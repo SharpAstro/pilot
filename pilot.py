@@ -59,6 +59,7 @@ PLANS = STATE / "plans"
 FLIGHTS = STATE / "flights.json"           # the last flight number given out, per repo code
 BLACKBOX = STATE / "blackbox.jsonl"        # every decision and event, append-only, across all flights
 AUTOPILOT = STATE / "autopilot.json"       # the autopilot's switch, session, and what it has been sent
+REFUEL_MODE = STATE / "refuel.json"        # {"mode": "auto" or "manual"}: may the watchtower approve refuels
 ASKS = STATE / "asks"                       # the question a pilot is waiting on you for, by session id
 NOTICES = STATE / "notifications.json"
 SUMMARIES = STATE / "summaries.json"
@@ -1334,6 +1335,20 @@ def watchtower(w, tokens, reason, account):
     return bool(verdict and verdict.group(1) == "APPROVE"), (why.group(1).strip() if why else out.strip()[:300])
 
 
+def refuel_mode():
+    """auto (the default): the watchtower may approve a refuel within its gates. manual: every refuel goes to
+    the tower, the controller or, while it is on, the autopilot. Switched from the dashboard's top bar."""
+    return "manual" if (read_json(REFUEL_MODE, {}) or {}).get("mode") == "manual" else "auto"
+
+
+def set_refuel_mode(mode):
+    mode = "manual" if mode == "manual" else "auto"
+    write_json(REFUEL_MODE, {"mode": mode, "at": time.time()})
+    blackbox(f"Refuelling set to {mode}: " + ("every refuel goes to the tower" if mode == "manual"
+                                              else "the watchtower may approve refuels within its gates"), actor="controller")
+    return mode
+
+
 def refuel(name, tokens, reason):
     """A pilot's request for more fuel for a worker. The gates come first and need no model: fresh usage
     figures with headroom in both windows, and at most maxFactor times the leg's first budget. Past them,
@@ -1348,7 +1363,8 @@ def refuel(name, tokens, reason):
     cfg = {**REFUEL, **(config().get("refuel") or {})}
     first = w.get("budget0") or config().get("budget") or w.get("budget") or 0
     ok, account = headroom()
-    gates = ([] if ok else [f"the account is short: {'; '.join(account)}"]) + \
+    gates = (["refuelling is on manual: the controller decides each one"] if refuel_mode() == "manual" else []) + \
+            ([] if ok else [f"the account is short: {'; '.join(account)}"]) + \
             ([] if tokens <= first * cfg["maxFactor"] else [f"{tokens:,} is past {cfg['maxFactor']} times the leg's first budget ({first:,})"])
     if gates:
         approved, why = False, "; ".join(gates)
@@ -1919,6 +1935,7 @@ class Hub:
         self.notices = Notices()
         self.running = set()             # summaries in flight, by key
         self.routing, self.route_failed = set(), {}   # plans being sent to the autopilot; when a send last failed
+        self.preview = False
 
     def poke(self):
         self.dirty = True
@@ -1927,8 +1944,8 @@ class Hub:
         """While the autopilot is on and up, sends it each live plan's waiting items once per change, through
         the intercom, in a thread so the watcher never waits on the relay. A failed send is tried again a
         minute later: a new session is not reachable for its first 20 to 40 seconds."""
-        if not snap["autopilot"]["enabled"] or not snap["autopilot"]["live"]:
-            return
+        if self.preview or not snap["autopilot"]["enabled"] or not snap["autopilot"]["live"]:
+            return                        # a preview dashboard never routes: the live one does, once
         st = read_json(AUTOPILOT, {})
         for p in snap["pilots"]:                   # a pilot stopped on a prompt in its terminal: once per wait
             key = f"prompt:{p['sessionId']}:{int(p.get('since') or 0)}"
@@ -1994,7 +2011,7 @@ class Hub:
                     snap["summaries"] = read_json(SUMMARIES, {})
                     snap["running"] = sorted(self.running)
                     ok, why = headroom()
-                    snap["refuel"] = {"ok": ok, "why": why}
+                    snap["refuel"] = {"mode": refuel_mode(), "ok": ok, "why": why}
                     snap["autopilot"] = autopilot_view()
                     self.route_autopilot(snap)
                     sids = [s["sessionId"] for s in snap["workers"] + snap["pilots"] if s.get("sessionId")]
@@ -2186,6 +2203,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.send(409, {"error": str(e)})
             HUB.poke()
             return self.send(200, out)
+        if self.path == "/api/refuel":
+            mode = set_refuel_mode(str(body.get("mode") or "auto"))
+            HUB.poke()
+            return self.send(200, {"ok": True, "mode": mode})
         if self.path == "/api/autopilot":
             try:
                 st = autopilot_on() if body.get("on") else autopilot_off()
@@ -2228,7 +2249,7 @@ def cmd_dashboard(a):
     if a.preview:
         HUB.notices.update = lambda snap: []
         HUB.notices.save = lambda: None
-        Handler.preview = True
+        HUB.preview = Handler.preview = True     # and it routes nothing to the autopilot
     threading.Thread(target=HUB.run, daemon=True).start()
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
     srv.daemon_threads = True

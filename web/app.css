@@ -197,6 +197,11 @@ details pre { margin: 6px 0 0; max-height: 360px; overflow: auto; white-space: p
   font: 12px/1.4 "Cascadia Mono", Consolas, monospace; background: var(--page); border: 1px solid var(--hair); border-radius: 6px; padding: 6px 10px; }
 /* the autopilot's switch, in the top bar */
 #autopilot button.ap { font-size: 12px; padding: 4px 10px; border-radius: 999px; }
+/* refuelling's switch: green when the watchtower may approve, plain when manual or held; never the autopilot's blue */
+button.fuel { font-size: 12px; padding: 3px 9px; border-radius: 6px; white-space: nowrap; }
+button.fuel.auto { color: var(--good-text); border-color: var(--good); }
+button.fuel.held { color: var(--ink-2); border-style: dashed; }
+button.fuel.manual { color: var(--ink); border-color: var(--warn); }
 #autopilot button.ap.on { background: var(--tint-fill); border-color: var(--fill); color: var(--fill); font-weight: 600; }
 /* the black box */
 .bbfilter { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }

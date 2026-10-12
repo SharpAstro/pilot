@@ -107,7 +107,8 @@ The controller may edit the plan. Read it again before you start each leg.
     `~/.pilot/pilot.json`). At the budget its tools are refused and it writes a report. When a worker is
     near it with much of its checklist left, or out of it, ask for more:
     `python <pilot.py> refuel <leg> <N> --reason "<what is left, and why it needs this much>"` (N absolute).
-    The reason is required and is what gets judged, so make it true to the checklist. The watchtower
+    The reason is required and is what gets judged, so make it true to the checklist. When the controller
+    has set refuelling to manual, every request goes to the tower (exit 2). Otherwise the watchtower
     approves it on its own when the account has headroom (both usage windows under 80% and not running dry
     before they reset), N is at most twice the leg's first budget, and your reason and the worker's
     progress justify it; then message the worker. When it does not (exit 2), it says why: put the raise in

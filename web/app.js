@@ -312,9 +312,14 @@ function renderTop() {
   for (const a of document.querySelectorAll("nav a")) a.classList.toggle("on", a.dataset.nav === (r.view === "session" ? "" : r.view));
   if (!S) return;
   // Whether a refuel can be approved by the watchtower right now, or has to come to you.
-  const fuel = S.refuel ? `<span class="usage-peak ${S.refuel.ok ? "u-good" : "sub"}" title="${esc(S.refuel.ok
-    ? `Refuels: the watchtower may approve them now (${S.refuel.why.join("; ")}), if the reason and the worker's progress justify it.`
-    : `Refuels come to you: ${S.refuel.why.join("; ")}.`)}">⛽ ${S.refuel.ok ? "auto" : "tower"}</span>` : "";
+  // Refuelling's switch, which is not the autopilot's: auto lets the watchtower approve a refuel within its
+  // gates (held while the account has no headroom), manual sends every refuel to the tower.
+  const rf = S.refuel || {}, manual = rf.mode === "manual", held = !manual && !rf.ok;
+  const fuel = S.refuel ? `<button class="fuel ${manual ? "manual" : held ? "held" : "auto"}" data-refuel="${manual ? "auto" : "manual"}" title="${esc(manual
+    ? "Refuelling: manual. Every refuel request comes to the tower: you, or the autopilot while it is on. Click for auto, where the watchtower may approve them."
+    : held ? `Refuelling: auto, but held now: ${(rf.why || []).join("; ")}. Until there is headroom, refuels come to the tower. Click for manual.`
+    : `Refuelling: auto. The watchtower may approve a refuel when the reason and the worker's progress justify it (${(rf.why || []).join("; ")}). Click for manual.`)}">
+    ⛽ refuel: ${manual ? "manual" : held ? "auto · held" : "auto"}</button>` : "";
   put($("#limits"), limitsHtml(S.limits) + fuel);
   // The autopilot's switch: off, starting, standby or working, and how many decisions it has made since on.
   const ap = S.autopilot || {}, apState = !ap.enabled ? "off" : !ap.live ? "starting" : ap.status === "busy" ? "deciding" : "standby";
@@ -1186,6 +1191,10 @@ document.addEventListener("click", async e => {
     return;
   }
   if (t.dataset.sendanswers) { sendAnswers(t.dataset.sendanswers); return; }
+  if (t.dataset.refuel) {
+    try { await post("/api/refuel", {mode: t.dataset.refuel}); } catch (err) { alert(err.message); }
+    return;
+  }
   if (t.dataset.autopilot) {
     const on = t.dataset.autopilot === "on";
     if (on && !confirm("Switch the autopilot on? Until you switch it off, an Opus 5.5 session decides what waits on you in every live flight: "
