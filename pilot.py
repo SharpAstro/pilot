@@ -48,6 +48,7 @@ import urllib.parse
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+CODE_MTIME = Path(__file__).stat().st_mtime   # a dashboard runs the code it started with; this tells it the file moved on
 WEB = HERE / "web"
 CONFIG = Path.home() / ".pilot" / "pilot.json"   # this machine's repos and defaults: local paths, so not in the repo
 STATE = Path(os.environ.get("PILOT_STATE") or Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".local/state") / "pilot")
@@ -876,12 +877,15 @@ def dry_at(five, start, now, used):
     return _add_work(now, (100 - used) / (used / on), now + 30 * 86400) if on > 0 else 0
 
 
-REFUEL = {"maxUsedPct": 80, "maxFactor": 2, "maxAgeMinutes": 30}     # ~/.pilot/pilot.json "refuel" overrides
+REFUEL = {"maxUsedPct": 80, "maxFactor": 2, "maxAgeMinutes": 30,     # ~/.pilot/pilot.json "refuel" overrides
+          "weekDryPct": 50, "weekDryDays": 3}
 
 
 def headroom(now=None):
     """Whether the account can take more spend: fresh figures, and each window under maxUsedPct and not
-    projected to run dry before it resets. Returns (ok, one phrase per window), for the watchtower's gate."""
+    projected to run dry before it resets. The 7-day projection holds only once the week is weekDryPct used
+    and the dry day is at most weekDryDays off: early in the week it is a guess from a few days' burn.
+    Returns (ok, one phrase per window), for the watchtower's gate."""
     now, cfg = now or time.time(), {**REFUEL, **(config().get("refuel") or {})}
     lim = limits()
     if not lim or not lim.get("windows"):
@@ -898,9 +902,14 @@ def headroom(now=None):
             continue
         dry = dry_at(key == "five_hour", reset - span, now, used) if used >= 10 else 0
         short = bool(dry) and dry <= reset
+        note = f", runs dry {time.strftime('%a %H:%M', time.localtime(dry))}, before its reset" if short else ""
+        if short and key == "seven_day" and (used < cfg["weekDryPct"] or dry - now > cfg["weekDryDays"] * 86400):
+            short = False
+            note += (f", but it is under {cfg['weekDryPct']}% used" if used < cfg["weekDryPct"]
+                     else f", but that is more than {cfg['weekDryDays']} days off")
         if used >= cfg["maxUsedPct"] or short:
             ok = False
-        why.append(f"{name} {used:.0f}%" + (f", runs dry {time.strftime('%a %H:%M', time.localtime(dry))}, before its reset" if short else ""))
+        why.append(f"{name} {used:.0f}%{note}")
     return ok, why
 
 
@@ -2027,6 +2036,7 @@ class Hub:
                     ok, why = headroom()
                     snap["refuel"] = {"mode": refuel_mode(), "ok": ok, "why": why}
                     snap["autopilot"] = autopilot_view()
+                    snap["stale"] = Path(__file__).stat().st_mtime != CODE_MTIME
                     self.route_autopilot(snap)
                     sids = [s["sessionId"] for s in snap["workers"] + snap["pilots"] if s.get("sessionId")]
                     last_fp = fingerprint(sids)

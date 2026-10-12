@@ -96,6 +96,9 @@ nav a.on { background: var(--page); color: var(--ink); font-weight: 600; box-sha
 .md code { background: color-mix(in srgb, var(--ink) 6%, transparent); padding: 0 3px; border-radius: 3px; }
 .md pre code { background: none; padding: 0; }
 .md h4 { margin: 10px 0 4px; font-size: 13px; }
+.md li > ul, .md li > ol { margin: 2px 0 4px; }
+/* a placeholder the text defines: its value on hover, and in what is copied */
+abbr.ph { text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
 
 /* flight plan and controls */
 .plan { margin-bottom: 12px; display: block; }

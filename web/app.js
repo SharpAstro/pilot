@@ -49,10 +49,28 @@ function put(el, html) {
   el.innerHTML = html; el._html = html;
   for (const d of el.querySelectorAll("details[data-k]")) if (opened.has(d.dataset.k)) d.open = opened.get(d.dataset.k);
 }
+// Copying text with a report's placeholders in it copies what they stand for: a command runs as pasted.
+document.addEventListener("copy", e => {
+  const sel = getSelection();
+  if (!sel.rangeCount) return;
+  const frag = sel.getRangeAt(0).cloneContents();
+  const phs = frag.querySelectorAll("abbr.ph[data-expand]");
+  if (!phs.length) return;
+  for (const a of phs) a.replaceWith(a.dataset.expand);
+  const box = document.createElement("div");           // innerText keeps line breaks only for laid-out text
+  box.style.cssText = "position:fixed;left:-99999px;top:0;white-space:pre-wrap";
+  box.append(frag); document.body.append(box);
+  e.clipboardData.setData("text/plain", box.innerText);
+  box.remove(); e.preventDefault();
+});
 function local(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch { return null; } }
 async function post(url, body) {
   const r = await fetch(url, {method: "POST", headers: {"X-Pilot": "1", "Content-Type": "application/json"}, body: JSON.stringify(body || {})});
   const j = await r.json().catch(() => ({}));
+  // The page comes from disk on every load, the server's code only when it starts: a button newer than the
+  // server meets a route it has never heard of.
+  if (r.status === 404 && j.error === "not found")
+    throw new Error(`This dashboard started before ${url} existed, so its server does not know it. Restart it (python pilot.py dashboard) and try again.`);
   if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
   return j;
 }
@@ -60,13 +78,35 @@ async function post(url, body) {
 // ------------------------------------------------------------------ a small Markdown: enough for reports
 
 // A report's line breaks are kept; `soft` joins a paragraph's lines, for prose wrapped at a fixed width.
+// A placeholder the text defines, "`<pv>` = `C:\...\pdf-viewer`", shows its value on hover wherever it is used,
+// and copies as that value.
 function md(src, soft) {
   const out = [], lines = String(src ?? "").replace(/\r/g, "").split("\n");
-  let para = [], list = null;
-  const inline = s => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
-    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  const defs = new Map();
+  for (const m of String(src ?? "").matchAll(/`(<[A-Za-z][\w.-]*>)`\s*(?:=|:=|is)\s*`([^`\n]+)`/g)) defs.set(esc(m[1]), m[2]);
+  const ph = defs.size && new RegExp([...defs.keys()].map(k => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "g");
+  const placeholders = h => !ph ? h : h.replace(ph, (k, at) => /^<\/code>\s*(?:=|:=|is)\s*<code>/.test(h.slice(at + k.length))
+    ? `<abbr class="ph" title="${esc(defs.get(k))}">${k}</abbr>`
+    : `<abbr class="ph" title="${esc(defs.get(k))}" data-expand="${esc(defs.get(k))}">${k}</abbr>`);
+  const inline = s => placeholders(esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>'));
+  // Lists nest by indent: `root` is the outermost list, `stack` the lists open inside it, innermost last.
+  let para = [], root = null, stack = [];
+  const listHtml = L => `<${L.t}>${L.items.map(x => `<li>${inline(x.text)}${x.subs.map(listHtml).join("")}</li>`).join("")}</${L.t}>`;
   const flushPara = () => { if (para.length) out.push(`<p>${para.map(inline).join(soft ? " " : "<br>")}</p>`); para = []; };
-  const flushList = () => { if (list) out.push(`<${list.t}>${list.items.map(x => `<li>${inline(x)}</li>`).join("")}</${list.t}>`); list = null; };
+  const flushList = () => { if (root) out.push(listHtml(root)); root = null; stack = []; };
+  const item = (text, t, n) => {
+    while (stack.length && stack.at(-1).n > n) stack.pop();
+    if (stack.length && stack.at(-1).n === n && stack.at(-1).t !== t) stack.pop();
+    if (!stack.length) flushList();
+    let top = stack.at(-1);
+    if (!top || top.n < n) {
+      const L = {t, n, items: []};
+      if (top) top.items.at(-1).subs.push(L); else root = L;
+      stack.push(top = L);
+    }
+    top.items.push({text, subs: []});
+  };
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
     let m;
@@ -77,12 +117,10 @@ function md(src, soft) {
       out.push(`<pre><code>${esc(body.join("\n"))}</code></pre>`);
     } else if ((m = /^#{1,6}\s+(.*)/.exec(l))) { flushPara(); flushList(); out.push(`<h4>${inline(m[1])}</h4>`); }
     else if ((m = /^\s*[-*]\s+(.*)/.exec(l)) || (m = /^\s*\d+[.)]\s+(.*)/.exec(l))) {
-      const t = /^\s*\d/.test(l) ? "ol" : "ul";
       flushPara();
-      if (!list || list.t !== t) { flushList(); list = {t, items: []}; }
-      list.items.push(m[1]);
+      item(m[1], /^\s*\d/.test(l) ? "ol" : "ul", /^\s*/.exec(l)[0].replace(/\t/g, "    ").length);
     } else if (!l.trim()) { flushPara(); flushList(); }
-    else if (list && /^\s{2,}/.test(l)) list.items[list.items.length - 1] += " " + l.trim();
+    else if (root && /^\s{2,}/.test(l)) stack.at(-1).items.at(-1).text += " " + l.trim();
     else { flushList(); para.push(l); }
   }
   flushPara(); flushList();
@@ -331,7 +369,11 @@ function renderTop() {
   const waiting = [...S.pilots.filter(p => p.status === "waiting").map(p => ({name: `pilot ${p.name}`, href: `#/s/${p.sessionId}`})),
                    ...(S.plans || []).filter(p => p.waiting).map(p => ({name: p.title, href: `#/s/${p.sessionId}`})),
                    ...S.workers.filter(w => w.state === "blocked").map(w => ({name: w.name, href: `#/w/${w.name}`}))];
+  // S.stale: pilot.py changed since this server started. A snapshot without refuel's mode is from a server
+  // older than that check.
+  const stale = S.stale || (S.refuel && !("mode" in S.refuel));
   put($("#alerts"),
+    (stale ? `<p class="warnline amber">This dashboard is running older code than <code>pilot.py</code> on disk, so newer buttons may answer "not found". Restart it: <code>python pilot.py dashboard</code>.</p>` : "") +
     (over.length ? `<p class="warnline">⚠ Over budget: ${over.map(w => `<a href="#/w/${esc(w.name)}">${esc(w.name)}</a>`).join(", ")}. Their tools are refused until the budget is raised (<code>pilot budget NAME N</code>).</p>` : "") +
     (waiting.length ? `<p class="warnline amber">Waiting on you: ${waiting.map(w => `<a href="${esc(w.href)}">${esc(w.name)}</a>`).join(", ")}.</p>` : ""));
   const n = S.notifications || {unread: 0, items: []};

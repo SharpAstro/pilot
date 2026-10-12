@@ -113,7 +113,8 @@ The controller may edit the plan. Read it again before you start each leg.
     The reason is required and is what gets judged, so make it true to the checklist. When the controller
     has set refuelling to manual, every request goes to the tower (exit 2). Otherwise the watchtower
     approves it on its own when the account has headroom (both usage windows under 80% and not running dry
-    before they reset), N is at most twice the leg's first budget, and your reason and the worker's
+    before they reset; the 7-day one counts as running dry only from 50% used, with the dry day at most 3 days
+    off), N is at most twice the leg's first budget, and your reason and the worker's
     progress justify it; then message the worker. When it does not (exit 2), it says why: put the raise in
     `## Waiting on the controller` with that and your recommendation. Never use `budget` yourself; it is
     the controller's override.

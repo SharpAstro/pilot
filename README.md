@@ -170,7 +170,8 @@ overshoot by one message, never more.
 **Refuelling.** A pilot asks for more with `pilot refuel <leg> <N> --reason`, and the reason is required.
 Gates come first and need no model: the usage figures are fresh (at most 30 minutes old), both windows
 are under 80% and not projected to run dry before they reset (the status line's rules), and N is at most
-twice the leg's first budget. Past them the **watchtower**, one Haiku call with no tools (about 3 s),
+twice the leg's first budget. The 7-day projection holds a refuel only once the week is 50% used and the dry
+day is at most 3 days off: early in the week it is a guess from a few days' burn. Past them the **watchtower**, one Haiku call with no tools (about 3 s),
 reads the leg's goal and Done when, the checklist, the spend, the worker's last message and the reason,
 and approves or sends it to the tower. It checks the reason against the checklist: in testing it refused a
 request whose reason claimed a step was finished that the checklist still had in progress. Either way the
@@ -179,7 +180,7 @@ a refuel would go right now, and is a switch: **auto** (the default) lets the wa
 gates, shown as `auto · held` while the account has no headroom; **manual** sends every refuel to the tower,
 you or the autopilot while it is on. The switch is in `<state>/refuel.json`, and each change is in the black
 box. `~/.pilot/pilot.json` takes `"refuel": {"maxUsedPct": 80, "maxFactor": 2,
-"maxAgeMinutes": 30}`.
+"maxAgeMinutes": 30, "weekDryPct": 50, "weekDryDays": 3}`.
 
 A Haiku summary is one `claude -p --model haiku` with no tools, no MCP servers, no settings and no saved
 session: about 4k tokens and 2 s for one worker, measured.
