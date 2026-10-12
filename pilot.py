@@ -2,17 +2,21 @@
 """pilot: one pilot session and some workers, on Claude Code's own background sessions.
 
 The pilot is an ordinary interactive session in the repo. A worker is `claude --bg -w <name>`: a background
-session in its own git worktree, branched from origin/develop, which the Claude Code daemon keeps running
-whether or not a terminal is open. This file starts workers the same way every time, lists them with what
-they have spent, gates their spend, and stops them. Talking to one is Claude Code's own business: the pilot
-uses SendMessage, and you use `claude attach <id>` or Remote Control.
+session in its own git worktree, branched from the repo's default branch, which the Claude Code daemon keeps
+running whether or not a terminal is open. This file starts workers the same way every time, lists them with
+what they have spent, gates their spend, delivers your messages, summarises them and serves the dashboard.
 
-  python pilot.py start NAME --brief FILE|- [--repo R] [--model M] [--effort E] [--budget N] [--pilot NAME]
+  python pilot.py plan [--title T]     the pilot session's flight plan: its path, made from the template once
+  python pilot.py start NAME --brief FILE|- [--repo R] [--model M] [--effort E] [--budget N]
+                         [--pilot NAME] [--after NAME]...
   python pilot.py list [--json]
   python pilot.py result NAME          the worker's last message: its report
+  python pilot.py say NAME TEXT|-      your message to a worker whose turn has ended, as a user turn
   python pilot.py budget NAME N        a new ceiling in weighted tokens (absolute, not an increment)
+  python pilot.py summary [NAME]       a Haiku summary of one worker, or of all of them
   python pilot.py stop NAME            stop it; the conversation is kept
-  python pilot.py rm NAME              delete it, and its worktree when Claude Code says that is safe
+  python pilot.py rm NAME              delete it (its worktree too, when Claude Code says that is safe) and
+                                       keep its record in the history
   python pilot.py dashboard [--port 5181]
   python pilot.py hook-budget          the worker plugin's PreToolUse hook (reads the payload on stdin)
 
@@ -23,8 +27,12 @@ Windows notes, all measured on CLI 2.1.296:
     after them; with the prompt on stdin there is nothing to swallow.
   * `--bg` refuses a directory whose workspace trust was never accepted. The repo must have been opened
     interactively once; `-w` worktrees inside it inherit that.
+  * `--bg --resume <session>` always continues in a new session id, a copy holding the whole conversation,
+    in the same worktree and with the same options. `say` uses that and moves the worker's record onto the
+    copy. Only the session that made the worktree owns it, so `rm` removes the copies first.
 """
 import argparse
+import datetime
 import glob
 import http.server
 import json
@@ -35,19 +43,43 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
+import urllib.parse
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+WEB = HERE / "web"
 CONFIG = HERE / "pilot.json"
 STATE = Path(os.environ.get("PILOT_STATE") or Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".local/state") / "pilot")
 WORKERS = STATE / "workers"
+ARCHIVE = STATE / "archive"
+BRIEFS = STATE / "briefs"
 METERS = STATE / "meters"
+PLANS = STATE / "plans"
+NOTICES = STATE / "notifications.json"
+SUMMARIES = STATE / "summaries.json"
 PROFILE = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,29}$")
+QUIET_SECONDS = 30 * 60
 
 
 def config():
     return json.loads(CONFIG.read_text(encoding="utf-8"))
+
+
+def read_json(path, default=None):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+
+
+def write_json(path, obj):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(obj, indent=1), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 # --------------------------------------------------------------------------- claude
@@ -85,37 +117,53 @@ def agents():
 
 def session_record(pid):
     """<profile>/sessions/<pid>.json, which carries the Remote Control session id."""
-    try:
-        return json.loads((PROFILE / "sessions" / f"{pid}.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return {}
+    return read_json(PROFILE / "sessions" / f"{pid}.json", {}) if pid else {}
+
+
+def job_state(job_id):
+    """<profile>/jobs/<id>/state.json: Claude Code's own state for a background session, with a one-line
+    `detail` of what it is doing or waiting on and, once a turn ends, its `output.result`."""
+    d = read_json(PROFILE / "jobs" / job_id / "state.json", {}) if job_id else {}
+    out = d.get("output") if isinstance(d.get("output"), dict) else {}
+    return {"detail": d.get("detail"), "result": out.get("result")}
 
 
 def transcript(session_id):
-    hits = glob.glob(str(PROFILE / "projects" / "*" / f"{session_id}.jsonl"))
+    hits = glob.glob(str(PROFILE / "projects" / "*" / f"{session_id}.jsonl")) if session_id else []
     return Path(hits[0]) if hits else None
+
+
+def subagent_files(session_id):
+    main = transcript(session_id)
+    return sorted(main.parent.glob(f"{session_id}/subagents/agent-*.jsonl")) if main else []
 
 
 def same_path(a, b):
     return os.path.normcase(os.path.normpath(a or "")) == os.path.normcase(os.path.normpath(b or ""))
 
 
+def base_branch(root):
+    r = subprocess.run(["git", "-C", root, "rev-parse", "--abbrev-ref", "origin/HEAD"], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else "origin/HEAD"
+
+
 # --------------------------------------------------------------------------- registry
 
 def load(name):
-    p = WORKERS / f"{name}.json"
-    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+    return read_json(WORKERS / f"{name}.json")
 
 
 def save(w):
-    WORKERS.mkdir(parents=True, exist_ok=True)
-    tmp = WORKERS / f"{w['name']}.json.tmp"
-    tmp.write_text(json.dumps(w, indent=1), encoding="utf-8")
-    os.replace(tmp, WORKERS / f"{w['name']}.json")
+    write_json(WORKERS / f"{w['name']}.json", w)
 
 
 def registered():
     return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(WORKERS.glob("*.json"))]
+
+
+def archived(limit=100):
+    rows = [read_json(p) for p in ARCHIVE.glob("*.json")]
+    return sorted((r for r in rows if r), key=lambda r: r.get("archivedAt") or 0, reverse=True)[:limit]
 
 
 def need(name):
@@ -125,18 +173,109 @@ def need(name):
     return w
 
 
+def sessions_of(w):
+    """Every session a worker has run as, oldest first: the one `start` made, then one per `say`."""
+    return w.get("sessions") or [{"id": w.get("id"), "sessionId": w.get("sessionId")}]
+
+
+# --------------------------------------------------------------------------- flight plan
+
+PLAN_TEMPLATE = """# Flight plan: {title}
+
+Objective: (one or two sentences: what this flight is for, and how you will know it landed)
+
+Pilot session: {sid}
+
+## Route
+
+| Leg | Goal | After | Done when |
+|---|---|---|---|
+
+## Log
+
+- {now} Plan opened.
+"""
+
+
+def pilot_session():
+    """The session this command runs in, when the pilot runs it: Claude Code sets CLAUDE_CODE_SESSION_ID in
+    every shell it starts. A flight plan belongs to that session, one to one."""
+    return os.environ.get("CLAUDE_CODE_SESSION_ID")
+
+
+def plan_path(sid):
+    return PLANS / f"{sid}.md" if sid else None
+
+
+def plan_log(sid, text):
+    """Appends a line to a flight plan's Log, which the template keeps as the last section."""
+    p = plan_path(sid)
+    if not p or not p.exists():
+        return
+    t = p.read_text(encoding="utf-8")
+    t += ("" if t.endswith("\n") else "\n") + ("" if "\n## Log" in t else "\n## Log\n\n")
+    p.write_text(t + f"- {time.strftime('%Y-%m-%d %H:%M')} {text}\n", encoding="utf-8")
+
+
+def parse_plan(text):
+    def section(name):
+        m = re.search(rf"^##\s+{name}\s*$(.*?)(?=^##\s|\Z)", text, re.M | re.S)
+        return m.group(1) if m else ""
+    title = re.search(r"^#\s+(?:Flight plan:\s*)?(.+)$", text, re.M)
+    objective = re.search(r"^Objective:\s*(.+)$", text, re.M)
+    legs = []
+    for line in section("Route").splitlines():
+        if not line.strip().startswith("|"):
+            continue
+        row = line.strip()
+        row = row[1:] if row.startswith("|") else row
+        row = row[:-1] if row.endswith("|") and not row.endswith("\\|") else row
+        cells = [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", row)]   # a `\|` stays in its cell
+        if not cells or set("".join(cells)) <= set("-: ") or cells[0].lower() == "leg":
+            continue
+        cells += [""] * (4 - len(cells))
+        name = re.sub(r"[`*]", "", cells[0]).strip()
+        after = [a for a in (x.strip(" `*") for x in re.split(r"[,;\s]+", cells[2])) if a and a not in ("-", "none")]
+        legs.append({"leg": name, "goal": cells[1], "after": after, "doneWhen": cells[3]})
+    log = [ln[2:].strip() for ln in section("Log").splitlines() if ln.startswith("- ")]
+    return {"title": title.group(1).strip() if title else "untitled", "objective": objective.group(1).strip() if objective else "",
+            "legs": legs, "log": log[-40:]}
+
+
+def plans_view(rows, workers):
+    """Flight plans whose pilot is live, or that a current worker flies a leg of, or touched this week."""
+    live = {r.get("sessionId"): r for r in rows if r.get("pid")}
+    flown = {w.get("plan") for w in workers if w.get("plan")}
+    out = []
+    for p in sorted(PLANS.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+        sid, mtime = p.stem, p.stat().st_mtime
+        if sid not in live and sid not in flown and time.time() - mtime > 7 * 86400:
+            continue
+        out.append({"sessionId": sid, "path": str(p), "updated": mtime, "live": sid in live,
+                    "pilot": (live.get(sid) or {}).get("name"), **parse_plan(p.read_text(encoding="utf-8"))})
+    return out[:10]
+
+
 # --------------------------------------------------------------------------- spend
 
 WEIGHTS = {"input_tokens": 1.0, "cache_creation_input_tokens": 1.25, "cache_read_input_tokens": 0.1, "output_tokens": 5.0}
 
 
+def local_day(ts):
+    try:
+        return datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().date().isoformat()
+    except (AttributeError, ValueError):
+        return None
+
+
 class Meter:
     """Weighted tokens of one transcript file, read incrementally: input + 1.25*cache_creation +
     0.1*cache_read + 5*output, the same price ratios Sam's agent_token_budget.sh uses. A message's usage is
-    repeated on every content block it was streamed in, so it is counted once per message id."""
+    repeated on every content block it was streamed in, so it is counted once per message id; a copy made
+    by `say` repeats the messages before it under the same ids, so they are counted once across files too."""
 
     def __init__(self, path):
-        self.path, self.offset, self.by_id, self.raw = Path(path), 0, {}, {}
+        self.path, self.offset, self.entries = Path(path), 0, {}
 
     def read(self):
         try:
@@ -158,100 +297,181 @@ class Meter:
             if e.get("type") != "assistant" or not isinstance(m, dict) or not isinstance(m.get("usage"), dict):
                 continue
             u = m["usage"]
-            key = m.get("id") or e.get("uuid")
-            self.raw[key] = {k: int(u.get(k) or 0) for k in WEIGHTS}
-            self.by_id[key] = sum(WEIGHTS[k] * self.raw[key][k] for k in WEIGHTS)
+            raw = [int(u.get(k) or 0) for k in WEIGHTS]
+            self.entries[m.get("id") or e.get("uuid")] = (sum(w * n for w, n in zip(WEIGHTS.values(), raw)), raw,
+                                                         local_day(e.get("timestamp")))
         return self
-
-    def weighted(self):
-        return int(sum(self.by_id.values()))
-
-    def tokens(self):
-        return {k: sum(r[k] for r in self.raw.values()) for k in WEIGHTS}
 
 
 _meters = {}
 
 
-def spend(session_id):
-    """Weighted tokens and raw token counts of a session, its subagents included."""
-    main = transcript(session_id)
-    if not main:
-        return {"weighted": 0, "tokens": {k: 0 for k in WEIGHTS}, "files": 0}
-    files = [main, *sorted(main.parent.glob(f"{session_id}/subagents/agent-*.jsonl"))]
-    total, tokens = 0, {k: 0 for k in WEIGHTS}
-    for f in files:
-        m = _meters.get(str(f)) or _meters.setdefault(str(f), Meter(f))
-        m.read()
-        total += m.weighted()
-        for k, v in m.tokens().items():
-            tokens[k] += v
-    return {"weighted": total, "tokens": tokens, "files": len(files)}
-
-
-# --------------------------------------------------------------------------- transcript reading
-
-def tail_events(session_id, n=40, tail_bytes=512 * 1024):
-    """The session's last n events as one-line summaries, newest last."""
-    path = transcript(session_id)
-    if not path:
-        return []
-    with open(path, "rb") as f:
-        f.seek(0, 2)
-        size = f.tell()
-        f.seek(max(0, size - tail_bytes))
-        data = f.read()
-    lines = data.splitlines()[1 if size > tail_bytes else 0:]
-    out = []
-    for line in lines:
-        try:
-            e = json.loads(line)
-        except ValueError:
+def spend(session_ids):
+    """Weighted tokens, raw counts and weighted tokens per local day of some sessions, their subagents
+    included, every message counted once."""
+    entries = {}
+    files = 0
+    for sid in session_ids:
+        main = transcript(sid)
+        if not main:
             continue
-        t, ts = e.get("type"), e.get("timestamp")
-        msg = e.get("message") if isinstance(e.get("message"), dict) else {}
-        content = msg.get("content")
-        if t == "assistant" and (e.get("error") or msg.get("error")):
-            # An API error, a usage limit or a failed login, recorded as a synthetic assistant message.
-            out.append({"at": ts, "kind": "error", "text": f"{e.get('error') or msg.get('error')}: {flat(content)[:600]}"})
-        elif t == "user" and isinstance(content, str):
-            kind = "message" if "cross-session-message" in content else "prompt"
-            out.append({"at": ts, "kind": kind, "text": content[:2000]})
-        elif t in ("user", "assistant") and isinstance(content, list):
-            for b in content:
-                if not isinstance(b, dict):
-                    continue
-                k = b.get("type")
-                if k == "text" and t == "assistant" and b.get("text", "").strip():
-                    out.append({"at": ts, "kind": "said", "text": b["text"][:4000]})
-                elif k == "tool_use":
-                    out.append({"at": ts, "kind": "tool", "tool": b.get("name"), "text": brief_input(b.get("input"))})
-                elif k == "tool_result" and b.get("is_error"):
-                    out.append({"at": ts, "kind": "error", "text": flat(b.get("content"))[:600]})
-    return out[-n:]
+        for f in [main, *subagent_files(sid)]:
+            m = _meters.get(str(f)) or _meters.setdefault(str(f), Meter(f))
+            entries.update(m.read().entries)
+            files += 1
+    tokens = {k: sum(e[1][i] for e in entries.values()) for i, k in enumerate(WEIGHTS)}
+    days = {}
+    for weighted, _, day in entries.values():
+        if day:
+            days[day] = days.get(day, 0) + weighted
+    return {"weighted": int(sum(e[0] for e in entries.values())), "tokens": tokens,
+            "days": {d: int(v) for d, v in days.items()}, "files": files}
 
+
+# --------------------------------------------------------------------------- transcripts
 
 def flat(content):
     if isinstance(content, str):
         return content
     if isinstance(content, list):
         return " ".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in content)
-    return json.dumps(content)
+    return "" if content is None else json.dumps(content)
 
 
 def brief_input(inp):
     if not isinstance(inp, dict):
         return ""
-    for k in ("command", "file_path", "pattern", "description", "prompt", "url", "to"):
+    for k in ("command", "file_path", "pattern", "description", "prompt", "url", "to", "skill"):
         if inp.get(k):
             return str(inp[k])[:300]
     return json.dumps(inp)[:300]
+
+
+# How Claude Code words a call it refused, and who refused it (measured on this machine's transcripts).
+DENIALS = [
+    (re.compile(r"denied by the Claude Code auto mode classifier"), "auto mode"),
+    (re.compile(r"^PreToolUse:\w+ hook error"), "a hook"),
+    (re.compile(r"^<tool_use_error>Blocked:"), "Claude Code"),
+    (re.compile(r"Permission to use .* has been denied|matches a deny rule", re.I), "a deny rule"),
+    (re.compile(r"doesn't want to proceed with this tool use"), "a prompt nobody approved"),
+]
+
+
+def events_of(e):
+    """One transcript record as the events the session view shows."""
+    out = []
+    t, ts = e.get("type"), e.get("timestamp")
+    msg = e.get("message") if isinstance(e.get("message"), dict) else {}
+    c = msg.get("content")
+
+    def ev(kind, **kw):
+        out.append({"kind": kind, "at": ts, **kw})
+
+    if t == "assistant" and (e.get("error") or e.get("isApiErrorMessage")):
+        ev("error", text=f"{e.get('error') or 'API error'}: {flat(c)[:2000]}")
+    elif t == "assistant" and isinstance(c, list):
+        for b in c:
+            k = b.get("type") if isinstance(b, dict) else None
+            if k == "text" and b.get("text", "").strip():
+                ev("said", text=b["text"][:20000])
+            elif k == "thinking" and b.get("thinking", "").strip():
+                ev("thinking", text=b["thinking"][:8000])
+            elif k == "tool_use":
+                inp = b.get("input")
+                ev("tool", id=b.get("id"), tool=b.get("name"), summary=brief_input(inp),
+                   input=(json.dumps(inp, indent=1, ensure_ascii=False) if inp is not None else "")[:12000])
+    elif t == "user" and isinstance(c, str) and not e.get("isMeta"):
+        if "<cross-session-message" in c:
+            m = re.search(r'from-name="([^"]*)"', c)
+            body = re.sub(r"<cross-session-message[^>]*>|</cross-session-message>", "", c)
+            body = body.replace("Another Claude session sent a message:", "").strip()
+            ev("message", sender=m.group(1) if m else "another session", text=body[:20000])
+        elif "<task-notification>" in c:
+            m = re.search(r"<summary>(.*?)</summary>", c, re.S)
+            ev("notice", text=(m.group(1) if m else re.sub(r"<[^>]+>", " ", c)).strip()[:2000])
+        else:
+            ev("prompt", text=c[:20000])
+    elif t == "user" and isinstance(c, list):
+        tur = e.get("toolUseResult") if isinstance(e.get("toolUseResult"), dict) else {}
+        for b in c:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_result":
+                text = flat(b.get("content"))
+                denied = next((who for rx, who in DENIALS if rx.search(text)), None) if b.get("is_error") else None
+                ev("result", id=b.get("tool_use_id"), error=bool(b.get("is_error")), denied=denied,
+                   agentId=tur.get("agentId"), text=text[:12000])
+            elif b.get("type") == "text" and not e.get("isMeta") and b.get("text", "").strip():
+                ev("prompt", text=b["text"][:20000])
+    elif t == "attachment":
+        a = e.get("attachment") or {}
+        if a.get("type") == "queued_command" and (a.get("prompt") or a.get("content")):
+            ev("prompt", text=flat(a.get("prompt") or a.get("content"))[:20000], queued=True)
+    elif t == "system":
+        st = e.get("subtype")
+        if st == "turn_duration":
+            ev("turn", ms=e.get("durationMs"))
+        elif st == "away_summary" and e.get("content"):
+            ev("recap", text=flat(e.get("content"))[:4000])
+        elif st == "compact_boundary":
+            ev("compact")
+    return out
+
+
+def read_events(path, offset=0):
+    """Events from a transcript after a byte offset, and the offset of the last complete line read."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(offset)
+            chunk = f.read()
+    except OSError:
+        return [], offset
+    end = chunk.rfind(b"\n") + 1
+    out = []
+    for line in chunk[:end].splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(e, dict):
+            out += events_of(e)
+    return out, offset + end
+
+
+def tail_events(session_id, n=40, tail_bytes=512 * 1024):
+    """A session's last n events, newest last, read from the end of its transcript."""
+    path = transcript(session_id)
+    if not path:
+        return []
+    size = path.stat().st_size
+    start = max(0, size - tail_bytes)
+    if start:
+        with open(path, "rb") as f:          # start on a line boundary
+            f.seek(start)
+            start += len(f.readline())
+    return read_events(path, start)[0][-n:]
 
 
 def report(session_id):
     """The session's last assistant text: a finished worker's report."""
     said = [e for e in tail_events(session_id, n=400, tail_bytes=4 * 1024 * 1024) if e["kind"] == "said"]
     return said[-1]["text"] if said else ""
+
+
+def head_word(text):
+    m = re.match(r"^\W*(DONE|BLOCKED|FAILED)\b", text or "")
+    return m.group(1) if m else None
+
+
+def subagents(session_id):
+    out = []
+    for f in subagent_files(session_id):
+        aid = f.stem[len("agent-"):]
+        meta = read_json(f.with_name(f"agent-{aid}.meta.json"), {})
+        m = _meters.get(str(f)) or _meters.setdefault(str(f), Meter(f))
+        out.append({"id": aid, "description": meta.get("description"), "type": meta.get("agentType"),
+                    "weighted": int(sum(e[0] for e in m.read().entries.values())), "lastActivity": f.stat().st_mtime})
+    return out
 
 
 # --------------------------------------------------------------------------- status
@@ -263,32 +483,30 @@ def worker_status(w, rows=None):
         w["sessionId"] = row["sessionId"]
         save(w)
     sid = w.get("sessionId")
-    path = transcript(sid) if sid else None
-    sp = spend(sid) if sid else {"weighted": 0, "tokens": {}, "files": 0}
+    path = transcript(sid)
+    sp = spend([s["sessionId"] for s in sessions_of(w) if s.get("sessionId")])
     last = None
     if path:
-        times = [path.stat().st_mtime] + [p.stat().st_mtime for p in path.parent.glob(f"{sid}/subagents/*.jsonl")]
-        last = max(times)
-    ev = tail_events(sid, n=12) if sid else []
-    now = next((e for e in reversed(ev) if e["kind"] in ("tool", "said")), None)
+        last = max([path.stat().st_mtime] + [p.stat().st_mtime for p in subagent_files(sid)])
+    ev = tail_events(sid, n=60) if sid else []
+    now = next(({k: (str(v)[:300] if k == "text" else v) for k, v in e.items() if k != "input"}
+                for e in reversed(ev) if e["kind"] in ("tool", "said")), None)
+    said = [e for e in ev if e["kind"] == "said"]
+    tail = [e for e in ev if e["kind"] in ("said", "error")]
     rec = session_record(row.get("pid")) if row and row.get("pid") else {}
     state = (row or {}).get("state") or ("gone" if not row else (row.get("status") or "?"))
+    job = job_state(w["id"])
     return {
-        **{k: w.get(k) for k in ("name", "id", "sessionId", "repo", "worktree", "branch", "model", "effort", "budget", "started")},
+        **{k: w.get(k) for k in ("name", "id", "sessionId", "repo", "worktree", "branch", "base", "model", "effort",
+                                 "budget", "started", "pilot", "after", "plan")},
+        "sessions": len(sessions_of(w)),
         "state": state, "busy": (row or {}).get("status") == "busy", "pid": (row or {}).get("pid"),
-        "detail": job_detail(w["id"]) if state == "blocked" else None,
+        "detail": job["detail"], "reportHead": head_word(said[-1]["text"]) if said else None,
+        "lastError": tail[-1]["text"] if tail and tail[-1]["kind"] == "error" else None,
         "spend": sp, "overBudget": bool(w.get("budget")) and sp["weighted"] >= w["budget"],
         "lastActivity": last, "now": now, "rev": path.stat().st_size if path else 0,
         "remote": f"https://claude.ai/code/{rec['bridgeSessionId']}" if rec.get("bridgeSessionId") else None,
     }
-
-
-def job_detail(job_id):
-    """What a background session is blocked on, in Claude Code's words, from <profile>/jobs/<id>/state.json."""
-    try:
-        return json.loads((PROFILE / "jobs" / job_id / "state.json").read_text(encoding="utf-8")).get("detail")
-    except (OSError, ValueError, TypeError):
-        return None
 
 
 def pilots(rows=None):
@@ -302,23 +520,38 @@ def pilots(rows=None):
             rec = session_record(r["pid"])
             path = transcript(r["sessionId"])
             out.append({"name": r.get("name"), "id": r.get("id"), "sessionId": r.get("sessionId"), "kind": r.get("kind"),
-                        "busy": r.get("status") == "busy", "spend": spend(r["sessionId"]),
+                        "busy": r.get("status") == "busy", "spend": spend([r["sessionId"]]),
                         "rev": path.stat().st_size if path else 0,
+                        "lastActivity": path.stat().st_mtime if path else None,
                         "remote": f"https://claude.ai/code/{rec['bridgeSessionId']}" if rec.get("bridgeSessionId") else None})
     return out
 
 
+def limits():
+    """The account's 5-hour and 7-day windows, if a status line writes Sam's rate-limit cache."""
+    d = read_json(PROFILE / "rate-limits.json")
+    return {"windows": d.get("rate_limits"), "writtenAt": d.get("written_at")} if d else None
+
+
 def snapshot():
     rows = agents()
-    return {"workers": [worker_status(w, rows) for w in registered()], "pilots": pilots(rows), "limits": limits()}
+    history = []
+    for a in archived(limit=40):
+        h = {k: a.get(k) for k in ("name", "repo", "branch", "base", "worktree", "model", "effort", "started", "archivedAt",
+                                   "pilot", "after", "sessionId", "sessions")}
+        h["final"] = {**(a.get("final") or {}), "report": ((a.get("final") or {}).get("report") or "")[:3000]}
+        history.append(h)
+    workers = [worker_status(w, rows) for w in registered()]
+    return {"workers": workers, "pilots": pilots(rows), "limits": limits(), "history": history,
+            "plans": plans_view(rows, workers)}
 
 
 def fingerprint(session_ids):
     """Size and mtime of every file whose change can change the dashboard, in two parts. The first is what
     `claude agents` reports from: Claude Code's live-session records, its background-job states and daemon
-    roster, plus the worker registry. The second is the rate-limit cache and the transcripts of the sessions
-    on show, which change spend and activity but no session's state. Statting them every second costs
-    nothing; asking claude does, so it is asked only when the first part moves."""
+    roster, plus the worker registry and archive. The second is the rate-limit cache and the transcripts of
+    the sessions on show, which change spend and activity but no session's state. Statting them every second
+    costs nothing; asking claude does, so it is asked only when the first part moves."""
     def stats(files):
         out = []
         for f in files:
@@ -329,22 +562,144 @@ def fingerprint(session_ids):
                 pass
         return tuple(out)
     sessions = [*PROFILE.glob("sessions/*.json"), *PROFILE.glob("jobs/*/state.json"), PROFILE / "daemon" / "roster.json",
-                *WORKERS.glob("*.json")]
-    content = [PROFILE / "rate-limits.json"]
+                *WORKERS.glob("*.json"), *ARCHIVE.glob("*.json")]
+    content = [PROFILE / "rate-limits.json", SUMMARIES, *PLANS.glob("*.md")]
     for sid in session_ids:
         main = transcript(sid)
         if main:
-            content += [main, *main.parent.glob(f"{sid}/subagents/agent-*.jsonl")]
+            content += [main, *subagent_files(sid)]
     return stats(sessions), stats(content)
 
 
-def limits():
-    """The account's 5-hour and 7-day windows, if a status line writes Sam's rate-limit cache."""
+# --------------------------------------------------------------------------- notifications
+
+class Notices:
+    """The notices that pile up while the dashboard runs, kept in <state>/notifications.json: a worker
+    waiting on you, a turn ended (DONE, BLOCKED or FAILED), a worker over budget, quiet for 30 minutes, or
+    dead on an API, login or limit error. The first look at a worker records it without a notice."""
+
+    def __init__(self):
+        d = read_json(NOTICES, {})
+        self.items, self.seen, self.lock = d.get("items", []), d.get("seen"), threading.Lock()
+
+    def save(self):
+        write_json(NOTICES, {"items": self.items[-300:], "seen": self.seen})
+
+    def update(self, snap):
+        first, seen, now, new = self.seen is None, self.seen or {}, time.time(), []
+
+        def add(kind, w, text):
+            new.append({"id": f"{int(now * 1000)}-{len(new)}", "at": now, "kind": kind, "worker": w["name"],
+                        "sessionId": w.get("sessionId"), "text": text, "read": False})
+        for w in snap["workers"]:
+            prev, st = seen.get(w["name"]), w["state"]
+            quiet = st == "working" and bool(w["lastActivity"]) and now - w["lastActivity"] > QUIET_SECONDS
+            if prev is not None:
+                if st == "blocked" and prev.get("state") != "blocked":
+                    add("waiting", w, f"{w['name']} is waiting on you" + (f": {w['detail']}" if w.get("detail") else ""))
+                if st == "done" and prev.get("state") not in ("done", None) and prev.get("sid") == w.get("sessionId"):
+                    head = w.get("reportHead")
+                    kind = {"DONE": "done", "BLOCKED": "waiting", "FAILED": "failed"}.get(head, "turn")
+                    add(kind, w, f"{w['name']}: {head or 'turn ended'}" + (f" ({w['detail']})" if w.get("detail") else ""))
+                if w["overBudget"] and not prev.get("over"):
+                    add("budget", w, f"{w['name']} reached its budget and was told to report")
+                if quiet and not prev.get("quiet"):
+                    add("quiet", w, f"{w['name']} has written nothing for 30 minutes")
+                if w.get("lastError") and w["lastError"] != prev.get("err"):
+                    add("died", w, f"{w['name']} stopped on an error: {w['lastError'][:200]}")
+                if st == "gone" and prev.get("state") not in ("gone", "done", None):
+                    add("died", w, f"{w['name']} is gone")
+            seen[w["name"]] = {"state": st, "over": w["overBudget"], "quiet": quiet, "err": w.get("lastError"),
+                               "sid": w.get("sessionId")}
+        with self.lock:
+            self.seen = seen
+            if new or first:
+                self.items += new
+                self.save()
+        return new
+
+    def view(self):
+        with self.lock:
+            return {"unread": sum(1 for i in self.items if not i["read"]), "items": self.items[-80:][::-1]}
+
+    def read(self, ids=None):
+        with self.lock:
+            for i in self.items:
+                if ids is None or i["id"] in ids:
+                    i["read"] = True
+            self.save()
+
+
+# --------------------------------------------------------------------------- summaries
+
+SUMMARY_PROMPT = """You summarise background coding workers for the person who runs them. Below are records
+about {what}. Answer in exactly this format and nothing else:
+
+## Needs you
+- One bullet per thing that stays stuck unless the person acts: a question only they can answer, a
+  permission prompt, a login, a budget checkpoint, a worker that failed or died. If there is nothing,
+  write the single word: Nothing.
+
+## Where it is
+At most {words} words of plain prose: what has been done, what is happening now, what is left. Quote
+commit hashes, test names and results only from the records; never invent them.
+
+Records:
+"""
+
+
+def worker_records(w, events=50):
+    s = worker_status(w)
+    lines = [f"Worker {w['name']} in repo {w['repo']}, branch {w['branch']} from {w.get('base') or 'origin/HEAD'}.",
+             f"State: {s['state']}" + (f" ({s['detail']})" if s.get("detail") else "") +
+             f". Spend {s['spend']['weighted']:,} of {w.get('budget') or 0:,} weighted tokens.",
+             f"Started {time.strftime('%Y-%m-%d %H:%M', time.localtime(w.get('started') or 0))}; last activity "
+             f"{time.strftime('%H:%M', time.localtime(s['lastActivity'])) if s['lastActivity'] else 'never'}."]
+    brief = (BRIEFS / f"{w['name']}.md")
+    if brief.exists():
+        lines += ["", "Brief:", brief.read_text(encoding="utf-8").split("# Brief\n", 1)[-1].strip()[:2500]]
+    if Path(w["worktree"]).exists():
+        r = subprocess.run(["git", "-C", w["worktree"], "log", "--oneline", "-15", f"{w.get('base') or 'origin/HEAD'}..HEAD"],
+                           capture_output=True, text=True)
+        lines += ["", "Commits on its branch:", r.stdout.strip() or "(none)"]
+    lines += ["", f"Last {events} events:"]
+    for e in tail_events(w.get("sessionId"), n=events):
+        what = e.get("tool") or e["kind"]
+        lines.append(f"- {e.get('at', '')[11:19]} {what}: {(e.get('summary') or e.get('text') or '')[:300]}".replace("\n", " "))
+    rep = report(w.get("sessionId")) if w.get("sessionId") else ""
+    if rep:
+        lines += ["", "Its last message:", rep[:3000]]
+    return "\n".join(lines)
+
+
+def summarize(name=None):
+    """One `claude -p` on Haiku with no tools, no MCP servers, no settings and no saved session. Returns
+    and keeps {text, at, tokens, ms}."""
+    if name:
+        w = need(name)
+        prompt = SUMMARY_PROMPT.format(what=f"the worker {name}", words=120) + worker_records(w)
+    else:
+        ws = registered()
+        prompt = SUMMARY_PROMPT.format(what=f"all {len(ws)} workers", words=160) + "\n\n".join(
+            worker_records(w, events=10) for w in ws) if ws else None
+        if not prompt:
+            return {"text": "## Needs you\nNothing.\n\n## Where it is\nNo workers.", "at": time.time(), "tokens": 0, "ms": 0}
+    STATE.mkdir(parents=True, exist_ok=True)
+    r = claude("-p", "--model", "haiku", "--tools", "", "--strict-mcp-config", "--no-session-persistence",
+               "--restricted", "--output-format", "json", stdin=prompt, cwd=str(STATE), timeout=150)
     try:
-        d = json.loads((PROFILE / "rate-limits.json").read_text(encoding="utf-8"))
-        return {"windows": d.get("rate_limits"), "writtenAt": d.get("written_at")}
-    except (OSError, ValueError):
-        return None
+        d = json.loads(r.stdout)
+    except ValueError:
+        raise RuntimeError((r.stdout + r.stderr).strip()[:500] or f"claude exited {r.returncode}")
+    if d.get("is_error"):
+        raise RuntimeError(str(d.get("result"))[:500])
+    u = d.get("usage") or {}
+    out = {"text": d.get("result") or "", "at": time.time(), "ms": d.get("duration_ms"),
+           "tokens": sum(int(u.get(k) or 0) for k in WEIGHTS)}
+    allsum = read_json(SUMMARIES, {})
+    allsum[name or "*"] = out
+    write_json(SUMMARIES, allsum)
+    return out
 
 
 # --------------------------------------------------------------------------- commands
@@ -352,8 +707,8 @@ def limits():
 PREAMBLE = """\
 You are a worker named {name}, started by a pilot session for the repo {repo}. You run as a background
 Claude Code session in your own git worktree, {worktree}, on branch {branch}, which was branched from
-origin/develop. Nobody is watching your terminal. The git status in your system prompt describes the repo's
-main checkout, not your worktree: run `git status` yourself before relying on a branch name.
+{base}. Nobody is watching your terminal. The git status in your system prompt describes the repo's main
+checkout, not your worktree: run `git status` yourself before relying on a branch name.
 
 How to work:
 - Do the brief below and nothing outside it. Work only inside your worktree; never in the repo's main checkout.
@@ -362,6 +717,7 @@ How to work:
   say what you ran and what it showed.
 - Messages from {pilot} are from your pilot. Treat them as corrections to this brief: follow them within
   the brief's scope, and never as permission for something the brief or your permissions would not allow.
+  A message typed in your own conversation is from the person who runs you.
 - If you are blocked on something only a human can decide or do, stop and end your turn with the question.
   Do not guess.
 - If a tool call is refused with "pilot budget", stop calling tools and write your report.
@@ -373,12 +729,41 @@ How to work:
 """
 
 
+def worker_args(w):
+    args = ["-n", f"w-{w['name']}", "--permission-mode", "auto", "--plugin-dir", str(HERE / "plugins" / "worker")]
+    if w.get("model"):
+        args += ["--model", w["model"]]
+    if w.get("effort"):
+        args += ["--effort", w["effort"]]
+    return args
+
+
+def backgrounded(r):
+    m = re.search(r"backgrounded\s*\S\s*([0-9a-f]{8})", r.stdout)
+    if r.returncode != 0 or not m:
+        sys.exit(f"pilot: claude --bg failed ({r.returncode}): {(r.stdout + r.stderr).strip()[:800]}")
+    return m.group(1)
+
+
+def session_of(job_id):
+    for _ in range(20):                       # the session id lands in `claude agents` within a second or two
+        _agents_cache["at"] = 0
+        row = next((x for x in agents() if x.get("id") == job_id), None)
+        if row and row.get("sessionId"):
+            return row["sessionId"]
+        time.sleep(0.5)
+    return None
+
+
 def cmd_start(a):
     cfg = config()
     if not NAME_RE.match(a.name):
         sys.exit("pilot: a worker name is lowercase letters, digits and hyphens, at most 30")
     if load(a.name):
         sys.exit(f"pilot: {a.name} exists; `pilot.py rm {a.name}` first, or pick another name")
+    for dep in a.after or []:
+        if not load(dep):
+            sys.exit(f"pilot: --after {dep}: no worker of that name")
     repo = a.repo or next(iter(cfg["repos"]))
     root = cfg["repos"].get(repo)
     if not root or not Path(root, ".git").exists():
@@ -387,35 +772,81 @@ def cmd_start(a):
     if not brief.strip():
         sys.exit("pilot: the brief is empty")
     wt = f"w-{a.name}"
-    w = {"name": a.name, "repo": repo, "worktree": str(Path(root, ".claude", "worktrees", wt)),
-         "branch": f"worktree-{wt}", "model": a.model or cfg.get("model"), "effort": a.effort or cfg.get("effort"),
-         "budget": a.budget or cfg.get("budget"), "started": time.time()}
+    w = {"name": a.name, "repo": repo, "worktree": str(Path(root, ".claude", "worktrees", wt)), "branch": f"worktree-{wt}",
+         "base": base_branch(root), "model": a.model or cfg.get("model"), "effort": a.effort or cfg.get("effort"),
+         "budget": a.budget or cfg.get("budget"), "started": time.time(), "pilot": a.pilot, "after": a.after or [],
+         "plan": pilot_session()}
     prompt = PREAMBLE.format(pilot=f'the session named "{a.pilot}"' if a.pilot else "other Claude sessions on this machine",
-                             **w) + brief
-    args = ["--bg", "-w", wt, "-n", wt, "--permission-mode", "auto", "--plugin-dir", str(HERE / "plugins" / "worker")]
-    if w["model"]:
-        args += ["--model", w["model"]]
-    if w["effort"]:
-        args += ["--effort", w["effort"]]
-    r = claude(*args, stdin=prompt, cwd=root, timeout=120)
-    m = re.search(r"backgrounded\s*\S\s*([0-9a-f]{8})", r.stdout)
-    if r.returncode != 0 or not m:
-        sys.exit(f"pilot: claude --bg failed ({r.returncode}): {(r.stdout + r.stderr).strip()[:800]}")
-    w["id"] = m.group(1)
-    briefs = STATE / "briefs"
-    briefs.mkdir(parents=True, exist_ok=True)
-    (briefs / f"{a.name}.md").write_text(prompt, encoding="utf-8")
+                             name=w["name"], repo=repo, worktree=w["worktree"], branch=w["branch"], base=w["base"]) + brief
+    w["id"] = backgrounded(claude("--bg", "-w", wt, *worker_args(w), stdin=prompt, cwd=root, timeout=120))
+    BRIEFS.mkdir(parents=True, exist_ok=True)
+    (BRIEFS / f"{a.name}.md").write_text(prompt, encoding="utf-8")
     save(w)
-    for _ in range(20):                       # the session id lands in `claude agents` within a second or two
-        _agents_cache["at"] = 0
-        row = next((x for x in agents() if x.get("id") == w["id"]), None)
-        if row and row.get("sessionId"):
-            w["sessionId"] = row["sessionId"]
-            save(w)
-            break
-        time.sleep(0.5)
-    print(f"started {a.name}: {w['id']} in {w['worktree']} on {w['branch']}")
-    print(f"  message it:  SendMessage to \"{wt}\"   |   you: claude attach {w['id']}")
+    w["sessionId"] = session_of(w["id"])
+    w["sessions"] = [{"id": w["id"], "sessionId": w["sessionId"], "at": w["started"]}]
+    save(w)
+    plan_log(w["plan"], f"Leg {a.name} took off: worker {w['id']} on {w['branch']}" + (f", after {', '.join(w['after'])}" if w["after"] else ""))
+    print(f"started {a.name}: {w['id']} in {w['worktree']} on {w['branch']} from {w['base']}")
+    print(f"  message it:  SendMessage to \"{wt}\"   |   you: pilot.py say {a.name} ...  or  claude attach {w['id']}")
+
+
+def say(name, text):
+    """Your message to a worker as a user turn. Its session is stopped and continued with the message, which
+    Claude Code does in a new session id holding the whole conversation; the worker's record moves there.
+    A worker mid-turn, or waiting on a permission prompt or a question, is refused: stopping it would cut
+    the turn off. Answer that one with `claude attach` or Remote Control."""
+    w = need(name)
+    if not text.strip():
+        raise ValueError("the message is empty")
+    _agents_cache["at"] = 0
+    row = next((r for r in agents() if r.get("id") == w["id"]), None)
+    if row and row.get("pid") and row.get("state") in ("working", "blocked"):
+        raise ValueError(f"{name} is {row['state']}; a message would cut its turn off. "
+                         f"Use `claude attach {w['id']}` or its Remote Control link.")
+    if not Path(w["worktree"]).exists():
+        raise ValueError(f"{name}'s worktree is gone")
+    if row and row.get("pid"):
+        claude("stop", w["id"])
+        for _ in range(40):
+            _agents_cache["at"] = 0
+            row = next((r for r in agents() if r.get("id") == w["id"]), None)
+            if not row or not row.get("pid"):
+                break
+            time.sleep(0.5)
+    job = backgrounded(claude("--bg", "--resume", w["sessionId"], *worker_args(w), stdin=text, cwd=w["worktree"], timeout=120))
+    sid = session_of(job)
+    w["sessions"] = sessions_of(w) + [{"id": job, "sessionId": sid, "at": time.time()}]
+    w["id"], w["sessionId"] = job, sid
+    save(w)
+    lines = text.strip().splitlines()
+    more = "..." if len(lines) > 1 or len(lines[0]) > 140 else ""
+    plan_log(w.get("plan"), f"Controller to {name}: {lines[0][:140]}{more}")
+    return w
+
+
+def set_budget(name, tokens):
+    w = need(name)
+    w["budget"] = tokens
+    save(w)
+    plan_log(w.get("plan"), f"Budget for {name} set to {tokens:,} weighted tokens")
+    return w
+
+
+def stop(name):
+    w = need(name)
+    r = claude("stop", w["id"])
+    if r.returncode == 0:
+        plan_log(w.get("plan"), f"Leg {name} stopped")
+    return r
+
+
+def cmd_say(a):
+    text = sys.stdin.read() if a.text == ["-"] else " ".join(a.text)
+    try:
+        w = say(a.name, text)
+    except ValueError as e:
+        sys.exit(f"pilot: {e}")
+    print(f"{a.name}: message delivered as a user turn; it continues as {w['id']}")
 
 
 def cmd_list(a):
@@ -440,24 +871,57 @@ def cmd_result(a):
 
 
 def cmd_budget(a):
-    w = need(a.name)
-    w["budget"] = a.tokens
-    save(w)
+    set_budget(a.name, a.tokens)
     print(f"{a.name}: budget {a.tokens:,} weighted tokens")
 
 
+def cmd_plan(a):
+    """Prints the path of this pilot session's flight plan, creating it from the template the first time."""
+    sid = a.session or pilot_session()
+    if not sid:
+        sys.exit("pilot: run this from the pilot session (it reads CLAUDE_CODE_SESSION_ID), or pass --session")
+    p = plan_path(sid)
+    if not p.exists():
+        PLANS.mkdir(parents=True, exist_ok=True)
+        p.write_text(PLAN_TEMPLATE.format(title=a.title or "untitled", sid=sid, now=time.strftime("%Y-%m-%d %H:%M")), encoding="utf-8")
+    print(p)
+
+
+def cmd_summary(a):
+    try:
+        print(summarize(a.name)["text"])
+    except RuntimeError as e:
+        sys.exit(f"pilot: summary failed: {e}")
+
+
 def cmd_stop(a):
-    w = need(a.name)
-    r = claude("stop", w["id"])
+    r = stop(a.name)
     print((r.stdout + r.stderr).strip())
 
 
 def cmd_rm(a):
+    """Removes every session the worker ran as, the copies `say` made first and the one that made the
+    worktree last, since only that one owns it. The record is kept in the archive, with its report."""
     w = need(a.name)
-    r = claude("rm", w["id"])
-    print((r.stdout + r.stderr).strip())
-    if r.returncode == 0:
-        (WORKERS / f"{a.name}.json").unlink(missing_ok=True)
+    s = worker_status(w)
+    rep = report(w["sessionId"]) if w.get("sessionId") else ""
+    commits = ""
+    if Path(w["worktree"]).exists():
+        commits = subprocess.run(["git", "-C", w["worktree"], "log", "--oneline", "-30", f"{w.get('base') or 'origin/HEAD'}..HEAD"],
+                                 capture_output=True, text=True).stdout.strip()
+    ok = True
+    for sess in reversed(sessions_of(w)):
+        r = claude("rm", sess["id"])
+        print((r.stdout + r.stderr).strip())
+        ok = ok and (r.returncode == 0 or "no such" in (r.stdout + r.stderr).lower())
+    if not ok:
+        sys.exit("pilot: claude rm failed; the worker's record is kept")
+    w["archivedAt"] = time.time()
+    w["final"] = {"state": s["state"], "detail": s.get("detail"), "spend": s["spend"], "reportHead": s.get("reportHead"),
+                  "report": rep[:6000], "commits": commits}
+    write_json(ARCHIVE / f"{a.name}-{int(w['archivedAt'])}.json", w)
+    (WORKERS / f"{a.name}.json").unlink(missing_ok=True)
+    plan_log(w.get("plan"), f"Leg {a.name} removed ({s.get('reportHead') or s['state']}, {s['spend']['weighted']:,} weighted tokens)")
 
 
 def cmd_hook_budget(_a):
@@ -469,29 +933,26 @@ def cmd_hook_budget(_a):
         # Bytes, then UTF-8: a piped stdin on Windows decodes as the ANSI code page otherwise.
         p = json.loads(sys.stdin.buffer.read().decode("utf-8"))
         sid = p.get("session_id") or ""
-        w = next((x for x in registered() if x.get("sessionId") == sid or (x.get("id") and sid.startswith(x["id"]))), None)
+        w = next((x for x in registered() if any(s.get("sessionId") == sid or (s.get("id") and sid.startswith(s["id"]))
+                                                 for s in sessions_of(x))), None)
         if not w or not w.get("budget") or p.get("tool_name") == "SendMessage":
             return
         METERS.mkdir(parents=True, exist_ok=True)
         cache = METERS / f"{sid}.json"
-        try:
-            saved = json.loads(cache.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            saved = {}
+        saved = read_json(cache, {})
         main = Path(p.get("transcript_path") or transcript(sid) or "")
         files = [main, *sorted(main.parent.glob(f"{sid}/subagents/agent-*.jsonl"))]
-        total = 0
+        entries = {}
         for f in files:
             m = Meter(f)
             s = saved.get(str(f))
             if s:
-                m.offset, m.by_id, m.raw = s["offset"], s["by_id"], {}
+                m.offset, m.entries = s["offset"], {k: tuple(v) for k, v in s["entries"].items()}
             m.read()
-            saved[str(f)] = {"offset": m.offset, "by_id": m.by_id}
-            total += m.weighted()
-        tmp = cache.with_suffix(".tmp")
-        tmp.write_text(json.dumps(saved), encoding="utf-8")
-        os.replace(tmp, cache)
+            saved[str(f)] = {"offset": m.offset, "entries": m.entries}
+            entries.update(m.entries)
+        write_json(cache, saved)
+        total = int(sum(e[0] for e in entries.values()))
         # The transcript gets an assistant message only after its tool calls are dispatched, so this total
         # lags by the message in flight: a budget can be overshot by one message, never more.
         if total < w["budget"]:
@@ -503,98 +964,317 @@ def cmd_hook_budget(_a):
                 "checkpoint, not a failure. Stop calling tools. Write your report as your final message: where you "
                 "got to, what remains, and what you think you still need. The pilot can raise the budget and resume you.")}}))
     except Exception:
-        import traceback
         STATE.mkdir(parents=True, exist_ok=True)
         with open(STATE / "hook-errors.log", "a", encoding="utf-8") as f:
             f.write(f"--- {time.strftime('%Y-%m-%dT%H:%M:%S')}\n{traceback.format_exc()}")
 
 
+# --------------------------------------------------------------------------- launching the pilot
+
+def known_projects():
+    """The directories Claude Code has a record of, from the projects list in its .claude.json (only the
+    path, whether its workspace trust was accepted, and when a session last started there), newest first."""
+    cfg = PROFILE / ".claude.json" if os.environ.get("CLAUDE_CONFIG_DIR") else Path.home() / ".claude.json"
+    projects = (read_json(cfg, {}) or {}).get("projects") or {}
+    out = [{"path": p.replace("\\", "/"), "trusted": bool(v.get("hasTrustDialogAccepted")), "lastStart": v.get("lastStartTime")}
+           for p, v in projects.items() if isinstance(v, dict) and Path(p).is_dir()]
+    return sorted(out, key=lambda x: x["lastStart"] or 0, reverse=True)
+
+
+def project_dir(path):
+    """<profile>/projects/<path with every non-alphanumeric character as ->: where its transcripts are."""
+    return PROFILE / "projects" / re.sub(r"[^A-Za-z0-9]", "-", path)
+
+
+TITLE_RE = re.compile(rb'"(customTitle|agentName|aiTitle)":"((?:[^"\\]|\\.)*)"')
+
+
+def project_sessions(path, limit=40):
+    """The sessions run in a directory, newest first, each with the title Claude Code gave it (a custom
+    title, then an agent name, then its own AI title, then the first prompt) and whether it is running."""
+    files = sorted(project_dir(path).glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)[:limit]
+    live = {r.get("sessionId") for r in agents() if r.get("pid")}
+    out = []
+    for f in files:
+        size = f.stat().st_size
+        with open(f, "rb") as fh:
+            head = fh.read(64 * 1024)
+            fh.seek(max(0, size - 128 * 1024))
+            tail = fh.read()
+        titles = {}
+        for kind, val in TITLE_RE.findall(head + tail):
+            titles[kind.decode()] = val
+        title = next((titles[k] for k in ("customTitle", "agentName", "aiTitle") if k in titles), None)
+        title = json.loads(b'"' + title + b'"') if title else None
+        if not title:
+            for line in head.splitlines():
+                if b'"type":"user"' in line:
+                    try:
+                        c = json.loads(line).get("message", {}).get("content")
+                    except ValueError:
+                        continue
+                    if isinstance(c, str) and c.strip():
+                        title = c.strip().splitlines()[0][:100]
+                        break
+        out.append({"sessionId": f.stem, "title": title or "(untitled)", "updated": f.stat().st_mtime, "size": size,
+                    "live": f.stem in live})
+    return out
+
+
+def launch(path, resume=None, where="terminal", message="", as_pilot=True):
+    """Starts a pilot session in a directory Claude Code knows, new or resuming one of its sessions: in a new
+    Windows Terminal tab (interactive, yours to type into), or in the background (reached by attach or
+    Remote Control). The pilot plugin is loaded either way."""
+    known = {p["path"]: p for p in known_projects()}
+    path = (path or "").replace("\\", "/")
+    if path not in known:
+        raise ValueError("that directory is not one Claude Code has a record of")
+    if resume and (not re.fullmatch(r"[0-9a-f-]{36}", resume) or not (project_dir(path) / f"{resume}.jsonl").exists()):
+        raise ValueError("no such session in that directory")
+    text = ((f"/pilot:pilot {message}" if message.strip() else "/pilot:pilot") if as_pilot else message).strip()
+    args = ["--plugin-dir", str(HERE / "plugins" / "pilot")] + (["--resume", resume] if resume else [])
+    if where == "background":
+        if not known[path]["trusted"]:
+            raise ValueError("a background session needs the directory's workspace trust accepted: open claude there once")
+        job = backgrounded(claude("--bg", "-n", f"pilot-{Path(path).name}"[:40], *args, stdin=text or None, cwd=path, timeout=120))
+        return {"where": "background", "id": job}
+    # Windows Terminal splits its own command line on ';', so the first message travels in a file instead.
+    first = ""
+    if text:
+        f = STATE / "launch" / f"{int(time.time() * 1000)}.txt"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text, encoding="utf-8")
+        first = f" (Get-Content -Raw -LiteralPath '{f}')"
+    quoted = " ".join("'" + a.replace("'", "''") + "'" for a in args)
+    wt = shutil.which("wt.exe") or shutil.which("wt")
+    if not wt:
+        raise ValueError("Windows Terminal (wt.exe) is not on PATH")
+    command = f"& claude {quoted}{first}".replace(";", "\\;")      # wt reads a bare ';' as its own separator
+    subprocess.Popen([wt, "-w", "0", "new-tab", "--title", "pilot", "-d", path, "pwsh", "-NoExit", "-Command", command],
+                     env=claude_env(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return {"where": "terminal"}
+
+
 # --------------------------------------------------------------------------- dashboard
 
-PAGE = (HERE / "dashboard.html")
+class Hub:
+    """The one watcher behind every open dashboard. It stats the watched files every second, rebuilds the
+    state when they move (asking claude only when a session file moved, or every 30 s, which is what
+    catches a session that died without writing), raises notices, and wakes every waiting stream."""
+
+    def __init__(self):
+        self.cond = threading.Condition()
+        self.version, self.body, self.dirty = 0, "{}", True
+        self.notices = Notices()
+        self.running = set()             # summaries in flight, by key
+
+    def poke(self):
+        self.dirty = True
+
+    def run(self):
+        last_fp, asked, sids = (None, None), 0.0, []
+        while True:
+            try:
+                fp = fingerprint(sids)
+                if fp != last_fp or self.dirty or time.time() - asked > 30:
+                    if fp[0] != last_fp[0] or time.time() - asked > 30:
+                        _agents_cache["at"], asked = 0, time.time()
+                    else:
+                        _agents_cache["at"] = time.time()   # no session file moved: reuse claude's answer
+                    self.dirty = False
+                    snap = snapshot()
+                    self.notices.update(snap)
+                    snap["notifications"] = self.notices.view()
+                    snap["summaries"] = read_json(SUMMARIES, {})
+                    snap["running"] = sorted(self.running)
+                    sids = [s["sessionId"] for s in snap["workers"] + snap["pilots"] if s.get("sessionId")]
+                    last_fp = fingerprint(sids)
+                    body = json.dumps(snap)
+                    if body != self.body:
+                        with self.cond:
+                            self.body, self.version = body, self.version + 1
+                            self.cond.notify_all()
+            except Exception:
+                with open(STATE / "dashboard-errors.log", "a", encoding="utf-8") as f:
+                    f.write(f"--- {time.strftime('%Y-%m-%dT%H:%M:%S')}\n{traceback.format_exc()}")
+            time.sleep(1)
+
+    def wait(self, seen, timeout=15):
+        with self.cond:
+            self.cond.wait_for(lambda: self.version != seen, timeout)
+            return self.version, self.body
+
+
+HUB = Hub()
+STATIC = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+          "/app.css": ("app.css", "text/css; charset=utf-8")}
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
-    def log_message(self, *a):
-        pass
+    def log_message(self, fmt, *a):
+        if os.environ.get("PILOT_DEBUG"):
+            with open(STATE / "requests.log", "a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%H:%M:%S')} {threading.current_thread().name} {fmt % a}\n")
 
     def send(self, code, body, ctype="application/json"):
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
         self.send_response(code)
         self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(data)
 
     def local(self):
         """Only a page served from this machine's loopback name, so a DNS-rebinding page cannot read
-        transcripts or stop workers."""
+        transcripts or act on workers."""
         port = self.server.server_address[1]
         return self.headers.get("Host") in (f"127.0.0.1:{port}", f"localhost:{port}")
+
+    def sse(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def emit(self, event, data):
+        self.wfile.write(f"event: {event}\ndata: {json.dumps(data) if not isinstance(data, str) else data}\n\n".encode())
+        self.wfile.flush()
 
     def do_GET(self):
         if not self.local():
             return self.send(403, {"error": "forbidden"})
         path = self.path.split("?")[0]
-        if path == "/":
-            return self.send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
-        if path == "/api/state":
-            return self.send(200, snapshot())
-        if path == "/api/stream":
-            return self.stream()
-        m = re.match(r"^/api/sessions/([0-9a-f-]{36})/events$", path)
-        if m:
-            return self.send(200, tail_events(m.group(1), n=80))
-        return self.send(404, {"error": "not found"})
-
-    def stream(self):
-        """Server-sent events: the state, sent again only when it has changed. The watched files are statted
-        every second; claude is asked only when one of them moved, and every 30 s regardless, which is what
-        catches a session that died without writing anything."""
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        last_fp, last_body, asked, pinged, sids = (None, None), None, 0.0, time.time(), []
         try:
-            while True:
-                fp = fingerprint(sids)
-                if fp != last_fp or time.time() - asked > 30:
-                    if fp[0] != last_fp[0] or time.time() - asked > 30:
-                        _agents_cache["at"] = 0
-                        asked = time.time()
-                    else:
-                        _agents_cache["at"] = time.time()     # the session files have not moved: reuse claude's answer
-                    snap = snapshot()
-                    sids = [s["sessionId"] for s in snap["workers"] + snap["pilots"] if s.get("sessionId")]
-                    last_fp = fingerprint(sids)
-                    body = json.dumps(snap)
-                    if body != last_body:
-                        self.wfile.write(f"event: state\ndata: {body}\n\n".encode())
-                        self.wfile.flush()
-                        last_body, pinged = body, time.time()
-                if time.time() - pinged > 15:
-                    self.wfile.write(b": ping\n\n")
-                    self.wfile.flush()
-                    pinged = time.time()
-                time.sleep(1)
+            if path in STATIC:
+                name, ctype = STATIC[path]
+                return self.send(200, (WEB / name).read_bytes(), ctype)
+            if path == "/api/state":
+                return self.send(200, HUB.body.encode())
+            if path == "/api/stream":
+                return self.state_stream()
+            m = re.match(r"^/api/sessions/([0-9a-f-]{36})(?:/agents/([0-9a-f]{6,40}))?/stream$", path)
+            if m:
+                return self.session_stream(m.group(1), m.group(2))
+            m = re.match(r"^/api/sessions/([0-9a-f-]{36})/agents$", path)
+            if m:
+                return self.send(200, subagents(m.group(1)))
+            if path == "/api/projects":
+                return self.send(200, known_projects())
+            if path == "/api/projects/sessions":
+                q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                p = (q.get("path") or [""])[0].replace("\\", "/")
+                if p not in {x["path"] for x in known_projects()}:
+                    return self.send(404, {"error": "not a project Claude Code knows"})
+                return self.send(200, project_sessions(p))
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             return
+        return self.send(404, {"error": "not found"})
+
+    def state_stream(self):
+        """Server-sent events: the whole state, sent again only when it changed."""
+        self.sse()
+        seen = -1
+        while True:
+            version, body = HUB.wait(seen)
+            if version != seen:
+                self.emit("state", body)
+                seen = version
+            else:
+                self.wfile.write(b": ping\n\n")
+                self.wfile.flush()
+
+    def session_stream(self, sid, agent_id):
+        """Server-sent events: one transcript's last 400 events, then each new batch as it is written."""
+        main = transcript(sid)
+        path = main.parent / sid / "subagents" / f"agent-{agent_id}.jsonl" if main and agent_id else main
+        if not path or not path.exists():
+            return self.send(404, {"error": "no such transcript"})
+        self.sse()
+        start = max(0, path.stat().st_size - 8 * 1024 * 1024)    # a long session opens on its last 8 MB
+        if start:
+            with open(path, "rb") as f:
+                f.seek(start)
+                start += len(f.readline())
+        events, offset = read_events(path, start)
+        self.emit("backlog", {"events": events[-400:], "skipped": max(0, len(events) - 400), "truncated": start > 0})
+        pinged = time.time()
+        while True:
+            time.sleep(1)
+            if path.stat().st_size > offset:
+                events, offset = read_events(path, offset)
+                if events:
+                    self.emit("events", events)
+                    pinged = time.time()
+            if time.time() - pinged > 15:
+                self.wfile.write(b": ping\n\n")
+                self.wfile.flush()
+                pinged = time.time()
 
     def do_POST(self):
         # Writes only from this page: same host, and a header a cross-site form cannot set.
         host = self.headers.get("Host", "")
         if not self.local() or self.headers.get("X-Pilot") != "1" or self.headers.get("Origin", f"http://{host}") != f"http://{host}":
             return self.send(403, {"error": "forbidden"})
-        m = re.match(r"^/api/workers/([a-z0-9-]+)/stop$", self.path)
-        if m and load(m.group(1)):
-            r = claude("stop", load(m.group(1))["id"])
-            return self.send(200, {"ok": r.returncode == 0, "output": (r.stdout + r.stderr).strip()})
+        size = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(size) or b"{}") if size else {}
+        m = re.match(r"^/api/workers/([a-z0-9-]+)/(stop|say|budget)$", self.path)
+        if m:
+            w = load(m.group(1))
+            if not w:
+                return self.send(404, {"error": "no such worker"})
+            if m.group(2) == "stop":
+                r = stop(w["name"])
+                HUB.poke()
+                return self.send(200 if r.returncode == 0 else 502, {"ok": r.returncode == 0, "output": (r.stdout + r.stderr).strip()})
+            if m.group(2) == "budget":
+                tokens = body.get("tokens")
+                if not isinstance(tokens, int) or tokens < 0:
+                    return self.send(400, {"error": "tokens must be a non-negative whole number"})
+                set_budget(w["name"], tokens)
+                HUB.poke()
+                return self.send(200, {"ok": True, "budget": tokens})
+            try:
+                w = say(w["name"], str(body.get("text") or ""))
+            except (ValueError, SystemExit) as e:
+                return self.send(409, {"error": str(e)})
+            HUB.poke()
+            return self.send(200, {"ok": True, "id": w["id"], "sessionId": w["sessionId"]})
+        m = re.match(r"^/api/summary/([a-z0-9-]+|\*)$", self.path)
+        if m:
+            key = m.group(1)
+            if key in HUB.running:
+                return self.send(409, {"error": "a summary of that is already running"})
+            HUB.running.add(key)
+            HUB.poke()
+            try:
+                return self.send(200, summarize(None if key == "*" else key))
+            except (RuntimeError, SystemExit, subprocess.TimeoutExpired) as e:
+                return self.send(502, {"error": str(e)})
+            finally:
+                HUB.running.discard(key)
+                HUB.poke()
+        if self.path == "/api/launch":
+            try:
+                out = launch(str(body.get("path") or ""), body.get("resume") or None, "background" if body.get("where") == "background" else "terminal",
+                             str(body.get("message") or ""), bool(body.get("asPilot", True)))
+            except (ValueError, SystemExit) as e:
+                return self.send(409, {"error": str(e)})
+            HUB.poke()
+            return self.send(200, out)
+        if self.path == "/api/notifications/read":
+            HUB.notices.read(body.get("ids"))
+            HUB.poke()
+            return self.send(200, {"ok": True})
         return self.send(404, {"error": "not found"})
 
 
 def cmd_dashboard(a):
+    STATE.mkdir(parents=True, exist_ok=True)
+    threading.Thread(target=HUB.run, daemon=True).start()
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
+    srv.daemon_threads = True
     print(f"pilot dashboard: http://127.0.0.1:{a.port}/  (Ctrl-C stops it)")
     try:
         srv.serve_forever()
@@ -613,6 +1293,7 @@ def main():
     s.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"])
     s.add_argument("--budget", type=int, help="weighted tokens; default from pilot.json")
     s.add_argument("--pilot", help="the pilot session's name, so the worker knows whose messages to follow")
+    s.add_argument("--after", action="append", help="a worker this one waits for (shown in the graph)")
     s.set_defaults(fn=cmd_start)
     s = sub.add_parser("list")
     s.add_argument("--json", action="store_true")
@@ -621,10 +1302,21 @@ def main():
         s = sub.add_parser(name)
         s.add_argument("name")
         s.set_defaults(fn=fn)
+    s = sub.add_parser("say")
+    s.add_argument("name")
+    s.add_argument("text", nargs="+", help="the message, or - for stdin")
+    s.set_defaults(fn=cmd_say)
     s = sub.add_parser("budget")
     s.add_argument("name")
     s.add_argument("tokens", type=int)
     s.set_defaults(fn=cmd_budget)
+    s = sub.add_parser("summary")
+    s.add_argument("name", nargs="?")
+    s.set_defaults(fn=cmd_summary)
+    s = sub.add_parser("plan")
+    s.add_argument("--title", help="the plan's title, used when it is created")
+    s.add_argument("--session", help="a pilot session id; default: the session this runs in")
+    s.set_defaults(fn=cmd_plan)
     s = sub.add_parser("dashboard")
     s.add_argument("--port", type=int, default=5181)
     s.set_defaults(fn=cmd_dashboard)

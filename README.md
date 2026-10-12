@@ -1,69 +1,103 @@
 # pilot
 
-One pilot session and some workers, for bullclip-backend, on one Claude Code account, on Windows.
+Claude Code as it is, with more control. There is a pilot, a flight plan, and you are the flight
+controller.
 
-- **Pilot**: the interactive session you talk to, in the repo's main checkout. It plans the work, writes a
-  brief per worker, starts workers, follows them and checks their results. It does not edit product code.
-- **Worker**: a background session (`claude --bg -w`) in its own git worktree, branched from
-  `origin/develop`. It does one brief, commits on its own branch, and ends with a report whose first line
-  is `DONE`, `BLOCKED` or `FAILED`.
+- **Pilot**: an ordinary interactive Claude Code session in the repo's main checkout, with the pilot
+  plugin loaded. It keeps the flight plan, writes a brief per leg, starts a worker for each, follows them
+  and checks what they did. It does not edit product code.
+- **Flight plan**: one Markdown file per pilot session: an objective, a route of legs (each with its goal,
+  the legs it waits for, and the check that proves it), and a log. The pilot writes it, `pilot.py` logs
+  into it, and you read it on the dashboard and may amend it.
+- **Worker**: a Claude Code background session (`claude --bg -w`) in its own git worktree, branched from
+  the repo's default branch. It flies one leg, commits on its own branch, and ends with a report whose
+  first line is `DONE`, `BLOCKED` or `FAILED`.
+- **Controller**: you. The dashboard is your radar. From it you read the plan and every conversation,
+  message a worker (as your own user turn), set its budget, stop it, summarise, and launch pilots.
 
-This is the small, Windows-native take on Sam's [runaway-agent](../runaway-agent) kit. That kit's session
-layer (launch.sh, session_pump.py, FIFOs, `/proc`, tmux) is Linux-only, and Claude Code now ships most of
-it natively, so this keeps only the parts that are still needed: a fixed way to start a worker, a spend
-ceiling per worker, and a dashboard.
+Everything else is Claude Code's own: background sessions, worktrees, subagents, `claude agents`,
+`claude attach`, Remote Control, `SendMessage` between sessions. This started as a Windows take on Sam's
+[runaway-agent](../runaway-agent) kit and keeps only what is not native: a fixed way to start a worker, a
+spend ceiling per worker, his read guards, and the dashboard.
 
 ## Use it
 
-```bash
-# 1. Start the pilot in the repo, with the pilot plugin loaded for this session only.
-cd C:/Users/SebastianGodelet/source/repos/drawboard/bullclip-backend
-claude --plugin-dir C:/Users/SebastianGodelet/source/repos/drawboard/pilot/plugins/pilot
-#    then: /pilot:pilot, and describe the work
+In pwsh, `pilot` is a function in `$PROFILE`:
 
-# 2. The dashboard, in another terminal: http://127.0.0.1:5181/
-python C:/Users/SebastianGodelet/source/repos/drawboard/pilot/pilot.py dashboard
+```powershell
+cd C:\Users\SebastianGodelet\source\repos\drawboard\bullclip-backend
+pilot                    # the pilot here: claude --plugin-dir <this repo>/plugins/pilot
+                         #   then: /pilot:pilot <what the flight is for>
+pilot dashboard          # http://127.0.0.1:5181/, in a second terminal
 ```
 
-The pilot starts workers with `pilot.py start`, and the CLI works for you too:
+Or launch the pilot from the dashboard's **Launch** page: pick any project Claude Code knows, start a new
+session or resume one, in a new Windows Terminal tab or in the background.
 
-```bash
-python pilot.py start fix-export --brief brief.md --pilot "<pilot session name>"
-python pilot.py list                 # state, weighted spend vs budget, last activity, current tool
-python pilot.py result fix-export    # the worker's report
-python pilot.py budget fix-export 20000000
-python pilot.py stop fix-export      # conversation kept: `claude attach <id>` resumes it
-python pilot.py rm fix-export        # deletes the session, and its worktree when that is safe
+The CLI is the pilot's, and yours:
+
+```powershell
+pilot plan --title "Export fixes"   # this pilot session's flight plan: its path, from the template once
+pilot start fix-export --brief brief.md --pilot "<pilot session name>" [--after other-leg]
+pilot list                          # state, weighted spend vs budget, last activity, current tool
+pilot result fix-export             # the worker's report
+pilot say fix-export "also cover rotated pages"   # your message, as a user turn (its turn must have ended)
+pilot budget fix-export 20000000    # an absolute ceiling, not an increment
+pilot summary [fix-export]          # a Haiku summary: Needs you / Where it is
+pilot stop fix-export               # conversation kept: `claude attach <id>` resumes it
+pilot rm fix-export                 # removes its sessions and worktree; the record stays in History
 ```
 
-**Talking to a worker.** The pilot uses `SendMessage` to `w-<name>`. You use `claude attach <id>` in a
-terminal, or the dashboard's **remote** link, which opens the worker in claude.ai (Remote Control, on your
-phone as well). The worker sees your words there as a user turn. `claude agents` is Claude Code's own
-full-screen view of every session.
+## The dashboard
+
+`pilot dashboard` serves `web/` on 127.0.0.1 only. One watcher thread stats the files Claude Code writes
+(session records, background-job states, the daemon roster, transcripts, flight plans) every second,
+rebuilds the state when one moves, and pushes it over one event stream; the page patches only what
+changed. It asks `claude agents` only when a session file moved, or every 30 s.
+
+| Page | What it shows |
+|---|---|
+| Overview | Each live flight plan with its route and every leg's live status (planned, working, waiting on you, done, failed, removed), the flight log; the radar (legs under their pilot, chained by After, planned legs dashed); a Haiku summary of all workers; every worker with state, spend against budget and what it is doing; the sessions open in a repo's main checkout. |
+| A worker or session | Its whole conversation streaming live: prompts, replies, thinking, every tool call with its input and result, refused calls in red with who refused them (auto mode, a hook, a deny rule, Claude Code) and the command with a copy button; subagent transcripts one click away; its summary; its leg; a message box; a budget control; attach, remote and stop. |
+| History | Removed workers with their result, branch, spend, report and commits, and their conversation. |
+| Spend | Weighted tokens per day over 14 days, and the token breakdown per worker. |
+| Launch | Start a pilot in any project from Claude Code's own list, new or resuming one of its sessions. |
+
+The bell collects notices while the dashboard runs: a worker waiting on you, a turn that ended (DONE,
+BLOCKED or FAILED), a budget reached, 30 quiet minutes, an API, login or limit error. **desktop** turns them
+into Windows notifications. A script error shows in a red line at the top of the page.
+
+Writes (message, budget, stop, summary, launch, notices read) need the page's own header and a loopback
+Host and Origin, so another site cannot drive them, and Launch only starts in a directory from Claude
+Code's own project list.
 
 ## What is where
 
 | What | Where |
 |---|---|
-| `pilot.py` | everything: start, list, result, budget, stop, rm, dashboard, and the budget hook |
-| `dashboard.html` | the dashboard page `pilot.py dashboard` serves on 127.0.0.1 only. The server pushes the state over one event stream when a watched file changes, and the page patches only what changed |
-| `pilot.json` | the repos (just bullclip-backend), the default model and effort (unset: the account's), the default budget |
+| `pilot.py` | everything: the CLI, the budget hook, the dashboard server |
+| `web/` | the dashboard page: `index.html`, `app.js`, `app.css`, no build step |
+| `pilot.json` | the repos workers may start in, the default model and effort (unset: the account's), the default budget |
 | `plugins/pilot/` | the pilot skill, loaded with `--plugin-dir` into the session you want as pilot |
-| `plugins/worker/` | the hooks every worker gets from `pilot.py start`: the budget checkpoint, and Sam's five hooks through `hooks/kit.sh` |
-| `%LOCALAPPDATA%/pilot/` | runtime state: `workers/<name>.json`, `briefs/<name>.md` (the exact prompt sent), `meters/`, `hook-errors.log` |
-| `bullclip-backend/.claude/worktrees/w-<name>` | each worker's worktree, branch `worktree-w-<name>`; already in `.git/info/exclude` |
-| `~/.claude/projects/...` | transcripts, where Claude Code always keeps them |
+| `plugins/worker/` | the hooks every worker gets: the budget checkpoint, and Sam's five hooks through `hooks/kit.sh` |
+| `%LOCALAPPDATA%/pilot/` | runtime state: `plans/<pilot session>.md`, `workers/`, `archive/`, `briefs/` (the exact prompt sent), `meters/`, `notifications.json`, `summaries.json`, error logs |
+| `<repo>/.claude/worktrees/w-<leg>` | each worker's worktree, branch `worktree-w-<leg>`; bullclip-backend already excludes the folder |
+| `~/.claude/projects/...` | transcripts, where Claude Code always keeps them; `rm` leaves them, so History can open them |
 
-Nothing is installed into `~/.claude`, and nothing is committed to bullclip-backend.
+Nothing is installed into `~/.claude`, and nothing is committed to the repos workers fly in. To add a
+repo, put it in `pilot.json` and open `claude` there once, so its workspace trust is accepted.
 
 ## Spend
 
 A worker's spend is in **weighted tokens**, `input + 1.25*cache_write + 0.1*cache_read + 5*output`, the
-ratios Sam's hooks use, counted once per message id over the worker's transcript and all its subagents.
+ratios Sam's hooks use, counted once per message id over all of the worker's sessions and their subagents.
 At its budget (default 10M, see `pilot.json`) every tool but `SendMessage` is refused, and the worker
-writes its report: a checkpoint, not a kill. `pilot.py budget` sets a new absolute ceiling. Claude Code
-writes an assistant message to the transcript only after its tool calls are dispatched, so the meter lags
-by the message in flight: a worker can overshoot by one message, never more.
+writes its report: a checkpoint, not a kill. Claude Code writes an assistant message to the transcript
+only after its tool calls are dispatched, so the meter lags by the message in flight: a worker can
+overshoot by one message, never more.
+
+A Haiku summary is one `claude -p --model haiku` with no tools, no MCP servers, no settings and no saved
+session: about 4k tokens and 2 s for one worker, measured.
 
 The dashboard shows the account's 5-hour and 7-day windows only if something writes
 `~/.claude/rate-limits.json`, in the shape of Sam's `statusline-cache.snippet.sh`. The status line is the
@@ -106,7 +140,7 @@ code):
 | `claude -p < prompt.txt` | yes | no | no | denied | No length cap. `claude -p "question" < data.txt` treats stdin as data and the argument as the question. |
 | `claude < prompt.txt > out.txt` (no `-p`) | yes | no | no | denied | With stdout redirected it behaves exactly like `-p`. |
 | `claude -p --input-format stream-json --output-format stream-json --verbose` | yes | yes, while stdin is open | yes: a message sent during a `sleep 12` was taken at the next step and answered in the same turn | with `--permission-prompt-tool stdio`, each one arrives as a `can_use_tool` control request; tested allow on a `touch` | What Sam's session_pump.py does. On Windows it needs threads, since `select()` takes only sockets, and no FIFO. Exits 0 when stdin closes. Listed in `claude agents` as interactive. |
-| `claude --bg` (used here) | yes | yes | yes, from another session via `SendMessage`; from you via `attach` or Remote Control | `state: blocked` until you answer it in `attach` or Remote Control | Daemon-supervised, so it survives closing the terminal. `-w` gives it a worktree off `origin/develop`; `claude rm` removes that worktree and its branch. Takes the prompt on stdin. Listed in `claude agents` with `state` working, blocked or done. |
+| `claude --bg` (used here) | yes | yes | yes, from another session via `SendMessage`; from you via `pilot say`, `attach` or Remote Control | `state: blocked` until you answer it in `attach` or Remote Control | Daemon-supervised, so it survives closing the terminal. `-w` gives it a worktree off `origin/HEAD`; `claude rm` removes that worktree and its branch. Takes the prompt on stdin. Listed in `claude agents` with `state` working, blocked or done, and Claude Code keeps a one-line `detail` of each job in `jobs/<id>/state.json`, which the dashboard shows. |
 
 Traps found on the way:
 
@@ -116,6 +150,11 @@ Traps found on the way:
   on stdin, so there is nothing to swallow.
 - **`--bg` refuses a directory whose workspace trust was never accepted**, and `-p` skips that check.
   bullclip-backend is trusted, and its `-w` worktrees inherit that.
+- **`--bg --resume <session>` always continues in a new session id**, a copy holding the whole conversation,
+  in the same worktree with the same options, even when the original was stopped first. The message is a
+  real user turn. `pilot say` uses that and moves the worker's record onto the copy. Only the session that
+  made a worktree owns it: removing a copy leaves the worktree, removing the original deletes it, so `rm`
+  removes the copies first.
 - **A worker's system prompt describes the main checkout's git status**, not the worktree's: one smoke
   worker reported `sg/sc-92521-count` as its branch. The preamble tells workers to run `git status`.
 - **Cross-session messages are data by default.** Without the preamble, a worker refused the pilot's
@@ -126,6 +165,11 @@ Traps found on the way:
 - **Idle notices reach the pilot between its turns, not during one.** Three notices for workers that went
   idle mid-turn all arrived together once the turn ended, and started a new turn. So the pilot starts its
   workers, subscribes, and ends its turn; each notice wakes it.
+- **Windows Terminal splits its command line on `;`.** A launch command with the first message inline broke
+  in two ("error 0x80070002 when launching ..."). Launch passes the message in a file and escapes `;`.
+- **Headless Edge captures before the page's fetches land** when an event stream is open, whatever
+  `--timeout` says, and `--virtual-time-budget` never ends with one open. `?nostream` makes the page fetch
+  the state once, for screenshots.
 
 **Sam's kit on Windows**
 
@@ -137,8 +181,7 @@ Traps found on the way:
   counts only if the kit's agents are installed in it), and the reader refuses Windows paths
   (`PathGuard.cs:42` wants a leading `/`). Making it a read-only Windows viewer is a small patch, about 2 to
   3 days. The `GetProcessById` liveness check it needs is banned by its own AC-15 rule outside a named file.
-  Its campaign and mission views do not apply to pilot plus workers.
-- **Hooks**: see below.
+  Its campaign and mission views do not apply to a pilot and its workers.
 
 **Sam's hooks** run on every worker, and only there; the pilot gets none of them.
 
@@ -161,7 +204,9 @@ Traps found on the way:
 ## Not done yet
 
 - No rate-limit figures until the status line writes the cache (above).
-- The dashboard can stop a worker but not message it. You use the remote link or `attach`, which keeps
-  your words a user turn rather than another session's message.
-- Workers run on the account's default model unless `pilot.json` or `--model` says otherwise. Every worker
-  gets the same model; there is no per-role model matrix.
+- A worker mid-turn, or waiting on a permission prompt, cannot be messaged from the dashboard: stopping it
+  would cut the turn off. Use **remote** or `claude attach`.
+- The flight plan is tied one to one to a pilot session id. Claude Code's help says an interactive
+  `--resume` reuses the id unless `--fork-session` is given, so `pilot --resume` should find its plan again;
+  not tested yet, and a background resume did fork. `pilot plan --session <old id>` reopens a plan by hand.
+- Every worker gets the same model (the account's default unless `pilot.json` or `--model` says otherwise).
