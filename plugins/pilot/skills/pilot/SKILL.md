@@ -86,10 +86,11 @@ The controller may edit the plan. Read it again before you start each leg.
    **The tower (the controller) decides only** what you and the co-pilot could not agree on, a budget raise
    (rule 11), the flight's scope or objective, anything a brief or your permissions do not allow (pushing,
    a PR, another repo, an outside service), anything irreversible, and what the controller meant when their
-   own words are ambiguous. Put each in `## Waiting on the controller`. When the controller is at the
-   terminal and can answer now, also ask with `AskUserQuestion`: the pilot plugin's hook shows its choices
-   on the dashboard and logs each answer in the plan. Never ask the tower in a plain reply alone; it is
-   visible only in your terminal.
+   own words are ambiguous. Put each in `## Waiting on the controller`, then end your turn: the answers
+   arrive as a message from `pilot-dashboard`, or the controller types them in your terminal. Never use
+   `AskUserQuestion`: its prompt blocks you, worker notices included, while the controller's dashboard
+   answers queue behind it, so the pilot plugin refuses it once you have a plan. Never ask the tower in a
+   plain reply alone either; it is visible only in your terminal.
 10. **Check before you report.** A leg has landed only when its worker's checklist is complete:
     `python <pilot.py> result <leg>` prints the report and then the checklist, and the dashboard shows it.
     An open item, whatever the report says, means it has not landed. Send the worker back to finish it,

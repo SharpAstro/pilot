@@ -1471,11 +1471,12 @@ def hook_error():
 
 
 def cmd_hook_ask(_a):
-    """PreToolUse and PostToolUse on AskUserQuestion, in the pilot plugin. Claude Code writes a question to
-    the transcript only once it is answered, so while the pilot waits on the controller nothing the dashboard
-    reads says what for. Before it is asked, the questions go to <state>/asks/<session>.json, which the plan
-    card shows while the pilot waits, and to the plan's log; once answered, the file goes and the answers go
-    to the log, so the plan keeps every decision the controller made. It never refuses anything."""
+    """PreToolUse and PostToolUse on AskUserQuestion, in the pilot plugin. A pilot with a flight plan is
+    refused the question and sent to the plan's `## Waiting on the controller` instead: a terminal prompt
+    blocks the pilot, worker notices included, and answers sent from the dashboard queue behind it (a pilot
+    sat on one for minutes after the controller had answered on the dashboard). Without a plan the question
+    goes ahead: it is recorded in <state>/asks/<session>.json for the plan card while the pilot waits, and
+    once answered the file goes and the answers are logged."""
     try:
         p = json.loads(sys.stdin.buffer.read().decode("utf-8"))
         sid = p.get("session_id")
@@ -1485,6 +1486,17 @@ def cmd_hook_ask(_a):
         f = ASKS / f"{sid}.json"
         if p.get("hook_event_name") == "PreToolUse":
             qs = (p.get("tool_input") or {}).get("questions") or []
+            if plan_path(sid).exists():
+                plan_log(sid, "Asked in the terminal; refused, so the question goes in the waiting section: "
+                              + "; ".join(one(q.get("question")) for q in qs)[:400])
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                    "permissionDecisionReason": (
+                        "pilot: don't ask in the terminal. A prompt there blocks you, worker notices included, and the "
+                        "controller's answers from the dashboard queue behind it. Put each question in your plan's "
+                        "`## Waiting on the controller` as `- **<question>** <context>. Options: <A> | <B>. Recommend: <A>.`, "
+                        "then end your turn. The answers arrive as a message from `pilot-dashboard`, or the controller "
+                        "types them here.")}}))
+                return
             write_json(f, {"at": time.time(), "questions": qs})
             for q in qs:
                 plan_log(sid, f"Pilot asks the controller ({one(q.get('header'))}): {one(q.get('question'))}")

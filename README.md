@@ -198,13 +198,13 @@ Traps found on the way:
 - **Idle notices reach the pilot between its turns, not during one.** Three notices for workers that went
   idle mid-turn all arrived together once the turn ended, and started a new turn. So the pilot starts its
   workers, subscribes, and ends its turn; each notice wakes it.
-- **A question the pilot is asking is not always in its transcript before you answer it.** One pending
-  `AskUserQuestion` was missing until answered, another was there with no result; `claude agents` says no
-  more than `status: waiting`, `waitingFor: input needed`. So the pilot plugin hooks `AskUserQuestion`:
-  before it is asked the questions go to `asks/<session>.json` and the plan's log, and once answered the file
-  goes and the answers go to the log. Where the hook missed it (a pilot started before the hook existed),
-  the dashboard takes an unanswered call from the transcript when it is there. Neither can answer it: that
-  takes the pilot's terminal or **remote**, and intercom messages wait behind the prompt until then.
+- **A pilot asking in its terminal blocks itself, and the dashboard cannot reach it.** A pilot asked about
+  WSL packages with `AskUserQuestion` while the same item sat in its plan; the controller answered on the
+  dashboard, and the answer queued behind the terminal prompt, as every message does, until someone pressed
+  a key there. The prompt also holds off worker notices. So the pilot plugin's hook refuses
+  `AskUserQuestion` to a pilot that has a plan and sends it to the plan's waiting section, which the
+  dashboard answers through the intercom. (A pending question is not always in the transcript before it is
+  answered; for a session without the hook, the dashboard takes it from there when it is.)
 - **Only a Claude session can use the intercom.** The CLI has no command for it, and the per-session pipe
   Claude Code's records name (`messagingSocketPath`) speaks an undocumented protocol. So `pilot tell`,
   the dashboard's intercom and its answer buttons run one Haiku session allowed `SendMessage` alone, named
@@ -258,10 +258,9 @@ Traps found on the way:
 
 ## Not done yet
 
-- A question the pilot is asking in its terminal (`AskUserQuestion`) cannot be answered from the
-  dashboard: Claude Code has no way in from outside. The dashboard shows it (for a pilot started after the
-  question hook existed) and links **remote**, Claude's own choice UI. Items in the plan's
-  `## Waiting on the controller` section are answered from the dashboard.
+- A question a session asks in its terminal (`AskUserQuestion`) cannot be answered from the dashboard:
+  Claude Code has no way in from outside. Pilots with a plan are refused it and use the plan instead; for
+  anything else the dashboard shows the question and links **remote**, Claude's own choice UI.
 - The flight plan is tied one to one to a pilot session id. An interactive `--resume` keeps the id, so a
   resumed pilot finds its plan again (measured: a pilot whose session ended came back as a new name, same
   id). What a resume loses is the pilot's `notify_when_idle` subscriptions, which lived in the old process:
