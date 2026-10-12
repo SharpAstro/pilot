@@ -276,10 +276,19 @@ def worker_status(w, rows=None):
     return {
         **{k: w.get(k) for k in ("name", "id", "sessionId", "repo", "worktree", "branch", "model", "effort", "budget", "started")},
         "state": state, "busy": (row or {}).get("status") == "busy", "pid": (row or {}).get("pid"),
+        "detail": job_detail(w["id"]) if state == "blocked" else None,
         "spend": sp, "overBudget": bool(w.get("budget")) and sp["weighted"] >= w["budget"],
-        "lastActivity": last, "now": now,
+        "lastActivity": last, "now": now, "rev": path.stat().st_size if path else 0,
         "remote": f"https://claude.ai/code/{rec['bridgeSessionId']}" if rec.get("bridgeSessionId") else None,
     }
+
+
+def job_detail(job_id):
+    """What a background session is blocked on, in Claude Code's words, from <profile>/jobs/<id>/state.json."""
+    try:
+        return json.loads((PROFILE / "jobs" / job_id / "state.json").read_text(encoding="utf-8")).get("detail")
+    except (OSError, ValueError, TypeError):
+        return None
 
 
 def pilots(rows=None):
@@ -291,10 +300,42 @@ def pilots(rows=None):
     for r in rows:
         if r.get("pid") and any(same_path(r.get("cwd"), root) for root in roots) and r.get("state") != "done":
             rec = session_record(r["pid"])
+            path = transcript(r["sessionId"])
             out.append({"name": r.get("name"), "id": r.get("id"), "sessionId": r.get("sessionId"), "kind": r.get("kind"),
                         "busy": r.get("status") == "busy", "spend": spend(r["sessionId"]),
+                        "rev": path.stat().st_size if path else 0,
                         "remote": f"https://claude.ai/code/{rec['bridgeSessionId']}" if rec.get("bridgeSessionId") else None})
     return out
+
+
+def snapshot():
+    rows = agents()
+    return {"workers": [worker_status(w, rows) for w in registered()], "pilots": pilots(rows), "limits": limits()}
+
+
+def fingerprint(session_ids):
+    """Size and mtime of every file whose change can change the dashboard, in two parts. The first is what
+    `claude agents` reports from: Claude Code's live-session records, its background-job states and daemon
+    roster, plus the worker registry. The second is the rate-limit cache and the transcripts of the sessions
+    on show, which change spend and activity but no session's state. Statting them every second costs
+    nothing; asking claude does, so it is asked only when the first part moves."""
+    def stats(files):
+        out = []
+        for f in files:
+            try:
+                st = f.stat()
+                out.append((str(f), st.st_mtime_ns, st.st_size))
+            except OSError:
+                pass
+        return tuple(out)
+    sessions = [*PROFILE.glob("sessions/*.json"), *PROFILE.glob("jobs/*/state.json"), PROFILE / "daemon" / "roster.json",
+                *WORKERS.glob("*.json")]
+    content = [PROFILE / "rate-limits.json"]
+    for sid in session_ids:
+        main = transcript(sid)
+        if main:
+            content += [main, *main.parent.glob(f"{sid}/subagents/agent-*.jsonl")]
+    return stats(sessions), stats(content)
 
 
 def limits():
@@ -498,13 +539,47 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/":
             return self.send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
         if path == "/api/state":
-            rows = agents()
-            return self.send(200, {"workers": [worker_status(w, rows) for w in registered()], "pilots": pilots(rows),
-                                   "limits": limits(), "now": time.time()})
+            return self.send(200, snapshot())
+        if path == "/api/stream":
+            return self.stream()
         m = re.match(r"^/api/sessions/([0-9a-f-]{36})/events$", path)
         if m:
             return self.send(200, tail_events(m.group(1), n=80))
         return self.send(404, {"error": "not found"})
+
+    def stream(self):
+        """Server-sent events: the state, sent again only when it has changed. The watched files are statted
+        every second; claude is asked only when one of them moved, and every 30 s regardless, which is what
+        catches a session that died without writing anything."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        last_fp, last_body, asked, pinged, sids = (None, None), None, 0.0, time.time(), []
+        try:
+            while True:
+                fp = fingerprint(sids)
+                if fp != last_fp or time.time() - asked > 30:
+                    if fp[0] != last_fp[0] or time.time() - asked > 30:
+                        _agents_cache["at"] = 0
+                        asked = time.time()
+                    else:
+                        _agents_cache["at"] = time.time()     # the session files have not moved: reuse claude's answer
+                    snap = snapshot()
+                    sids = [s["sessionId"] for s in snap["workers"] + snap["pilots"] if s.get("sessionId")]
+                    last_fp = fingerprint(sids)
+                    body = json.dumps(snap)
+                    if body != last_body:
+                        self.wfile.write(f"event: state\ndata: {body}\n\n".encode())
+                        self.wfile.flush()
+                        last_body, pinged = body, time.time()
+                if time.time() - pinged > 15:
+                    self.wfile.write(b": ping\n\n")
+                    self.wfile.flush()
+                    pinged = time.time()
+                time.sleep(1)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            return
 
     def do_POST(self):
         # Writes only from this page: same host, and a header a cross-site form cannot set.

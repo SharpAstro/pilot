@@ -46,7 +46,7 @@ full-screen view of every session.
 | What | Where |
 |---|---|
 | `pilot.py` | everything: start, list, result, budget, stop, rm, dashboard, and the budget hook |
-| `dashboard.html` | the dashboard page `pilot.py dashboard` serves on 127.0.0.1 only |
+| `dashboard.html` | the dashboard page `pilot.py dashboard` serves on 127.0.0.1 only. The server pushes the state over one event stream when a watched file changes, and the page patches only what changed |
 | `pilot.json` | the repos (just bullclip-backend), the default model and effort (unset: the account's), the default budget |
 | `plugins/pilot/` | the pilot skill, loaded with `--plugin-dir` into the session you want as pilot |
 | `plugins/worker/` | the hooks every worker gets from `pilot.py start`: the budget checkpoint, and Sam's five hooks through `hooks/kit.sh` |
