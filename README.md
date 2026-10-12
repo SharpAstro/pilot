@@ -123,6 +123,14 @@ objective: those stay in the plan for you. In auto mode the classifier checks ev
 its whole transcript as context; a refused one leaves that item for you. Switching it off stops the
 session. The routing runs in the dashboard, so the dashboard has to run too.
 
+A pilot stopped on a prompt in its terminal, most often a permission prompt, reaches the autopilot too:
+the dashboard reads its screen (the Terminal card's `console-io`) and sends it, once per wait, for pilots
+that fly a plan. The autopilot answers with `pilot type <pilot> --text 1` (yes, this once) when the command
+is within its scope and can be undone, and with `--key esc` and a message otherwise; it never chooses the
+option that stops the prompt asking, which would change the pilot's permissions for good. The classifier
+checks its `pilot type` like any command, and refused console typing once before; a refusal leaves the
+prompt for you. Every keystroke is in the plan's log and the black box as the autopilot's.
+
 **The black box** (`<state>/blackbox.jsonl`) records every decision and event across all flights,
 append-only: everything `pilot.py` writes into a plan's log, who acted (you, the autopilot, the watchtower,
 a pilot, `pilot.py`), the flight, and events outside plans, such as the autopilot going on and off. The

@@ -1385,6 +1385,17 @@ For each item:
 5. Every command you run is checked by auto mode's classifier. If it refuses one, do not work around it:
    leave that item for the controller and say so in your answer.
 
+A pilot can also be stopped on a prompt in its terminal, most often a permission prompt for a command it
+wants to run; the dashboard then sends you its screen. Read what the prompt asks:
+- A command within what you may decide that can be undone: approve it this once,
+  `python {pilot} type "<pilot name>" --text 1` (option 1, "Yes"). It prints the screen after; if the
+  prompt is still there, press Enter: `python {pilot} type "<pilot name>" --key enter`. Never choose the
+  option that stops it asking: that changes the pilot's permissions for good.
+- Anything else: decline it, `python {pilot} type "<pilot name>" --key esc`, then tell the pilot with
+  `python {pilot} tell "<pilot name>" --as autopilot -m "..."` that it waits for the controller, and why.
+Check the screen you were sent is still what the pilot shows before you type: `python {pilot} type`
+with no text or key prints it.
+
 Then end your turn. The next items arrive as a message; do not poll, and start no work of your own. Now
 reply with one line saying you are on standby, and end your turn."""
 
@@ -1495,6 +1506,21 @@ def cmd_result(a):
         print(f"\n--- checklist: {len(items) - len(left)} of {len(items)} completed" + (f"; OPEN: {len(left)}, so it has not landed" if left else ""))
         for i in items:
             print(f"  [{'x' if i['status'] == 'completed' else '>' if i['status'] == 'in_progress' else ' '}] {i['subject']}")
+
+
+def cmd_type(a):
+    """Types into a live pilot's terminal, by its name, and prints its screen after. The autopilot answers a
+    pilot's terminal prompt with it; run by anyone else it is the controller typing. Logged in the plan."""
+    target = next((p for p in pilots() if a.name in (p.get("name"), p.get("sessionId"))), None)
+    if not target:
+        sys.exit(f"pilot: no live pilot is named {a.name}")
+    st = read_json(AUTOPILOT, {})
+    actor = "Autopilot" if st.get("sessionId") and os.environ.get("CLAUDE_CODE_SESSION_ID") == st["sessionId"] else "Controller"
+    try:
+        out = pilot_console(target["sessionId"], a.text or "", a.key or [], actor=actor)
+    except (ValueError, subprocess.TimeoutExpired) as e:
+        sys.exit(f"pilot: {e}")
+    print("\n".join(out["lines"][-40:]))
 
 
 def cmd_whois(a):
@@ -1771,7 +1797,7 @@ def cmd_console_io(a):
     sys.stdout.write(json.dumps(out))
 
 
-def pilot_console(sid, text="", keys=()):
+def pilot_console(sid, text="", keys=(), actor="Controller"):
     """A live pilot's screen, read or typed into from the dashboard. Only pilots, sessions in a configured
     repo's main checkout: a background worker has no console. What is typed goes in the plan's log."""
     row = next((r for r in agents() if r.get("sessionId") == sid and r.get("pid")), None)
@@ -1790,7 +1816,7 @@ def pilot_console(sid, text="", keys=()):
     if out.get("error"):
         raise ValueError(out["error"])
     if text or keys:
-        plan_log(sid, "Controller typed into the pilot's terminal: " + " + ".join(([repr(text)] if text else []) + keys))
+        plan_log(sid, f"{actor} typed into the pilot's terminal: " + " + ".join(([repr(text)] if text else []) + keys))
     return out
 
 
@@ -1904,6 +1930,30 @@ class Hub:
         if not snap["autopilot"]["enabled"] or not snap["autopilot"]["live"]:
             return
         st = read_json(AUTOPILOT, {})
+        for p in snap["pilots"]:                   # a pilot stopped on a prompt in its terminal: once per wait
+            key = f"prompt:{p['sessionId']}:{int(p.get('since') or 0)}"
+            if p.get("status") != "waiting" or not plan_path(p["sessionId"]).exists() or key in st.get("sent", {}) \
+                    or key in self.routing or time.time() - self.route_failed.get(key, 0) < 60:
+                continue
+            self.routing.add(key)
+
+            def send_prompt(p=p, key=key):
+                try:
+                    screen = pilot_console(p["sessionId"])["lines"][-45:]
+                    asks = "".join(f"\n- {q.get('question')}" for q in (p.get("ask") or {}).get("questions") or [])
+                    intercom([AUTOPILOT_NAME], f"Pilot \"{p['name']}\" (session {p['sessionId']}) is stopped on a prompt in its "
+                             f"terminal, waiting for {p.get('waitingFor') or 'input'}.{' Its question:' + asks if asks else ''}\n"
+                             f"Its screen now:\n" + "\n".join(screen), sender="Dashboard")
+                    s = read_json(AUTOPILOT, {})
+                    s.setdefault("sent", {})[key] = 1
+                    write_json(AUTOPILOT, s)
+                    blackbox(f"Sent pilot {p['name']}'s terminal prompt to the autopilot", actor="pilot.py", plan=p["sessionId"])
+                except Exception:
+                    self.route_failed[key] = time.time()
+                finally:
+                    self.routing.discard(key)
+                    self.poke()
+            threading.Thread(target=send_prompt, daemon=True).start()
         for pl in snap["plans"]:
             sid, items = pl["sessionId"], pl.get("waiting") or ""
             if not items or not pl.get("live") or st.get("sent", {}).get(sid) == items or sid in self.routing:
@@ -2245,6 +2295,11 @@ def main():
     s.add_argument("--text")
     s.add_argument("--key", action="append", choices=sorted(CONSOLE_KEYS))
     s.set_defaults(fn=cmd_console_io)
+    s = sub.add_parser("type", help="type into a live pilot's terminal, by name, and print its screen")
+    s.add_argument("name")
+    s.add_argument("--text")
+    s.add_argument("--key", action="append", choices=sorted(CONSOLE_KEYS))
+    s.set_defaults(fn=cmd_type)
     s = sub.add_parser("whois", help="the session id behind a live session's name, for a worker checking its pilot")
     s.add_argument("name")
     s.set_defaults(fn=cmd_whois)
