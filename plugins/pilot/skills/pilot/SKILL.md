@@ -65,7 +65,9 @@ The controller may edit the plan. Read it again before you start each leg.
 6. **Follow without polling.** After starting a worker, `SendMessage` to its name with
    `notify_when_idle: true` and no message. A new worker is not reachable for its first 20 to 40 seconds
    ("No agent named ... is reachable"): do other work, then send again. When the notice arrives, read its
-   report with `python <pilot.py> result <leg>`. Never loop on `list` or sleep waiting for one.
+   report with `python <pilot.py> result <leg>`. Never loop on `list` or sleep waiting for one. A
+   subscription lives only as long as your process: if you were resumed, subscribe again to every worker
+   `python <pilot.py> list` shows still flying, before anything else.
 7. **Correct a worker** with `SendMessage` to its name, inside its brief. If the brief itself was wrong,
    stop the worker, fix the route, and start a new leg with a new brief. Messages from the controller reach
    a worker as its own user turns; you do not send those.
