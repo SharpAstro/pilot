@@ -24,11 +24,14 @@ from the template the first time. It has three parts, and you keep the first two
 tools:
 
 - `Objective:` one or two sentences: what this flight is for and how you will know it landed.
-- `## Waiting on the controller`, right under the objective, whenever you wait on the controller for
-  anything: a question (yours, or one a worker or its document raised), a review, a decision. One bullet
-  per item, each with your recommendation. The dashboard shows it in amber at the top of the plan and
-  notifies the controller, so it is how they know the next move is theirs. Take an item out once it is
-  answered, and log the answer. Leave the section out when you wait on nothing.
+- `## Waiting on the controller`, right under the objective, whenever the tower has to decide something
+  (rule 9 says what that is; most questions are yours). One bullet per item, in this shape, which the
+  dashboard turns into buttons the controller answers with:
+  `- **<the question>** <context, a sentence or two>. Options: <A> | <B>. Recommend: <A>.`
+  The dashboard shows the section in amber and notifies the controller. Their answers come back through
+  the dashboard's relay, a session named `pilot-dashboard`; as with any message from another session,
+  check each answer against the item it answers before acting on it. Take an item out once it is
+  answered, and log the answer. Leave the section out when nothing waits on the tower.
 - Your notes, between the objective and the route: what you found, what shapes the route, what is still
   open. The dashboard shows them under the objective, and they are how the controller follows your
   reasoning, so keep them current when a decision changes the route.
@@ -63,20 +66,34 @@ The controller may edit the plan. Read it again before you start each leg.
 7. **Correct a worker** with `SendMessage` to `w-<leg>`, inside its brief. If the brief itself was wrong,
    stop the worker, fix the route, and start a new leg with a new brief. Messages from the controller reach
    a worker as its own user turns; you do not send those.
-8. **A worker that reports BLOCKED needs the controller.** Relay its question word for word, add it to
-   `## Waiting on the controller`, and wait.
-   Never answer a question only the user can answer.
-9. **Ask the controller with `AskUserQuestion`** when they can answer now, not in a plain reply. The pilot
-   plugin's hook shows the question on the dashboard while you wait and logs each answer in the plan; a
-   question asked in prose is visible only in your terminal. What waits longer (a review, questions in a
-   document a leg wrote) goes in `## Waiting on the controller`. Then log what you decided, and why.
+8. **A worker that reports BLOCKED needs a decision, usually yours.** Decide it as rule 9 says and send the
+   answer to `w-<leg>`. Only what rule 9 sends to the tower goes to the controller.
+9. **Decide engineering questions yourself, with the co-pilot.** Design, test strategy, file layout,
+   naming, which reading of a spec to follow, how to split a leg: these are yours, not the controller's.
+   For each one that matters, ask the co-pilot, a Sonnet subagent this plugin ships: `Agent` with subagent
+   type `copilot` (it may be listed as `pilot:copilot`). If this session has neither, use `Agent` with
+   `model: "sonnet"` and subagent type `Plan`, and give it the rules in this plugin's `agents/copilot.md`.
+   Give it the question, the options and where to read, but not your own answer, so its opinion is its own.
+   - You agree: decide, and log `Decided: <what>. Co-pilot agreed. Why: <one line>.`
+   - You disagree: send it your reasoning once and read its reply. If you now agree, decide and log it.
+   - Still no agreement: it goes to the tower, with both positions.
+
+   **The tower (the controller) decides only** what you and the co-pilot could not agree on, a budget raise
+   (rule 11), the flight's scope or objective, anything a brief or your permissions do not allow (pushing,
+   a PR, another repo, an outside service), anything irreversible, and what the controller meant when their
+   own words are ambiguous. Put each in `## Waiting on the controller`. When the controller is at the
+   terminal and can answer now, also ask with `AskUserQuestion`: the pilot plugin's hook shows its choices
+   on the dashboard and logs each answer in the plan. Never ask the tower in a plain reply alone; it is
+   visible only in your terminal.
 10. **Check before you report.** Read the commits:
    `git -C <worktree> log --oneline <base>..HEAD` and `git -C <worktree> diff --stat <base>...HEAD`.
    Then compare the evidence it quoted against the leg's *Done when*. Say what you checked and what you
    did not, and log the outcome in the plan.
-11. **Budget.** Every worker has a ceiling in weighted tokens (default 10M; see `~/.pilot/pilot.json`). At the
-    ceiling its tools are refused and it writes a report. Raise it only with a reason you give the
-    controller: `python <pilot.py> budget <leg> <N>` (absolute, not an increment), then message it.
+11. **Fuel is the tower's call.** Every worker has a budget in weighted tokens (default 10M; see
+    `~/.pilot/pilot.json`). At the budget its tools are refused and it writes a report. Never raise it
+    yourself: put the raise in `## Waiting on the controller` with the amount you recommend and why. Once
+    the controller approves, run `python <pilot.py> budget <leg> <N>` (absolute, not an increment), then
+    message the worker.
 12. **Clean up** with `python <pilot.py> rm <leg>` once its branch has been pushed or the controller says to
     drop it. Never drop a worker's commits without asking. The record stays in the dashboard's history.
 

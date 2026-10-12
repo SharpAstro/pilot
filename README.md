@@ -12,8 +12,13 @@ controller.
 - **Worker**: a Claude Code background session (`claude --bg -w`) in its own git worktree, branched from
   the repo's default branch. It flies one leg, commits on its own branch, and ends with a report whose
   first line is `DONE`, `BLOCKED` or `FAILED`.
-- **Controller**: you. The dashboard is your radar. From it you read the plan and every conversation,
-  message a worker (as your own user turn), set its budget, stop it, summarise, and launch pilots.
+- **Co-pilot**: a Sonnet subagent the pilot plugin ships (`agents/copilot.md`), read-only. The pilot
+  settles engineering questions itself and asks the co-pilot for an independent opinion on each one that
+  matters; they agree, or after one exchange the question goes to you. Only that, a budget raise, scope,
+  anything outside a brief's permissions, anything irreversible, and what you meant come to the tower.
+- **Controller**: you, the tower. The dashboard is your radar. From it you read the plan and every
+  conversation, answer what the pilot waits on you for, message any live pilot or worker through the
+  intercom, set budgets, stop workers, summarise, and launch pilots.
 
 Everything else is Claude Code's own: background sessions, worktrees, subagents, `claude agents`,
 `claude attach`, Remote Control, `SendMessage` between sessions. This started as a Windows take on Sam's
@@ -41,6 +46,7 @@ pilot plan --title "Export fixes"   # this pilot session's flight plan: its path
 pilot start fix-export --brief brief.md --pilot "<pilot session name>" [--after other-leg]
 pilot list                          # state, weighted spend vs budget, last activity, current tool
 pilot result fix-export             # the worker's report
+pilot tell w-fix-export -m "also cover rotated pages"   # through the intercom, mid-turn too
 pilot say fix-export "also cover rotated pages"   # your message, as a user turn (its turn must have ended)
 pilot budget fix-export 20000000    # an absolute ceiling, not an increment
 pilot summary [fix-export]          # a Haiku summary: Needs you / Where it is
@@ -57,8 +63,8 @@ changed. It asks `claude agents` only when a session file moved, or every 30 s.
 
 | Page | What it shows |
 |---|---|
-| Overview | Each flight plan, folded to one line with a tally of its legs once it has landed (click to open; your choice sticks, and a folded plan leaves only its box on the radar): what its pilot is doing (working, idle and following its legs, or waiting on you, with the question it asked and where to answer it), what the pilot is waiting on you for (its `## Waiting on the controller` section, in amber), its last message in full when its turn has ended with nothing in the air, the pilot's notes (what it found, why the route is this shape), the route with every leg's live status (planned, working and its current tool call, waiting on you, done, failed, removed), and the flight log with every question and answer; the radar (legs under their pilot, chained by After, planned legs dashed); a Haiku summary of all workers; every worker with state, spend against budget and what it is doing; the sessions open in a repo's main checkout. |
-| A worker or session | Its whole conversation streaming live, folded as Claude Code's remote view folds it: what it says in full, and each run of tool calls as one line ("Read 5 files, ran 3 commands (1 failed)") that opens to every call with its input and result, a subagent's run named by its task; a live line under it with what it is doing now (Claude Code's own one-line detail) and how long the turn has run; refused calls in red with who refused them (their run opens itself) (auto mode, a hook, a deny rule, Claude Code) and the command with a copy button; subagent transcripts one click away; its summary; its leg; a message box; a budget control; attach, remote and stop. |
+| Overview | Each flight plan, folded to one line with a tally of its legs once it has landed (click to open; your choice sticks, and a folded plan leaves only its box on the radar): what its pilot is doing (working, idle and following its legs, or waiting on you, with the question it asked and where to answer it), what the pilot is waiting on you for (its `## Waiting on the controller` section, in amber), its last message in full when its turn has ended with nothing in the air, the pilot's notes (what it found, why the route is this shape), the route with every leg's live status (planned, working and its current tool call, waiting on you, done, failed, removed), and the flight log with every question and answer; the intercom, one line to message live sessions (everyone, all pilots, all workers, a flight, or one); the radar (legs under their pilot, chained by After, planned legs dashed); a Haiku summary of all workers; every worker with state, spend against budget and what it is doing; the sessions open in a repo's main checkout. |
+| A worker or session | Its whole conversation streaming live, folded as Claude Code's remote view folds it: what it says in full, and each run of tool calls as one line ("Read 5 files, ran 3 commands (1 failed)") that opens to every call with its input and result, a subagent's run named by its task; a live line under it with what it is doing now (Claude Code's own one-line detail) and how long the turn has run; refused calls in red with who refused them (their run opens itself) (auto mode, a hook, a deny rule, Claude Code) and the command with a copy button; subagent transcripts one click away; its summary; its leg; a message box that goes through the intercom (or, for a worker whose turn has ended, as your own turn); a budget control; attach, remote and stop. |
 | History | Removed workers with their result, branch, spend, report and commits, and their conversation. |
 | Spend | Weighted tokens per day over 14 days, and the token breakdown per worker. |
 | Launch | Start a pilot in any project from Claude Code's own list, new or resuming one of its sessions. |
@@ -161,6 +167,13 @@ Traps found on the way:
   than `status: waiting`, `waitingFor: input needed`. So the pilot plugin hooks `AskUserQuestion`: before it
   is asked the questions go to `asks/<session>.json` and the plan's log, and once answered the file goes and
   the answers go to the log. A pilot started before the hook existed shows only that it is waiting.
+- **Only a Claude session can use the intercom.** The CLI has no command for it, and the per-session pipe
+  Claude Code's records name (`messagingSocketPath`) speaks an undocumented protocol. So `pilot tell`,
+  the dashboard's intercom and its answer buttons run one Haiku session allowed `SendMessage` alone, named
+  `pilot-dashboard`: about 3 to 5 s and a tenth of a cent a message, measured, delivered word for word.
+  A recipient takes it as Claude Code takes any cross-session message, a teammate's request acted on within
+  its own permissions. Nothing tells workers to treat `pilot-dashboard` as you: any process here can take
+  that name, so it would hand your authority to whoever claims it.
 - **Windows Terminal splits its command line on `;`.** A launch command with the first message inline broke
   in two ("error 0x80070002 when launching ..."). Launch passes the message in a file and escapes `;`.
 - **Headless Edge captures before the page's fetches land** when an event stream is open, whatever
@@ -199,8 +212,10 @@ Traps found on the way:
 
 ## Not done yet
 
-- A worker mid-turn, or waiting on a permission prompt, cannot be messaged from the dashboard: stopping it
-  would cut the turn off. Use **remote** or `claude attach`.
+- A question the pilot is asking in its terminal (`AskUserQuestion`) cannot be answered from the
+  dashboard: Claude Code has no way in from outside. The dashboard shows it (for a pilot started after the
+  question hook existed) and links **remote**, Claude's own choice UI. Items in the plan's
+  `## Waiting on the controller` section are answered from the dashboard.
 - The flight plan is tied one to one to a pilot session id. Claude Code's help says an interactive
   `--resume` reuses the id unless `--fork-session` is given, so `pilot --resume` should find its plan again;
   not tested yet, and a background resume did fork. `pilot plan --session <old id>` reopens a plan by hand.

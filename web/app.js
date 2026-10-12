@@ -28,6 +28,8 @@ document.addEventListener("toggle", e => {
 }, true);
 function put(el, html) {
   if (!el || el._html === html) return;
+  const f = document.activeElement;      // never wipe what the reader is typing: the next render catches up
+  if (f && f !== document.body && el.contains(f) && f.matches("input, textarea, select")) return;
   el.innerHTML = html; el._html = html;
   for (const d of el.querySelectorAll("details[data-k]")) if (opened.has(d.dataset.k)) d.open = opened.get(d.dataset.k);
 }
@@ -342,12 +344,74 @@ function planCard(p, s) {
       <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} ` : ""}${yourMove ? `<span class="chip blocked">your move</span>` : pilotChip(ps, flying)} · plan updated ${esc(ago(p.updated))}
       · <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
-    ${p.waiting ? `<div class="ask"><div class="cardhead"><b>Waiting on you</b><span class="sub">from the plan · ${where}</span></div>${md(p.waiting, true)}</div>` : ""}
+    ${p.waiting ? waitingHtml(p, ps) : ""}
     ${yourMove && ps.said ? `<details class="lastsaid" ${fold("said:" + p.sessionId, true)}><summary>its turn ended ${esc(ago(Date.parse(ps.said.at) / 1000))} with nothing in the air; its last message</summary>${md(ps.said.text)}</details>` : pilotNow(ps)}
     ${p.notes ? `<details ${fold("notes:" + p.sessionId, waiting)}><summary>the pilot's notes: what it found and why the route is this shape</summary>${md(p.notes, true)}</details>` : ""}
     <div class="tablewrap"><table><thead><tr><th>Leg</th><th>Goal</th><th>After</th><th>Done when</th><th>Status</th><th class="num">Spend</th></tr></thead>
       <tbody>${legs || `<tr><td colspan="6" class="sub">No legs yet. The pilot adds them to the Route table.</td></tr>`}</tbody></table></div>
     ${log ? `<details ${fold("log:" + p.sessionId, true)}><summary>flight log: decisions, questions and answers, legs taking off and landing</summary><ul class="log">${log}</ul></details>` : ""}</details>`;
+}
+
+// ------------------------------------------------------------------ answering the pilot from the dashboard
+
+// The plan's waiting items, as the pilot skill asks for them:
+//   - **<question>** <context>. Options: A | B. Recommend: A.
+// Each gets buttons (its options, or accepting the recommendation) and a box for a reply of your own. Send
+// relays the answers to the pilot through the intercom. Choices are kept, across re-renders, until sent.
+const answers = new Map(), sentNote = new Map();
+
+function waitingItems(src) {
+  const intro = [], items = [];
+  for (const l of String(src || "").split("\n")) {
+    if (/^([-*]|\d+[.)])\s/.test(l)) items.push(l.replace(/^([-*]|\d+[.)])\s+/, ""));
+    else if (items.length && l.trim()) items[items.length - 1] += " " + l.trim();
+    else if (!items.length) intro.push(l);
+  }
+  return {intro: intro.join("\n").trim(), items: items.map(text => {
+    const title = ((/^\*\*(.+?)\*\*/.exec(text) || [])[1] || text.split(/[.?]\s/)[0]).trim();
+    const opts = /Options:\s*(.+?)(?:\.\s+Recommend|\.\s*$|$)/.exec(text), rec = /Recommend(?:ation)?:\s*(.+?)\s*$/.exec(text);
+    return {text, title, options: opts ? opts[1].split(/\s+\|\s+/).map(s => s.trim()).filter(Boolean) : [],
+            rec: rec ? rec[1].replace(/\.$/, "") : "", recShort: rec ? rec[1].split(/[.,;(]/)[0].trim() : ""};
+  })};
+}
+
+function waitingHtml(p, ps) {
+  const {intro, items} = waitingItems(p.waiting), sid = p.sessionId;
+  const where = ps?.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : "";
+  let n = 0;
+  const rows = items.map((it, i) => {
+    const a = answers.get(`${sid}|${it.title}`);
+    if (a) n++;
+    const btn = (kind, value, label, rec) => `<button class="choice${a?.kind === kind && a.value === value ? " on" : ""}${rec ? " rec" : ""}"
+      data-answer="${esc(sid)}" data-item="${i}" data-kind="${kind}" data-value="${esc(value)}" title="${esc(rec ? `recommended: ${it.rec}` : value)}">${esc(label)}</button>`;
+    const plain = s => s.replace(/[`*]/g, ""), short = plain(it.recShort);
+    const choices = it.options.length ? it.options.map(o => btn("option", o, plain(o), o === it.recShort || it.rec.startsWith(o))).join("")
+      : it.rec ? btn("accept", it.rec, `accept: ${short.length > 40 ? short.slice(0, 39) + "…" : short}`, true) : "";
+    return `<li>${md(it.text, true)}<div class="choices">${choices}<input class="reply" data-answer="${esc(sid)}" data-item="${i}"
+      placeholder="${choices ? "or your own answer" : "your answer"}" value="${esc(a?.kind === "text" ? a.value : "")}"></div></li>`;
+  }).join("");
+  const can = p.live && p.pilot;
+  return `<div class="ask"><div class="cardhead"><b>Waiting on you</b><span class="sub">from the plan · answer here, in the pilot's terminal${where}</span></div>
+    ${intro ? md(intro, true) : ""}<ol class="items">${rows}</ol>
+    <div class="sendrow"><button class="primary" data-sendanswers="${esc(sid)}"${n && can ? "" : " disabled"}>Send ${n || ""} answer${n === 1 ? "" : "s"} to the pilot</button>
+      <span class="sub">${esc(sentNote.get(sid) || (can ? "through the intercom; it reaches the pilot at its next step" : "the pilot is not running"))}</span></div></div>`;
+}
+
+async function sendAnswers(sid) {
+  const p = (S.plans || []).find(x => x.sessionId === sid);
+  if (!p?.pilot) return;
+  const picked = waitingItems(p.waiting).items.map(it => [it, answers.get(`${sid}|${it.title}`)]).filter(([, a]) => a);
+  if (!picked.length) return;
+  const text = `The controller's answers to items in your plan's "Waiting on the controller" section, sent from the dashboard:\n`
+    + picked.map(([it, a]) => `- ${it.title}: ${a.kind === "accept" ? `accepted your recommendation (${it.rec})` : a.value}`).join("\n")
+    + `\nTake each answered item out of the section, log the answer, and carry on.`;
+  sentNote.set(sid, "sending…"); render();
+  try {
+    const j = await post("/api/intercom", {to: [p.pilot], text});
+    for (const [it] of picked) answers.delete(`${sid}|${it.title}`);
+    sentNote.set(sid, `sent ${picked.length}: ${j.result}`);
+  } catch (e) { sentNote.set(sid, `not sent: ${e.message}`); }
+  render();
 }
 
 // A plan is open by default while it is in the air: its pilot runs, or a worker flies one of its legs.
@@ -449,6 +513,9 @@ const VIEWS = {};
 VIEWS.overview = root => {
   root.innerHTML = `
     <div class="s-plans"></div>
+    <div class="card pad bcast"><b>Intercom</b>
+      <textarea class="s-btext" rows="1" placeholder="A message to live sessions: it reaches each at its next step, mid-turn too. Ctrl+Enter sends."></textarea>
+      <select class="s-bto"></select><button class="primary s-bsend">Send</button><div class="sub s-bnote"></div></div>
     <h2>Radar</h2><div class="card graph s-graph"></div>
     <h2>Summary</h2>
     <div class="card pad"><div class="cardhead"><b>All workers</b><span><span class="sub s-stamp"></span> <button data-sum="*" class="s-btn">Summarise</button></span></div>
@@ -458,8 +525,36 @@ VIEWS.overview = root => {
     <h2>Sessions in the main checkout</h2><div class="card"><div class="list s-pilots"></div>
       <div class="empty s-pempty">No session open in a repo's main checkout. Start the pilot there with <code>pilot</code>.</div></div>`;
   const rowsW = new Map(), rowsP = new Map();
+  // The intercom's targets: everyone, all pilots, all workers, a flight's pilot and legs, or one session.
+  let targets = [], picked = "everyone";
+  const bto = $(".s-bto", root), btext = $(".s-btext", root), bnote = $(".s-bnote", root);
+  bto.addEventListener("change", () => { picked = bto.value; });
+  async function broadcast() {
+    const t = targets.find(([label]) => label === bto.value), text = btext.value.trim();
+    if (!t || !text) return;
+    $(".s-bsend", root).disabled = true; put(bnote, `sending to ${esc(t[1].join(", "))}…`);
+    try { const j = await post("/api/intercom", {to: t[1], text}); btext.value = ""; put(bnote, esc(j.result)); }
+    catch (e) { put(bnote, `<span style="color:var(--crit)">${esc(e.message)}</span>`); }
+    $(".s-bsend", root).disabled = false;
+  }
+  $(".s-bsend", root).addEventListener("click", broadcast);
+  btext.addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); broadcast(); } });
   return {
     update(s) {
+      const pilotsN = s.pilots.map(p => p.name), workersN = s.workers.filter(w => w.pid).map(w => `w-${w.name}`);
+      targets = [];
+      if (pilotsN.length && workersN.length) targets.push(["everyone", [...pilotsN, ...workersN]]);
+      if (pilotsN.length) targets.push(["all pilots", pilotsN]);
+      if (workersN.length) targets.push(["all workers", workersN]);
+      for (const p of s.plans || []) {
+        const legs = p.legs.map(l => s.workers.find(w => w.name === l.leg && w.pid)).filter(Boolean).map(w => `w-${w.name}`);
+        if (p.pilot && pilotsN.includes(p.pilot) && legs.length) targets.push([`${p.title}: pilot and legs`, [p.pilot, ...legs]]);
+      }
+      for (const n of [...pilotsN, ...workersN]) targets.push([n, [n]]);
+      if (!targets.some(([l]) => l === picked) && targets.length) picked = targets[0][0];
+      put(bto, targets.map(([l, ns]) => `<option${l === picked ? " selected" : ""} value="${esc(l)}">${esc(l)}${ns.length > 1 ? ` (${ns.length})` : ""}</option>`).join("")
+        || `<option value="">no live sessions</option>`);
+      $(".s-bsend", root).disabled = !targets.length;
       const sp = summaryParts("*", s);
       put($(".s-sum", root), sp.body); put($(".s-stamp", root), esc(sp.stamp)); $(".s-btn", root).disabled = sp.running;
       put($(".s-plans", root), (s.plans || []).length ? s.plans.map(p => planCard(p, s)).join("")
@@ -489,8 +584,9 @@ VIEWS.session = (root, r) => {
       <div class="summary s-sum" style="margin-top:6px"></div></div>
     <div class="sess" style="margin-top:12px">
       <div><div class="card"><div class="stream s-stream"><div class="empty">loading…</div></div><div class="live s-live" hidden></div></div>
-        <div class="say s-say" hidden><textarea class="s-text" placeholder="Message this worker. It arrives as your own turn. Ctrl+Enter sends."></textarea>
-          <div class="bar2"><span class="sub s-hint"></span><button class="primary s-send">Send</button></div></div></div>
+        <div class="say s-say" hidden><textarea class="s-text" placeholder="Message this session. Ctrl+Enter sends."></textarea>
+          <div class="bar2"><span class="sub s-hint"></span><label class="sub s-asturn" hidden title="Stops it and continues it with your words as a user turn, in a new session id. Only once its turn has ended."><input type="checkbox" class="s-asturnbox"> as my own turn</label>
+            <button class="primary s-send">Send</button></div></div></div>
       <div class="side"><div class="card pad s-ctl" hidden><b>Controls</b>
           <div class="ctlrow"><label>budget, weighted tokens <input class="s-budget" inputmode="numeric" placeholder="e.g. 20M"></label><button class="s-setbudget">set</button></div>
           <div class="sub s-ctlhint"></div></div>
@@ -498,7 +594,7 @@ VIEWS.session = (root, r) => {
         <div class="card pad"><b>Subagents</b><div class="s-agents" style="margin-top:6px"><span class="sub">none</span></div></div></div>
     </div>`;
   const stream = $(".s-stream", root), tools = new Map();
-  let sid, es = null, agentsRev = null, worker = null, group = null, turnAt = null, liveText = "";
+  let sid, es = null, agentsRev = null, worker = null, sayTo = null, group = null, turnAt = null, liveText = "";
 
   function open(newSid) {
     if (es) es.close();
@@ -652,15 +748,23 @@ VIEWS.session = (root, r) => {
     } catch { agentsRev = null; }
   }
 
+  // Through the intercom by default: it reaches the session at its next step, mid-turn too, without stopping
+  // it. "As my own turn" is the old way for a worker whose turn has ended: stop it, continue it with your words.
   async function send() {
-    const box = $(".s-text", root), text = box.value.trim();
-    if (!text || !worker) return;
-    const btn = $(".s-send", root);
-    btn.disabled = true; put($(".s-hint", root), "delivering…");
+    const box = $(".s-text", root), text = box.value.trim(), hint = $(".s-hint", root);
+    if (!text || !(sayTo || worker)) return;
+    const btn = $(".s-send", root), asTurn = !!worker && (!sayTo || (!$(".s-asturn", root).hidden && $(".s-asturnbox", root).checked));
+    btn.disabled = true; put(hint, "delivering…");
     try {
-      const j = await post(`/api/workers/${worker}/say`, {text});
-      box.value = ""; put($(".s-hint", root), `delivered as your turn; it continues as ${esc(j.id)}`);
-    } catch (e) { put($(".s-hint", root), `<span style="color:var(--crit)">${esc(e.message)}</span>`); }
+      if (asTurn) {
+        const j = await post(`/api/workers/${worker}/say`, {text});
+        put(hint, `delivered as your turn; it continues as ${esc(j.id)}`);
+      } else {
+        const j = await post("/api/intercom", {to: [sayTo], text});
+        put(hint, `intercom: ${esc(j.result)}`);
+      }
+      box.value = "";
+    } catch (e) { put(hint, `<span style="color:var(--crit)">${esc(e.message)}</span>`); }
     btn.disabled = false;
   }
   async function setBudget() {
@@ -700,15 +804,12 @@ VIEWS.session = (root, r) => {
         put($(".s-sum", root), sp.body); put($(".s-stamp", root), esc(sp.stamp)); $(".s-btn", root).disabled = sp.running;
       }
       const say = $(".s-say", root);
-      say.hidden = !w || !!r.agent;
-      if (w) {
-        const busy = w.pid && (w.state === "working" || w.state === "blocked");
-        $(".s-send", root).disabled = busy;
-        if (busy && $(".s-hint", root)._html?.startsWith("delivered") !== true)
-          put($(".s-hint", root), w.state === "working" ? "It is mid-turn. A message now would cut the turn off: wait, or use attach or remote."
-            : "It is waiting on a prompt only attach or remote can answer.");
-        else if (!busy && !$(".s-hint", root)._html) put($(".s-hint", root), "Its turn has ended: a message continues it with your words as a user turn.");
-      }
+      sayTo = w && w.pid ? `w-${w.name}` : p ? p.name : null;
+      say.hidden = !(sayTo || w) || !!r.agent;
+      const turnOver = !!w && !(w.pid && (w.state === "working" || w.state === "blocked"));
+      $(".s-asturn", root).hidden = !turnOver;
+      if (!sayTo && w) $(".s-asturnbox", root).checked = true;      // not running: only a new turn reaches it
+      if (!$(".s-hint", root)._html) put($(".s-hint", root), sayTo ? "Through the intercom: it arrives at its next step, mid-turn too." : "");
       const info = w || h || p || {};
       const leg = (s.plans || []).flatMap(x => x.legs.map(l => ({...l, plan: x.title}))).find(l => l.leg === (w || h)?.name);
       const rows = [["flight plan", leg?.plan], ["leg goal", leg?.goal], ["done when", leg?.doneWhen],
@@ -899,6 +1000,15 @@ document.addEventListener("click", async e => {
     return;
   }
   if (t.dataset.sum) { summarise(t.dataset.sum); return; }
+  if (t.dataset.answer && t.dataset.kind) {        // a choice toggles; one choice per item
+    const p = (S.plans || []).find(x => x.sessionId === t.dataset.answer), it = p && waitingItems(p.waiting).items[+t.dataset.item];
+    if (!it) return;
+    const k = `${p.sessionId}|${it.title}`, a = answers.get(k);
+    if (a && a.kind === t.dataset.kind && a.value === t.dataset.value) answers.delete(k); else answers.set(k, {kind: t.dataset.kind, value: t.dataset.value});
+    sentNote.delete(p.sessionId); render();
+    return;
+  }
+  if (t.dataset.sendanswers) { sendAnswers(t.dataset.sendanswers); return; }
   if (t.dataset.note) {
     post("/api/notifications/read", {ids: [t.dataset.note]}).catch(() => {});
     $("#panel").hidden = true;
@@ -907,6 +1017,21 @@ document.addEventListener("click", async e => {
   if (t.dataset.href && !getSelection().toString()) location.hash = t.dataset.href;
 });
 document.addEventListener("click", e => { if (!e.target.closest(".bellwrap")) $("#panel").hidden = true; }, true);
+// A reply typed for a waiting item replaces that item's choice. It updates its neighbours in place rather
+// than re-rendering, so the Send button you reach for next is not swapped out under the click.
+document.addEventListener("input", e => {
+  const el = e.target;
+  if (!el.matches("input.reply[data-answer]")) return;
+  const p = (S.plans || []).find(x => x.sessionId === el.dataset.answer), items = p ? waitingItems(p.waiting).items : [];
+  const it = items[+el.dataset.item];
+  if (!it) return;
+  const k = `${p.sessionId}|${it.title}`;
+  if (el.value.trim()) answers.set(k, {kind: "text", value: el.value.trim()}); else if (answers.get(k)?.kind === "text") answers.delete(k);
+  if (el.value.trim()) for (const b of el.parentElement.querySelectorAll("button.choice")) b.classList.remove("on");
+  const n = items.filter(x => answers.has(`${p.sessionId}|${x.title}`)).length, send = el.closest(".ask")?.querySelector("[data-sendanswers]");
+  if (send) { send.disabled = !n || !(p.live && p.pilot); send.textContent = `Send ${n || ""} answer${n === 1 ? "" : "s"} to the pilot`; }
+  sentNote.delete(p.sessionId);
+});
 window.addEventListener("hashchange", render);
 setInterval(render, 30000);        // only the "5m ago" texts move between states
 render();

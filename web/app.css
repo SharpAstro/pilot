@@ -117,6 +117,23 @@ nav a.on { background: var(--page); color: var(--ink); font-weight: 600; box-sha
 .plan .pilotnow b { color: var(--ink); }
 .plan td .doing { max-width: 300px; margin-top: 3px; }
 .plan .ask > .md { margin-top: 6px; }
+/* answering the pilot: one row of choices per waiting item, then Send */
+.plan .ask ol.items { margin: 8px 0 0; padding-left: 22px; }
+.plan .ask ol.items li { margin: 0 0 10px; }
+.plan .ask .choices { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+.plan .ask button.choice { font-size: 12px; padding: 3px 9px; border-radius: 999px; }
+.plan .ask button.choice.rec { border-color: var(--warn); }
+.plan .ask button.choice.on { background: var(--warn); border-color: var(--warn); color: #000; }
+.plan .ask input.reply { flex: 1; min-width: 220px; font: inherit; font-size: 12px; padding: 4px 8px; border-radius: 6px;
+  border: 1px solid var(--hair); background: var(--surface); color: var(--ink); }
+.plan .ask .sendrow { display: flex; gap: 10px; align-items: center; margin-top: 4px; }
+/* the intercom: one line to message live sessions */
+.bcast { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.bcast textarea { flex: 1; min-width: 280px; font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 6px; resize: vertical;
+  border: 1px solid var(--hair); background: var(--page); color: var(--ink); }
+.bcast select { font: inherit; font-size: 12px; padding: 5px 6px; border-radius: 6px; border: 1px solid var(--hair); background: var(--page); color: var(--ink); max-width: 320px; }
+.bcast .s-bnote { flex-basis: 100%; }
+.bcast .s-bnote:empty { display: none; }
 .plan details.lastsaid { margin: 8px 0 4px; }
 .plan details.lastsaid > summary { color: var(--ink); font-weight: 600; }
 .plan details > .md { margin-top: 6px; padding: 8px 12px; border-left: 2px solid var(--hair); }

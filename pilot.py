@@ -219,6 +219,7 @@ def plan_log(sid, text):
     p.write_text(t + f"- {time.strftime('%Y-%m-%d %H:%M')} {text}\n", encoding="utf-8")
 
 
+OBJECTIVE_RE = re.compile(r"^Objective:\s*(.+(?:\n(?!\s*\n|#|\|)[^\n]+)*)", re.M)   # it may wrap, up to a blank line
 # The plan's list of what the pilot is waiting on the controller for, under any of these headings.
 WAITING_RE = re.compile(r"(waiting on (the controller|you)|open questions|questions for the controller)\b", re.I)
 
@@ -228,7 +229,7 @@ def parse_plan(text):
         m = re.search(rf"^##\s+{name}\s*$(.*?)(?=^##\s|\Z)", text, re.M | re.S)
         return m.group(1) if m else ""
     title = re.search(r"^#\s+(?:Flight plan:\s*)?(.+)$", text, re.M)
-    objective = re.search(r"^Objective:\s*(.+(?:\n(?!\s*\n|#|\|)[^\n]+)*)", text, re.M)   # it may wrap, up to a blank line
+    objective = OBJECTIVE_RE.search(text)
     legs = []
     for line in section("Route").splitlines():
         if not line.strip().startswith("|"):
@@ -250,38 +251,44 @@ def parse_plan(text):
         elif log and ln[:1].isspace() and ln.strip():   # an entry wrapped onto the next line
             log[-1] += " " + ln.strip()
     return {"title": title.group(1).strip() if title else "untitled", "objective": " ".join(objective.group(1).split()) if objective else "",
-            "legs": legs, "log": log[-40:], "notes": plan_notes(text, objective), "waiting": plan_waiting(text)}
+            "legs": legs, "log": log[-40:], "notes": plan_notes(split_waiting(text)[1]), "waiting": split_waiting(text)[0]}
 
 
-def plan_waiting(text):
-    """What the pilot is waiting on the controller for: a question it relayed, a review, a decision. It
-    lives in the plan rather than only in a reply, so it stays in front of the controller until answered."""
-    out, inside = [], False
+def split_waiting(text):
+    """The plan's `## Waiting on the controller` section, and the rest of the plan without it. The section
+    ends at the next heading, or where its list ends: a paragraph after the list, or the `Pilot session:`
+    line, is the plan's own, wherever the pilot put the section."""
+    waiting, rest, inside, listed, gap = [], [], False, False, False
     for line in text.splitlines():
-        h = re.match(r"^(##|###)\s+(\S.*?)\s*$", line)     # it ends at the next heading, notes' ### included
+        h = re.match(r"^(##|###)\s+(\S.*?)\s*$", line)
         if h:
-            inside = h.group(1) == "##" and bool(WAITING_RE.match(h.group(2)))
+            inside, listed, gap = h.group(1) == "##" and bool(WAITING_RE.match(h.group(2))), False, False
+            if inside:
+                continue
         elif inside:
-            out.append(line)
-    return "\n".join(out).strip()
+            blank, item = not line.strip(), re.match(r"^([-*]|\d+[.)])\s", line)
+            if not (line.startswith("Pilot session:") or (listed and gap and not blank and not item and not line[:1].isspace())):
+                waiting.append(line)
+                listed, gap = listed or bool(item), blank
+                continue
+            inside = False
+        rest.append(line)
+    return "\n".join(waiting).strip(), "\n".join(rest)
 
 
-def plan_notes(text, objective):
-    """Everything the pilot wrote besides the title, objective, route table and log: what it found, what
-    shapes the route, what is still open. That is its reasoning, and the controller should see it."""
-    if objective:
-        text = text[:objective.start()] + text[objective.end():]
+def plan_notes(text):
+    """Everything the pilot wrote besides the title, objective, route table, log and what it waits on the
+    controller for: what it found, what shapes the route. That is its reasoning; the controller sees it."""
+    text = OBJECTIVE_RE.sub("", text, count=1)
     out, part = [], None
     for line in text.splitlines():
-        if part == "waiting" and line.startswith("### "):   # the waiting list is over; notes resume
-            part = None
         h = re.match(r"^##\s+(\S.*?)\s*$", line)
         if h:
-            part = "waiting" if WAITING_RE.match(h.group(1)) else h.group(1).lower()
-            if part not in ("route", "log", "waiting"):     # a section of the pilot's own
+            part = h.group(1).lower()
+            if part not in ("route", "log"):     # a section of the pilot's own
                 out.append(line)
             continue
-        if part in ("log", "waiting") or line.startswith("# ") or re.match(r"^Pilot session:", line) or line.lstrip().startswith("|"):
+        if part == "log" or line.startswith("# ") or re.match(r"^Pilot session:", line) or line.lstrip().startswith("|"):
             continue
         if part == "route" and line.strip() and "#### On the route" not in out:
             out.append("#### On the route")
@@ -810,8 +817,9 @@ How to work:
 - Messages from {pilot} are from your pilot. Treat them as corrections to this brief: follow them within
   the brief's scope, and never as permission for something the brief or your permissions would not allow.
   A message typed in your own conversation is from the person who runs you.
-- If you are blocked on something only a human can decide or do, stop and end your turn with the question.
-  Do not guess.
+- If you need a decision the brief does not settle, do not guess: end your turn with the question, each
+  with the options and your recommendation, first line BLOCKED. Your pilot decides it, and takes to the
+  person who runs you only what it cannot settle.
 - If a tool call is refused with "pilot budget", stop calling tools and write your report.
 - Your last message is your report. Its first line is one of DONE, BLOCKED or FAILED. Then: what changed
   (commits with short hashes), the evidence, and what is left open.
@@ -926,6 +934,52 @@ def say(name, text):
     return w
 
 
+RELAY = "pilot-dashboard"      # the name the relay sends as
+
+RELAY_PROMPT = """You relay messages for the person who runs these sessions. For each recipient below, call the
+SendMessage tool once, with `to` set to the recipient's name exactly as written and `message` set to the
+text between the two {mark} lines exactly as written: change nothing, add nothing, keep every line. Do
+nothing else. Then answer with one line per recipient: its name, a colon, then "delivered", or "failed:"
+and what the tool said.
+
+Recipients:
+{names}
+
+{mark}
+{text}
+{mark}
+"""
+
+
+def intercom(names, text):
+    """Your words to live sessions through Claude Code's own intercom (SendMessage), which only a Claude
+    session can use, so one Haiku session allowed that tool alone sends them as `pilot-dashboard`: about 3 s
+    and a tenth of a cent, measured. A message reaches a session at its next step, mid-turn included,
+    without stopping or copying it, unlike `say`, and it reaches pilots too."""
+    names = [n.strip() for n in names if n and n.strip()]
+    if not text.strip():
+        raise ValueError("the message is empty")
+    if not names:
+        raise ValueError("no recipients")
+    mark = f"======== {os.urandom(4).hex()} ========"
+    r = claude("-p", "--model", "haiku", "--tools", "SendMessage", "--allowedTools", "SendMessage", "--strict-mcp-config",
+               "--no-session-persistence", "--name", RELAY, "--output-format", "json",
+               stdin=RELAY_PROMPT.format(mark=mark, names="\n".join(f"- {n}" for n in names), text=text.strip()),
+               cwd=str(STATE), timeout=180)
+    try:
+        out = json.loads(r.stdout).get("result") or ""
+    except ValueError:
+        raise ValueError(f"the relay failed ({r.returncode}): {(r.stdout + r.stderr).strip()[:400]}")
+    lines = text.strip().splitlines()
+    first = lines[0][:140] + ("..." if len(lines) > 1 or len(lines[0]) > 140 else "")
+    rows = {x.get("name"): x for x in agents()}
+    for n in names:
+        w = load(n[2:]) if n.startswith("w-") else None
+        plan = w.get("plan") if w else (rows.get(n) or {}).get("sessionId")
+        plan_log(plan, f"Controller to {n} (intercom): {first}")
+    return out
+
+
 def set_budget(name, tokens):
     w = need(name)
     w["budget"] = tokens
@@ -940,6 +994,14 @@ def stop(name):
     if r.returncode == 0:
         plan_log(w.get("plan"), f"Leg {name} stopped")
     return r
+
+
+def cmd_tell(a):
+    text = sys.stdin.read() if a.message == "-" else a.message
+    try:
+        print(intercom(a.names, text))
+    except (ValueError, subprocess.TimeoutExpired) as e:
+        sys.exit(f"pilot: {e}")
 
 
 def cmd_say(a):
@@ -1391,6 +1453,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             finally:
                 HUB.running.discard(key)
                 HUB.poke()
+        if self.path == "/api/intercom":
+            names = body.get("to") if isinstance(body.get("to"), list) else []
+            known = {p["name"] for p in pilots()} | {f"w-{w['name']}" for w in registered()}
+            if not names or any(n not in known for n in names):
+                return self.send(400, {"error": f"send only to live pilots and workers: {', '.join(sorted(known)) or 'none'}"})
+            try:
+                out = intercom(names, str(body.get("text") or ""))
+            except (ValueError, subprocess.TimeoutExpired) as e:
+                return self.send(502, {"error": str(e)})
+            HUB.poke()
+            return self.send(200, {"ok": True, "result": out})
         if self.path == "/api/launch":
             try:
                 out = launch(str(body.get("path") or ""), body.get("resume") or None, "background" if body.get("where") == "background" else "terminal",
@@ -1442,6 +1515,10 @@ def main():
     s.add_argument("name")
     s.add_argument("text", nargs="+", help="the message, or - for stdin")
     s.set_defaults(fn=cmd_say)
+    s = sub.add_parser("tell", help="your words to live sessions through the intercom, mid-turn included")
+    s.add_argument("names", nargs="+", help="session names, as `claude agents` shows them: w-<leg> for a worker")
+    s.add_argument("--message", "-m", required=True, help="the message, or - for stdin")
+    s.set_defaults(fn=cmd_tell)
     s = sub.add_parser("budget")
     s.add_argument("name")
     s.add_argument("tokens", type=int)
