@@ -464,8 +464,24 @@ def user_text(c, ev, queued=False):
     elif "<task-notification>" in c:
         m = re.search(r"<summary>(.*?)</summary>", c, re.S)
         ev("notice", text=(m.group(1) if m else re.sub(r"<[^>]+>", " ", c)).strip()[:2000])
+    elif "<bash-input>" in c:                          # a `!` command the user ran in the session
+        ev("shell", text=tagged(c, "bash-input")[:4000])
+    elif "<bash-stdout>" in c or "<bash-stderr>" in c:
+        out = re.sub(r"</?persisted-output>", "", tagged(c, "bash-stdout")).strip()
+        ev("shellout", text=out[:20000], err=tagged(c, "bash-stderr").strip()[:8000])
+    elif "<command-name>" in c:                        # a slash command, with what was typed after it
+        ev("command", text=f"{tagged(c, 'command-name')} {tagged(c, 'command-args')}".strip()[:4000])
+    elif "<local-command-stdout>" in c or "<local-command-stderr>" in c:
+        ev("shellout", text=tagged(c, "local-command-stdout").strip()[:20000], err=tagged(c, "local-command-stderr").strip()[:8000])
+    elif "<local-command-caveat>" in c:                # Claude Code's note to the model about the two above
+        return
     else:
         ev("prompt", text=c[:20000], **({"queued": True} if queued else {}))
+
+
+def tagged(c, name):
+    m = re.search(rf"<{name}>(.*?)</{name}>", c, re.S)
+    return m.group(1) if m else ""
 
 
 def events_of(e):
@@ -504,7 +520,7 @@ def events_of(e):
                 ev("result", id=b.get("tool_use_id"), error=bool(b.get("is_error")), denied=denied,
                    agentId=tur.get("agentId"), text=text[:12000])
             elif b.get("type") == "text" and not e.get("isMeta") and b.get("text", "").strip():
-                ev("prompt", text=b["text"][:20000])
+                user_text(b["text"], ev)
     elif t == "attachment":
         a = e.get("attachment") or {}
         if a.get("type") == "queued_command" and (a.get("prompt") or a.get("content")):
@@ -1573,13 +1589,28 @@ def console_io(pid, text="", keys=()):
         if not k32.GetConsoleScreenBufferInfo(hout, ctypes.byref(info)):
             raise OSError(f"cannot read the console of process {pid} (error {ctypes.get_last_error()})")
         width = info.srWindow.Right - info.srWindow.Left + 1
-        buf, got, lines = ctypes.create_unicode_buffer(width + 1), wt.DWORD(), []
+        buf, attrs, got, got2 = ctypes.create_unicode_buffer(width + 1), (wt.WORD * width)(), wt.DWORD(), wt.DWORD()
+        lines, rows = [], []
         for y in range(info.srWindow.Top, info.srWindow.Bottom + 1):
-            k32.ReadConsoleOutputCharacterW(hout, buf, width, COORD(info.srWindow.Left, y), ctypes.byref(got))
-            lines.append(buf.value[:got.value].rstrip())
+            at = COORD(info.srWindow.Left, y)
+            k32.ReadConsoleOutputCharacterW(hout, buf, width, at, ctypes.byref(got))
+            k32.ReadConsoleOutputAttribute(hout, attrs, width, at, ctypes.byref(got2))
+            chars = buf[:got.value]
+            colours = [a & 0xFF for a in attrs[:got.value]] + [7] * max(0, got.value - got2.value)
+            while chars and chars[-1] == " " and colours[len(chars) - 1] >> 4 == 0:   # trailing blanks on no background
+                chars = chars[:-1]
+            runs = []                                # [text, colour]: the console's 16 colours, low nibble ink, high paper
+            for ch, a in zip(chars, colours):
+                if runs and runs[-1][1] == a:
+                    runs[-1][0] += ch
+                else:
+                    runs.append([ch, a])
+            lines.append(chars)
+            rows.append(runs)
         while lines and not lines[-1]:
             lines.pop()
-        return {"title": title.value, "lines": lines, "typed": len(strokes)}
+            rows.pop()
+        return {"title": title.value, "lines": lines, "rows": rows, "typed": len(strokes)}
     finally:
         for h in handles:
             k32.CloseHandle(wt.HANDLE(h))

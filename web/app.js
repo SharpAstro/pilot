@@ -89,6 +89,55 @@ function md(src, soft) {
   return `<div class="md">${out.join("")}</div>`;
 }
 
+// ------------------------------------------------------------------ terminal colours
+
+// ANSI escapes in tool and shell output become colour: bold, dim, italic, underline, and 16, 256 and 24-bit
+// colours. Other escapes (cursor moves, erases, OSC titles and links) are dropped.
+const ANSI16 = ["#1e1e1e", "#cd3131", "#0dbc79", "#c8b400", "#2472c8", "#bc3fbc", "#11a8cd", "#cccccc",
+                "#767676", "#f14c4c", "#23d18b", "#e5e510", "#3b8eea", "#d670d6", "#29b8db", "#ffffff"];
+function ansi256(n) {
+  if (n < 16) return ANSI16[n];
+  if (n >= 232) { const v = 8 + (n - 232) * 10; return `rgb(${v},${v},${v})`; }
+  n -= 16;
+  return `rgb(${[Math.floor(n / 36), Math.floor(n / 6) % 6, n % 6].map(x => x ? 55 + x * 40 : 0)})`;
+}
+function ansi(src) {
+  const s = String(src ?? "").replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, "").replace(/\x1b\[[0-9;?]*[A-Za-ln-z]/g, "");
+  if (!s.includes("\x1b[")) return esc(s);
+  const parts = s.split(/\x1b\[([0-9;]*)m/);
+  let out = "", st = {}, open = false;
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 0) { out += esc(parts[i]); continue; }
+    const codes = parts[i] === "" ? [0] : parts[i].split(";").map(Number);
+    for (let j = 0; j < codes.length; j++) {
+      const c = codes[j];
+      if (c === 0) st = {};
+      else if (c === 1) st.b = 1; else if (c === 2) st.d = 1; else if (c === 3) st.i = 1; else if (c === 4) st.u = 1;
+      else if (c === 22) { delete st.b; delete st.d; } else if (c === 23) delete st.i; else if (c === 24) delete st.u;
+      else if (c >= 30 && c <= 37) st.fg = ANSI16[c - 30]; else if (c >= 90 && c <= 97) st.fg = ANSI16[c - 82];
+      else if (c >= 40 && c <= 47) st.bg = ANSI16[c - 40]; else if (c >= 100 && c <= 107) st.bg = ANSI16[c - 92];
+      else if (c === 39) delete st.fg; else if (c === 49) delete st.bg;
+      else if ((c === 38 || c === 48) && codes[j + 1] === 5) { st[c === 38 ? "fg" : "bg"] = ansi256(codes[j + 2]); j += 2; }
+      else if ((c === 38 || c === 48) && codes[j + 1] === 2) { st[c === 38 ? "fg" : "bg"] = `rgb(${codes.slice(j + 2, j + 5)})`; j += 4; }
+    }
+    if (open) out += "</span>";
+    const css = [st.fg && `color:${st.fg}`, st.bg && `background:${st.bg}`, st.b && "font-weight:700", st.d && "opacity:.7",
+                 st.i && "font-style:italic", st.u && "text-decoration:underline"].filter(Boolean).join(";");
+    open = !!css;
+    if (open) out += `<span style="${css}">`;
+  }
+  return out + (open ? "</span>" : "");
+}
+
+// A console screen's runs, [text, colour]: the low nibble is the ink, the high the paper, with the console's
+// bit order (1 blue, 2 green, 4 red, 8 bright) against ANSI's (1 red, 2 green, 4 blue). Light grey on black,
+// the console's default, takes the page's own colours.
+const conColour = i => ANSI16[((i & 1) << 2) | (i & 2) | ((i & 4) >> 2) | (i & 8)];
+const screenHtml = rows => rows.map(row => row.map(([text, a]) => {
+  const ink = a & 15, paper = a >> 4, css = [ink !== 7 && `color:${conColour(ink)}`, paper && `background:${conColour(paper)}`].filter(Boolean).join(";");
+  return css ? `<span style="${css}">${esc(text)}</span>` : esc(text);
+}).join("")).join("\n");
+
 // ------------------------------------------------------------------ shared pieces
 
 function stateOf(w) {
@@ -745,6 +794,15 @@ VIEWS.session = (root, r) => {
       }
       case "message": div.innerHTML = meta(`message from ${ev.sender}`) + `<div class="body">${md(ev.text)}</div>`; return div;
       case "said": div.title = clock(ev.at); div.innerHTML = `<div class="body">${md(ev.text)}</div>`; return div;
+      // `!` commands the user ran in the session, their output, and slash commands, as a terminal shows them.
+      case "shell": div.title = clock(ev.at); div.innerHTML = `<div class="shellline"><span class="bang">!</span>${esc(ev.text)}</div>`; return div;
+      case "command": div.title = clock(ev.at); div.innerHTML = `<div class="shellline cmd">${esc(ev.text)}</div>`; return div;
+      case "shellout": {
+        const text = [ev.text, ev.err && `\x1b[31m${ev.err}\x1b[0m`].filter(Boolean).join("\n"), n = (text.match(/\n/g) || []).length + 1;
+        if (!text) return null;
+        div.innerHTML = n > 14 ? `<details><summary>output · ${n} lines</summary><pre class="out">${ansi(text)}</pre></details>` : `<pre class="out">${ansi(text)}</pre>`;
+        return div;
+      }
       case "result":            // its call came before the backlog began: only a refusal is worth showing alone
         if (!ev.denied) return null;
         div.innerHTML = `<div class="tool"><div class="head"><b>refused</b></div><div class="res error">${result(ev, null)}</div></div>`;
@@ -767,7 +825,7 @@ VIEWS.session = (root, r) => {
         <details><summary>what it said</summary><pre>${esc(ev.text)}</pre></details></div>`;
     }
     const lines = (ev.text.match(/\n/g) || []).length + 1;
-    return `<details><summary>${ev.error ? "error" : "result"} · ${lines} line${lines === 1 ? "" : "s"}</summary><pre>${esc(ev.text)}</pre></details>${sub}`;
+    return `<details><summary>${ev.error ? "error" : "result"} · ${lines} line${lines === 1 ? "" : "s"}</summary><pre>${ansi(ev.text)}</pre></details>${sub}`;
   }
 
   // A pilot's terminal: its screen, read while the card is open, and keystrokes typed into it after a
@@ -781,7 +839,7 @@ VIEWS.session = (root, r) => {
       if (j.error) { put($(".s-tnote", root), `<span style="color:var(--crit)">${esc(j.error)}</span>`); return; }
       put($(".s-ttitle", root), `window title: ${esc(j.title)}`);
       const pre = $(".s-screen", root), stick = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 30;
-      put(pre, esc(j.lines.join("\n")));
+      put(pre, j.rows ? screenHtml(j.rows) : esc(j.lines.join("\n")));
       if (stick) pre.scrollTop = pre.scrollHeight;
     } catch (e) { put($(".s-tnote", root), esc(e.message)); }
   }
@@ -791,7 +849,7 @@ VIEWS.session = (root, r) => {
     put($(".s-tnote", root), "typing…");
     try {
       const j = await post(`/api/console/${termSid}`, {text, keys});
-      put($(".s-screen", root), esc(j.lines.join("\n"))); $(".s-screen", root).scrollTop = 1e9;
+      put($(".s-screen", root), j.rows ? screenHtml(j.rows) : esc(j.lines.join("\n"))); $(".s-screen", root).scrollTop = 1e9;
       put($(".s-tnote", root), `typed ${esc(what)}`);
       $(".s-ttext", root).value = "";
     } catch (e) { put($(".s-tnote", root), `<span style="color:var(--crit)">${esc(e.message)}</span>`); }

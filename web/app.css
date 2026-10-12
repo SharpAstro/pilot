@@ -187,6 +187,14 @@ ul.checklist li.in_progress span:first-child { color: var(--fill); }
 .ev.error .body { color: var(--crit); }
 details > summary { cursor: pointer; color: var(--ink-2); font-size: 12px; }
 details pre { margin: 6px 0 0; max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--page); border: 1px solid var(--hair); border-radius: 6px; padding: 8px 10px; }
+/* `!` commands, slash commands and their output, as a terminal shows them */
+.ev.shell, .ev.command { padding-top: 4px; padding-bottom: 2px; }
+.shellline { font: 13px/1.4 "Cascadia Mono", Consolas, monospace; color: var(--ink); }
+.shellline .bang { color: var(--warn); font-weight: 700; margin-right: 8px; }
+.shellline.cmd { color: var(--fill); }
+.ev.shellout { padding-top: 0; }
+.ev.shellout pre.out { margin: 2px 0 0; max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  font: 12px/1.4 "Cascadia Mono", Consolas, monospace; background: var(--page); border: 1px solid var(--hair); border-radius: 6px; padding: 6px 10px; }
 /* a pilot's terminal: its screen, and a line to type into it */
 .term { margin-top: 12px; }
 .term > summary { color: inherit; font-size: inherit; }
