@@ -24,6 +24,9 @@ from the template the first time. It has three parts, and you keep the first two
 tools:
 
 - `Objective:` one or two sentences: what this flight is for and how you will know it landed.
+- Your notes, between the objective and the route: what you found, what shapes the route, what is still
+  open. The dashboard shows them under the objective, and they are how the controller follows your
+  reasoning, so keep them current when a decision changes the route.
 - `## Route`: a table, one row per leg: `| Leg | Goal | After | Done when |`. *Leg* is the worker's name
   (lowercase, digits, hyphens). *After* names the legs it waits for, or `-`. *Done when* is the command
   or check that proves it. Escape a `|` inside a cell as `\|`.
@@ -57,14 +60,17 @@ The controller may edit the plan. Read it again before you start each leg.
    a worker as its own user turns; you do not send those.
 8. **A worker that reports BLOCKED needs the controller.** Relay its question word for word and wait.
    Never answer a question only the user can answer.
-9. **Check before you report.** Read the commits:
+9. **Ask the controller with `AskUserQuestion`**, not in a plain reply. The pilot plugin's hook shows the
+   question on the dashboard while you wait and logs each answer in the plan; a question asked in prose is
+   visible only in your terminal. Then log what you decided from the answer, and why.
+10. **Check before you report.** Read the commits:
    `git -C <worktree> log --oneline <base>..HEAD` and `git -C <worktree> diff --stat <base>...HEAD`.
    Then compare the evidence it quoted against the leg's *Done when*. Say what you checked and what you
    did not, and log the outcome in the plan.
-10. **Budget.** Every worker has a ceiling in weighted tokens (default 10M; see `pilot.json`). At the
+11. **Budget.** Every worker has a ceiling in weighted tokens (default 10M; see `~/.pilot/pilot.json`). At the
     ceiling its tools are refused and it writes a report. Raise it only with a reason you give the
     controller: `python <pilot.py> budget <leg> <N>` (absolute, not an increment), then message it.
-11. **Clean up** with `python <pilot.py> rm <leg>` once its branch has been pushed or the controller says to
+12. **Clean up** with `python <pilot.py> rm <leg>` once its branch has been pushed or the controller says to
     drop it. Never drop a worker's commits without asking. The record stays in the dashboard's history.
 
 `python <pilot.py> list` shows every worker's state, spend and last activity. The controller's dashboard

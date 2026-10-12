@@ -57,13 +57,13 @@ changed. It asks `claude agents` only when a session file moved, or every 30 s.
 
 | Page | What it shows |
 |---|---|
-| Overview | Each live flight plan with its route and every leg's live status (planned, working, waiting on you, done, failed, removed), the flight log; the radar (legs under their pilot, chained by After, planned legs dashed); a Haiku summary of all workers; every worker with state, spend against budget and what it is doing; the sessions open in a repo's main checkout. |
-| A worker or session | Its whole conversation streaming live: prompts, replies, thinking, every tool call with its input and result, refused calls in red with who refused them (auto mode, a hook, a deny rule, Claude Code) and the command with a copy button; subagent transcripts one click away; its summary; its leg; a message box; a budget control; attach, remote and stop. |
+| Overview | Each flight plan, folded to one line with a tally of its legs once it has landed (click to open; your choice sticks, and a folded plan leaves only its box on the radar): what its pilot is doing (working, idle and following its legs, or waiting on you, with the question it asked and where to answer it), the pilot's notes (what it found, why the route is this shape), the route with every leg's live status (planned, working and its current tool call, waiting on you, done, failed, removed), and the flight log with every question and answer; the radar (legs under their pilot, chained by After, planned legs dashed); a Haiku summary of all workers; every worker with state, spend against budget and what it is doing; the sessions open in a repo's main checkout. |
+| A worker or session | Its whole conversation streaming live, folded as Claude Code's remote view folds it: what it says in full, and each run of tool calls as one line ("Read 5 files, ran 3 commands (1 failed)") that opens to every call with its input and result, a subagent's run named by its task; a live line under it with what it is doing now (Claude Code's own one-line detail) and how long the turn has run; refused calls in red with who refused them (their run opens itself) (auto mode, a hook, a deny rule, Claude Code) and the command with a copy button; subagent transcripts one click away; its summary; its leg; a message box; a budget control; attach, remote and stop. |
 | History | Removed workers with their result, branch, spend, report and commits, and their conversation. |
 | Spend | Weighted tokens per day over 14 days, and the token breakdown per worker. |
 | Launch | Start a pilot in any project from Claude Code's own list, new or resuming one of its sessions. |
 
-The bell collects notices while the dashboard runs: a worker waiting on you, a turn that ended (DONE,
+The bell collects notices while the dashboard runs: a pilot or worker waiting on you, a turn that ended (DONE,
 BLOCKED or FAILED), a budget reached, 30 quiet minutes, an API, login or limit error. **desktop** turns them
 into Windows notifications. A script error shows in a red line at the top of the page.
 
@@ -77,21 +77,32 @@ Code's own project list.
 |---|---|
 | `pilot.py` | everything: the CLI, the budget hook, the dashboard server |
 | `web/` | the dashboard page: `index.html`, `app.js`, `app.css`, no build step |
-| `pilot.json` | the repos workers may start in, the default model and effort (unset: the account's), the default budget |
-| `plugins/pilot/` | the pilot skill, loaded with `--plugin-dir` into the session you want as pilot |
+| `plugins/pilot/` | the pilot skill, loaded with `--plugin-dir` into the session you want as pilot, and the hook that shows its questions on the dashboard and logs your answers in the plan |
 | `plugins/worker/` | the hooks every worker gets: the budget checkpoint, and Sam's five hooks through `hooks/kit.sh` |
+| `~/.pilot/pilot.json` | this machine's settings, kept out of the repo since they name local paths: the repos workers may start in, the default model and effort (unset: the account's), the default budget. Missing, it means no repos and a 10M budget |
 | `%LOCALAPPDATA%/pilot/` | runtime state: `plans/<pilot session>.md`, `workers/`, `archive/`, `briefs/` (the exact prompt sent), `meters/`, `notifications.json`, `summaries.json`, error logs |
-| `<repo>/.claude/worktrees/w-<leg>` | each worker's worktree, branch `worktree-w-<leg>`; bullclip-backend already excludes the folder |
+| `<repo>/.claude/worktrees/w-<leg>` | each worker's worktree, branch `worktree-w-<leg>`; `start` adds the folder to the repo's `.git/info/exclude` |
 | `~/.claude/projects/...` | transcripts, where Claude Code always keeps them; `rm` leaves them, so History can open them |
 
 Nothing is installed into `~/.claude`, and nothing is committed to the repos workers fly in. To add a
-repo, put it in `pilot.json` and open `claude` there once, so its workspace trust is accepted.
+repo, put it in `~/.pilot/pilot.json` and open `claude` there once, so its workspace trust is accepted.
+A worker starts in the repo whose main checkout the pilot runs in; `start` refuses a checkout that is not
+listed, rather than fly the leg somewhere else.
+
+```json
+{
+  "repos": { "bullclip-backend": "C:/Users/<you>/source/repos/drawboard/bullclip-backend" },
+  "model": null,
+  "effort": null,
+  "budget": 10000000
+}
+```
 
 ## Spend
 
 A worker's spend is in **weighted tokens**, `input + 1.25*cache_write + 0.1*cache_read + 5*output`, the
 ratios Sam's hooks use, counted once per message id over all of the worker's sessions and their subagents.
-At its budget (default 10M, see `pilot.json`) every tool but `SendMessage` is refused, and the worker
+At its budget (default 10M, see `~/.pilot/pilot.json`) every tool but `SendMessage` is refused, and the worker
 writes its report: a checkpoint, not a kill. Claude Code writes an assistant message to the transcript
 only after its tool calls are dispatched, so the meter lags by the message in flight: a worker can
 overshoot by one message, never more.
@@ -99,36 +110,16 @@ overshoot by one message, never more.
 A Haiku summary is one `claude -p --model haiku` with no tools, no MCP servers, no settings and no saved
 session: about 4k tokens and 2 s for one worker, measured.
 
-The dashboard shows the account's 5-hour and 7-day windows only if something writes
-`~/.claude/rate-limits.json`, in the shape of Sam's `statusline-cache.snippet.sh`. The status line is the
-only thing Claude Code hands `rate_limits` to, and it renders in background sessions too. In
-`~/.claude/statusline/Program.cs`, right after `long now = ...` in render mode (not applied; it's your
-code):
-
-```csharp
-    // The status line is the only thing handed rate_limits: keep a copy where pilot's dashboard reads it.
-    if (root.TryGetProperty("rate_limits", out var rlCache) && rlCache.ValueKind == JsonValueKind.Object)
-    {
-        try
-        {
-            string dir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR")
-                ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
-            string cachePath = Path.Combine(dir, "rate-limits.json");
-            string tmpPath = $"{cachePath}.{Environment.ProcessId}.tmp";
-            using (var fs = File.Create(tmpPath))
-            using (var w = new Utf8JsonWriter(fs))
-            {
-                w.WriteStartObject();
-                w.WritePropertyName("rate_limits");
-                rlCache.WriteTo(w);
-                w.WriteNumber("written_at", now);
-                w.WriteEndObject();
-            }
-            File.Move(tmpPath, cachePath, overwrite: true);
-        }
-        catch { }
-    }
-```
+**Account usage.** The status line is the only thing Claude Code hands `rate_limits` to, and it renders
+in background sessions too, so `~/.claude/statusline/Program.cs` keeps a copy: `CacheRateLimits` writes
+`~/.claude/rate-limits.json` (the figures plus `written_at`) when they change or the copy is a minute
+old, through a temp file so a reader never sees half of it. `./update.sh` there rebuilds it and syncs its
+gist. The top bar reads that file and draws it by the status line's own rules, so the two never disagree:
+peak or off-peak with a countdown (peak is weekdays 13:00-19:00 UTC); each window's used share and reset;
+and a burn projection with its gauge, `▰▱▱` runs dry before the reset, `▰▰▱` only just makes it, `▰▰▰`
+comfortable. The 5-hour window projects on the wall clock, the 7-day one over working hours only (07:30 to
+21:00 local), and the 5-hour one goes hot pink when it runs dry within 15 minutes with the reset further off
+than that. Figures more than 15 minutes old say when they were read; hover any of them for the sentence.
 
 ## Why it is built this way: measured on Windows 11, Claude Code 2.1.296
 
@@ -165,6 +156,11 @@ Traps found on the way:
 - **Idle notices reach the pilot between its turns, not during one.** Three notices for workers that went
   idle mid-turn all arrived together once the turn ended, and started a new turn. So the pilot starts its
   workers, subscribes, and ends its turn; each notice wakes it.
+- **A question the pilot is asking is not in its transcript until you answer it.** Claude Code writes the
+  assistant message holding an `AskUserQuestion` only once the tool returns, and `claude agents` says no more
+  than `status: waiting`, `waitingFor: input needed`. So the pilot plugin hooks `AskUserQuestion`: before it
+  is asked the questions go to `asks/<session>.json` and the plan's log, and once answered the file goes and
+  the answers go to the log. A pilot started before the hook existed shows only that it is waiting.
 - **Windows Terminal splits its command line on `;`.** A launch command with the first message inline broke
   in two ("error 0x80070002 when launching ..."). Launch passes the message in a file and escapes `;`.
 - **Headless Edge captures before the page's fetches land** when an event stream is open, whatever
@@ -203,10 +199,9 @@ Traps found on the way:
 
 ## Not done yet
 
-- No rate-limit figures until the status line writes the cache (above).
 - A worker mid-turn, or waiting on a permission prompt, cannot be messaged from the dashboard: stopping it
   would cut the turn off. Use **remote** or `claude attach`.
 - The flight plan is tied one to one to a pilot session id. Claude Code's help says an interactive
   `--resume` reuses the id unless `--fork-session` is given, so `pilot --resume` should find its plan again;
   not tested yet, and a background resume did fork. `pilot plan --session <old id>` reopens a plan by hand.
-- Every worker gets the same model (the account's default unless `pilot.json` or `--model` says otherwise).
+- Every worker gets the same model (the account's default unless `~/.pilot/pilot.json` or `--model` says otherwise).

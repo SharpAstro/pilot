@@ -49,13 +49,14 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 WEB = HERE / "web"
-CONFIG = HERE / "pilot.json"
+CONFIG = Path.home() / ".pilot" / "pilot.json"   # this machine's repos and defaults: local paths, so not in the repo
 STATE = Path(os.environ.get("PILOT_STATE") or Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".local/state") / "pilot")
 WORKERS = STATE / "workers"
 ARCHIVE = STATE / "archive"
 BRIEFS = STATE / "briefs"
 METERS = STATE / "meters"
 PLANS = STATE / "plans"
+ASKS = STATE / "asks"                       # the question a pilot is waiting on you for, by session id
 NOTICES = STATE / "notifications.json"
 SUMMARIES = STATE / "summaries.json"
 PROFILE = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
@@ -64,7 +65,8 @@ QUIET_SECONDS = 30 * 60
 
 
 def config():
-    return json.loads(CONFIG.read_text(encoding="utf-8"))
+    cfg = json.loads(CONFIG.read_text(encoding="utf-8")) if CONFIG.exists() else {}
+    return {"repos": {}, "model": None, "effort": None, "budget": 10_000_000, **cfg}
 
 
 def read_json(path, default=None):
@@ -222,7 +224,7 @@ def parse_plan(text):
         m = re.search(rf"^##\s+{name}\s*$(.*?)(?=^##\s|\Z)", text, re.M | re.S)
         return m.group(1) if m else ""
     title = re.search(r"^#\s+(?:Flight plan:\s*)?(.+)$", text, re.M)
-    objective = re.search(r"^Objective:\s*(.+)$", text, re.M)
+    objective = re.search(r"^Objective:\s*(.+(?:\n(?!\s*\n|#|\|)[^\n]+)*)", text, re.M)   # it may wrap, up to a blank line
     legs = []
     for line in section("Route").splitlines():
         if not line.strip().startswith("|"):
@@ -237,22 +239,52 @@ def parse_plan(text):
         name = re.sub(r"[`*]", "", cells[0]).strip()
         after = [a for a in (x.strip(" `*") for x in re.split(r"[,;\s]+", cells[2])) if a and a not in ("-", "none")]
         legs.append({"leg": name, "goal": cells[1], "after": after, "doneWhen": cells[3]})
-    log = [ln[2:].strip() for ln in section("Log").splitlines() if ln.startswith("- ")]
-    return {"title": title.group(1).strip() if title else "untitled", "objective": objective.group(1).strip() if objective else "",
-            "legs": legs, "log": log[-40:]}
+    log = []
+    for ln in section("Log").splitlines():
+        if ln.startswith("- "):
+            log.append(ln[2:].strip())
+        elif log and ln[:1].isspace() and ln.strip():   # an entry wrapped onto the next line
+            log[-1] += " " + ln.strip()
+    return {"title": title.group(1).strip() if title else "untitled", "objective": " ".join(objective.group(1).split()) if objective else "",
+            "legs": legs, "log": log[-40:], "notes": plan_notes(text, objective)}
 
 
-def plans_view(rows, workers):
-    """Flight plans whose pilot is live, or that a current worker flies a leg of, or touched this week."""
+def plan_notes(text, objective):
+    """Everything the pilot wrote besides the title, objective, route table and log: what it found, what
+    shapes the route, what is still open. That is its reasoning, and the controller should see it."""
+    if objective:
+        text = text[:objective.start()] + text[objective.end():]
+    out, part = [], None
+    for line in text.splitlines():
+        h = re.match(r"^##\s+(\S.*?)\s*$", line)
+        if h:
+            part = h.group(1).lower()
+            if part not in ("route", "log"):     # a section of the pilot's own
+                out.append(line)
+            continue
+        if part == "log" or line.startswith("# ") or re.match(r"^Pilot session:", line) or line.lstrip().startswith("|"):
+            continue
+        if part == "route" and line.strip() and "#### On the route" not in out:
+            out.append("#### On the route")
+        out.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+
+
+def plans_view(rows, workers, seen=None):
+    """Flight plans whose pilot is live, or that a current worker flies a leg of, or touched this week. A live
+    pilot comes with what it is doing (session_view), reusing `seen`, the pilots already looked at."""
     live = {r.get("sessionId"): r for r in rows if r.get("pid")}
     flown = {w.get("plan") for w in workers if w.get("plan")}
+    seen = seen or {}
     out = []
     for p in sorted(PLANS.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
         sid, mtime = p.stem, p.stat().st_mtime
         if sid not in live and sid not in flown and time.time() - mtime > 7 * 86400:
             continue
         out.append({"sessionId": sid, "path": str(p), "updated": mtime, "live": sid in live,
-                    "pilot": (live.get(sid) or {}).get("name"), **parse_plan(p.read_text(encoding="utf-8"))})
+                    "pilot": (live.get(sid) or {}).get("name"),
+                    "pilotState": (seen.get(sid) or session_view(live[sid])) if sid in live else None,
+                    **parse_plan(p.read_text(encoding="utf-8"))})
     return out[:10]
 
 
@@ -476,6 +508,12 @@ def subagents(session_id):
 
 # --------------------------------------------------------------------------- status
 
+def doing_now(ev):
+    """The last tool call or reply among a session's events: what it is doing, or did last."""
+    return next(({k: (str(v)[:300] if k == "text" else v) for k, v in e.items() if k != "input"}
+                 for e in reversed(ev) if e["kind"] in ("tool", "said")), None)
+
+
 def worker_status(w, rows=None):
     rows = agents() if rows is None else rows
     row = next((r for r in rows if r.get("id") == w["id"] or r.get("sessionId") == w.get("sessionId")), None)
@@ -489,8 +527,7 @@ def worker_status(w, rows=None):
     if path:
         last = max([path.stat().st_mtime] + [p.stat().st_mtime for p in subagent_files(sid)])
     ev = tail_events(sid, n=60) if sid else []
-    now = next(({k: (str(v)[:300] if k == "text" else v) for k, v in e.items() if k != "input"}
-                for e in reversed(ev) if e["kind"] in ("tool", "said")), None)
+    now = doing_now(ev)
     said = [e for e in ev if e["kind"] == "said"]
     tail = [e for e in ev if e["kind"] in ("said", "error")]
     rec = session_record(row.get("pid")) if row and row.get("pid") else {}
@@ -517,14 +554,28 @@ def pilots(rows=None):
     out = []
     for r in rows:
         if r.get("pid") and any(same_path(r.get("cwd"), root) for root in roots) and r.get("state") != "done":
-            rec = session_record(r["pid"])
             path = transcript(r["sessionId"])
             out.append({"name": r.get("name"), "id": r.get("id"), "sessionId": r.get("sessionId"), "kind": r.get("kind"),
-                        "busy": r.get("status") == "busy", "spend": spend([r["sessionId"]]),
-                        "rev": path.stat().st_size if path else 0,
-                        "lastActivity": path.stat().st_mtime if path else None,
-                        "remote": f"https://claude.ai/code/{rec['bridgeSessionId']}" if rec.get("bridgeSessionId") else None})
+                        "spend": spend([r["sessionId"]]), "rev": path.stat().st_size if path else 0,
+                        "lastActivity": path.stat().st_mtime if path else None, **session_view(r)})
     return out
+
+
+def session_view(r):
+    """What a live session is doing, from its `claude agents` row: Claude Code's own status (busy, idle, or
+    waiting on you, for what and since when), its last tool call or reply, and the question it is asking.
+    Claude Code writes a pending AskUserQuestion to the transcript only once it is answered, so the question
+    comes from the pilot plugin's hook (cmd_hook_ask), and only while the session still waits on it."""
+    sid, rec = r.get("sessionId"), session_record(r.get("pid"))
+    status = r.get("status") or rec.get("status")
+    since = (rec.get("statusUpdatedAt") or 0) / 1000 or None
+    ask = read_json(ASKS / f"{sid}.json") if status == "waiting" and sid else None
+    if ask and since and ask.get("at", 0) < since - 60:       # asked before this wait began: a cancelled question
+        ask = None
+    now = doing_now(tail_events(sid, n=60) if sid else [])
+    return {"status": status, "busy": status == "busy", "waitingFor": r.get("waitingFor") or rec.get("waitingFor"),
+            "since": since, "now": now, "ask": ask,
+            "remote": f"https://claude.ai/code/{rec['bridgeSessionId']}" if rec.get("bridgeSessionId") else None}
 
 
 def limits():
@@ -542,8 +593,9 @@ def snapshot():
         h["final"] = {**(a.get("final") or {}), "report": ((a.get("final") or {}).get("report") or "")[:3000]}
         history.append(h)
     workers = [worker_status(w, rows) for w in registered()]
-    return {"workers": workers, "pilots": pilots(rows), "limits": limits(), "history": history,
-            "plans": plans_view(rows, workers)}
+    ps = pilots(rows)
+    return {"workers": workers, "pilots": ps, "limits": limits(), "history": history,
+            "plans": plans_view(rows, workers, {p["sessionId"]: p for p in ps})}
 
 
 def fingerprint(session_ids):
@@ -563,7 +615,7 @@ def fingerprint(session_ids):
         return tuple(out)
     sessions = [*PROFILE.glob("sessions/*.json"), *PROFILE.glob("jobs/*/state.json"), PROFILE / "daemon" / "roster.json",
                 *WORKERS.glob("*.json"), *ARCHIVE.glob("*.json")]
-    content = [PROFILE / "rate-limits.json", SUMMARIES, *PLANS.glob("*.md")]
+    content = [PROFILE / "rate-limits.json", SUMMARIES, *PLANS.glob("*.md"), *ASKS.glob("*.json")]
     for sid in session_ids:
         main = transcript(sid)
         if main:
@@ -576,7 +628,8 @@ def fingerprint(session_ids):
 class Notices:
     """The notices that pile up while the dashboard runs, kept in <state>/notifications.json: a worker
     waiting on you, a turn ended (DONE, BLOCKED or FAILED), a worker over budget, quiet for 30 minutes, or
-    dead on an API, login or limit error. The first look at a worker records it without a notice."""
+    dead on an API, login or limit error, and a pilot waiting on you. The first look at a session records it
+    without a notice."""
 
     def __init__(self):
         d = read_json(NOTICES, {})
@@ -588,9 +641,9 @@ class Notices:
     def update(self, snap):
         first, seen, now, new = self.seen is None, self.seen or {}, time.time(), []
 
-        def add(kind, w, text):
+        def add(kind, w, text, href=None):
             new.append({"id": f"{int(now * 1000)}-{len(new)}", "at": now, "kind": kind, "worker": w["name"],
-                        "sessionId": w.get("sessionId"), "text": text, "read": False})
+                        "sessionId": w.get("sessionId"), "text": text, "read": False, "href": href})
         for w in snap["workers"]:
             prev, st = seen.get(w["name"]), w["state"]
             quiet = st == "working" and bool(w["lastActivity"]) and now - w["lastActivity"] > QUIET_SECONDS
@@ -611,6 +664,13 @@ class Notices:
                     add("died", w, f"{w['name']} is gone")
             seen[w["name"]] = {"state": st, "over": w["overBudget"], "quiet": quiet, "err": w.get("lastError"),
                                "sid": w.get("sessionId")}
+        for p in snap["pilots"]:
+            key = "pilot:" + p["sessionId"]
+            if seen.get(key) is not None and p["status"] == "waiting" and seen[key].get("state") != "waiting":
+                q = next(iter((p.get("ask") or {}).get("questions") or []), {})
+                add("waiting", p, f"pilot {p['name']} is waiting on you: {q.get('question') or p.get('waitingFor') or 'input'}",
+                    href=f"#/s/{p['sessionId']}")
+            seen[key] = {"state": p["status"]}
         with self.lock:
             self.seen = seen
             if new or first:
@@ -764,10 +824,20 @@ def cmd_start(a):
     for dep in a.after or []:
         if not load(dep):
             sys.exit(f"pilot: --after {dep}: no worker of that name")
-    repo = a.repo or next(iter(cfg["repos"]))
+    # The pilot runs in its repo's main checkout, so that is where its workers start. Falling back to the first
+    # configured repo would quietly fly a leg in somebody else's repo.
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
+    repo = a.repo or next((k for k, v in cfg["repos"].items() if same_path(v, top)), None)
+    if not repo:
+        sys.exit(f"pilot: {top or os.getcwd()} is not in {CONFIG} (it knows {', '.join(cfg['repos']) or 'none'}); add it, or pass --repo")
     root = cfg["repos"].get(repo)
     if not root or not Path(root, ".git").exists():
-        sys.exit(f"pilot: unknown repo {repo}; pilot.json knows {', '.join(cfg['repos'])}")
+        sys.exit(f"pilot: unknown repo {repo}; {CONFIG} knows {', '.join(cfg['repos']) or 'none'}")
+    exclude = Path(root, ".git", "info", "exclude")    # keep the workers' worktrees out of the user's `git status`
+    if Path(root, ".git").is_dir() and ".claude/worktrees/" not in (exclude.read_text(encoding="utf-8") if exclude.exists() else ""):
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        with exclude.open("a", encoding="utf-8") as f:
+            f.write("\n.claude/worktrees/\n")
     brief = sys.stdin.read() if a.brief == "-" else Path(a.brief).read_text(encoding="utf-8")
     if not brief.strip():
         sys.exit("pilot: the brief is empty")
@@ -964,9 +1034,43 @@ def cmd_hook_budget(_a):
                 "checkpoint, not a failure. Stop calling tools. Write your report as your final message: where you "
                 "got to, what remains, and what you think you still need. The pilot can raise the budget and resume you.")}}))
     except Exception:
-        STATE.mkdir(parents=True, exist_ok=True)
-        with open(STATE / "hook-errors.log", "a", encoding="utf-8") as f:
-            f.write(f"--- {time.strftime('%Y-%m-%dT%H:%M:%S')}\n{traceback.format_exc()}")
+        hook_error()
+
+
+def hook_error():
+    STATE.mkdir(parents=True, exist_ok=True)
+    with open(STATE / "hook-errors.log", "a", encoding="utf-8") as f:
+        f.write(f"--- {time.strftime('%Y-%m-%dT%H:%M:%S')}\n{traceback.format_exc()}")
+
+
+def cmd_hook_ask(_a):
+    """PreToolUse and PostToolUse on AskUserQuestion, in the pilot plugin. Claude Code writes a question to
+    the transcript only once it is answered, so while the pilot waits on the controller nothing the dashboard
+    reads says what for. Before it is asked, the questions go to <state>/asks/<session>.json, which the plan
+    card shows while the pilot waits, and to the plan's log; once answered, the file goes and the answers go
+    to the log, so the plan keeps every decision the controller made. It never refuses anything."""
+    try:
+        p = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+        sid = p.get("session_id")
+        if not sid:
+            return
+        one = lambda s: " ".join(str(s or "").split())
+        f = ASKS / f"{sid}.json"
+        if p.get("hook_event_name") == "PreToolUse":
+            qs = (p.get("tool_input") or {}).get("questions") or []
+            write_json(f, {"at": time.time(), "questions": qs})
+            for q in qs:
+                plan_log(sid, f"Pilot asks the controller ({one(q.get('header'))}): {one(q.get('question'))}")
+            return
+        f.unlink(missing_ok=True)
+        r = p.get("tool_response") if isinstance(p.get("tool_response"), dict) else {}
+        headers = {q.get("question"): q.get("header") for q in (p.get("tool_input") or {}).get("questions") or []}
+        notes = r.get("annotations") if isinstance(r.get("annotations"), dict) else {}
+        for q, ans in (r.get("answers") or {}).items():
+            note = notes.get(q, {}).get("notes") if isinstance(notes.get(q), dict) else None
+            plan_log(sid, f"Controller answered ({one(headers.get(q) or q)}): {one(ans)}" + (f"; note: {one(note)}" if note else ""))
+    except Exception:
+        hook_error()
 
 
 # --------------------------------------------------------------------------- launching the pilot
@@ -1291,7 +1395,7 @@ def main():
     s.add_argument("--repo")
     s.add_argument("--model")
     s.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"])
-    s.add_argument("--budget", type=int, help="weighted tokens; default from pilot.json")
+    s.add_argument("--budget", type=int, help="weighted tokens; default from ~/.pilot/pilot.json")
     s.add_argument("--pilot", help="the pilot session's name, so the worker knows whose messages to follow")
     s.add_argument("--after", action="append", help="a worker this one waits for (shown in the graph)")
     s.set_defaults(fn=cmd_start)
@@ -1321,6 +1425,7 @@ def main():
     s.add_argument("--port", type=int, default=5181)
     s.set_defaults(fn=cmd_dashboard)
     sub.add_parser("hook-budget").set_defaults(fn=cmd_hook_budget)
+    sub.add_parser("hook-ask").set_defaults(fn=cmd_hook_ask)
     a = ap.parse_args()
     if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")

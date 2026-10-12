@@ -1,0 +1,20 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          { "type": "command", "command": "python -I \"${CLAUDE_PLUGIN_ROOT}/../../pilot.py\" hook-ask" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          { "type": "command", "command": "python -I \"${CLAUDE_PLUGIN_ROOT}/../../pilot.py\" hook-ask" }
+        ]
+      }
+    ]
+  }
+}

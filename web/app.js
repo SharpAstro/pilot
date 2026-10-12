@@ -16,7 +16,21 @@ const M = n => !n ? "0" : n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" :
 const ago = t => { if (!t) return "never"; const s = Date.now() / 1000 - t; return s < 60 ? "just now" : s < 3600 ? Math.round(s / 60) + "m ago" : s < 86400 ? (s / 3600).toFixed(1) + "h ago" : Math.round(s / 86400) + "d ago"; };
 const clock = iso => iso ? new Date(iso).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"}) : "";
 const when = t => t ? new Date(t * 1000).toLocaleString([], {weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"}) : "";
-function put(el, html) { if (el && el._html !== html) { el.innerHTML = html; el._html = html; } }
+// A <details data-k> keeps the reader's open or closed choice when put() rebuilds it. Only a choice that
+// differs from its default (data-open="1" when open by default) is kept, so the default still moves: a plan
+// that lands folds away unless the reader opened it. Folding a plan redraws the radar, which hides its legs.
+const opened = new Map();
+document.addEventListener("toggle", e => {
+  const d = e.target, k = d.dataset?.k;
+  if (!k) return;
+  if (d.open === (d.dataset.open === "1")) opened.delete(k); else opened.set(k, d.open);
+  if (k.startsWith("plan:") && S) render();
+}, true);
+function put(el, html) {
+  if (!el || el._html === html) return;
+  el.innerHTML = html; el._html = html;
+  for (const d of el.querySelectorAll("details[data-k]")) if (opened.has(d.dataset.k)) d.open = opened.get(d.dataset.k);
+}
 function local(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch { return null; } }
 async function post(url, body) {
   const r = await fetch(url, {method: "POST", headers: {"X-Pilot": "1", "Content-Type": "application/json"}, body: JSON.stringify(body || {})});
@@ -27,12 +41,13 @@ async function post(url, body) {
 
 // ------------------------------------------------------------------ a small Markdown: enough for reports
 
-function md(src) {
+// A report's line breaks are kept; `soft` joins a paragraph's lines, for prose wrapped at a fixed width.
+function md(src, soft) {
   const out = [], lines = String(src ?? "").replace(/\r/g, "").split("\n");
   let para = [], list = null;
   const inline = s => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-  const flushPara = () => { if (para.length) out.push(`<p>${para.map(inline).join("<br>")}</p>`); para = []; };
+  const flushPara = () => { if (para.length) out.push(`<p>${para.map(inline).join(soft ? " " : "<br>")}</p>`); para = []; };
   const flushList = () => { if (list) out.push(`<${list.t}>${list.items.map(x => `<li>${inline(x)}</li>`).join("")}</${list.t}>`); list = null; };
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
@@ -100,17 +115,88 @@ function actions(w, isWorker) {
   return `<div class="actions">${a.join("")}</div>`;
 }
 
-function limitsHtml(l) {
-  if (!l || !l.windows) return `<span class="sub" title="Add the rate-limit cache to your status line (see README) to show the 5-hour and 7-day windows here.">no rate-limit figures</span>`;
-  const out = [];
-  for (const [key, label] of [["five_hour", "5-hour"], ["seven_day", "7-day"]]) {
-    const w = l.windows[key]; if (!w) continue;
-    const p = w.used_percentage ?? 0, cls = p >= 90 ? "crit" : p >= 75 ? "warn" : "";
-    const resets = w.resets_at ? new Date(w.resets_at * 1000).toLocaleString([], {weekday: "short", hour: "2-digit", minute: "2-digit"}) : "";
-    out.push(`<div class="limit meter" title="read ${esc(ago(l.writtenAt))}"><div class="lbl"><span>${label} ${Math.round(p)}%${p >= 90 ? " ⚠" : ""}</span><span>resets ${esc(resets)}</span></div>
-      <div class="track"><div class="bar ${cls}" style="width:${Math.min(100, p)}%"></div></div></div>`);
+// ------------------------------------------------------------------ account usage, as the status line shows it
+
+// The same rules as ~/.claude/statusline/Program.cs, so the two never disagree. Peak is weekdays 13:00-19:00
+// UTC. A window's burn is projected forward from its start: the 5-hour one on the wall clock, the 7-day one
+// over working hours only (07:30-21:00 local), since nothing is spent overnight. The gauge says whether the
+// window runs dry before it resets (▰▱▱), only just makes it (▰▰▱, under a fifth of the window to spare),
+// or is comfortable (▰▰▰). The 5-hour window goes past red when it runs dry within 15 minutes and the reset
+// is further off than that.
+const hhmm = ts => new Date(ts * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", hour12: false});
+const dayhhmm = ts => new Date(ts * 1000).toLocaleString([], {weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false});
+const countdown = s => s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h${Math.floor(s % 3600 / 60)}m` : `${Math.floor(s / 86400)}d${Math.floor(s % 86400 / 3600)}h`;
+
+function peakHtml(now) {
+  const d = new Date(now * 1000), t13 = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 13) / 1000, t19 = t13 + 6 * 3600;
+  const dow = d.getUTCDay() || 7, weekday = dow <= 5, inPeak = weekday && now >= t13 && now < t19;
+  const secs = inPeak ? t19 - now : weekday && now < t13 ? t13 - now : t13 + ({5: 3, 6: 2, 7: 1}[dow] || 1) * 86400 - now;
+  const near = secs < 3600;
+  const [icon, cls, what] = inPeak ? (near ? ["🌇", "warn", "peak ends in"] : ["🔥", "crit", "peak hours, ending in"])
+    : (near ? ["🌅", "warn", "peak starts in"] : ["🌙", "good", "off-peak; peak starts in"]);
+  return `<span class="usage-peak u-${cls}" title="${esc(`${what} ${countdown(secs)}. Peak is weekdays 13:00-19:00 UTC, when the 5-hour window drains faster.`)}">${icon} ${countdown(secs)}</span>`;
+}
+
+const atLocal = (ts, h, m, days = 0) => { const d = new Date(ts * 1000); d.setDate(d.getDate() + days); d.setHours(h, m, 0, 0); return d.getTime() / 1000; };
+const offHours = ts => { const d = new Date(ts * 1000), h = d.getHours() + d.getMinutes() / 60; return h >= 21 || h < 7.5; };
+const nextWorkStart = ts => atLocal(ts, 7, 30) > ts ? atLocal(ts, 7, 30) : atLocal(ts, 7, 30, 1);
+function workSeconds(from, to) {
+  let total = 0, t = from;
+  while (t < to) {
+    if (offHours(t)) { t = Math.min(nextWorkStart(t), to); continue; }
+    const end = Math.min(atLocal(t, 21, 0), to);
+    total += end - t; t = end;
   }
-  return out.join("");
+  return total;
+}
+function addWorkSeconds(from, need, cap) {
+  let t = from;
+  while (need > 0 && t < cap) {
+    if (offHours(t)) { t = nextWorkStart(t); continue; }
+    const chunk = atLocal(t, 21, 0) - t;
+    if (chunk >= need) return t + Math.round(need);
+    need -= chunk; t += chunk;
+  }
+  return Math.min(t, cap);
+}
+function exhaustAt(five, start, now, used) {
+  if (used <= 0) return 0;
+  if (five) return now > start ? now + Math.round((100 - used) / (used / (now - start))) : 0;
+  const on = workSeconds(start, now);
+  return on > 0 ? addWorkSeconds(now, (100 - used) / (used / on), now + 30 * 86400) : 0;
+}
+
+function usageWindow(key, w, now) {
+  const five = key === "five_hour", span = five ? 5 * 3600 : 7 * 86400, fmt = five ? hhmm : dayhhmm;
+  const icon = five ? "⏳" : "📅", name = five ? "5-hour window" : "7-day window";
+  const used = w.used_percentage ?? 0, pct = Math.round(used);
+  const reset = typeof w.resets_at === "number" ? w.resets_at : (Date.parse(w.resets_at) / 1000 || null);
+  if (reset && reset <= now)
+    return `<div class="limit meter" title="${esc(`${name}: reset at ${fmt(reset)}; no figures since`)}"><div class="lbl"><span class="u-good">${icon} reset</span><span>🔄 ${esc(fmt(reset))}</span></div>
+      <div class="track"><div class="bar" style="width:0"></div></div></div>`;
+  let gauge = null, critical = false, dry = 0;
+  if (reset && pct >= 10) {
+    dry = exhaustAt(five, reset - span, now, used);
+    if (dry > now) {
+      gauge = dry <= reset ? {meter: "▰▱▱", cls: "crit", out: true} : dry - reset < span / 5 ? {meter: "▰▰▱", cls: "warn"} : {meter: "▰▰▰", cls: "good"};
+      critical = five && dry <= now + 900 && reset > now + 900;
+    }
+  }
+  const cls = critical ? "alarm" : gauge?.out || pct >= 80 ? "crit" : pct >= 50 ? "warn" : "good";
+  const tip = `${name}: ${pct}% used` + (reset ? `, resets ${fmt(reset)}` : "") + (gauge ? `. At this rate it runs dry ${fmt(dry)}, ` +
+    (gauge.out ? "before it resets" : gauge.cls === "warn" ? "only just after it resets" : "well after it resets") : "") +
+    (five ? "." : ". Projected over working hours, 07:30-21:00.");
+  return `<div class="limit meter" title="${esc(tip)}"><div class="lbl"><span class="u-${cls}">${icon} ${pct}%</span>
+      <span>${gauge ? `<span class="u-${critical ? "alarm" : gauge.cls}">${gauge.meter} ${esc(fmt(dry))}</span> ` : ""}${reset ? `🔄 ${esc(fmt(reset))}` : ""}</span></div>
+    <div class="track"><div class="bar ${cls === "good" ? "" : cls}" style="width:${Math.min(100, used).toFixed(1)}%"></div></div></div>`;
+}
+
+function limitsHtml(l) {
+  const now = Math.floor(Date.now() / 1000);
+  if (!l || !l.windows) return peakHtml(now) + `<span class="sub" title="The status line writes ~/.claude/rate-limits.json whenever Claude Code hands it the account's windows (see README).">no usage figures yet</span>`;
+  const old = l.writtenAt && now - l.writtenAt > 15 * 60;
+  return peakHtml(now) + ["five_hour", "seven_day"].filter(k => l.windows[k]).map(k => usageWindow(k, l.windows[k], now)).join("")
+    + (old ? `<span class="sub" title="The figures come from the last status line repaint in any session">as of ${esc(hhmm(l.writtenAt))}</span>` : "");
 }
 
 const sumErr = {};
@@ -144,17 +230,19 @@ function renderTop() {
   for (const a of document.querySelectorAll("nav a")) a.classList.toggle("on", a.dataset.nav === (r.view === "session" ? "" : r.view));
   if (!S) return;
   put($("#limits"), limitsHtml(S.limits));
-  const over = S.workers.filter(w => w.overBudget), waiting = S.workers.filter(w => w.state === "blocked");
+  const over = S.workers.filter(w => w.overBudget);
+  const waiting = [...S.pilots.filter(p => p.status === "waiting").map(p => ({name: `pilot ${p.name}`, href: `#/s/${p.sessionId}`})),
+                   ...S.workers.filter(w => w.state === "blocked").map(w => ({name: w.name, href: `#/w/${w.name}`}))];
   put($("#alerts"),
     (over.length ? `<p class="warnline">⚠ Over budget: ${over.map(w => `<a href="#/w/${esc(w.name)}">${esc(w.name)}</a>`).join(", ")}. Their tools are refused until the budget is raised (<code>pilot budget NAME N</code>).</p>` : "") +
-    (waiting.length ? `<p class="warnline amber">Waiting on you: ${waiting.map(w => `<a href="#/w/${esc(w.name)}">${esc(w.name)}</a>`).join(", ")}.</p>` : ""));
+    (waiting.length ? `<p class="warnline amber">Waiting on you: ${waiting.map(w => `<a href="${esc(w.href)}">${esc(w.name)}</a>`).join(", ")}.</p>` : ""));
   const n = S.notifications || {unread: 0, items: []};
   const badge = $("#badge");
   badge.hidden = !n.unread; badge.textContent = n.unread > 99 ? "99+" : n.unread;
   document.title = (n.unread ? `(${n.unread}) ` : "") + "Pilot";
-  put($("#notes"), n.items.length ? n.items.map(i => `<div class="note ${i.read ? "" : "unread"}" data-note="${esc(i.id)}" data-href="#/w/${esc(i.worker)}">
+  put($("#notes"), n.items.length ? n.items.map(i => `<div class="note ${i.read ? "" : "unread"}" data-note="${esc(i.id)}" data-href="${esc(i.href || `#/w/${i.worker}`)}">
       <span>${NOTE_ICON[i.kind] || "•"}</span><div>${esc(i.text)}<div class="when">${esc(when(i.at))}</div></div></div>`).join("")
-    : `<div class="empty">Nothing yet. Notices pile up here while the dashboard runs: a worker waiting on you, a turn that ended, a budget reached, 30 quiet minutes, an error.</div>`);
+    : `<div class="empty">Nothing yet. Notices pile up here while the dashboard runs: a pilot or worker waiting on you, a turn that ended, a budget reached, 30 quiet minutes, an error.</div>`);
   $("#desk").textContent = "Notification" in window && Notification.permission === "granted" ? "desktop on" : "desktop";
 }
 
@@ -165,7 +253,7 @@ function desktop() {
   if ("Notification" in window && Notification.permission === "granted")
     for (const i of items.filter(i => !i.read && i.id > seen).reverse()) {
       const note = new Notification(`Pilot: ${i.worker}`, {body: i.text, tag: i.id});
-      note.onclick = () => { window.focus(); location.hash = `#/w/${i.worker}`; };
+      note.onclick = () => { window.focus(); location.hash = i.href || `#/w/${i.worker}`; };
     }
   if (newest > seen) local("pilot.noteSeen", newest);
 }
@@ -193,6 +281,35 @@ function place(list, items, empty, rows) {
   empty.hidden = items.length > 0;
 }
 
+// ------------------------------------------------------------------ pilots
+
+// A pilot's state is Claude Code's own: busy, idle, or waiting on you (for a question or a permission prompt).
+// An idle pilot with legs in the air is following them: it wakes when one of them ends its turn.
+function pilotChip(ps, flying = []) {
+  if (!ps) return `<span class="chip other">pilot not running</span>`;
+  if (ps.status === "waiting") return `<span class="chip blocked" title="${esc(ps.waitingFor || "")}">waiting on you${ps.since ? ` · ${esc(ago(ps.since).replace(" ago", ""))}` : ""}</span>`;
+  if (ps.busy) return `<span class="chip working">● working</span>`;
+  return `<span class="chip other">${flying.length ? `idle, following ${esc(flying.join(", "))}` : "idle"}</span>`;
+}
+
+// The first line of a reply, without its Markdown: enough to say what it was about.
+const gist = s => (String(s || "").split("\n").map(l => l.replace(/[*`]/g, "").replace(/^[\s#>-]+/, "").trim()).find(Boolean) || "");
+const nowText = n => n.kind === "tool" ? `<b>${esc(n.tool)}</b> ${esc(n.summary || "")}` : esc(gist(n.text));
+
+// What the pilot is doing, or the question it is waiting on you for, with where to answer it.
+function pilotNow(ps) {
+  if (!ps) return "";
+  const where = `answer it in the pilot's terminal${ps.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : ""}`;
+  if (ps.status === "waiting" && ps.ask?.questions?.length)
+    return `<div class="ask"><div class="cardhead"><b>The pilot is asking you</b><span class="sub">since ${esc(when(ps.since || ps.ask.at))} · ${where}</span></div>
+      ${ps.ask.questions.map(q => `<div class="q"><div>${q.header ? `<span class="hdr">${esc(q.header)}</span>` : ""}${esc(q.question)}${q.multiSelect ? ` <span class="sub">(any of)</span>` : ""}</div>
+        <ul>${(q.options || []).map(o => `<li><b>${esc(o.label)}</b>${o.description ? ` <span class="sub">${esc(o.description)}</span>` : ""}</li>`).join("")}</ul></div>`).join("")}</div>`;
+  if (ps.status === "waiting")
+    return `<p class="warnline amber">The pilot is waiting on you (${esc(ps.waitingFor || "input")}) since ${esc(when(ps.since))}: ${where}.
+      Its question shows here only if the pilot was started after its question hook existed.</p>`;
+  return ps.now ? `<div class="pilotnow sub">${ps.busy ? "now" : "last"}: ${nowText(ps.now)}</div>` : "";
+}
+
 // ------------------------------------------------------------------ flight plans
 
 // A leg's state: its worker's if one flies it now, else how its removed worker landed, else planned.
@@ -210,16 +327,38 @@ function planCard(p, s) {
     const sp = w ? w.spend : h ? h.final?.spend : null;
     const link = w ? `#/w/${esc(w.name)}` : h ? `#/s/${esc(h.sessionId)}` : "";
     return `<tr${link ? ` class="click" data-href="${link}"` : ""}><td><b>${esc(l.leg)}</b></td><td>${md(l.goal)}</td><td>${esc(l.after.join(", ") || "-")}</td>
-      <td>${md(l.doneWhen)}</td><td><span class="chip ${st.cls}">${esc(st.label)}</span></td><td class="num">${sp ? esc(M(sp.weighted)) : ""}</td></tr>`;
+      <td>${md(l.doneWhen)}</td><td><span class="chip ${st.cls}">${esc(st.label)}</span>${w && (w.state === "working" || w.state === "blocked") ? doing(w) : ""}</td><td class="num">${sp ? esc(M(sp.weighted)) : ""}</td></tr>`;
   }).join("");
-  const log = p.log.slice(-8).reverse().map(l => `<li>${esc(l)}</li>`).join("");
-  return `<div class="card pad plan"><div class="cardhead"><b>Flight plan · ${esc(p.title)}</b>
-      <span class="sub">${p.live ? `<span class="conn live">pilot ${esc(p.pilot || "")}</span> · ` : "pilot not running · "}updated ${esc(ago(p.updated))}
-      · <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></div>
+  const log = p.log.slice(-12).reverse().map(l => `<li>${esc(l)}</li>`).join("");
+  const ps = p.pilotState, waiting = ps?.status === "waiting";
+  const flying = p.legs.map(l => l.leg).filter(n => s.workers.some(w => w.name === n && w.state === "working"));
+  const fold = (k, def) => `data-k="${esc(k)}"${def ? ` data-open="1"` : ""}${(opened.has(k) ? opened.get(k) : def) ? " open" : ""}`;
+  return `<details class="card pad plan" ${fold("plan:" + p.sessionId, planActive(p, s))}>
+    <summary class="cardhead"><span><b>Flight plan · ${esc(p.title)}</b> <span class="sub">${esc(legTally(p, s))}</span></span>
+      <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} ` : ""}${pilotChip(ps, flying)} · plan updated ${esc(ago(p.updated))}
+      · <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
+    ${pilotNow(ps)}
+    ${p.notes ? `<details ${fold("notes:" + p.sessionId, waiting)}><summary>the pilot's notes: what it found and why the route is this shape</summary>${md(p.notes, true)}</details>` : ""}
     <div class="tablewrap"><table><thead><tr><th>Leg</th><th>Goal</th><th>After</th><th>Done when</th><th>Status</th><th class="num">Spend</th></tr></thead>
       <tbody>${legs || `<tr><td colspan="6" class="sub">No legs yet. The pilot adds them to the Route table.</td></tr>`}</tbody></table></div>
-    ${log ? `<details><summary>flight log</summary><ul class="log">${log}</ul></details>` : ""}</div>`;
+    ${log ? `<details ${fold("log:" + p.sessionId, true)}><summary>flight log: decisions, questions and answers, legs taking off and landing</summary><ul class="log">${log}</ul></details>` : ""}</details>`;
+}
+
+// A plan is open by default while it is in the air: its pilot runs, or a worker flies one of its legs.
+const planActive = (p, s) => p.live || p.legs.some(l => s.workers.some(w => w.name === l.leg && w.pid));
+const planOpen = (p, s) => opened.has("plan:" + p.sessionId) ? opened.get("plan:" + p.sessionId) : planActive(p, s);
+
+// "3 legs: 1 working, 2 planned", for a plan folded to one line.
+function legTally(p, s) {
+  if (!p.legs.length) return "no legs yet";
+  const n = {};
+  for (const l of p.legs) {
+    const {st} = legState(s, l.leg);
+    const word = st.planned ? "planned" : {working: "working", blocked: "waiting on you", done: "done", failed: "failed"}[st.cls] || "ended";
+    n[word] = (n[word] || 0) + 1;
+  }
+  return `${p.legs.length} leg${p.legs.length > 1 ? "s" : ""}: ` + Object.entries(n).map(([k, v]) => `${v} ${k}`).join(", ");
 }
 
 // ------------------------------------------------------------------ graph
@@ -227,21 +366,24 @@ function planCard(p, s) {
 // Every plan's legs hang under its pilot, chained by After; workers on no plan hang under the pilot that
 // named itself when it started them. A planned leg no worker flies yet is drawn dashed.
 function graphSvg(s) {
-  const items = [], roots = new Map(), onPlan = new Set();
+  const items = [], roots = new Map(), onPlan = new Set(), folded = new Set();
   for (const p of s.plans || []) {
-    roots.set("p:" + p.sessionId, p.title);
+    const open = planOpen(p, s);
+    roots.set("p:" + p.sessionId, {label: p.title, sub: open ? "pilot" : `collapsed · ${legTally(p, s)}`, folded: !open});
+    if (!open) folded.add(p.sessionId);
     for (const l of p.legs) {
       onPlan.add(l.leg);
+      if (!open) continue;                     // a folded plan keeps its box and hides its legs
       const {w, st} = legState(s, l.leg);
       items.push({name: l.leg, after: l.after, root: "p:" + p.sessionId, w, st, started: w?.started || Infinity});
     }
   }
-  for (const w of s.workers) if (!onPlan.has(w.name)) {
+  for (const w of s.workers) if (!onPlan.has(w.name) && !folded.has(w.plan)) {
     const root = w.plan && roots.has("p:" + w.plan) ? "p:" + w.plan : "q:" + (w.pilot || "pilot");
-    if (!roots.has(root)) roots.set(root, w.pilot || "pilot");
+    if (!roots.has(root)) roots.set(root, {label: w.pilot || "pilot", sub: "pilot"});
     items.push({name: w.name, after: w.after || [], root, w, st: stateOf(w), started: w.started || 0});
   }
-  if (!items.length) return `<div class="empty">The graph fills in from the flight plan's route, and from workers as the pilot starts them. A leg with an After hangs under the leg it waits for.</div>`;
+  if (!items.length && !roots.size) return `<div class="empty">The graph fills in from the flight plan's route, and from workers as the pilot starts them. A leg with an After hangs under the leg it waits for.</div>`;
   const byName = new Map(items.map(x => [x.name, x])), depthOf = new Map();
   const depth = (x, path = new Set()) => {
     if (depthOf.has(x.name)) return depthOf.get(x.name);
@@ -253,7 +395,7 @@ function graphSvg(s) {
     return d;
   };
   items.forEach(x => depth(x));
-  const layers = [[...roots].map(([key, label]) => ({key, pilot: label}))];
+  const layers = [[...roots].map(([key, r]) => ({key, pilot: r}))];
   for (const x of [...items].sort((a, b) => a.started - b.started)) (layers[depthOf.get(x.name)] ||= []).push({key: "w:" + x.name, x});
   const NW = 196, NH = 62, GX = 26, GY = 48, PAD = 8;
   const widest = Math.max(...layers.map(l => (l || []).length));
@@ -278,8 +420,9 @@ function graphSvg(s) {
   for (const l of layers) for (const n of l || []) {
     const {x, y} = pos.get(n.key);
     if (n.pilot) {
-      nodes.push(`<g class="node"><rect class="box" x="${x}" y="${y}" width="${NW}" height="${NH}" rx="8" style="fill:var(--surface);stroke:var(--ink-2);stroke-width:1.5"/>
-        <text x="${x + 12}" y="${y + 24}" font-weight="700">${esc(clip(n.pilot, 24))}</text><text class="sm" x="${x + 12}" y="${y + 44}">pilot</text></g>`);
+      const r = n.pilot, dash = r.folded ? ";stroke-dasharray:5 4;opacity:.7" : "";
+      nodes.push(`<g class="node"><title>${esc(r.label)}</title><rect class="box" x="${x}" y="${y}" width="${NW}" height="${NH}" rx="8" style="fill:var(--surface);stroke:var(--ink-2);stroke-width:1.5${dash}"/>
+        <text x="${x + 12}" y="${y + 24}" font-weight="700">${esc(clip(r.label, 24))}</text><text class="sm" x="${x + 12}" y="${y + 44}">${esc(clip(r.sub, 30))}</text></g>`);
       continue;
     }
     const {w, st, name} = n.x, f = w && w.budget ? Math.min(1, w.spend.weighted / w.budget) : 0;
@@ -323,8 +466,10 @@ VIEWS.overview = root => {
       }})), $(".s-wempty", root), rowsW);
       place($(".s-pilots", root), s.pilots.map(p => ({key: p.sessionId, href: `#/s/${p.sessionId}`, fill: v => {
         put(v.name, `${esc(p.name)}<small>${esc(p.kind)} · ${esc(ago(p.lastActivity))}</small>`);
-        put(v.chip, `<span class="chip ${p.busy ? "working" : "other"}">${p.busy ? "● busy" : "idle"}</span>`);
-        put(v.meter, meter(p.spend, 0)); put(v.doing, ""); put(v.actions, actions(p, false));
+        put(v.chip, pilotChip(p)); put(v.meter, meter(p.spend, 0));
+        put(v.doing, p.status === "waiting" ? `<span class="doing"><b>needs you:</b> ${esc(p.ask?.questions?.[0]?.question || p.waitingFor || "input")}</span>`
+          : p.now ? `<span class="doing">${nowText(p.now)}</span>` : "");
+        put(v.actions, actions(p, false));
       }})), $(".s-pempty", root), rowsP);
     },
   };
@@ -338,7 +483,7 @@ VIEWS.session = (root, r) => {
     <div class="card pad s-sumcard" hidden><div class="cardhead"><b>Summary</b><span><span class="sub s-stamp"></span> <button class="s-btn">Summarise</button></span></div>
       <div class="summary s-sum" style="margin-top:6px"></div></div>
     <div class="sess" style="margin-top:12px">
-      <div><div class="card"><div class="stream s-stream"><div class="empty">loading…</div></div></div>
+      <div><div class="card"><div class="stream s-stream"><div class="empty">loading…</div></div><div class="live s-live" hidden></div></div>
         <div class="say s-say" hidden><textarea class="s-text" placeholder="Message this worker. It arrives as your own turn. Ctrl+Enter sends."></textarea>
           <div class="bar2"><span class="sub s-hint"></span><button class="primary s-send">Send</button></div></div></div>
       <div class="side"><div class="card pad s-ctl" hidden><b>Controls</b>
@@ -348,17 +493,17 @@ VIEWS.session = (root, r) => {
         <div class="card pad"><b>Subagents</b><div class="s-agents" style="margin-top:6px"><span class="sub">none</span></div></div></div>
     </div>`;
   const stream = $(".s-stream", root), tools = new Map();
-  let sid, es = null, agentsRev = null, worker = null;
+  let sid, es = null, agentsRev = null, worker = null, group = null, turnAt = null, liveText = "";
 
   function open(newSid) {
     if (es) es.close();
-    sid = newSid; tools.clear(); agentsRev = null;
+    sid = newSid; tools.clear(); agentsRev = null; group = null; turnAt = null;
     if (!sid) { stream.innerHTML = `<div class="empty">No transcript yet.</div>`; return; }
     es = new EventSource(r.agent ? `/api/sessions/${sid}/agents/${r.agent}/stream` : `/api/sessions/${sid}/stream`);
     es.addEventListener("backlog", e => {
       const d = JSON.parse(e.data);
       stream.innerHTML = d.skipped || d.truncated ? `<div class="ev notice">earlier events are not shown</div>` : "";
-      tools.clear();
+      tools.clear(); group = null;
       append(d.events, true);
     });
     es.addEventListener("events", e => append(JSON.parse(e.data), false));
@@ -373,7 +518,78 @@ VIEWS.session = (root, r) => {
     if (stick) stream.scrollTop = stream.scrollHeight;
   }
 
+  // A run of tool calls folds into one line, as Claude Code's own remote view does: "Read 5 files, ran 3
+  // commands (1 failed)". What the session says closes the run. An Agent call is a line of its own, named
+  // by its task. A run holding a refused call opens itself, so the refusal still shows in red.
+  function newGroup(title) {
+    const el = document.createElement("details");
+    el.className = "ev group";
+    el.innerHTML = `<summary></summary><div class="gbody"></div>`;
+    const g = {el, body: el.lastChild, items: new Map(), thought: false, title};
+    return g;
+  }
+  function tally(g) {
+    if (g.title) {
+      const t = g.items.get("agent") || {failed: 0, refused: 0};
+      return esc(g.title) + bad(t);
+    }
+    const parts = [];
+    for (const [key, t] of g.items) {
+      const one = t.files.size === 1 ? `<b>${esc([...t.files][0].split(/[\\/]/).pop())}</b>` : null;
+      const p = {read: one ? `read ${one}` : `read ${t.n} files`, ran: t.n === 1 ? "ran a command" : `ran ${t.n} commands`,
+        edited: one ? `edited ${one}` : `edited ${t.files.size || t.n} files`, wrote: one ? `wrote ${one}` : `wrote ${t.files.size || t.n} files`,
+        searched: "searched code", web: "searched the web", fetched: t.n === 1 ? "fetched a page" : `fetched ${t.n} pages`,
+        sent: t.n === 1 ? "sent a message" : `sent ${t.n} messages`, tasks: "updated tasks"}[key] ?? (t.n === 1 ? `used ${esc(key)}` : `used ${esc(key)} ${t.n} times`);
+      parts.push(p + bad(t));
+    }
+    const s = parts.join(", ") || (g.thought ? "thought" : "");
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+  const bad = t => t.failed || t.refused ? ` <span class="gbad">(${[t.failed && `${t.failed} failed`, t.refused && `${t.refused} refused`].filter(Boolean).join(", ")})</span>` : "";
+  const KIND = {Read: "read", Bash: "ran", PowerShell: "ran", Edit: "edited", MultiEdit: "edited", NotebookEdit: "edited", Write: "wrote",
+    Grep: "searched", Glob: "searched", WebSearch: "web", WebFetch: "fetched", SendMessage: "sent",
+    TaskCreate: "tasks", TaskUpdate: "tasks", TaskList: "tasks", TaskGet: "tasks", TaskStop: "tasks", TodoWrite: "tasks"};
+
   function event(ev) {
+    if (ev.kind === "tool" || ev.kind === "thinking") {
+      const agent = ev.kind === "tool" && (ev.tool === "Agent" || ev.tool === "Task");
+      const fresh = agent || !group;
+      const g = agent ? newGroup(ev.summary || "subagent") : group || newGroup();
+      const div = document.createElement("div");
+      if (ev.kind === "thinking") {
+        div.innerHTML = `<details><summary>thinking · ${esc(clock(ev.at))}</summary><pre>${esc(ev.text)}</pre></details>`;
+        g.thought = true;
+      } else {
+        div.innerHTML = `<div class="tool"><div class="head"><b>${esc(ev.tool)}</b><span title="${esc(ev.summary)}">${esc(ev.summary)}</span><span class="sub">${esc(clock(ev.at))}</span></div>
+          ${ev.input ? `<details><summary>input</summary><pre>${esc(ev.input)}</pre></details>` : ""}<div class="res"></div></div>`;
+        const key = agent ? "agent" : KIND[ev.tool] || ev.tool;
+        const t = g.items.get(key) || {n: 0, failed: 0, refused: 0, files: new Set()};
+        t.n++;
+        if (["read", "edited", "wrote"].includes(key) && ev.summary) t.files.add(ev.summary);
+        g.items.set(key, t);
+        tools.set(ev.id, {el: div, ev, g, key});
+      }
+      g.body.appendChild(div);
+      g.el.firstChild.innerHTML = tally(g);
+      group = agent ? null : g;
+      return fresh ? g.el : null;
+    }
+    if (ev.kind === "result") {
+      const t = tools.get(ev.id);
+      if (t) {
+        const host = $(".res", t.el);
+        host.className = "res" + (ev.error ? " error" : "");
+        host.innerHTML = result(ev, t.ev);
+        if (ev.denied || ev.error) {
+          const it = t.g.items.get(t.key);
+          if (ev.denied) { it.refused++; t.g.el.open = true; } else it.failed++;
+          t.g.el.firstChild.innerHTML = tally(t.g);
+        }
+        return null;
+      }
+    }
+    group = null;
+    if (["prompt", "message", "notice"].includes(ev.kind)) turnAt = Date.parse(ev.at) || turnAt;
     const div = document.createElement("div");
     div.className = "ev " + ev.kind;
     const meta = t => `<div class="meta">${esc(t)} · ${esc(clock(ev.at))}</div>`;
@@ -385,19 +601,11 @@ VIEWS.session = (root, r) => {
         return div;
       }
       case "message": div.innerHTML = meta(`message from ${ev.sender}`) + `<div class="body">${md(ev.text)}</div>`; return div;
-      case "said": div.innerHTML = meta("assistant") + `<div class="body">${md(ev.text)}</div>`; return div;
-      case "thinking": div.innerHTML = `<details><summary>thinking · ${esc(clock(ev.at))}</summary><pre>${esc(ev.text)}</pre></details>`; return div;
-      case "tool":
-        div.innerHTML = `<div class="tool"><div class="head"><b>${esc(ev.tool)}</b><span title="${esc(ev.summary)}">${esc(ev.summary)}</span><span class="sub">${esc(clock(ev.at))}</span></div>
-          ${ev.input ? `<details><summary>input</summary><pre>${esc(ev.input)}</pre></details>` : ""}<div class="res"></div></div>`;
-        tools.set(ev.id, {el: div, ev});
+      case "said": div.title = clock(ev.at); div.innerHTML = `<div class="body">${md(ev.text)}</div>`; return div;
+      case "result":            // its call came before the backlog began: only a refusal is worth showing alone
+        if (!ev.denied) return null;
+        div.innerHTML = `<div class="tool"><div class="head"><b>refused</b></div><div class="res error">${result(ev, null)}</div></div>`;
         return div;
-      case "result": {
-        const t = tools.get(ev.id), html = result(ev, t && t.ev);
-        if (t) { const host = $(".res", t.el); host.className = "res" + (ev.error ? " error" : ""); host.innerHTML = html; return null; }
-        div.innerHTML = `<div class="tool"><div class="head"><b>result</b></div><div class="res${ev.error ? " error" : ""}">${html}</div></div>`;
-        return div;
-      }
       case "turn": div.innerHTML = `<hr>turn ended${ev.ms ? ` · ${Math.round(ev.ms / 1000)} s` : ""}`; return div;
       case "compact": div.innerHTML = `<hr>context compacted`; return div;
       case "notice": div.textContent = ev.text; return div;
@@ -418,6 +626,15 @@ VIEWS.session = (root, r) => {
     const lines = (ev.text.match(/\n/g) || []).length + 1;
     return `<details><summary>${ev.error ? "error" : "result"} · ${lines} line${lines === 1 ? "" : "s"}</summary><pre>${esc(ev.text)}</pre></details>${sub}`;
   }
+
+  function tick() {
+    const el = $(".s-live", root);
+    el.hidden = !liveText;
+    if (!liveText) return;
+    const s = turnAt ? Math.max(0, Math.floor((Date.now() - turnAt) / 1000)) : null;
+    put(el, liveText + (s === null ? "" : ` <span class="sub">${s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`}</span>`));
+  }
+  const timer = setInterval(tick, 1000);
 
   async function loadAgents(rev) {
     if (!sid || r.agent || rev === agentsRev) return;
@@ -465,7 +682,7 @@ VIEWS.session = (root, r) => {
       if (want !== sid) open(want);
       const name = w ? w.name : p ? p.name : h ? `${h.name} (removed)` : (r.sid || "").slice(0, 8);
       put($(".s-title", root), esc(name) + (r.agent ? ` <span class="sub">› subagent ${esc(r.agent)}</span>` : ""));
-      put($(".s-chip", root), w ? chip(w) : p ? `<span class="chip ${p.busy ? "working" : "other"}">${p.busy ? "● busy" : "idle"}</span>` : h ? chip(h) : "");
+      put($(".s-chip", root), w ? chip(w) : p ? pilotChip(p) : h ? chip(h) : "");
       put($(".s-meter", root), w ? meter(w.spend, w.budget) : p ? meter(p.spend, 0) : h ? meter(h.final?.spend, 0) : "");
       put($(".s-actions", root), w ? actions(w, true) : p ? actions(p, false) : "");
       const plan = (s.plans || []).find(x => x.sessionId === (p ? p.sessionId : r.sid));
@@ -495,8 +712,16 @@ VIEWS.session = (root, r) => {
         ["started", when(info.started)], ["removed", when(info.archivedAt)], ["Claude Code says", info.detail || info.final?.detail], ["session", sid]];
       put($(".s-info", root), rows.filter(([, v]) => v).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join(""));
       loadAgents(w ? w.rev : p ? p.rev : 0);
+      // The live line: what it is doing now (Claude Code's own one-line detail for a worker), or what it is
+      // waiting on you for, and how long this turn has run.
+      const x = w || p, waitingOn = w ? w.state === "blocked" : p?.status === "waiting";
+      liveText = r.agent || !x ? ""
+        : waitingOn ? `<span class="pulse wait"></span><b>waiting on you</b> ${esc(w ? w.detail || "" : p.ask?.questions?.[0]?.question || p.waitingFor || "")}`
+        : (w ? w.state === "working" : p.busy) ? `<span class="pulse"></span>${w?.detail ? esc(w.detail) : x.now ? nowText(x.now) : "working"}` : "";
+      if (!turnAt && w?.started) turnAt = w.started * 1000;    // the turn began before the backlog: since it started
+      tick();
     },
-    unmount() { if (es) es.close(); },
+    unmount() { if (es) es.close(); clearInterval(timer); },
   };
 };
 
