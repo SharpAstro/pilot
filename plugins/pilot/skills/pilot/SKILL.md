@@ -76,7 +76,10 @@ The controller may edit the plan. Read it again before you start each leg.
    stop the worker, fix the route, and start a new leg with a new brief. Messages from the controller reach
    a worker as its own user turns; you do not send those.
 8. **A worker that reports BLOCKED needs a decision, usually yours.** Decide it as rule 9 says and send the
-   answer to the worker. Only what rule 9 sends to the tower goes to the controller.
+   answer to the worker. Only what rule 9 sends to the tower goes to the controller. A worker blocked on a
+   refused command is never told, by a brief or a message, to reach it another way (a script, another shell,
+   environment variables): run the step yourself if your own permissions allow it and log that you did,
+   or it goes to the tower.
 9. **Decide engineering questions yourself, with the co-pilot.** Design, test strategy, file layout,
    naming, which reading of a spec to follow, how to split a leg: these are yours, not the controller's.
    For each one that matters, ask the co-pilot, a Sonnet subagent this plugin ships: `Agent` with subagent

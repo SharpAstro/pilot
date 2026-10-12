@@ -16,7 +16,9 @@ controller.
   branch, and ends with a report whose first line is `DONE`, `BLOCKED` or `FAILED`. A leg has landed only
   when its checklist is complete: nothing is left open or for later. An item the worker cannot finish is a
   `BLOCKED` report, and the pilot sends it back or makes the item a leg of its own. A `DONE` with items
-  open shows in amber.
+  open shows in amber. A command refused by a permission check, a hook or a Claude Code guard is a
+  `BLOCKED` report too, never a script or another shell that does the same: a worker once got past the
+  worktree guard by writing the refused `wsl ...` into a script and running `bash` on it.
 - **Co-pilot**: a Sonnet subagent the pilot plugin ships (`agents/copilot.md`), read-only. The pilot
   settles engineering questions itself and asks the co-pilot for an independent opinion on each one that
   matters; they agree, or after one exchange the question goes to you. Only that, a budget raise, scope,

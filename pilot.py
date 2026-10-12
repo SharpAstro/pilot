@@ -81,11 +81,21 @@ def read_json(path, default=None):
 
 
 def write_json(path, obj):
+    """Writes through a temp file and a rename. On Windows the rename is refused (WinError 5) while another
+    process, the dashboard most often, has the file open for a read, so it is retried for up to two seconds.
+    The temp file is this process's own, so two writers never rename each other's half-written file."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(obj, indent=1), encoding="utf-8")
-    os.replace(tmp, path)
+    for wait in [0.02, 0.05, 0.1, 0.2, 0.3, 0.5, 0.8, 0]:
+        try:
+            return os.replace(tmp, path)
+        except PermissionError:
+            if not wait:
+                tmp.unlink(missing_ok=True)
+                raise
+            time.sleep(wait)
 
 
 # --------------------------------------------------------------------------- claude
@@ -1118,6 +1128,10 @@ How to work:
   item completed. Nothing is left open, for later, or out: an item you cannot finish is a BLOCKED report
   that names it and says why, and your pilot decides what happens to it.
 - If a tool call is refused with "pilot budget", stop calling tools and write your report.
+- A command refused by a permission check, a hook or one of Claude Code's guards is refused for good. Never
+  reach its effect another way: not from a script, another shell or tool, or with changed environment
+  variables or git config. If the brief cannot be done without it, end your turn BLOCKED, quoting the
+  command and the refusal; your pilot decides.
 - Your last message is your report. Its first line is one of DONE, BLOCKED or FAILED. Then: what changed
   (commits with short hashes), the evidence, and, for BLOCKED or FAILED, each open checklist item and why.
 
