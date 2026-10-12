@@ -452,6 +452,29 @@ function pilotNow(ps) {
 
 // ------------------------------------------------------------------ flight plans
 
+// What a leg leaves in its repo: commits past its base, pushed or not (to a remote branch of any name), and
+// uncommitted files in its worktree. `git` is pilot.py's collateral(); null until its first read lands.
+function gitLine(g) {
+  if (!g) return "";
+  const tip = `${g.branch}${g.head ? ` at ${g.head}` : ""}, from ${g.base || "?"}. Remote branches as of the repo's last fetch or push.`;
+  if (g.gone) return `<div class="gitline sub" title="${esc(tip)}">⎇ branch deleted</div>`;
+  if (g.error) return `<div class="gitline sub" title="${esc(g.error)}">⎇ git could not read it</div>`;
+  const bits = [g.ahead ? `${g.ahead} commit${g.ahead === 1 ? "" : "s"}` : `<span class="sub">no commits</span>`];
+  if (g.ahead) bits.push(g.unpushed ? `<span class="bad">${g.unpushed} not pushed</span>`
+    : `<span class="ok">pushed${g.remotes?.length ? ` · ${esc(g.remotes[0])}` : ""}</span>`);
+  if (g.dirty) bits.push(`<span class="bad">${g.dirty} uncommitted</span>`);
+  return `<div class="gitline" title="${esc(tip)}">⎇ ${bits.join(" · ")}</div>`;
+}
+// The flight's: which legs hold commits on no remote, or uncommitted files.
+function flightGit(p, s) {
+  const gs = p.legs.map(l => [l.leg, legState(s, l.leg)]).map(([n, {w, h}]) => [n, (w || h)?.git]).filter(([, g]) => g && !g.gone && !g.error);
+  if (!gs.some(([, g]) => g.ahead || g.dirty)) return "";
+  const un = gs.filter(([, g]) => g.unpushed), dirty = gs.filter(([, g]) => g.dirty);
+  if (!un.length && !dirty.length) return ` · <span class="gitsum ok">⎇ all pushed</span>`;
+  return ` · <span class="gitsum bad">⎇ ${[un.length && `not pushed: ${un.map(([n, g]) => `${esc(n)} (${g.unpushed})`).join(", ")}`,
+    dirty.length && `uncommitted: ${dirty.map(([n, g]) => `${esc(n)} (${g.dirty})`).join(", ")}`].filter(Boolean).join("; ")}</span>`;
+}
+
 // A leg's state: its worker's if one flies it now, else how its removed worker landed, else planned.
 function legState(s, name) {
   const w = s.workers.find(x => x.name === name);
@@ -467,7 +490,7 @@ function planCard(p, s) {
     const sp = w ? w.spend : h ? h.final?.spend : null;
     const link = w ? `#/w/${esc(w.name)}` : h ? `#/s/${esc(h.sessionId)}` : "";
     return `<tr${link ? ` class="click" data-href="${link}"` : ""}><td><b>${esc(l.leg)}</b></td><td>${md(l.goal)}</td><td>${esc(l.after.join(", ") || "-")}</td>
-      <td>${md(l.doneWhen)}</td><td><span class="chip ${st.cls}">${esc(st.label)}</span>${w && (w.state === "working" || w.state === "blocked") ? doing(w) : ""}${checkLine(w ? w.checklist : h?.final?.checklist)}</td><td class="num">${sp ? esc(M(sp.weighted)) : ""}</td></tr>`;
+      <td>${md(l.doneWhen)}</td><td><span class="chip ${st.cls}">${esc(st.label)}</span>${w && (w.state === "working" || w.state === "blocked") ? doing(w) : ""}${checkLine(w ? w.checklist : h?.final?.checklist)}${gitLine((w || h)?.git)}</td><td class="num">${sp ? esc(M(sp.weighted)) : ""}</td></tr>`;
   }).join("");
   const log = p.log.slice(-12).reverse().map(l => `<li>${esc(l)}</li>`).join("");
   const ps = p.pilotState, waiting = ps?.status === "waiting";
@@ -477,7 +500,7 @@ function planCard(p, s) {
   const yourMove = p.live && ps?.status === "idle" && !flying.length;
   const where = `answer in the pilot's terminal${ps?.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : ""}`;
   return `<details class="card pad plan" ${fold("plan:" + p.sessionId, planActive(p, s) || !!p.waiting)}>
-    <summary class="cardhead"><span><b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> <span class="sub">${esc(legTally(p, s))}</span></span>
+    <summary class="cardhead"><span><b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}</span></span>
       <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} ` : ""}${yourMove ? `<span class="chip blocked">your move</span>` : pilotChip(ps, flying)} · plan updated ${esc(ago(p.updated))}
       · <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
@@ -734,6 +757,7 @@ VIEWS.session = (root, r) => {
           <div class="ctlrow"><label>budget, weighted tokens <input class="s-budget" inputmode="numeric" placeholder="e.g. 20M"></label><button class="s-setbudget">set</button></div>
           <div class="sub s-ctlhint"></div></div>
         <div class="card pad s-checkcard" hidden><div class="cardhead"><b>Checklist</b><span class="sub s-checkn"></span></div><ul class="checklist s-check"></ul></div>
+        <div class="card pad s-gitcard" hidden><div class="cardhead"><b>What it leaves</b><span class="sub s-gitn"></span></div><dl class="s-git" style="margin-top:8px"></dl></div>
         <div class="card pad"><b>Session</b><dl class="s-info" style="margin-top:8px"></dl></div>
         <div class="card pad"><b>Subagents</b><div class="s-agents" style="margin-top:6px"><span class="sub">none</span></div></div></div>
     </div>`;
@@ -1003,6 +1027,17 @@ VIEWS.session = (root, r) => {
       $(".s-checkcard", root).hidden = !items.length || !!r.agent;
       put($(".s-checkn", root), items.length ? `${items.length - left} of ${items.length} done${left && (w?.reportHead || h?.final?.reportHead) === "DONE" ? " · reported DONE with items open" : ""}` : "");
       put($(".s-check", root), checkList(items));
+      const g = (w || h)?.git, outside = (w || h)?.outside;
+      $(".s-gitcard", root).hidden = !(g || outside) || !!r.agent;
+      put($(".s-gitn", root), gitLine(g));
+      put($(".s-git", root), [["repo", g?.repo], ["branch", g && `${g.branch}${g.head ? ` at ${g.head}` : ""}${g.gone ? " (deleted)" : ""}`],
+        ["commits", g && !g.gone ? `${g.ahead ?? "?"} past ${g.base}` : ""],
+        ["not pushed", g?.unpushed ? `${g.unpushed} commit(s) on no remote branch` : ""],
+        ["on remote", (g?.ahead && g?.remotes?.join(", ")) || ""],
+        ["worktree", g && !g.gone ? (g.worktree ? (g.dirty ? `${g.dirty} uncommitted` : "clean") : "removed") : ""]]
+        .filter(([, v]) => v).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")
+        + (g?.dirtyFiles?.length ? `<dt>uncommitted</dt><dd><pre class="dirty">${esc(g.dirtyFiles.join("\n"))}</pre></dd>` : "")
+        + `<dt>outside the worktree</dt><dd>${outside ? md(outside) : `<span class="sub">${w && w.state === "working" ? "its report will say" : "its report does not say"}</span>`}</dd>`);
       const info = w || h || p || {};
       const leg = (s.plans || []).flatMap(x => x.legs.map(l => ({...l, plan: x.title}))).find(l => l.leg === (w || h)?.name);
       const rows = [["flight plan", leg?.plan], ["leg goal", leg?.goal], ["done when", leg?.doneWhen],
@@ -1069,7 +1104,7 @@ VIEWS.history = root => {
       put($(".s-rows", root), s.history.map(h => {
         const key = `${h.name}-${h.archivedAt}`, f = h.final || {};
         return `<tr class="click" data-key="${esc(key)}"><td><b>${esc(h.name)}</b><div class="sub">${esc(h.repo)}</div></td><td>${chip(h)}<div class="sub">${esc(f.detail || "")}</div></td>
-          <td>${esc(h.branch)}<div class="sub">from ${esc(h.base || "")}</div></td><td class="num">${esc(M(f.spend?.weighted))}</td><td>${esc(when(h.archivedAt))}</td>
+          <td>${esc(h.branch)}<div class="sub">from ${esc(h.base || "")}</div>${gitLine(h.git)}</td><td class="num">${esc(M(f.spend?.weighted))}</td><td>${esc(when(h.archivedAt))}</td>
           <td>${h.sessionId ? `<a href="#/s/${esc(h.sessionId)}">conversation ›</a>` : ""}</td></tr>` +
           (opened.has(key) ? `<tr><td colspan="6"><div class="summary">${f.report ? md(f.report) : `<span class="sub">no report</span>`}</div>
             ${f.commits ? `<h2>Commits</h2><pre>${esc(f.commits)}</pre>` : ""}</td></tr>` : "");

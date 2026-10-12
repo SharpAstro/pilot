@@ -738,6 +738,75 @@ def doing_now(ev):
                  for e in reversed(ev) if e["kind"] in ("tool", "said")), None)
 
 
+# --------------------------------------------------------------------------- what a leg leaves behind
+
+_git, _git_busy, _git_slots = {}, set(), threading.Semaphore(3)
+
+
+def collateral_now(w):
+    """What a leg leaves in its repo: its branch's tip, its commits past its base, how many of them are on no
+    remote branch under any name (a pilot may push a leg as feat/<topic>, not as its worktree branch), the
+    remote branches that hold its tip, and its worktree's uncommitted files. Remote branches are as of the
+    repo's last fetch or push."""
+    root, br = config()["repos"].get(w.get("repo")), w.get("branch")
+    if not root or not br:
+        return None
+
+    def git(*a, cwd=root):
+        r = subprocess.run(["git", "-C", str(cwd), *a], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=60)
+        return r.stdout.strip() if r.returncode == 0 else None
+    out = {"repo": w.get("repo"), "branch": br, "base": w.get("base"), "at": time.time(),
+           "worktree": bool(w.get("worktree")) and Path(w["worktree"]).is_dir()}
+    sha = git("rev-parse", "--verify", "--quiet", f"refs/heads/{br}")
+    if not sha:
+        return {**out, "gone": True}
+    remotes = [r for r in (git("for-each-ref", "--contains", sha, "--format=%(refname:short)", "refs/remotes") or "").splitlines()
+               if "/" in r and not r.endswith("/HEAD")]
+    dirty = [l for l in (git("status", "--porcelain", cwd=w["worktree"]) or "").splitlines() if l.strip()] if out["worktree"] else []
+    return {**out, "head": sha[:8],
+            "ahead": int(git("rev-list", "--count", f"{w['base']}..{sha}") or 0) if w.get("base") else None,
+            "unpushed": int(git("rev-list", "--count", sha, "--not", "--remotes") or 0),
+            "remotes": remotes[:5], "dirty": len(dirty), "dirtyFiles": dirty[:20]}
+
+
+def collateral(w, ttl=20):
+    """collateral_now, cached: its git calls take most of a second in a big repo, so the dashboard reads the
+    last answer and a background thread refreshes it once it is `ttl` seconds old."""
+    key = (w.get("repo"), w.get("branch"))
+    c = _git.get(key)
+    if (not c or time.time() - c["at"] > ttl) and key not in _git_busy and all(key):
+        _git_busy.add(key)
+
+        def run():
+            with _git_slots:
+                try:
+                    _git[key] = collateral_now(w) or {"at": time.time()}
+                except Exception:
+                    _git[key] = {"at": time.time(), "error": traceback.format_exc(limit=1)}
+                finally:
+                    _git_busy.discard(key)
+            HUB.poke()
+        threading.Thread(target=run, daemon=True).start()
+    return c
+
+
+def outside_line(report):
+    """The report's `Outside the worktree:` line (and the bullets under it): what the worker created or
+    changed beyond its worktree, which no git command can find."""
+    lines = (report or "").splitlines()
+    for i, l in enumerate(lines):
+        m = re.match(r"^[\s>#*-]*outside the worktree[*:\s]*(.*)$", l, re.I)
+        if m:
+            got = [m.group(1).strip()] if m.group(1).strip() else []
+            for n in lines[i + 1:]:
+                if not re.match(r"^\s*[-*]\s+", n):
+                    break
+                got.append(n.strip())
+            return "\n".join(got) or None
+    return None
+
+
 def worker_status(w, rows=None):
     rows = agents() if rows is None else rows
     row = next((r for r in rows if r.get("id") == w["id"] or r.get("sessionId") == w.get("sessionId")), None)
@@ -768,6 +837,7 @@ def worker_status(w, rows=None):
         "lastActivity": last, "now": now, "rev": path.stat().st_size if path else 0,
         "checklist": checklist([s.get("sessionId") for s in sessions_of(w)]),
         "remote": f"https://claude.ai/code/{rec['bridgeSessionId']}" if rec.get("bridgeSessionId") else None,
+        "git": collateral(w), "outside": outside_line(said[-1]["text"]) if said else None,
     }
 
 
@@ -920,6 +990,7 @@ def snapshot():
         h = {k: a.get(k) for k in ("name", "repo", "branch", "base", "worktree", "model", "effort", "started", "archivedAt",
                                    "pilot", "after", "sessionId", "sessions")}
         h["final"] = {**(a.get("final") or {}), "report": ((a.get("final") or {}).get("report") or "")[:3000]}
+        h["git"], h["outside"] = collateral(a, ttl=120), outside_line((a.get("final") or {}).get("report"))
         history.append(h)
     workers = [worker_status(w, rows) for w in registered()]
     ps = pilots(rows)
@@ -1143,6 +1214,10 @@ How to work:
   command and the refusal; your pilot decides.
 - Your last message is your report. Its first line is one of DONE, BLOCKED or FAILED. Then: what changed
   (commits with short hashes), the evidence, and, for BLOCKED or FAILED, each open checklist item and why.
+  End it with a line `Outside the worktree:` naming every file, folder, clone or setting you created or
+  changed outside your worktree (a scratch folder, another repo, a WSL clone, global config), or `none`.
+  Anything there that the work depends on, such as a generator whose output you committed, belongs in a
+  commit instead; say where you put it.
 
 # Brief
 
@@ -1545,6 +1620,18 @@ def cmd_result(a):
         print(f"\n--- checklist: {len(items) - len(left)} of {len(items)} completed" + (f"; OPEN: {len(left)}, so it has not landed" if left else ""))
         for i in items:
             print(f"  [{'x' if i['status'] == 'completed' else '>' if i['status'] == 'in_progress' else ' '}] {i['subject']}")
+    g = collateral_now(w) or {}
+    if g.get("gone"):
+        print(f"\n--- branch {g['branch']}: gone from {g['repo']}")
+    elif g:
+        print(f"\n--- branch {g['branch']} ({g['head']}): {g['ahead']} commit(s) past {g['base']}; "
+              + (f"NOT PUSHED: {g['unpushed']} on no remote branch" if g["unpushed"] else
+                 f"pushed, in {', '.join(g['remotes'])}" if g["ahead"] else "nothing to push")
+              + (f"; UNCOMMITTED: {g['dirty']} file(s)" if g["dirty"] else ""))
+        for l in g["dirtyFiles"]:
+            print(f"  {l}")
+    out = outside_line(report(w["sessionId"]) if w.get("sessionId") else "")
+    print(f"--- outside the worktree: {out or 'the report does not say'}")
 
 
 def cmd_type(a):

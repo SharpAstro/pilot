@@ -98,8 +98,11 @@ The controller may edit the plan. Read it again before you start each leg.
    `AskUserQuestion`: its prompt blocks you, worker notices included, while the controller's dashboard
    answers queue behind it, so the pilot plugin refuses it once you have a plan. Never ask the tower in a
    plain reply alone either; it is visible only in your terminal.
-10. **Check before you report.** A leg has landed only when its worker's checklist is complete:
-    `python <pilot.py> result <leg>` prints the report and then the checklist, and the dashboard shows it.
+10. **Check before you report.** A leg has landed only when its worker's checklist is complete and its
+    worktree has nothing uncommitted: `python <pilot.py> result <leg>` prints the report, the checklist, the
+    branch (commits, how many are on no remote branch, uncommitted files) and the report's
+    `Outside the worktree:` line, and the dashboard shows them. Anything outside the worktree that the work
+    depends on goes into a commit.
     An open item, whatever the report says, means it has not landed. Send the worker back to finish it,
     or decide with the co-pilot to make it a new leg on the route. Nothing is left open or "for later" off
     the route. Then read the commits:

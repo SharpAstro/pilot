@@ -98,6 +98,9 @@ nav a.on { background: var(--page); color: var(--ink); font-weight: 600; box-sha
 .md h4 { margin: 10px 0 4px; font-size: 13px; }
 .md li > ul, .md li > ol { margin: 2px 0 4px; }
 /* a placeholder the text defines: its value on hover, and in what is copied */
+.gitline { font-size: 12px; margin-top: 4px; white-space: nowrap; }
+.gitline .ok, .gitsum.ok { color: var(--good-text); } .gitline .bad, .gitsum.bad { color: var(--warn); }
+pre.dirty { margin: 0; font-size: 11px; white-space: pre-wrap; }
 abbr.ph { text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
 
 /* flight plan and controls */
