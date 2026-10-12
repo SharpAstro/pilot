@@ -1,10 +1,26 @@
 "use strict";
-// A script error shows on the page rather than only in a console nobody has open.
+// A script error shows on the page rather than only in a console nobody has open. The same error again
+// counts up on its line instead of adding another.
+const shown = new Map();
 function oops(text) {
   const box = document.getElementById("errors");
-  if (box) box.insertAdjacentHTML("beforeend", `<p class="warnline">Dashboard error: ${String(text).replace(/</g, "&lt;")}</p>`);
+  if (!box) return;
+  text = String(text);
+  const seen = shown.get(text);
+  if (seen) { seen.n++; seen.el.lastChild.textContent = ` (${seen.n} times)`; return; }
+  const el = document.createElement("p");
+  el.className = "warnline";
+  el.textContent = `Dashboard error: ${text}`;
+  el.appendChild(document.createElement("span"));
+  box.appendChild(el);
+  shown.set(text, {el, n: 1});
 }
-window.addEventListener("error", e => oops(`${e.message} (${String(e.filename || "").split("/").pop()}:${e.lineno})`));
+window.addEventListener("error", e => {
+  // Chrome reports a ResizeObserver pass that left work for the next frame as a page error. It is harmless,
+  // and it is the browser's own: nothing on this page uses a ResizeObserver.
+  if (/^ResizeObserver loop/.test(e.message || "")) return;
+  oops(`${e.message} (${String(e.filename || "").split("/").pop()}:${e.lineno})`);
+});
 window.addEventListener("unhandledrejection", e => oops(e.reason && e.reason.stack || e.reason));
 // Pilot dashboard. The server pushes the whole state over /api/stream whenever it changes, and an open
 // session streams its own transcript. Views patch only what changed (put() compares HTML per slot), so
@@ -309,7 +325,7 @@ function pilotNow(ps) {
         <ul>${(q.options || []).map(o => `<li><b>${esc(o.label)}</b>${o.description ? ` <span class="sub">${esc(o.description)}</span>` : ""}</li>`).join("")}</ul></div>`).join("")}</div>`;
   if (ps.status === "waiting")
     return `<p class="warnline amber">The pilot is waiting on you (${esc(ps.waitingFor || "input")}) since ${esc(when(ps.since))}: ${where}.
-      Its question shows here only if the pilot was started after its question hook existed.</p>`;
+      Its question shows here when the question hook or its transcript has it; this time neither does, so it may be a permission prompt.</p>`;
   return ps.now ? `<div class="pilotnow sub">${ps.busy ? "now" : "last"}: ${nowText(ps.now)}</div>` : "";
 }
 

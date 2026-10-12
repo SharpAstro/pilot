@@ -162,11 +162,13 @@ Traps found on the way:
 - **Idle notices reach the pilot between its turns, not during one.** Three notices for workers that went
   idle mid-turn all arrived together once the turn ended, and started a new turn. So the pilot starts its
   workers, subscribes, and ends its turn; each notice wakes it.
-- **A question the pilot is asking is not in its transcript until you answer it.** Claude Code writes the
-  assistant message holding an `AskUserQuestion` only once the tool returns, and `claude agents` says no more
-  than `status: waiting`, `waitingFor: input needed`. So the pilot plugin hooks `AskUserQuestion`: before it
-  is asked the questions go to `asks/<session>.json` and the plan's log, and once answered the file goes and
-  the answers go to the log. A pilot started before the hook existed shows only that it is waiting.
+- **A question the pilot is asking is not always in its transcript before you answer it.** One pending
+  `AskUserQuestion` was missing until answered, another was there with no result; `claude agents` says no
+  more than `status: waiting`, `waitingFor: input needed`. So the pilot plugin hooks `AskUserQuestion`:
+  before it is asked the questions go to `asks/<session>.json` and the plan's log, and once answered the file
+  goes and the answers go to the log. Where the hook missed it (a pilot started before the hook existed),
+  the dashboard takes an unanswered call from the transcript when it is there. Neither can answer it: that
+  takes the pilot's terminal or **remote**, and intercom messages wait behind the prompt until then.
 - **Only a Claude session can use the intercom.** The CLI has no command for it, and the per-session pipe
   Claude Code's records name (`messagingSocketPath`) speaks an undocumented protocol. So `pilot tell`,
   the dashboard's intercom and its answer buttons run one Haiku session allowed `SendMessage` alone, named

@@ -587,6 +587,21 @@ def pilots(rows=None):
     return out
 
 
+def pending_question(ev):
+    """An AskUserQuestion that has no answer yet, if the transcript already holds the call. Claude Code
+    writes it there before the answer at least some of the time (seen once without, once with), so this
+    covers a session the question hook missed, such as one started before the hook existed."""
+    answered = {e.get("id") for e in ev if e["kind"] == "result"}
+    for e in reversed(ev):
+        if e["kind"] == "tool" and e.get("tool") == "AskUserQuestion" and e.get("id") not in answered:
+            try:
+                at = datetime.datetime.fromisoformat(str(e.get("at")).replace("Z", "+00:00")).timestamp()
+                return {"at": at, "questions": json.loads(e.get("input") or "{}").get("questions") or []}
+            except ValueError:
+                return None
+    return None
+
+
 def session_view(r):
     """What a live session is doing, from its `claude agents` row: Claude Code's own status (busy, idle, or
     waiting on you, for what and since when), its last tool call or reply, and the question it is asking.
@@ -599,6 +614,8 @@ def session_view(r):
     if ask and since and ask.get("at", 0) < since - 60:       # asked before this wait began: a cancelled question
         ask = None
     ev = tail_events(sid, n=60) if sid else []
+    if status == "waiting" and not ask:
+        ask = pending_question(ev)
     now, said = doing_now(ev), next((e for e in reversed(ev) if e["kind"] == "said"), None)
     return {"said": {"text": said["text"][:8000], "at": said["at"]} if said else None, "status": status, "busy": status == "busy", "waitingFor": r.get("waitingFor") or rec.get("waitingFor"),
             "since": since, "now": now, "ask": ask,
