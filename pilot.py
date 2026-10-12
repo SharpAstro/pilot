@@ -56,6 +56,7 @@ ARCHIVE = STATE / "archive"
 BRIEFS = STATE / "briefs"
 METERS = STATE / "meters"
 PLANS = STATE / "plans"
+FLIGHTS = STATE / "flights.json"           # the last flight number given out, per repo code
 ASKS = STATE / "asks"                       # the question a pilot is waiting on you for, by session id
 NOTICES = STATE / "notifications.json"
 SUMMARIES = STATE / "summaries.json"
@@ -189,6 +190,8 @@ def sessions_of(w):
 
 PLAN_TEMPLATE = """# Flight plan: {title}
 
+Flight: {flight}
+
 Objective: (one or two sentences: what this flight is for, and how you will know it landed)
 
 Pilot session: {sid}
@@ -202,6 +205,34 @@ Pilot session: {sid}
 
 - {now} Plan opened.
 """
+
+
+def flight_code(repo):
+    """The next flight number for a repo: its name's initials, or its first three letters when it is one
+    word, and a count kept in <state>/flights.json. drawboard-pdf-sdk flies DPS1, DPS2 and so on."""
+    parts = [p for p in re.split(r"[-_. ]+", repo) if p]
+    code = ("".join(p[0] for p in parts) if len(parts) > 1 else repo[:3]).upper()
+    counts = read_json(FLIGHTS, {})
+    counts[code] = counts.get(code, 0) + 1
+    write_json(FLIGHTS, counts)
+    return f"{code}{counts[code]}"
+
+
+def plan_flight(sid, repo):
+    """A plan's flight number, given it now if it has none: a plan opened before flight numbers existed gets
+    one when its next leg takes off, on a `Flight:` line under the title."""
+    p = plan_path(sid)
+    if not p or not p.exists():
+        return None
+    t = p.read_text(encoding="utf-8")
+    m = FLIGHT_RE.search(t)
+    if m:
+        return m.group(1)
+    flight = flight_code(repo)
+    title = re.search(r"^#\s.*$", t, re.M)
+    at = title.end() if title else 0
+    p.write_text(t[:at] + f"\n\nFlight: {flight}" + t[at:], encoding="utf-8")
+    return flight
 
 
 def pilot_session():
@@ -224,6 +255,7 @@ def plan_log(sid, text):
     p.write_text(t + f"- {time.strftime('%Y-%m-%d %H:%M')} {text}\n", encoding="utf-8")
 
 
+FLIGHT_RE = re.compile(r"^Flight:\s*(\S+)", re.M)
 OBJECTIVE_RE = re.compile(r"^Objective:\s*(.+(?:\n(?!\s*\n|#|\|)[^\n]+)*)", re.M)   # it may wrap, up to a blank line
 # The plan's list of what the pilot is waiting on the controller for, under any of these headings.
 WAITING_RE = re.compile(r"(waiting on (the controller|you)|open questions|questions for the controller)\b", re.I)
@@ -256,7 +288,7 @@ def parse_plan(text):
         elif log and ln[:1].isspace() and ln.strip():   # an entry wrapped onto the next line
             log[-1] += " " + ln.strip()
     return {"title": title.group(1).strip() if title else "untitled", "objective": " ".join(objective.group(1).split()) if objective else "",
-            "legs": legs, "log": log[-40:], "notes": plan_notes(split_waiting(text)[1]), "waiting": split_waiting(text)[0]}
+            "flight": (FLIGHT_RE.search(text) or [None, None])[1], "legs": legs, "log": log[-40:], "notes": plan_notes(split_waiting(text)[1]), "waiting": split_waiting(text)[0]}
 
 
 def split_waiting(text):
@@ -272,7 +304,7 @@ def split_waiting(text):
                 continue
         elif inside:
             blank, item = not line.strip(), re.match(r"^([-*]|\d+[.)])\s", line)
-            if not (line.startswith("Pilot session:") or (listed and gap and not blank and not item and not line[:1].isspace())):
+            if not (line.startswith(("Pilot session:", "Flight:")) or (listed and gap and not blank and not item and not line[:1].isspace())):
                 waiting.append(line)
                 listed, gap = listed or bool(item), blank
                 continue
@@ -293,7 +325,7 @@ def plan_notes(text):
             if part not in ("route", "log"):     # a section of the pilot's own
                 out.append(line)
             continue
-        if part == "log" or line.startswith("# ") or re.match(r"^Pilot session:", line) or line.lstrip().startswith("|"):
+        if part == "log" or line.startswith("# ") or re.match(r"^(Pilot session|Flight):", line) or line.lstrip().startswith("|"):
             continue
         if part == "route" and line.strip() and "#### On the route" not in out:
             out.append("#### On the route")
@@ -420,6 +452,22 @@ DENIALS = [
 ]
 
 
+def user_text(c, ev, queued=False):
+    """A user turn's text: a message from another session, Claude Code's notice that a background job the
+    session started has finished (a command, a subagent), or a prompt. A notice or message waiting for the
+    session's turn to end arrives queued, as an attachment, but is the same thing."""
+    if "<cross-session-message" in c:
+        m = re.search(r'from-name="([^"]*)"', c)
+        body = re.sub(r"<cross-session-message[^>]*>|</cross-session-message>", "", c)
+        body = body.replace("Another Claude session sent a message:", "").strip()
+        ev("message", sender=m.group(1) if m else "another session", text=body[:20000])
+    elif "<task-notification>" in c:
+        m = re.search(r"<summary>(.*?)</summary>", c, re.S)
+        ev("notice", text=(m.group(1) if m else re.sub(r"<[^>]+>", " ", c)).strip()[:2000])
+    else:
+        ev("prompt", text=c[:20000], **({"queued": True} if queued else {}))
+
+
 def events_of(e):
     """One transcript record as the events the session view shows."""
     out = []
@@ -444,16 +492,7 @@ def events_of(e):
                 ev("tool", id=b.get("id"), tool=b.get("name"), summary=brief_input(inp),
                    input=(json.dumps(inp, indent=1, ensure_ascii=False) if inp is not None else "")[:12000])
     elif t == "user" and isinstance(c, str) and not e.get("isMeta"):
-        if "<cross-session-message" in c:
-            m = re.search(r'from-name="([^"]*)"', c)
-            body = re.sub(r"<cross-session-message[^>]*>|</cross-session-message>", "", c)
-            body = body.replace("Another Claude session sent a message:", "").strip()
-            ev("message", sender=m.group(1) if m else "another session", text=body[:20000])
-        elif "<task-notification>" in c:
-            m = re.search(r"<summary>(.*?)</summary>", c, re.S)
-            ev("notice", text=(m.group(1) if m else re.sub(r"<[^>]+>", " ", c)).strip()[:2000])
-        else:
-            ev("prompt", text=c[:20000])
+        user_text(c, ev)
     elif t == "user" and isinstance(c, list):
         tur = e.get("toolUseResult") if isinstance(e.get("toolUseResult"), dict) else {}
         for b in c:
@@ -469,7 +508,7 @@ def events_of(e):
     elif t == "attachment":
         a = e.get("attachment") or {}
         if a.get("type") == "queued_command" and (a.get("prompt") or a.get("content")):
-            ev("prompt", text=flat(a.get("prompt") or a.get("content"))[:20000], queued=True)
+            user_text(flat(a.get("prompt") or a.get("content")), ev, queued=True)
     elif t == "system":
         st = e.get("subtype")
         if st == "turn_duration":
@@ -539,6 +578,25 @@ def subagents(session_id):
 
 # --------------------------------------------------------------------------- status
 
+def checklist(session_ids):
+    """A session's checklist, the task list it keeps with TaskCreate and TaskUpdate, which Claude Code
+    stores as <profile>/tasks/<session>/<n>.json: from the newest of the sessions given that has one. Each
+    item: id, subject, status (pending, in_progress, completed) and activeForm, how it reads in progress."""
+    for sid in reversed([s for s in session_ids if s]):
+        items = []
+        for f in (PROFILE / "tasks" / sid).glob("*.json"):
+            t = read_json(f)
+            if isinstance(t, dict) and t.get("subject") and t.get("status") != "deleted":
+                items.append({k: t.get(k) for k in ("id", "subject", "status", "activeForm")})
+        if items:
+            return sorted(items, key=lambda x: int(x["id"]) if str(x.get("id")).isdigit() else 0)
+    return []
+
+
+def open_items(items):
+    return [i for i in items if i.get("status") != "completed"]
+
+
 def doing_now(ev):
     """The last tool call or reply among a session's events: what it is doing, or did last."""
     return next(({k: (str(v)[:300] if k == "text" else v) for k, v in e.items() if k != "input"}
@@ -566,13 +624,14 @@ def worker_status(w, rows=None):
     job = job_state(w["id"])
     return {
         **{k: w.get(k) for k in ("name", "id", "sessionId", "repo", "worktree", "branch", "base", "model", "effort",
-                                 "budget", "started", "pilot", "after", "plan")},
+                                 "budget", "started", "pilot", "after", "plan")}, "agent": agent_name(w),
         "sessions": len(sessions_of(w)),
         "state": state, "busy": (row or {}).get("status") == "busy", "pid": (row or {}).get("pid"),
         "detail": job["detail"], "reportHead": head_word(said[-1]["text"]) if said else None,
         "lastError": tail[-1]["text"] if tail and tail[-1]["kind"] == "error" else None,
         "spend": sp, "overBudget": bool(w.get("budget")) and sp["weighted"] >= w["budget"],
         "lastActivity": last, "now": now, "rev": path.stat().st_size if path else 0,
+        "checklist": checklist([s.get("sessionId") for s in sessions_of(w)]),
         "remote": f"https://claude.ai/code/{rec['bridgeSessionId']}" if rec.get("bridgeSessionId") else None,
     }
 
@@ -622,7 +681,7 @@ def session_view(r):
     if status == "waiting" and not ask:
         ask = pending_question(ev)
     now, said = doing_now(ev), next((e for e in reversed(ev) if e["kind"] == "said"), None)
-    return {"said": {"text": said["text"][:8000], "at": said["at"]} if said else None, "status": status, "busy": status == "busy", "waitingFor": r.get("waitingFor") or rec.get("waitingFor"),
+    return {"said": {"text": said["text"][:8000], "at": said["at"]} if said else None, "checklist": checklist([sid]), "status": status, "busy": status == "busy", "waitingFor": r.get("waitingFor") or rec.get("waitingFor"),
             "since": since, "now": now, "ask": ask,
             "remote": f"https://claude.ai/code/{rec['bridgeSessionId']}" if rec.get("bridgeSessionId") else None}
 
@@ -671,6 +730,7 @@ def fingerprint(session_ids):
         main = transcript(sid)
         if main:
             content += [main, *subagent_files(sid)]
+        content += PROFILE.glob(f"tasks/{sid}/*.json")
     return stats(sessions), stats(content)
 
 
@@ -842,17 +902,28 @@ How to work:
 - If you need a decision the brief does not settle, do not guess: end your turn with the question, each
   with the options and your recommendation, first line BLOCKED. Your pilot decides it, and takes to the
   person who runs you only what it cannot settle.
+- Keep a checklist with the task tools (TaskCreate, TaskUpdate): one item per piece of the brief, the
+  brief's check last. Your pilot and the person who runs you watch it. You report DONE only with every
+  item completed. Nothing is left open, for later, or out: an item you cannot finish is a BLOCKED report
+  that names it and says why, and your pilot decides what happens to it.
 - If a tool call is refused with "pilot budget", stop calling tools and write your report.
 - Your last message is your report. Its first line is one of DONE, BLOCKED or FAILED. Then: what changed
-  (commits with short hashes), the evidence, and what is left open.
+  (commits with short hashes), the evidence, and, for BLOCKED or FAILED, each open checklist item and why.
 
 # Brief
 
 """
 
 
+def agent_name(w):
+    """A worker's session name, what `claude agents`, Recents and SendMessage know it by: its flight number
+    and leg, `DPS1 scaffold`, or `w-<leg>` when its plan has no flight number (or for a worker started before
+    there were any)."""
+    return w.get("agent") or f"w-{w['name']}"
+
+
 def worker_args(w):
-    args = ["-n", f"w-{w['name']}", "--permission-mode", "auto", "--plugin-dir", str(HERE / "plugins" / "worker")]
+    args = ["-n", agent_name(w), "--permission-mode", "auto", "--plugin-dir", str(HERE / "plugins" / "worker")]
     if w.get("model"):
         args += ["--model", w["model"]]
     if w.get("effort"):
@@ -908,6 +979,8 @@ def cmd_start(a):
          "base": base_branch(root), "model": a.model or cfg.get("model"), "effort": a.effort or cfg.get("effort"),
          "budget": a.budget or cfg.get("budget"), "started": time.time(), "pilot": a.pilot, "after": a.after or [],
          "plan": pilot_session()}
+    flight = plan_flight(w["plan"], repo) if w["plan"] else None
+    w["agent"] = f"{flight} {a.name}" if flight else f"w-{a.name}"
     prompt = PREAMBLE.format(pilot=f'the session named "{a.pilot}"' if a.pilot else "other Claude sessions on this machine",
                              name=w["name"], repo=repo, worktree=w["worktree"], branch=w["branch"], base=w["base"]) + brief
     w["id"] = backgrounded(claude("--bg", "-w", wt, *worker_args(w), stdin=prompt, cwd=root, timeout=120))
@@ -919,7 +992,7 @@ def cmd_start(a):
     save(w)
     plan_log(w["plan"], f"Leg {a.name} took off: worker {w['id']} on {w['branch']}" + (f", after {', '.join(w['after'])}" if w["after"] else ""))
     print(f"started {a.name}: {w['id']} in {w['worktree']} on {w['branch']} from {w['base']}")
-    print(f"  message it:  SendMessage to \"{wt}\"   |   you: pilot.py say {a.name} ...  or  claude attach {w['id']}")
+    print(f"  message it:  SendMessage to \"{w['agent']}\"   |   you: pilot.py tell \"{w['agent']}\" -m ...  or  claude attach {w['id']}")
 
 
 def say(name, text):
@@ -996,7 +1069,7 @@ def intercom(names, text):
     first = lines[0][:140] + ("..." if len(lines) > 1 or len(lines[0]) > 140 else "")
     rows = {x.get("name"): x for x in agents()}
     for n in names:
-        w = load(n[2:]) if n.startswith("w-") else None
+        w = next((x for x in registered() if agent_name(x) == n), None)
         plan = w.get("plan") if w else (rows.get(n) or {}).get("sessionId")
         plan_log(plan, f"Controller to {n} (intercom): {first}")
     return out
@@ -1052,8 +1125,16 @@ def cmd_list(a):
 
 
 def cmd_result(a):
+    """The worker's report, then its checklist. An item still open means the leg has not landed, whatever
+    the report's first line says."""
     w = need(a.name)
     print(report(w["sessionId"]) if w.get("sessionId") else "(no session yet)")
+    items = checklist([s.get("sessionId") for s in sessions_of(w)])
+    if items:
+        left = open_items(items)
+        print(f"\n--- checklist: {len(items) - len(left)} of {len(items)} completed" + (f"; OPEN: {len(left)}, so it has not landed" if left else ""))
+        for i in items:
+            print(f"  [{'x' if i['status'] == 'completed' else '>' if i['status'] == 'in_progress' else ' '}] {i['subject']}")
 
 
 def cmd_budget(a):
@@ -1069,7 +1150,10 @@ def cmd_plan(a):
     p = plan_path(sid)
     if not p.exists():
         PLANS.mkdir(parents=True, exist_ok=True)
-        p.write_text(PLAN_TEMPLATE.format(title=a.title or "untitled", sid=sid, now=time.strftime("%Y-%m-%d %H:%M")), encoding="utf-8")
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
+        repo = next((k for k, v in config()["repos"].items() if same_path(v, top)), Path(top or os.getcwd()).name)
+        p.write_text(PLAN_TEMPLATE.format(title=a.title or "untitled", flight=flight_code(repo), sid=sid,
+                                          now=time.strftime("%Y-%m-%d %H:%M")), encoding="utf-8")
     print(p)
 
 
@@ -1104,7 +1188,7 @@ def cmd_rm(a):
         sys.exit("pilot: claude rm failed; the worker's record is kept")
     w["archivedAt"] = time.time()
     w["final"] = {"state": s["state"], "detail": s.get("detail"), "spend": s["spend"], "reportHead": s.get("reportHead"),
-                  "report": rep[:6000], "commits": commits}
+                  "report": rep[:6000], "commits": commits, "checklist": checklist([x.get("sessionId") for x in sessions_of(w)])}
     write_json(ARCHIVE / f"{a.name}-{int(w['archivedAt'])}.json", w)
     (WORKERS / f"{a.name}.json").unlink(missing_ok=True)
     plan_log(w.get("plan"), f"Leg {a.name} removed ({s.get('reportHead') or s['state']}, {s['spend']['weighted']:,} weighted tokens)")
@@ -1482,7 +1566,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 HUB.poke()
         if self.path == "/api/intercom":
             names = body.get("to") if isinstance(body.get("to"), list) else []
-            known = {p["name"] for p in pilots()} | {f"w-{w['name']}" for w in registered()}
+            known = {p["name"] for p in pilots()} | {agent_name(w) for w in registered()}
             if not names or any(n not in known for n in names):
                 return self.send(400, {"error": f"send only to live pilots and workers: {', '.join(sorted(known)) or 'none'}"})
             try:
@@ -1551,7 +1635,7 @@ def main():
     s.add_argument("text", nargs="+", help="the message, or - for stdin")
     s.set_defaults(fn=cmd_say)
     s = sub.add_parser("tell", help="your words to live sessions through the intercom, mid-turn included")
-    s.add_argument("names", nargs="+", help="session names, as `claude agents` shows them: w-<leg> for a worker")
+    s.add_argument("names", nargs="+", help="session names, as `claude agents` shows them: `DPS1 scaffold` (flight and leg) for a worker")
     s.add_argument("--message", "-m", required=True, help="the message, or - for stdin")
     s.set_defaults(fn=cmd_tell)
     s = sub.add_parser("budget")

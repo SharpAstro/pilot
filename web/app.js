@@ -95,9 +95,11 @@ function stateOf(w) {
   if (w.state === "working") return {cls: "working", label: "● working", stroke: "var(--fill)", tint: "var(--tint-fill)"};
   if (w.state === "blocked") return {cls: "blocked", label: "waiting on you", stroke: "var(--warn)", tint: "var(--tint-warn)"};
   if (w.state === "done" || w.final) {
-    const head = w.reportHead || w.final?.reportHead;
+    const head = w.reportHead || w.final?.reportHead, open = openItems(w.checklist || w.final?.checklist).length;
     if (head === "FAILED") return {cls: "failed", label: "✗ failed", stroke: "var(--crit)", tint: "var(--tint-crit)"};
     if (head === "BLOCKED") return {cls: "blocked", label: "blocked: needs you", stroke: "var(--warn)", tint: "var(--tint-warn)"};
+    // DONE with checklist items still open has not landed: the pilot sends it back or makes them a leg.
+    if (head === "DONE" && open) return {cls: "blocked", label: `DONE, ${open} item${open > 1 ? "s" : ""} open`, stroke: "var(--warn)", tint: "var(--tint-warn)"};
     if (head === "DONE") return {cls: "done", label: "✓ done", stroke: "var(--good)", tint: "var(--tint-good)"};
     return {cls: "other", label: "turn ended", stroke: "var(--axis)", tint: "var(--surface)"};
   }
@@ -105,6 +107,19 @@ function stateOf(w) {
   return {cls: "other", label: w.state || "unknown", stroke: "var(--axis)", tint: "var(--surface)"};
 }
 const chip = w => { const s = stateOf(w); return `<span class="chip ${s.cls}" title="${esc(w.detail || "")}">${esc(s.label)}</span>`; };
+
+// A session's checklist (its task list): how much is done, and what it is on now.
+const openItems = items => (items || []).filter(i => i.status !== "completed");
+function checkLine(items) {
+  if (!items?.length) return "";
+  const done = items.length - openItems(items).length, now = items.find(i => i.status === "in_progress");
+  return `<div class="checkline" title="${esc(items.map(i => `${i.status === "completed" ? "✓" : i.status === "in_progress" ? "●" : "○"} ${i.subject}`).join("\n"))}">
+    <span class="clbar"><i style="width:${(100 * done / items.length).toFixed(0)}%"></i></span>${done}/${items.length}${now ? ` · ${esc(now.activeForm || now.subject)}` : ""}</div>`;
+}
+function checkList(items) {
+  return items.map(i => `<li class="${i.status}"><span>${i.status === "completed" ? "✓" : i.status === "in_progress" ? "●" : "○"}</span>
+    <span>${esc(i.status === "in_progress" ? i.activeForm || i.subject : i.subject)}</span></li>`).join("");
+}
 
 function meter(sp, budget) {
   sp = sp || {weighted: 0, tokens: {}};
@@ -346,7 +361,7 @@ function planCard(p, s) {
     const sp = w ? w.spend : h ? h.final?.spend : null;
     const link = w ? `#/w/${esc(w.name)}` : h ? `#/s/${esc(h.sessionId)}` : "";
     return `<tr${link ? ` class="click" data-href="${link}"` : ""}><td><b>${esc(l.leg)}</b></td><td>${md(l.goal)}</td><td>${esc(l.after.join(", ") || "-")}</td>
-      <td>${md(l.doneWhen)}</td><td><span class="chip ${st.cls}">${esc(st.label)}</span>${w && (w.state === "working" || w.state === "blocked") ? doing(w) : ""}</td><td class="num">${sp ? esc(M(sp.weighted)) : ""}</td></tr>`;
+      <td>${md(l.doneWhen)}</td><td><span class="chip ${st.cls}">${esc(st.label)}</span>${w && (w.state === "working" || w.state === "blocked") ? doing(w) : ""}${checkLine(w ? w.checklist : h?.final?.checklist)}</td><td class="num">${sp ? esc(M(sp.weighted)) : ""}</td></tr>`;
   }).join("");
   const log = p.log.slice(-12).reverse().map(l => `<li>${esc(l)}</li>`).join("");
   const ps = p.pilotState, waiting = ps?.status === "waiting";
@@ -356,7 +371,7 @@ function planCard(p, s) {
   const yourMove = p.live && ps?.status === "idle" && !flying.length;
   const where = `answer in the pilot's terminal${ps?.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : ""}`;
   return `<details class="card pad plan" ${fold("plan:" + p.sessionId, planActive(p, s) || !!p.waiting)}>
-    <summary class="cardhead"><span><b>Flight plan · ${esc(p.title)}</b> <span class="sub">${esc(legTally(p, s))}</span></span>
+    <summary class="cardhead"><span><b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> <span class="sub">${esc(legTally(p, s))}</span></span>
       <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} ` : ""}${yourMove ? `<span class="chip blocked">your move</span>` : pilotChip(ps, flying)} · plan updated ${esc(ago(p.updated))}
       · <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
@@ -454,7 +469,7 @@ function graphSvg(s) {
   const items = [], roots = new Map(), onPlan = new Set(), folded = new Set();
   for (const p of s.plans || []) {
     const open = planOpen(p, s);
-    roots.set("p:" + p.sessionId, {label: p.title, sub: open ? "pilot" : `collapsed · ${legTally(p, s)}`, folded: !open});
+    roots.set("p:" + p.sessionId, {label: p.flight ? `${p.flight} ${p.title}` : p.title, sub: open ? "pilot" : `collapsed · ${legTally(p, s)}`, folded: !open});
     if (!open) folded.add(p.sessionId);
     for (const l of p.legs) {
       onPlan.add(l.leg);
@@ -557,13 +572,13 @@ VIEWS.overview = root => {
   btext.addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); broadcast(); } });
   return {
     update(s) {
-      const pilotsN = s.pilots.map(p => p.name), workersN = s.workers.filter(w => w.pid).map(w => `w-${w.name}`);
+      const pilotsN = s.pilots.map(p => p.name), workersN = s.workers.filter(w => w.pid).map(w => w.agent);
       targets = [];
       if (pilotsN.length && workersN.length) targets.push(["everyone", [...pilotsN, ...workersN]]);
       if (pilotsN.length) targets.push(["all pilots", pilotsN]);
       if (workersN.length) targets.push(["all workers", workersN]);
       for (const p of s.plans || []) {
-        const legs = p.legs.map(l => s.workers.find(w => w.name === l.leg && w.pid)).filter(Boolean).map(w => `w-${w.name}`);
+        const legs = p.legs.map(l => s.workers.find(w => w.name === l.leg && w.pid)).filter(Boolean).map(w => w.agent);
         if (p.pilot && pilotsN.includes(p.pilot) && legs.length) targets.push([`${p.title}: pilot and legs`, [p.pilot, ...legs]]);
       }
       for (const n of [...pilotsN, ...workersN]) targets.push([n, [n]]);
@@ -606,6 +621,7 @@ VIEWS.session = (root, r) => {
       <div class="side"><div class="card pad s-ctl" hidden><b>Controls</b>
           <div class="ctlrow"><label>budget, weighted tokens <input class="s-budget" inputmode="numeric" placeholder="e.g. 20M"></label><button class="s-setbudget">set</button></div>
           <div class="sub s-ctlhint"></div></div>
+        <div class="card pad s-checkcard" hidden><div class="cardhead"><b>Checklist</b><span class="sub s-checkn"></span></div><ul class="checklist s-check"></ul></div>
         <div class="card pad"><b>Session</b><dl class="s-info" style="margin-top:8px"></dl></div>
         <div class="card pad"><b>Subagents</b><div class="s-agents" style="margin-top:6px"><span class="sub">none</span></div></div></div>
     </div>`;
@@ -820,12 +836,16 @@ VIEWS.session = (root, r) => {
         put($(".s-sum", root), sp.body); put($(".s-stamp", root), esc(sp.stamp)); $(".s-btn", root).disabled = sp.running;
       }
       const say = $(".s-say", root);
-      sayTo = w && w.pid ? `w-${w.name}` : p ? p.name : null;
+      sayTo = w && w.pid ? w.agent : p ? p.name : null;
       say.hidden = !(sayTo || w) || !!r.agent;
       const turnOver = !!w && !(w.pid && (w.state === "working" || w.state === "blocked"));
       $(".s-asturn", root).hidden = !turnOver;
       if (!sayTo && w) $(".s-asturnbox", root).checked = true;      // not running: only a new turn reaches it
       if (!$(".s-hint", root)._html) put($(".s-hint", root), sayTo ? "Through the intercom: it arrives at its next step, mid-turn too." : "");
+      const items = (w ? w.checklist : p ? p.checklist : h?.final?.checklist) || [], left = openItems(items).length;
+      $(".s-checkcard", root).hidden = !items.length || !!r.agent;
+      put($(".s-checkn", root), items.length ? `${items.length - left} of ${items.length} done${left && (w?.reportHead || h?.final?.reportHead) === "DONE" ? " · reported DONE with items open" : ""}` : "");
+      put($(".s-check", root), checkList(items));
       const info = w || h || p || {};
       const leg = (s.plans || []).flatMap(x => x.legs.map(l => ({...l, plan: x.title}))).find(l => l.leg === (w || h)?.name);
       const rows = [["flight plan", leg?.plan], ["leg goal", leg?.goal], ["done when", leg?.doneWhen],

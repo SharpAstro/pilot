@@ -12,7 +12,10 @@ message workers, set budgets and stop them. Workers fly the legs.
 - **flight plan**: one Markdown file for this session, which the controller reads on the dashboard.
 - **leg**: one piece of work in the plan, flown by one worker of the same name.
 - **worker**: a background Claude Code session that `pilot.py` started, in its own git worktree branched
-  from the repo's default branch. Its name in `ListAgents` is `w-<leg>`.
+  from the repo's default branch. Its name in `ListAgents` is the flight number and the leg, `DPS1
+  scaffold`, which `pilot.py start` prints; a worker started before flight numbers is `w-<leg>`.
+- **flight number**: the plan's `Flight:` line, given when the plan opens (or when its first leg takes off,
+  for an older plan). It tells this flight's workers apart from every other flight's, in Recents too.
 
 `pilot.py` is four directories above this skill's base directory:
 `<base directory>/../../../../pilot.py`. Call it with `python` (never `python3` on Windows).
@@ -59,15 +62,15 @@ The controller may edit the plan. Read it again before you start each leg.
    - *Constraints*: what not to touch, and whether it may push or open a PR (default: neither).
    - *Report*: anything beyond the standard report.
 5. **Two legs never edit the same files at the same time.** If they would, chain them with *After*.
-6. **Follow without polling.** After starting a worker, `SendMessage` to `w-<leg>` with
+6. **Follow without polling.** After starting a worker, `SendMessage` to its name with
    `notify_when_idle: true` and no message. A new worker is not reachable for its first 20 to 40 seconds
    ("No agent named ... is reachable"): do other work, then send again. When the notice arrives, read its
    report with `python <pilot.py> result <leg>`. Never loop on `list` or sleep waiting for one.
-7. **Correct a worker** with `SendMessage` to `w-<leg>`, inside its brief. If the brief itself was wrong,
+7. **Correct a worker** with `SendMessage` to its name, inside its brief. If the brief itself was wrong,
    stop the worker, fix the route, and start a new leg with a new brief. Messages from the controller reach
    a worker as its own user turns; you do not send those.
 8. **A worker that reports BLOCKED needs a decision, usually yours.** Decide it as rule 9 says and send the
-   answer to `w-<leg>`. Only what rule 9 sends to the tower goes to the controller.
+   answer to the worker. Only what rule 9 sends to the tower goes to the controller.
 9. **Decide engineering questions yourself, with the co-pilot.** Design, test strategy, file layout,
    naming, which reading of a spec to follow, how to split a leg: these are yours, not the controller's.
    For each one that matters, ask the co-pilot, a Sonnet subagent this plugin ships: `Agent` with subagent
@@ -85,7 +88,11 @@ The controller may edit the plan. Read it again before you start each leg.
    terminal and can answer now, also ask with `AskUserQuestion`: the pilot plugin's hook shows its choices
    on the dashboard and logs each answer in the plan. Never ask the tower in a plain reply alone; it is
    visible only in your terminal.
-10. **Check before you report.** Read the commits:
+10. **Check before you report.** A leg has landed only when its worker's checklist is complete:
+    `python <pilot.py> result <leg>` prints the report and then the checklist, and the dashboard shows it.
+    An open item, whatever the report says, means it has not landed. Send the worker back to finish it,
+    or decide with the co-pilot to make it a new leg on the route. Nothing is left open or "for later" off
+    the route. Then read the commits:
    `git -C <worktree> log --oneline <base>..HEAD` and `git -C <worktree> diff --stat <base>...HEAD`.
    Then compare the evidence it quoted against the leg's *Done when*. Say what you checked and what you
    did not, and log the outcome in the plan.

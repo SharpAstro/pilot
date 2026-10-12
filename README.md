@@ -6,12 +6,17 @@ controller.
 - **Pilot**: an ordinary interactive Claude Code session in the repo's main checkout, with the pilot
   plugin loaded. It keeps the flight plan, writes a brief per leg, starts a worker for each, follows them
   and checks what they did. It does not edit product code.
-- **Flight plan**: one Markdown file per pilot session: an objective, a route of legs (each with its goal,
-  the legs it waits for, and the check that proves it), and a log. The pilot writes it, `pilot.py` logs
-  into it, and you read it on the dashboard and may amend it.
+- **Flight plan**: one Markdown file per pilot session: a flight number, an objective, a route of legs
+  (each with its goal, the legs it waits for, and the check that proves it), and a log. The pilot writes
+  it, `pilot.py` logs into it, and you read it on the dashboard and may amend it. The flight number is the
+  repo's initials and a count (`DPS1` for drawboard-pdf-sdk), given when the plan opens, so every worker
+  of the flight is named for it: `DPS1 scaffold` in `claude agents`, Recents and the dashboard.
 - **Worker**: a Claude Code background session (`claude --bg -w`) in its own git worktree, branched from
-  the repo's default branch. It flies one leg, commits on its own branch, and ends with a report whose
-  first line is `DONE`, `BLOCKED` or `FAILED`.
+  the repo's default branch. It flies one leg, keeps a checklist (its task list), commits on its own
+  branch, and ends with a report whose first line is `DONE`, `BLOCKED` or `FAILED`. A leg has landed only
+  when its checklist is complete: nothing is left open or for later. An item the worker cannot finish is a
+  `BLOCKED` report, and the pilot sends it back or makes the item a leg of its own. A `DONE` with items
+  open shows in amber.
 - **Co-pilot**: a Sonnet subagent the pilot plugin ships (`agents/copilot.md`), read-only. The pilot
   settles engineering questions itself and asks the co-pilot for an independent opinion on each one that
   matters; they agree, or after one exchange the question goes to you. Only that, a budget raise, scope,
@@ -63,7 +68,7 @@ changed. It asks `claude agents` only when a session file moved, or every 30 s.
 
 | Page | What it shows |
 |---|---|
-| Overview | Each flight plan, folded to one line with a tally of its legs once it has landed (click to open; your choice sticks, and a folded plan leaves only its box on the radar): what its pilot is doing (working, idle and following its legs, or waiting on you, with the question it asked and where to answer it), what the pilot is waiting on you for (its `## Waiting on the controller` section, in amber), its last message in full when its turn has ended with nothing in the air, the pilot's notes (what it found, why the route is this shape), the route with every leg's live status (planned, working and its current tool call, waiting on you, done, failed, removed), and the flight log with every question and answer; the intercom, one line to message live sessions (everyone, all pilots, all workers, a flight, or one); the radar (legs under their pilot, chained by After, planned legs dashed); a Haiku summary of all workers; every worker with state, spend against budget and what it is doing; the sessions open in a repo's main checkout. |
+| Overview | Each flight plan, folded to one line with a tally of its legs once it has landed (click to open; your choice sticks, and a folded plan leaves only its box on the radar): what its pilot is doing (working, idle and following its legs, or waiting on you, with the question it asked and where to answer it), what the pilot is waiting on you for (its `## Waiting on the controller` section, in amber), its last message in full when its turn has ended with nothing in the air, the pilot's notes (what it found, why the route is this shape), the route with every leg's live status and its checklist (done of total, and the item it is on) (planned, working and its current tool call, waiting on you, done, failed, removed), and the flight log with every question and answer; the intercom, one line to message live sessions (everyone, all pilots, all workers, a flight, or one); the radar (legs under their pilot, chained by After, planned legs dashed); a Haiku summary of all workers; every worker with state, spend against budget and what it is doing; the sessions open in a repo's main checkout. |
 | A worker or session | Its whole conversation streaming live, folded as Claude Code's remote view folds it: what it says in full, and each run of tool calls as one line ("Read 5 files, ran 3 commands (1 failed)") that opens to every call with its input and result, a subagent's run named by its task; a live line under it with what it is doing now (Claude Code's own one-line detail) and how long the turn has run; refused calls in red with who refused them (their run opens itself) (auto mode, a hook, a deny rule, Claude Code) and the command with a copy button; subagent transcripts one click away; its summary; its leg; a message box that goes through the intercom (or, for a worker whose turn has ended, as your own turn); a budget control; attach, remote and stop. |
 | History | Removed workers with their result, branch, spend, report and commits, and their conversation. |
 | Spend | Weighted tokens per day over 14 days, and the token breakdown per worker. |
@@ -86,7 +91,7 @@ Code's own project list.
 | `plugins/pilot/` | the pilot skill, loaded with `--plugin-dir` into the session you want as pilot, and the hook that shows its questions on the dashboard and logs your answers in the plan |
 | `plugins/worker/` | the hooks every worker gets: the budget checkpoint, and Sam's five hooks through `hooks/kit.sh` |
 | `~/.pilot/pilot.json` | this machine's settings, kept out of the repo since they name local paths: the repos workers may start in, the default model and effort (unset: the account's), the default budget. Missing, it means no repos and a 10M budget |
-| `%LOCALAPPDATA%/pilot/` | runtime state: `plans/<pilot session>.md`, `workers/`, `archive/`, `briefs/` (the exact prompt sent), `meters/`, `notifications.json`, `summaries.json`, error logs |
+| `%LOCALAPPDATA%/pilot/` | runtime state: `plans/<pilot session>.md`, `flights.json` (the last flight number per repo), `workers/`, `archive/`, `briefs/` (the exact prompt sent), `meters/`, `notifications.json`, `summaries.json`, error logs |
 | `<repo>/.claude/worktrees/w-<leg>` | each worker's worktree, branch `worktree-w-<leg>`; `start` adds the folder to the repo's `.git/info/exclude` |
 | `~/.claude/projects/...` | transcripts, where Claude Code always keeps them; `rm` leaves them, so History can open them |
 

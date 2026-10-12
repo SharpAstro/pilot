@@ -116,6 +116,16 @@ nav a.on { background: var(--page); color: var(--ink); font-weight: 600; box-sha
 .plan .pilotnow { margin: 4px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plan .pilotnow b { color: var(--ink); }
 .plan td .doing { max-width: 300px; margin-top: 3px; }
+/* a session's checklist: a line in its leg's row, a card on its page */
+.checkline { font-size: 12px; color: var(--ink-2); margin-top: 3px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clbar { display: inline-block; width: 40px; height: 4px; border-radius: 2px; background: var(--track); vertical-align: middle; margin-right: 6px; overflow: hidden; }
+.clbar i { display: block; height: 100%; background: var(--good); }
+ul.checklist { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; }
+ul.checklist li { display: flex; gap: 6px; padding: 2px 0; color: var(--ink-2); }
+ul.checklist li.completed { color: var(--muted); }
+ul.checklist li.completed span:last-child { text-decoration: line-through; }
+ul.checklist li.in_progress { color: var(--ink); font-weight: 600; }
+ul.checklist li.in_progress span:first-child { color: var(--fill); }
 .plan .ask > .md { margin-top: 6px; }
 /* answering the pilot: one row of choices per waiting item, then Send */
 .plan .ask ol.items { margin: 8px 0 0; padding-left: 22px; }
