@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pilot</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --hair: #e1e0d9; --track: #e1e0d9; --ring: rgba(11,11,11,0.10);
+  --fill: #2a78d6; --good: #0ca30c; --warn: #fab219; --crit: #d03b3b; --good-text: #006300;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --hair: #2c2c2a; --track: #2c2c2a; --ring: rgba(255,255,255,0.10); --fill: #3987e5; --good-text: #0ca30c;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --hair: #2c2c2a; --track: #2c2c2a; --ring: rgba(255,255,255,0.10); --fill: #3987e5; --good-text: #0ca30c;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 48px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; margin-bottom: 16px; }
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 13px; font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: .04em; margin: 24px 0 8px; }
+.sub { color: var(--muted); font-size: 12px; }
+.limits { display: flex; gap: 16px; flex-wrap: wrap; margin-left: auto; }
+.limit { min-width: 170px; }
+.card { background: var(--surface); border: 1px solid var(--ring); border-radius: 8px; }
+.row { display: grid; grid-template-columns: minmax(130px, 1.2fr) 130px minmax(150px, 1.3fr) minmax(160px, 2fr) auto; gap: 12px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--hair); cursor: pointer; }
+.row:first-child { border-top: 0; }
+.row:hover { background: color-mix(in srgb, var(--ink) 3%, transparent); }
+.name { font-weight: 600; overflow-wrap: anywhere; }
+.name small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
+.chip { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.chip.working { color: var(--fill); } .chip.blocked { color: var(--ink); } .chip.done { color: var(--good-text); } .chip.other { color: var(--muted); }
+.chip.blocked::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); margin-right: 6px; }
+.meter { display: grid; gap: 3px; }
+.meter .lbl { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.track { height: 6px; background: var(--track); border-radius: 3px; overflow: hidden; }
+.bar { height: 100%; background: var(--fill); border-radius: 3px; min-width: 2px; }
+.bar.warn { background: var(--warn); } .bar.crit { background: var(--crit); }
+.doing { color: var(--ink-2); font-size: 12px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.doing b { color: var(--ink); font-weight: 600; }
+.actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+button, a.btn { font: inherit; font-size: 12px; padding: 4px 9px; border-radius: 6px; border: 1px solid var(--ring); background: var(--page); color: var(--ink); cursor: pointer; text-decoration: none; white-space: nowrap; }
+button:hover, a.btn:hover { border-color: var(--muted); }
+button.danger { color: var(--crit); }
+.detail { padding: 0 14px 14px; border-top: 1px dashed var(--hair); display: grid; gap: 12px; }
+.report { white-space: pre-wrap; background: var(--page); border: 1px solid var(--hair); border-radius: 6px; padding: 10px 12px; font-size: 13px; max-height: 340px; overflow: auto; }
+.events { font: 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; max-height: 420px; overflow: auto; background: var(--page); border: 1px solid var(--hair); border-radius: 6px; padding: 8px 10px; }
+.ev { display: grid; grid-template-columns: 64px 70px 1fr; gap: 8px; padding: 2px 0; }
+.ev .t { color: var(--muted); } .ev .k { color: var(--ink-2); } .ev .x { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ev.error .k, .ev.error .x { color: var(--crit); }
+.ev.message .k { color: var(--fill); }
+.empty { padding: 14px; color: var(--muted); }
+.warnline { margin: 0 0 12px; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--crit); color: var(--ink); }
+@media (max-width: 760px) {
+  .row { grid-template-columns: 1fr auto; }
+  .row .meter, .row .doing { grid-column: 1 / -1; }
+  .row .actions { grid-column: 1 / -1; justify-content: flex-start; }
+  .limits { margin-left: 0; width: 100%; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Pilot</h1>
+    <span class="sub" id="stamp">loading…</span>
+    <div class="limits" id="limits"></div>
+  </header>
+  <div id="alerts"></div>
+  <h2>Pilot</h2>
+  <div class="card" id="pilots"><div class="empty">…</div></div>
+  <h2>Workers</h2>
+  <div class="card" id="workers"><div class="empty">…</div></div>
+</main>
+<script>
+const open = new Set(JSON.parse(sessionStorageGet("open") || "[]"));
+function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch { return null; } }
+function sessionStorageSet(k, v) { try { sessionStorage.setItem(k, v); } catch {} }
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const M = n => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : Math.round(n / 1e3) + "k";
+const ago = t => { if (!t) return "never"; const s = Date.now() / 1000 - t; return s < 60 ? Math.round(s) + "s ago" : s < 3600 ? Math.round(s / 60) + "m ago" : (s / 3600).toFixed(1) + "h ago"; };
+const clock = iso => iso ? new Date(iso).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"}) : "";
+
+function meter(sp, budget) {
+  const t = sp.tokens || {};
+  const tip = `input ${(t.input_tokens||0).toLocaleString()} · cache write ${(t.cache_creation_input_tokens||0).toLocaleString()} · cache read ${(t.cache_read_input_tokens||0).toLocaleString()} · output ${(t.output_tokens||0).toLocaleString()}\nweighted = input + 1.25×write + 0.1×read + 5×output`;
+  if (!budget) return `<div class="meter" title="${esc(tip)}"><div class="lbl"><span>${M(sp.weighted)} weighted</span></div></div>`;
+  const f = sp.weighted / budget, cls = f >= 1 ? "crit" : f >= 0.75 ? "warn" : "";
+  const note = f >= 1 ? "⚠ over budget" : f >= 0.75 ? "▲ near budget" : "";
+  return `<div class="meter" title="${esc(tip)}"><div class="lbl"><span>${M(sp.weighted)} / ${M(budget)}</span><span>${note}</span></div>
+    <div class="track"><div class="bar ${cls}" style="width:${Math.min(100, f * 100).toFixed(1)}%"></div></div></div>`;
+}
+
+function chip(w) {
+  const s = w.state;
+  if (s === "working") return `<span class="chip working">● working</span>`;
+  if (s === "blocked") return `<span class="chip blocked">waiting on you</span>`;
+  if (s === "done") return `<span class="chip done">✓ turn ended</span>`;
+  return `<span class="chip other">${esc(s || "unknown")}</span>`;
+}
+
+function limitsHtml(l) {
+  if (!l || !l.windows) return `<span class="sub" title="Add the rate-limit cache to your status line (see README) to show the 5-hour and 7-day windows here.">no rate-limit figures</span>`;
+  const out = [];
+  for (const [key, label] of [["five_hour", "5-hour"], ["seven_day", "7-day"]]) {
+    const w = l.windows[key]; if (!w) continue;
+    const p = w.used_percentage ?? 0, cls = p >= 90 ? "crit" : p >= 75 ? "warn" : "";
+    const resets = w.resets_at ? new Date(w.resets_at * 1000).toLocaleString([], {weekday: "short", hour: "2-digit", minute: "2-digit"}) : "";
+    out.push(`<div class="limit meter"><div class="lbl"><span>${label} ${Math.round(p)}%${p >= 90 ? " ⚠" : ""}</span><span>resets ${esc(resets)}</span></div>
+      <div class="track"><div class="bar ${cls}" style="width:${Math.min(100, p)}%"></div></div></div>`);
+  }
+  out.push(`<span class="sub">read ${ago(l.writtenAt)}</span>`);
+  return out.join("");
+}
+
+function doing(w) {
+  const n = w.now; if (!n) return `<span class="doing">nothing yet</span>`;
+  return n.kind === "tool" ? `<span class="doing"><b>${esc(n.tool)}</b> ${esc(n.text)}</span>` : `<span class="doing">${esc(n.text)}</span>`;
+}
+
+function actions(w, isWorker) {
+  const a = [];
+  if (w.id) a.push(`<button data-copy="claude attach ${esc(w.id)}" title="Copy the command that opens this session in a terminal">attach</button>`);
+  if (w.remote) a.push(`<a class="btn" href="${esc(w.remote)}" target="_blank" rel="noopener" title="Talk to it from claude.ai or your phone (Remote Control)">remote ↗</a>`);
+  if (isWorker && w.pid && w.state !== "gone") a.push(`<button class="danger" data-stop="${esc(w.name)}">stop</button>`);
+  return `<div class="actions">${a.join("")}</div>`;
+}
+
+async function detail(sessionId) {
+  const ev = await (await fetch(`/api/sessions/${sessionId}/events`)).json();
+  const said = ev.filter(e => e.kind === "said");
+  const last = said.length ? said[said.length - 1].text : "";
+  return `${last ? `<div><h2 style="margin-top:12px">Last message</h2><div class="report">${esc(last)}</div></div>` : ""}
+    <div><h2 style="margin-top:4px">Recent events</h2><div class="events">${ev.map(e =>
+      `<div class="ev ${esc(e.kind)}"><span class="t">${esc(clock(e.at))}</span><span class="k">${esc(e.kind === "tool" ? e.tool : e.kind)}</span><span class="x">${esc(e.text)}</span></div>`).join("") || "nothing yet"}</div></div>`;
+}
+
+async function render(s) {
+  document.getElementById("stamp").textContent = `updated ${new Date(s.now * 1000).toLocaleTimeString()}`;
+  document.getElementById("limits").innerHTML = limitsHtml(s.limits);
+  const over = s.workers.filter(w => w.overBudget), waiting = s.workers.filter(w => w.state === "blocked");
+  document.getElementById("alerts").innerHTML =
+    (over.length ? `<p class="warnline">⚠ Over budget: ${over.map(w => esc(w.name)).join(", ")}. Their tools are refused until you raise the budget (<code>pilot.py budget NAME N</code>).</p>` : "") +
+    (waiting.length ? `<p class="warnline" style="border-color:var(--warn)">Waiting on you: ${waiting.map(w => esc(w.name)).join(", ")}.</p>` : "");
+  document.getElementById("pilots").innerHTML = s.pilots.length ? s.pilots.map(p => `
+    <div class="row" data-sid="${esc(p.sessionId)}"><div class="name">${esc(p.name)}<small>${esc(p.kind)}</small></div>
+      <span class="chip ${p.busy ? "working" : "other"}">${p.busy ? "● busy" : "idle"}</span>${meter(p.spend, 0)}<span class="doing"></span>${actions(p, false)}</div>
+    ${open.has(p.sessionId) ? `<div class="detail" data-for="${esc(p.sessionId)}">loading…</div>` : ""}`).join("")
+    : `<div class="empty">No session open in the repo's main checkout. Start one there with the pilot plugin.</div>`;
+  document.getElementById("workers").innerHTML = s.workers.length ? s.workers.map(w => `
+    <div class="row" data-sid="${esc(w.sessionId || "")}"><div class="name">${esc(w.name)}<small>${esc(w.branch)} · ${esc(w.id)} · last ${ago(w.lastActivity)}</small></div>
+      ${chip(w)}${meter(w.spend, w.budget)}${doing(w)}${actions(w, true)}</div>
+    ${w.sessionId && open.has(w.sessionId) ? `<div class="detail" data-for="${esc(w.sessionId)}">loading…</div>` : ""}`).join("")
+    : `<div class="empty">No workers. The pilot starts them with <code>pilot.py start NAME --brief FILE</code>.</div>`;
+  for (const d of document.querySelectorAll(".detail[data-for]")) d.innerHTML = await detail(d.dataset.for);
+}
+
+async function tick() {
+  try { render(await (await fetch("/api/state")).json()); }
+  catch (e) { document.getElementById("stamp").textContent = "dashboard server not reachable"; }
+}
+
+document.addEventListener("click", async e => {
+  const t = e.target.closest("button, a, .row");
+  if (!t) return;
+  if (t.dataset.copy) { navigator.clipboard?.writeText(t.dataset.copy); t.textContent = "copied"; return; }
+  if (t.dataset.stop) {
+    if (!confirm(`Stop ${t.dataset.stop}? Its conversation is kept; claude attach resumes it.`)) return;
+    const r = await fetch(`/api/workers/${t.dataset.stop}/stop`, {method: "POST", headers: {"X-Pilot": "1"}});
+    alert((await r.json()).output || r.status); tick(); return;
+  }
+  if (t.tagName === "A") return;
+  if (t.classList.contains("row") && t.dataset.sid) {
+    open.has(t.dataset.sid) ? open.delete(t.dataset.sid) : open.add(t.dataset.sid);
+    sessionStorageSet("open", JSON.stringify([...open])); tick();
+  }
+});
+tick(); setInterval(tick, 4000);
+</script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+{
+  "name": "pilot-worker",
+  "version": "0.1.0",
+  "description": "Loaded into every worker pilot.py starts: the spend checkpoint, and Sam's runaway-agent hooks from the sibling checkout."
+}

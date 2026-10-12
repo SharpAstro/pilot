@@ -1,0 +1,5 @@
+{
+  "name": "pilot",
+  "version": "0.1.0",
+  "description": "Makes a session the pilot: it briefs workers, starts them with pilot.py, follows them and checks their results."
+}
