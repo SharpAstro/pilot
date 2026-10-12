@@ -232,6 +232,7 @@ function renderTop() {
   put($("#limits"), limitsHtml(S.limits));
   const over = S.workers.filter(w => w.overBudget);
   const waiting = [...S.pilots.filter(p => p.status === "waiting").map(p => ({name: `pilot ${p.name}`, href: `#/s/${p.sessionId}`})),
+                   ...(S.plans || []).filter(p => p.waiting).map(p => ({name: p.title, href: `#/s/${p.sessionId}`})),
                    ...S.workers.filter(w => w.state === "blocked").map(w => ({name: w.name, href: `#/w/${w.name}`}))];
   put($("#alerts"),
     (over.length ? `<p class="warnline">⚠ Over budget: ${over.map(w => `<a href="#/w/${esc(w.name)}">${esc(w.name)}</a>`).join(", ")}. Their tools are refused until the budget is raised (<code>pilot budget NAME N</code>).</p>` : "") +
@@ -333,12 +334,16 @@ function planCard(p, s) {
   const ps = p.pilotState, waiting = ps?.status === "waiting";
   const flying = p.legs.map(l => l.leg).filter(n => s.workers.some(w => w.name === n && w.state === "working"));
   const fold = (k, def) => `data-k="${esc(k)}"${def ? ` data-open="1"` : ""}${(opened.has(k) ? opened.get(k) : def) ? " open" : ""}`;
-  return `<details class="card pad plan" ${fold("plan:" + p.sessionId, planActive(p, s))}>
+  // The pilot's turn has ended and nothing is in the air: whatever happens next is up to the controller.
+  const yourMove = p.live && ps?.status === "idle" && !flying.length;
+  const where = `answer in the pilot's terminal${ps?.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : ""}`;
+  return `<details class="card pad plan" ${fold("plan:" + p.sessionId, planActive(p, s) || !!p.waiting)}>
     <summary class="cardhead"><span><b>Flight plan · ${esc(p.title)}</b> <span class="sub">${esc(legTally(p, s))}</span></span>
-      <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} ` : ""}${pilotChip(ps, flying)} · plan updated ${esc(ago(p.updated))}
+      <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} ` : ""}${yourMove ? `<span class="chip blocked">your move</span>` : pilotChip(ps, flying)} · plan updated ${esc(ago(p.updated))}
       · <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
-    ${pilotNow(ps)}
+    ${p.waiting ? `<div class="ask"><div class="cardhead"><b>Waiting on you</b><span class="sub">from the plan · ${where}</span></div>${md(p.waiting, true)}</div>` : ""}
+    ${yourMove && ps.said ? `<details class="lastsaid" ${fold("said:" + p.sessionId, true)}><summary>its turn ended ${esc(ago(Date.parse(ps.said.at) / 1000))} with nothing in the air; its last message</summary>${md(ps.said.text)}</details>` : pilotNow(ps)}
     ${p.notes ? `<details ${fold("notes:" + p.sessionId, waiting)}><summary>the pilot's notes: what it found and why the route is this shape</summary>${md(p.notes, true)}</details>` : ""}
     <div class="tablewrap"><table><thead><tr><th>Leg</th><th>Goal</th><th>After</th><th>Done when</th><th>Status</th><th class="num">Spend</th></tr></thead>
       <tbody>${legs || `<tr><td colspan="6" class="sub">No legs yet. The pilot adds them to the Route table.</td></tr>`}</tbody></table></div>

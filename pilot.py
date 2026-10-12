@@ -219,6 +219,10 @@ def plan_log(sid, text):
     p.write_text(t + f"- {time.strftime('%Y-%m-%d %H:%M')} {text}\n", encoding="utf-8")
 
 
+# The plan's list of what the pilot is waiting on the controller for, under any of these headings.
+WAITING_RE = re.compile(r"(waiting on (the controller|you)|open questions|questions for the controller)\b", re.I)
+
+
 def parse_plan(text):
     def section(name):
         m = re.search(rf"^##\s+{name}\s*$(.*?)(?=^##\s|\Z)", text, re.M | re.S)
@@ -246,7 +250,20 @@ def parse_plan(text):
         elif log and ln[:1].isspace() and ln.strip():   # an entry wrapped onto the next line
             log[-1] += " " + ln.strip()
     return {"title": title.group(1).strip() if title else "untitled", "objective": " ".join(objective.group(1).split()) if objective else "",
-            "legs": legs, "log": log[-40:], "notes": plan_notes(text, objective)}
+            "legs": legs, "log": log[-40:], "notes": plan_notes(text, objective), "waiting": plan_waiting(text)}
+
+
+def plan_waiting(text):
+    """What the pilot is waiting on the controller for: a question it relayed, a review, a decision. It
+    lives in the plan rather than only in a reply, so it stays in front of the controller until answered."""
+    out, inside = [], False
+    for line in text.splitlines():
+        h = re.match(r"^(##|###)\s+(\S.*?)\s*$", line)     # it ends at the next heading, notes' ### included
+        if h:
+            inside = h.group(1) == "##" and bool(WAITING_RE.match(h.group(2)))
+        elif inside:
+            out.append(line)
+    return "\n".join(out).strip()
 
 
 def plan_notes(text, objective):
@@ -256,13 +273,15 @@ def plan_notes(text, objective):
         text = text[:objective.start()] + text[objective.end():]
     out, part = [], None
     for line in text.splitlines():
+        if part == "waiting" and line.startswith("### "):   # the waiting list is over; notes resume
+            part = None
         h = re.match(r"^##\s+(\S.*?)\s*$", line)
         if h:
-            part = h.group(1).lower()
-            if part not in ("route", "log"):     # a section of the pilot's own
+            part = "waiting" if WAITING_RE.match(h.group(1)) else h.group(1).lower()
+            if part not in ("route", "log", "waiting"):     # a section of the pilot's own
                 out.append(line)
             continue
-        if part == "log" or line.startswith("# ") or re.match(r"^Pilot session:", line) or line.lstrip().startswith("|"):
+        if part in ("log", "waiting") or line.startswith("# ") or re.match(r"^Pilot session:", line) or line.lstrip().startswith("|"):
             continue
         if part == "route" and line.strip() and "#### On the route" not in out:
             out.append("#### On the route")
@@ -572,8 +591,9 @@ def session_view(r):
     ask = read_json(ASKS / f"{sid}.json") if status == "waiting" and sid else None
     if ask and since and ask.get("at", 0) < since - 60:       # asked before this wait began: a cancelled question
         ask = None
-    now = doing_now(tail_events(sid, n=60) if sid else [])
-    return {"status": status, "busy": status == "busy", "waitingFor": r.get("waitingFor") or rec.get("waitingFor"),
+    ev = tail_events(sid, n=60) if sid else []
+    now, said = doing_now(ev), next((e for e in reversed(ev) if e["kind"] == "said"), None)
+    return {"said": {"text": said["text"][:8000], "at": said["at"]} if said else None, "status": status, "busy": status == "busy", "waitingFor": r.get("waitingFor") or rec.get("waitingFor"),
             "since": since, "now": now, "ask": ask,
             "remote": f"https://claude.ai/code/{rec['bridgeSessionId']}" if rec.get("bridgeSessionId") else None}
 
@@ -594,6 +614,8 @@ def snapshot():
         history.append(h)
     workers = [worker_status(w, rows) for w in registered()]
     ps = pilots(rows)
+    for p in ps:
+        p["flying"] = [w["name"] for w in workers if w.get("plan") == p["sessionId"] and w["state"] in ("working", "blocked")]
     return {"workers": workers, "pilots": ps, "limits": limits(), "history": history,
             "plans": plans_view(rows, workers, {p["sessionId"]: p for p in ps})}
 
@@ -670,7 +692,17 @@ class Notices:
                 q = next(iter((p.get("ask") or {}).get("questions") or []), {})
                 add("waiting", p, f"pilot {p['name']} is waiting on you: {q.get('question') or p.get('waitingFor') or 'input'}",
                     href=f"#/s/{p['sessionId']}")
+            elif seen.get(key, {}).get("state") == "busy" and p["status"] == "idle" and not p.get("flying"):
+                first = next((ln.strip(" #*>-`") for ln in ((p.get("said") or {}).get("text") or "").splitlines() if ln.strip()), "")
+                add("turn", p, f"pilot {p['name']} ended its turn, nothing in the air" + (f": {first[:200]}" if first else ""),
+                    href=f"#/s/{p['sessionId']}")
             seen[key] = {"state": p["status"]}
+        for pl in snap["plans"]:
+            key, items = "plan:" + pl["sessionId"], pl.get("waiting") or ""
+            if seen.get(key) is not None and items and items != seen[key].get("waiting"):
+                add("waiting", {"name": pl.get("pilot") or pl["title"], "sessionId": pl["sessionId"]},
+                    f"{pl['title']}: the pilot is waiting on you", href=f"#/s/{pl['sessionId']}")
+            seen[key] = {"waiting": items}
         with self.lock:
             self.seen = seen
             if new or first:

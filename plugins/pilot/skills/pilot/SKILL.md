@@ -24,6 +24,11 @@ from the template the first time. It has three parts, and you keep the first two
 tools:
 
 - `Objective:` one or two sentences: what this flight is for and how you will know it landed.
+- `## Waiting on the controller`, right under the objective, whenever you wait on the controller for
+  anything: a question (yours, or one a worker or its document raised), a review, a decision. One bullet
+  per item, each with your recommendation. The dashboard shows it in amber at the top of the plan and
+  notifies the controller, so it is how they know the next move is theirs. Take an item out once it is
+  answered, and log the answer. Leave the section out when you wait on nothing.
 - Your notes, between the objective and the route: what you found, what shapes the route, what is still
   open. The dashboard shows them under the objective, and they are how the controller follows your
   reasoning, so keep them current when a decision changes the route.
@@ -58,11 +63,13 @@ The controller may edit the plan. Read it again before you start each leg.
 7. **Correct a worker** with `SendMessage` to `w-<leg>`, inside its brief. If the brief itself was wrong,
    stop the worker, fix the route, and start a new leg with a new brief. Messages from the controller reach
    a worker as its own user turns; you do not send those.
-8. **A worker that reports BLOCKED needs the controller.** Relay its question word for word and wait.
+8. **A worker that reports BLOCKED needs the controller.** Relay its question word for word, add it to
+   `## Waiting on the controller`, and wait.
    Never answer a question only the user can answer.
-9. **Ask the controller with `AskUserQuestion`**, not in a plain reply. The pilot plugin's hook shows the
-   question on the dashboard while you wait and logs each answer in the plan; a question asked in prose is
-   visible only in your terminal. Then log what you decided from the answer, and why.
+9. **Ask the controller with `AskUserQuestion`** when they can answer now, not in a plain reply. The pilot
+   plugin's hook shows the question on the dashboard while you wait and logs each answer in the plan; a
+   question asked in prose is visible only in your terminal. What waits longer (a review, questions in a
+   document a leg wrote) goes in `## Waiting on the controller`. Then log what you decided, and why.
 10. **Check before you report.** Read the commits:
    `git -C <worktree> log --oneline <base>..HEAD` and `git -C <worktree> diff --stat <base>...HEAD`.
    Then compare the evidence it quoted against the leg's *Done when*. Say what you checked and what you
