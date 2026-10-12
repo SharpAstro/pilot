@@ -242,7 +242,9 @@ Traps found on the way:
   dashboard: Claude Code has no way in from outside. The dashboard shows it (for a pilot started after the
   question hook existed) and links **remote**, Claude's own choice UI. Items in the plan's
   `## Waiting on the controller` section are answered from the dashboard.
-- The flight plan is tied one to one to a pilot session id. Claude Code's help says an interactive
-  `--resume` reuses the id unless `--fork-session` is given, so `pilot --resume` should find its plan again;
-  not tested yet, and a background resume did fork. `pilot plan --session <old id>` reopens a plan by hand.
+- The flight plan is tied one to one to a pilot session id. An interactive `--resume` keeps the id, so a
+  resumed pilot finds its plan again (measured: a pilot whose session ended came back as a new name, same
+  id). What a resume loses is the pilot's `notify_when_idle` subscriptions, which lived in the old process:
+  a resumed pilot subscribes to its flying workers again. A background resume does fork the id; then
+  `pilot plan --session <old id>` reopens the plan.
 - Every worker gets the same model (the account's default unless `~/.pilot/pilot.json` or `--model` says otherwise).
