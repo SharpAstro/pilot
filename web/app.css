@@ -187,6 +187,16 @@ ul.checklist li.in_progress span:first-child { color: var(--fill); }
 .ev.error .body { color: var(--crit); }
 details > summary { cursor: pointer; color: var(--ink-2); font-size: 12px; }
 details pre { margin: 6px 0 0; max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--page); border: 1px solid var(--hair); border-radius: 6px; padding: 8px 10px; }
+/* a pilot's terminal: its screen, and a line to type into it */
+.term { margin-top: 12px; }
+.term > summary { color: inherit; font-size: inherit; }
+.term .screen { margin: 8px 0; max-height: 420px; overflow: auto; white-space: pre; font: 12px/1.35 "Cascadia Mono", Consolas, monospace;
+  background: var(--page); border: 1px solid var(--hair); border-radius: 6px; padding: 8px 10px; }
+.term .termrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.term .termrow input:not([type]) { flex: 1; min-width: 240px; font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 6px;
+  border: 1px solid var(--hair); background: var(--page); color: var(--ink); }
+.term .keys { display: inline-flex; gap: 4px; }
+.term .keys button { padding: 3px 8px; font-size: 12px; }
 /* a run of tool calls, folded to one line as Claude Code's remote view folds it */
 .ev.group { padding: 2px 14px; }
 .ev.group > summary { color: var(--muted); font-size: 13px; list-style: none; }

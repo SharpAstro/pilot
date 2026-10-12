@@ -619,6 +619,12 @@ VIEWS.session = (root, r) => {
       <div class="summary s-sum" style="margin-top:6px"></div></div>
     <div class="sess" style="margin-top:12px">
       <div><div class="card"><div class="stream s-stream"><div class="empty">loading…</div></div><div class="live s-live" hidden></div></div>
+        <details class="card pad term s-term" hidden><summary><b>Terminal</b> <span class="sub">its screen, read every 2 s while this is open; what you type goes straight into it</span></summary>
+          <div class="sub s-ttitle"></div><pre class="screen s-screen">reading…</pre>
+          <div class="termrow"><input class="s-ttext" placeholder="text to type, e.g. an answer or /remote-control">
+            <label class="sub"><input type="checkbox" class="s-tenter" checked> then Enter</label><button class="primary s-tsend">Type</button>
+            <span class="keys"><button data-tkey="up" title="Up arrow">↑</button><button data-tkey="down" title="Down arrow">↓</button><button data-tkey="enter">Enter</button><button data-tkey="esc" title="Esc cancels a prompt, and mid-turn it interrupts the turn">Esc</button></span></div>
+          <div class="sub s-tnote"></div></details>
         <div class="say s-say" hidden><textarea class="s-text" placeholder="Message this session. Ctrl+Enter sends."></textarea>
           <div class="bar2"><span class="sub s-hint"></span><label class="sub s-asturn" hidden title="Stops it and continues it with your words as a user turn, in a new session id. Only once its turn has ended."><input type="checkbox" class="s-asturnbox"> as my own turn</label>
             <button class="primary s-send">Send</button></div></div></div>
@@ -764,6 +770,40 @@ VIEWS.session = (root, r) => {
     return `<details><summary>${ev.error ? "error" : "result"} · ${lines} line${lines === 1 ? "" : "s"}</summary><pre>${esc(ev.text)}</pre></details>${sub}`;
   }
 
+  // A pilot's terminal: its screen, read while the card is open, and keystrokes typed into it after a
+  // confirm. Only pilots: a background worker has no console. The server logs what is typed in the plan.
+  const term = $(".s-term", root);
+  let termSid = null, termTimer = null, termName = "";
+  async function readTerm() {
+    if (!termSid || !term.open) return;
+    try {
+      const j = await (await fetch(`/api/console/${termSid}`)).json();
+      if (j.error) { put($(".s-tnote", root), `<span style="color:var(--crit)">${esc(j.error)}</span>`); return; }
+      put($(".s-ttitle", root), `window title: ${esc(j.title)}`);
+      const pre = $(".s-screen", root), stick = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 30;
+      put(pre, esc(j.lines.join("\n")));
+      if (stick) pre.scrollTop = pre.scrollHeight;
+    } catch (e) { put($(".s-tnote", root), esc(e.message)); }
+  }
+  async function typeTerm(text, keys) {
+    const what = [text && `"${text}"`, ...keys.map(k => k === "enter" ? "Enter" : k === "esc" ? "Esc" : k === "up" ? "↑" : "↓")].filter(Boolean).join(" + ");
+    if (!(keys.length === 1 && (keys[0] === "up" || keys[0] === "down")) && !confirm(`Type ${what} into ${termName}'s terminal?`)) return;
+    put($(".s-tnote", root), "typing…");
+    try {
+      const j = await post(`/api/console/${termSid}`, {text, keys});
+      put($(".s-screen", root), esc(j.lines.join("\n"))); $(".s-screen", root).scrollTop = 1e9;
+      put($(".s-tnote", root), `typed ${esc(what)}`);
+      $(".s-ttext", root).value = "";
+    } catch (e) { put($(".s-tnote", root), `<span style="color:var(--crit)">${esc(e.message)}</span>`); }
+  }
+  term.addEventListener("toggle", () => { clearInterval(termTimer); if (term.open) { readTerm(); termTimer = setInterval(readTerm, 2000); } });
+  $(".s-tsend", root).addEventListener("click", () => {
+    const text = $(".s-ttext", root).value.trim();
+    if (text || $(".s-tenter", root).checked) typeTerm(text, $(".s-tenter", root).checked ? ["enter"] : []);
+  });
+  $(".s-ttext", root).addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $(".s-tsend", root).click(); } });
+  term.addEventListener("click", e => { const k = e.target.closest("[data-tkey]")?.dataset.tkey; if (k) typeTerm("", [k]); });
+
   function tick() {
     const el = $(".s-live", root);
     el.hidden = !liveText;
@@ -846,6 +886,8 @@ VIEWS.session = (root, r) => {
       $(".s-asturn", root).hidden = !turnOver;
       if (!sayTo && w) $(".s-asturnbox", root).checked = true;      // not running: only a new turn reaches it
       if (!$(".s-hint", root)._html) put($(".s-hint", root), sayTo ? "Through the intercom: it arrives at its next step, mid-turn too." : "");
+      termSid = p && !r.agent ? p.sessionId : null; termName = p ? p.name : "";
+      term.hidden = !termSid;
       const items = (w ? w.checklist : p ? p.checklist : h?.final?.checklist) || [], left = openItems(items).length;
       $(".s-checkcard", root).hidden = !items.length || !!r.agent;
       put($(".s-checkn", root), items.length ? `${items.length - left} of ${items.length} done${left && (w?.reportHead || h?.final?.reportHead) === "DONE" ? " · reported DONE with items open" : ""}` : "");
@@ -867,7 +909,7 @@ VIEWS.session = (root, r) => {
       if (!turnAt && w?.started) turnAt = w.started * 1000;    // the turn began before the backlog: since it started
       tick();
     },
-    unmount() { if (es) es.close(); clearInterval(timer); },
+    unmount() { if (es) es.close(); clearInterval(timer); clearInterval(termTimer); },
   };
 };
 

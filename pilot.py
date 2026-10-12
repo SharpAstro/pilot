@@ -1512,6 +1512,111 @@ def cmd_hook_ask(_a):
         hook_error()
 
 
+# --------------------------------------------------------------------------- a pilot's console
+
+CONSOLE_KEYS = {"enter": (0x0D, 13), "esc": (0x1B, 27), "tab": (0x09, 9), "backspace": (0x08, 8),
+                "up": (0x26, 0), "down": (0x28, 0), "left": (0x25, 0), "right": (0x27, 0)}
+
+
+def console_io(pid, text="", keys=()):
+    """A console's title and visible screen, after typing text and keys into it if any are given. It
+    attaches to the console of process `pid`, which a process can do only with no console of its own, so
+    the dashboard runs it in a detached child (`pilot.py console-io`). Keystrokes go into that one console's
+    input buffer with WriteConsoleInput: no window focus, so nothing can land in another tab. Typed text
+    reaches Claude Code's prompt; mid-turn it is queued as a message, and a slash command still runs."""
+    import ctypes
+    from ctypes import wintypes as wt
+    k32, u32 = ctypes.WinDLL("kernel32", use_last_error=True), ctypes.WinDLL("user32")
+
+    class COORD(ctypes.Structure):
+        _fields_ = [("X", wt.SHORT), ("Y", wt.SHORT)]
+
+    class INFO(ctypes.Structure):
+        _fields_ = [("dwSize", COORD), ("dwCursorPosition", COORD), ("wAttributes", wt.WORD),
+                    ("srWindow", wt.SMALL_RECT), ("dwMaximumWindowSize", COORD)]
+
+    class KEY(ctypes.Structure):
+        _fields_ = [("bKeyDown", wt.BOOL), ("wRepeatCount", wt.WORD), ("wVirtualKeyCode", wt.WORD),
+                    ("wVirtualScanCode", wt.WORD), ("UnicodeChar", wt.WCHAR), ("dwControlKeyState", wt.DWORD)]
+
+    class EVENT(ctypes.Union):
+        _fields_ = [("KeyEvent", KEY), ("pad", ctypes.c_byte * 16)]
+
+    class RECORD(ctypes.Structure):
+        _fields_ = [("EventType", wt.WORD), ("Event", EVENT)]
+
+    k32.CreateFileW.restype = wt.HANDLE
+    k32.FreeConsole()
+    if not k32.AttachConsole(wt.DWORD(pid)):
+        raise OSError(f"cannot attach to the console of process {pid} (error {ctypes.get_last_error()})")
+    handles = []
+    try:
+        for name in ("CONIN$", "CONOUT$"):        # read and write, shared, open existing
+            handles.append(k32.CreateFileW(name, 0xC0000000, 3, None, 3, 0, None))
+        hin, hout = handles
+        strokes = [(u32.VkKeyScanW(ch) & 0xFF, ord(ch)) for ch in text] + [CONSOLE_KEYS[k] for k in keys]
+        if strokes:
+            recs = (RECORD * (2 * len(strokes)))()
+            for i, (vk, code) in enumerate(strokes):
+                for j, down in enumerate((True, False)):
+                    k = recs[2 * i + j]
+                    k.EventType = 1                  # KEY_EVENT: a key down, then up
+                    k.Event.KeyEvent.bKeyDown, k.Event.KeyEvent.wRepeatCount = down, 1
+                    k.Event.KeyEvent.wVirtualKeyCode, k.Event.KeyEvent.UnicodeChar = vk, chr(code)
+            n = wt.DWORD()
+            if not k32.WriteConsoleInputW(hin, recs, len(recs), ctypes.byref(n)):
+                raise OSError(f"cannot type into the console of process {pid} (error {ctypes.get_last_error()})")
+            time.sleep(0.8)                          # let it draw before the screen is read back
+        title = ctypes.create_unicode_buffer(1024)
+        k32.GetConsoleTitleW(title, 1024)
+        info = INFO()
+        if not k32.GetConsoleScreenBufferInfo(hout, ctypes.byref(info)):
+            raise OSError(f"cannot read the console of process {pid} (error {ctypes.get_last_error()})")
+        width = info.srWindow.Right - info.srWindow.Left + 1
+        buf, got, lines = ctypes.create_unicode_buffer(width + 1), wt.DWORD(), []
+        for y in range(info.srWindow.Top, info.srWindow.Bottom + 1):
+            k32.ReadConsoleOutputCharacterW(hout, buf, width, COORD(info.srWindow.Left, y), ctypes.byref(got))
+            lines.append(buf.value[:got.value].rstrip())
+        while lines and not lines[-1]:
+            lines.pop()
+        return {"title": title.value, "lines": lines, "typed": len(strokes)}
+    finally:
+        for h in handles:
+            k32.CloseHandle(wt.HANDLE(h))
+        k32.FreeConsole()
+
+
+def cmd_console_io(a):
+    try:
+        out = console_io(a.pid, a.text or "", a.key or [])
+    except Exception as e:                      # always answer in JSON: the dashboard reads nothing else
+        out = {"error": f"{type(e).__name__}: {e}"}
+    sys.stdout.write(json.dumps(out))
+
+
+def pilot_console(sid, text="", keys=()):
+    """A live pilot's screen, read or typed into from the dashboard. Only pilots, sessions in a configured
+    repo's main checkout: a background worker has no console. What is typed goes in the plan's log."""
+    row = next((r for r in agents() if r.get("sessionId") == sid and r.get("pid")), None)
+    if not row or sid not in {p["sessionId"] for p in pilots()}:
+        raise ValueError("only a live pilot's terminal, a session in a repo's main checkout, can be read or typed into")
+    text = " ".join(str(text or "").split())[:2000]
+    keys = [k for k in keys if k in CONSOLE_KEYS]
+    r = subprocess.run([sys.executable, str(HERE / "pilot.py"), "console-io", str(row["pid"]),
+                        *(["--text", text] if text else []), *[x for k in keys for x in ("--key", k)]],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+                       creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+    try:
+        out = json.loads(r.stdout)
+    except ValueError:
+        raise ValueError(f"console-io failed: {(r.stdout + r.stderr).strip()[:300]}")
+    if out.get("error"):
+        raise ValueError(out["error"])
+    if text or keys:
+        plan_log(sid, "Controller typed into the pilot's terminal: " + " + ".join(([repr(text)] if text else []) + keys))
+    return out
+
+
 # --------------------------------------------------------------------------- launching the pilot
 
 def known_projects():
@@ -1706,6 +1811,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             m = re.match(r"^/api/sessions/([0-9a-f-]{36})/agents$", path)
             if m:
                 return self.send(200, subagents(m.group(1)))
+            m = re.match(r"^/api/console/([0-9a-f-]{36})$", path)
+            if m:
+                try:
+                    return self.send(200, pilot_console(m.group(1)))
+                except (ValueError, subprocess.TimeoutExpired) as e:
+                    return self.send(409, {"error": str(e)})
             if path == "/api/projects":
                 return self.send(200, known_projects())
             if path == "/api/projects/sessions":
@@ -1805,6 +1916,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             finally:
                 HUB.running.discard(key)
                 HUB.poke()
+        m = re.match(r"^/api/console/([0-9a-f-]{36})$", self.path)
+        if m:
+            try:
+                out = pilot_console(m.group(1), str(body.get("text") or ""), body.get("keys") if isinstance(body.get("keys"), list) else [])
+            except (ValueError, subprocess.TimeoutExpired) as e:
+                return self.send(409, {"error": str(e)})
+            HUB.poke()
+            return self.send(200, out)
         if self.path == "/api/intercom":
             names = body.get("to") if isinstance(body.get("to"), list) else []
             known = {p["name"] for p in pilots()} | {agent_name(w) for w in registered()}
@@ -1901,6 +2020,11 @@ def main():
     s.set_defaults(fn=cmd_dashboard)
     sub.add_parser("hook-budget").set_defaults(fn=cmd_hook_budget)
     sub.add_parser("hook-ask").set_defaults(fn=cmd_hook_ask)
+    s = sub.add_parser("console-io", help="internal: read a console's screen, or type into it, by process id")
+    s.add_argument("pid", type=int)
+    s.add_argument("--text")
+    s.add_argument("--key", action="append", choices=sorted(CONSOLE_KEYS))
+    s.set_defaults(fn=cmd_console_io)
     s = sub.add_parser("whois", help="the session id behind a live session's name, for a worker checking its pilot")
     s.add_argument("name")
     s.set_defaults(fn=cmd_whois)
