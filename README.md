@@ -212,6 +212,14 @@ Traps found on the way:
   A recipient takes it as Claude Code takes any cross-session message, a teammate's request acted on within
   its own permissions. Nothing tells workers to treat `pilot-dashboard` as you: any process here can take
   that name, so it would hand your authority to whoever claims it.
+- **A resumed pilot has a new name, and a worker briefed by name ignores it.** `w-scaffold`, briefed with its
+  pilot's name, took no action on its own resumed pilot ("not my pilot"). A resume keeps the session id,
+  so a brief names the pilot by both, and `pilot whois "<name>"` prints the id behind a live name for the
+  worker to check: a session can take any name, not another's id.
+- **A finished checklist disappears from disk.** Once every item is completed, Claude Code deletes the
+  items under `tasks/<session>/` and keeps only `.highwatermark` and `.lock`, so a landed leg looked as if it
+  kept no checklist. `pilot.py` rebuilds it from the transcript's successful `TaskCreate` and `TaskUpdate`
+  calls (25 ms for a worker's whole transcript, then cached).
 - **Windows Terminal splits its command line on `;`.** A launch command with the first message inline broke
   in two ("error 0x80070002 when launching ..."). Launch passes the message in a file and escapes `;`.
 - **Headless Edge captures before the page's fetches land** when an event stream is open, whatever
