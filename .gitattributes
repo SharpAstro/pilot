@@ -1,3 +1,2 @@
-# Shell scripts run under Git Bash; a CR breaks them, whatever core.autocrlf says.
-*.sh text eol=lf
-*.py text eol=lf
+# Everything is LF, whatever core.autocrlf says. Git Bash fails on a CR in a script.
+* text=auto eol=lf
