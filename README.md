@@ -53,7 +53,8 @@ pilot list                          # state, weighted spend vs budget, last acti
 pilot result fix-export             # the worker's report
 pilot tell w-fix-export -m "also cover rotated pages"   # through the intercom, mid-turn too
 pilot say fix-export "also cover rotated pages"   # your message, as a user turn (its turn must have ended)
-pilot budget fix-export 20000000    # an absolute ceiling, not an increment
+pilot refuel fix-export 16000000 --reason "API and tests left, ~3M each"   # the watchtower approves, or it goes to you
+pilot budget fix-export 20000000    # the controller's override: an absolute ceiling, not an increment
 pilot summary [fix-export]          # a Haiku summary: Needs you / Where it is
 pilot stop fix-export               # conversation kept: `claude attach <id>` resumes it
 pilot rm fix-export                 # removes its sessions and worktree; the record stays in History
@@ -136,6 +137,17 @@ At its budget (default 10M, see `~/.pilot/pilot.json`) every tool but `SendMessa
 writes its report: a checkpoint, not a kill. Claude Code writes an assistant message to the transcript
 only after its tool calls are dispatched, so the meter lags by the message in flight: a worker can
 overshoot by one message, never more.
+
+**Refuelling.** A pilot asks for more with `pilot refuel <leg> <N> --reason`, and the reason is required.
+Gates come first and need no model: the usage figures are fresh (at most 30 minutes old), both windows
+are under 80% and not projected to run dry before they reset (the status line's rules), and N is at most
+twice the leg's first budget. Past them the **watchtower**, one Haiku call with no tools (about 3 s),
+reads the leg's goal and Done when, the checklist, the spend, the worker's last message and the reason,
+and approves or sends it to the tower. It checks the reason against the checklist: in testing it refused a
+request whose reason claimed a step was finished that the checklist still had in progress. Either way the
+plan's log has the verdict and the reason, and the bell has every refuel. The top bar's ⛽ says which way
+a refuel would go right now. `~/.pilot/pilot.json` takes `"refuel": {"maxUsedPct": 80, "maxFactor": 2,
+"maxAgeMinutes": 30}`.
 
 A Haiku summary is one `claude -p --model haiku` with no tools, no MCP servers, no settings and no saved
 session: about 4k tokens and 2 s for one worker, measured.

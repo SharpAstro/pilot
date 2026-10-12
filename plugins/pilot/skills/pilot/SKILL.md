@@ -98,11 +98,16 @@ The controller may edit the plan. Read it again before you start each leg.
    `git -C <worktree> log --oneline <base>..HEAD` and `git -C <worktree> diff --stat <base>...HEAD`.
    Then compare the evidence it quoted against the leg's *Done when*. Say what you checked and what you
    did not, and log the outcome in the plan.
-11. **Fuel is the tower's call.** Every worker has a budget in weighted tokens (default 10M; see
-    `~/.pilot/pilot.json`). At the budget its tools are refused and it writes a report. Never raise it
-    yourself: put the raise in `## Waiting on the controller` with the amount you recommend and why. Once
-    the controller approves, run `python <pilot.py> budget <leg> <N>` (absolute, not an increment), then
-    message the worker.
+11. **Fuel goes through the watchtower.** Every worker has a budget in weighted tokens (default 10M; see
+    `~/.pilot/pilot.json`). At the budget its tools are refused and it writes a report. When a worker is
+    near it with much of its checklist left, or out of it, ask for more:
+    `python <pilot.py> refuel <leg> <N> --reason "<what is left, and why it needs this much>"` (N absolute).
+    The reason is required and is what gets judged, so make it true to the checklist. The watchtower
+    approves it on its own when the account has headroom (both usage windows under 80% and not running dry
+    before they reset), N is at most twice the leg's first budget, and your reason and the worker's
+    progress justify it; then message the worker. When it does not (exit 2), it says why: put the raise in
+    `## Waiting on the controller` with that and your recommendation. Never use `budget` yourself; it is
+    the controller's override.
 12. **Clean up** with `python <pilot.py> rm <leg>` once its branch has been pushed or the controller says to
     drop it. Never drop a worker's commits without asking. The record stays in the dashboard's history.
 

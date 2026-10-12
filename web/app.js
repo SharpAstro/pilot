@@ -257,12 +257,16 @@ function connect() {
 }
 function conn(ok) { const c = $("#conn"); c.className = "conn" + (ok ? " live" : ""); c.textContent = ok ? "live" : "reconnecting…"; }
 
-const NOTE_ICON = {waiting: "🟡", done: "✅", failed: "❌", died: "❌", budget: "⚠️", quiet: "💤", turn: "•"};
+const NOTE_ICON = {waiting: "🟡", done: "✅", failed: "❌", died: "❌", budget: "⚠️", fuel: "⛽", quiet: "💤", turn: "•"};
 function renderTop() {
   const r = parse();
   for (const a of document.querySelectorAll("nav a")) a.classList.toggle("on", a.dataset.nav === (r.view === "session" ? "" : r.view));
   if (!S) return;
-  put($("#limits"), limitsHtml(S.limits));
+  // Whether a refuel can be approved by the watchtower right now, or has to come to you.
+  const fuel = S.refuel ? `<span class="usage-peak ${S.refuel.ok ? "u-good" : "sub"}" title="${esc(S.refuel.ok
+    ? `Refuels: the watchtower may approve them now (${S.refuel.why.join("; ")}), if the reason and the worker's progress justify it.`
+    : `Refuels come to you: ${S.refuel.why.join("; ")}.`)}">⛽ ${S.refuel.ok ? "auto" : "tower"}</span>` : "";
+  put($("#limits"), limitsHtml(S.limits) + fuel);
   const over = S.workers.filter(w => w.overBudget);
   const waiting = [...S.pilots.filter(p => p.status === "waiting").map(p => ({name: `pilot ${p.name}`, href: `#/s/${p.sessionId}`})),
                    ...(S.plans || []).filter(p => p.waiting).map(p => ({name: p.title, href: `#/s/${p.sessionId}`})),

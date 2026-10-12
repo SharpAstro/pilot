@@ -692,6 +692,84 @@ def limits():
     return {"windows": d.get("rate_limits"), "writtenAt": d.get("written_at")} if d else None
 
 
+# The burn projection, by the status line's own rules (~/.claude/statusline/Program.cs), so the dashboard,
+# the status line and the watchtower never disagree. The 5-hour window projects on the wall clock; the
+# 7-day one over working hours only, 07:30 to 21:00 local, since nothing is spent overnight.
+def _at(ts, h, m, days=0):
+    d = datetime.datetime.fromtimestamp(ts).replace(hour=h, minute=m, second=0, microsecond=0)
+    return (d + datetime.timedelta(days=days)).timestamp()
+
+
+def _off_hours(ts):
+    d = datetime.datetime.fromtimestamp(ts)
+    return d.hour + d.minute / 60 >= 21 or d.hour + d.minute / 60 < 7.5
+
+
+def _next_work(ts):
+    return _at(ts, 7, 30) if _at(ts, 7, 30) > ts else _at(ts, 7, 30, 1)
+
+
+def _work_seconds(a, b):
+    total, t = 0.0, a
+    while t < b:
+        if _off_hours(t):
+            t = min(_next_work(t), b)
+            continue
+        end = min(_at(t, 21, 0), b)
+        total, t = total + end - t, end
+    return total
+
+
+def _add_work(t, need, cap):
+    while need > 0 and t < cap:
+        if _off_hours(t):
+            t = _next_work(t)
+            continue
+        chunk = _at(t, 21, 0) - t
+        if chunk >= need:
+            return t + need
+        need, t = need - chunk, t + chunk
+    return min(t, cap)
+
+
+def dry_at(five, start, now, used):
+    """When a window runs dry at the rate it has burnt since it opened; 0 when there is nothing to go on."""
+    if used <= 0:
+        return 0
+    if five:
+        return now + (100 - used) / (used / (now - start)) if now > start else 0
+    on = _work_seconds(start, now)
+    return _add_work(now, (100 - used) / (used / on), now + 30 * 86400) if on > 0 else 0
+
+
+REFUEL = {"maxUsedPct": 80, "maxFactor": 2, "maxAgeMinutes": 30}     # ~/.pilot/pilot.json "refuel" overrides
+
+
+def headroom(now=None):
+    """Whether the account can take more spend: fresh figures, and each window under maxUsedPct and not
+    projected to run dry before it resets. Returns (ok, one phrase per window), for the watchtower's gate."""
+    now, cfg = now or time.time(), {**REFUEL, **(config().get("refuel") or {})}
+    lim = limits()
+    if not lim or not lim.get("windows"):
+        return False, ["no usage figures: the status line writes them"]
+    age = now - (lim.get("writtenAt") or 0)
+    if age > cfg["maxAgeMinutes"] * 60:
+        return False, [f"the usage figures are {int(age // 60)} minutes old"]
+    ok, why = True, []
+    for key, span, name in (("five_hour", 5 * 3600, "5-hour"), ("seven_day", 7 * 86400, "7-day")):
+        w = lim["windows"].get(key) or {}
+        used, reset = float(w.get("used_percentage") or 0), w.get("resets_at")
+        if not isinstance(reset, (int, float)) or reset <= now:
+            why.append(f"{name} {used:.0f}%")
+            continue
+        dry = dry_at(key == "five_hour", reset - span, now, used) if used >= 10 else 0
+        short = bool(dry) and dry <= reset
+        if used >= cfg["maxUsedPct"] or short:
+            ok = False
+        why.append(f"{name} {used:.0f}%" + (f", runs dry {time.strftime('%a %H:%M', time.localtime(dry))}, before its reset" if short else ""))
+    return ok, why
+
+
 def snapshot():
     rows = agents()
     history = []
@@ -773,8 +851,10 @@ class Notices:
                     add("died", w, f"{w['name']} stopped on an error: {w['lastError'][:200]}")
                 if st == "gone" and prev.get("state") not in ("gone", "done", None):
                     add("died", w, f"{w['name']} is gone")
+            if prev is not None and (w.get("budget") or 0) > (prev.get("budget") or w.get("budget") or 0):
+                add("fuel", w, f"{w['name']} refuelled to {w['budget']:,} weighted tokens")
             seen[w["name"]] = {"state": st, "over": w["overBudget"], "quiet": quiet, "err": w.get("lastError"),
-                               "sid": w.get("sessionId")}
+                               "sid": w.get("sessionId"), "budget": w.get("budget")}
         for p in snap["pilots"]:
             key = "pilot:" + p["sessionId"]
             if seen.get(key) is not None and p["status"] == "waiting" and seen[key].get("state") != "waiting":
@@ -977,7 +1057,7 @@ def cmd_start(a):
     wt = f"w-{a.name}"
     w = {"name": a.name, "repo": repo, "worktree": str(Path(root, ".claude", "worktrees", wt)), "branch": f"worktree-{wt}",
          "base": base_branch(root), "model": a.model or cfg.get("model"), "effort": a.effort or cfg.get("effort"),
-         "budget": a.budget or cfg.get("budget"), "started": time.time(), "pilot": a.pilot, "after": a.after or [],
+         "budget": a.budget or cfg.get("budget"), "budget0": a.budget or cfg.get("budget"), "started": time.time(), "pilot": a.pilot, "after": a.after or [],
          "plan": pilot_session()}
     flight = plan_flight(w["plan"], repo) if w["plan"] else None
     w["agent"] = f"{flight} {a.name}" if flight else f"w-{a.name}"
@@ -1075,6 +1155,75 @@ def intercom(names, text):
     return out
 
 
+WATCHTOWER_PROMPT = """You are the watchtower over coding workers that each fly one leg of a piece of work. A pilot asks
+for more fuel, a higher token budget, for one worker. The account has headroom; that was checked. Judge
+whether this request is justified, or must go to the tower, the person who runs the work.
+
+APPROVE when the reason names what is left, the checklist shows real progress for what has been spent,
+and the amount is in proportion to what is left at the rate it has been spending.
+TOWER when the reason is vague, the worker shows little progress for its spend (stuck on one item, going
+round in circles), or the amount looks out of proportion.
+
+Answer with exactly two lines and nothing else:
+VERDICT: APPROVE or TOWER
+WHY: one sentence the person will read.
+
+The request:
+"""
+
+
+def watchtower(w, tokens, reason, account):
+    """A Haiku verdict on a refuel request: one `claude -p` with no tools, no MCP servers and no saved session,
+    like a summary. Returns (approved, why); anything it cannot answer goes to the tower."""
+    s = worker_status(w)
+    plan = parse_plan(plan_path(w["plan"]).read_text(encoding="utf-8")) if w.get("plan") and plan_path(w["plan"]).exists() else {}
+    leg = next((l for l in plan.get("legs", []) if l["leg"] == w["name"]), {})
+    items = s.get("checklist") or []
+    lines = [f"- Worker {w['name']}. Leg goal: {leg.get('goal') or '(not on a route)'}. Done when: {leg.get('doneWhen') or '-'}",
+             f"- Budget now {w.get('budget') or 0:,} weighted tokens, spent {s['spend']['weighted']:,}; asking for {tokens:,}.",
+             f"- Reason given: {reason}",
+             f"- Checklist: {len(items) - len(open_items(items))} of {len(items)} done" if items else "- Checklist: none kept",
+             *[f"  [{'x' if i['status'] == 'completed' else '>' if i['status'] == 'in_progress' else ' '}] {i['subject']}" for i in items],
+             f"- Its last message: {(report(w['sessionId']) if w.get('sessionId') else '')[-1500:]}",
+             f"- Account: {'; '.join(account)}"]
+    try:
+        r = claude("-p", "--model", "haiku", "--tools", "", "--strict-mcp-config", "--no-session-persistence",
+                   "--name", "pilot-watchtower", "--output-format", "json", stdin=WATCHTOWER_PROMPT + "\n".join(lines),
+                   cwd=str(STATE), timeout=150)
+        out = json.loads(r.stdout).get("result") or ""
+    except (ValueError, subprocess.TimeoutExpired) as e:
+        return False, f"the watchtower could not answer ({e})"
+    verdict, why = re.search(r"VERDICT:\s*(APPROVE|TOWER)", out), re.search(r"WHY:\s*(.+)", out)
+    return bool(verdict and verdict.group(1) == "APPROVE"), (why.group(1).strip() if why else out.strip()[:300])
+
+
+def refuel(name, tokens, reason):
+    """A pilot's request for more fuel for a worker. The gates come first and need no model: fresh usage
+    figures with headroom in both windows, and at most maxFactor times the leg's first budget. Past them,
+    the watchtower judges the reason against the worker's progress. Returns (approved, why); approved means
+    the budget is raised. Either way the plan's log says what happened and why."""
+    w = need(name)
+    reason = " ".join(str(reason or "").split())
+    if len(reason) < 20:
+        raise ValueError("give the reason: what is left, and why it needs this much")
+    if tokens <= (w.get("budget") or 0):
+        raise ValueError(f"{name}'s budget is already {w.get('budget') or 0:,}; a refuel raises it")
+    cfg = {**REFUEL, **(config().get("refuel") or {})}
+    first = w.get("budget0") or config().get("budget") or w.get("budget") or 0
+    ok, account = headroom()
+    gates = ([] if ok else [f"the account is short: {'; '.join(account)}"]) + \
+            ([] if tokens <= first * cfg["maxFactor"] else [f"{tokens:,} is past {cfg['maxFactor']} times the leg's first budget ({first:,})"])
+    if gates:
+        approved, why = False, "; ".join(gates)
+    else:
+        approved, why = watchtower(w, tokens, reason, account)
+    if approved:
+        set_budget(name, tokens)
+    plan_log(w.get("plan"), f"Watchtower {'approved' if approved else 'sent to the tower'}: refuel {name} to {tokens:,}. "
+                            f"{why.rstrip('.')}. Asked because: {reason}")
+    return approved, why
+
+
 def set_budget(name, tokens):
     w = need(name)
     w["budget"] = tokens
@@ -1135,6 +1284,18 @@ def cmd_result(a):
         print(f"\n--- checklist: {len(items) - len(left)} of {len(items)} completed" + (f"; OPEN: {len(left)}, so it has not landed" if left else ""))
         for i in items:
             print(f"  [{'x' if i['status'] == 'completed' else '>' if i['status'] == 'in_progress' else ' '}] {i['subject']}")
+
+
+def cmd_refuel(a):
+    try:
+        approved, why = refuel(a.name, a.tokens, a.reason)
+    except ValueError as e:
+        sys.exit(f"pilot: {e}")
+    if approved:
+        print(f"approved: {a.name} refuelled to {a.tokens:,}. {why}\nNow message the worker.")
+    else:
+        print(f"not approved: {why}\nPut the raise in `## Waiting on the controller`, with this and your recommendation.")
+        sys.exit(2)
 
 
 def cmd_budget(a):
@@ -1391,6 +1552,8 @@ class Hub:
                     snap["notifications"] = self.notices.view()
                     snap["summaries"] = read_json(SUMMARIES, {})
                     snap["running"] = sorted(self.running)
+                    ok, why = headroom()
+                    snap["refuel"] = {"ok": ok, "why": why}
                     sids = [s["sessionId"] for s in snap["workers"] + snap["pilots"] if s.get("sessionId")]
                     last_fp = fingerprint(sids)
                     body = json.dumps(snap)
@@ -1638,6 +1801,11 @@ def main():
     s.add_argument("names", nargs="+", help="session names, as `claude agents` shows them: `DPS1 scaffold` (flight and leg) for a worker")
     s.add_argument("--message", "-m", required=True, help="the message, or - for stdin")
     s.set_defaults(fn=cmd_tell)
+    s = sub.add_parser("refuel", help="ask for more fuel: the watchtower approves it, or it goes to the tower")
+    s.add_argument("name")
+    s.add_argument("tokens", type=int, help="the new budget, absolute")
+    s.add_argument("--reason", required=True, help="what is left, and why it needs this much")
+    s.set_defaults(fn=cmd_refuel)
     s = sub.add_parser("budget")
     s.add_argument("name")
     s.add_argument("tokens", type=int)
