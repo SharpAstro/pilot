@@ -145,8 +145,13 @@ def same_path(a, b):
 
 
 def base_branch(root):
-    r = subprocess.run(["git", "-C", root, "rev-parse", "--abbrev-ref", "origin/HEAD"], capture_output=True, text=True)
-    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else "origin/HEAD"
+    """What a worker's worktree branches from: origin/HEAD, or in a repo with no remote, the branch its main
+    checkout is on, which is what `claude --bg -w` takes then (measured on this repo, which has none)."""
+    for ref in ("origin/HEAD", "HEAD"):
+        r = subprocess.run(["git", "-C", root, "rev-parse", "--abbrev-ref", ref], capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip() and r.stdout.strip() != "HEAD":
+            return r.stdout.strip()
+    return "HEAD"
 
 
 # --------------------------------------------------------------------------- registry
@@ -1326,6 +1331,7 @@ STATIC = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js",
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    preview = False
     def log_message(self, fmt, *a):
         if os.environ.get("PILOT_DEBUG"):
             with open(STATE / "requests.log", "a", encoding="utf-8") as f:
@@ -1414,6 +1420,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 start += len(f.readline())
         events, offset = read_events(path, start)
         self.emit("backlog", {"events": events[-400:], "skipped": max(0, len(events) - 400), "truncated": start > 0})
+        if self.preview:                      # one look, then close: an open stream never lets headless Edge settle
+            self.wfile.write(b"retry: 600000\n\n")
+            self.wfile.flush()
+            return
         pinged = time.time()
         while True:
             time.sleep(1)
@@ -1497,11 +1507,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 def cmd_dashboard(a):
+    """The dashboard. --preview is a second one for checking a change to pilot itself beside the live one: on
+    5182 unless --port says otherwise, it raises no notices and writes none, and a session page's stream
+    sends its backlog and closes, so headless Edge settles and can take a screenshot (README)."""
     STATE.mkdir(parents=True, exist_ok=True)
+    port = a.port or (5182 if a.preview else 5181)
+    if a.preview:
+        HUB.notices.update = lambda snap: []
+        HUB.notices.save = lambda: None
+        Handler.preview = True
     threading.Thread(target=HUB.run, daemon=True).start()
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
     srv.daemon_threads = True
-    print(f"pilot dashboard: http://127.0.0.1:{a.port}/  (Ctrl-C stops it)")
+    print(f"pilot dashboard{' (preview)' if a.preview else ''}: http://127.0.0.1:{port}/  (Ctrl-C stops it)")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
@@ -1548,7 +1566,8 @@ def main():
     s.add_argument("--session", help="a pilot session id; default: the session this runs in")
     s.set_defaults(fn=cmd_plan)
     s = sub.add_parser("dashboard")
-    s.add_argument("--port", type=int, default=5181)
+    s.add_argument("--port", type=int, help="default 5181, or 5182 with --preview")
+    s.add_argument("--preview", action="store_true", help="a second dashboard for checking a change: no notices, session streams close")
     s.set_defaults(fn=cmd_dashboard)
     sub.add_parser("hook-budget").set_defaults(fn=cmd_hook_budget)
     sub.add_parser("hook-ask").set_defaults(fn=cmd_hook_ask)

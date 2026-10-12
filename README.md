@@ -104,6 +104,25 @@ listed, rather than fly the leg somewhere else.
 }
 ```
 
+## Flying this repo with itself
+
+It is in `~/.pilot/pilot.json` like any repo. It has no remote, so its workers branch from local `main`:
+with no `origin`, `claude --bg -w` takes the main checkout's branch (measured), and `pilot.py` names that as
+the base. The live dashboard and every running pilot use the main checkout, so a worker cannot break the
+tooling that watches it: its change reaches them only when its branch is merged into `main` (the
+controller's call), the server only after a restart, the page on a reload. Nobody edits `main` by hand
+while a flight runs here.
+
+A worker checks a dashboard change with its own copy, beside the live one:
+
+```bash
+python pilot.py dashboard --preview     # port 5182; raises and writes no notices; session streams close after their backlog
+"/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" --headless=new --disable-gpu --hide-scrollbars   --force-dark-mode --window-size=1400,1000 --virtual-time-budget=4000 --user-data-dir=<scratch dir>   --screenshot=<scratch dir>/page.png "http://127.0.0.1:5182/?nostream#/s/<session id>"
+```
+
+then reads the PNG. `?nostream` takes the state once; `--preview` closes a session page's stream, which
+would otherwise keep headless Edge from ever settling.
+
 ## Spend
 
 A worker's spend is in **weighted tokens**, `input + 1.25*cache_write + 0.1*cache_read + 5*output`, the
