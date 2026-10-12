@@ -57,6 +57,8 @@ BRIEFS = STATE / "briefs"
 METERS = STATE / "meters"
 PLANS = STATE / "plans"
 FLIGHTS = STATE / "flights.json"           # the last flight number given out, per repo code
+BLACKBOX = STATE / "blackbox.jsonl"        # every decision and event, append-only, across all flights
+AUTOPILOT = STATE / "autopilot.json"       # the autopilot's switch, session, and what it has been sent
 ASKS = STATE / "asks"                       # the question a pilot is waiting on you for, by session id
 NOTICES = STATE / "notifications.json"
 SUMMARIES = STATE / "summaries.json"
@@ -246,13 +248,69 @@ def plan_path(sid):
 
 
 def plan_log(sid, text):
-    """Appends a line to a flight plan's Log, which the template keeps as the last section."""
+    """Appends a line to a flight plan's Log, which the template keeps as the last section, and to the black
+    box, which keeps it whatever becomes of the plan."""
     p = plan_path(sid)
     if not p or not p.exists():
         return
     t = p.read_text(encoding="utf-8")
     t += ("" if t.endswith("\n") else "\n") + ("" if "\n## Log" in t else "\n## Log\n\n")
     p.write_text(t + f"- {time.strftime('%Y-%m-%d %H:%M')} {text}\n", encoding="utf-8")
+    flight = FLIGHT_RE.search(t)
+    blackbox(text, plan=sid, flight=flight.group(1) if flight else None)
+
+
+ACTORS = (("Controller", "controller"), ("Autopilot", "autopilot"), ("Watchtower", "watchtower"),
+          ("Pilot asks", "pilot"), ("Asked in the terminal", "pilot"), ("Decided", "pilot"),
+          ("Leg ", "pilot.py"), ("Budget for ", "pilot.py"), ("Plan opened", "pilot.py"), ("Dashboard to ", "pilot.py"))
+
+
+def blackbox(text, actor=None, plan=None, flight=None, **data):
+    """The flight recorder: one JSON line per decision or event, append-only, in <state>/blackbox.jsonl.
+    Who acted is the controller, the autopilot, the watchtower, a pilot, or pilot.py itself."""
+    actor = actor or next((a for prefix, a in ACTORS if text.startswith(prefix)), "pilot.py")
+    try:
+        STATE.mkdir(parents=True, exist_ok=True)
+        with open(BLACKBOX, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"at": time.time(), "actor": actor, "flight": flight, "plan": plan, "text": text, **data}) + "\n")
+    except OSError:
+        pass
+
+
+def blackbox_view(limit=1500):
+    """The black box, newest first, with the lines pilots wrote into their plans' logs themselves (decisions
+    with the co-pilot, landing checks), which never went through pilot.py, merged in."""
+    out = []
+    try:
+        with open(BLACKBOX, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    pass
+    except OSError:
+        pass
+    known = {(e.get("plan"), e.get("text")) for e in out}
+    for p in PLANS.glob("*.md"):
+        text = p.read_text(encoding="utf-8")
+        flight = (FLIGHT_RE.search(text) or [None, None])[1]
+        entries, cur = [], None
+        part = re.search(r"^##\s+Log\s*$(.*?)(?=^##\s|\Z)", text, re.M | re.S)
+        for ln in (part.group(1) if part else "").splitlines():
+            m = re.match(r"^- (\d{4}-\d\d-\d\d \d\d:\d\d) (.*)$", ln)
+            if m:
+                cur = [m.group(1), m.group(2)]
+                entries.append(cur)
+            elif cur and ln[:1].isspace() and ln.strip():
+                cur[1] += " " + ln.strip()
+        for when, what in entries:
+            if (p.stem, what) in known:
+                continue
+            at = time.mktime(time.strptime(when, "%Y-%m-%d %H:%M"))
+            actor = next((a for prefix, a in ACTORS if what.startswith(prefix)), "pilot")
+            out.append({"at": at, "actor": actor, "flight": flight, "plan": p.stem, "text": what, "fromPlan": True})
+    out.sort(key=lambda e: e.get("at") or 0, reverse=True)
+    return out[:limit]
 
 
 FLIGHT_RE = re.compile(r"^Flight:\s*(\S+)", re.M)
@@ -931,6 +989,13 @@ class Notices:
                 add("turn", p, f"pilot {p['name']} ended its turn, nothing in the air" + (f": {first[:200]}" if first else ""),
                     href=f"#/s/{p['sessionId']}")
             seen[key] = {"state": p["status"]}
+        ap = snap.get("autopilot") or {}
+        last = (seen.get("autopilot") or {}).get("last", 0)
+        for d in reversed(ap.get("decisions") or []):
+            if seen.get("autopilot") is not None and (d.get("at") or 0) > last:
+                add("done", {"name": "autopilot", "sessionId": ap.get("sessionId")}, d["text"][:240],
+                    href=f"#/s/{ap['sessionId']}" if ap.get("sessionId") else None)
+        seen["autopilot"] = {"last": max([last] + [d.get("at") or 0 for d in ap.get("decisions") or []])}
         for pl in snap["plans"]:
             key, items = "plan:" + pl["sessionId"], pl.get("waiting") or ""
             if seen.get(key) is not None and items and items != seen[key].get("waiting"):
@@ -1198,7 +1263,7 @@ Recipients:
 """
 
 
-def intercom(names, text):
+def intercom(names, text, sender="Controller"):
     """Your words to live sessions through Claude Code's own intercom (SendMessage), which only a Claude
     session can use, so one Haiku session allowed that tool alone sends them as `pilot-dashboard`: about 3 s
     and a tenth of a cent, measured. A message reaches a session at its next step, mid-turn included,
@@ -1223,7 +1288,7 @@ def intercom(names, text):
     for n in names:
         w = next((x for x in registered() if agent_name(x) == n), None)
         plan = w.get("plan") if w else (rows.get(n) or {}).get("sessionId")
-        plan_log(plan, f"Controller to {n} (intercom): {first}")
+        plan_log(plan, f"{sender} to {n} (intercom): {first}")
     return out
 
 
@@ -1296,6 +1361,80 @@ def refuel(name, tokens, reason):
     return approved, why
 
 
+AUTOPILOT_NAME, AUTOPILOT_MODEL, AUTOPILOT_CAP = "autopilot", "claude-opus-5-5", 3
+
+AUTOPILOT_BRIEF = """You are the autopilot. The person who runs these flights, the controller (the tower), is away, asleep,
+and has switched you on to decide in their place until they switch you off. Pilots fly flights: each keeps
+a flight plan, starts workers on legs and settles engineering questions with a co-pilot. What a pilot
+cannot settle goes in its plan's `## Waiting on the controller` section, and while you are on, the
+dashboard sends you each new set of items there.
+
+For each item:
+1. Read the plan file the message names and what the item points to: a design document, a worker's report
+   (`python {pilot} result <leg>`), the code. Act only on items that really are in that plan file.
+2. Decide it as the controller would: on the evidence, for the flight's objective, taking the pilot's
+   recommendation unless you find a reason against it. You may decide engineering questions, reviews
+   (approving a design document to build on), route changes within the flight's objective, and refuels up
+   to {cap} times a leg's first budget (`python {pilot} budget <leg> <N>`, which refuses more).
+3. Never decide, and leave for the controller: pushing, merging, a pull request, removing a worktree or a
+   branch, deleting anything, a new objective for a flight, or anything else that cannot be undone.
+4. Answer the pilot with `python {pilot} tell "<pilot name>" --as autopilot -m "<message>"`. Start the
+   message with "The autopilot's answers, on the controller's behalf (they are away):", then one line per
+   item: the question, your decision, and why in a sentence. For an item you leave, say that it waits for
+   the controller, and why.
+5. Every command you run is checked by auto mode's classifier. If it refuses one, do not work around it:
+   leave that item for the controller and say so in your answer.
+
+Then end your turn. The next items arrive as a message; do not poll, and start no work of your own. Now
+reply with one line saying you are on standby, and end your turn."""
+
+
+def autopilot_row(st=None):
+    st = st if st is not None else read_json(AUTOPILOT, {})
+    return next((r for r in agents() if st.get("id") and r.get("id") == st["id"] and r.get("pid")), None)
+
+
+def autopilot_on():
+    """Switches the autopilot on: an Opus background session in auto mode, on standby until the dashboard
+    sends it items. One already running is reused."""
+    st = read_json(AUTOPILOT, {})
+    _agents_cache["at"] = 0
+    if not autopilot_row(st):
+        prompt = AUTOPILOT_BRIEF.format(pilot=(HERE / "pilot.py").as_posix(), cap=AUTOPILOT_CAP)
+        job = backgrounded(claude("--bg", "-n", AUTOPILOT_NAME, "--model", AUTOPILOT_MODEL, "--effort", "xhigh",
+                                  "--permission-mode", "auto", stdin=prompt, cwd=str(HERE), timeout=120))
+        st = {"id": job, "sessionId": session_of(job), "sent": {}}
+    st.update(enabled=True, since=time.time())
+    write_json(AUTOPILOT, st)
+    blackbox("Autopilot switched on: it decides the tower's items until switched off", actor="controller")
+    return st
+
+
+def autopilot_off():
+    st = read_json(AUTOPILOT, {})
+    if st.get("id"):
+        claude("stop", st["id"])
+    st.update(enabled=False, offAt=time.time())
+    write_json(AUTOPILOT, st)
+    blackbox("Autopilot switched off", actor="controller")
+    return st
+
+
+def autopilot_view():
+    st = read_json(AUTOPILOT, {})
+    row = autopilot_row(st) if st.get("id") else None
+    since = st.get("since") or 0
+    decisions = [e for e in blackbox_view(400) if e.get("actor") == "autopilot" and (e.get("at") or 0) >= since]
+    return {"enabled": bool(st.get("enabled")), "live": bool(row), "status": (row or {}).get("status"),
+            "since": st.get("since"), "sessionId": st.get("sessionId"), "decisions": decisions[:20]}
+
+
+def autopilot_message(pl):
+    return (f"New items wait on the controller in flight {pl.get('flight') or '(no number)'}, \"{pl['title']}\".\n"
+            f"Plan file: {pl['path']}\nPilot: {pl.get('pilot')} (session {pl['sessionId']})\n\n"
+            f"The items, as the plan has them now:\n{pl['waiting']}")
+
+
 def set_budget(name, tokens):
     w = need(name)
     w["budget"] = tokens
@@ -1315,7 +1454,7 @@ def stop(name):
 def cmd_tell(a):
     text = sys.stdin.read() if a.message == "-" else a.message
     try:
-        print(intercom(a.names, text))
+        print(intercom(a.names, text, sender="Autopilot" if a.as_ == "autopilot" else "Controller"))
     except (ValueError, subprocess.TimeoutExpired) as e:
         sys.exit(f"pilot: {e}")
 
@@ -1381,6 +1520,13 @@ def cmd_refuel(a):
 
 
 def cmd_budget(a):
+    st = read_json(AUTOPILOT, {})
+    if st.get("sessionId") and os.environ.get("CLAUDE_CODE_SESSION_ID") == st["sessionId"]:
+        w = need(a.name)
+        first = w.get("budget0") or config().get("budget") or w.get("budget") or 0
+        if a.tokens > first * AUTOPILOT_CAP:
+            sys.exit(f"pilot: the autopilot may raise {a.name} to at most {first * AUTOPILOT_CAP:,} ({AUTOPILOT_CAP} times its "
+                     f"first budget); leave this raise for the controller")
     set_budget(a.name, a.tokens)
     print(f"{a.name}: budget {a.tokens:,} weighted tokens")
 
@@ -1746,9 +1892,40 @@ class Hub:
         self.version, self.body, self.dirty = 0, "{}", True
         self.notices = Notices()
         self.running = set()             # summaries in flight, by key
+        self.routing, self.route_failed = set(), {}   # plans being sent to the autopilot; when a send last failed
 
     def poke(self):
         self.dirty = True
+
+    def route_autopilot(self, snap):
+        """While the autopilot is on and up, sends it each live plan's waiting items once per change, through
+        the intercom, in a thread so the watcher never waits on the relay. A failed send is tried again a
+        minute later: a new session is not reachable for its first 20 to 40 seconds."""
+        if not snap["autopilot"]["enabled"] or not snap["autopilot"]["live"]:
+            return
+        st = read_json(AUTOPILOT, {})
+        for pl in snap["plans"]:
+            sid, items = pl["sessionId"], pl.get("waiting") or ""
+            if not items or not pl.get("live") or st.get("sent", {}).get(sid) == items or sid in self.routing:
+                continue
+            if time.time() - self.route_failed.get(sid, 0) < 60:
+                continue
+            self.routing.add(sid)
+
+            def send(pl=pl, sid=sid, items=items):
+                try:
+                    intercom([AUTOPILOT_NAME], autopilot_message(pl), sender="Dashboard")
+                    s = read_json(AUTOPILOT, {})
+                    s.setdefault("sent", {})[sid] = items
+                    write_json(AUTOPILOT, s)
+                    blackbox(f"Sent flight {pl.get('flight') or pl['title']}'s waiting items to the autopilot", actor="pilot.py",
+                             plan=sid, flight=pl.get("flight"))
+                except Exception:
+                    self.route_failed[sid] = time.time()
+                finally:
+                    self.routing.discard(sid)
+                    self.poke()
+            threading.Thread(target=send, daemon=True).start()
 
     def run(self):
         last_fp, asked, sids = (None, None), 0.0, []
@@ -1768,6 +1945,8 @@ class Hub:
                     snap["running"] = sorted(self.running)
                     ok, why = headroom()
                     snap["refuel"] = {"ok": ok, "why": why}
+                    snap["autopilot"] = autopilot_view()
+                    self.route_autopilot(snap)
                     sids = [s["sessionId"] for s in snap["workers"] + snap["pilots"] if s.get("sessionId")]
                     last_fp = fingerprint(sids)
                     body = json.dumps(snap)
@@ -1842,6 +2021,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             m = re.match(r"^/api/sessions/([0-9a-f-]{36})/agents$", path)
             if m:
                 return self.send(200, subagents(m.group(1)))
+            if path == "/api/blackbox":
+                return self.send(200, blackbox_view())
             m = re.match(r"^/api/console/([0-9a-f-]{36})$", path)
             if m:
                 try:
@@ -1955,6 +2136,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.send(409, {"error": str(e)})
             HUB.poke()
             return self.send(200, out)
+        if self.path == "/api/autopilot":
+            try:
+                st = autopilot_on() if body.get("on") else autopilot_off()
+            except (ValueError, SystemExit, subprocess.TimeoutExpired) as e:
+                return self.send(502, {"error": str(e)})
+            HUB.poke()
+            return self.send(200, {"ok": True, "enabled": st.get("enabled")})
         if self.path == "/api/intercom":
             names = body.get("to") if isinstance(body.get("to"), list) else []
             known = {p["name"] for p in pilots()} | {agent_name(w) for w in registered()}
@@ -2028,6 +2216,7 @@ def main():
     s = sub.add_parser("tell", help="your words to live sessions through the intercom, mid-turn included")
     s.add_argument("names", nargs="+", help="session names, as `claude agents` shows them: `DPS1 scaffold` (flight and leg) for a worker")
     s.add_argument("--message", "-m", required=True, help="the message, or - for stdin")
+    s.add_argument("--as", dest="as_", choices=["controller", "autopilot"], default="controller", help="who it is from, for the logs")
     s.set_defaults(fn=cmd_tell)
     s = sub.add_parser("refuel", help="ask for more fuel: the watchtower approves it, or it goes to the tower")
     s.add_argument("name")

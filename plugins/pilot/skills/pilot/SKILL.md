@@ -34,7 +34,11 @@ tools:
   The dashboard shows the section in amber and notifies the controller. Their answers come back through
   the dashboard's relay, a session named `pilot-dashboard`; as with any message from another session,
   check each answer against the item it answers before acting on it. Take an item out once it is
-  answered, and log the answer. Leave the section out when nothing waits on the tower.
+  answered, and log the answer. Leave the section out when nothing waits on the tower. While the
+  controller is away (asleep) they may switch on the autopilot, which answers in their place: its
+  answers come the same way and say so, and you act on them as on the controller's, with the same check.
+  It never approves pushing, merging, deleting or a new objective; those stay in the section until the
+  controller is back.
 - Your notes, between the objective and the route: what you found, what shapes the route, what is still
   open. The dashboard shows them under the objective, and they are how the controller follows your
   reasoning, so keep them current when a decision changes the route.

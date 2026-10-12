@@ -316,6 +316,12 @@ function renderTop() {
     ? `Refuels: the watchtower may approve them now (${S.refuel.why.join("; ")}), if the reason and the worker's progress justify it.`
     : `Refuels come to you: ${S.refuel.why.join("; ")}.`)}">⛽ ${S.refuel.ok ? "auto" : "tower"}</span>` : "";
   put($("#limits"), limitsHtml(S.limits) + fuel);
+  // The autopilot's switch: off, starting, standby or working, and how many decisions it has made since on.
+  const ap = S.autopilot || {}, apState = !ap.enabled ? "off" : !ap.live ? "starting" : ap.status === "busy" ? "deciding" : "standby";
+  put($("#autopilot"), `<button class="ap ${ap.enabled ? "on" : ""}" data-autopilot="${ap.enabled ? "off" : "on"}" title="${esc(ap.enabled
+      ? `On since ${when(ap.since)}. It decides the tower's items in your place: all but irreversible. ${ap.decisions?.length || 0} decision(s) so far; the Black box has them. Click to switch it off.`
+      : "Off. Switch it on when you leave: an Opus 5.5 session decides what waits on you, all but irreversible (never pushes, merges, deletes, or sets a new objective), each step checked by auto mode's classifier.")}">
+    ✈ autopilot: ${apState}${ap.enabled && ap.decisions?.length ? ` · ${ap.decisions.length}` : ""}</button>`);
   const over = S.workers.filter(w => w.overBudget);
   const waiting = [...S.pilots.filter(p => p.status === "waiting").map(p => ({name: `pilot ${p.name}`, href: `#/s/${p.sessionId}`})),
                    ...(S.plans || []).filter(p => p.waiting).map(p => ({name: p.title, href: `#/s/${p.sessionId}`})),
@@ -971,6 +977,36 @@ VIEWS.session = (root, r) => {
   };
 };
 
+// The black box: every decision and event across all flights, newest first, from <state>/blackbox.jsonl and
+// the lines pilots wrote into their plans themselves. Filter by who acted and by flight.
+VIEWS.blackbox = root => {
+  root.innerHTML = `<h2>Black box</h2>
+    <div class="card pad bbfilter"><span class="sub">who</span><span class="s-who"></span><span class="sub">flight</span><select class="s-flight"></select>
+      <span class="sub s-count"></span></div>
+    <div class="card tablewrap"><table class="bb"><thead><tr><th>When</th><th>Who</th><th>Flight</th><th>What</th></tr></thead><tbody class="s-rows"></tbody></table>
+      <div class="empty s-empty" hidden>Nothing recorded yet.</div></div>`;
+  let all = [], who = "all", flight = "all", fetched = 0;
+  const WHO = ["all", "controller", "autopilot", "watchtower", "pilot", "pilot.py"];
+  async function load() {
+    if (Date.now() - fetched < 5000) return;
+    fetched = Date.now();
+    try { all = await (await fetch("/api/blackbox")).json(); draw(); } catch (e) { put($(".s-count", root), esc(e.message)); }
+  }
+  function draw() {
+    const flights = ["all", ...new Set(all.map(e => e.flight).filter(Boolean))];
+    put($(".s-who", root), WHO.map(w => `<button class="choice${w === who ? " on" : ""}" data-who="${w}">${w}</button>`).join(""));
+    put($(".s-flight", root), flights.map(f => `<option${f === flight ? " selected" : ""}>${esc(f)}</option>`).join(""));
+    const rows = all.filter(e => (who === "all" || e.actor === who) && (flight === "all" || e.flight === flight));
+    put($(".s-count", root), `${rows.length} of ${all.length}`);
+    put($(".s-rows", root), rows.slice(0, 500).map(e => `<tr><td class="nowrap">${esc(when(e.at))}</td><td><span class="who ${esc(e.actor)}">${esc(e.actor)}</span></td>
+      <td>${esc(e.flight || "")}</td><td>${md(e.text, true)}</td></tr>`).join(""));
+    $(".s-empty", root).hidden = rows.length > 0;
+  }
+  root.addEventListener("click", e => { const w = e.target.closest("[data-who]")?.dataset.who; if (w) { who = w; draw(); } });
+  $(".s-flight", root).addEventListener("change", e => { flight = e.target.value; draw(); });
+  return {update() { load(); }};
+};
+
 VIEWS.history = root => {
   root.innerHTML = `<h2>History</h2><div class="card tablewrap"><table><thead><tr><th>Worker</th><th>Result</th><th>Branch</th><th class="num">Spend</th><th>Removed</th><th></th></tr></thead>
     <tbody class="s-rows"></tbody></table><div class="empty s-empty">Workers removed with <code>pilot rm</code> are kept here with their report, commits and spend.</div></div>`;
@@ -1097,6 +1133,7 @@ function parse() {
   if ((m = /^\/w\/([a-z0-9-]+)$/.exec(h))) return {view: "session", worker: m[1]};
   if ((m = /^\/s\/([0-9a-f-]{36})(?:\/a\/([0-9a-f]+))?$/.exec(h))) return {view: "session", sid: m[1], agent: m[2]};
   if (h === "/history") return {view: "history"};
+  if (h === "/blackbox") return {view: "blackbox"};
   if (h === "/spend") return {view: "spend"};
   if (h.startsWith("/launch")) return {view: "launch"};
   return {view: "overview"};
@@ -1149,6 +1186,16 @@ document.addEventListener("click", async e => {
     return;
   }
   if (t.dataset.sendanswers) { sendAnswers(t.dataset.sendanswers); return; }
+  if (t.dataset.autopilot) {
+    const on = t.dataset.autopilot === "on";
+    if (on && !confirm("Switch the autopilot on? Until you switch it off, an Opus 5.5 session decides what waits on you in every live flight: "
+      + "engineering calls, reviews, route changes within a flight's objective, refuels up to 3x. It never pushes, merges, deletes or sets a new objective; "
+      + "those wait for you. Every decision goes in the black box.")) return;
+    t.disabled = true; t.textContent = on ? "✈ autopilot: starting…" : "✈ autopilot: stopping…";
+    try { await post("/api/autopilot", {on}); } catch (err) { alert(err.message); }
+    t.disabled = false;
+    return;
+  }
   if (t.dataset.note) {
     post("/api/notifications/read", {ids: [t.dataset.note]}).catch(() => {});
     $("#panel").hidden = true;

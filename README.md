@@ -92,7 +92,7 @@ Code's own project list.
 | `plugins/pilot/` | the pilot skill, loaded with `--plugin-dir` into the session you want as pilot, and the hook that shows its questions on the dashboard and logs your answers in the plan |
 | `plugins/worker/` | the hooks every worker gets: the budget checkpoint, and Sam's five hooks through `hooks/kit.sh` |
 | `~/.pilot/pilot.json` | this machine's settings, kept out of the repo since they name local paths: the repos workers may start in, the default model and effort (unset: the account's), the default budget. Missing, it means no repos and a 10M budget |
-| `%LOCALAPPDATA%/pilot/` | runtime state: `plans/<pilot session>.md`, `flights.json` (the last flight number per repo), `workers/`, `archive/`, `briefs/` (the exact prompt sent), `meters/`, `notifications.json`, `summaries.json`, error logs |
+| `%LOCALAPPDATA%/pilot/` | runtime state: `plans/<pilot session>.md`, `flights.json` (the last flight number per repo), `blackbox.jsonl` (every decision), `autopilot.json`, `workers/`, `archive/`, `briefs/` (the exact prompt sent), `meters/`, `notifications.json`, `summaries.json`, error logs |
 | `<repo>/.claude/worktrees/w-<leg>` | each worker's worktree, branch `worktree-w-<leg>`; `start` adds the folder to the repo's `.git/info/exclude` |
 | `~/.claude/projects/...` | transcripts, where Claude Code always keeps them; `rm` leaves them, so History can open them |
 
@@ -109,6 +109,25 @@ listed, rather than fly the leg somewhere else.
   "budget": 10000000
 }
 ```
+
+## Autopilot and black box
+
+**The autopilot** is for when you are away, asleep. The top bar's switch starts it: an Opus 5.5 background
+session at xhigh effort, named `autopilot`, in auto mode, on standby until something needs the tower.
+While it is on, the dashboard sends it each live plan's `## Waiting on the controller` items once per
+change, through the intercom, and it answers the pilot with `pilot tell --as autopilot`, marked as its
+answers on your behalf. It may decide engineering questions, reviews (approving a design document to build
+on), route changes within a flight's objective, and refuels up to 3 times a leg's first budget
+(`pilot budget` refuses it more). It never pushes, merges, opens a PR, deletes anything or sets a new
+objective: those stay in the plan for you. In auto mode the classifier checks every command it runs, with
+its whole transcript as context; a refused one leaves that item for you. Switching it off stops the
+session. The routing runs in the dashboard, so the dashboard has to run too.
+
+**The black box** (`<state>/blackbox.jsonl`) records every decision and event across all flights,
+append-only: everything `pilot.py` writes into a plan's log, who acted (you, the autopilot, the watchtower,
+a pilot, `pilot.py`), the flight, and events outside plans, such as the autopilot going on and off. The
+**Black box** page reads it back with the lines pilots wrote into their plans themselves merged in, newest
+first, filtered by who and by flight. Deleting a plan leaves its record.
 
 ## Flying this repo with itself
 

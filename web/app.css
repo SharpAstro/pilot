@@ -195,6 +195,19 @@ details pre { margin: 6px 0 0; max-height: 360px; overflow: auto; white-space: p
 .ev.shellout { padding-top: 0; }
 .ev.shellout pre.out { margin: 2px 0 0; max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
   font: 12px/1.4 "Cascadia Mono", Consolas, monospace; background: var(--page); border: 1px solid var(--hair); border-radius: 6px; padding: 6px 10px; }
+/* the autopilot's switch, in the top bar */
+#autopilot button.ap { font-size: 12px; padding: 4px 10px; border-radius: 999px; }
+#autopilot button.ap.on { background: var(--tint-fill); border-color: var(--fill); color: var(--fill); font-weight: 600; }
+/* the black box */
+.bbfilter { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.bbfilter .s-who { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.bbfilter button.choice { font-size: 12px; padding: 3px 9px; border-radius: 999px; }
+.bbfilter button.choice.on { background: var(--fill); border-color: var(--fill); color: #fff; }
+table.bb td { vertical-align: top; font-size: 13px; }
+table.bb td .md p { margin: 0; }
+td.nowrap { white-space: nowrap; color: var(--ink-2); }
+.who { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 1px 6px; border-radius: 4px; background: var(--track); }
+.who.controller { color: var(--warn); } .who.autopilot { color: var(--fill); } .who.watchtower { color: var(--good-text); }
 /* a pilot's terminal: its screen, and a line to type into it */
 .term { margin-top: 12px; }
 .term > summary { color: inherit; font-size: inherit; }
