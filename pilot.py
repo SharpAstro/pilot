@@ -10,6 +10,7 @@ what they have spent, gates their spend, delivers your messages, summarises them
   python pilot.py screenshot ROUTE --out F   a headless Edge screenshot of a dashboard page (the preview's)
   python pilot.py log TEXT              a line in the flight plan's Log, stamped with the time now
   python pilot.py track [--out F] [--url U]   its tracking page, to publish as an artifact; --url records where
+  python pilot.py connect FLIGHT... [--remove]   flights this one connects from: its legs wait for them to land
   python pilot.py start NAME --brief FILE|- [--repo R] [--model M] [--effort E] [--budget N]
                          [--pilot NAME] [--after NAME]...
   python pilot.py list [--json]
@@ -401,6 +402,8 @@ def blackbox_view(limit=1500):
 
 
 FLIGHT_RE = re.compile(r"^Flight:\s*(\S+)", re.M)
+# The flights this one connects from, comma-separated: its legs take off only once each of them has landed.
+CONNECTS_RE = re.compile(r"^Connects:[ \t]*(.*)$", re.M)
 OBJECTIVE_RE = re.compile(r"^Objective:\s*(.+(?:\n(?!\s*\n|#|\|)[^\n]+)*)", re.M)   # it may wrap, up to a blank line
 # The plan's list of what the pilot is waiting on the controller for, under any of these headings.
 WAITING_RE = re.compile(r"(waiting on (the controller|you)|open questions|questions for the controller)\b", re.I)
@@ -433,7 +436,14 @@ def parse_plan(text):
         elif log and ln[:1].isspace() and ln.strip():   # an entry wrapped onto the next line
             log[-1] += " " + ln.strip()
     return {"title": title.group(1).strip() if title else "untitled", "objective": " ".join(objective.group(1).split()) if objective else "",
-            "flight": (FLIGHT_RE.search(text) or [None, None])[1], "tracking": (TRACKING_RE.search(text) or [None, None])[1], "legs": legs, "log": log[-40:], "notes": plan_notes(split_waiting(text)[1]), "waiting": split_waiting(text)[0]}
+            "flight": (FLIGHT_RE.search(text) or [None, None])[1], "tracking": (TRACKING_RE.search(text) or [None, None])[1],
+            "connects": plan_connects(text), "legs": legs, "log": log[-40:], "notes": plan_notes(split_waiting(text)[1]), "waiting": split_waiting(text)[0]}
+
+
+def plan_connects(text):
+    """The flight numbers on a plan's `Connects:` line, in its order; none without one."""
+    m = CONNECTS_RE.search(text)
+    return [f for f in re.split(r"[,\s]+", m.group(1)) if f] if m else []
 
 
 def split_waiting(text):
@@ -449,7 +459,7 @@ def split_waiting(text):
                 continue
         elif inside:
             blank, item = not line.strip(), re.match(r"^([-*]|\d+[.)])\s", line)
-            if not (line.startswith(("Pilot session:", "Flight:", "Tracking:")) or (listed and gap and not blank and not item and not line[:1].isspace())):
+            if not (line.startswith(("Pilot session:", "Flight:", "Tracking:", "Connects:")) or (listed and gap and not blank and not item and not line[:1].isspace())):
                 waiting.append(line)
                 listed, gap = listed or bool(item), blank
                 continue
@@ -470,7 +480,7 @@ def plan_notes(text):
             if part not in ("route", "log"):     # a section of the pilot's own
                 out.append(line)
             continue
-        if part == "log" or line.startswith("# ") or re.match(r"^(Pilot session|Flight|Tracking):", line) or line.lstrip().startswith("|"):
+        if part == "log" or line.startswith("# ") or re.match(r"^(Pilot session|Flight|Tracking|Connects):", line) or line.lstrip().startswith("|"):
             continue
         if part == "route" and line.strip() and "#### On the route" not in out:
             out.append("#### On the route")
@@ -525,7 +535,15 @@ def plans_view(rows, workers, seen=None):
                     **parse_plan(text)})
     out = by_priority(out)[:10]
     gone = archived(200)
+    flights = flight_plans() if any(p["connects"] for p in out) else {}
     for p in out:
+        # The flights it connects from, each with whether it has landed, for its strip and plan card.
+        p["connections"] = []
+        for f in p["connects"]:
+            try:
+                p["connections"].append(connection(f, workers, gone, flights))
+            except Exception as e:      # like its times, worth less than the rest of the dashboard
+                p["connections"].append({"flight": f, "known": True, "landed": False, "state": f"{type(e).__name__}: {e}", "open": []})
         try:
             p["times"] = flight_times(p["sessionId"], p["legs"], workers, gone)
         except Exception as e:          # a flight's times are worth less than the rest of the dashboard
@@ -1814,6 +1832,11 @@ def cmd_start(a):
     for dep in a.after or []:
         if not load(dep):
             sys.exit(f"pilot: --after {dep}: no worker of that name")
+    # A flight that connects from another waits for it to land: its change has to be merged before this one's
+    # legs build on it. There is no flag past this; the controller decides, through the plan's waiting section.
+    hold = connection_hold(pilot_session())
+    if hold:
+        sys.exit(hold)
     stale = daemon_lock()
     if stale:
         sys.exit(f"pilot: Claude Code's daemon lock ({stale['path']}) is stale: {stale['why']}. Until it goes, no background "
@@ -2415,6 +2438,93 @@ def leg_state(w):
     return "planned", "turn ended" if w.get("state") == "done" or fin else (w.get("state") or "unknown")
 
 
+def flight_legs(sid, legs, workers, gone=(), fresh=False):
+    """Each route leg of a plan with its worker, the live one of that name on this plan (a worker_status) or
+    else its latest removed one, and leg_state's (css class, label) for it. A removed leg's pull request is
+    read from its git as a live one's is; `fresh` reads every leg's git now, for a command, rather than the
+    dashboard's cached answer, which a command that has just started has not got yet."""
+    live = {w["name"]: w for w in workers if w.get("plan") == sid}
+    old = {}
+    for a in gone:                    # newest first: a leg flown twice shows its last worker
+        if a.get("plan") == sid and a.get("name") not in old:
+            old[a["name"]] = a
+    out = []
+    for leg in legs:
+        w, g = live.get(leg["leg"]) or old.get(leg["leg"]), None
+        if w and (fresh or leg["leg"] not in live) and w.get("repo") and w.get("branch"):
+            try:
+                g = collateral_now(w) if fresh else collateral(w, ttl=120)
+            except Exception:
+                g = None
+            w = {**w, "approach": approach(w.get("reviews"), (g or {}).get("prs"))}
+        cls, label = leg_state(w)
+        out.append({"leg": leg["leg"], "w": w, "cls": cls, "label": label, "live": leg["leg"] in live, "git": g})
+    return out
+
+
+def flight_landed(states):
+    """Whether a flight has landed, from flight_legs: every leg on its route landed and every pull request its
+    legs opened at the gate, merged. A leg cleared to land waits on its merge still. With what is still open."""
+    left = [f"{s['leg']}: {s['label']}" for s in states if s["cls"] != "good"]
+    left += [f"{s['leg']}: #{ap['pr']} {ap['label']}" for s in states if s["cls"] == "good"
+             for ap in [(s["w"] or {}).get("approach")] if ap and ap["stage"] != "gate"]
+    return bool(states) and not left, left or ([] if states else ["no legs on its route yet"])
+
+
+def flight_plans():
+    """Every flight plan by its flight number: {number: (plan id, plan text)}, however old."""
+    out = {}
+    for p in sorted(PLANS.glob("*.md"), key=lambda p: p.stat().st_mtime):
+        text = p.read_text(encoding="utf-8")
+        m = FLIGHT_RE.search(text)
+        if m:
+            out[m.group(1)] = (p.stem, text)
+    return out
+
+
+def connection(flight, workers, gone=(), plans=None, fresh=False):
+    """Where a flight this one connects from stands: landed, or what of it is still open; or that no plan
+    has that number, which is never taken as landed (a typo would otherwise pass)."""
+    plans = flight_plans() if plans is None else plans
+    if flight not in plans:
+        return {"flight": flight, "known": False, "landed": False, "state": "no flight has that number", "open": []}
+    sid, text = plans[flight]
+    plan = parse_plan(text)
+    states = flight_legs(sid, plan["legs"], workers, gone, fresh)
+    landed, left = flight_landed(states)
+    good = sum(1 for s in states if s["cls"] == "good")
+    state = ("landed" if landed else "no legs on its route yet" if not states else
+             f"all {len(states)} legs landed, pull requests not merged" if good == len(states) else f"{good} of {len(states)} legs landed")
+    return {"flight": flight, "known": True, "sessionId": sid, "title": plan["title"], "landed": landed, "state": state, "open": left}
+
+
+def connection_hold(sid):
+    """Why a leg of this plan's flight may not take off yet: a flight it connects from that has not landed,
+    or that no plan has the number of. None when every connection has landed, or it has none."""
+    p = plan_path(sid)
+    if not p or not p.exists():
+        return None
+    text = p.read_text(encoding="utf-8")
+    flights = plan_connects(text)
+    if not flights:
+        return None
+    me = (FLIGHT_RE.search(text) or [None, "this flight"])[1]
+    rows, plans = agents(), flight_plans()
+    workers = [worker_status(w, rows) for w in registered()]
+    gone = archived(500)
+    why = []
+    for f in flights:
+        c = connection(f, workers, gone, plans, fresh=True)
+        if not c["known"]:
+            why.append(f"{f}: no flight plan has that number (a typo? `pilot.py connect --remove {f}` takes it off)")
+        elif not c["landed"]:
+            why.append(f"{f} ({c['title']}): {c['state']}; still open: {'; '.join(c['open'])}")
+    if not why:
+        return None
+    return (f"pilot: {me} connects from {', '.join(flights)}, and a leg of it takes off only once each has landed. "
+            f"Not landed: {' | '.join(why)}. Wait for it to land, or put it to the controller in `## Waiting on the controller`.")
+
+
 def _inline(s):
     s = html.escape(s)
     s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
@@ -2490,28 +2600,19 @@ def track_html(sid):
         raise ValueError(f"no flight plan for session {sid}")
     plan = parse_plan(p.read_text(encoding="utf-8"))
     rows = agents()
-    live = {w["name"]: worker_status(w, rows) for w in registered() if w.get("plan") == sid}
-    gone = {}
-    for a in archived(500):        # newest first: a leg flown twice shows its last worker
-        if a.get("plan") == sid and a.get("name") not in gone:
-            gone[a["name"]] = a
+    states = flight_legs(sid, plan["legs"], [worker_status(w, rows) for w in registered() if w.get("plan") == sid], archived(500), fresh=True)
+    landed, left = flight_landed(states)
     legs, counts = [], {}
-    for leg in plan["legs"]:
-        w = live.get(leg["leg"]) or gone.get(leg["leg"])
-        cls, label = leg_state(w)
-        if w and leg["leg"] not in live:
+    for leg, st in zip(plan["legs"], states):
+        w, cls, label = st["w"], st["cls"], st["label"]
+        if w and not st["live"]:
             label += " · removed"
         counts[cls] = counts.get(cls, 0) + 1
         items = (w or {}).get("checklist") or ((w or {}).get("final") or {}).get("checklist") or []
         done = len(items) - len(open_items(items))
         on = next((i for i in items if i.get("status") == "in_progress"), None)
-        g = None
-        if w and w.get("repo") and w.get("branch"):
-            try:
-                g = collateral_now(w)
-            except Exception:
-                g = None
-        sp = (w or {}).get("spend") or ((w or {}).get("final") or {}).get("spend")
+        g = st["git"]                   # flight_legs read it now, for the leg's PR
+        sp =(w or {}).get("spend") or ((w or {}).get("final") or {}).get("spend")
         bits = []
         if items:
             bits.append(f'<div class="sub">checklist {done} of {len(items)}' + (f" · on: {_inline(on.get('activeForm') or on.get('subject') or '')}" if on else "")
@@ -2533,8 +2634,10 @@ def track_html(sid):
         banner = ("warn", f"Waiting on you: {k} item{'s' if k > 1 else ''}")
     elif counts.get("working"):
         banner = ("working", f"In the air: {counts['working']} of {n} leg{'s' if n != 1 else ''} flying, {counts.get('good', 0)} landed")
-    elif n and counts.get("good") == n:
+    elif landed:
         banner = ("good", f"Landed: all {n} legs")
+    elif n and counts.get("good") == n:      # landed waits for the PRs: one cleared to land is not merged yet
+        banner = ("working", f"All {n} legs landed; not at the gate: {', '.join(left)}")
     elif counts.get("warn") or counts.get("bad"):
         banner = ("warn", f"{counts.get('warn', 0) + counts.get('bad', 0)} leg(s) need a decision; {counts.get('good', 0)} of {n} landed")
     else:
@@ -2592,6 +2695,45 @@ def cmd_track(a):
     print(out)
     print(f"publish it to {url.group(1)} (pass it as the Artifact url)" if url else
           "publish it as a new artifact, then record its URL: pilot.py track --url <url>")
+
+
+def cmd_connect(a):
+    """Files, or with --remove takes off, the flights this pilot session's flight connects from, on the plan's
+    `Connects:` line under its `Flight:` one. A flight number no plan has is refused: a typo would hold every
+    leg's takeoff for a flight that never lands."""
+    sid = a.session or pilot_session()
+    if not sid:
+        sys.exit("pilot: run this from the pilot session (it reads CLAUDE_CODE_SESSION_ID), or pass --session")
+    p = plan_path(sid)
+    if not p or not p.exists():
+        sys.exit("pilot: this session has no flight plan yet; open it with `pilot.py plan` first")
+    t = p.read_text(encoding="utf-8")
+    me, have = (FLIGHT_RE.search(t) or [None, None])[1], plan_connects(t)
+    flights = [f for x in a.flights for f in re.split(r"[,\s]+", x) if f]
+    if a.remove:
+        missing = [f for f in flights if f not in have]
+        if missing:
+            sys.exit(f"pilot: {me or 'this flight'} does not connect from {', '.join(missing)}; it connects from {', '.join(have) or 'none'}")
+        now = [f for f in have if f not in flights]
+    else:
+        plans = flight_plans()
+        unknown = [f for f in flights if f not in plans]
+        if unknown:
+            sys.exit(f"pilot: no flight plan has the number {', '.join(unknown)}; the flights are {', '.join(sorted(plans)) or 'none'}")
+        if me in flights:
+            sys.exit(f"pilot: {me} is this flight; it cannot connect from itself")
+        now = have + [f for f in flights if f not in have]
+    line = f"Connects: {', '.join(now)}"
+    if CONNECTS_RE.search(t):
+        t = CONNECTS_RE.sub(line, t, count=1) if now else re.sub(r"\n*^Connects:.*$", "", t, count=1, flags=re.M)
+    elif now:
+        m = FLIGHT_RE.search(t) or re.search(r"^#\s.*$", t, re.M)
+        at = m.end() if m else 0
+        t = t[:at] + f"\n\n{line}" + t[at:]
+    p.write_text(t, encoding="utf-8")
+    plan_log(sid, f"{'No longer connects from' if a.remove else 'Connects from'} {', '.join(flights)}"
+                  + (f": its legs take off once {', '.join(now)} {'has' if len(now) == 1 else 'have'} landed" if now else ""))
+    print(f"recorded: {line}" if now else "recorded: no connections")
 
 
 def cmd_summary(a):
@@ -3483,6 +3625,11 @@ def main():
     s.add_argument("--url", help="record the artifact URL it was published at on the plan's Tracking: line")
     s.add_argument("--session", help="a pilot session id; default: the session this runs in")
     s.set_defaults(fn=cmd_track)
+    s = sub.add_parser("connect", help="file a flight this one connects from: its legs take off once that flight has landed")
+    s.add_argument("flights", nargs="+", help="flight numbers, e.g. TIA2")
+    s.add_argument("--remove", action="store_true", help="take these connections off the plan")
+    s.add_argument("--session", help="a pilot session id; default: the session this runs in")
+    s.set_defaults(fn=cmd_connect)
     s = sub.add_parser("dashboard")
     s.add_argument("--port", type=int, help="default 5181; with --preview, the first free one from 5182")
     s.add_argument("--preview", action="store_true", help="a second dashboard for checking a change: no notices, session streams close")
