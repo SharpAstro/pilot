@@ -947,6 +947,25 @@ def outside_line(report):
     return None
 
 
+LOG_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s")
+
+
+def unread(w, busy, last):
+    """True when a leg stopped after the last line of its plan's Log that names it: its pilot has not looked at
+    what it left (a pilot logs every result it checks). A pilot that stopped listening for idle notices misses a
+    leg that finishes while it waits, and the leg sits there, done and unpushed, until someone asks."""
+    p = plan_path(w.get("plan"))
+    if busy or not last or not p or not p.exists():
+        return False
+    seen = None
+    for line in parse_plan(p.read_text(encoding="utf-8"))["log"]:
+        m = LOG_TS_RE.match(line)
+        if m and w["name"] in line:
+            t = time.mktime(time.strptime(m.group(1), "%Y-%m-%d %H:%M"))
+            seen = t if seen is None else max(seen, t)
+    return seen is not None and last > seen + 120     # the log keeps minutes, the transcript seconds
+
+
 def worker_status(w, rows=None):
     rows = agents() if rows is None else rows
     row = next((r for r in rows if r.get("id") == w["id"] or r.get("sessionId") == w.get("sessionId")), None)
@@ -976,6 +995,7 @@ def worker_status(w, rows=None):
         "lastError": tail[-1]["text"] if tail and tail[-1]["kind"] == "error" else None,
         "spend": sp, "overBudget": bool(w.get("budget")) and sp["weighted"] >= w["budget"],
         "lastActivity": last, "now": now, "rev": path.stat().st_size if path else 0,
+        "unread": state in ("done", "blocked") and unread(w, (row or {}).get("status") == "busy", last),
         "checklist": checklist([s.get("sessionId") for s in sessions_of(w)]),
         "remote": f"https://claude.ai/code/{rec['bridgeSessionId']}" if rec.get("bridgeSessionId") else None,
         "git": collateral(w), "outside": outside_line(said[-1]["text"]) if said else None,
@@ -1749,7 +1769,7 @@ def cmd_list(a):
         print("no workers")
     for s in ws:
         b = f"/{s['budget'] / 1e6:.0f}M" if s["budget"] else ""
-        flag = "  OVER BUDGET" if s["overBudget"] else ""
+        flag = ("  OVER BUDGET" if s["overBudget"] else "") + ("  UNREAD: stopped after its pilot last logged it" if s["unread"] else "")
         age = f"{(time.time() - s['lastActivity']) / 60:.0f}m ago" if s["lastActivity"] else "-"
         doing = (s["now"] or {}).get("tool") or ("said" if s["now"] else "")
         print(f"{s['name']:<20} {s['id']:<9} {s['state']:<9} {s['spend']['weighted'] / 1e6:6.2f}M{b:<5} last {age:<8} {doing}{flag}")

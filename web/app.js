@@ -187,6 +187,8 @@ function stateOf(w) {
     if (head === "BLOCKED") return {cls: "blocked", label: "blocked: needs you", stroke: "var(--warn)", tint: "var(--tint-warn)"};
     // DONE with checklist items still open has not landed: the pilot sends it back or makes them a leg.
     if (head === "DONE" && open) return {cls: "blocked", label: `DONE, ${open} item${open > 1 ? "s" : ""} open`, stroke: "var(--warn)", tint: "var(--tint-warn)"};
+    // Stopped after the plan's log last named it: its pilot has not looked, so nothing will happen until it does.
+    if (head === "DONE" && w.unread) return {cls: "blocked", label: "✓ done · pilot hasn't looked", stroke: "var(--warn)", tint: "var(--tint-warn)"};
     if (head === "DONE") return {cls: "done", label: "✓ done", stroke: "var(--good)", tint: "var(--tint-good)"};
     return {cls: "other", label: "turn ended", stroke: "var(--axis)", tint: "var(--surface)"};
   }

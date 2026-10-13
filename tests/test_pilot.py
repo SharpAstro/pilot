@@ -212,6 +212,24 @@ class PlanTests(Case):
         self.assertEqual(actors["Decided: one leg per concern. Co-pilot agreed."], "pilot")
 
 
+class UnreadTests(Case):
+    def test_a_leg_that_stopped_after_its_pilot_last_logged_it_is_unread(self):
+        self.plan("p1", "# Flight plan: x\n\n## Log\n\n- 2026-10-13 20:52 Asked leg-a for a docs commit.\n"
+                        "- 2026-10-13 21:30 Other news.\n")
+        w = self.worker("leg-a", plan="p1")
+        at = time.mktime(time.strptime("2026-10-13 20:52", "%Y-%m-%d %H:%M"))
+        self.assertTrue(pilot.unread(w, False, at + 600))     # finished ten minutes after; later lines name others
+        self.assertFalse(pilot.unread(w, False, at + 60))     # within the log's minute, and its slack
+        self.assertFalse(pilot.unread(w, True, at + 600))     # still busy
+        pilot.plan_log("p1", "leg-a LANDED: checked and pushed.")
+        self.assertFalse(pilot.unread(w, False, time.time() - 5))
+
+    def test_a_leg_its_plan_never_names_or_without_a_plan_is_not_unread(self):
+        self.plan("p1", "# Flight plan: x\n\n## Log\n\n- 2026-10-13 20:52 Plan opened.\n")
+        self.assertFalse(pilot.unread(self.worker("leg-a", plan="p1"), False, time.time()))
+        self.assertFalse(pilot.unread(self.worker("leg-b"), False, time.time()))
+
+
 class SpendTests(Case):
     def test_weighted_tokens_count_each_message_once_across_files_and_subagents(self):
         main = self.transcript("w1", [usage("m1", inp=100, out=10), usage("m1", inp=100, out=10),
