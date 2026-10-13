@@ -381,7 +381,7 @@ function renderTop() {
     ⛽ refuel: ${manual ? "manual" : held ? "auto · held" : "auto"}</button>` : "";
   put($("#limits"), limitsHtml(S.limits) + fuel);
   // The autopilot's switch: off, starting, standby or working, and how many decisions it has made since on.
-  const ap = S.autopilot || {}, apState = !ap.enabled ? "off" : !ap.live ? "starting" : ap.status === "busy" ? "deciding" : "standby";
+  const ap = S.autopilot || {}, apState = !ap.enabled ? "off" : !ap.live ? (Date.now() / 1000 - (ap.since || 0) < 90 ? "starting" : "asleep, wakes for items") : ap.status === "busy" ? "deciding" : "standby";
   put($("#autopilot"), `<button class="ap ${ap.enabled ? "on" : ""}" data-autopilot="${ap.enabled ? "off" : "on"}" title="${esc(ap.enabled
       ? `On since ${when(ap.since)}. It decides the tower's items in your place: all but irreversible. ${ap.decisions?.length || 0} decision(s) so far; the Black box has them. Click to switch it off.`
       : "Off. Switch it on when you leave: an Opus 5.5 session decides what waits on you, all but irreversible (never pushes, merges, deletes, or sets a new objective), each step checked by auto mode's classifier.")}">
@@ -577,11 +577,13 @@ function planCard(p, s) {
   const flying = p.legs.map(l => l.leg).filter(n => s.workers.some(w => w.name === n && w.state === "working"));
   const fold = (k, def) => `data-k="${esc(k)}"${def ? ` data-open="1"` : ""}${(opened.has(k) ? opened.get(k) : def) ? " open" : ""}`;
   // The pilot's turn has ended and nothing is in the air: whatever happens next is up to the controller.
-  const move = p.live && ps?.status === "idle" && !flying.length ? yourMoveOf(p, s, ps) : null;
+  // A flight whose legs have all landed with nothing left open reads landed, whether or not its pilot still runs.
+  const settled = !flying.length ? yourMoveOf(p, s, ps) : null;
+  const move = p.live && ps?.status === "idle" ? settled : settled === "" ? "" : null;
   const yourMove = !!move, atGate = move === "";
   // The flight's state sits by its name: whose move it is, the pilot at work, or landed.
   const status = atGate ? `<span class="chip done">✓ landed</span>`
-    : yourMove ? `<span class="chip blocked move" title="${esc(ps.said?.text || "")}">${move}</span>` : pilotChip(ps, flying);
+    : yourMove ? `<span class="chip blocked move" title="${esc(ps.said?.text || "")}">${move}</span>` : p.asleep ? `<span class="chip other" title="Its background session has ended. The dashboard wakes it, as a copy, when one of its legs stops or a message comes for it.">pilot asleep${flying.length ? `, wakes when ${esc(flying.join(", "))} stops` : ""}</span>` : pilotChip(ps, flying);
   const where = `answer in the pilot's terminal${ps?.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : ""}`;
   // With more than one flight each starts folded, so the page reads as a list of flights, unless it waits on you;
   // alone, an active one starts open. A fold you set stays as you left it.

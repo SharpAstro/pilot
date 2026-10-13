@@ -2091,13 +2091,22 @@ def cmd_screenshot(a):
     url = a.url if a.url.startswith("http") else f"http://127.0.0.1:{a.port}/?nostream#/{a.url.lstrip('#/')}"
     out = Path(a.out).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
-    profile = out.parent / ".edge-profile"      # its own, so a running Edge is neither used nor touched
+    import tempfile
+    profile = Path(tempfile.mkdtemp(prefix=".edge-", dir=out.parent))     # its own each time: a running Edge is not touched
+    out.unlink(missing_ok=True)
     w, _, h = a.size.partition("x")
-    r = subprocess.run([str(edge), "--headless=new", "--disable-gpu", "--hide-scrollbars", "--force-dark-mode",
-                        f"--window-size={int(w)},{int(h)}", f"--virtual-time-budget={a.wait}", f"--user-data-dir={profile}",
-                        f"--screenshot={out}", url], capture_output=True, text=True, timeout=120)
+    proc = subprocess.Popen([str(edge), "--headless=new", "--disable-gpu", "--hide-scrollbars", "--force-dark-mode",
+                             f"--window-size={int(w)},{int(h)}", f"--virtual-time-budget={a.wait}", f"--user-data-dir={profile}",
+                             f"--screenshot={out}", url], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+    try:
+        said, _ = proc.communicate(timeout=60)
+    except subprocess.TimeoutExpired:
+        # A page that never settles (the live dashboard's open streams) keeps headless Edge waiting for good.
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
+        said = "it did not finish in 60 s: a page whose streams stay open never settles; check the preview (--port 5182)"
+    shutil.rmtree(profile, ignore_errors=True)
     if not out.is_file():
-        sys.exit(f"pilot: Edge wrote no screenshot (exit {r.returncode}): {(r.stderr or r.stdout).strip()[:400]}")
+        sys.exit(f"pilot: Edge wrote no screenshot: {(said or '').strip()[-400:]}")
     print(f"{out} ({out.stat().st_size:,} bytes) of {url}")
 
 
