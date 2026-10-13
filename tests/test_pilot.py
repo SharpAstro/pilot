@@ -19,6 +19,7 @@ import tempfile
 import time
 import types
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(tempfile.mkdtemp(prefix="pilot-tests-"))
@@ -213,6 +214,131 @@ class PlanTests(Case):
         actors = {e["text"]: e["actor"] for e in view}
         self.assertEqual(actors["Controller answered (Push): Yes"], "controller")
         self.assertEqual(actors["Decided: one leg per concern. Co-pilot agreed."], "pilot")
+
+
+CONNECTED = """# Flight plan: Theme tokens
+
+Flight: TIA2
+
+Objective: Ship the tokens.
+
+Pilot session: s2
+
+## Route
+
+| Leg | Goal | After | Done when |
+|---|---|---|---|
+| build | Build the tokens | - | tests pass |
+
+## Log
+
+- 2026-10-13 09:00 Plan opened.
+"""
+
+
+class ConnectionTests(Case):
+    def connect(self, *flights, remove=False, session="s1"):
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            pilot.cmd_connect(types.SimpleNamespace(session=session, flights=list(flights), remove=remove))
+        return out.getvalue()
+
+    def start(self, sid="s1"):
+        with unittest.mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": sid}):
+            with self.assertRaises(SystemExit) as e:
+                pilot.cmd_start(types.SimpleNamespace(name="leg", after=None))
+        return str(e.exception)
+
+    def landed(self, leg="build", plan="s2", **final):
+        pilot.write_json(pilot.ARCHIVE / f"{leg}-1.json", {"name": leg, "plan": plan, "archivedAt": 1, **final,
+                         "final": {"reportHead": "DONE", "checklist": [{"status": "completed", "subject": "x"}]}})
+
+    def test_the_connects_line_parses_and_is_neither_notes_nor_waiting(self):
+        text = PLAN.replace("Recommend: 16M.\n", "Recommend: 16M.\nConnects: TIA2, DPS1\n")
+        p = pilot.parse_plan(text)
+        self.assertEqual(p["connects"], ["TIA2", "DPS1"])
+        self.assertNotIn("Connects", p["waiting"])
+        self.assertEqual(p["waiting"].count("\n- "), 1, "the waiting list ends at the header line")
+        self.assertEqual(p["notes"], "The exporter rounds rotation twice; that is the bug.")
+        self.assertEqual(pilot.parse_plan(PLAN)["connects"], [])
+
+    def test_connect_files_the_line_once_under_the_flight_and_logs_it(self):
+        self.plan("s1", PLAN)
+        self.plan("s2", CONNECTED)
+        self.plan("s3", CONNECTED.replace("TIA2", "DPS1"))
+        self.assertIn("recorded: Connects: TIA2", self.connect("TIA2"))
+        self.connect("TIA2,DPS1")
+        text = pilot.plan_path("s1").read_text(encoding="utf-8")
+        self.assertEqual(text.count("Connects:"), 1)
+        self.assertIn("Flight: WA1\n\nConnects: TIA2, DPS1\n", text)
+        self.assertEqual(pilot.parse_plan(text)["connects"], ["TIA2", "DPS1"])
+        self.assertTrue(self.log_of("s1")[-1].endswith("Connects from TIA2, DPS1: its legs take off once TIA2, DPS1 have landed"))
+
+    def test_connect_refuses_an_unknown_flight_and_itself(self):
+        self.plan("s1", PLAN)
+        self.plan("s2", CONNECTED)
+        with self.assertRaises(SystemExit) as e:
+            self.connect("TIA9")
+        self.assertIn("no flight plan has the number TIA9", str(e.exception))
+        self.assertIn("TIA2", str(e.exception), "it lists the flights there are")
+        with self.assertRaises(SystemExit) as e:
+            self.connect("WA1")
+        self.assertIn("cannot connect from itself", str(e.exception))
+        self.assertEqual(pilot.plan_path("s1").read_text(encoding="utf-8"), PLAN)
+
+    def test_connect_remove_takes_a_connection_off(self):
+        self.plan("s1", PLAN)
+        self.plan("s2", CONNECTED)
+        self.plan("s3", CONNECTED.replace("TIA2", "DPS1"))
+        self.connect("TIA2", "DPS1")
+        self.connect("TIA2", remove=True)
+        self.assertEqual(pilot.parse_plan(pilot.plan_path("s1").read_text(encoding="utf-8"))["connects"], ["DPS1"])
+        self.assertIn("recorded: no connections", self.connect("DPS1", remove=True))
+        text = pilot.plan_path("s1").read_text(encoding="utf-8")
+        self.assertNotIn("Connects:", text)
+        self.assertIn("Flight: WA1\n\nObjective:", text)
+        self.assertIn("No longer connects from DPS1", self.log_of("s1")[-1])
+        with self.assertRaises(SystemExit) as e:
+            self.connect("DPS1", remove=True)
+        self.assertIn("does not connect from DPS1", str(e.exception))
+
+    def test_start_refuses_while_the_connection_has_not_landed(self):
+        self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nConnects: TIA2"))
+        self.plan("s2", CONNECTED)
+        msg = self.start()
+        self.assertIn("WA1 connects from TIA2", msg)
+        self.assertIn("TIA2 (Theme tokens): 0 of 1 legs landed; still open: build: planned", msg)
+        self.assertIn("put it to the controller in `## Waiting on the controller`", msg)
+        self.assertFalse(pilot.WORKERS.exists() and list(pilot.WORKERS.glob("*.json")), "nothing took off")
+
+    def test_start_refuses_a_connection_no_flight_has(self):
+        self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nConnects: TIA9"))
+        self.plan("s2", CONNECTED)
+        msg = self.start()
+        self.assertIn("TIA9: no flight plan has that number", msg)
+
+    def test_start_goes_on_once_the_connection_has_landed(self):
+        self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nConnects: TIA2"))
+        self.plan("s2", CONNECTED)
+        self.landed()
+        self.assertIsNone(pilot.connection_hold("s1"))
+        pilot.write_json(pilot.DAEMON_LOCK, {"pid": os.getpid(), "procStartFt": "1"})
+        self.assertIn("daemon lock", self.start(), "past the connection, to the next check")
+
+    def test_landed_waits_for_the_pull_requests(self):
+        st = [{"leg": "build", "w": {"approach": {"stage": "cleared", "label": "cleared to land", "pr": 7}}, "cls": "good", "label": "cleared to land"}]
+        self.assertEqual(pilot.flight_landed(st), (False, ["build: #7 cleared to land"]))
+        st[0]["w"]["approach"]["stage"] = "gate"
+        self.assertEqual(pilot.flight_landed(st), (True, []))
+        self.assertEqual(pilot.flight_landed([]), (False, ["no legs on its route yet"]))
+
+    def test_the_dashboard_gets_each_connection_and_whether_it_landed(self):
+        self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nConnects: TIA2, TIA9"))
+        self.plan("s2", CONNECTED)
+        p = next(p for p in pilot.plans_view([], []) if p["sessionId"] == "s1")
+        self.assertEqual([(c["flight"], c["known"], c["landed"]) for c in p["connections"]], [("TIA2", True, False), ("TIA9", False, False)])
+        self.landed()
+        p = next(p for p in pilot.plans_view([], []) if p["sessionId"] == "s1")
+        self.assertEqual((p["connections"][0]["landed"], p["connections"][0]["state"]), (True, "landed"))
 
 
 class PriorityTests(Case):
