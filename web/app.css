@@ -274,7 +274,7 @@ td.nowrap { white-space: nowrap; color: var(--ink-2); }
 .t-link { font-size: 12px; }
 .t-input pre { max-height: 300px; }
 .t-res { color: var(--muted); position: relative; padding-left: 3ch; }
-.t-res::before { content: "BF"; position: absolute; left: 0.6ch; top: 0; }
+.t-res::before { content: "\23BF"; position: absolute; left: 0.6ch; top: 0; }
 .t-res.err { color: var(--crit); }
 .t-line { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
 .t-res .t-full pre { margin: 0 0 2px; max-height: 480px; color: var(--ink); }
