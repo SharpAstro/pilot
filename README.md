@@ -68,6 +68,7 @@ The CLI is the pilot's, and yours:
 pilot plan --title "Export fixes"   # this pilot session's flight plan: its path, from the template once
 pilot track --out <scratch>/track.html   # its tracking page, for the pilot to publish as an artifact
 pilot track --url <artifact url>    # where it was published: the plan's Tracking: line
+pilot connect TIA2 [--remove]       # a flight this one waits for, on the plan's Connects: line; start holds until it lands
 pilot start fix-export --brief brief.md --pilot "<pilot session name>" [--after other-leg]
 pilot list                          # state, weighted spend vs budget, last activity, current tool
 pilot result fix-export             # the worker's report

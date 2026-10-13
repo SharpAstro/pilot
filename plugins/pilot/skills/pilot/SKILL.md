@@ -50,6 +50,12 @@ tools:
   which stamps it with the time now; never write a time yourself (a pilot's guessed times once ran 20
   minutes ahead of the clock, and the log read out of order).
 
+A **connection** is another flight this one waits for: when your legs need its change merged first, file
+it with `python <pilot.py> connect <flight number>` (`--remove` takes it off), which checks the number
+exists, puts it on the plan's `Connects:` line and logs it; never write that line yourself. Until every
+leg of that flight has landed and its PRs are merged, `pilot.py start` refuses your legs and says what is
+still open. There is no way past it: wait, or put it to the controller in `## Waiting on the controller`.
+
 The controller may edit the plan. Read it again before you start each leg.
 
 ## The tracking page
