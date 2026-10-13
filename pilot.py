@@ -1103,7 +1103,7 @@ def collateral_now(w):
             "ahead": int(git("rev-list", "--count", f"{w['base']}..{sha}") or 0) if w.get("base") else None,
             "unpushed": int(git("rev-list", "--count", sha, "--not", "--remotes") or 0),
             "remotes": remotes[:5], "dirty": len(dirty), "dirtyFiles": dirty[:20],
-            "prs": leg_prs(root, remotes[:5], w.get("repo")) if remotes and shutil.which("gh") else []}
+            "prs": leg_prs(root, remotes[:5], w.get("repo")) if remotes else []}
 
 
 PR_FIELDS = "number,title,state,url,isDraft,reviewDecision,statusCheckRollup,headRefName,headRefOid"
@@ -1144,11 +1144,17 @@ def gh_json(root, *args):
 
 def leg_prs(root, remotes, repo=None):
     """The pull requests opened from any remote branch that holds the leg's tip: a pilot pushes a leg under a
-    name of its own (feat/<topic>), so the worktree branch's name finds nothing. Newest first."""
+    name of its own (feat/<topic>), so the worktree branch's name finds nothing. Newest first. None when gh is
+    missing or a lookup fails: its PRs are unknown then, not absent, and a flight never lands on that."""
     out, seen = [], set()
+    if remotes and not shutil.which("gh"):
+        return None
     for ref in remotes:
         head = ref.split("/", 1)[1] if "/" in ref else ref
-        for p in gh_json(root, "pr", "list", "--state", "all", "--head", head, "--limit", "3", "--json", PR_FIELDS) or []:
+        found = gh_json(root, "pr", "list", "--state", "all", "--head", head, "--limit", "3", "--json", PR_FIELDS)
+        if found is None:
+            return None
+        for p in found:
             if p.get("number") not in seen:
                 seen.add(p.get("number"))
                 out.append(pr_view(p, repo))
@@ -2457,6 +2463,8 @@ def flight_legs(sid, legs, workers, gone=(), fresh=False):
             except Exception:
                 g = None
             w = {**w, "approach": approach(w.get("reviews"), (g or {}).get("prs"))}
+        elif w:
+            g = w.get("git")            # a live leg's status carries collateral's last answer, or None before it
         cls, label = leg_state(w)
         out.append({"leg": leg["leg"], "w": w, "cls": cls, "label": label, "live": leg["leg"] in live, "git": g})
     return out
@@ -2464,9 +2472,14 @@ def flight_legs(sid, legs, workers, gone=(), fresh=False):
 
 def flight_landed(states):
     """Whether a flight has landed, from flight_legs: every leg on its route landed and every pull request its
-    legs opened at the gate, merged. A leg cleared to land waits on its merge still. With what is still open."""
+    legs opened at the gate, merged. A leg cleared to land waits on its merge still. A leg's git not read yet
+    (none, pending, an error, or its PRs unknown) is not landed either: until then its PRs are unknown, not
+    absent, as the dashboard has it (4463789). With what is still open."""
+    def unread(g):
+        return not g or g.get("pending") or g.get("error") or g.get("prs") is None
     left = [f"{s['leg']}: {s['label']}" for s in states if s["cls"] != "good"]
-    left += [f"{s['leg']}: #{ap['pr']} {ap['label']}" for s in states if s["cls"] == "good"
+    left += [f"{s['leg']}: its pull requests not read yet" for s in states if s["cls"] == "good" and unread(s.get("git"))]
+    left += [f"{s['leg']}: #{ap['pr']} {ap['label']}" for s in states if s["cls"] == "good" and not unread(s.get("git"))
              for ap in [(s["w"] or {}).get("approach")] if ap and ap["stage"] != "gate"]
     return bool(states) and not left, left or ([] if states else ["no legs on its route yet"])
 

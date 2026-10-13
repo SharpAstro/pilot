@@ -237,6 +237,17 @@ Pilot session: s2
 
 
 class ConnectionTests(Case):
+    def setUp(self):
+        super().setUp()
+        # Each leg's git, as collateral_now would read it: read, no commits past its base, no PR.
+        self.git = {"ahead": 0, "prs": [], "remotes": []}
+        self._git_fns = pilot.collateral_now, pilot.collateral
+        pilot.collateral_now, pilot.collateral = (lambda w: self.git), (lambda w, ttl=20: self.git)
+
+    def tearDown(self):
+        pilot.collateral_now, pilot.collateral = self._git_fns
+        super().tearDown()
+
     def connect(self, *flights, remove=False, session="s1"):
         with contextlib.redirect_stdout(io.StringIO()) as out:
             pilot.cmd_connect(types.SimpleNamespace(session=session, flights=list(flights), remove=remove))
@@ -249,7 +260,8 @@ class ConnectionTests(Case):
         return str(e.exception)
 
     def landed(self, leg="build", plan="s2", **final):
-        pilot.write_json(pilot.ARCHIVE / f"{leg}-1.json", {"name": leg, "plan": plan, "archivedAt": 1, **final,
+        pilot.write_json(pilot.ARCHIVE / f"{leg}-1.json", {"name": leg, "plan": plan, "archivedAt": 1, "repo": "web-app",
+                         "branch": f"worktree-w-{leg}", **final,
                          "final": {"reportHead": "DONE", "checklist": [{"status": "completed", "subject": "x"}]}})
 
     def test_the_connects_line_parses_and_is_neither_notes_nor_waiting(self):
@@ -325,11 +337,33 @@ class ConnectionTests(Case):
         self.assertIn("daemon lock", self.start(), "past the connection, to the next check")
 
     def test_landed_waits_for_the_pull_requests(self):
-        st = [{"leg": "build", "w": {"approach": {"stage": "cleared", "label": "cleared to land", "pr": 7}}, "cls": "good", "label": "cleared to land"}]
+        st = [{"leg": "build", "w": {"approach": {"stage": "cleared", "label": "cleared to land", "pr": 7}}, "cls": "good", "label": "cleared to land",
+               "git": {"ahead": 0, "prs": []}}]
         self.assertEqual(pilot.flight_landed(st), (False, ["build: #7 cleared to land"]))
         st[0]["w"]["approach"]["stage"] = "gate"
         self.assertEqual(pilot.flight_landed(st), (True, []))
         self.assertEqual(pilot.flight_landed([]), (False, ["no legs on its route yet"]))
+
+    def test_a_done_leg_whose_pull_requests_are_not_read_has_not_landed(self):
+        leg = lambda git: [{"leg": "build", "w": {"reportHead": "DONE"}, "cls": "good", "label": "landed", "git": git}]
+        for git in (None, {"pending": True}, {"error": "boom"}, {"ahead": 0, "remotes": ["origin/feat/x"], "prs": None}):
+            self.assertEqual(pilot.flight_landed(leg(git)), (False, ["build: its pull requests not read yet"]), git)
+
+    def test_start_refuses_while_the_connections_git_cannot_be_read(self):
+        self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nConnects: TIA2"))
+        self.plan("s2", CONNECTED)
+        self.landed()
+        self.git = None                 # collateral_now found nothing, or raised
+        self.assertIn("build: its pull requests not read yet", self.start())
+        pilot.collateral_now = lambda w: 1 / 0
+        self.assertIn("build: its pull requests not read yet", self.start())
+
+    def test_a_failed_or_missing_gh_leaves_the_pull_requests_unknown(self):
+        with unittest.mock.patch.object(pilot, "gh_json", lambda *a: None):
+            self.assertIsNone(pilot.leg_prs(ROOT, ["origin/feat/x"]))
+        with unittest.mock.patch.object(pilot.shutil, "which", lambda name: None):
+            self.assertIsNone(pilot.leg_prs(ROOT, ["origin/feat/x"]))
+        self.assertEqual(pilot.leg_prs(ROOT, []), [], "no remote branch holds it: no PR, known")
 
     def test_the_dashboard_gets_each_connection_and_whether_it_landed(self):
         self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nConnects: TIA2, TIA9"))
