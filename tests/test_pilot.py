@@ -1257,8 +1257,20 @@ class AlternateTests(Case):
     """Lanes from After (a fork and a join), the optional `Alt of` column, an alternate apart from the route
     until it is taken, and `start --divert`."""
 
+    def setUp(self):
+        super().setUp()
+        # Each leg's git, as ConnectionTests has it: read, no commits past its base, no PR.
+        self.git = {"ahead": 0, "prs": [], "remotes": []}
+        self._git_fns = pilot.collateral_now, pilot.collateral
+        pilot.collateral_now, pilot.collateral = (lambda w: self.git), (lambda w, ttl=20: self.git)
+
+    def tearDown(self):
+        pilot.collateral_now, pilot.collateral = self._git_fns
+        super().tearDown()
+
     def archive(self, leg, head="DONE", **kw):
-        pilot.write_json(pilot.ARCHIVE / f"{leg}-1.json", {"name": leg, "plan": "s1", "archivedAt": 1, "started": 1000.0, **kw,
+        pilot.write_json(pilot.ARCHIVE / f"{leg}-1.json", {"name": leg, "plan": "s1", "archivedAt": 1, "started": 1000.0,
+                         "repo": "web-app", "branch": f"worktree-w-{leg}", **kw,
                          "final": {"reportHead": head, "checklist": [{"status": "completed", "subject": "x"}]}})
 
     def states(self):
