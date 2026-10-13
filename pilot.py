@@ -277,8 +277,8 @@ Pilot session: {sid}
 
 ## Route
 
-| Leg | Goal | After | Done when |
-|---|---|---|---|
+| Leg | Goal | After | Done when | Alt of |
+|---|---|---|---|---|
 
 ## Log
 
@@ -425,10 +425,12 @@ def parse_plan(text):
         cells = [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", row)]   # a `\|` stays in its cell
         if not cells or set("".join(cells)) <= set("-: ") or cells[0].lower() == "leg":
             continue
-        cells += [""] * (4 - len(cells))
+        cells += [""] * (5 - len(cells))
         name = re.sub(r"[`*]", "", cells[0]).strip()
         after = [a for a in (x.strip(" `*") for x in re.split(r"[,;\s]+", cells[2])) if a and a not in ("-", "none")]
-        legs.append({"leg": name, "goal": cells[1], "after": after, "doneWhen": cells[3]})
+        # An alternate names its primary in the optional fifth column; a 4-column route has none.
+        alt = re.sub(r"[`*]", "", cells[4]).strip()
+        legs.append({"leg": name, "goal": cells[1], "after": after, "doneWhen": cells[3], "altOf": "" if alt in ("-", "none") else alt})
     log = []
     for ln in section("Log").splitlines():
         if ln.startswith("- "):
@@ -438,6 +440,52 @@ def parse_plan(text):
     return {"title": title.group(1).strip() if title else "untitled", "objective": " ".join(objective.group(1).split()) if objective else "",
             "flight": (FLIGHT_RE.search(text) or [None, None])[1], "tracking": (TRACKING_RE.search(text) or [None, None])[1],
             "connects": plan_connects(text), "legs": legs, "log": log[-40:], "notes": plan_notes(split_waiting(text)[1]), "waiting": split_waiting(text)[0]}
+
+
+def route_depths(legs):
+    """Each leg's column on the route: its longest path back through After, 0 for one that waits for nothing.
+    Legs of one depth fly side by side, as lanes. An alternate is no column of its own: it takes its primary's,
+    and an After naming one counts as naming its primary. A cycle counts as no wait."""
+    primary = {l["leg"]: l["altOf"] for l in legs if l.get("altOf")}
+    byname = {l["leg"]: l for l in legs if not l.get("altOf")}
+    out = {}
+
+    def depth(name, path=()):
+        if name in out:
+            return out[name]
+        if name in path:
+            return 0
+        deps = [d for d in (primary.get(a, a) for a in byname[name]["after"]) if d in byname]
+        out[name] = 1 + max(depth(d, (*path, name)) for d in deps) if deps else 0
+        return out[name]
+    for name in byname:
+        depth(name)
+    for alt, of in primary.items():
+        out[alt] = out.get(of, 0)
+    return out
+
+
+def alt_taken(w, live):
+    """Whether an alternate leg has been taken: its worker runs, or a removed one landed. Removing an
+    alternate's worker before it lands undoes the diversion."""
+    return bool(w) and (live or leg_state(w)[0] == "good")
+
+
+def flown(states):
+    """The route as flown, from flight_legs: each primary leg, or, once it has been diverted, its taken
+    alternates in its place (any one of them landed lands it). An alternate not taken is no part of it, so it
+    never keeps a flight from landing nor counts as a leg."""
+    taken = {}
+    for s in states:
+        if s.get("altOf") and s.get("taken"):
+            taken.setdefault(s["altOf"], []).append(s)
+    out = []
+    for s in states:
+        if s.get("altOf"):
+            continue
+        alts = taken.get(s["leg"])
+        out.append(next((a for a in alts if a["cls"] == "good"), alts[-1]) if alts else s)
+    return out
 
 
 def plan_connects(text):
@@ -544,6 +592,7 @@ def plans_view(rows, workers, seen=None):
                 p["connections"].append(connection(f, workers, gone, flights))
             except Exception as e:      # like its times, worth less than the rest of the dashboard
                 p["connections"].append({"flight": f, "known": True, "landed": False, "state": f"{type(e).__name__}: {e}", "open": []})
+        p["depths"] = route_depths(p["legs"])   # the strip's lanes and the chart's columns
         try:
             p["times"] = flight_times(p["sessionId"], p["legs"], workers, gone)
         except Exception as e:          # a flight's times are worth less than the rest of the dashboard
@@ -705,7 +754,13 @@ def flight_times(sid, legs, workers, gone=()):
     for a in gone:                    # newest first: a leg flown twice counts its last worker
         if a.get("plan") == sid and a.get("name") not in old:
             old[a["name"]] = a
-    t = project_eta([leg_timing(live.get(l["leg"]) or old.get(l["leg"])) for l in legs])
+    # Timed over the route as flown: an alternate not taken is no leg of it, and a taken one flies in its primary's place.
+    route = []
+    for l in legs:
+        w = live.get(l["leg"]) or old.get(l["leg"])
+        alt = l.get("altOf") or ""
+        route.append({"leg": l["leg"], "w": w, "cls": leg_state(w)[0], "altOf": alt, "taken": bool(alt) and alt_taken(w, l["leg"] in live)})
+    t = project_eta([leg_timing(s["w"]) for s in flown(route)])
     t["scheduled"] = schedule(sid, t["eta"], persist=not HUB.preview)
     end = t["arrived"] or t["eta"]
     t["delay"] = end - t["scheduled"] if end and t["scheduled"] else None
@@ -1402,7 +1457,7 @@ def worker_status(w, rows=None):
     job = job_state(w["id"])
     return {
         **{k: w.get(k) for k in ("name", "id", "sessionId", "repo", "worktree", "branch", "base", "model", "effort",
-                                 "budget", "started", "pilot", "after", "plan")}, "agent": agent_name(w),
+                                 "budget", "started", "pilot", "after", "plan", "divertedFrom", "divertReason")}, "agent": agent_name(w),
         "budget0": w.get("budget0") or config().get("budget") or w.get("budget"),
         "sessions": len(sessions_of(w)),
         "state": state, "busy": (row or {}).get("status") == "busy", "pid": (row or {}).get("pid"),
@@ -1837,6 +1892,33 @@ def session_of(job_id):
     return None
 
 
+def diversion(sid, name, reason):
+    """Whether leg `name` of this plan may take off, as far as alternates go: (primary, reason) for an alternate
+    taken on a diversion, None for any other leg, or exits with why not. An alternate takes off only with
+    --divert and while its primary is not in the air (planned, failed or stopped); a primary does not while a
+    worker for one of its alternates exists, until that worker is removed."""
+    p = plan_path(sid) if sid else None
+    legs = parse_plan(p.read_text(encoding="utf-8"))["legs"] if p and p.exists() else []
+    leg = next((l for l in legs if l["leg"] == name), None)
+    if not leg or not leg["altOf"]:
+        if reason is not None:
+            sys.exit(f"pilot: {name} is no alternate on the route (its `Alt of` column is empty), so there is nothing to divert to")
+        alts = [l["leg"] for l in legs if l["altOf"] == name and (load(l["leg"]) or {}).get("plan") == sid]
+        if alts:
+            sys.exit(f"pilot: {name} was diverted to {', '.join(alts)}; `pilot.py rm {alts[0]}` first to undo the diversion")
+        return None
+    of = leg["altOf"]
+    if reason is None or not reason.strip():
+        sys.exit(f"pilot: {name} is an alternate for {of}; take it only on a diversion: "
+                 f"`pilot.py start {name} --divert \"<why>\"`, the pilot's decision, logged in the plan")
+    w = load(of)
+    w = worker_status(w) if w and w.get("plan") == sid else next((g for g in archived(200) if g.get("plan") == sid and g.get("name") == of), None)
+    cls, label = leg_state(w)
+    if cls not in ("planned", "bad"):
+        sys.exit(f"pilot: cannot divert {of} to {name}: {of} is {label}; divert only from a leg planned, failed or stopped")
+    return of, reason.strip()
+
+
 def cmd_start(a):
     cfg = config()
     if not NAME_RE.match(a.name):
@@ -1846,6 +1928,7 @@ def cmd_start(a):
     for dep in a.after or []:
         if not load(dep):
             sys.exit(f"pilot: --after {dep}: no worker of that name")
+    divert = diversion(pilot_session(), a.name, getattr(a, "divert", None))
     # A flight that connects from another waits for it to land: its change has to be merged before this one's
     # legs build on it. There is no flag past this; the controller decides, through the plan's waiting section.
     hold = connection_hold(pilot_session())
@@ -1877,6 +1960,8 @@ def cmd_start(a):
          "base": base_branch(root), "model": a.model or cfg.get("model"), "effort": a.effort or cfg.get("effort"),
          "budget": a.budget or cfg.get("budget"), "budget0": a.budget or cfg.get("budget"), "started": time.time(), "pilot": a.pilot, "after": a.after or [],
          "plan": pilot_session()}
+    if divert:
+        w["divertedFrom"], w["divertReason"] = divert
     flight = plan_flight(w["plan"], repo) if w["plan"] else None
     w["agent"] = f"{flight} {a.name}" if flight else f"w-{a.name}"
     # The pilot is named by its session id, which an interactive resume keeps, as well as by its name, which a
@@ -1895,7 +1980,9 @@ def cmd_start(a):
     w["sessionId"] = session_of(w["id"])
     w["sessions"] = [{"id": w["id"], "sessionId": w["sessionId"], "at": w["started"]}]
     save(w)
-    plan_log(w["plan"], f"Leg {a.name} took off: worker {w['id']} on {w['branch']}" + (f", after {', '.join(w['after'])}" if w["after"] else ""))
+    if divert:
+        plan_log(w["plan"], f"Leg {divert[0]} diverted to {a.name}: {divert[1]}")
+    plan_log(w["plan"], f"Leg {a.name} took off:worker {w['id']} on {w['branch']}" + (f", after {', '.join(w['after'])}" if w["after"] else ""))
     print(f"started {a.name}: {w['id']} in {w['worktree']} on {w['branch']} from {w['base']}")
     print(f"  message it:  SendMessage to \"{w['agent']}\"   |   you: pilot.py tell \"{w['agent']}\" -m ...  or  claude attach {w['id']}")
 
@@ -2480,7 +2567,9 @@ def flight_legs(sid, legs, workers, gone=(), fresh=False):
         elif w:
             g = w.get("git")            # a live leg's status carries collateral's last answer, or None before it
         cls, label = leg_state(w)
-        out.append({"leg": leg["leg"], "w": w, "cls": cls, "label": label, "live": leg["leg"] in live, "git": g})
+        alt = leg.get("altOf") or ""
+        out.append({"leg": leg["leg"], "w": w, "cls": cls, "label": label, "live": leg["leg"] in live, "git": g,
+                    "altOf": alt, "taken": bool(alt) and alt_taken(w, leg["leg"] in live)})
     return out
 
 
@@ -2489,7 +2578,9 @@ def flight_landed(states):
     legs opened at the gate, merged. A leg cleared to land waits on its merge still. A leg's git not read yet
     (none, pending, an error, or its PRs unknown) is not landed either: until then its PRs are unknown, not
     absent, as the dashboard has it (4463789). And a leg's commits past its base land only on a merged PR,
-    DONE and unpushed or not: a flight connects from this one for that change merged. With what is still open."""
+    DONE and unpushed or not: a flight connects from this one for that change merged. With what is still open.
+    The route is the one flown: an alternate not taken does not count, and a taken one stands for its primary."""
+    states = flown(states)
     def still_open(s):
         if s["cls"] != "good":
             return s["label"]
@@ -2530,6 +2621,7 @@ def connection(flight, workers, gone=(), plans=None, fresh=False):
     plan = parse_plan(text)
     states = flight_legs(sid, plan["legs"], workers, gone, fresh)
     landed, left = flight_landed(states)
+    states = flown(states)
     good = sum(1 for s in states if s["cls"] == "good")
     state = ("landed" if landed else "no legs on its route yet" if not states else
              f"all {len(states)} legs landed, pull requests not merged" if good == len(states) else f"{good} of {len(states)} legs landed")
@@ -2641,11 +2733,15 @@ def track_html(sid):
     states = flight_legs(sid, plan["legs"], [worker_status(w, rows) for w in registered() if w.get("plan") == sid], archived(500), fresh=True)
     landed, left = flight_landed(states)
     legs, counts = [], {}
+    on_route = {id(s) for s in flown(states)}     # the counts are the route as flown: no alternate not taken
     for leg, st in zip(plan["legs"], states):
         w, cls, label = st["w"], st["cls"], st["label"]
+        if st["altOf"] and not st["taken"]:
+            cls, label = "planned", "alternate, not taken"
         if w and not st["live"]:
             label += " · removed"
-        counts[cls] = counts.get(cls, 0) + 1
+        if id(st) in on_route:
+            counts[cls] = counts.get(cls, 0) + 1
         items = (w or {}).get("checklist") or ((w or {}).get("final") or {}).get("checklist") or []
         done = len(items) - len(open_items(items))
         on = next((i for i in items if i.get("status") == "in_progress"), None)
@@ -2664,9 +2760,13 @@ def track_html(sid):
         if sp:
             bits.append(f'<div class="sub">spend {sp["weighted"] / 1e6:.1f}M' + (f' of {w["budget"] / 1e6:.0f}M' if w.get("budget") else "") + "</div>")
         after = f' <span class="sub">after {html.escape(", ".join(leg["after"]))}</span>' if leg["after"] else ""
+        if st["altOf"]:
+            after += f' <span class="sub">alternate for {html.escape(st["altOf"])}</span>'
+            if w and w.get("divertedFrom"):
+                bits.append(f'<div class="sub">diverted from {html.escape(w["divertedFrom"])}: {_inline(w.get("divertReason") or "")}</div>')
         legs.append(f'<div class="card leg"><div class="leghead"><b>{html.escape(leg["leg"])}{after}</b><span class="chip {cls}">{html.escape(label)}</span></div>'
                     f'<div>{_inline(leg["goal"])}</div>' + (f'<div class="sub">done when: {_inline(leg["doneWhen"])}</div>' if leg["doneWhen"] else "") + "".join(bits) + "</div>")
-    n = len(plan["legs"])
+    n = len(on_route)
     if plan["waiting"]:
         k = len(re.findall(r"^\s*[-*]\s", plan["waiting"], re.M)) or 1
         banner = ("warn", f"Waiting on you: {k} item{'s' if k > 1 else ''}")
@@ -3624,6 +3724,7 @@ def main():
     s.add_argument("--budget", type=int, help="weighted tokens; default from ~/.pilot/pilot.json")
     s.add_argument("--pilot", help="the pilot session's name, so the worker knows whose messages to follow")
     s.add_argument("--after", action="append", help="a worker this one waits for (shown in the graph)")
+    s.add_argument("--divert", metavar="REASON", help="take this alternate leg in place of its primary, and log why")
     s.set_defaults(fn=cmd_start)
     s = sub.add_parser("list")
     s.add_argument("--json", action="store_true")
