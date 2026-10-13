@@ -500,6 +500,146 @@ class PriorityTests(Case):
             srv.server_close()
 
 
+class FlightArchiveTests(Case):
+    """The controller's archive of whole flights, in archived-flights.json: the plan stays where it is, off the
+    Overview and the order, on History, until a restore puts it back. Not the worker archive of `pilot rm`."""
+
+    def setUp(self):
+        super().setUp()
+        now = time.time()
+        for i, (sid, flight) in enumerate((("a", "WA1"), ("b", "WA2"), ("c", "WA3"))):
+            text = PLAN.replace("Export fixes", f"Flight {sid}").replace("Flight: WA1", f"Flight: {flight}").replace("Pilot session: s1", f"Pilot session: {sid}")
+            os.utime(self.plan(sid, text), (now - i * 60, now - i * 60))
+        pilot.write_json(pilot.PRIORITY, ["c", "b", "a"])
+
+    def order(self):
+        return [p["sessionId"] for p in pilot.plans_view([], [])]
+
+    def cli(self, flight, restore=False, force=False):
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            pilot.cmd_archive(types.SimpleNamespace(flight=flight, restore=restore, force=force))
+        return out.getvalue()
+
+    def flying(self, leg="fix", plan="b"):
+        self.worker(leg, plan=plan)
+        self.rows = [{"id": f"job-{leg}", "sessionId": f"sess-{leg}", "state": "working", "status": "busy"}]
+
+    def test_archive_keeps_the_plan_and_takes_it_off_the_overview_and_the_order(self):
+        before = pilot.plan_path("b").read_text(encoding="utf-8")
+        out = self.cli("WA2")
+        self.assertIn("WA2 (Flight b) archived", out)
+        self.assertEqual(self.order(), ["c", "a"])
+        self.assertEqual(pilot.priority(), ["c", "a"])
+        text = pilot.plan_path("b").read_text(encoding="utf-8")
+        self.assertTrue(text.startswith(before), "the plan is kept whole, only a log line added")
+        self.assertEqual(pilot.parse_plan(text)["legs"][0]["leg"], "design")
+        self.assertIn("Archived by the controller", self.log_of("b")[-1])
+        bb = [json.loads(l) for l in pilot.BLACKBOX.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual((bb[-1]["text"], bb[-1]["actor"], bb[-1]["flight"], bb[-1]["plan"]), ("Archived by the controller", "controller", "WA2", "b"))
+        hist = pilot.flight_history([])
+        self.assertEqual([(h["sessionId"], h["flight"], h["title"]) for h in hist], [("b", "WA2", "Flight b")])
+        self.assertEqual([(l["leg"], l["label"]) for l in hist[0]["legs"]], [("design", "planned"), ("fix", "planned")])
+        self.assertIn("times", hist[0])
+        with unittest.mock.patch.object(pilot, "flight_history", lambda w, g=(): "fh"):
+            snap = pilot.snapshot()
+        self.assertEqual(snap["flightHistory"], "fh")
+        self.assertNotIn("b", [p["sessionId"] for p in snap["plans"]])
+        with self.assertRaises(SystemExit) as e:
+            self.cli("WA2")
+        self.assertEqual(str(e.exception), "pilot: WA2 (Flight b) is archived already")
+
+    def test_restore_puts_it_back_in_its_old_place(self):
+        self.cli("wa2")                                  # a flight number in any case, or its plan id
+        pilot.set_priority(["a", "c"])                   # the controller reorders while it is away
+        out = self.cli("b", restore=True)
+        self.assertIn("WA2 (Flight b) restored", out)
+        self.assertEqual(pilot.priority(), ["a", "b", "c"])
+        self.assertEqual(self.order(), ["a", "b", "c"])
+        self.assertEqual(pilot.flight_history([]), [])
+        self.assertIn("Restored by the controller", self.log_of("b")[-1])
+        with self.assertRaises(SystemExit) as e:
+            self.cli("WA2", restore=True)
+        self.assertEqual(str(e.exception), "pilot: WA2 (Flight b) is not archived")
+
+    def test_a_flight_the_order_never_placed_comes_back_last(self):
+        pilot.PRIORITY.unlink()
+        self.cli("WA1")                                  # `a`, the most recently touched
+        self.cli("WA1", restore=True)                    # and touched again by its log line
+        self.assertEqual(self.order(), ["b", "c", "a"])
+
+    def test_legs_still_flying_refuse_it_unless_forced(self):
+        self.flying()
+        with self.assertRaises(SystemExit) as e:
+            self.cli("WA2")
+        self.assertEqual(str(e.exception), "pilot: WA2 (Flight b) has legs still flying: fix. Archiving it gives up on them; "
+                                           "`python pilot.py archive --force WA2` archives it anyway.")
+        self.assertEqual(self.order(), ["c", "b", "a"])
+        self.cli("WA2", force=True)
+        self.assertEqual(self.order(), ["c", "a"])
+        self.assertEqual(self.log_of("b")[-1][17:], "Archived by the controller, with fix still flying")
+        self.assertEqual(pilot.flight_history([])[0]["flyingAtArchive"], ["fix"])
+
+    def test_a_pilot_never_archives_a_flight(self):
+        with unittest.mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "a"}):
+            with self.assertRaises(SystemExit) as e:
+                self.cli("WA2")
+        self.assertIn("only the controller archives a flight", str(e.exception))
+        self.assertEqual(pilot.archived_flights(), {})
+
+    def test_an_unknown_flight(self):
+        with self.assertRaises(SystemExit) as e:
+            self.cli("ZZ9")
+        self.assertEqual(str(e.exception), "pilot: no flight plan has the number ZZ9")
+
+    def test_a_connection_to_an_archived_flight_still_resolves_by_its_own_state(self):
+        self.plan("s2", CONNECTED)
+        self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA9\n\nConnects: TIA2"))
+        pilot.archive_flight("TIA2")
+        git = {"ahead": 0, "prs": [], "remotes": []}
+        with unittest.mock.patch.object(pilot, "collateral", lambda w, ttl=20: git), unittest.mock.patch.object(pilot, "collateral_now", lambda w: git):
+            c = pilot.connection("TIA2", [], [])
+            self.assertEqual((c["known"], c["landed"], c["sessionId"]), (True, False, "s2"))
+            pilot.write_json(pilot.ARCHIVE / "build-1.json", {"name": "build", "plan": "s2", "archivedAt": 1, "repo": "web-app", "branch": "worktree-w-build",
+                             "final": {"reportHead": "DONE", "checklist": [{"status": "completed", "subject": "x"}]}})
+            p = next(p for p in pilot.plans_view([], []) if p["sessionId"] == "s1")
+        self.assertEqual([(c["flight"], c["known"], c["landed"]) for c in p["connections"]], [("TIA2", True, True)])
+
+    def test_a_woken_pilots_archived_flight_stays_archived(self):
+        pilot.archive_flight("WA2")
+        pilot.move_plan("b", "b2")
+        self.assertEqual(list(pilot.archived_flights()), ["b2"])
+        self.assertNotIn("b2", self.order())
+
+    def test_the_endpoint_names_legs_flying_and_archives_when_forced(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        self.flying()
+        srv = pilot.http.server.ThreadingHTTPServer(("127.0.0.1", 0), pilot.Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            def post(path, body, headers={"X-Pilot": "1"}):
+                req = urllib.request.Request(f"http://127.0.0.1:{srv.server_address[1]}{path}", json.dumps(body).encode(),
+                                             {"Content-Type": "application/json", **headers}, method="POST")
+                try:
+                    with urllib.request.urlopen(req) as r:
+                        return r.status, json.loads(r.read())
+                except urllib.error.HTTPError as e:
+                    with e:
+                        return e.code, json.loads(e.read())
+            self.assertEqual(post("/api/flights/b/archive", {}, headers={})[0], 403, "only the dashboard's page archives")
+            code, body = post("/api/flights/b/archive", {})
+            self.assertEqual((code, body["flying"]), (409, ["fix"]))
+            self.assertEqual(post("/api/flights/b/archive", {"force": True}), (200, {"ok": True, "sessionId": "b"}))
+            self.assertEqual(self.order(), ["c", "a"])
+            self.assertEqual(post("/api/flights/WA2/restore", {}), (200, {"ok": True, "sessionId": "b"}))
+            self.assertEqual(self.order(), ["c", "b", "a"])
+            self.assertEqual(post("/api/flights/nope/restore", {})[0], 409)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+
 class WakeTests(Case):
     def test_a_sleeping_pilot_wakes_as_a_copy_and_its_plan_and_legs_move_with_it(self):
         self.plan("old-sid", "# Flight plan: x\n\nPilot session: old-sid\n\n## Log\n\n- 2026-10-14 08:00 Plan opened.\n")
