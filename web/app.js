@@ -459,6 +459,14 @@ function pilotNow(ps) {
 
 // What a leg leaves in its repo: commits past its base, pushed or not (to a remote branch of any name), and
 // uncommitted files in its worktree. `git` is pilot.py's collateral(); null until its first read lands.
+// A pull request as a link: its number, state and checks, in the colour of where it stands.
+function prChip(p, withRepo) {
+  const cls = p.state === "MERGED" ? "ok" : p.state === "CLOSED" || p.ci === "failing" ? "bad" : p.ci === "passing" ? "ok" : "sub";
+  const what = [p.state === "OPEN" ? "open" : p.state?.toLowerCase(), p.state !== "MERGED" && p.state !== "CLOSED" && p.ci !== "none" ? `checks ${p.ci}` : "",
+                p.review === "APPROVED" ? "approved" : p.review === "CHANGES_REQUESTED" ? "changes requested" : ""].filter(Boolean).join(", ");
+  return `<a class="prchip ${cls}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(p.title || "")}">${withRepo && p.repo ? esc(p.repo) + " " : ""}#${esc(p.number)} ${esc(what)} ↗</a>`;
+}
+
 function gitLine(g) {
   if (!g) return "";
   const tip = `${g.branch}${g.head ? ` at ${g.head}` : ""}, from ${g.base || "?"}. Remote branches as of the repo's last fetch or push.`;
@@ -468,6 +476,7 @@ function gitLine(g) {
   if (g.ahead) bits.push(g.unpushed ? `<span class="bad">${g.unpushed} not pushed</span>`
     : `<span class="ok">pushed${g.remotes?.length ? ` · ${esc(g.remotes[0])}` : ""}</span>`);
   if (g.dirty) bits.push(`<span class="bad">${g.dirty} uncommitted</span>`);
+  for (const p of g.prs || []) bits.push(prChip(p));
   return `<div class="gitline" title="${esc(tip)}">⎇ ${bits.join(" · ")}</div>`;
 }
 // The flight's: which legs hold commits on no remote, or uncommitted files.
@@ -509,6 +518,7 @@ function planCard(p, s) {
       <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} ` : ""}${yourMove ? `<span class="chip blocked">your move</span>` : pilotChip(ps, flying)} · plan updated ${esc(ago(p.updated))}
       ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
+    ${(p.prs || []).length ? `<div class="prline"><span class="sub">pull requests the plan names:</span> ${p.prs.map(x => prChip(x, true)).join(" ")}</div>` : ""}
     ${p.waiting ? waitingHtml(p, ps) : ""}
     ${yourMove && ps.said ? `<details class="lastsaid" ${fold("said:" + p.sessionId, true)}><summary>its turn ended ${esc(ago(Date.parse(ps.said.at) / 1000))} with nothing in the air; its last message</summary>${md(ps.said.text)}</details>` : pilotNow(ps)}
     ${p.notes ? `<details ${fold("notes:" + p.sessionId, waiting)}><summary>the pilot's notes: what it found and why the route is this shape</summary>${md(p.notes, true)}</details>` : ""}

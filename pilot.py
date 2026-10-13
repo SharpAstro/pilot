@@ -473,10 +473,12 @@ def plans_view(rows, workers, seen=None):
         sid, mtime = p.stem, p.stat().st_mtime
         if sid not in live and sid not in flown and time.time() - mtime > 7 * 86400:
             continue
+        text = p.read_text(encoding="utf-8")
         out.append({"sessionId": sid, "path": str(p), "updated": mtime, "live": sid in live,
                     "pilot": (live.get(sid) or {}).get("name"),
                     "pilotState": (seen.get(sid) or session_view(live[sid])) if sid in live else None,
-                    **parse_plan(p.read_text(encoding="utf-8"))})
+                    "prs": mentioned_prs(re.split(r"^##\s+Log\s*$", text, maxsplit=1, flags=re.M)[0]),   # not the log's history
+                    **parse_plan(text)})
     return out[:10]
 
 
@@ -832,7 +834,80 @@ def collateral_now(w):
     return {**out, "head": sha[:8],
             "ahead": int(git("rev-list", "--count", f"{w['base']}..{sha}") or 0) if w.get("base") else None,
             "unpushed": int(git("rev-list", "--count", sha, "--not", "--remotes") or 0),
-            "remotes": remotes[:5], "dirty": len(dirty), "dirtyFiles": dirty[:20]}
+            "remotes": remotes[:5], "dirty": len(dirty), "dirtyFiles": dirty[:20],
+            "prs": leg_prs(root, remotes[:5]) if remotes and shutil.which("gh") else []}
+
+
+PR_FIELDS = "number,title,state,url,isDraft,reviewDecision,statusCheckRollup,headRefName"
+
+
+def pr_view(p):
+    """A pull request as the dashboard shows it: number, title, state (OPEN, MERGED, CLOSED, or DRAFT), its link,
+    and its checks folded to one word: passing, failing, running, or none."""
+    checks = [(c.get("conclusion") or c.get("state") or "").upper() for c in p.get("statusCheckRollup") or []]
+    running = [(c.get("status") or "").upper() for c in p.get("statusCheckRollup") or []]
+    ci = ("failing" if any(c in ("FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED") for c in checks)
+          else "running" if any(s in ("IN_PROGRESS", "QUEUED", "PENDING", "WAITING") for s in running) or "PENDING" in checks
+          else "passing" if checks else "none")
+    state = "DRAFT" if p.get("isDraft") and p.get("state") == "OPEN" else p.get("state")
+    return {"number": p.get("number"), "title": p.get("title"), "state": state, "url": p.get("url"),
+            "branch": p.get("headRefName"), "review": p.get("reviewDecision") or None, "ci": ci}
+
+
+def gh_json(root, *args):
+    r = subprocess.run(["gh", *args], cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    if r.returncode != 0:
+        return None
+    try:
+        return json.loads(r.stdout or "null")
+    except ValueError:
+        return None
+
+
+def leg_prs(root, remotes):
+    """The pull requests opened from any remote branch that holds the leg's tip: a pilot pushes a leg under a
+    name of its own (feat/<topic>), so the worktree branch's name finds nothing. Newest first."""
+    out, seen = [], set()
+    for ref in remotes:
+        head = ref.split("/", 1)[1] if "/" in ref else ref
+        for p in gh_json(root, "pr", "list", "--state", "all", "--head", head, "--limit", "3", "--json", PR_FIELDS) or []:
+            if p.get("number") not in seen:
+                seen.add(p.get("number"))
+                out.append(pr_view(p))
+    return sorted(out, key=lambda p: p["number"] or 0, reverse=True)
+
+
+_prs, _prs_busy = {}, set()
+
+
+def mentioned_prs(text, ttl=60):
+    """Pull requests a plan names as `<repo> #<n>` (or `<repo> PR #<n>`), for a repo in ~/.pilot/pilot.json, with
+    their state: so `DIR.Lib #109` in a waiting item shows whether #109 is merged yet. Read in the background
+    and cached like the legs' git state; a PR not read yet is left out until it is."""
+    repos = config()["repos"]
+    if not repos or not text:
+        return []
+    names = "|".join(re.escape(k) for k in sorted(repos, key=len, reverse=True))
+    out = []
+    for name, num in dict.fromkeys(re.findall(rf"(?<![\w.-])({names})\s+(?:PR\s+)?#(\d+)\b", text, re.I)):
+        repo = next(k for k in repos if k.lower() == name.lower())
+        key = (repo, int(num))
+        c = _prs.get(key)
+        if (not c or time.time() - c["at"] > ttl) and key not in _prs_busy:
+            _prs_busy.add(key)
+
+            def run(key=key):
+                with _git_slots:
+                    try:
+                        p = gh_json(repos[key[0]], "pr", "view", str(key[1]), "--json", PR_FIELDS)
+                        _prs[key] = {"at": time.time(), "pr": {**pr_view(p), "repo": key[0]} if p else None}
+                    finally:
+                        _prs_busy.discard(key)
+                HUB.poke()
+            threading.Thread(target=run, daemon=True).start()
+        if c and c.get("pr"):
+            out.append(c["pr"])
+    return out
 
 
 def collateral(w, ttl=20):

@@ -100,6 +100,9 @@ nav a.on { background: var(--page); color: var(--ink); font-weight: 600; box-sha
 /* a placeholder the text defines: its value on hover, and in what is copied */
 .gitline { font-size: 12px; margin-top: 4px; white-space: nowrap; }
 .gitline .ok, .gitsum.ok { color: var(--good-text); } .gitline .bad, .gitsum.bad { color: var(--warn); }
+.prline { font-size: 13px; margin: 6px 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.prchip { text-decoration: none; border: 1px solid var(--ring); border-radius: 999px; padding: 0 8px; white-space: nowrap; }
+.prchip.ok { color: var(--good-text); } .prchip.bad { color: var(--warn); border-color: var(--warn); } .prchip.sub { color: var(--muted); }
 pre.dirty { margin: 0; font-size: 11px; white-space: pre-wrap; }
 abbr.ph { text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
 

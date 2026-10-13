@@ -438,6 +438,35 @@ class DaemonLockTests(Case):
         self.assertTrue(pilot.DAEMON_LOCK.exists(), "pilot.py never removes it itself")
 
 
+class PullRequestTests(Case):
+    def test_checks_fold_to_one_word(self):
+        pr = lambda **kw: pilot.pr_view({"number": 1, "state": "OPEN", **kw})
+        self.assertEqual(pr()["ci"], "none")
+        self.assertEqual(pr(statusCheckRollup=[{"status": "COMPLETED", "conclusion": "SUCCESS"},
+                                               {"status": "COMPLETED", "conclusion": "SKIPPED"}])["ci"], "passing")
+        self.assertEqual(pr(statusCheckRollup=[{"status": "IN_PROGRESS"}, {"conclusion": "SUCCESS"}])["ci"], "running")
+        self.assertEqual(pr(statusCheckRollup=[{"status": "IN_PROGRESS"}, {"conclusion": "FAILURE"}])["ci"], "failing")
+        self.assertEqual(pr(isDraft=True)["state"], "DRAFT")
+        self.assertEqual(pr(isDraft=True, state="MERGED")["state"], "MERGED")
+
+    def test_a_plan_names_prs_by_repo_and_number(self):
+        self.config(repos={"DIR.Lib": str(ROOT), "tianwen": str(ROOT)})
+        asked = []
+        self._gh, pilot.gh_json = pilot.gh_json, lambda root, *a: asked.append(a[2]) or {"number": int(a[2]), "state": "MERGED"}
+        try:
+            text = "Merge DIR.Lib #109 first, then dir.lib PR #110; tianwen #5. Not #7, not foo.DIR.Lib #8."
+            for _ in range(50):
+                got = pilot.mentioned_prs(text)
+                if len(got) == 3:
+                    break
+                time.sleep(0.05)
+        finally:
+            pilot.gh_json = self._gh
+            pilot._prs.clear()
+        self.assertEqual(sorted((p["repo"], p["number"]) for p in got), [("DIR.Lib", 109), ("DIR.Lib", 110), ("tianwen", 5)])
+        self.assertEqual(sorted(asked), ["109", "110", "5"])
+
+
 class TrackTests(Case):
     def test_leg_states(self):
         two = [{"status": "completed"}, {"status": "in_progress"}]
