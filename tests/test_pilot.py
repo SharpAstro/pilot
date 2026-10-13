@@ -258,6 +258,18 @@ class PriorityTests(Case):
                 pilot.set_priority(bad)
         self.assertFalse(pilot.PRIORITY.exists())
 
+    def test_a_woken_pilots_flight_keeps_its_place(self):
+        self.flights("a", "old", "b")
+        pilot.write_json(pilot.PRIORITY, ["b", "old", "a"])
+        pilot.move_plan("old", "new")
+        self.assertEqual(self.order(), ["b", "new", "a"])
+        self.assertEqual(pilot.read_json(pilot.PRIORITY), ["b", "new", "a"])
+
+    def test_a_woken_pilot_the_order_never_placed_writes_no_order(self):
+        self.flights("a", "old")
+        pilot.move_plan("old", "new")
+        self.assertFalse(pilot.PRIORITY.exists())
+
     def test_the_endpoint_applies_a_new_order(self):
         import threading
         import urllib.error
