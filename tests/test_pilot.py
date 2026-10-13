@@ -215,6 +215,76 @@ class PlanTests(Case):
         self.assertEqual(actors["Decided: one leg per concern. Co-pilot agreed."], "pilot")
 
 
+class PriorityTests(Case):
+    """The controller's order of flights, in priority.json: it orders the dashboard's flights, and only
+    set_priority (the dashboard's POST /api/priority) writes it."""
+
+    def flights(self, *sids):
+        """Plans for `sids`, the first the most recently touched, so with no order they list in that order."""
+        now = time.time()
+        for i, sid in enumerate(sids):
+            os.utime(self.plan(sid, PLAN.replace("Export fixes", sid)), (now - i * 60, now - i * 60))
+
+    def order(self):
+        return [p["sessionId"] for p in pilot.plans_view([], [])]
+
+    def test_no_file_lists_by_last_touched(self):
+        self.flights("a", "b", "c")
+        self.assertEqual(pilot.priority(), [])
+        self.assertEqual(self.order(), ["a", "b", "c"])
+
+    def test_a_corrupt_file_is_no_order(self):
+        self.flights("a", "b", "c")
+        for junk in ("{not json", '{"a": 1}', '["c", 7, null]'):
+            pilot.PRIORITY.write_text(junk, encoding="utf-8")
+            want = ["c", "a", "b"] if junk.startswith("[") else ["a", "b", "c"]
+            self.assertEqual(self.order(), want, junk)
+
+    def test_the_order_lists_first_and_new_flights_follow_in_todays_order(self):
+        self.flights("new1", "a", "new2", "b", "c")
+        pilot.write_json(pilot.PRIORITY, ["c", "gone", "a"])
+        self.assertEqual(self.order(), ["c", "a", "new1", "new2", "b"], "a stale id is passed over")
+
+    def test_a_write_drops_stale_ids_and_keeps_the_rest_of_the_old_order(self):
+        self.flights("a", "b", "c", "d")
+        pilot.write_json(pilot.PRIORITY, ["gone", "d", "c"])
+        self.assertEqual(pilot.set_priority(["b", "a", "nope"]), ["b", "a", "d", "c"])
+        self.assertEqual(pilot.read_json(pilot.PRIORITY), ["b", "a", "d", "c"])
+        self.assertEqual(self.order(), ["b", "a", "d", "c"])
+
+    def test_a_write_takes_only_a_list_of_ids(self):
+        for bad in (None, "a", ["a", 1], ["../x"]):
+            with self.assertRaises(ValueError):
+                pilot.set_priority(bad)
+        self.assertFalse(pilot.PRIORITY.exists())
+
+    def test_the_endpoint_applies_a_new_order(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        self.flights("a", "b", "c")
+        srv = pilot.http.server.ThreadingHTTPServer(("127.0.0.1", 0), pilot.Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            def post(body, headers={"X-Pilot": "1"}):
+                req = urllib.request.Request(f"http://127.0.0.1:{srv.server_address[1]}/api/priority", json.dumps(body).encode(),
+                                             {"Content-Type": "application/json", **headers}, method="POST")
+                try:
+                    with urllib.request.urlopen(req) as r:
+                        return r.status, json.loads(r.read())
+                except urllib.error.HTTPError as e:
+                    with e:
+                        return e.code, json.loads(e.read())
+            self.assertEqual(post({"order": ["c", "a", "b"]}), (200, {"ok": True, "order": ["c", "a", "b"]}))
+            self.assertEqual(self.order(), ["c", "a", "b"])
+            self.assertEqual(post({"order": "c"})[0], 400)
+            self.assertEqual(post({"order": ["a", "b", "c"]}, headers={})[0], 403, "only the dashboard's page writes it")
+            self.assertEqual(self.order(), ["c", "a", "b"])
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+
 class WakeTests(Case):
     def test_a_sleeping_pilot_wakes_as_a_copy_and_its_plan_and_legs_move_with_it(self):
         self.plan("old-sid", "# Flight plan: x\n\nPilot session: old-sid\n\n## Log\n\n- 2026-10-14 08:00 Plan opened.\n")
