@@ -318,6 +318,17 @@ def pilot_session():
     return os.environ.get("CLAUDE_CODE_SESSION_ID")
 
 
+def sender():
+    """Who runs this command, for the logs: the autopilot, a pilot (a session with a flight plan), or else the
+    controller. A pilot's `say` to its worker was logged as the controller's."""
+    me, st = os.environ.get("CLAUDE_CODE_SESSION_ID"), read_json(AUTOPILOT, {})
+    if me and me == st.get("sessionId"):
+        return "Autopilot"
+    if me and plan_path(me).exists():
+        return "Pilot"
+    return "Controller"
+
+
 def plan_path(sid):
     return PLANS / f"{sid}.md" if sid else None
 
@@ -336,7 +347,7 @@ def plan_log(sid, text):
 
 
 ACTORS = (("Controller", "controller"), ("Autopilot", "autopilot"), ("Watchtower", "watchtower"),
-          ("Pilot asks", "pilot"), ("Asked in the terminal", "pilot"), ("Decided", "pilot"),
+          ("Pilot asks", "pilot"), ("Pilot to ", "pilot"), ("Pilot woken", "pilot.py"), ("Asked in the terminal", "pilot"), ("Decided", "pilot"),
           ("Leg ", "pilot.py"), ("Budget for ", "pilot.py"), ("Plan opened", "pilot.py"), ("Dashboard to ", "pilot.py"))
 
 
@@ -1656,7 +1667,7 @@ def say(name, text):
     save(w)
     lines = text.strip().splitlines()
     more = "..." if len(lines) > 1 or len(lines[0]) > 140 else ""
-    plan_log(w.get("plan"), f"Controller to {name}: {lines[0][:140]}{more}")
+    plan_log(w.get("plan"), f"{sender()} to {name}: {lines[0][:140]}{more}")
     return w
 
 
