@@ -864,7 +864,7 @@ VIEWS.session = (root, r) => {
     <div class="card pad s-sumcard" hidden><div class="cardhead"><b>Summary</b><span><span class="sub s-stamp"></span> <button class="s-btn">Summarise</button></span></div>
       <div class="summary s-sum" style="margin-top:6px"></div></div>
     <div class="sess" style="margin-top:12px">
-      <div><div class="card"><div class="stream s-stream"><div class="empty">loading…</div></div><div class="live s-live" hidden></div></div>
+      <div><div class="card"><div class="stream tstream s-stream"><div class="empty">loading…</div></div><div class="live s-live" hidden></div></div>
         <details class="card pad term s-term" hidden><summary><b>Terminal</b> <span class="sub">its screen, read every 2 s while this is open; what you type goes straight into it</span></summary>
           <div class="sub s-ttitle"></div><pre class="screen s-screen">reading…</pre>
           <div class="termrow"><input class="s-ttext" placeholder="text to type, e.g. an answer or /remote-control">
@@ -884,17 +884,17 @@ VIEWS.session = (root, r) => {
         <div class="card pad"><b>Subagents</b><div class="s-agents" style="margin-top:6px"><span class="sub">none</span></div></div></div>
     </div>`;
   const stream = $(".s-stream", root), tools = new Map();
-  let sid, es = null, agentsRev = null, worker = null, sayTo = null, group = null, turnAt = null, liveText = "";
+  let sid, es = null, agentsRev = null, worker = null, sayTo = null, turnAt = null, liveText = "", agentLabel = "", titleName = "";
 
   function open(newSid) {
     if (es) es.close();
-    sid = newSid; tools.clear(); agentsRev = null; group = null; turnAt = null;
+    sid = newSid; tools.clear(); agentsRev = null; turnAt = null;
     if (!sid) { stream.innerHTML = `<div class="empty">No transcript yet.</div>`; return; }
     es = new EventSource(r.agent ? `/api/sessions/${sid}/agents/${r.agent}/stream` : `/api/sessions/${sid}/stream`);
     es.addEventListener("backlog", e => {
       const d = JSON.parse(e.data);
       stream.innerHTML = d.skipped || d.truncated ? `<div class="ev notice">earlier events are not shown</div>` : "";
-      tools.clear(); group = null;
+      tools.clear();
       append(d.events, true);
     });
     es.addEventListener("events", e => append(JSON.parse(e.data), false));
@@ -909,126 +909,124 @@ VIEWS.session = (root, r) => {
     if (stick) stream.scrollTop = stream.scrollHeight;
   }
 
-  // A run of tool calls folds into one line, as Claude Code's own remote view does: "Read 5 files, ran 3
-  // commands (1 failed)". What the session says closes the run. An Agent call is a line of its own, named
-  // by its task. A run holding a refused call opens itself, so the refusal still shows in red.
-  function newGroup(title) {
-    const el = document.createElement("details");
-    el.className = "ev group";
-    el.innerHTML = `<summary></summary><div class="gbody"></div>`;
-    const g = {el, body: el.lastChild, items: new Map(), thought: false, title};
-    return g;
+  // The conversation as Claude Code's terminal draws it, ported from Sam's campaigner (its Term.tsx): ● what
+  // the session says; one line per tool call, `Name(what it was asked)`, its dot green, red, or blinking while
+  // it runs, and its result under a ⎿, three lines of it and the rest a click away (a Read says only how many
+  // lines); thinking folded to one line; a subagent on its own page, linked from the call that started it.
+  // A click on a call's line shows its whole input. A call pilot's wiring refused and the session answered by
+  // doing what it said (`gate`: pilot's ask hook, Sam's reply gate) is not drawn: that is the wiring talking.
+  const PREVIEW = 3;
+  const plain = s => esc(s.replace(/\x1b\[[0-9;]*m/g, ""));
+  function row(dot, cls, html) {
+    const div = document.createElement("div");
+    div.className = "ev t-row" + (cls ? " " + cls : "");
+    div.innerHTML = `<span class="t-dot">${dot}</span><div class="t-body">${html}</div>`;
+    return div;
   }
-  function tally(g) {
-    if (g.title) {
-      const t = g.items.get("agent") || {failed: 0, refused: 0};
-      return esc(g.title) + bad(t);
-    }
-    const parts = [];
-    for (const [key, t] of g.items) {
-      const one = t.files.size === 1 ? `<b>${esc([...t.files][0].split(/[\\/]/).pop())}</b>` : null;
-      const p = {read: one ? `read ${one}` : `read ${t.n} files`, ran: t.n === 1 ? "ran a command" : `ran ${t.n} commands`,
-        edited: one ? `edited ${one}` : `edited ${t.files.size || t.n} files`, wrote: one ? `wrote ${one}` : `wrote ${t.files.size || t.n} files`,
-        searched: "searched code", web: "searched the web", fetched: t.n === 1 ? "fetched a page" : `fetched ${t.n} pages`,
-        sent: t.n === 1 ? "sent a message" : `sent ${t.n} messages`, tasks: "updated tasks"}[key] ?? (t.n === 1 ? `used ${esc(key)}` : `used ${esc(key)} ${t.n} times`);
-      parts.push(p + bad(t));
-    }
-    const s = parts.join(", ") || (g.thought ? "thought" : "");
-    return s.charAt(0).toUpperCase() + s.slice(1);
+  const agentLink = id => `<a class="t-link" href="#/s/${sid}/a/${esc(id)}">open subagent ${esc(id.slice(0, 8))} ›</a>`;
+  // mcp__<server>__<tool>, as the terminal names it: the tool, then the server. An Agent call by its subagent type and task.
+  function callOf(ev) {
+    let inp = {};
+    try { inp = JSON.parse(ev.input || "{}") || {}; } catch { }
+    if (ev.tool === "Agent" || ev.tool === "Task") return {name: inp.subagent_type || ev.tool, args: inp.description || ev.summary || ""};
+    const mcp = /^mcp__(.+?)__(.+)$/.exec(ev.tool || "");
+    return {name: mcp ? `${mcp[2]} (${mcp[1].replace(/^plugin_|^claude_ai_/, "").replace(/_/g, " ")})` : ev.tool || "tool", args: ev.summary || ""};
   }
-  const bad = t => t.failed || t.refused ? ` <span class="gbad">(${[t.failed && `${t.failed} failed`, t.refused && `${t.refused} refused`].filter(Boolean).join(", ")})</span>` : "";
-  const KIND = {Read: "read", Bash: "ran", PowerShell: "ran", Edit: "edited", MultiEdit: "edited", NotebookEdit: "edited", Write: "wrote",
-    Grep: "searched", Glob: "searched", WebSearch: "web", WebFetch: "fetched", SendMessage: "sent",
-    TaskCreate: "tasks", TaskUpdate: "tasks", TaskList: "tasks", TaskGet: "tasks", TaskStop: "tasks", TodoWrite: "tasks"};
+  // Long text cut to its first lines until clicked: `.t-head` shows, `.t-full` waits, a [data-fold] swaps them.
+  const folded = (head, more, full) => `<div class="t-head">${head}${more ? `<button class="t-fold" data-fold>${more}</button>` : ""}</div>
+    <div class="t-full" hidden>${full}<button class="t-fold" data-fold>(click to collapse)</button></div>`;
 
   function event(ev) {
-    if (ev.kind === "tool" || ev.kind === "thinking") {
-      const agent = ev.kind === "tool" && (ev.tool === "Agent" || ev.tool === "Task");
-      const fresh = agent || !group;
-      const g = agent ? newGroup(ev.summary || "subagent") : group || newGroup();
-      const div = document.createElement("div");
-      if (ev.kind === "thinking") {
-        div.innerHTML = `<details><summary>thinking · ${esc(clock(ev.at))}</summary><pre>${esc(ev.text)}</pre></details>`;
-        g.thought = true;
-      } else {
-        div.innerHTML = `<div class="tool"><div class="head"><b>${esc(ev.tool)}</b><span title="${esc(ev.summary)}">${esc(ev.summary)}</span><span class="sub">${esc(clock(ev.at))}</span></div>
-          ${ev.input ? `<details><summary>input</summary><pre>${esc(ev.input)}</pre></details>` : ""}<div class="res"></div></div>`;
-        const key = agent ? "agent" : KIND[ev.tool] || ev.tool;
-        const t = g.items.get(key) || {n: 0, failed: 0, refused: 0, files: new Set()};
-        t.n++;
-        if (["read", "edited", "wrote"].includes(key) && ev.summary) t.files.add(ev.summary);
-        g.items.set(key, t);
-        tools.set(ev.id, {el: div, ev, g, key});
-      }
-      g.body.appendChild(div);
-      g.el.firstChild.innerHTML = tally(g);
-      group = agent ? null : g;
-      return fresh ? g.el : null;
+    if (ev.kind === "tool") {
+      const c = callOf(ev);
+      const div = row("●", "t-tool run", `<div class="t-call" title="${esc(clock(ev.at))} · click for its input"><b>${esc(c.name)}</b>${c.args
+        ? `<span>(${esc(c.args.split("\n")[0])})</span>` : ""}</div><div class="t-agent">${ev.agentId ? agentLink(ev.agentId) : ""}</div>
+        ${ev.input ? `<div class="t-input" hidden><pre>${esc(ev.input)}</pre></div>` : ""}<div class="t-res" hidden></div>`);
+      tools.set(ev.id, {el: div, ev});
+      return div;
     }
+    if (ev.kind === "thinking")
+      return row("✻", "t-think", `<details><summary>Thinking…</summary><div class="t-thought">${md(ev.text)}</div></details>`);
     if (ev.kind === "result") {
       const t = tools.get(ev.id);
       if (t) {
-        const host = $(".res", t.el);
-        host.className = "res" + (ev.error ? " error" : "");
+        if (ev.gate) { t.el.remove(); return null; }
+        const bad = ev.error || !!ev.denied;
+        t.el.classList.replace("run", bad ? "err" : "ok");
+        const host = $(".t-res", t.el);
+        host.className = "t-res" + (bad ? " err" : ""); host.hidden = false;
         host.innerHTML = result(ev, t.ev);
-        if (ev.denied || ev.error) {
-          const it = t.g.items.get(t.key);
-          if (ev.denied) { it.refused++; t.g.el.open = true; } else it.failed++;
-          t.g.el.firstChild.innerHTML = tally(t.g);
-        }
+        if (ev.agentId && !t.ev.agentId) $(".t-agent", t.el).innerHTML = agentLink(ev.agentId);
         return null;
       }
+      // Its call came before the backlog began: only a refusal is worth showing alone.
+      return ev.denied && !ev.gate ? row("●", "t-tool err", `<div class="t-call"><b>refused</b></div><div class="t-res err">${result(ev, null)}</div>`) : null;
     }
-    group = null;
     if (["prompt", "message", "handback", "notice"].includes(ev.kind)) turnAt = Date.parse(ev.at) || turnAt;
     const div = document.createElement("div");
     div.className = "ev " + ev.kind;
-    const meta = t => `<div class="meta">${esc(t)} · ${esc(clock(ev.at))}</div>`;
+    div.title = clock(ev.at);
     switch (ev.kind) {
       case "prompt": {
-        const parts = ev.text.replace(/\r/g, "").split("\n# Brief\n");
-        div.innerHTML = meta(ev.queued ? "prompt (queued)" : "prompt") + `<div class="body">${parts.length > 1
-          ? `<details><summary>worker instructions</summary><pre>${esc(parts[0])}</pre></details>${md(parts.slice(1).join("\n# Brief\n"))}` : md(ev.text)}</div>`;
-        return div;
+        const parts = ev.text.replace(/\r/g, "").split("\n# Brief\n"), text = parts.slice(-1)[0], lines = text.split("\n");
+        const body = lines.length > 12 ? folded(md(lines.slice(0, 8).join("\n")), `… +${lines.length - 8} lines (click to expand)`, md(text)) : md(text);
+        return prompt(div, ev.queued ? "queued" : "", (parts.length > 1
+          ? `<details><summary>worker instructions</summary><pre>${esc(parts.slice(0, -1).join("\n# Brief\n"))}</pre></details>` : "") + body);
       }
-      case "message": div.innerHTML = meta(`message from ${ev.sender}`) + `<div class="body">${md(ev.text)}</div>`; return div;
+      case "message": return prompt(div, `message from ${ev.sender}`, md(ev.text));
       // A subagent's final report, handed back to this session: its words, not the user's.
-      case "handback": div.innerHTML = `<div class="meta">report from a subagent · ${esc(clock(ev.at))}${ev.agentId
-        ? ` · <a href="#/s/${sid}/a/${esc(ev.agentId)}">its transcript ›</a>` : ""}</div><div class="body">${md(ev.text)}</div>`; return div;
-      case "said": div.title = clock(ev.at); div.innerHTML = `<div class="body">${md(ev.text)}</div>`; return div;
+      case "handback": return row("●", "t-handback", `<div class="t-label">report from a subagent${ev.agentId ? ` · ${agentLink(ev.agentId)}` : ""}</div>${md(ev.text)}`);
+      case "said": return row("●", "said", md(ev.text));
       // `!` commands the user ran in the session, their output, and slash commands, as a terminal shows them.
-      case "shell": div.title = clock(ev.at); div.innerHTML = `<div class="shellline"><span class="bang">!</span>${esc(ev.text)}</div>`; return div;
-      case "command": div.title = clock(ev.at); div.innerHTML = `<div class="shellline cmd">${esc(ev.text)}</div>`; return div;
+      case "shell": div.innerHTML = `<div class="shellline"><span class="bang">!</span>${esc(ev.text)}</div>`; return div;
+      case "command": div.innerHTML = `<div class="shellline cmd">${esc(ev.text)}</div>`; return div;
       case "shellout": {
         const text = [ev.text, ev.err && `\x1b[31m${ev.err}\x1b[0m`].filter(Boolean).join("\n"), n = (text.match(/\n/g) || []).length + 1;
         if (!text) return null;
         div.innerHTML = n > 14 ? `<details><summary>output · ${n} lines</summary><pre class="out">${ansi(text)}</pre></details>` : `<pre class="out">${ansi(text)}</pre>`;
         return div;
       }
-      case "result":            // its call came before the backlog began: only a refusal is worth showing alone
-        if (!ev.denied) return null;
-        div.innerHTML = `<div class="tool"><div class="head"><b>refused</b></div><div class="res error">${result(ev, null)}</div></div>`;
-        return div;
       case "turn": div.innerHTML = `<hr>turn ended${ev.ms ? ` · ${Math.round(ev.ms / 1000)} s` : ""}`; return div;
       case "compact": div.innerHTML = `<hr>context compacted`; return div;
-      case "notice": div.textContent = ev.text; return div;
-      case "recap": div.innerHTML = meta("Claude Code's recap") + `<div class="body">${md(ev.text)}</div>`; return div;
-      case "error": div.innerHTML = meta("error") + `<div class="body">${esc(ev.text)}</div>`; return div;
+      case "notice": return row("●", "t-notice", esc(ev.text));
+      case "recap": div.innerHTML = `<div class="meta">Claude Code's recap</div><div class="body">${md(ev.text)}</div>`; return div;
+      case "error": return row("●", "t-error", esc(ev.text));
     }
     return null;
   }
 
+  // A prompt, a message from another session: `>` and the words, as the terminal shows a user turn.
+  function prompt(div, label, html) {
+    div.classList.add("t-prompt");
+    div.innerHTML = `<span class="t-gt">&gt;</span><div class="t-body">${label ? `<div class="t-label">${esc(label)}</div>` : ""}${html}</div>`;
+    return div;
+  }
+
   function result(ev, tool) {
-    const sub = ev.agentId ? ` · <a href="#/s/${sid}/a/${esc(ev.agentId)}">open the subagent's transcript ›</a>` : "";
     if (ev.denied) {
       let cmd = "";
       try { const inp = JSON.parse(tool?.input || "{}"); cmd = inp.command || inp.file_path || ""; } catch { cmd = tool?.input || ""; }
       return `<div class="denied"><div class="who">Refused by ${esc(ev.denied)}</div>${cmd ? `<pre>${esc(cmd)}</pre><button data-copytext="${esc(cmd)}">copy</button>` : ""}
         <details><summary>what it said</summary><pre>${esc(ev.text)}</pre></details></div>`;
     }
-    const lines = (ev.text.match(/\n/g) || []).length + 1;
-    return `<details><summary>${ev.error ? "error" : "result"} · ${lines} line${lines === 1 ? "" : "s"}</summary><pre>${ansi(ev.text)}</pre></details>${sub}`;
+    const lines = ev.text.trim() ? ev.text.replace(/\s+$/, "").split("\n") : [];
+    if (!lines.length) return `<div class="t-dim">(No output)</div>`;
+    const read = tool?.tool === "Read" && !ev.error;
+    const head = read ? [`Read ${lines.length.toLocaleString()} lines`] : lines.slice(0, PREVIEW), rest = lines.length - head.length;
+    return folded(head.map(l => `<div class="t-line">${plain(l) || " "}</div>`).join(""),
+      read ? "(click to expand)" : rest > 0 ? `… +${rest.toLocaleString()} lines (click to expand)` : "", `<pre>${ansi(ev.text)}</pre>`);
   }
+  stream.addEventListener("click", e => {
+    if (e.target.closest("a, [data-copytext], details > summary")) return;
+    const fold = e.target.closest("[data-fold]");
+    if (fold) {
+      const host = fold.closest(".t-head, .t-full").parentElement;
+      for (const el of host.querySelectorAll(":scope > .t-head, :scope > .t-full")) el.hidden = !el.hidden;
+      return;
+    }
+    const input = e.target.closest(".t-call")?.parentElement.querySelector(":scope > .t-input");
+    if (input) input.hidden = !input.hidden;
+  });
 
   // A pilot's terminal: its screen, read while the card is open, and keystrokes typed into it after a
   // confirm. Only pilots: a background worker has no console. The server logs what is typed in the plan.
@@ -1073,14 +1071,20 @@ VIEWS.session = (root, r) => {
   }
   const timer = setInterval(tick, 1000);
 
+  const setTitle = () => put($(".s-title", root), esc(titleName) + (r.agent ? ` <span class="sub">› subagent ${esc(agentLabel || r.agent)}</span>` : ""));
+  // Each subagent is a page of its own, as in campaigner: the main conversation is the session's alone. On a
+  // subagent's page the card leads back to the session and marks the one shown.
   async function loadAgents(rev) {
-    if (!sid || r.agent || rev === agentsRev) return;
+    if (!sid || rev === agentsRev) return;
     agentsRev = rev;
     try {
-      const list = await (await fetch(`/api/sessions/${sid}/agents`)).json();
-      put($(".s-agents", root), list.length ? list.sort((a, b) => b.lastActivity - a.lastActivity).map(a =>
-        `<a class="agent" href="#/s/${sid}/a/${esc(a.id)}">${esc(a.description || a.id)}<small>${esc(a.type || "agent")} · ${esc(M(a.weighted))} · ${esc(ago(a.lastActivity))}</small></a>`).join("")
-        : `<span class="sub">none</span>`);
+      const list = await (await fetch(`/api/sessions/${sid}/agents`)).json(), cur = list.find(a => a.id === r.agent);
+      agentLabel = cur ? `${cur.type || "agent"}${cur.description ? ` · ${cur.description}` : ""}` : "";
+      setTitle();
+      put($(".s-agents", root), (r.agent ? `<a class="agent" href="#/s/${sid}">the session itself<small>its main conversation</small></a>` : "")
+        + (list.length ? list.sort((a, b) => b.lastActivity - a.lastActivity).map(a =>
+          `<a class="agent${a.id === r.agent ? " on" : ""}" href="#/s/${sid}/a/${esc(a.id)}">${esc(a.description || a.id)}<small>${esc(a.type || "agent")} · ${esc(M(a.weighted))} · ${esc(ago(a.lastActivity))}</small></a>`).join("")
+          : `<span class="sub">none</span>`));
     } catch { agentsRev = null; }
   }
 
@@ -1126,7 +1130,8 @@ VIEWS.session = (root, r) => {
       const want = w ? w.sessionId : h ? h.sessionId : r.sid;
       if (want !== sid) open(want);
       const name = w ? w.name : p ? p.name : h ? `${h.name} (removed)` : (r.sid || "").slice(0, 8);
-      put($(".s-title", root), esc(name) + (r.agent ? ` <span class="sub">› subagent ${esc(r.agent)}</span>` : ""));
+      titleName = name; setTitle();
+      stream.classList.toggle("idle", !(w ? w.state === "working" : p?.busy));
       put($(".s-chip", root), w ? chip(w) : p ? pilotChip(p) : h ? chip(h) : "");
       put($(".s-meter", root), w ? meter(w.spend, w.budget) : p ? meter(p.spend, 0) : h ? meter(h.final?.spend, 0) : "");
       put($(".s-actions", root), w ? actions(w, true) : p ? actions(p, false) : "");
