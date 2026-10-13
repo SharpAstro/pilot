@@ -1925,6 +1925,20 @@ def asleep(row):
     return bool(row) and row.get("kind") == "background" and not row.get("pid")
 
 
+def move_plan(old, new):
+    """Moves a flight plan, and what is kept about it by plan id, from pilot session `old` to `new`."""
+    src = plan_path(old)
+    plan_path(new).write_text(src.read_text(encoding="utf-8").replace(f"Pilot session: {old}", f"Pilot session: {new}"), encoding="utf-8")
+    src.unlink()
+    for w in registered():
+        if w.get("plan") == old:
+            w["plan"] = new
+            save(w)
+    order = priority()
+    if old in order:                     # the flight keeps its place in the controller's order
+        write_json(PRIORITY, [new if x == old else x for x in order])
+
+
 def wake_pilot(old, why):
     """Resumes a background pilot that has ended, with `why` as its next turn. `--bg --resume` continues in a copy
     under a new session id, and a flight plan is its pilot session's, so the plan, and the workers flying it,
@@ -1942,13 +1956,7 @@ def wake_pilot(old, why):
     new = session_of(job)
     if not new:
         return None
-    src = plan_path(old)
-    plan_path(new).write_text(src.read_text(encoding="utf-8").replace(f"Pilot session: {old}", f"Pilot session: {new}"), encoding="utf-8")
-    src.unlink()
-    for w in registered():
-        if w.get("plan") == old:
-            w["plan"] = new
-            save(w)
+    move_plan(old, new)
     plan_log(new, f"Pilot woken by pilot.py as {new[:8]} (its session {old[:8]} had ended): {why.splitlines()[0][:200]}")
     return new
 
