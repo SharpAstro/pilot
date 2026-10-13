@@ -412,6 +412,8 @@ class FlightTimeTests(Case):
         self.assertEqual(t["active"], 4 * 60 + 600 + 60)
         self.assertEqual((t["done"], t["total"]), (1, 1))
         self.assertEqual(pilot.leg_timing(None), {"state": "unflown"})
+        self.worker("a", sessions=[{"sessionId": "s-a"}, {"sessionId": "s-a2"}])   # a live status counts its sessions
+        self.assertEqual(pilot.leg_timing({**w, "sessions": 2})["active"], 4 * 60 + 600 + 60)
 
     def test_eta_of_a_leg_in_the_air_at_its_own_rate(self):
         t = pilot.project_eta([self.leg("flying", active=1200, done=2, total=6)], now=10_000)
