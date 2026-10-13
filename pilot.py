@@ -498,7 +498,10 @@ def plans_view(rows, workers, seen=None):
     out = out[:10]
     gone = archived(200)
     for p in out:
-        p["times"] = flight_times(p["sessionId"], p["legs"], workers, gone)
+        try:
+            p["times"] = flight_times(p["sessionId"], p["legs"], workers, gone)
+        except Exception as e:          # a flight's times are worth less than the rest of the dashboard
+            p["times"] = {"error": f"{type(e).__name__}: {e}"}
     return out
 
 
@@ -549,7 +552,10 @@ _stamps = {}
 
 
 def leg_moments(w):
-    """Every moment a leg's worker recorded, over all its sessions and their subagents."""
+    """Every moment a leg's worker recorded, over all its sessions and their subagents. A live worker's status
+    (worker_status) counts its sessions rather than listing them, so its record in the registry lists them."""
+    if not isinstance(w.get("sessions"), list) and NAME_RE.match(str(w.get("name") or "")):
+        w = load(w["name"]) or w
     out = set()
     for s in sessions_of(w):
         main = transcript(s.get("sessionId"))
