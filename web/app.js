@@ -43,6 +43,7 @@ document.addEventListener("toggle", e => {
 }, true);
 function put(el, html) {
   if (!el || el._html === html) return;
+  if (dragging && el.contains(dragging.item)) return;   // a flight being dragged: the drop redraws it
   const f = document.activeElement;      // never wipe what the reader is typing: the next render catches up
   if (f && f !== document.body && el.contains(f) && f.matches("input, textarea, select")) return;
   el.innerHTML = html; el._html = html;
@@ -588,8 +589,8 @@ function planCard(p, s) {
   // With more than one flight each starts folded, so the page reads as a list of flights, unless it waits on you;
   // alone, an active one starts open. A fold you set stays as you left it.
   const many = (s.plans || []).length > 1;
-  return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" ${fold("plan:" + p.sessionId, !!p.waiting || (!many && planActive(p, s)))}>
-    <summary class="cardhead"><span><b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
+  return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" data-order="${esc(p.sessionId)}" ${fold("plan:" + p.sessionId, !!p.waiting || (!many && planActive(p, s)))}>
+    <summary class="cardhead"><span>${reorderHtml(p, s)}<b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
       <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} · ` : ""}plan updated ${esc(ago(p.updated))}
       ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
@@ -800,9 +801,66 @@ function flightStrip(p, s) {
   const bob = plane.y < Y ? ` class="bob"` : "";
   const svg = `<svg viewBox="0 0 ${W} 86" role="img" aria-label="${esc(status.replace(/<[^>]+>/g, ""))}">${lines.join("")}${gate}${stops.join("")}
     <g transform="translate(${plane.x.toFixed(1)},${plane.y})"><g${bob}><path d="${PLANE}" style="fill:${color};stroke:var(--page);stroke-width:1"/></g></g></svg>`;
-  return `<div class="flight" data-plan="${esc(p.sessionId)}" title="Open its flight plan">
-    <div class="fhead"><b>${p.flight ? esc(p.flight) : "Flight"}</b> ${esc(p.title)} <span class="sub">· ${status}${flightGit(p, s)}</span>${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</div>${svg}</div>`;
+  return `<div class="flight" data-plan="${esc(p.sessionId)}" data-order="${esc(p.sessionId)}" title="Open its flight plan">
+    <div class="fhead">${reorderHtml(p, s)}<b>${p.flight ? esc(p.flight) : "Flight"}</b> ${esc(p.title)} <span class="sub">· ${status}${flightGit(p, s)}</span>${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</div>${svg}</div>`;
 }
+
+// ------------------------------------------------------------------ the controller's order of flights
+
+// Flights list in the controller's priority order, pilot.py's priority.json, the strips and the plan cards alike.
+// A flight's grip drags it up or down its list: pointer events, so a finger works as a mouse does (the grip takes
+// no scrolling touch). Its ▲▼ buttons move it one place, for a keyboard or a hand that would rather tap. Either
+// sends the whole order to POST /api/priority; the list shows it at once and redraws from the server's state.
+let dragging = null;
+
+function reorderHtml(p, s) {
+  if ((s.plans || []).length < 2) return "";
+  const sid = esc(p.sessionId);
+  return `<span class="reorder"><span class="grip" data-grip="${sid}" title="Drag to reorder flights by priority">⠿</span><button class="mv" data-move="${sid}" data-dir="-1" title="Up: higher priority" aria-label="move up">▲</button><button class="mv" data-move="${sid}" data-dir="1" title="Down: lower priority" aria-label="move down">▼</button></span>`;
+}
+
+async function setOrder(ids) {
+  const was = S.plans;
+  S.plans = ids.map(id => was.find(p => p.sessionId === id)).filter(Boolean);
+  render();
+  try { await post("/api/priority", {order: ids}); }
+  catch (e) { S.plans = was; render(); alert(e.message); }
+}
+
+function moveFlight(sid, dir) {
+  const ids = (S.plans || []).map(p => p.sessionId), i = ids.indexOf(sid), j = i + dir;
+  if (i < 0 || j < 0 || j >= ids.length) return;
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  setOrder(ids);
+}
+
+document.addEventListener("pointerdown", e => {
+  const g = e.target.closest("[data-grip]"), item = g?.closest("[data-order]");
+  if (!item || e.button) return;
+  e.preventDefault();
+  g.setPointerCapture(e.pointerId);
+  dragging = {item, list: item.parentElement, from: [...item.parentElement.children].map(c => c.dataset.order).join()};
+  item.classList.add("dragging");
+});
+document.addEventListener("pointermove", e => {
+  if (!dragging) return;
+  const {item, list} = dragging;
+  // It goes before the first other flight whose middle is below the pointer, or last.
+  const next = [...list.querySelectorAll(":scope > [data-order]")].find(c => c !== item && e.clientY < c.getBoundingClientRect().top + c.offsetHeight / 2);
+  if (next !== item.nextElementSibling) list.insertBefore(item, next || null);
+});
+function drop() {
+  if (!dragging) return;
+  const {item, list, from} = dragging, ids = [...list.querySelectorAll(":scope > [data-order]")].map(c => c.dataset.order);
+  item.classList.remove("dragging");
+  dragging = null;
+  list._html = null;                  // its markup no longer matches what was drawn: the next render redraws it
+  if (ids.join() !== from) setOrder(ids); else render();
+}
+document.addEventListener("pointerup", drop);
+document.addEventListener("pointercancel", drop);
+// The grip only drags: a click on it neither opens the flight's plan nor folds its card.
+document.addEventListener("click", e => { if (e.target.closest("[data-grip]")) { e.preventDefault(); e.stopPropagation(); } }, true);
 
 function flightsHtml(s) {
   const plans = s.plans || [];
@@ -1459,6 +1517,7 @@ function openPlan(sid) {
 document.addEventListener("click", async e => {
   const t = e.target.closest("button, a, [data-href], [data-plan]");
   if (!t) return;
+  if (t.dataset.move) { e.preventDefault(); return moveFlight(t.dataset.move, Number(t.dataset.dir)); }   // not the card's fold too
   if (t.dataset.plan) return openPlan(t.dataset.plan);
   if (t.classList.contains("s-restart")) return restartServer(t);
   if (t.classList.contains("s-clearlock")) {
