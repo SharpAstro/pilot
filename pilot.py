@@ -1937,6 +1937,10 @@ def move_plan(old, new):
     order = priority()
     if old in order:                     # the flight keeps its place in the controller's order
         write_json(PRIORITY, [new if x == old else x for x in order])
+    book = read_json(SCHEDULES, {})
+    if isinstance(book, dict) and old in book:   # and its schedule, so its delay still counts from its first ETA
+        book[new] = book.pop(old)
+        write_json(SCHEDULES, book)
 
 
 def wake_pilot(old, why):
