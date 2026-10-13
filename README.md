@@ -329,8 +329,9 @@ Traps found on the way:
   Two were watched firing in a live worker. `big_read_guard.sh` refused a whole `Read` of a 212 KB file.
   `agent_call_budget.sh` let a subagent briefed with `[[CALL_BUDGET=1]]` make its first call, then
   refused the second with its checkpoint text.
-- **Wired through `plugins/worker/hooks/kit.sh`**, which runs them from the sibling `../runaway-agent`
-  checkout in place, so his fixes arrive with `git pull`. It also puts winget's jq on PATH. A Claude Code
+- **Wired through `plugins/worker/hooks/kit.sh`**, which runs them from the `runaway-agent` checkout in
+  place, so his fixes arrive with `git pull`. It looks beside pilot first, then in the other org roots under
+  the same repos dir (`drawboard/runaway-agent` beside `sharpastro/pilot`). It also puts winget's jq on PATH. A Claude Code
   daemon started before jq was installed does not have it, and his hooks fail open without it.
 - **They write state** under `~/.claude/state/` (`spawn-count`, `token-budget`, `fat-result`).
 - **Gaps.** `big_read_guard.sh` misses `cat C:/...`, because its regex excludes `:`, and 8.3 short names

@@ -171,6 +171,15 @@ def process_identity(pid):
         k32.CloseHandle(h)
 
 
+def runaway_kit(here=None):
+    """The runaway-agent checkout the worker plugin's hooks run (plugins/worker/hooks/kit.sh looks the same way):
+    beside pilot's checkout, else in another org root under the same repos dir. None when there is none, and then
+    every worker's guards fail open, silently: the desktop's workers flew without them until this was checked."""
+    org = (here or HERE).parent
+    return next((k for k in [org / "runaway-agent", *sorted(org.parent.glob("*/runaway-agent"))]
+                 if (k / "big_read_guard.sh").is_file()), None)
+
+
 def daemon_lock():
     """Claude Code's daemon lock, when it is stale: it names a daemon that is gone, so `claude --bg` will not
     start one and no worker starts (measured: a lock left pointing at a pid Windows had since given to an
@@ -1579,6 +1588,10 @@ def cmd_start(a):
     if stale:
         sys.exit(f"pilot: Claude Code's daemon lock ({stale['path']}) is stale: {stale['why']}. Until it goes, no background "
                  f"session starts. {DAEMON_LOCK_HELP} Put it in `## Waiting on the controller`; don't remove it yourself.")
+    if not runaway_kit():
+        print(f"pilot: warning: no runaway-agent checkout beside {HERE.parent} or in another org root beside it, so "
+              f"this worker flies without its guards (big reads, token and call budgets); clone "
+              f"DrawboardLtd/runaway-agent there", file=sys.stderr)
     # The pilot runs in its repo's main checkout, so that is where its workers start. Falling back to the first
     # configured repo would quietly fly a leg in somebody else's repo.
     top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()

@@ -556,11 +556,12 @@ function yourMoveOf(p, s, ps) {
     : x.review === "APPROVED" ? `merge ${link(x)}` : x.review === "CHANGES_REQUESTED" ? `${link(x)}: changes requested`
     : `${link(x)} waits on its reviewers`;
   if (landed && prs.length) return "landed · your move: " + prs.map(step).join(", ");
-  // Every leg landed and nothing left open: the flight is done, whatever the pilot's last words were.
-  if (landed) return "";
+  // Every leg landed and nothing left open: the flight is done, whatever the pilot's last words were. Only once
+  // every leg's git has been read, though: until then its PRs are unknown, not absent.
+  if (landed && legs.every(({w, h}) => (w || h)?.git)) return "";
   // No open PR known (none, or not looked up yet): the pilot's own words say what it is waiting for.
   const last = String(ps?.said?.text || "").split("\n").map(l => l.replace(/[*`]/g, "").replace(/^[\s#>-]+/, "").trim()).filter(Boolean).pop();
-  return `${auto ? "autopilot's move" : "your move"}${last ? `: ${esc(last.length > 110 ? last.slice(0, 107) + "…" : last)}` : ""}`;
+  return `${landed ? "landed · " : ""}${auto ? "autopilot's move" : "your move"}${last ? `: ${esc(last.length > 110 ? last.slice(0, 107) + "…" : last)}` : ""}`;
 }
 
 function planCard(p, s) {

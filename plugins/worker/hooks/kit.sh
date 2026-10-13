@@ -5,9 +5,17 @@
 # installed does not have that on PATH, and a hook without jq fails open, silently.
 links="$(cygpath -u "${LOCALAPPDATA:-$USERPROFILE/AppData/Local}")/Microsoft/WinGet/Links"
 case ":$PATH:" in *":$links:"*) ;; *) PATH="$links:$PATH" ;; esac
-kit="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)/runaway-agent"
+# It sits beside pilot's checkout, or in another org root under the same repos dir: pilot is a SharpAstro repo
+# and the kit a DrawboardLtd one, and on the desktop they are not siblings, so every worker's guards failed open.
+org="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+kit="$org/runaway-agent"
 if [ ! -f "$kit/$1" ]; then
-    echo "pilot: no runaway-agent hook at $kit/$1" >&2
+    for k in "$org"/../*/runaway-agent; do
+        [ -f "$k/$1" ] && { kit="$(cd "$k" && pwd)"; break; }
+    done
+fi
+if [ ! -f "$kit/$1" ]; then
+    echo "pilot: no runaway-agent hook $1 beside $org or in another org root beside it" >&2
     exit 1
 fi
 

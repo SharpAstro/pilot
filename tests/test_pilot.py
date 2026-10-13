@@ -594,6 +594,21 @@ class DaemonLockTests(Case):
         self.assertTrue(pilot.DAEMON_LOCK.exists(), "pilot.py never removes it itself")
 
 
+class RunawayKitTests(Case):
+    def test_the_kit_is_found_beside_pilot_or_in_another_org_root(self):
+        repos = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, repos, True)
+        here = repos / "sharpastro" / "pilot"
+        here.mkdir(parents=True)
+        self.assertIsNone(pilot.runaway_kit(here))
+        (repos / "drawboard" / "runaway-agent").mkdir(parents=True)
+        (repos / "drawboard" / "runaway-agent" / "big_read_guard.sh").write_text("")
+        self.assertEqual(pilot.runaway_kit(here), repos / "drawboard" / "runaway-agent")
+        (repos / "sharpastro" / "runaway-agent").mkdir()
+        (repos / "sharpastro" / "runaway-agent" / "big_read_guard.sh").write_text("")
+        self.assertEqual(pilot.runaway_kit(here), repos / "sharpastro" / "runaway-agent", "the sibling comes first")
+
+
 class PullRequestTests(Case):
     def test_checks_fold_to_one_word(self):
         pr = lambda **kw: pilot.pr_view({"number": 1, "state": "OPEN", **kw})
