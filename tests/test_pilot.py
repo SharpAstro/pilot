@@ -1375,7 +1375,7 @@ class AlternateTests(Case):
         w = self.start("api-b", divert="the old client cannot be fixed", launch=True)
         self.assertEqual((w["divertedFrom"], w["divertReason"]), ("api", "the old client cannot be fixed"))
         self.assertIn("Leg api diverted to api-b: the old client cannot be fixed", self.log_of("s1")[-2])
-        self.assertIn("Leg api-b took off", self.log_of("s1")[-1])
+        self.assertIn("Leg api-b took off: worker", self.log_of("s1")[-1])
         self.assertTrue({s["leg"]: s for s in self.states()}["api-b"]["taken"])
 
     def test_start_refuses_a_primary_while_its_alternate_has_a_worker(self):

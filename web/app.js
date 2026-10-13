@@ -571,7 +571,7 @@ function yourMoveOf(p, s, ps) {
     return `${auto ? "autopilot's move" : "your move"}: answer ${n} item${n === 1 ? "" : "s"} below${auto && merges ? `, and ${merges === 1 ? "a merge" : `${merges} merges`} for you` : ""}`;
   }
   const legs = flownLegs(p, s).map(l => legState(s, l.leg));
-  const prs =[...new Map(legs.flatMap(({w, h}) => (w || h)?.git?.prs || []).map(x => [x.url, x])).values()]
+  const prs = [...new Map(legs.flatMap(({w, h}) => (w || h)?.git?.prs || []).map(x => [x.url, x])).values()]
     .filter(x => x.state !== "MERGED" && x.state !== "CLOSED");
   const link = x => `<a href="${esc(x.url)}" target="_blank" rel="noopener">#${esc(x.number)}</a>`;
   const landed = legs.length && legs.every(({st}) => st.cls === "done");

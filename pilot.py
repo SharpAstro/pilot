@@ -1982,7 +1982,7 @@ def cmd_start(a):
     save(w)
     if divert:
         plan_log(w["plan"], f"Leg {divert[0]} diverted to {a.name}: {divert[1]}")
-    plan_log(w["plan"], f"Leg {a.name} took off:worker {w['id']} on {w['branch']}" + (f", after {', '.join(w['after'])}" if w["after"] else ""))
+    plan_log(w["plan"], f"Leg {a.name} took off: worker {w['id']} on {w['branch']}" + (f", after {', '.join(w['after'])}" if w["after"] else ""))
     print(f"started {a.name}: {w['id']} in {w['worktree']} on {w['branch']} from {w['base']}")
     print(f"  message it:  SendMessage to \"{w['agent']}\"   |   you: pilot.py tell \"{w['agent']}\" -m ...  or  claude attach {w['id']}")
 
