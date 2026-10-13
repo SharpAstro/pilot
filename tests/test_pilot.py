@@ -425,6 +425,35 @@ class TranscriptTests(Case):
         self.assertIsNone(pilot.events_of(tool_result("t", "denied by the Claude Code auto mode classifier"))[0]["denied"],
                           "only an error result is a refusal")
 
+    def test_a_refusal_by_the_wiring_is_a_gate(self):
+        cases = [("pilot budget: this worker has spent 10,000,000 of its 10,000,000 weighted tokens.", "pilot's budget", False),
+                 ("pilot: don't ask in the terminal. A prompt there blocks you", "pilot's ask hook", True),
+                 ("PreToolUse:Bash hook error: SAM-REPLY-GATE: reply first", "the reply gate", True),
+                 ("This session is isolated in the worktree C:/repo/.claude/worktrees/w-x", "Claude Code", False),
+                 ("denied by the Claude Code auto mode classifier", "auto mode", False)]
+        for text, who, gate in cases:
+            ev = pilot.events_of(tool_result("t", text, error=True))[0]
+            self.assertEqual((ev["denied"], ev.get("gate", False)), (who, gate), text)
+        self.assertNotIn("gate", pilot.events_of(tool_result("t", "pilot: don't ask in the terminal"))[0],
+                         "only an error result is refused")
+
+    def test_an_agent_call_links_the_subagent_it_started(self):
+        main = self.transcript("s1", [
+            tool_use("toolu_a", "Agent", {"description": "Co-pilot: split legs", "subagent_type": "pilot:copilot", "prompt": "?"}),
+            tool_use("toolu_b", "Agent", {"description": "not started yet", "prompt": "?"}),
+            tool_use("toolu_c", "Bash", {"command": "ls"}),
+            tool_result("toolu_a", "Async agent launched", toolUseResult={"agentId": "a421b8957fc08c300"})])
+        staff = main.parent / "s1" / "subagents"
+        staff.mkdir(parents=True)
+        (staff / "agent-a421b8957fc08c300.meta.json").write_text(json.dumps(
+            {"agentType": "pilot:copilot", "description": "Co-pilot: split legs", "toolUseId": "toolu_a"}), encoding="utf-8")
+        (staff / "agent-a421b8957fc08c300.jsonl").write_text("", encoding="utf-8")
+        events = pilot.link_spawns(pilot.read_events(main)[0], staff)
+        calls = {e["id"]: e.get("agentId") for e in events if e["kind"] == "tool"}
+        self.assertEqual(calls, {"toolu_a": "a421b8957fc08c300", "toolu_b": None, "toolu_c": None})
+        self.assertEqual([e["agentId"] for e in events if e["kind"] == "result"], ["a421b8957fc08c300"])
+        self.assertEqual(pilot.link_spawns([], staff / "missing"), [])
+
     def test_events_of_a_turn(self):
         said = pilot.events_of({"type": "assistant", "message": {"content": [
             {"type": "text", "text": "DONE: fixed"}, {"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "ls"}}]}})
