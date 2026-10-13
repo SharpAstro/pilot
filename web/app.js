@@ -373,7 +373,8 @@ function renderTop() {
   // older than that check.
   const stale = S.stale || (S.refuel && !("mode" in S.refuel));
   put($("#alerts"),
-    (stale ? `<p class="warnline amber">This dashboard is running older code than <code>pilot.py</code> on disk, so newer buttons may answer "not found". Restart it: <code>python pilot.py dashboard</code>.</p>` : "") +
+    (stale ? `<p class="warnline amber">This dashboard is running older code than <code>pilot.py</code> on disk, so newer buttons may answer "not found". ${S.restartable
+      ? `<button class="s-restart">Restart now</button> or press R in its terminal.` : `Restart it: <code>pilot dashboard</code>.`}</p>` : "") +
     (over.length ? `<p class="warnline">⚠ Over budget: ${over.map(w => `<a href="#/w/${esc(w.name)}">${esc(w.name)}</a>`).join(", ")}. Their tools are refused until the budget is raised (<code>pilot budget NAME N</code>).</p>` : "") +
     (waiting.length ? `<p class="warnline amber">Waiting on you: ${waiting.map(w => `<a href="${esc(w.href)}">${esc(w.name)}</a>`).join(", ")}.</p>` : ""));
   const n = S.notifications || {unread: 0, items: []};
@@ -499,10 +500,10 @@ function planCard(p, s) {
   // The pilot's turn has ended and nothing is in the air: whatever happens next is up to the controller.
   const yourMove = p.live && ps?.status === "idle" && !flying.length;
   const where = `answer in the pilot's terminal${ps?.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : ""}`;
-  return `<details class="card pad plan" ${fold("plan:" + p.sessionId, planActive(p, s) || !!p.waiting)}>
+  return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" ${fold("plan:" + p.sessionId, planActive(p, s) || !!p.waiting)}>
     <summary class="cardhead"><span><b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}</span></span>
       <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} ` : ""}${yourMove ? `<span class="chip blocked">your move</span>` : pilotChip(ps, flying)} · plan updated ${esc(ago(p.updated))}
-      · <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
+      ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
     ${p.waiting ? waitingHtml(p, ps) : ""}
     ${yourMove && ps.said ? `<details class="lastsaid" ${fold("said:" + p.sessionId, true)}><summary>its turn ended ${esc(ago(Date.parse(ps.said.at) / 1000))} with nothing in the air; its last message</summary>${md(ps.said.text)}</details>` : pilotNow(ps)}
@@ -670,7 +671,10 @@ function graphSvg(s) {
 
 const VIEWS = {};
 
-VIEWS.overview = root => {
+VIEWS.overview = (root, r) => {
+  // #/plan/<pilot session>: the Overview with that plan opened and scrolled to, once it is there to show.
+  let focusPlan = r?.plan || null;
+  if (focusPlan) opened.set("plan:" + focusPlan, true);
   root.innerHTML = `
     <div class="s-plans"></div>
     <div class="card pad bcast"><b>Intercom</b>
@@ -719,6 +723,9 @@ VIEWS.overview = root => {
       put($(".s-sum", root), sp.body); put($(".s-stamp", root), esc(sp.stamp)); $(".s-btn", root).disabled = sp.running;
       put($(".s-plans", root), (s.plans || []).length ? s.plans.map(p => planCard(p, s)).join("")
         : `<div class="card pad"><b>No flight plan</b><div class="sub" style="margin-top:4px">The pilot opens one with <code>pilot plan</code> before it starts workers: the objective, the route of legs, and a log you can both read.</div></div>`);
+      const card = focusPlan && document.getElementById("plan-" + focusPlan);
+      // Below the sticky top bar, whose height depends on how it wraps.
+      if (card) { window.scrollTo(0, card.getBoundingClientRect().top + scrollY - ($(".top")?.offsetHeight || 0) - 8); focusPlan = null; }
       put($(".s-graph", root), graphSvg(s));
       place($(".s-workers", root), s.workers.map(w => ({key: w.name, href: `#/w/${w.name}`, fill: v => {
         put(v.name, `${esc(w.name)}<small>${esc(w.branch)} · ${esc(w.id)} · ${esc(ago(w.lastActivity))}</small>`);
@@ -858,7 +865,7 @@ VIEWS.session = (root, r) => {
       }
     }
     group = null;
-    if (["prompt", "message", "notice"].includes(ev.kind)) turnAt = Date.parse(ev.at) || turnAt;
+    if (["prompt", "message", "handback", "notice"].includes(ev.kind)) turnAt = Date.parse(ev.at) || turnAt;
     const div = document.createElement("div");
     div.className = "ev " + ev.kind;
     const meta = t => `<div class="meta">${esc(t)} · ${esc(clock(ev.at))}</div>`;
@@ -870,6 +877,9 @@ VIEWS.session = (root, r) => {
         return div;
       }
       case "message": div.innerHTML = meta(`message from ${ev.sender}`) + `<div class="body">${md(ev.text)}</div>`; return div;
+      // A subagent's final report, handed back to this session: its words, not the user's.
+      case "handback": div.innerHTML = `<div class="meta">report from a subagent · ${esc(clock(ev.at))}${ev.agentId
+        ? ` · <a href="#/s/${sid}/a/${esc(ev.agentId)}">its transcript ›</a>` : ""}</div><div class="body">${md(ev.text)}</div>`; return div;
       case "said": div.title = clock(ev.at); div.innerHTML = `<div class="body">${md(ev.text)}</div>`; return div;
       // `!` commands the user ran in the session, their output, and slash commands, as a terminal shows them.
       case "shell": div.title = clock(ev.at); div.innerHTML = `<div class="shellline"><span class="bang">!</span>${esc(ev.text)}</div>`; return div;
@@ -1166,7 +1176,8 @@ VIEWS.spend = root => {
 
 VIEWS.launch = root => {
   root.innerHTML = `<h2>Launch a pilot</h2><div class="card pad launch">
-      <label>Project <select class="s-proj"><option>loading…</option></select></label>
+      <label>Project <input class="s-filter" type="search" placeholder="filter: every word must match, e.g. sharp dir" autocomplete="off">
+        <select class="s-proj"><option>loading…</option></select></label>
       <div class="sub s-projnote"></div>
       <div><b>Session</b><div class="s-sessions sessions"></div></div>
       <div class="opts"><b>Where</b>
@@ -1186,25 +1197,57 @@ VIEWS.launch = root => {
       `<label title="${esc(x.sessionId)}"><input type="radio" name="sess" value="${esc(x.sessionId)}"> resume <b>${esc(x.title)}</b>
         <span class="sub">${esc(ago(x.updated))}${x.live ? " · running now: resuming starts a copy" : ""}</span></label>`).join("");
   }
+  // The project list, narrowed by the filter: every word typed must appear in the path, in any case.
+  // The selection stays when it still matches; otherwise the first match is taken and its sessions load.
+  function fill(want) {
+    const words = $(".s-filter", root).value.toLowerCase().split(/\s+/).filter(Boolean);
+    const shown = projects.filter(p => words.every(w => p.path.toLowerCase().includes(w)));
+    const keep = shown.some(p => p.path === want) ? want : shown[0]?.path;
+    sel.innerHTML = shown.length ? shown.map(p => `<option value="${esc(p.path)}"${p.path === keep ? " selected" : ""}>${esc(p.path)}${p.trusted ? "" : " (not trusted)"}</option>`).join("")
+      : `<option value="">no project matches</option>`;
+    $(".s-go", root).disabled = !shown.length;
+    if (!shown.length) { put($(".s-projnote", root), ""); list.innerHTML = ""; }
+    else if (keep !== want || !list.innerHTML) loadSessions();
+  }
   (async () => {
     projects = await (await fetch("/api/projects")).json().catch(() => []);
-    const fromHash = new URLSearchParams(location.hash.split("?")[1] || "").get("path");
-    sel.innerHTML = projects.map(p => `<option value="${esc(p.path)}"${p.path === fromHash ? " selected" : ""}>${esc(p.path)}${p.trusted ? "" : " (not trusted)"}</option>`).join("");
-    if (projects.length) loadSessions();
+    fill(new URLSearchParams(location.hash.split("?")[1] || "").get("path"));
+    $(".s-filter", root).focus();
   })();
+  $(".s-filter", root).addEventListener("input", () => fill(sel.value));
   sel.addEventListener("change", loadSessions);
+  // After a launch, the page waits for the session to come up, then goes to its flight plan once the pilot has
+  // opened one, or to its session page when it was not started as the pilot. A new session is the first in that
+  // directory started after the launch; a resumed one keeps its id; a background one is known by its job id.
+  let pending = null;
+  const norm = p => (p || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
   $(".s-go", root).addEventListener("click", async () => {
     const btn = $(".s-go", root);
     btn.disabled = true; put($(".s-result", root), "launching…");
     try {
-      const j = await post("/api/launch", {path: sel.value, resume: $('input[name="sess"]:checked', root)?.value || null,
-        where: $('input[name="where"]:checked', root).value, message: $(".s-msg", root).value, asPilot: $(".s-aspilot", root).checked});
-      put($(".s-result", root), j.where === "terminal" ? "opened in a new Windows Terminal tab"
-        : `started in the background as ${esc(j.id)}: <button data-copy="claude attach ${esc(j.id)}">copy attach</button> or open it from Overview`);
+      const resume = $('input[name="sess"]:checked', root)?.value || null, asPilot = $(".s-aspilot", root).checked;
+      const j = await post("/api/launch", {path: sel.value, resume, where: $('input[name="where"]:checked', root).value,
+        message: $(".s-msg", root).value, asPilot});
+      pending = {path: norm(sel.value), resume, job: j.id || null, asPilot, at: Date.now(), where: j.where};
+      put($(".s-result", root), (j.where === "terminal" ? "opened in a new Windows Terminal tab"
+        : `started in the background as ${esc(j.id)}: <button data-copy="claude attach ${esc(j.id)}">copy attach</button>`) + "; waiting for it to come up…");
     } catch (e) { put($(".s-result", root), `<span style="color:var(--crit)">${esc(e.message)}</span>`); }
     btn.disabled = false;
   });
-  return {update() {}};
+  return {update(s) {
+    if (!pending) return;
+    const p = s.pilots.find(x => pending.resume ? x.sessionId === pending.resume && (x.startedAt || 0) >= pending.at - 5000
+      : pending.job ? x.id === pending.job || x.id?.startsWith(pending.job)
+      : norm(x.cwd) === pending.path && (x.startedAt || 0) >= pending.at - 5000);
+    const waited = (Date.now() - pending.at) / 1000;
+    if (!p) {
+      if (waited > 45) put($(".s-result", root), `launched, but no session has come up in that directory after ${Math.round(waited)} s. The dashboard lists sessions only in repos named in <code>~/.pilot/pilot.json</code>.`);
+      return;
+    }
+    const plan = (s.plans || []).find(x => x.sessionId === p.sessionId);
+    if (plan || !pending.asPilot || waited > 180) { pending = null; location.hash = plan ? `#/plan/${p.sessionId}` : `#/s/${p.sessionId}`; return; }
+    put($(".s-result", root), `${esc(p.name)} is up; waiting for it to open its flight plan… <a href="#/s/${esc(p.sessionId)}">its session ›</a>`);
+  }};
 };
 
 // ------------------------------------------------------------------ routing
@@ -1218,6 +1261,7 @@ function parse() {
   if (h === "/blackbox") return {view: "blackbox"};
   if (h === "/spend") return {view: "spend"};
   if (h.startsWith("/launch")) return {view: "launch"};
+  if ((m = /^\/plan\/([0-9a-f-]{36})$/.exec(h))) return {view: "overview", plan: m[1]};
   return {view: "overview"};
 }
 
@@ -1241,9 +1285,23 @@ async function summarise(key) {
   render();
 }
 
+// Restarts the server on the code now on disk (its supervisor starts it again), then reloads the page once
+// the new server answers, so the page's code is the latest too.
+async function restartServer(btn) {
+  btn.disabled = true; btn.textContent = "restarting…";
+  try { await post("/api/restart"); } catch (e) { btn.textContent = e.message; return; }
+  await new Promise(r => setTimeout(r, 1000));
+  for (let i = 0; i < 60; i++) {
+    try { if ((await fetch("/api/state", {cache: "no-store"})).ok) return location.reload(); } catch {}
+    await new Promise(r => setTimeout(r, 500));
+  }
+  btn.textContent = "it has not come back: look at its terminal";
+}
+
 document.addEventListener("click", async e => {
   const t = e.target.closest("button, a, [data-href]");
   if (!t) return;
+  if (t.classList.contains("s-restart")) return restartServer(t);
   if (t.id === "bell") { $("#panel").hidden = !$("#panel").hidden; return; }
   if (t.id === "readall") { await post("/api/notifications/read").catch(() => {}); return; }
   if (t.id === "desk") { if ("Notification" in window) await Notification.requestPermission(); renderTop(); return; }

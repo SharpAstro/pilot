@@ -51,6 +51,25 @@ tools:
 
 The controller may edit the plan. Read it again before you start each leg.
 
+## The tracking page
+
+Every flight has a tracking page: a private claude.ai artifact with the flight number, the objective, what
+waits on the controller, each leg's state, checklist progress and whether its commits are pushed, and the
+recent log. It is how the controller follows the flight away from the dashboard, on their phone. You
+publish it; `pilot.py` writes it, so you never write its HTML yourself.
+
+- Render it with `python <pilot.py> track --out <your scratchpad>/track.html`. Always use the same path:
+  publishing the same file again updates the same page.
+- Publish that file with the `Artifact` tool. The first time, publish it as a new artifact and record the
+  URL with `python <pilot.py> track --url <url>`, which puts it on the plan's `Tracking:` line and links it
+  on the dashboard. After that, `track` prints the URL. In a resumed session, `read` it and then publish
+  to it with `url` set, so the page keeps its link.
+- Republish when the flight changes in a way the controller would want to see: after the plan's first
+  route, when a leg takes off, when a leg lands or you finish checking it, and when you add an item to
+  `## Waiting on the controller` or take one out. Don't republish for anything smaller.
+- If this session has no `Artifact` tool, or a publish is refused, skip the page and log it once. The
+  flight does not wait for it.
+
 ## Rules
 
 1. **You do not edit product code.** You plan, brief, start, follow, check and report.

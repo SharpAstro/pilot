@@ -7,6 +7,7 @@ running whether or not a terminal is open. This file starts workers the same way
 what they have spent, gates their spend, delivers your messages, summarises them and serves the dashboard.
 
   python pilot.py plan [--title T]     the pilot session's flight plan: its path, made from the template once
+  python pilot.py track [--out F] [--url U]   its tracking page, to publish as an artifact; --url records where
   python pilot.py start NAME --brief FILE|- [--repo R] [--model M] [--effort E] [--budget N]
                          [--pilot NAME] [--after NAME]...
   python pilot.py list [--json]
@@ -34,6 +35,7 @@ Windows notes, all measured on CLI 2.1.296:
 import argparse
 import datetime
 import glob
+import html
 import http.server
 import json
 import os
@@ -358,7 +360,7 @@ def parse_plan(text):
         elif log and ln[:1].isspace() and ln.strip():   # an entry wrapped onto the next line
             log[-1] += " " + ln.strip()
     return {"title": title.group(1).strip() if title else "untitled", "objective": " ".join(objective.group(1).split()) if objective else "",
-            "flight": (FLIGHT_RE.search(text) or [None, None])[1], "legs": legs, "log": log[-40:], "notes": plan_notes(split_waiting(text)[1]), "waiting": split_waiting(text)[0]}
+            "flight": (FLIGHT_RE.search(text) or [None, None])[1], "tracking": (TRACKING_RE.search(text) or [None, None])[1], "legs": legs, "log": log[-40:], "notes": plan_notes(split_waiting(text)[1]), "waiting": split_waiting(text)[0]}
 
 
 def split_waiting(text):
@@ -374,7 +376,7 @@ def split_waiting(text):
                 continue
         elif inside:
             blank, item = not line.strip(), re.match(r"^([-*]|\d+[.)])\s", line)
-            if not (line.startswith(("Pilot session:", "Flight:")) or (listed and gap and not blank and not item and not line[:1].isspace())):
+            if not (line.startswith(("Pilot session:", "Flight:", "Tracking:")) or (listed and gap and not blank and not item and not line[:1].isspace())):
                 waiting.append(line)
                 listed, gap = listed or bool(item), blank
                 continue
@@ -395,7 +397,7 @@ def plan_notes(text):
             if part not in ("route", "log"):     # a section of the pilot's own
                 out.append(line)
             continue
-        if part == "log" or line.startswith("# ") or re.match(r"^(Pilot session|Flight):", line) or line.lstrip().startswith("|"):
+        if part == "log" or line.startswith("# ") or re.match(r"^(Pilot session|Flight|Tracking):", line) or line.lstrip().startswith("|"):
             continue
         if part == "route" and line.strip() and "#### On the route" not in out:
             out.append("#### On the route")
@@ -526,7 +528,13 @@ def user_text(c, ev, queued=False):
     """A user turn's text: a message from another session, Claude Code's notice that a background job the
     session started has finished (a command, a subagent), or a prompt. A notice or message waiting for the
     session's turn to end arrives queued, as an attachment, but is the same thing."""
-    if "<cross-session-message" in c:
+    if "<agent-message" in c:                          # a subagent's report handed back to the session
+        m = re.search(r'<agent-message from="([^"]*)">(.*?)(?:</agent-message>|\Z)', c, re.S)
+        body = m.group(2) if m else c
+        body = body.split("The report follows:", 1)[-1]                  # the harness's frame around the report
+        body = "\n".join(l[2:] if l.startswith("  ") else l for l in body.strip("\n").splitlines())   # it indents every line
+        ev("handback", agentId=m.group(1) if m else None, text=body.strip()[:20000])
+    elif "<cross-session-message" in c:
         m = re.search(r'from-name="([^"]*)"', c)
         body = re.sub(r"<cross-session-message[^>]*>|</cross-session-message>", "", c)
         body = body.replace("Another Claude session sent a message:", "").strip()
@@ -851,6 +859,7 @@ def pilots(rows=None):
         if r.get("pid") and any(same_path(r.get("cwd"), root) for root in roots) and r.get("state") != "done":
             path = transcript(r["sessionId"])
             out.append({"name": r.get("name"), "id": r.get("id"), "sessionId": r.get("sessionId"), "kind": r.get("kind"),
+                        "cwd": r.get("cwd"), "startedAt": r.get("startedAt"),
                         "spend": spend([r["sessionId"]]), "rev": path.stat().st_size if path else 0,
                         "lastActivity": path.stat().st_mtime if path else None, **session_view(r)})
     return out
@@ -1698,6 +1707,210 @@ def cmd_plan(a):
     print(p)
 
 
+# --------------------------------------------------------------------------- the tracking page
+
+def leg_state(w):
+    """A leg's state from its worker's status, or its removed worker's record, as the dashboard's stateOf
+    reads it: (css class, label)."""
+    if not w:
+        return "planned", "planned"
+    fin = w.get("final") or {}
+    if w.get("state") == "working":
+        return "working", "flying"
+    if w.get("state") == "blocked":
+        return "warn", "waiting on you"
+    head, items = w.get("reportHead") or fin.get("reportHead"), w.get("checklist") or fin.get("checklist") or []
+    left = len(open_items(items))
+    if head == "FAILED":
+        return "bad", "failed"
+    if head == "BLOCKED":
+        return "warn", "blocked"
+    if head == "DONE" and left:
+        return "warn", f"done, {left} item{'s' if left > 1 else ''} open"
+    if head == "DONE":
+        return "good", "landed"
+    return "planned", "turn ended" if w.get("state") == "done" or fin else (w.get("state") or "unknown")
+
+
+def _inline(s):
+    s = html.escape(s)
+    s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
+
+
+def _md(text):
+    """Just enough Markdown for a plan's notes and waiting items: headings, bullets, paragraphs, `code`, **bold**."""
+    out, para, items = [], [], []
+
+    def flush():
+        if para:
+            out.append(f"<p>{_inline(' '.join(para))}</p>")
+            para.clear()
+        if items:
+            out.append("<ul>" + "".join(f"<li>{_inline(i)}</li>" for i in items) + "</ul>")
+            items.clear()
+    for line in (text or "").splitlines():
+        h = re.match(r"^#{2,4}\s+(.*)$", line)
+        b = re.match(r"^\s*(?:[-*]|\d+[.)])\s+(?:\[[ x]\]\s+)?(.*)$", line)
+        if h:
+            flush()
+            out.append(f"<h3>{_inline(h.group(1))}</h3>")
+        elif b:
+            if para:
+                flush()
+            items.append(b.group(1))
+        elif not line.strip():
+            flush()
+        elif items and line[:1].isspace():
+            items[-1] += " " + line.strip()
+        else:
+            if items:
+                flush()
+            para.append(line.strip())
+    flush()
+    return "\n".join(out)
+
+
+TRACK_CSS = """
+:root{--bg:#f7f7f5;--card:#fff;--ink:#1d1d1b;--sub:#6b6b66;--line:#e3e2dd;--good:#2f7d4f;--warn:#a8650a;--bad:#b3261e;
+--fly:#2457c5;--tint-good:#e6f2ea;--tint-warn:#fbf0dc;--tint-bad:#f9e3e1;--tint-fly:#e4ecfb;--tint-planned:#efefec}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#151514;--card:#1f1f1d;--ink:#ecebe6;--sub:#9c9b94;
+--line:#33322f;--good:#6cc08b;--warn:#e7a948;--bad:#f08a80;--fly:#86a8f0;--tint-good:#1c3325;--tint-warn:#3a2c14;
+--tint-bad:#3d1d1a;--tint-fly:#1b2740;--tint-planned:#2a2a27}}
+:root[data-theme="dark"]{--bg:#151514;--card:#1f1f1d;--ink:#ecebe6;--sub:#9c9b94;--line:#33322f;--good:#6cc08b;--warn:#e7a948;
+--bad:#f08a80;--fly:#86a8f0;--tint-good:#1c3325;--tint-warn:#3a2c14;--tint-bad:#3d1d1a;--tint-fly:#1b2740;--tint-planned:#2a2a27}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:760px;margin:0 auto;padding:20px 16px 40px}h1{font-size:1.35rem;margin:0 0 2px}h2{font-size:1rem;margin:22px 0 8px}
+h3{font-size:.95rem;margin:12px 0 4px}.sub{color:var(--sub);font-size:.85rem}code{font:.85em ui-monospace,Consolas,monospace;
+background:var(--tint-planned);padding:0 4px;border-radius:4px;overflow-wrap:anywhere}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:8px 0}
+.banner{border-radius:10px;padding:10px 14px;margin:14px 0;font-weight:600}.banner.warn{background:var(--tint-warn);color:var(--warn)}
+.banner.working{background:var(--tint-fly);color:var(--fly)}.banner.good{background:var(--tint-good);color:var(--good)}
+.banner.planned{background:var(--tint-planned);color:var(--sub)}.waiting{border-color:var(--warn)}
+.leg{display:grid;gap:4px}.leghead{display:flex;justify-content:space-between;gap:8px;align-items:baseline;flex-wrap:wrap}
+.chip{font-size:.8rem;font-weight:600;padding:1px 8px;border-radius:999px;white-space:nowrap}
+.chip.good{background:var(--tint-good);color:var(--good)}.chip.warn{background:var(--tint-warn);color:var(--warn)}
+.chip.bad{background:var(--tint-bad);color:var(--bad)}.chip.working{background:var(--tint-fly);color:var(--fly)}
+.chip.planned{background:var(--tint-planned);color:var(--sub)}.bar{height:6px;background:var(--tint-planned);border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--good)}.ok{color:var(--good)}.no{color:var(--bad)}
+ul{padding-left:20px;margin:4px 0}li{margin:2px 0}ul.log{list-style:none;padding:0}ul.log li{border-top:1px solid var(--line);padding:6px 0}
+details summary{cursor:pointer;color:var(--sub)}p{margin:6px 0}
+"""
+
+
+def track_html(sid):
+    """The flight's tracking page: one self-contained HTML file, a high-level view of the plan and its legs
+    for the controller away from the dashboard. A pilot publishes it as a claude.ai artifact; it is only as
+    fresh as its last publish, so it says when it was rendered."""
+    p = plan_path(sid)
+    if not p or not p.exists():
+        raise ValueError(f"no flight plan for session {sid}")
+    plan = parse_plan(p.read_text(encoding="utf-8"))
+    rows = agents()
+    live = {w["name"]: worker_status(w, rows) for w in registered() if w.get("plan") == sid}
+    gone = {}
+    for a in archived(500):        # newest first: a leg flown twice shows its last worker
+        if a.get("plan") == sid and a.get("name") not in gone:
+            gone[a["name"]] = a
+    legs, counts = [], {}
+    for leg in plan["legs"]:
+        w = live.get(leg["leg"]) or gone.get(leg["leg"])
+        cls, label = leg_state(w)
+        if w and leg["leg"] not in live:
+            label += " · removed"
+        counts[cls] = counts.get(cls, 0) + 1
+        items = (w or {}).get("checklist") or ((w or {}).get("final") or {}).get("checklist") or []
+        done = len(items) - len(open_items(items))
+        on = next((i for i in items if i.get("status") == "in_progress"), None)
+        g = None
+        if w and w.get("repo") and w.get("branch"):
+            try:
+                g = collateral_now(w)
+            except Exception:
+                g = None
+        sp = (w or {}).get("spend") or ((w or {}).get("final") or {}).get("spend")
+        bits = []
+        if items:
+            bits.append(f'<div class="sub">checklist {done} of {len(items)}' + (f" · on: {_inline(on.get('activeForm') or on.get('subject') or '')}" if on else "")
+                        + f'</div><div class="bar"><i style="width:{100 * done // len(items)}%"></i></div>')
+        if g and g.get("gone"):
+            bits.append('<div class="sub">branch deleted</div>')
+        elif g and g.get("ahead"):
+            pushed = f'<span class="no">{g["unpushed"]} not pushed</span>' if g["unpushed"] else f'<span class="ok">pushed{" · " + html.escape(g["remotes"][0]) if g["remotes"] else ""}</span>'
+            bits.append(f'<div class="sub">{g["ahead"]} commit{"s" if g["ahead"] != 1 else ""} · {pushed}'
+                        + (f' · <span class="no">{g["dirty"]} uncommitted</span>' if g["dirty"] else "") + "</div>")
+        if sp:
+            bits.append(f'<div class="sub">spend {sp["weighted"] / 1e6:.1f}M' + (f' of {w["budget"] / 1e6:.0f}M' if w.get("budget") else "") + "</div>")
+        after = f' <span class="sub">after {html.escape(", ".join(leg["after"]))}</span>' if leg["after"] else ""
+        legs.append(f'<div class="card leg"><div class="leghead"><b>{html.escape(leg["leg"])}{after}</b><span class="chip {cls}">{html.escape(label)}</span></div>'
+                    f'<div>{_inline(leg["goal"])}</div>' + (f'<div class="sub">done when: {_inline(leg["doneWhen"])}</div>' if leg["doneWhen"] else "") + "".join(bits) + "</div>")
+    n = len(plan["legs"])
+    if plan["waiting"]:
+        k = len(re.findall(r"^\s*[-*]\s", plan["waiting"], re.M)) or 1
+        banner = ("warn", f"Waiting on you: {k} item{'s' if k > 1 else ''}")
+    elif counts.get("working"):
+        banner = ("working", f"In the air: {counts['working']} of {n} leg{'s' if n != 1 else ''} flying, {counts.get('good', 0)} landed")
+    elif n and counts.get("good") == n:
+        banner = ("good", f"Landed: all {n} legs")
+    elif counts.get("warn") or counts.get("bad"):
+        banner = ("warn", f"{counts.get('warn', 0) + counts.get('bad', 0)} leg(s) need a decision; {counts.get('good', 0)} of {n} landed")
+    else:
+        banner = ("planned", f"{counts.get('good', 0)} of {n} legs landed" if n else "No legs on the route yet")
+    title = f"Flight {plan['flight']}" if plan["flight"] else "Flight plan"
+    log = "".join(f"<li>{_inline(l)}</li>" for l in reversed(plan["log"][-10:]))
+    now = time.strftime("%Y-%m-%d %H:%M")
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{html.escape(title)}</title><style>{TRACK_CSS}</style></head><body><main>
+<h1>{html.escape(title)} · {html.escape(plan['title'])}</h1>
+<div class="sub">rendered {now} by pilot.py; as fresh as the pilot's last publish</div>
+{f'<p>{_inline(plan["objective"])}</p>' if plan["objective"] else ""}
+<div class="banner {banner[0]}">{html.escape(banner[1])}</div>
+{f'<h2>Waiting on the controller</h2><div class="card waiting">{_md(plan["waiting"])}</div>' if plan["waiting"] else ""}
+<h2>Route</h2>{"".join(legs) or '<p class="sub">The pilot has not added any legs yet.</p>'}
+{f'<details class="card"><summary>the pilot&#39;s notes</summary>{_md(plan["notes"])}</details>' if plan["notes"] else ""}
+{f'<h2>Recent log</h2><ul class="log">{log}</ul>' if log else ""}
+</main></body></html>
+"""
+
+
+TRACKING_RE = re.compile(r"^Tracking:\s*(\S+)", re.M)
+
+
+def cmd_track(a):
+    """Renders this pilot session's tracking page for it to publish, or records the URL it was published at
+    on the plan's `Tracking:` line, which the dashboard links and a resumed pilot republishes to."""
+    sid = a.session or pilot_session()
+    if not sid:
+        sys.exit("pilot: run this from the pilot session (it reads CLAUDE_CODE_SESSION_ID), or pass --session")
+    p = plan_path(sid)
+    if not p or not p.exists():
+        sys.exit("pilot: this session has no flight plan yet; open it with `pilot.py plan` first")
+    t = p.read_text(encoding="utf-8")
+    if a.url:
+        line = f"Tracking: {a.url}"
+        if TRACKING_RE.search(t):
+            t = TRACKING_RE.sub(line, t, count=1)
+        else:
+            m = FLIGHT_RE.search(t) or re.search(r"^#\s.*$", t, re.M)
+            at = m.end() if m else 0
+            t = t[:at] + f"\n\n{line}" + t[at:]
+        p.write_text(t, encoding="utf-8")
+        plan_log(sid, f"Tracking page published at {a.url}")
+        print(f"recorded: {line}")
+        return
+    try:
+        page = track_html(sid)
+    except ValueError as e:
+        sys.exit(f"pilot: {e}")
+    out = Path(a.out) if a.out else STATE / "track" / f"{sid}.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(page, encoding="utf-8")
+    url = TRACKING_RE.search(t)
+    print(out)
+    print(f"publish it to {url.group(1)} (pass it as the Artifact url)" if url else
+          "publish it as a new artifact, then record its URL: pilot.py track --url <url>")
+
+
 def cmd_summary(a):
     try:
         print(summarize(a.name)["text"])
@@ -2124,6 +2337,7 @@ class Hub:
                     snap["refuel"] = {"mode": refuel_mode(), "ok": ok, "why": why}
                     snap["autopilot"] = autopilot_view()
                     snap["stale"] = Path(__file__).stat().st_mtime != CODE_MTIME
+                    snap["restartable"] = SUPERVISED
                     self.route_autopilot(snap)
                     sids = [s["sessionId"] for s in snap["workers"] + snap["pilots"] if s.get("sessionId")]
                     last_fp = fingerprint(sids)
@@ -2344,6 +2558,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.send(409, {"error": str(e)})
             HUB.poke()
             return self.send(200, out)
+        if self.path == "/api/restart":
+            if not SUPERVISED:
+                return self.send(409, {"error": "this dashboard has no supervisor to start it again: stop it and run `pilot dashboard`"})
+            self.send(200, {"ok": True})
+            threading.Timer(0.3, lambda: os._exit(RESTART_CODE)).start()     # once the answer is out
+            return
         if self.path == "/api/notifications/read":
             HUB.notices.read(body.get("ids"))
             HUB.poke()
@@ -2351,10 +2571,73 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.send(404, {"error": "not found"})
 
 
+RESTART_CODE = 75        # the server's exit code that asks its supervisor to start it again
+SUPERVISED = False       # this server runs under `pilot dashboard`'s supervisor, so it can be restarted
+
+
+def watch_parent(pid):
+    """Ends this process when its supervisor ends, however that happens (closing the terminal, a kill), so a
+    server is never left holding the port with no one to restart or stop it."""
+    def run():
+        if os.name == "nt":
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            h = k32.OpenProcess(0x00100000, False, pid)        # SYNCHRONIZE
+            if h:
+                k32.WaitForSingleObject(h, 0xFFFFFFFF)
+        else:
+            while os.getppid() == pid:
+                time.sleep(1)
+        os._exit(0)
+    threading.Thread(target=run, daemon=True).start()
+
+
+def supervise(a):
+    """Runs the dashboard's server as a child process and starts it again, on the code now on disk, when R is
+    pressed in this terminal or the page's restart button asks (the server exits with RESTART_CODE). Ctrl-C
+    reaches both, and stops both."""
+    args = [sys.executable, str(Path(__file__).resolve()), "dashboard", "--child", str(os.getpid())] + (["--port", str(a.port)] if a.port else [])
+    keys = None
+    if os.name == "nt":
+        # A console's input, not NUL: Windows calls NUL a character device, so isatty() says yes to it.
+        import ctypes, msvcrt
+        if ctypes.windll.kernel32.GetConsoleMode(ctypes.windll.kernel32.GetStdHandle(-10), ctypes.byref(ctypes.c_ulong())):
+            keys = msvcrt
+    print(f"pilot dashboard: http://127.0.0.1:{a.port or 5181}/  ({'R restarts it on the latest code, ' if keys else ''}Ctrl-C stops it)", flush=True)
+    p = None
+    try:
+        while True:
+            p = subprocess.Popen(args)
+            restart = False
+            while p.poll() is None:
+                if keys and keys.kbhit() and keys.getwch() in ("r", "R", "\x12"):    # R, or Ctrl-R
+                    restart = True
+                    p.terminate()
+                    p.wait()
+                    break
+                time.sleep(0.1)
+            if not restart and p.returncode != RESTART_CODE:
+                sys.exit(p.returncode)
+            print(f"pilot dashboard: restarting on the code now on disk ({time.strftime('%H:%M:%S')})", flush=True)
+    except KeyboardInterrupt:
+        try:
+            p and p.wait(timeout=5)
+        except Exception:
+            p.kill()
+
+
 def cmd_dashboard(a):
-    """The dashboard. --preview is a second one for checking a change to pilot itself beside the live one: on
-    5182 unless --port says otherwise, it raises no notices and writes none, and a session page's stream
-    sends its backlog and closes, so headless Edge settles and can take a screenshot (README)."""
+    """The dashboard. Run plainly, it is a supervisor (supervise) over the server, which runs as its child with
+    --child. --preview is a second one for checking a change to pilot itself beside the live one, in one
+    process with no supervisor: on 5182 unless --port says otherwise, it raises no notices and writes none,
+    and a session page's stream sends its backlog and closes, so headless Edge settles and can take a
+    screenshot (README)."""
+    global SUPERVISED
+    if not a.preview and not a.child:
+        return supervise(a)
+    if a.child:
+        SUPERVISED = True
+        watch_parent(a.child)
     STATE.mkdir(parents=True, exist_ok=True)
     port = a.port or (5182 if a.preview else 5181)
     if a.preview:
@@ -2364,7 +2647,8 @@ def cmd_dashboard(a):
     threading.Thread(target=HUB.run, daemon=True).start()
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
     srv.daemon_threads = True
-    print(f"pilot dashboard{' (preview)' if a.preview else ''}: http://127.0.0.1:{port}/  (Ctrl-C stops it)")
+    if not a.child:
+        print(f"pilot dashboard{' (preview)' if a.preview else ''}: http://127.0.0.1:{port}/  (Ctrl-C stops it)")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
@@ -2416,9 +2700,15 @@ def main():
     s.add_argument("--title", help="the plan's title, used when it is created")
     s.add_argument("--session", help="a pilot session id; default: the session this runs in")
     s.set_defaults(fn=cmd_plan)
+    s = sub.add_parser("track", help="render the flight's tracking page to publish as an artifact, or record its URL")
+    s.add_argument("--out", help="where to write the page; default <state>/track/<session>.html")
+    s.add_argument("--url", help="record the artifact URL it was published at on the plan's Tracking: line")
+    s.add_argument("--session", help="a pilot session id; default: the session this runs in")
+    s.set_defaults(fn=cmd_track)
     s = sub.add_parser("dashboard")
     s.add_argument("--port", type=int, help="default 5181, or 5182 with --preview")
     s.add_argument("--preview", action="store_true", help="a second dashboard for checking a change: no notices, session streams close")
+    s.add_argument("--child", type=int, help=argparse.SUPPRESS)     # internal: the server, under its supervisor's pid
     s.set_defaults(fn=cmd_dashboard)
     sub.add_parser("hook-budget").set_defaults(fn=cmd_hook_budget)
     sub.add_parser("hook-ask").set_defaults(fn=cmd_hook_ask)

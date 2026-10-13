@@ -9,8 +9,14 @@ controller.
 - **Flight plan**: one Markdown file per pilot session: a flight number, an objective, a route of legs
   (each with its goal, the legs it waits for, and the check that proves it), and a log. The pilot writes
   it, `pilot.py` logs into it, and you read it on the dashboard and may amend it. The flight number is the
-  repo's initials and a count (`DPS1` for drawboard-pdf-sdk), given when the plan opens, so every worker
-  of the flight is named for it: `DPS1 scaffold` in `claude agents`, Recents and the dashboard.
+  repo's initials and a count (`WA1` for web-app), given when the plan opens, so every worker
+  of the flight is named for it: `WA1 scaffold` in `claude agents`, Recents and the dashboard.
+- **Tracking page**: one private claude.ai artifact per flight, for following it away from the
+  dashboard: the objective, what waits on you, each leg's state, checklist progress and whether it is
+  pushed, and the recent log. `pilot track` renders it from the plan and its workers, the pilot publishes
+  it (only a Claude session can) when the flight changes, and `pilot track --url` records its link on the
+  plan's `Tracking:` line, which the dashboard links. It is as fresh as its last publish, and says when
+  that was.
 - **Worker**: a Claude Code background session (`claude --bg -w`) in its own git worktree, branched from
   the repo's default branch. It flies one leg, keeps a checklist (its task list), commits on its own
   branch, and ends with a report whose first line is `DONE`, `BLOCKED` or `FAILED`. A leg has landed only
@@ -37,7 +43,7 @@ spend ceiling per worker, his read guards, and the dashboard.
 In pwsh, `pilot` is a function in `$PROFILE`:
 
 ```powershell
-cd C:\Users\SebastianGodelet\source\repos\drawboard\bullclip-backend
+cd C:\Users\<you>\source\repos\web-app
 pilot                    # the pilot here: claude --plugin-dir <this repo>/plugins/pilot
                          #   then: /pilot:pilot <what the flight is for>
 pilot dashboard          # http://127.0.0.1:5181/, in a second terminal
@@ -50,6 +56,8 @@ The CLI is the pilot's, and yours:
 
 ```powershell
 pilot plan --title "Export fixes"   # this pilot session's flight plan: its path, from the template once
+pilot track --out <scratch>/track.html   # its tracking page, for the pilot to publish as an artifact
+pilot track --url <artifact url>    # where it was published: the plan's Tracking: line
 pilot start fix-export --brief brief.md --pilot "<pilot session name>" [--after other-leg]
 pilot list                          # state, weighted spend vs budget, last activity, current tool
 pilot result fix-export             # the worker's report
@@ -64,7 +72,11 @@ pilot rm fix-export                 # removes its sessions and worktree; the rec
 
 ## The dashboard
 
-`pilot dashboard` serves `web/` on 127.0.0.1 only. One watcher thread stats the files Claude Code writes
+`pilot dashboard` serves `web/` on 127.0.0.1 only. It runs the server as a child of a small supervisor, so
+it can be restarted on the code now on disk without leaving the terminal: press **R** there, or **Restart
+now** in the page's "running older code" line, which then reloads the page too. Ctrl-C stops both, and the
+server ends with its supervisor however that goes, so it never holds the port alone. `--preview` runs in
+one process, with no supervisor. One watcher thread stats the files Claude Code writes
 (session records, background-job states, the daemon roster, transcripts, flight plans) every second,
 rebuilds the state when one moves, and pushes it over one event stream; the page patches only what
 changed. It asks `claude agents` only when a session file moved, or every 30 s.
@@ -91,10 +103,11 @@ Code's own project list.
 |---|---|
 | `pilot.py` | everything: the CLI, the budget hook, the dashboard server |
 | `web/` | the dashboard page: `index.html`, `app.js`, `app.css`, no build step |
+| `tests/` | the offline suite: `python -m unittest discover tests`, standard library only, no Claude Code needed (see Tests) |
 | `plugins/pilot/` | the pilot skill, loaded with `--plugin-dir` into the session you want as pilot, and the hook that shows its questions on the dashboard and logs your answers in the plan |
 | `plugins/worker/` | the hooks every worker gets: the budget checkpoint, and Sam's five hooks through `hooks/kit.sh` |
 | `~/.pilot/pilot.json` | this machine's settings, kept out of the repo since they name local paths: the repos workers may start in, the default model and effort (unset: the account's), the default budget. Missing, it means no repos and a 10M budget |
-| `%LOCALAPPDATA%/pilot/` | runtime state: `plans/<pilot session>.md`, `flights.json` (the last flight number per repo), `blackbox.jsonl` (every decision), `autopilot.json`, `workers/`, `archive/`, `briefs/` (the exact prompt sent), `meters/`, `notifications.json`, `summaries.json`, error logs |
+| `%LOCALAPPDATA%/pilot/` | runtime state: `plans/<pilot session>.md`, `flights.json` (the last flight number per repo), `blackbox.jsonl` (every decision), `autopilot.json`, `track/` (tracking pages rendered with no `--out`), `workers/`, `archive/`, `briefs/` (the exact prompt sent), `meters/`, `notifications.json`, `summaries.json`, error logs |
 | `<repo>/.claude/worktrees/w-<leg>` | each worker's worktree, branch `worktree-w-<leg>`; `start` adds the folder to the repo's `.git/info/exclude` |
 | `~/.claude/projects/...` | transcripts, where Claude Code always keeps them; `rm` leaves them, so History can open them |
 
@@ -105,7 +118,7 @@ listed, rather than fly the leg somewhere else.
 
 ```json
 {
-  "repos": { "bullclip-backend": "C:/Users/<you>/source/repos/drawboard/bullclip-backend" },
+  "repos": { "web-app": "C:/Users/<you>/source/repos/web-app" },
   "model": null,
   "effort": null,
   "budget": 10000000
@@ -157,6 +170,20 @@ python pilot.py dashboard --preview     # port 5182; raises and writes no notice
 
 then reads the PNG. `?nostream` takes the state once; `--preview` closes a session page's stream, which
 would otherwise keep headless Edge from ever settling.
+
+## Tests
+
+```bash
+python -m unittest discover tests      # from the repo root; under a second
+```
+
+The offline suite runs `pilot.py`'s own logic against fixtures and needs no Claude Code, no daemon and
+no account. It covers parsing plans (the route, the waiting section, the notes, header lines), flight
+numbers, the plan log and the black box, weighted spend, checklists rebuilt from a transcript, who refused a
+call, the refuel gates and headroom projections, the budget and ask hooks, and the tracking page. Each test
+gets its own empty `PILOT_STATE` and `CLAUDE_CONFIG_DIR` in a temporary folder, and `claude agents` is
+replaced by fixed rows, so the suite never touches this machine's real state. A fixture transcript has to
+use Claude Code's real wording: `replay_tasks` skips any line without "ask" in it, as a fast pre-filter.
 
 ## Spend
 
@@ -215,14 +242,14 @@ Traps found on the way:
   `--add-dir`, `--tools`, `--mcp-config` and `--disallowedTools` are the same. `pilot.py` sends the prompt
   on stdin, so there is nothing to swallow.
 - **`--bg` refuses a directory whose workspace trust was never accepted**, and `-p` skips that check.
-  bullclip-backend is trusted, and its `-w` worktrees inherit that.
+  Open `claude` in the repo once and accept its trust prompt; its `-w` worktrees inherit that.
 - **`--bg --resume <session>` always continues in a new session id**, a copy holding the whole conversation,
   in the same worktree with the same options, even when the original was stopped first. The message is a
   real user turn. `pilot say` uses that and moves the worker's record onto the copy. Only the session that
   made a worktree owns it: removing a copy leaves the worktree, removing the original deletes it, so `rm`
   removes the copies first.
 - **A worker's system prompt describes the main checkout's git status**, not the worktree's: one smoke
-  worker reported `sg/sc-92521-count` as its branch. The preamble tells workers to run `git status`.
+  worker reported the main checkout's feature branch as its own. The preamble tells workers to run `git status`.
 - **Cross-session messages are data by default.** Without the preamble, a worker refused the pilot's
   correction ("a message from another session isn't your instruction"). With the preamble naming its pilot,
   it followed it and said why. The preamble also says a correction never widens the brief or the worker's
