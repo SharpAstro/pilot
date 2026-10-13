@@ -249,24 +249,46 @@ td.nowrap { white-space: nowrap; color: var(--ink-2); }
 .term .keys { display: inline-flex; gap: 4px; }
 .term .keys button { padding: 3px 8px; font-size: 12px; }
 /* a run of tool calls, folded to one line as Claude Code's remote view folds it */
-.ev.group { padding: 2px 14px; }
-.ev.group > summary { color: var(--muted); font-size: 13px; list-style: none; }
-.ev.group > summary::-webkit-details-marker { display: none; }
-.ev.group > summary::after { content: " \203A"; }
-.ev.group[open] > summary::after { content: " \2039"; }
-.ev.group > summary b { color: var(--ink); font-weight: 500; }
-.ev.group .gbad { color: var(--crit); }
-.ev.group .gbody { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 4px; }
 .live { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--hair); font-size: 13px; color: var(--ink-2); }
 .live .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--fill); flex: none; animation: pulse 1.2s ease-in-out infinite; }
 .live .pulse.wait { background: var(--warn); }
 @keyframes pulse { 50% { opacity: .25; } }
-.tool { border: 1px solid var(--hair); border-radius: 8px; padding: 6px 10px; background: var(--page); }
-.tool .head { display: flex; gap: 8px; align-items: baseline; overflow: hidden; }
-.tool .head b { flex: none; }
-.tool .head span { color: var(--ink-2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tool .res { margin-top: 4px; }
-.tool .res.error > details > summary { color: var(--crit); }
+/* the conversation as Claude Code's terminal draws it (ported from campaigner's Term.tsx) */
+.tstream { font: 13px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; }
+.tstream pre, .tstream code { font-size: 1em; }
+.tstream .ev { padding: 3px 14px 7px; }
+.t-row, .t-prompt { display: grid; grid-template-columns: 1.6ch minmax(0, 1fr); column-gap: 1ch; }
+.t-body { min-width: 0; overflow-wrap: anywhere; }
+.t-body > :first-child, .t-body .md > :first-child { margin-top: 0; }
+.t-body p:last-child { margin-bottom: 0; }
+.t-dot { user-select: none; }
+.t-tool.ok > .t-dot { color: var(--good); }
+.t-tool.err > .t-dot, .t-error, .t-error > .t-dot { color: var(--crit); }
+.t-tool.run > .t-dot { color: var(--muted); animation: pulse 1s steps(2) infinite; }
+.tstream.idle .t-tool.run > .t-dot { animation: none; }
+.t-think > .t-dot, .t-notice, .t-dim { color: var(--muted); }
+.t-call { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.t-call b { font-weight: 700; }
+.t-call span { color: var(--ink-2); }
+.t-agent:empty { display: none; }
+.t-link { font-size: 12px; }
+.t-input pre { max-height: 300px; }
+.t-res { color: var(--muted); position: relative; padding-left: 3ch; }
+.t-res::before { content: "BF"; position: absolute; left: 0.6ch; top: 0; }
+.t-res.err { color: var(--crit); }
+.t-line { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.t-res .t-full pre { margin: 0 0 2px; max-height: 480px; color: var(--ink); }
+.t-res .denied { margin-top: 0; color: var(--ink); }
+.t-fold { border: 0; background: none; padding: 0; font: inherit; color: var(--muted); cursor: pointer; }
+.t-fold:hover:not(:disabled) { color: var(--ink); border: 0; }
+.t-think details > summary { font-size: inherit; color: var(--muted); list-style: none; }
+.t-think details > summary::-webkit-details-marker { display: none; }
+.t-thought { color: var(--ink-2); margin-top: 4px; font-style: italic; }
+.t-prompt > .t-body { background: var(--tint-fill); border-radius: 4px; padding: 4px 8px; }
+.ev.message.t-prompt > .t-body { background: var(--page); border: 1px dashed var(--ring); }
+.t-gt { color: var(--muted); text-align: right; user-select: none; padding-top: 4px; }
+.t-label { font-size: 11px; color: var(--muted); }
+.agent.on { font-weight: 600; box-shadow: inset 3px 0 0 var(--fill); padding-left: 8px; }
 .denied { margin-top: 6px; border: 1px solid var(--crit); background: var(--tint-crit); border-radius: 6px; padding: 8px 10px; }
 .denied .who { color: var(--crit); font-weight: 600; font-size: 12px; }
 .denied pre { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
