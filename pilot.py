@@ -969,6 +969,7 @@ def worker_status(w, rows=None):
     return {
         **{k: w.get(k) for k in ("name", "id", "sessionId", "repo", "worktree", "branch", "base", "model", "effort",
                                  "budget", "started", "pilot", "after", "plan")}, "agent": agent_name(w),
+        "budget0": w.get("budget0") or config().get("budget") or w.get("budget"),
         "sessions": len(sessions_of(w)),
         "state": state, "busy": (row or {}).get("status") == "busy", "pid": (row or {}).get("pid"),
         "detail": job["detail"], "reportHead": head_word(said[-1]["text"]) if said else None,

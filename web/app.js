@@ -231,8 +231,21 @@ function actions(w, isWorker) {
   const a = [];
   if (w.id) a.push(`<button data-copy="claude attach ${esc(w.id)}" title="Copy the command that opens this session in a terminal">attach</button>`);
   if (w.remote) a.push(`<a class="btn" href="${esc(w.remote)}" target="_blank" rel="noopener" title="Talk to it from claude.ai or your phone (Remote Control)">remote ↗</a>`);
+  if (isWorker && w.budget && (w.spend?.weighted || 0) >= 0.75 * w.budget) a.push(fillButton(w));
   if (isWorker && w.pid && w.state !== "gone") a.push(`<button class="danger" data-stop="${esc(w.name)}">stop</button>`);
   return `<div class="actions">${a.join("")}</div>`;
+}
+
+// The controller's refuel, which needs no watchtower: one more tank, the leg's first budget, past whatever is
+// higher of its budget and its spend, rounded up to a whole million.
+function fillTo(w) {
+  const tank = w.budget0 || 10e6;
+  return Math.ceil((Math.max(w.budget || 0, w.spend?.weighted || 0) + tank) / 1e6) * 1e6;
+}
+function fillButton(w) {
+  const to = fillTo(w);
+  return `<button class="fill" data-fill="${esc(w.name)}" data-to="${to}" title="${esc(`Raises ${w.name}'s budget from ${M(w.budget)} to ${M(to)}: `
+    + `one more tank of its first budget (${M(w.budget0 || 10e6)}) past what it has spent. If its turn has ended, you are asked whether to tell it to carry on.`)}">⛽ refuel to ${M(to)}</button>`;
 }
 
 // ------------------------------------------------------------------ account usage, as the status line shows it
@@ -379,7 +392,7 @@ function renderTop() {
       <span class="sub">${esc(lock.path)}</span></p>` : "") +
     (stale ? `<p class="warnline amber">This dashboard is running older code than <code>pilot.py</code> on disk, so newer buttons may answer "not found". ${S.restartable
       ? `<button class="s-restart">Restart now</button> or press R in its terminal.` : `Restart it: <code>pilot dashboard</code>.`}</p>` : "") +
-    (over.length ? `<p class="warnline">⚠ Over budget: ${over.map(w => `<a href="#/w/${esc(w.name)}">${esc(w.name)}</a>`).join(", ")}. Their tools are refused until the budget is raised (<code>pilot budget NAME N</code>).</p>` : "") +
+    (over.length ? `<p class="warnline">⚠ Over budget: ${over.map(w => `<a href="#/w/${esc(w.name)}">${esc(w.name)}</a> ${fillButton(w)}`).join(", ")}. Their tools are refused until the budget is raised.</p>` : "") +
     (waiting.length ? `<p class="warnline amber">Waiting on you: ${waiting.map(w => `<a href="${esc(w.href)}">${esc(w.name)}</a>`).join(", ")}.</p>` : ""));
   const n = S.notifications || {unread: 0, items: []};
   const badge = $("#badge");
@@ -777,6 +790,7 @@ VIEWS.session = (root, r) => {
             <button class="primary s-send">Send</button></div></div></div>
       <div class="side"><div class="card pad s-ctl" hidden><b>Controls</b>
           <div class="ctlrow"><label>budget, weighted tokens <input class="s-budget" inputmode="numeric" placeholder="e.g. 20M"></label><button class="s-setbudget">set</button></div>
+          <div class="ctlrow s-fill"></div>
           <div class="sub s-ctlhint"></div></div>
         <div class="card pad s-checkcard" hidden><div class="cardhead"><b>Checklist</b><span class="sub s-checkn"></span></div><ul class="checklist s-check"></ul></div>
         <div class="card pad s-gitcard" hidden><div class="cardhead"><b>What it leaves</b><span class="sub s-gitn"></span></div><dl class="s-git" style="margin-top:8px"></dl></div>
@@ -1033,6 +1047,7 @@ VIEWS.session = (root, r) => {
       const plan = (s.plans || []).find(x => x.sessionId === (p ? p.sessionId : r.sid));
       put($(".s-plan", root), plan && !r.agent ? planCard(plan, s) : "");
       $(".s-ctl", root).hidden = !w;
+      put($(".s-fill", root), w && w.budget ? fillButton(w) : "");
       const card = $(".s-sumcard", root);
       card.hidden = !w;
       if (w) {
@@ -1359,6 +1374,21 @@ document.addEventListener("click", async e => {
   if (t.dataset.sendanswers) { sendAnswers(t.dataset.sendanswers); return; }
   if (t.dataset.refuel) {
     try { await post("/api/refuel", {mode: t.dataset.refuel}); } catch (err) { alert(err.message); }
+    return;
+  }
+  if (t.dataset.fill) {
+    const name = t.dataset.fill, to = +t.dataset.to;
+    t.disabled = true;
+    try {
+      await post(`/api/workers/${name}/budget`, {tokens: to});
+      // Fuel does not wake a worker: one whose turn ended at its budget waits until it hears from you.
+      const w = S.workers.find(x => x.name === name);
+      if (w && !(w.pid && (w.state === "working" || w.state === "blocked"))
+          && confirm(`${name} now has ${M(to)}. Its turn has ended, so it waits until it hears from you. Tell it to carry on with its brief?`))
+        await post(`/api/workers/${name}/say`, {text: `The controller raised your budget to ${M(to)} weighted tokens. Carry on with your brief `
+          + `where you stopped. If nothing is left, end your turn with DONE and one line saying so.`});
+    } catch (err) { alert(err.message); }
+    t.disabled = false;
     return;
   }
   if (t.dataset.autopilot) {

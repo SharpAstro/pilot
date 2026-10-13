@@ -377,6 +377,12 @@ class RefuelTests(Case):
         with self.assertRaises(ValueError):
             self.refuel(9_000_000)
 
+    def test_the_dashboard_gets_each_legs_first_budget_for_its_refuel_button(self):
+        self.assertEqual(pilot.worker_status(pilot.load("fix"), [])["budget0"], 10_000_000)
+        self.config(budget=8_000_000)               # a worker from before budget0, since raised: the config's
+        old = self.worker("old", budget=16_000_000, budget0=None)
+        self.assertEqual(pilot.worker_status(old, [])["budget0"], 8_000_000)
+
 
 class HookTests(Case):
     def test_budget_checkpoint(self):
