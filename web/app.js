@@ -1426,7 +1426,8 @@ VIEWS.blackbox = root => {
 function flightHistoryRow(f) {
   const t = f.times || {};
   const end = t.arrived ? `ARR ${esc(when(t.arrived))}` : t.eta ? `last ETA ${esc(when(t.eta))}` : esc(t.noEta || t.error || "no ETA");
-  const legs = f.legs.map(l => `<span class="chip ${l.cls}" title="${esc(l.altOf ? `alternate for ${l.altOf}` : "")}">${esc(l.leg)}: ${esc(l.label)}</span>`).join(" ");
+  const CHIP = {good: "done", warn: "blocked", bad: "failed", working: "working"};   // leg_state's classes, as chips
+  const legs = f.legs.map(l => `<span class="chip ${CHIP[l.cls] || "other"}" title="${esc(l.altOf ? `alternate for ${l.altOf}` : "")}">${esc(l.leg)}: ${esc(l.label)}</span>`).join(" ");
   return `<tr><td><b>${f.flight ? `Flight ${esc(f.flight)}` : "Flight plan"}</b><div class="sub">${esc(f.title)}</div></td>
     <td>${t.departed ? `DEP ${esc(when(t.departed))}` : `<span class="sub">not departed</span>`}<div class="sub">${end}</div></td>
     <td>${t.delay != null ? delayHtml(t.delay) : `<span class="sub">-</span>`}</td>
