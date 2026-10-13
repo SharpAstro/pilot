@@ -360,3 +360,5 @@ tr.click { cursor: pointer; } tr.click:hover td { background: color-mix(in srgb,
   .row .actions { justify-content: flex-start; }
   .limits { margin-left: 0; width: 100%; order: 5; }
 }
+.plan .planfoot { display: flex; justify-content: flex-end; margin-top: 8px; }
+.plan .planfoot button.arch { font-size: 12px; padding: 3px 10px; color: var(--ink-2); }

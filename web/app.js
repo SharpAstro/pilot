@@ -71,7 +71,7 @@ async function post(url, body) {
   // server meets a route it has never heard of.
   if (r.status === 404 && j.error === "not found")
     throw new Error(`This dashboard started before ${url} existed, so its server does not know it. Restart it (python pilot.py dashboard) and try again.`);
-  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), {flying: j.flying});   // an archive refused names its legs flying
   return j;
 }
 
@@ -637,7 +637,8 @@ function planCard(p, s) {
     ${p.legs.length > 1 ? `<details ${fold("chart:" + p.sessionId, true)}><summary>the route as a chart: each leg after the legs it waits for</summary><div class="graph">${routeChart(p, s)}</div></details>` : ""}
     <div class="tablewrap"><table><thead><tr><th>Leg</th><th>Goal</th><th>After</th><th>Done when</th><th>Status</th><th class="num">Spend</th></tr></thead>
       <tbody>${legs || `<tr><td colspan="6" class="sub">No legs yet. The pilot adds them to the Route table.</td></tr>`}</tbody></table></div>
-    ${log ? `<details ${fold("log:" + p.sessionId, true)}><summary>flight log: decisions, questions and answers, legs taking off and landing</summary><ul class="log">${log}</ul></details>` : ""}</details>`;
+    ${log ? `<details ${fold("log:" + p.sessionId, true)}><summary>flight log: decisions, questions and answers, legs taking off and landing</summary><ul class="log">${log}</ul></details>` : ""}
+    <div class="planfoot"><button class="arch" data-archive="${esc(p.sessionId)}" data-name="${esc(p.flight ? `Flight ${p.flight}` : "this flight")} · ${esc(p.title)}" title="Off the Overview and the Flights strips, onto History; nothing is deleted, and History restores it">Archive flight…</button></div></details>`;
 }
 
 // ------------------------------------------------------------------ answering the pilot from the dashboard
@@ -1420,8 +1421,24 @@ VIEWS.blackbox = root => {
   return {update() { load(); }};
 };
 
+// Archived flights, pilot.py's flight_history(): plans the controller put away, kept whole, each with its times,
+// how its legs ended and a Restore. Not the workers below them, which `pilot rm` archived one leg at a time.
+function flightHistoryRow(f) {
+  const t = f.times || {};
+  const end = t.arrived ? `ARR ${esc(when(t.arrived))}` : t.eta ? `last ETA ${esc(when(t.eta))}` : esc(t.noEta || t.error || "no ETA");
+  const legs = f.legs.map(l => `<span class="chip ${l.cls}" title="${esc(l.altOf ? `alternate for ${l.altOf}` : "")}">${esc(l.leg)}: ${esc(l.label)}</span>`).join(" ");
+  return `<tr><td><b>${f.flight ? `Flight ${esc(f.flight)}` : "Flight plan"}</b><div class="sub">${esc(f.title)}</div></td>
+    <td>${t.departed ? `DEP ${esc(when(t.departed))}` : `<span class="sub">not departed</span>`}<div class="sub">${end}</div></td>
+    <td>${t.delay != null ? delayHtml(t.delay) : `<span class="sub">-</span>`}</td>
+    <td>${legs || `<span class="sub">no legs</span>`}${f.flyingAtArchive?.length ? `<div class="sub">archived with ${esc(f.flyingAtArchive.join(", "))} still flying</div>` : ""}</td>
+    <td>${esc(when(f.archivedAt))}</td>
+    <td>${f.missing ? "" : `<button data-restore="${esc(f.sessionId)}" title="Back on the Overview, in its old place in the order">Restore</button> <a href="#/s/${esc(f.sessionId)}">pilot session ›</a>`}</td></tr>`;
+}
+
 VIEWS.history = root => {
-  root.innerHTML = `<h2>History</h2><div class="card tablewrap"><table><thead><tr><th>Worker</th><th>Result</th><th>Branch</th><th class="num">Spend</th><th>Removed</th><th></th></tr></thead>
+  root.innerHTML = `<h2>Flights</h2><div class="card tablewrap"><table><thead><tr><th>Flight</th><th>Times</th><th>Delay</th><th>Legs</th><th>Archived</th><th></th></tr></thead>
+    <tbody class="s-flights"></tbody></table><div class="empty s-fempty">Flights you archive from their plan card, or with <code>pilot archive &lt;flight&gt;</code>, are kept here whole, to restore.</div></div>
+    <h2>Workers</h2><div class="card tablewrap"><table><thead><tr><th>Worker</th><th>Result</th><th>Branch</th><th class="num">Spend</th><th>Removed</th><th></th></tr></thead>
     <tbody class="s-rows"></tbody></table><div class="empty s-empty">Workers removed with <code>pilot rm</code> are kept here with their report, commits and spend.</div></div>`;
   const opened = new Set();
   root.addEventListener("click", e => {
@@ -1432,6 +1449,9 @@ VIEWS.history = root => {
   });
   return {
     update(s) {
+      const fl = s.flightHistory || [];
+      put($(".s-flights", root), fl.map(flightHistoryRow).join(""));
+      $(".s-fempty", root).hidden = fl.length > 0;
       put($(".s-rows", root), s.history.map(h => {
         const key = `${h.name}-${h.archivedAt}`, f = h.final || {};
         return `<tr class="click" data-key="${esc(key)}"><td><b>${esc(h.name)}</b><div class="sub">${esc(h.repo)}</div></td><td>${chip(h)}<div class="sub">${esc(f.detail || "")}</div></td>
@@ -1653,6 +1673,26 @@ document.addEventListener("click", async e => {
   if (t.dataset.stop) {
     if (!confirm(`Stop ${t.dataset.stop}? Its conversation is kept: claude attach, or a message from here, resumes it.`)) return;
     try { await post(`/api/workers/${t.dataset.stop}/stop`); } catch (err) { alert(err.message); }
+    return;
+  }
+  // Archiving a flight is the controller's: one confirm, and a second that names its legs still flying.
+  if (t.dataset.archive) {
+    e.preventDefault();
+    const sid = t.dataset.archive, name = t.dataset.name;
+    if (!confirm(`Archive ${name}? It leaves the Overview and the Flights strips and is listed on History, where Restore puts it back. Nothing is deleted.`)) return;
+    t.disabled = true;
+    try { await post(`/api/flights/${sid}/archive`); }
+    catch (err) {
+      const legs = err.flying;
+      if (legs?.length && confirm(`${name} has legs still flying: ${legs.join(", ")}. Archive it anyway and give up on them? They keep running until you stop them.`)) {
+        try { await post(`/api/flights/${sid}/archive`, {force: true}); } catch (err2) { alert(err2.message); }
+      } else if (!legs?.length) alert(err.message);
+    } finally { t.disabled = false; }
+    return;
+  }
+  if (t.dataset.restore) {
+    t.disabled = true;
+    try { await post(`/api/flights/${t.dataset.restore}/restore`); } catch (err) { alert(err.message); t.disabled = false; }
     return;
   }
   if (t.dataset.sum) { summarise(t.dataset.sum); return; }
