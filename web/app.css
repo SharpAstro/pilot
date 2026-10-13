@@ -192,6 +192,14 @@ ul.checklist li.in_progress span:first-child { color: var(--fill); }
 .flight .bob { animation: bob 2.4s ease-in-out infinite; }
 @keyframes bob { 50% { transform: translateY(-2.5px); } }
 @media (prefers-reduced-motion: reduce) { .flight .bob { animation: none; } }
+/* Reordering flights by priority: a grip to drag, by mouse or finger, and ▲▼ to move one place. */
+.reorder { display: inline-flex; align-items: center; gap: 2px; margin-right: 8px; vertical-align: middle; }
+.reorder .grip { cursor: grab; touch-action: none; user-select: none; color: var(--muted); font-size: 16px; line-height: 1; padding: 4px 6px; border-radius: 6px; }
+.reorder .grip:hover { color: var(--ink); background: var(--ring); }
+.reorder button.mv { font-size: 10px; padding: 2px 6px; line-height: 1.2; color: var(--ink-2); }
+[data-order].dragging { opacity: .6; outline: 2px dashed var(--fill); outline-offset: -2px; }
+[data-order].dragging .grip { cursor: grabbing; }
+@media (pointer: coarse) { .reorder .grip { font-size: 20px; padding: 8px 10px; } .reorder button.mv { font-size: 13px; padding: 6px 10px; } }
 
 /* flight times: departure, ETA or arrival, and delay, on a flight's strip and its plan card */
 .ftimes { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink-2); }
