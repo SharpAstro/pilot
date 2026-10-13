@@ -45,7 +45,7 @@ controller.
 
 Everything else is Claude Code's own: background sessions, worktrees, subagents, `claude agents`,
 `claude attach`, Remote Control, `SendMessage` between sessions. This started as a Windows take on Sam's
-[runaway-agent](../runaway-agent) kit and keeps only what is not native: a fixed way to start a worker, a
+[runaway-agent](https://github.com/DrawboardLtd/runaway-agent) kit and keeps only what is not native: a fixed way to start a worker, a
 spend ceiling per worker, his read guards, and the dashboard.
 
 ## Use it
@@ -78,7 +78,7 @@ pilot refuel fix-export 16000000 --reason "API and tests left, ~3M each"   # the
 pilot budget fix-export 20000000    # the controller's override: an absolute ceiling, not an increment
 pilot summary [fix-export]          # a Haiku summary: Needs you / Where it is
 pilot stop fix-export               # conversation kept: `claude attach <id>` resumes it
-pilot rm fix-export                 # removes its sessions and worktree; the record stays in History
+pilot rm fix-export                 # removes its sessions, worktree and local branch; the record stays in History
 ```
 
 ## The dashboard
@@ -329,10 +329,13 @@ Traps found on the way:
   Two were watched firing in a live worker. `big_read_guard.sh` refused a whole `Read` of a 212 KB file.
   `agent_call_budget.sh` let a subagent briefed with `[[CALL_BUDGET=1]]` make its first call, then
   refused the second with its checkpoint text.
-- **Wired through `plugins/worker/hooks/kit.sh`**, which runs them from the `runaway-agent` checkout in
-  place, so his fixes arrive with `git pull`. It looks beside pilot first, then in the other org roots under
-  the same repos dir (`drawboard/runaway-agent` beside `sharpastro/pilot`). It also puts winget's jq on PATH. A Claude Code
-  daemon started before jq was installed does not have it, and his hooks fail open without it.
+- **They are part of this repo**, in `plugins/worker/hooks/runaway/`, copied unedited from runaway-agent at
+  `c4bee6c` (2026-10-12). Run from a sibling checkout, they failed open on any machine where it was not
+  beside pilot, and on the desktop no worker had them. Taking his fixes is copying the five files again.
+- **Wired through `plugins/worker/hooks/kit.sh`**, which settles what pilot needs differently before his
+  hook runs (a PDF read by its `pages`, an image), so the copies stay his. It also puts winget's jq on
+  PATH. A Claude Code daemon started before jq was installed does not have it, and his hooks fail open
+  without it.
 - **They write state** under `~/.claude/state/` (`spawn-count`, `token-budget`, `fat-result`).
 - **Gaps.** `big_read_guard.sh` misses `cat C:/...`, because its regex excludes `:`, and 8.3 short names
   with `~`. `agent_ratelimit_gate.sh` does nothing until the status line writes `rate-limits.json`.

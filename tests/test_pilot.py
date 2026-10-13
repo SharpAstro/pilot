@@ -11,6 +11,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -594,19 +595,53 @@ class DaemonLockTests(Case):
         self.assertTrue(pilot.DAEMON_LOCK.exists(), "pilot.py never removes it itself")
 
 
+class RemoveTests(Case):
+    def rm(self, *results):
+        """Runs `rm fix` with `claude rm` answering each session in turn, and returns the calls it made."""
+        calls, answers = [], list(results)
+
+        def fake(*args, timeout=60, **_):
+            calls.append((args, timeout))
+            code, out = answers.pop(0)
+            return types.SimpleNamespace(returncode=code, stdout=out, stderr="")
+        real, pilot.claude = pilot.claude, fake
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                pilot.cmd_rm(types.SimpleNamespace(name="fix"))
+        finally:
+            pilot.claude = real
+        return calls
+
+    def setUp(self):
+        super().setUp()
+        self.worker("fix", worktree=str(pilot.STATE / "no-such-worktree"),
+                    sessions=[{"id": "job-a", "sessionId": "sess-a"}, {"id": "job-b", "sessionId": "sess-b"}])
+
+    def test_the_copies_go_first_and_nothing_times_out(self):
+        calls = self.rm((0, ""), (0, ""))
+        self.assertEqual([c[0] for c in calls], [("rm", "job-b"), ("rm", "job-a")])
+        self.assertEqual({c[1] for c in calls}, {None}, "a 6 GB worktree took six and a half minutes to delete")
+        self.assertIsNone(pilot.load("fix"))
+        self.assertEqual(len(list(pilot.ARCHIVE.glob("fix-*.json"))), 1)
+
+    def test_sessions_already_removed_by_hand_still_archive(self):
+        self.rm((1, "No job matching 'job-b'"), (1, "no such session"))
+        self.assertIsNone(pilot.load("fix"))
+
+    def test_a_failure_keeps_the_record(self):
+        with self.assertRaises(SystemExit):
+            self.rm((0, ""), (1, "permission denied"))
+        self.assertIsNotNone(pilot.load("fix"))
+
+
 class RunawayKitTests(Case):
-    def test_the_kit_is_found_beside_pilot_or_in_another_org_root(self):
-        repos = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, repos, True)
-        here = repos / "sharpastro" / "pilot"
-        here.mkdir(parents=True)
-        self.assertIsNone(pilot.runaway_kit(here))
-        (repos / "drawboard" / "runaway-agent").mkdir(parents=True)
-        (repos / "drawboard" / "runaway-agent" / "big_read_guard.sh").write_text("")
-        self.assertEqual(pilot.runaway_kit(here), repos / "drawboard" / "runaway-agent")
-        (repos / "sharpastro" / "runaway-agent").mkdir()
-        (repos / "sharpastro" / "runaway-agent" / "big_read_guard.sh").write_text("")
-        self.assertEqual(pilot.runaway_kit(here), repos / "sharpastro" / "runaway-agent", "the sibling comes first")
+    def test_every_hook_the_worker_plugin_wires_is_in_the_repo(self):
+        hooks = pilot.HERE / "plugins" / "worker" / "hooks"
+        wired = set(re.findall(r'kit\.sh\\" (\w+\.sh)', (hooks / "hooks.json").read_text(encoding="utf-8")))
+        self.assertEqual(len(wired), 5, wired)
+        for name in wired:
+            self.assertTrue((hooks / "runaway" / name).is_file(), name)
+            self.assertNotIn(b"\r", (hooks / "runaway" / name).read_bytes(), f"{name}: Git Bash fails on a CR")
 
 
 class PullRequestTests(Case):

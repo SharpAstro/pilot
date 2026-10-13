@@ -193,6 +193,9 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
     itself; both were right, and both were the controller's to do.
 14. **Clean up** with `python <pilot.py> rm <leg>` once its branch has been pushed or the controller says to
     drop it. Never drop a worker's commits without asking. The record stays in the dashboard's history.
+    It deletes the worktree and its local `worktree-w-<leg>` branch, and a big worktree takes minutes (a
+    built SDK, 6 GB, took six and a half), so run it in the background rather than under a 2-minute
+    timeout. A leg whose sessions were already removed by hand still archives.
 
 `python <pilot.py> list` shows every worker's state, spend and last activity. The controller's dashboard
 is `python <pilot.py> dashboard`, at http://127.0.0.1:5181/.

@@ -171,15 +171,6 @@ def process_identity(pid):
         k32.CloseHandle(h)
 
 
-def runaway_kit(here=None):
-    """The runaway-agent checkout the worker plugin's hooks run (plugins/worker/hooks/kit.sh looks the same way):
-    beside pilot's checkout, else in another org root under the same repos dir. None when there is none, and then
-    every worker's guards fail open, silently: the desktop's workers flew without them until this was checked."""
-    org = (here or HERE).parent
-    return next((k for k in [org / "runaway-agent", *sorted(org.parent.glob("*/runaway-agent"))]
-                 if (k / "big_read_guard.sh").is_file()), None)
-
-
 def daemon_lock():
     """Claude Code's daemon lock, when it is stale: it names a daemon that is gone, so `claude --bg` will not
     start one and no worker starts (measured: a lock left pointing at a pid Windows had since given to an
@@ -1588,10 +1579,6 @@ def cmd_start(a):
     if stale:
         sys.exit(f"pilot: Claude Code's daemon lock ({stale['path']}) is stale: {stale['why']}. Until it goes, no background "
                  f"session starts. {DAEMON_LOCK_HELP} Put it in `## Waiting on the controller`; don't remove it yourself.")
-    if not runaway_kit():
-        print(f"pilot: warning: no runaway-agent checkout beside {HERE.parent} or in another org root beside it, so "
-              f"this worker flies without its guards (big reads, token and call budgets); clone "
-              f"DrawboardLtd/runaway-agent there", file=sys.stderr)
     # The pilot runs in its repo's main checkout, so that is where its workers start. Falling back to the first
     # configured repo would quietly fly a leg in somebody else's repo.
     top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
@@ -2280,11 +2267,17 @@ def cmd_rm(a):
     if Path(w["worktree"]).exists():
         commits = subprocess.run(["git", "-C", w["worktree"], "log", "--oneline", "-30", f"{w.get('base') or 'origin/HEAD'}..HEAD"],
                                  capture_output=True, text=True).stdout.strip()
+    if Path(w["worktree"]).exists():
+        print(f"deleting {w['worktree']} with its session: a big worktree takes minutes", flush=True)
     ok = True
     for sess in reversed(sessions_of(w)):
-        r = claude("rm", sess["id"])
-        print((r.stdout + r.stderr).strip())
-        ok = ok and (r.returncode == 0 or "no such" in (r.stdout + r.stderr).lower())
+        # No timeout: `claude rm` deletes the worktree's files, and a built SDK checkout (about 6 GB) took 6 min 26 s.
+        # Stopped part way, it would leave a worktree half deleted; 60 s timed out and kept the record.
+        r = claude("rm", sess["id"], timeout=None)
+        out = (r.stdout + r.stderr).strip()
+        print(out)
+        # A session already removed by hand: "No job matching '<id>'", or "no such" from older versions.
+        ok = ok and (r.returncode == 0 or bool(re.search(r"no such|no job matching", out, re.I)))
     if not ok:
         sys.exit("pilot: claude rm failed; the worker's record is kept")
     w["archivedAt"] = time.time()

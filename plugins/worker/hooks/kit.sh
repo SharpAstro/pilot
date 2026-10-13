@@ -1,21 +1,15 @@
 #!/usr/bin/env bash
 # Runs one of Sam's runaway-agent hooks for a worker, under Git Bash on Windows: kit.sh <hook>.sh
-# The kit is the sibling checkout ../runaway-agent, used in place so its fixes arrive with a git pull.
+# The hooks are copies in runaway/ beside this script, taken unedited from DrawboardLtd/runaway-agent at
+# c4bee6c (2026-10-12), so a worker's guards never depend on where another checkout sits. Anything pilot
+# needs differently is settled here, before his hook, which keeps a refresh a plain copy.
 # His hooks need jq, which winget puts in its Links dir; a Claude Code daemon started before jq was
 # installed does not have that on PATH, and a hook without jq fails open, silently.
 links="$(cygpath -u "${LOCALAPPDATA:-$USERPROFILE/AppData/Local}")/Microsoft/WinGet/Links"
 case ":$PATH:" in *":$links:"*) ;; *) PATH="$links:$PATH" ;; esac
-# It sits beside pilot's checkout, or in another org root under the same repos dir: pilot is a SharpAstro repo
-# and the kit a DrawboardLtd one, and on the desktop they are not siblings, so every worker's guards failed open.
-org="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-kit="$org/runaway-agent"
+kit="$(dirname "${BASH_SOURCE[0]}")/runaway"
 if [ ! -f "$kit/$1" ]; then
-    for k in "$org"/../*/runaway-agent; do
-        [ -f "$k/$1" ] && { kit="$(cd "$k" && pwd)"; break; }
-    done
-fi
-if [ ! -f "$kit/$1" ]; then
-    echo "pilot: no runaway-agent hook $1 beside $org or in another org root beside it" >&2
+    echo "pilot: no runaway-agent hook $kit/$1" >&2
     exit 1
 fi
 
