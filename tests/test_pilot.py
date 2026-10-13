@@ -365,6 +365,29 @@ class ConnectionTests(Case):
             self.assertIsNone(pilot.leg_prs(ROOT, ["origin/feat/x"]))
         self.assertEqual(pilot.leg_prs(ROOT, []), [], "no remote branch holds it: no PR, known")
 
+    def test_a_legs_commits_land_only_on_a_merged_pull_request(self):
+        leg = lambda git, w=None: [{"leg": "build", "w": w or {"reportHead": "DONE"}, "cls": "good", "label": "landed", "git": git}]
+        self.assertEqual(pilot.flight_landed(leg({"ahead": 2, "prs": []})), (False, ["build: 2 commits on no merged pull request"]))
+        open_pr = {"number": 7, "state": "OPEN"}
+        self.assertFalse(pilot.flight_landed(leg({"ahead": 1, "prs": [open_pr]}))[0])
+        self.assertEqual(pilot.flight_landed(leg({"ahead": 2, "prs": [{"number": 7, "state": "MERGED"}]})), (True, []))
+        self.assertEqual(pilot.flight_landed(leg({"ahead": 0, "prs": []})), (True, []), "no commits past its base, or all on it: landed")
+
+    def test_a_removed_legs_deleted_branch_lands_only_with_no_commits(self):
+        leg = lambda commits: [{"leg": "build", "w": {"final": {"reportHead": "DONE", "commits": commits}}, "cls": "good", "label": "landed",
+                                "git": {"gone": True, "repo": "web-app", "branch": "worktree-w-build"}}]
+        self.assertEqual(pilot.flight_landed(leg("")), (True, []))
+        self.assertEqual(pilot.flight_landed(leg("abc1234 the fix")), (False, ["build: its branch is deleted, so its commits cannot be read"]))
+
+    def test_start_refuses_while_the_connections_commits_are_not_merged(self):
+        self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nConnects: TIA2"))
+        self.plan("s2", CONNECTED)
+        self.landed()
+        self.git = {"ahead": 3, "prs": [], "remotes": []}      # DONE, unpushed
+        self.assertIn("build: 3 commits on no merged pull request", self.start())
+        self.git = {"ahead": 3, "prs": [{"number": 7, "state": "MERGED"}], "remotes": ["origin/feat/x"]}
+        self.assertIsNone(pilot.connection_hold("s1"))
+
     def test_the_dashboard_gets_each_connection_and_whether_it_landed(self):
         self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nConnects: TIA2, TIA9"))
         self.plan("s2", CONNECTED)
@@ -1061,6 +1084,28 @@ class RunawayKitTests(Case):
 
 
 class PullRequestTests(Case):
+    def test_a_removed_legs_deleted_branch_is_read_from_the_tip_its_record_kept(self):
+        repo = ROOT / "tip-repo"
+        shutil.rmtree(repo, ignore_errors=True)
+        git = lambda *a: subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", *a],
+                                        check=True, capture_output=True, text=True).stdout.strip()
+        repo.mkdir()
+        git("init", "-q", "-b", "main")
+        git("commit", "-q", "--allow-empty", "-m", "base")
+        git("checkout", "-q", "-b", "worktree-w-build")
+        git("commit", "-q", "--allow-empty", "-m", "the fix")
+        commits = git("log", "--oneline", "main..HEAD")
+        git("checkout", "-q", "main")
+        git("branch", "-q", "-D", "worktree-w-build")
+        self.config(repos={"web-app": str(repo)})
+        w = {"repo": "web-app", "branch": "worktree-w-build", "base": "main", "worktree": str(repo / "gone"), "started": 0,
+             "final": {"commits": commits}}
+        g = pilot.collateral_now(w)
+        self.assertTrue(g["gone"])
+        self.assertEqual((g["ahead"], g["prs"]), (1, []), "on no remote: no PR, and one commit past its base")
+        self.assertEqual(pilot.collateral_now({**w, "final": {"commits": ""}}).get("ahead"), None, "no tip kept: nothing to read")
+
+
     def test_checks_fold_to_one_word(self):
         pr = lambda **kw: pilot.pr_view({"number": 1, "state": "OPEN", **kw})
         self.assertEqual(pr()["ci"], "none")

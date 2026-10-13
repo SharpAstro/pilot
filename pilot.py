@@ -1091,6 +1091,12 @@ def collateral_now(w):
     out = {"repo": w.get("repo"), "branch": br, "base": w.get("base"), "at": time.time(),
            "worktree": bool(w.get("worktree")) and Path(w["worktree"]).is_dir()}
     sha = git("rev-parse", "--verify", "--quiet", f"refs/heads/{br}")
+    # A removed leg's branch may have gone with its worktree; the tip its record kept (`rm` logs its commits)
+    # still reads its commits past its base and the PRs that hold them, for a flight connecting from it.
+    tip = ((w.get("final") or {}).get("commits") or "").split(maxsplit=1)[:1]
+    if not sha and tip:
+        sha = git("rev-parse", "--verify", "--quiet", f"{tip[0]}^{{commit}}")
+        out["gone"] = bool(sha)
     if not sha:
         # A leg that has just taken off has no branch yet: Claude Code makes its worktree once the session starts.
         if not out["worktree"] and time.time() - (w.get("started") or 0) < 900:
@@ -2474,13 +2480,24 @@ def flight_landed(states):
     """Whether a flight has landed, from flight_legs: every leg on its route landed and every pull request its
     legs opened at the gate, merged. A leg cleared to land waits on its merge still. A leg's git not read yet
     (none, pending, an error, or its PRs unknown) is not landed either: until then its PRs are unknown, not
-    absent, as the dashboard has it (4463789). With what is still open."""
-    def unread(g):
-        return not g or g.get("pending") or g.get("error") or g.get("prs") is None
-    left = [f"{s['leg']}: {s['label']}" for s in states if s["cls"] != "good"]
-    left += [f"{s['leg']}: its pull requests not read yet" for s in states if s["cls"] == "good" and unread(s.get("git"))]
-    left += [f"{s['leg']}: #{ap['pr']} {ap['label']}" for s in states if s["cls"] == "good" and not unread(s.get("git"))
-             for ap in [(s["w"] or {}).get("approach")] if ap and ap["stage"] != "gate"]
+    absent, as the dashboard has it (4463789). And a leg's commits past its base land only on a merged PR,
+    DONE and unpushed or not: a flight connects from this one for that change merged. With what is still open."""
+    def still_open(s):
+        if s["cls"] != "good":
+            return s["label"]
+        g = s.get("git") or {}
+        if g.get("gone") and g.get("ahead") is None:     # its branch deleted, and no tip kept to read it by
+            return None if ((s["w"] or {}).get("final") or {}).get("commits") == "" else "its branch is deleted, so its commits cannot be read"
+        if not g or g.get("pending") or g.get("error") or g.get("prs") is None:
+            return "its pull requests not read yet"
+        ap = (s["w"] or {}).get("approach")
+        if ap and ap["stage"] != "gate":
+            return f"#{ap['pr']} {ap['label']}"
+        n = g.get("ahead")
+        if n and not any(p.get("state") == "MERGED" for p in g["prs"]):
+            return f"{n} commit{'s' if n != 1 else ''} on no merged pull request"
+        return None
+    left = [f"{s['leg']}: {why}" for s in states for why in [still_open(s)] if why]
     return bool(states) and not left, left or ([] if states else ["no legs on its route yet"])
 
 
