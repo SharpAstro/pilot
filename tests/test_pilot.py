@@ -364,6 +364,17 @@ class TranscriptTests(Case):
         items = pilot.checklist(["w1"])         # no task files: Claude Code deleted them
         self.assertEqual([(i["subject"], i["status"]) for i in items], [("write test", "completed")])
 
+    def test_a_continued_session_numbers_its_new_items_from_one_again(self):
+        self.transcript("w2", [      # a `say` copy: the earlier session's calls, then its own store from #1
+            tool_use("t1", "TaskCreate", {"subject": "step 1"}), tool_result("t1", "Task #1 created"),
+            tool_use("t2", "TaskCreate", {"subject": "step 2"}), tool_result("t2", "Task #2 created"),
+            tool_use("t3", "TaskUpdate", {"taskId": "1", "status": "completed"}), tool_result("t3", "Updated task #1 status"),
+            tool_use("t4", "TaskCreate", {"subject": "R1 B1 fix"}), tool_result("t4", "Task #1 created"),
+            tool_use("t5", "TaskUpdate", {"taskId": "1", "status": "in_progress"}), tool_result("t5", "Updated task #1 status"),
+        ])
+        self.assertEqual([(i["subject"], i["status"]) for i in pilot.checklist(["w2"])],
+                         [("step 1", "completed"), ("step 2", "pending"), ("R1 B1 fix", "in_progress")])
+
     def test_who_refused_a_call(self):
         cases = [("denied by the Claude Code auto mode classifier", "auto mode"),
                  ("PreToolUse:Bash hook error: no", "a hook"),

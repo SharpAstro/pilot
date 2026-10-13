@@ -743,9 +743,11 @@ def checklist(session_ids):
             t = read_json(f)
             if isinstance(t, dict) and t.get("subject") and t.get("status") != "deleted":
                 items.append({k: t.get(k) for k in ("id", "subject", "status", "activeForm")})
-        items = items or replay_tasks(sid)
         if items:
             return sorted(items, key=lambda x: int(x["id"]) if str(x.get("id")).isdigit() else 0)
+        items = replay_tasks(sid)      # in the order the items were made
+        if items:
+            return items
     return []
 
 
@@ -757,7 +759,8 @@ def replay_tasks(sid):
     one is completed, keeping only .highwatermark and .lock (seen on a worker that finished all six), so a
     finished checklist would read as none kept. Its TaskCreate and TaskUpdate calls are still in the
     transcript; only those that succeeded count. Cached by the transcript's size: a finished worker's
-    transcript no longer moves."""
+    transcript no longer moves. A session `say` continued holds the earlier session's calls too, but its own
+    task store starts again at #1, so a #1 made later is a new item, not the old #1 again."""
     path = transcript(sid)
     if not path:
         return []
@@ -785,6 +788,8 @@ def replay_tasks(sid):
                         tur = e.get("toolUseResult") if isinstance(e.get("toolUseResult"), dict) else {}
                         m = re.search(r"Task #(\d+)", flat(b.get("content")))
                         tid = str((tur.get("task") or {}).get("id") or (m.group(1) if m else len(items) + 1))
+                        if tid in items:            # a new task store: the old item keeps its place under another key
+                            items = {(f"{k}~{len(items)}" if k == tid else k): v for k, v in items.items()}
                         items[tid] = {"id": tid, "subject": inp.get("subject"), "status": "pending", "activeForm": inp.get("activeForm")}
                     elif str(inp.get("taskId")) in items:
                         it = items[str(inp["taskId"])]
