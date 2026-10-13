@@ -455,6 +455,7 @@ class TranscriptTests(Case):
     def test_a_refusal_by_the_wiring_is_a_gate(self):
         cases = [("pilot budget: this worker has spent 10,000,000 of its 10,000,000 weighted tokens.", "pilot's budget", False),
                  ("pilot: don't ask in the terminal. A prompt there blocks you", "pilot's ask hook", True),
+                 ("PreToolUse:Bash hook error: pilot budget: this worker has spent 10,000,000", "pilot's budget", False),
                  ("PreToolUse:Bash hook error: SAM-REPLY-GATE: reply first", "the reply gate", True),
                  ("This session is isolated in the worktree C:/repo/.claude/worktrees/w-x", "Claude Code", False),
                  ("denied by the Claude Code auto mode classifier", "auto mode", False)]
