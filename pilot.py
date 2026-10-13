@@ -591,12 +591,20 @@ def brief_input(inp):
 
 # How Claude Code words a call it refused, and who refused it (measured on this machine's transcripts).
 DENIALS = [
+    (re.compile(r"^pilot budget: "), "pilot's budget"),
+    (re.compile(r"pilot: don't ask in the terminal"), "pilot's ask hook"),
+    (re.compile(r"SAM-REPLY-GATE"), "the reply gate"),
     (re.compile(r"denied by the Claude Code auto mode classifier"), "auto mode"),
     (re.compile(r"^PreToolUse:\w+ hook error"), "a hook"),
     (re.compile(r"^<tool_use_error>Blocked:"), "Claude Code"),
     (re.compile(r"Permission to use .* has been denied|matches a deny rule", re.I), "a deny rule"),
     (re.compile(r"doesn't want to proceed with this tool use"), "a prompt nobody approved"),
+    (re.compile(r"^This (session|agent) is isolated in the worktree"), "Claude Code"),
 ]
+# A refusal by the wiring that the session answers by doing what it says, not by the session's own choice:
+# pilot's ask hook sends a pilot's question to its plan, Sam's reply gate wants the reply written first. It is
+# marked `gate`, and the session view does not draw it, as campaigner does not draw the reply gate's.
+GATES = {"pilot's ask hook", "the reply gate"}
 
 
 def user_text(c, ev, queued=False):
@@ -671,7 +679,7 @@ def events_of(e):
                 text = flat(b.get("content"))
                 denied = next((who for rx, who in DENIALS if rx.search(text)), None) if b.get("is_error") else None
                 ev("result", id=b.get("tool_use_id"), error=bool(b.get("is_error")), denied=denied,
-                   agentId=tur.get("agentId"), text=text[:12000])
+                   agentId=tur.get("agentId"), text=text[:12000], **({"gate": True} if denied in GATES else {}))
             elif b.get("type") == "text" and not e.get("isMeta") and b.get("text", "").strip():
                 user_text(b["text"], ev)
     elif t == "attachment":
@@ -707,6 +715,28 @@ def read_events(path, offset=0):
         if isinstance(e, dict):
             out += events_of(e)
     return out, offset + end
+
+
+def spawns(staff_dir):
+    """Which subagent each Agent call started: its tool_use id to the agent id, from the subagents' meta files
+    (`toolUseId`). The call's result names the agent too, but only once it is back, and a background
+    subagent's page is worth opening while it runs."""
+    out = {}
+    for f in Path(staff_dir).glob("agent-*.meta.json"):
+        tid = read_json(f, {}).get("toolUseId") if f.is_file() else None
+        if tid:
+            out[tid] = f.name[len("agent-"):-len(".meta.json")]
+    return out
+
+
+def link_spawns(events, staff_dir):
+    """Each Agent call among the events, with `agentId`: the subagent it started, once its meta file is written."""
+    calls = [e for e in events if e["kind"] == "tool" and e.get("tool") in ("Agent", "Task") and not e.get("agentId")]
+    links = spawns(staff_dir) if calls else {}
+    for e in calls:
+        if e.get("id") in links:
+            e["agentId"] = links[e["id"]]
+    return events
 
 
 def tail_events(session_id, n=40, tail_bytes=512 * 1024):
@@ -2941,7 +2971,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with open(path, "rb") as f:
                 f.seek(start)
                 start += len(f.readline())
+        staff = main.parent / sid / "subagents"      # a subagent's own Agent calls start agents beside it
         events, offset = read_events(path, start)
+        link_spawns(events, staff)
         self.emit("backlog", {"events": events[-400:], "skipped": max(0, len(events) - 400), "truncated": start > 0})
         if self.preview:                      # one look, then close: an open stream never lets headless Edge settle
             self.wfile.write(b"retry: 600000\n\n")
@@ -2953,7 +2985,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if path.stat().st_size > offset:
                 events, offset = read_events(path, offset)
                 if events:
-                    self.emit("events", events)
+                    self.emit("events", link_spawns(events, staff))
                     pinged = time.time()
             if time.time() - pinged > 15:
                 self.wfile.write(b": ping\n\n")
