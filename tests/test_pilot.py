@@ -545,6 +545,13 @@ class FlightTimeTests(Case):
         pilot.SCHEDULES.write_text("[1, 2]", encoding="utf-8")
         self.assertEqual(pilot.schedule("p2", 80_000.0), 80_000.0)
 
+    def test_a_woken_pilots_flight_keeps_its_schedule(self):
+        self.plan("old", PLAN)
+        self.assertEqual(pilot.schedule("old", 50_000.0), 50_000.0)
+        pilot.move_plan("old", "new")
+        self.assertEqual(pilot.schedule("new", 90_000.0), 50_000.0, "its delay still counts from its first ETA")
+        self.assertNotIn("old", pilot.read_json(pilot.SCHEDULES))
+
     def test_a_preview_keeps_its_schedules_in_memory(self):
         self.assertEqual(pilot.schedule("p3", 60_000.0, persist=False), 60_000.0)
         self.assertEqual(pilot.schedule("p3", 61_000.0, persist=False), 60_000.0)
