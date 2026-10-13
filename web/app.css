@@ -210,6 +210,14 @@ ul.checklist li.in_progress span:first-child { color: var(--fill); }
 .plan .times .basis { flex-basis: 100%; }
 /* end flight times */
 
+/* connections: the flights a flight connects from, waiting until each has landed, plain once it has */
+.connect { font-size: 12px; font-weight: 600; white-space: nowrap; padding: 0 7px; border: 1px solid var(--axis); border-radius: 999px; color: var(--ink-2); cursor: pointer; }
+.connect.waiting { border-color: var(--warn); color: var(--ink); }
+.connect.waiting::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); margin-right: 5px; }
+.connect.unknown { border-color: var(--crit); color: var(--crit); cursor: help; }
+.plan .connects { margin: 6px 0 2px; font-size: 13px; }
+/* end connections */
+
 /* session view */
 .sess-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 4px 0 12px; }
 .sess-head .title { font-size: 18px; font-weight: 700; }

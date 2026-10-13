@@ -590,11 +590,12 @@ function planCard(p, s) {
   // alone, an active one starts open. A fold you set stays as you left it.
   const many = (s.plans || []).length > 1;
   return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" data-order="${esc(p.sessionId)}" ${fold("plan:" + p.sessionId, !!p.waiting || (!many && planActive(p, s)))}>
-    <summary class="cardhead"><span>${reorderHtml(p, s)}<b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
+    <summary class="cardhead"><span>${reorderHtml(p, s)}<b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> ${connectsHtml(p)} <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
       <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} · ` : ""}plan updated ${esc(ago(p.updated))}
       ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
     ${timesCard(p.times)}
+    ${connectsCard(p)}
     ${(p.prs || []).length ? `<div class="prline"><span class="sub">pull requests the plan names:</span> ${p.prs.map(x => prChip(x, true)).join(" ")}</div>` : ""}
     ${p.waiting ? waitingHtml(p, ps) : ""}
     ${yourMove && !atGate && ps.said ? `<details class="lastsaid" ${fold("said:" + p.sessionId, true)}><summary>its turn ended ${esc(ago(Date.parse(ps.said.at) / 1000))} with nothing in the air; its last message</summary>${md(ps.said.text)}</details>` : pilotNow(ps)}
@@ -756,6 +757,24 @@ function timesCard(t) {
     ${t.basis ? `<span class="basis sub">${t.arrived ? "" : "ETA from "}${esc(t.basis)}</span>` : ""}</div>`;
 }
 
+// The flights a flight connects from, pilot.py's connection(): its legs take off only once each has landed, so
+// one not landed yet reads waiting, and a number no flight has reads as the error it is. Once it has landed it is
+// plain. Each opens its own flight's plan.
+function connectChip(c) {
+  const cls = c.landed ? "landed" : c.known ? "waiting" : "unknown";
+  const tip = c.known ? `connects from ${c.flight}${c.title ? ` · ${c.title}` : ""}: ${c.state}${c.open?.length ? `; still open: ${c.open.join("; ")}` : ""}`
+    : `connects from ${c.flight}, but ${c.state}: a typo? pilot.py connect --remove ${c.flight}`;
+  return `<span class="connect ${cls}"${c.sessionId ? ` data-plan="${esc(c.sessionId)}"` : ""} title="${esc(tip)}">⇠ ${esc(c.flight)}${c.landed ? "" : c.known ? " · waiting" : " · no such flight"}</span>`;
+}
+const connectsHtml = p => (p.connections || []).map(connectChip).join(" ");
+function connectsCard(p) {
+  const cs = p.connections || [];
+  if (!cs.length) return "";
+  const held = cs.filter(c => !c.landed);
+  return `<div class="connects"><span class="sub">connects from</span> ${cs.map(c => `${connectChip(c)} <span class="sub">${esc(c.title ? `${c.title}: ` : "")}${esc(c.state)}</span>`).join(" · ")}
+    ${held.length ? `<span class="sub">— its legs take off once ${held.map(c => esc(c.flight)).join(", ")} ${held.length > 1 ? "have" : "has"} landed</span>` : ""}</div>`;
+}
+
 // Where a flight is: its legs as stops along one route, in the plan's order, the last stop its destination. The
 // plane flies the first leg that has not landed, as far along it as that leg's checklist is, and holds in amber
 // while that leg waits on you. Before the first takeoff it stands at the gate; when every leg is done it has landed.
@@ -802,7 +821,7 @@ function flightStrip(p, s) {
   const svg = `<svg viewBox="0 0 ${W} 86" role="img" aria-label="${esc(status.replace(/<[^>]+>/g, ""))}">${lines.join("")}${gate}${stops.join("")}
     <g transform="translate(${plane.x.toFixed(1)},${plane.y})"><g${bob}><path d="${PLANE}" style="fill:${color};stroke:var(--page);stroke-width:1"/></g></g></svg>`;
   return `<div class="flight" data-plan="${esc(p.sessionId)}" data-order="${esc(p.sessionId)}" title="Open its flight plan">
-    <div class="fhead">${reorderHtml(p, s)}<b>${p.flight ? esc(p.flight) : "Flight"}</b> ${esc(p.title)} <span class="sub">· ${status}${flightGit(p, s)}</span>${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</div>${svg}</div>`;
+    <div class="fhead">${reorderHtml(p, s)}<b>${p.flight ? esc(p.flight) : "Flight"}</b> ${connectsHtml(p)} ${esc(p.title)} <span class="sub">· ${status}${flightGit(p, s)}</span>${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</div>${svg}</div>`;
 }
 
 // ------------------------------------------------------------------ the controller's order of flights
@@ -1518,7 +1537,7 @@ document.addEventListener("click", async e => {
   const t = e.target.closest("button, a, [data-href], [data-plan]");
   if (!t) return;
   if (t.dataset.move) { e.preventDefault(); return moveFlight(t.dataset.move, Number(t.dataset.dir)); }   // not the card's fold too
-  if (t.dataset.plan) return openPlan(t.dataset.plan);
+  if (t.dataset.plan) { e.preventDefault(); return openPlan(t.dataset.plan); }   // a connection's chip folds no card it sits on
   if (t.classList.contains("s-restart")) return restartServer(t);
   if (t.classList.contains("s-clearlock")) {
     if (!confirm("Remove Claude Code's stale daemon lock? The next background session then starts a new daemon.")) return;
