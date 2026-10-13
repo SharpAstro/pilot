@@ -495,7 +495,169 @@ def plans_view(rows, workers, seen=None):
                     "pilotState": (seen.get(sid) or session_view(live[sid])) if sid in live else None,
                     "prs": mentioned_prs(re.split(r"^##\s+Log\s*$", text, maxsplit=1, flags=re.M)[0]),   # not the log's history
                     **parse_plan(text)})
-    return out[:10]
+    out = out[:10]
+    gone = archived(200)
+    for p in out:
+        p["times"] = flight_times(p["sessionId"], p["legs"], workers, gone)
+    return out
+
+
+# --------------------------------------------------------------------------- flight times
+
+# Active time counts each gap between two of a leg's transcript records at most this long. Bash's longest
+# foreground timeout is 10 minutes, so a silence longer than that is not work: a machine asleep, a worker
+# waiting on its pilot or the tower, a turn that ended.
+GAP_CAP = 10 * 60
+SCHEDULES = STATE / "schedules.json"   # each flight's schedule, its first ETA, by plan id: {"<sid>": {"eta": t, "set": t}}
+STAMP_RE = re.compile(rb'"timestamp":\s*"([^"]+)"')
+
+
+def active_seconds(stamps, cap=GAP_CAP):
+    """The active time over some moments: every gap between two of them, in order, counted at most `cap`."""
+    s = sorted(stamps)
+    return sum(min(b - a, cap) for a, b in zip(s, s[1:]))
+
+
+class Stamps:
+    """The moments one transcript file records, read incrementally as Meter reads spend: the first timestamp
+    of each line. A copy made by `say` repeats the records before it, at the same moments, so a set keeps them once."""
+
+    def __init__(self, path):
+        self.path, self.offset, self.at = Path(path), 0, set()
+
+    def read(self):
+        try:
+            with open(self.path, "rb") as f:
+                f.seek(self.offset)
+                chunk = f.read()
+        except OSError:
+            return self
+        end = chunk.rfind(b"\n") + 1
+        self.offset += end
+        for line in chunk[:end].splitlines():
+            m = STAMP_RE.search(line)
+            if not m:
+                continue
+            try:
+                self.at.add(datetime.datetime.fromisoformat(m.group(1).decode().replace("Z", "+00:00")).timestamp())
+            except ValueError:
+                pass
+        return self
+
+
+_stamps = {}
+
+
+def leg_moments(w):
+    """Every moment a leg's worker recorded, over all its sessions and their subagents."""
+    out = set()
+    for s in sessions_of(w):
+        main = transcript(s.get("sessionId"))
+        for f in [main, *subagent_files(s.get("sessionId"))] if main else []:
+            out |= (_stamps.get(str(f)) or _stamps.setdefault(str(f), Stamps(f))).read().at
+    return out
+
+
+def leg_timing(w):
+    """What a route leg gives the flight's times: unflown (no worker yet), flying, or landed (DONE with its
+    checklist complete), its active time, checklist items done of total, and when it started and last moved."""
+    if not w:
+        return {"state": "unflown"}
+    fin = w.get("final") or {}
+    items = w.get("checklist") or fin.get("checklist") or []
+    head = w.get("reportHead") or fin.get("reportHead")
+    at = leg_moments(w)
+    landed = head == "DONE" and not open_items(items) and w.get("state") != "working"
+    return {"state": "landed" if landed else "flying", "active": active_seconds(at), "done": len(items) - len(open_items(items)),
+            "total": len(items), "started": w.get("started") or (min(at) if at else None), "last": max(at) if at else None,
+            "name": w.get("name")}
+
+
+def _mins(s):
+    return f"{s / 60:.0f}m" if s < 5400 else f"{s / 3600:.1f}h"
+
+
+def project_eta(legs, now=None):
+    """The flight's departure, and its ETA or, once every leg has landed, its arrival. A leg in the air has its
+    open items left at its own rate, items done per active second, or the landed legs' rate before it has done
+    one; with no checklist yet it takes the landed legs' mean active time, less what it has flown. Legs in the
+    air fly side by side, so the longest of them counts; legs not flown follow one after another, each at the
+    landed legs' mean. With nothing to time a leg by, there is no ETA yet, and `noEta` says why."""
+    now = time.time() if now is None else now
+    landed = [l for l in legs if l["state"] == "landed"]
+    flying = [l for l in legs if l["state"] == "flying"]
+    unflown = [l for l in legs if l["state"] == "unflown"]
+    starts = [l["started"] for l in landed + flying if l.get("started")]
+    out = {"departed": min(starts) if starts else None, "eta": None, "arrived": None, "basis": "", "noEta": None}
+    if not out["departed"]:
+        out["noEta"] = "not departed"
+        return out
+    if not flying and not unflown:
+        out["arrived"] = max((l["last"] for l in landed if l.get("last")), default=None)
+        out["basis"] = f"all {len(landed)} leg{'s' if len(landed) != 1 else ''} landed"
+        return out
+    timed = [l for l in landed if l["active"] > 0]
+    mean = sum(l["active"] for l in timed) / len(timed) if timed else None
+    pooled = sum(l["done"] for l in timed) / sum(l["active"] for l in timed) if timed and any(l["done"] for l in timed) else None
+    air, why = [], []
+    for l in flying:
+        own = l["done"] / l["active"] if l["total"] and l["done"] and l["active"] > 0 else None
+        rate = own or pooled
+        if l["total"] and rate:
+            air.append((l["total"] - l["done"]) / rate)
+            why.append(f"{l.get('name') or 'a leg'}: {l['total'] - l['done']} of {l['total']} items left at "
+                       f"{_mins(1 / rate)} an item ({'its own rate' if own else 'the landed legs’ rate'})")
+        elif mean is not None:
+            air.append(max(0, mean - l["active"]))
+            why.append(f"{l.get('name') or 'a leg'}: no checklist yet, the landed legs’ mean {_mins(mean)}")
+        else:
+            out["noEta"] = f"no ETA yet: {l.get('name') or 'a leg'} has no item done and no leg has landed to time it by"
+            return out
+    if unflown and mean is None:
+        out["noEta"] = f"no ETA yet: no leg has landed to time the {len(unflown)} not flown by"
+        return out
+    if unflown:
+        why.append(f"{len(unflown)} leg{'s' if len(unflown) != 1 else ''} not flown at {_mins(mean)} each, "
+                   f"the mean of {len(timed)} landed")
+    out["eta"] = now + max(air, default=0) + len(unflown) * (mean or 0)
+    out["basis"] = "; ".join(why) + f" (active time, a gap counted at most {GAP_CAP // 60}m)"
+    return out
+
+
+_schedules = {}      # a preview dashboard's schedules: it writes nothing into the real state
+
+
+def schedule(sid, eta, persist=True):
+    """A flight's schedule: its first ETA, taken the first time one can be computed and never rewritten. It is
+    kept in <state>/schedules.json by plan id, not in the plan, which pilots edit by hand; a missing or
+    unreadable file counts as no schedules. Setting one logs it in the plan, as an audit copy."""
+    book = read_json(SCHEDULES, {}) if persist else _schedules
+    book = book if isinstance(book, dict) else {}
+    have = book.get(sid)
+    if isinstance(have, dict) and isinstance(have.get("eta"), (int, float)):
+        return have["eta"]
+    if eta is None:
+        return None
+    book[sid] = {"eta": eta, "set": time.time()}
+    if persist:
+        write_json(SCHEDULES, book)
+        plan_log(sid, f"Schedule set: ETA {time.strftime('%Y-%m-%d %H:%M', time.localtime(eta))}")
+    return eta
+
+
+def flight_times(sid, legs, workers, gone=()):
+    """A flight's departure, ETA or arrival, schedule and delay (seconds late; early is negative), for its
+    strip and plan card. A leg's worker is the live one of that name on this plan, else its latest removed one."""
+    live = {w["name"]: w for w in workers if w.get("plan") == sid}
+    old = {}
+    for a in gone:                    # newest first: a leg flown twice counts its last worker
+        if a.get("plan") == sid and a.get("name") not in old:
+            old[a["name"]] = a
+    t = project_eta([leg_timing(live.get(l["leg"]) or old.get(l["leg"])) for l in legs])
+    t["scheduled"] = schedule(sid, t["eta"], persist=not HUB.preview)
+    end = t["arrived"] or t["eta"]
+    t["delay"] = end - t["scheduled"] if end and t["scheduled"] else None
+    return t
 
 
 # --------------------------------------------------------------------------- spend
