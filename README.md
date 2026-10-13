@@ -59,6 +59,24 @@ pilot                    # the pilot here: claude --plugin-dir <this repo>/plugi
 pilot dashboard          # http://127.0.0.1:5181/, in a second terminal
 ```
 
+The function sends a first word that is one of pilot.py's subcommands to pilot.py and anything else to
+Claude Code. It reads the subcommands from pilot.py's source each call (starting Python to ask takes
+seconds on a loaded box), so a new one works without an edit; a fixed list once sent `pilot log` to a
+new Claude session as its prompt.
+
+```powershell
+function pilot {
+    $root = 'C:\Users\<you>\source\repos\sharpastro\pilot'
+    $cmds = [regex]::Matches((Get-Content -Raw "$root\pilot.py"), 'add_parser\("([a-z][a-z-]*)"|\("([a-z][a-z-]*)", cmd_\w+\)') |
+        ForEach-Object { if ($_.Groups[1].Success) { $_.Groups[1].Value } else { $_.Groups[2].Value } }
+    if ($args.Count -gt 0 -and $args[0] -in $cmds) {
+        python "$root\pilot.py" @args
+    } else {
+        claude --plugin-dir "$root\plugins\pilot" @args
+    }
+}
+```
+
 Or launch the pilot from the dashboard's **Launch** page: pick any project Claude Code knows, start a new
 session or resume one, in a new Windows Terminal tab or in the background.
 
@@ -123,8 +141,10 @@ Code's own project list.
 | `<repo>/.claude/worktrees/w-<leg>` | each worker's worktree, branch `worktree-w-<leg>`; `start` adds the folder to the repo's `.git/info/exclude` |
 | `~/.claude/projects/...` | transcripts, where Claude Code always keeps them; `rm` leaves them, so History can open them |
 
-Nothing is installed into `~/.claude`, and nothing is committed to the repos workers fly in. To add a
-repo, put it in `~/.pilot/pilot.json` and open `claude` there once, so its workspace trust is accepted.
+Nothing is installed into `~/.claude`, and nothing is committed to the repos workers fly in. A repo joins
+`~/.pilot/pilot.json` by itself, under its folder's name, when a pilot opens its flight plan there, however
+the pilot was started (the `pilot` command, the dashboard's launch, a bare `/pilot:pilot`); you can also
+add one by hand. Open `claude` there once, so its workspace trust is accepted.
 A worker starts in the repo whose main checkout the pilot runs in; `start` refuses a checkout that is not
 listed, rather than fly the leg somewhere else.
 

@@ -2415,9 +2415,15 @@ def cmd_plan(a):
     if not sid:
         sys.exit("pilot: run this from the pilot session (it reads CLAUDE_CODE_SESSION_ID), or pass --session")
     p = plan_path(sid)
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
+    # The pilot's repo joins pilot.json when it opens its plan there, however it was started: the `pilot` command,
+    # the dashboard, a bare /pilot:pilot. Its workers start only in a configured repo, and the dashboard lists
+    # only sessions there. Not with --session, which may be run from anywhere.
+    added = register_repo(top) if top and not a.session else None
+    if added:
+        print(f"pilot: added {top} to {CONFIG} as {added}", file=sys.stderr)
     if not p.exists():
         PLANS.mkdir(parents=True, exist_ok=True)
-        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
         repo = next((k for k, v in config()["repos"].items() if same_path(v, top)), Path(top or os.getcwd()).name)
         p.write_text(PLAN_TEMPLATE.format(title=a.title or "untitled", flight=flight_code(repo), sid=sid,
                                           now=time.strftime("%Y-%m-%d %H:%M")), encoding="utf-8")
@@ -3074,6 +3080,22 @@ def project_sessions(path, limit=40):
     return out
 
 
+def register_repo(path):
+    """Adds a git checkout to pilot.json's repos under its folder's name, unless one already names it, and returns
+    the name it was added as. A pilot launched from the dashboard in a repo not named there was not listed as a
+    pilot (the launch page waited for it in vain), and `start` would have refused its first leg."""
+    cfg = read_json(CONFIG, {}) or {}
+    repos = cfg.setdefault("repos", {})
+    if any(same_path(v, path) for v in repos.values()) or not Path(path, ".git").exists():
+        return None
+    name, n = Path(path).name, 2
+    while name in repos:
+        name, n = f"{Path(path).name}-{n}", n + 1
+    repos[name] = path
+    write_json(CONFIG, cfg)
+    return name
+
+
 def launch(path, resume=None, where="terminal", message="", as_pilot=True):
     """Starts a pilot session in a directory Claude Code knows, new or resuming one of its sessions: in a new
     Windows Terminal tab (interactive, yours to type into), or in the background (reached by attach or
@@ -3086,11 +3108,12 @@ def launch(path, resume=None, where="terminal", message="", as_pilot=True):
         raise ValueError("no such session in that directory")
     text = ((f"/pilot:pilot {message}" if message.strip() else "/pilot:pilot") if as_pilot else message).strip()
     args = ["--plugin-dir", str(HERE / "plugins" / "pilot")] + (["--resume", resume] if resume else [])
+    added = {"registered": register_repo(path)} if as_pilot else {}
     if where == "background":
         if not known[path]["trusted"]:
             raise ValueError("a background session needs the directory's workspace trust accepted: open claude there once")
         job = backgrounded(claude("--bg", "-n", f"pilot-{Path(path).name}"[:40], *args, stdin=text or None, cwd=path, timeout=120))
-        return {"where": "background", "id": job}
+        return {"where": "background", "id": job, **added}
     # Windows Terminal splits its own command line on ';', so the first message travels in a file instead.
     first = ""
     if text:
@@ -3105,7 +3128,7 @@ def launch(path, resume=None, where="terminal", message="", as_pilot=True):
     command = f"& claude {quoted}{first}".replace(";", "\\;")      # wt reads a bare ';' as its own separator
     subprocess.Popen([wt, "-w", "0", "new-tab", "--title", "pilot", "-d", path, "pwsh", "-NoExit", "-Command", command],
                      env=claude_env(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return {"where": "terminal"}
+    return {"where": "terminal", **added}
 
 
 # --------------------------------------------------------------------------- dashboard

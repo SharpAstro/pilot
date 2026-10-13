@@ -1457,7 +1457,8 @@ VIEWS.launch = root => {
         message: $(".s-msg", root).value, asPilot});
       pending = {path: norm(sel.value), resume, job: j.id || null, asPilot, at: Date.now(), where: j.where};
       put($(".s-result", root), (j.where === "terminal" ? "opened in a new Windows Terminal tab"
-        : `started in the background as ${esc(j.id)}: <button data-copy="claude attach ${esc(j.id)}">copy attach</button>`) + "; waiting for it to come up…");
+        : `started in the background as ${esc(j.id)}: <button data-copy="claude attach ${esc(j.id)}">copy attach</button>`)
+        + (j.registered ? `; added to <code>~/.pilot/pilot.json</code> as ${esc(j.registered)}` : "") + "; waiting for it to come up…");
     } catch (e) { put($(".s-result", root), `<span style="color:var(--crit)">${esc(e.message)}</span>`); }
     btn.disabled = false;
   });

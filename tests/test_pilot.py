@@ -197,6 +197,26 @@ class PlanTests(Case):
         self.assertEqual((p["title"], p["flight"]), ("Export fixes", "WA1"))
         self.assertEqual(len(p["log"]), 1)
 
+    def test_a_pilot_opening_its_plan_registers_its_repo(self):
+        repo = ROOT / "graph-app"
+        repo.mkdir(exist_ok=True)
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        self.config(repos={})
+        cwd, env = os.getcwd(), dict(os.environ)
+        os.chdir(repo)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                pilot.cmd_plan(types.SimpleNamespace(session="s3", title="from elsewhere"))
+                self.assertEqual(pilot.config()["repos"], {}, "--session may be run from anywhere")
+                os.environ["CLAUDE_CODE_SESSION_ID"] = "s4"
+                pilot.cmd_plan(types.SimpleNamespace(session=None, title="Graphs"))
+        finally:
+            os.chdir(cwd)
+            os.environ.clear()
+            os.environ.update(env)
+        self.assertEqual(list(pilot.config()["repos"]), ["graph-app"])
+        self.assertTrue(os.path.samefile(pilot.config()["repos"]["graph-app"], repo))
+
     def test_plan_log_appends_and_records_in_the_black_box(self):
         self.plan("s1", PLAN)
         pilot.plan_log("s1", "Leg fix took off")
@@ -1032,6 +1052,24 @@ class DaemonLockTests(Case):
             pilot.cmd_start(types.SimpleNamespace(name="leg", after=None))
         self.assertIn("daemon lock", str(e.exception))
         self.assertTrue(pilot.DAEMON_LOCK.exists(), "pilot.py never removes it itself")
+
+
+class RegisterRepoTests(Case):
+    def test_a_launched_repo_is_added_once_under_its_folder_name(self):
+        repos = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, repos, True)
+        for d in ("a/graphjoy", "b/graphjoy", "c/plain"):
+            (repos / d).mkdir(parents=True)
+        (repos / "a/graphjoy/.git").mkdir()
+        (repos / "b/graphjoy/.git").write_text("gitdir: elsewhere")      # a worktree's .git is a file
+        self.config(repos={"pilot": "C:/x/pilot"}, budget=5)
+        self.assertEqual(pilot.register_repo(str(repos / "a/graphjoy")), "graphjoy")
+        self.assertIsNone(pilot.register_repo(str(repos / "a" / "graphjoy")), "already named")
+        self.assertEqual(pilot.register_repo(str(repos / "b/graphjoy")), "graphjoy-2")
+        self.assertIsNone(pilot.register_repo(str(repos / "c/plain")), "not a git checkout")
+        cfg = pilot.config()
+        self.assertEqual(set(cfg["repos"]), {"pilot", "graphjoy", "graphjoy-2"})
+        self.assertEqual(cfg["budget"], 5, "the rest of the config is kept")
 
 
 class RemoveTests(Case):
