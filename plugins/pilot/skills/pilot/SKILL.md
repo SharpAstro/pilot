@@ -216,6 +216,8 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
     It deletes the worktree and its local `worktree-w-<leg>` branch, and a big worktree takes minutes (a
     built SDK, 6 GB, took six and a half), so run it in the background rather than under a 2-minute
     timeout. A leg whose sessions were already removed by hand still archives.
+    Archiving a whole flight (`pilot.py archive`) is the controller's alone: never archive one yourself; once it
+    has landed you may suggest it in your last report.
 
 `python <pilot.py> list` shows every worker's state, spend and last activity. The controller's dashboard
 is `python <pilot.py> dashboard`, at http://127.0.0.1:5181/.
