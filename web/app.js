@@ -613,7 +613,8 @@ function graphSvg(s) {
   const items = [], roots = new Map(), onPlan = new Set(), folded = new Set();
   for (const p of s.plans || []) {
     const open = planOpen(p, s);
-    roots.set("p:" + p.sessionId, {label: p.flight ? `${p.flight} ${p.title}` : p.title, sub: open ? "pilot" : `collapsed · ${legTally(p, s)}`, folded: !open});
+    roots.set("p:" + p.sessionId, {label: p.flight ? `${p.flight} ${p.title}` : p.title, sub: open ? "pilot" : `collapsed · ${legTally(p, s)} · click to open`,
+                                   folded: !open, plan: p.sessionId});
     if (!open) folded.add(p.sessionId);
     for (const l of p.legs) {
       onPlan.add(l.leg);
@@ -665,7 +666,7 @@ function graphSvg(s) {
     const {x, y} = pos.get(n.key);
     if (n.pilot) {
       const r = n.pilot, dash = r.folded ? ";stroke-dasharray:5 4;opacity:.7" : "";
-      nodes.push(`<g class="node"><title>${esc(r.label)}</title><rect class="box" x="${x}" y="${y}" width="${NW}" height="${NH}" rx="8" style="fill:var(--surface);stroke:var(--ink-2);stroke-width:1.5${dash}"/>
+      nodes.push(`<g class="node"${r.plan ? ` data-plan="${esc(r.plan)}"` : ""}><title>${esc(r.label)}${r.plan ? (r.folded ? ": click to open its plan" : ": click to go to its plan") : ""}</title><rect class="box" x="${x}" y="${y}" width="${NW}" height="${NH}" rx="8" style="fill:var(--surface);stroke:var(--ink-2);stroke-width:1.5${dash}"/>
         <text x="${x + 12}" y="${y + 24}" font-weight="700">${esc(clip(r.label, 24))}</text><text class="sm" x="${x + 12}" y="${y + 44}">${esc(clip(r.sub, 30))}</text></g>`);
       continue;
     }
@@ -1312,9 +1313,18 @@ async function restartServer(btn) {
   btn.textContent = "it has not come back: look at its terminal";
 }
 
+// A plan's box on the radar: unfold its card (a folded plan leaves only that box) and scroll to it.
+function openPlan(sid) {
+  opened.set("plan:" + sid, true);
+  render();
+  const card = document.getElementById("plan-" + sid);
+  if (card) window.scrollTo(0, card.getBoundingClientRect().top + scrollY - ($(".top")?.offsetHeight || 0) - 8);
+}
+
 document.addEventListener("click", async e => {
-  const t = e.target.closest("button, a, [data-href]");
+  const t = e.target.closest("button, a, [data-href], [data-plan]");
   if (!t) return;
+  if (t.dataset.plan) return openPlan(t.dataset.plan);
   if (t.classList.contains("s-restart")) return restartServer(t);
   if (t.classList.contains("s-clearlock")) {
     if (!confirm("Remove Claude Code's stale daemon lock? The next background session then starts a new daemon.")) return;
