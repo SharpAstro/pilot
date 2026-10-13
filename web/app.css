@@ -185,9 +185,14 @@ ul.checklist li.in_progress span:first-child { color: var(--fill); }
 .flight .fhead { font-size: 13px; }
 .flight svg { display: block; width: 100%; height: auto; }
 .flight text { font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--ink-2); }
-.flight line { stroke-width: 2.5; stroke-linecap: round; }
-.flight line.flown { stroke: var(--good); }
-.flight line.ahead { stroke: var(--axis); stroke-dasharray: 6 5; }
+/* A leg's track: from each leg it waits for (or the gate) to its stop, so lanes fork and join. */
+.flight .trk { fill: none; stroke-width: 2.5; stroke-linecap: round; }
+.flight .trk.flown { stroke: var(--good); }
+.flight .trk.ahead { stroke: var(--axis); stroke-dasharray: 6 5; }
+/* An alternate leg: dashed beside its primary, faint until it is taken. */
+.flight .trk.alt { stroke-dasharray: 2 4; stroke-width: 2; }
+.flight .stop.out { opacity: .6; }
+.flight .stop.alt text { font-style: italic; }
 .flight .stop[data-href] { cursor: pointer; }
 .flight .bob { animation: bob 2.4s ease-in-out infinite; }
 @keyframes bob { 50% { transform: translateY(-2.5px); } }
