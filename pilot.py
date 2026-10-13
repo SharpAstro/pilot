@@ -1411,7 +1411,9 @@ def worker_status(w, rows=None):
         "spend": sp, "overBudget": bool(w.get("budget")) and sp["weighted"] >= w["budget"],
         "lastActivity": last, "now": now, "rev": path.stat().st_size if path else 0,
         "approach": approach(w.get("reviews"), (collateral(w) or {}).get("prs")),
-        "unread": state in ("done", "blocked") and unread(w, (row or {}).get("status") == "busy", stopped or last),
+        # Its turn has ended (done or blocked): stopped, even while Claude Code still calls it busy, as it does
+        # while a background task it started is attached. ephemeris reported BLOCKED so, and its pilot slept on.
+        "unread": state in ("done", "blocked") and unread(w, False, stopped or last),
         "checklist": checklist([s.get("sessionId") for s in sessions_of(w)]),
         "remote": f"https://claude.ai/code/{rec['bridgeSessionId']}" if rec.get("bridgeSessionId") else None,
         "git": collateral(w), "outside": outside_line(said[-1]["text"]) if said else None,
