@@ -583,7 +583,10 @@ function planCard(p, s) {
   const status = atGate ? `<span class="chip done">✓ landed</span>`
     : yourMove ? `<span class="chip blocked move" title="${esc(ps.said?.text || "")}">${move}</span>` : pilotChip(ps, flying);
   const where = `answer in the pilot's terminal${ps?.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : ""}`;
-  return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" ${fold("plan:" + p.sessionId, planActive(p, s) || !!p.waiting)}>
+  // With more than one flight each starts folded, so the page reads as a list of flights, unless it waits on you;
+  // alone, an active one starts open. A fold you set stays as you left it.
+  const many = (s.plans || []).length > 1;
+  return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" ${fold("plan:" + p.sessionId, !!p.waiting || (!many && planActive(p, s)))}>
     <summary class="cardhead"><span><b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}</span> ${status}</span>
       <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} · ` : ""}plan updated ${esc(ago(p.updated))}
       ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>

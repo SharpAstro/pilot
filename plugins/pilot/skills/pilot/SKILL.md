@@ -91,7 +91,10 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
    ("No agent named ... is reachable"): do other work, then send again. When the notice arrives, read its
    report with `python <pilot.py> result <leg>`. Never loop on `list` or sleep waiting for one. A
    subscription lives only as long as your process: if you were resumed, subscribe again to every worker
-   `python <pilot.py> list` shows still flying, before anything else.
+   `python <pilot.py> list` shows still flying, before anything else. A background pilot's process ends
+   with its turn (and with a machine that sleeps); the dashboard then wakes it as a copy, under a new
+   session id, when one of its legs stops or a message comes for it, and moves its plan along. A turn that
+   starts "(pilot.py) Your background session had ended" is that: re-read the plan, then go on.
 7. **Correct a worker** with `SendMessage` to its name, inside its brief. If the brief itself was wrong,
    stop the worker, fix the route, and start a new leg with a new brief. Messages from the controller reach
    a worker as its own user turns; you do not send those.

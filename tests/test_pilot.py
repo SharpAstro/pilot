@@ -213,6 +213,33 @@ class PlanTests(Case):
         self.assertEqual(actors["Decided: one leg per concern. Co-pilot agreed."], "pilot")
 
 
+class WakeTests(Case):
+    def test_a_sleeping_pilot_wakes_as_a_copy_and_its_plan_and_legs_move_with_it(self):
+        self.plan("old-sid", "# Flight plan: x\n\nPilot session: old-sid\n\n## Log\n\n- 2026-10-14 08:00 Plan opened.\n")
+        self.worker("leg-a", plan="old-sid")
+        self.rows = [{"name": "pilot-x", "sessionId": "old-sid", "kind": "background", "state": "done", "pid": None, "cwd": str(ROOT)}]
+        calls = []
+        saved = pilot.claude, pilot.backgrounded, pilot.session_of
+        pilot.claude = lambda *a, **kw: calls.append((a, kw.get("stdin"))) or None
+        pilot.backgrounded, pilot.session_of = (lambda r: "job12345"), (lambda job: "new-sid")
+        try:
+            self.assertEqual(pilot.wake_pilot("old-sid", "Leg leg-a has stopped (DONE)."), "new-sid")
+        finally:
+            pilot.claude, pilot.backgrounded, pilot.session_of = saved
+        self.assertEqual(calls[0][0][:3], ("--bg", "--resume", "old-sid"))
+        self.assertIn("Leg leg-a has stopped (DONE).", calls[0][1])
+        self.assertFalse(pilot.plan_path("old-sid").exists())
+        self.assertIn("Pilot session: new-sid", pilot.plan_path("new-sid").read_text(encoding="utf-8"))
+        self.assertEqual(pilot.load("leg-a")["plan"], "new-sid")
+        self.assertIn("Pilot woken by pilot.py as new-sid", self.log_of("new-sid")[-1])
+
+    def test_a_live_or_interactive_pilot_is_not_woken(self):
+        self.plan("p1", "# Flight plan: x\n\n## Log\n\n")
+        for row in ({"sessionId": "p1", "kind": "background", "pid": 42}, {"sessionId": "p1", "kind": "interactive", "pid": None}):
+            self.rows = [row]
+            self.assertIsNone(pilot.wake_pilot("p1", "why"))
+
+
 class LogTests(Case):
     def test_log_stamps_the_time_now(self):
         self.plan("p1", "# Flight plan: x\n\n## Log\n\n- 2026-10-13 20:52 Plan opened.\n")

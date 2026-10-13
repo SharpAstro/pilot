@@ -470,6 +470,7 @@ def plans_view(rows, workers, seen=None):
     """Flight plans whose pilot is live, or that a current worker flies a leg of, or touched this week. A live
     pilot comes with what it is doing (session_view), reusing `seen`, the pilots already looked at."""
     live = {r.get("sessionId"): r for r in rows if r.get("pid")}
+    asleep_rows = {r.get("sessionId"): r for r in rows if asleep(r)}
     flown = {w.get("plan") for w in workers if w.get("plan")}
     seen = seen or {}
     out = []
@@ -478,7 +479,7 @@ def plans_view(rows, workers, seen=None):
         if sid not in live and sid not in flown and time.time() - mtime > 7 * 86400:
             continue
         text = p.read_text(encoding="utf-8")
-        out.append({"sessionId": sid, "path": str(p), "updated": mtime, "live": sid in live,
+        out.append({"sessionId": sid, "path": str(p), "updated": mtime, "live": sid in live, "asleep": asleep(asleep_rows.get(sid)),
                     "pilot": (live.get(sid) or {}).get("name"),
                     "pilotState": (seen.get(sid) or session_view(live[sid])) if sid in live else None,
                     "prs": mentioned_prs(re.split(r"^##\s+Log\s*$", text, maxsplit=1, flags=re.M)[0]),   # not the log's history
@@ -1676,6 +1677,58 @@ Recipients:
 """
 
 
+# --------------------------------------------------------------------------- waking a session that has ended
+
+WAKES = STATE / "wakes.json"        # what each wake was for, so one stop wakes a pilot once
+
+
+def asleep(row):
+    """A background session whose process has ended: one ends with its turn, and a machine that sleeps ends the
+    rest. It answers nothing (the intercom cannot reach it) until it is resumed."""
+    return bool(row) and row.get("kind") == "background" and not row.get("pid")
+
+
+def wake_pilot(old, why):
+    """Resumes a background pilot that has ended, with `why` as its next turn. `--bg --resume` continues in a copy
+    under a new session id, and a flight plan is its pilot session's, so the plan, and the workers flying it,
+    move onto the new id: `pilot plan` and `pilot log` find it there. Returns the new id, or None when there is
+    no such pilot asleep."""
+    _agents_cache["at"] = 0
+    row = next((r for r in agents() if r.get("sessionId") == old), None)
+    if not asleep(row) or not plan_path(old).exists():
+        return None
+    text = (f"(pilot.py) Your background session had ended, so you are resumed as a copy of it, to pick this up:\n{why}\n\n"
+            f"Your flight plan moved with you to your new session id (`python {(HERE / 'pilot.py').as_posix()} plan` prints it). "
+            f"Subscribe again to every worker still flying, then carry on as your rules say; end your turn when nothing is yours to do.")
+    job = backgrounded(claude("--bg", "--resume", old, "-n", row.get("name") or "pilot", "--plugin-dir", str(HERE / "plugins" / "pilot"),
+                              stdin=text, cwd=row.get("cwd") or str(HERE), timeout=120))
+    new = session_of(job)
+    if not new:
+        return None
+    src = plan_path(old)
+    plan_path(new).write_text(src.read_text(encoding="utf-8").replace(f"Pilot session: {old}", f"Pilot session: {new}"), encoding="utf-8")
+    src.unlink()
+    for w in registered():
+        if w.get("plan") == old:
+            w["plan"] = new
+            save(w)
+    plan_log(new, f"Pilot woken by pilot.py as {new[:8]} (its session {old[:8]} had ended): {why.splitlines()[0][:200]}")
+    return new
+
+
+def wake_autopilot(text):
+    """Resumes the autopilot when it has ended, with `text` as its next turn, and records its new session."""
+    st = read_json(AUTOPILOT, {})
+    if not st.get("sessionId"):
+        return None
+    job = backgrounded(claude("--bg", "--resume", st["sessionId"], "-n", AUTOPILOT_NAME, "--model", AUTOPILOT_MODEL, "--effort", "xhigh",
+                              "--permission-mode", "auto", stdin=text, cwd=str(HERE), timeout=120))
+    st.update(id=job, sessionId=session_of(job) or st["sessionId"])
+    write_json(AUTOPILOT, st)
+    blackbox("Autopilot woken by pilot.py: its session had ended", actor="pilot.py")
+    return job
+
+
 def intercom(names, text, sender="Controller"):
     """Your words to live sessions through Claude Code's own intercom (SendMessage), which only a Claude
     session can use, so one Haiku session allowed that tool alone sends them as `pilot-dashboard`: about 3 s
@@ -1686,6 +1739,19 @@ def intercom(names, text, sender="Controller"):
         raise ValueError("the message is empty")
     if not names:
         raise ValueError("no recipients")
+    _agents_cache["at"] = 0
+    rows = {x.get("name"): x for x in agents()}
+    woken = []
+    for n in list(names):
+        if not asleep(rows.get(n)):
+            continue
+        msg = f"A message from {sender}, sent while your session had ended:\n{text.strip()}"
+        if n == AUTOPILOT_NAME and wake_autopilot(msg):
+            names.remove(n); woken.append(n)
+        elif wake_pilot(rows[n].get("sessionId"), msg):
+            names.remove(n); woken.append(n)
+    if not names:
+        return f"woke {', '.join(woken)} with it"
     mark = f"======== {os.urandom(4).hex()} ========"
     r = claude("-p", "--model", "haiku", "--tools", "SendMessage", "--allowedTools", "SendMessage", "--strict-mcp-config",
                "--no-session-persistence", "--name", RELAY, "--output-format", "json",
@@ -2623,16 +2689,46 @@ class Hub:
         self.notices = Notices()
         self.running = set()             # summaries in flight, by key
         self.routing, self.route_failed = set(), {}   # plans being sent to the autopilot; when a send last failed
+        self.waking = set()                            # pilots being woken
         self.preview = False
 
     def poke(self):
         self.dirty = True
 
+    def wake_pilots(self, snap):
+        """A background pilot that has ended is woken when one of its legs stops after its log last named it (the
+        unread flag): nobody else would tell it, and the leg would sit there done. Once per stop, in a thread."""
+        if self.preview:
+            return
+        rows = {r.get("sessionId"): r for r in agents()}
+        done = read_json(WAKES, {})
+        for w in snap["workers"]:
+            pid = w.get("plan")
+            key = f"{w['name']}:{int(w.get('lastActivity') or 0)}"
+            if not w.get("unread") or not asleep(rows.get(pid)) or done.get(pid) == key or pid in self.waking:
+                continue
+            self.waking.add(pid)
+
+            def go(pid=pid, w=w, key=key):
+                try:
+                    new = wake_pilot(pid, f"Leg {w['name']} has stopped ({w.get('reportHead') or w.get('state')}) since your log last named it. "
+                                          f"Read its report: python {(HERE / 'pilot.py').as_posix()} result {w['name']}")
+                    d = read_json(WAKES, {})
+                    d[new or pid] = key
+                    write_json(WAKES, d)
+                except Exception:
+                    pass
+                finally:
+                    self.waking.discard(pid)
+                    self.poke()
+            threading.Thread(target=go, daemon=True).start()
+
     def route_autopilot(self, snap):
         """While the autopilot is on and up, sends it each live plan's waiting items once per change, through
         the intercom, in a thread so the watcher never waits on the relay. A failed send is tried again a
         minute later: a new session is not reachable for its first 20 to 40 seconds."""
-        if self.preview or not snap["autopilot"]["enabled"] or not snap["autopilot"]["live"]:
+        # An autopilot whose session has ended is still on: the intercom wakes it with what it is sent.
+        if self.preview or not snap["autopilot"]["enabled"]:
             return                        # a preview dashboard never routes: the live one does, once
         st = read_json(AUTOPILOT, {})
         for p in snap["pilots"]:                   # a pilot stopped on a prompt in its terminal: once per wait
@@ -2661,7 +2757,7 @@ class Hub:
             threading.Thread(target=send_prompt, daemon=True).start()
         for pl in snap["plans"]:
             sid, items = pl["sessionId"], pl.get("waiting") or ""
-            if not items or not pl.get("live") or st.get("sent", {}).get(sid) == items or sid in self.routing:
+            if not items or not (pl.get("live") or pl.get("asleep")) or st.get("sent", {}).get(sid) == items or sid in self.routing:
                 continue
             if time.time() - self.route_failed.get(sid, 0) < 60:
                 continue
@@ -2704,6 +2800,7 @@ class Hub:
                     snap["stale"] = Path(__file__).stat().st_mtime != CODE_MTIME
                     snap["restartable"] = SUPERVISED
                     snap["daemonLock"] = daemon_lock()
+                    self.wake_pilots(snap)
                     self.route_autopilot(snap)
                     sids = [s["sessionId"] for s in snap["workers"] + snap["pilots"] if s.get("sessionId")]
                     last_fp = fingerprint(sids)
