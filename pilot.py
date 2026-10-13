@@ -7,6 +7,7 @@ running whether or not a terminal is open. This file starts workers the same way
 what they have spent, gates their spend, delivers your messages, summarises them and serves the dashboard.
 
   python pilot.py plan [--title T]     the pilot session's flight plan: its path, made from the template once
+  python pilot.py screenshot ROUTE --out F   a headless Edge screenshot of a dashboard page (the preview's)
   python pilot.py log TEXT              a line in the flight plan's Log, stamped with the time now
   python pilot.py track [--out F] [--url U]   its tracking page, to publish as an artifact; --url records where
   python pilot.py start NAME --brief FILE|- [--repo R] [--model M] [--effort E] [--budget N]
@@ -2010,6 +2011,30 @@ def cmd_budget(a):
     print(f"{a.name}: budget {a.tokens:,} weighted tokens")
 
 
+EDGE = [Path(os.environ.get(v, "")) / "Microsoft/Edge/Application/msedge.exe" for v in ("ProgramFiles(x86)", "ProgramFiles")]
+
+
+def cmd_screenshot(a):
+    """A headless Edge screenshot of a dashboard page, for a worker checking a change on its preview (port 5182).
+    A worktree-isolated worker is refused Edge run by its path, since Claude Code cannot tell a command named at
+    runtime from git; `python pilot.py screenshot` is a plain command, and finds Edge itself."""
+    edge = next((e for e in EDGE if e.is_file()), None)
+    if not edge:
+        sys.exit("pilot: no Microsoft Edge at " + " or ".join(str(e) for e in EDGE))
+    # A route is written without its `#/` (`s/<session id>`): Git Bash rewrites an argument starting `/` into a path.
+    url = a.url if a.url.startswith("http") else f"http://127.0.0.1:{a.port}/?nostream#/{a.url.lstrip('#/')}"
+    out = Path(a.out).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    profile = out.parent / ".edge-profile"      # its own, so a running Edge is neither used nor touched
+    w, _, h = a.size.partition("x")
+    r = subprocess.run([str(edge), "--headless=new", "--disable-gpu", "--hide-scrollbars", "--force-dark-mode",
+                        f"--window-size={int(w)},{int(h)}", f"--virtual-time-budget={a.wait}", f"--user-data-dir={profile}",
+                        f"--screenshot={out}", url], capture_output=True, text=True, timeout=120)
+    if not out.is_file():
+        sys.exit(f"pilot: Edge wrote no screenshot (exit {r.returncode}): {(r.stderr or r.stdout).strip()[:400]}")
+    print(f"{out} ({out.stat().st_size:,} bytes) of {url}")
+
+
 def cmd_log(a):
     """Appends a line to this pilot session's flight plan's Log, stamped with the time now: a pilot writing the
     time itself guesses it, and its log once ran 20 minutes ahead of the clock, out of order."""
@@ -3057,6 +3082,13 @@ def main():
     s.add_argument("--title", help="the plan's title, used when it is created")
     s.add_argument("--session", help="a pilot session id; default: the session this runs in")
     s.set_defaults(fn=cmd_plan)
+    s = sub.add_parser("screenshot", help="a headless Edge screenshot of a dashboard page, for checking a change on the preview")
+    s.add_argument("url", help="a full URL, or a route on the preview without its #/: 's/<session id>', 'w/<leg>', '' for the overview")
+    s.add_argument("--out", required=True, help="the PNG to write, in your scratch dir")
+    s.add_argument("--port", type=int, default=5182, help="the dashboard a route is on; default the preview's, 5182")
+    s.add_argument("--size", default="1400x1000", help="the window, WxH")
+    s.add_argument("--wait", type=int, default=6000, help="virtual time to let the page settle, in ms")
+    s.set_defaults(fn=cmd_screenshot)
     s = sub.add_parser("log", help="append a line to this pilot session's flight plan's Log, stamped with the time now")
     s.add_argument("text", nargs="+")
     s.add_argument("--session", help="a pilot session id; default: the session this runs in")

@@ -176,10 +176,12 @@ A worker checks a dashboard change with its own copy, beside the live one:
 
 ```bash
 python pilot.py dashboard --preview     # port 5182; raises and writes no notices; session streams close after their backlog
-"/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" --headless=new --disable-gpu --hide-scrollbars   --force-dark-mode --window-size=1400,1000 --virtual-time-budget=4000 --user-data-dir=<scratch dir>   --screenshot=<scratch dir>/page.png "http://127.0.0.1:5182/?nostream#/s/<session id>"
+python pilot.py screenshot s/<session id> --out <scratch dir>/page.png   # headless Edge, on the preview
 ```
 
-then reads the PNG. `?nostream` takes the state once; `--preview` closes a session page's stream, which
+then reads the PNG. `screenshot` finds Edge itself: a worktree-isolated worker is refused Edge run by its
+path, since Claude Code cannot tell a command named at runtime from git, and was right not to get round
+that through PowerShell. `?nostream` takes the state once; `--preview` closes a session page's stream, which
 would otherwise keep headless Edge from ever settling.
 
 ## Tests
