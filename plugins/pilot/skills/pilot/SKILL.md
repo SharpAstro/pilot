@@ -42,13 +42,24 @@ tools:
 - Your notes, between the objective and the route: what you found, what shapes the route, what is still
   open. The dashboard shows them under the objective, and they are how the controller follows your
   reasoning, so keep them current when a decision changes the route.
-- `## Route`: a table, one row per leg: `| Leg | Goal | After | Done when |`. *Leg* is the worker's name
-  (lowercase, digits, hyphens). *After* names the legs it waits for, or `-`. *Done when* is the command
-  or check that proves it. Escape a `|` inside a cell as `\|`.
+- `## Route`: a table, one row per leg: `| Leg | Goal | After | Done when | Alt of |`. *Leg* is the worker's
+  name (lowercase, digits, hyphens). *After* names the legs it waits for, or `-`; legs with no wait between
+  them fly side by side, and the dashboard draws them as parallel lanes that join at the leg after them.
+  *Done when* is the command or check that proves it. *Alt of* is empty except on an alternate (below);
+  a route without the column still reads. Escape a `|` inside a cell as `\|`.
 - `## Log`: stays the last section. `pilot.py` appends to it itself when a leg takes off, is messaged,
   re-budgeted, stopped or removed. Log each decision you make with `python <pilot.py> log "<text>"`,
   which stamps it with the time now; never write a time yourself (a pilot's guessed times once ran 20
   minutes ahead of the clock, and the log read out of order).
+
+An **alternate** is a leg you file in case its primary cannot land: another way to the same goal. Give it
+its own leg name, the primary's *After*, and the primary's name in *Alt of*. It is drawn dashed beside its
+primary and counts for nothing until it is taken: it never keeps the flight from landing nor counts as a
+leg. Diverting is your decision, made when the primary has failed, has stopped, or should not fly: take it
+with `python <pilot.py> start <alternate> --brief <file> --pilot "<name>" --divert "<why>"`, which logs
+"Leg <primary> diverted to <alternate>: <why>". `start` refuses an alternate without `--divert` or while its
+primary is flying or waiting, and refuses the primary while the alternate's worker exists; `rm` of the
+alternate before it lands undoes the diversion. A failed or stopped primary whose alternate landed counts as done.
 
 A **connection** is another flight this one waits for: when your legs need its change merged first, file
 it with `python <pilot.py> connect <flight number>` (`--remove` takes it off), which checks the number
