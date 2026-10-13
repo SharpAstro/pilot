@@ -175,8 +175,8 @@ while a flight runs here.
 A worker checks a dashboard change with its own copy, beside the live one:
 
 ```bash
-python pilot.py dashboard --preview     # port 5182; raises and writes no notices; session streams close after their backlog
-python pilot.py screenshot s/<session id> --out <scratch dir>/page.png   # headless Edge, on the preview
+python pilot.py dashboard --preview     # the first free port from 5182, which it prints; raises and writes no notices
+python pilot.py screenshot s/<session id> --port <its port> --out <scratch dir>/page.png   # headless Edge
 ```
 
 then reads the PNG. `screenshot` finds Edge itself: a worktree-isolated worker is refused Edge run by its

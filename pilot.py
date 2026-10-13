@@ -3118,10 +3118,22 @@ def supervise(a):
             p.kill()
 
 
+class ExclusiveServer(http.server.ThreadingHTTPServer):
+    """Binds its port alone. Python's server asks for address reuse, which on Windows lets a second server bind a
+    port already in use: two previews once shared 5182 and one served old code."""
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self):
+        import socket
+        if os.name == "nt":
+            self.socket.setsockopt(socket.SOL_SOCKET, getattr(socket, "SO_EXCLUSIVEADDRUSE", -5), 1)
+        super().server_bind()
+
+
 def cmd_dashboard(a):
     """The dashboard. Run plainly, it is a supervisor (supervise) over the server, which runs as its child with
     --child. --preview is a second one for checking a change to pilot itself beside the live one, in one
-    process with no supervisor: on 5182 unless --port says otherwise, it raises no notices and writes none,
+    process with no supervisor: on the first free port from 5182 unless --port says otherwise (it prints it), it raises no notices and writes none,
     and a session page's stream sends its backlog and closes, so headless Edge settles and can take a
     screenshot (README)."""
     global SUPERVISED
@@ -3131,16 +3143,25 @@ def cmd_dashboard(a):
         SUPERVISED = True
         watch_parent(a.child)
     STATE.mkdir(parents=True, exist_ok=True)
-    port = a.port or (5182 if a.preview else 5181)
     if a.preview:
         HUB.notices.update = lambda snap: []
         HUB.notices.save = lambda: None
         HUB.preview = Handler.preview = True     # and it routes nothing to the autopilot
     threading.Thread(target=HUB.run, daemon=True).start()
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    # A preview with no --port takes the first free one from 5182: two workers each check a change at once.
+    ports = [a.port] if a.port else (range(5182, 5200) if a.preview else [5181])
+    srv = None
+    for port in ports:
+        try:
+            srv = ExclusiveServer(("127.0.0.1", port), Handler)
+            break
+        except OSError:
+            continue
+    if not srv:
+        sys.exit(f"pilot: port {ports[0]}{'-' + str(ports[-1]) if len(ports) > 1 else ''} is taken")
     srv.daemon_threads = True
     if not a.child:
-        print(f"pilot dashboard{' (preview)' if a.preview else ''}: http://127.0.0.1:{port}/  (Ctrl-C stops it)")
+        print(f"pilot dashboard{' (preview)' if a.preview else ''}: http://127.0.0.1:{port}/  (Ctrl-C stops it)", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
@@ -3216,7 +3237,7 @@ def main():
     s.add_argument("--session", help="a pilot session id; default: the session this runs in")
     s.set_defaults(fn=cmd_track)
     s = sub.add_parser("dashboard")
-    s.add_argument("--port", type=int, help="default 5181, or 5182 with --preview")
+    s.add_argument("--port", type=int, help="default 5181; with --preview, the first free one from 5182")
     s.add_argument("--preview", action="store_true", help="a second dashboard for checking a change: no notices, session streams close")
     s.add_argument("--child", type=int, help=argparse.SUPPRESS)     # internal: the server, under its supervisor's pid
     s.set_defaults(fn=cmd_dashboard)
