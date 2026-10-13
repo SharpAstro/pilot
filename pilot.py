@@ -63,6 +63,7 @@ BRIEFS = STATE / "briefs"
 REVIEWS = STATE / "reviews"                # the reviewer's round files, by leg
 METERS = STATE / "meters"
 PLANS = STATE / "plans"
+PRIORITY = STATE / "priority.json"         # the controller's order of flights, plan ids first to last; only set_priority writes it
 FLIGHTS = STATE / "flights.json"           # the last flight number given out, per repo code
 BLACKBOX = STATE / "blackbox.jsonl"        # every decision and event, append-only, across all flights
 AUTOPILOT = STATE / "autopilot.json"       # the autopilot's switch, session, and what it has been sent
@@ -477,6 +478,33 @@ def plan_notes(text):
     return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
 
 
+def priority():
+    """The controller's order of flights: plan ids, first first. A missing or unreadable file is no order."""
+    v = read_json(PRIORITY, [])
+    return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
+
+
+def by_priority(plans):
+    """Plans in the controller's order. One it has not placed, a new flight, goes after those it has, in the
+    order they came in; an id in the order whose plan is gone is passed over."""
+    rank = {sid: i for i, sid in enumerate(priority())}
+    return sorted(plans, key=lambda p: rank.get(p["sessionId"], len(rank)))
+
+
+def set_priority(ids):
+    """Writes the controller's order of flights. The ids given come first; flights the old order placed that
+    are not among them keep their places after, so a reorder of the flights on show does not forget one off
+    it. Ids with no plan, the old order's stale ones too, are dropped."""
+    if not isinstance(ids, list) or not all(isinstance(x, str) and re.match(r"^[A-Za-z0-9-]{1,64}$", x) for x in ids):
+        raise ValueError("order must be a list of plan ids")
+    out = []
+    for sid in [*ids, *priority()]:
+        if sid not in out and plan_path(sid).exists():
+            out.append(sid)
+    write_json(PRIORITY, out)
+    return out
+
+
 def plans_view(rows, workers, seen=None):
     """Flight plans whose pilot is live, or that a current worker flies a leg of, or touched this week. A live
     pilot comes with what it is doing (session_view), reusing `seen`, the pilots already looked at."""
@@ -495,7 +523,7 @@ def plans_view(rows, workers, seen=None):
                     "pilotState": (seen.get(sid) or session_view(live[sid])) if sid in live else None,
                     "prs": mentioned_prs(re.split(r"^##\s+Log\s*$", text, maxsplit=1, flags=re.M)[0]),   # not the log's history
                     **parse_plan(text)})
-    out = out[:10]
+    out = by_priority(out)[:10]
     gone = archived(200)
     for p in out:
         try:
@@ -1537,7 +1565,7 @@ def fingerprint(session_ids):
         return tuple(out)
     sessions = [*PROFILE.glob("sessions/*.json"), *PROFILE.glob("jobs/*/state.json"), PROFILE / "daemon" / "roster.json",
                 *WORKERS.glob("*.json"), *ARCHIVE.glob("*.json")]
-    content = [PROFILE / "rate-limits.json", SUMMARIES, *PLANS.glob("*.md"), *ASKS.glob("*.json")]
+    content = [PROFILE / "rate-limits.json", SUMMARIES, PRIORITY, *PLANS.glob("*.md"), *ASKS.glob("*.json")]
     for sid in session_ids:
         main = transcript(sid)
         if main:
@@ -3211,6 +3239,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.send(409, {"error": str(e)})
             HUB.poke()
             return self.send(200, out)
+        if self.path == "/api/priority":
+            try:
+                order = set_priority(body.get("order"))
+            except ValueError as e:
+                return self.send(400, {"error": str(e)})
+            HUB.poke()
+            return self.send(200, {"ok": True, "order": order})
         if self.path == "/api/refuel":
             mode = set_refuel_mode(str(body.get("mode") or "auto"))
             HUB.poke()
