@@ -29,6 +29,16 @@ controller.
   settles engineering questions itself and asks the co-pilot for an independent opinion on each one that
   matters; they agree, or after one exchange the question goes to you. Only that, a budget raise, scope,
   anything outside a brief's permissions, anything irreversible, and what you meant come to the tower.
+- **Reviewer**: an Opus subagent the pilot plugin ships (`agents/reviewer.md`), read-only and fresh every
+  round. Once a pilot has pushed a landed leg and opened its PR, the reviewer reads every changed line
+  against the leg's brief, *Done when* and checklist, and answers with a round file: `BUGS: <n>`, the
+  checklist ticked off with where the diff meets each item, then bugs (each proven by a trace or a failing
+  test), questions, noted and preferences, the classes and the "is it the leg's?" test of Sam's
+  mission-review, without its coverage ledger and staff. `pilot review` records it. Bugs go back to the
+  worker as `R<n> B<i>` checklist items and the pilot pushes the fixes; at most two rounds find bugs before
+  what is left comes to you. A PR is *on approach* while a round is due, *go-around* while it is fixed,
+  *holding* for CI, *cleared to land* once accepted and green (only then is the merge put to you), and *at
+  the gate* once merged.
 - **Controller**: you, the tower. The dashboard is your radar. From it you read the plan and every
   conversation, answer what the pilot waits on you for, message any live pilot or worker through the
   intercom, set budgets, stop workers, summarise, and launch pilots.
@@ -63,6 +73,7 @@ pilot list                          # state, weighted spend vs budget, last acti
 pilot result fix-export             # the worker's report
 pilot tell w-fix-export -m "also cover rotated pages"   # through the intercom, mid-turn too
 pilot say fix-export "also cover rotated pages"   # your message, as a user turn (its turn must have ended)
+pilot review fix-export --file round1.md --post   # record a review round of its PR (and post it there)
 pilot refuel fix-export 16000000 --reason "API and tests left, ~3M each"   # the watchtower approves, or it goes to you
 pilot budget fix-export 20000000    # the controller's override: an absolute ceiling, not an increment
 pilot summary [fix-export]          # a Haiku summary: Needs you / Where it is

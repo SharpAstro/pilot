@@ -482,7 +482,14 @@ function prChip(p, withRepo) {
   return `<a class="prchip ${cls}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(p.title || "")}">${withRepo && p.repo ? esc(p.repo) + " " : ""}#${esc(p.number)} ${esc(what)} ↗</a>`;
 }
 
-function gitLine(g) {
+// Where a leg's PR stands in its review: on approach, go-around, holding, to the tower, cleared to land, at the gate.
+function approachChip(ap) {
+  if (!ap) return "";
+  const cls = ap.stage === "cleared" || ap.stage === "gate" ? "ok" : ap.stage === "goaround" || ap.stage === "tower" ? "bad" : "sub";
+  return `<span class="prchip ${cls}" title="${esc(ap.why)}">✈ ${esc(ap.label)}</span>`;
+}
+
+function gitLine(g, ap) {
   if (!g) return "";
   const tip = `${g.branch}${g.head ? ` at ${g.head}` : ""}, from ${g.base || "?"}. Remote branches as of the repo's last fetch or push.`;
   if (g.gone) return `<div class="gitline sub" title="${esc(tip)}">⎇ branch deleted</div>`;
@@ -491,7 +498,7 @@ function gitLine(g) {
   if (g.ahead) bits.push(g.unpushed ? `<span class="bad">${g.unpushed} not pushed</span>`
     : `<span class="ok">pushed${g.remotes?.length ? ` · ${esc(g.remotes[0])}` : ""}</span>`);
   if (g.dirty) bits.push(`<span class="bad">${g.dirty} uncommitted</span>`);
-  for (const p of g.prs || []) bits.push(prChip(p));
+  for (const p of g.prs || []) bits.push(prChip(p) + (ap && ap.pr === p.number ? " " + approachChip(ap) : ""));
   return `<div class="gitline" title="${esc(tip)}">⎇ ${bits.join(" · ")}</div>`;
 }
 // The flight's: which legs hold commits on no remote, or uncommitted files.
@@ -519,7 +526,7 @@ function planCard(p, s) {
     const sp = w ? w.spend : h ? h.final?.spend : null;
     const link = w ? `#/w/${esc(w.name)}` : h ? `#/s/${esc(h.sessionId)}` : "";
     return `<tr${link ? ` class="click" data-href="${link}"` : ""}><td><b>${esc(l.leg)}</b></td><td>${md(l.goal)}</td><td>${esc(l.after.join(", ") || "-")}</td>
-      <td>${md(l.doneWhen)}</td><td><span class="chip ${st.cls}">${esc(st.label)}</span>${w && (w.state === "working" || w.state === "blocked") ? doing(w) : ""}${checkLine(w ? w.checklist : h?.final?.checklist)}${gitLine((w || h)?.git)}</td><td class="num">${sp ? esc(M(sp.weighted)) : ""}</td></tr>`;
+      <td>${md(l.doneWhen)}</td><td><span class="chip ${st.cls}">${esc(st.label)}</span>${w && (w.state === "working" || w.state === "blocked") ? doing(w) : ""}${checkLine(w ? w.checklist : h?.final?.checklist)}${gitLine((w || h)?.git, (w || h)?.approach)}</td><td class="num">${sp ? esc(M(sp.weighted)) : ""}</td></tr>`;
   }).join("");
   const log = p.log.slice(-12).reverse().map(l => `<li>${esc(l)}</li>`).join("");
   const ps = p.pilotState, waiting = ps?.status === "waiting";
@@ -1071,7 +1078,7 @@ VIEWS.session = (root, r) => {
       put($(".s-check", root), checkList(items));
       const g = (w || h)?.git, outside = (w || h)?.outside;
       $(".s-gitcard", root).hidden = !(g || outside) || !!r.agent;
-      put($(".s-gitn", root), gitLine(g));
+      put($(".s-gitn", root), gitLine(g, (w || h)?.approach));
       put($(".s-git", root), [["repo", g?.repo], ["branch", g && `${g.branch}${g.head ? ` at ${g.head}` : ""}${g.gone ? " (deleted)" : ""}`],
         ["commits", g && !g.gone ? `${g.ahead ?? "?"} past ${g.base}` : ""],
         ["not pushed", g?.unpushed ? `${g.unpushed} commit(s) on no remote branch` : ""],

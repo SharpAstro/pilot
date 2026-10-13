@@ -13,6 +13,7 @@ what they have spent, gates their spend, delivers your messages, summarises them
   python pilot.py list [--json]
   python pilot.py result NAME          the worker's last message: its report
   python pilot.py say NAME TEXT|-      your message to a worker whose turn has ended, as a user turn
+  python pilot.py review NAME --file F [--post]   record a review round of the leg's PR, from the reviewer's file
   python pilot.py budget NAME N        a new ceiling in weighted tokens (absolute, not an increment)
   python pilot.py summary [NAME]       a Haiku summary of one worker, or of all of them
   python pilot.py stop NAME            stop it; the conversation is kept
@@ -57,6 +58,7 @@ STATE = Path(os.environ.get("PILOT_STATE") or Path(os.environ.get("LOCALAPPDATA"
 WORKERS = STATE / "workers"
 ARCHIVE = STATE / "archive"
 BRIEFS = STATE / "briefs"
+REVIEWS = STATE / "reviews"                # the reviewer's round files, by leg
 METERS = STATE / "meters"
 PLANS = STATE / "plans"
 FLIGHTS = STATE / "flights.json"           # the last flight number given out, per repo code
@@ -838,7 +840,7 @@ def collateral_now(w):
             "prs": leg_prs(root, remotes[:5]) if remotes and shutil.which("gh") else []}
 
 
-PR_FIELDS = "number,title,state,url,isDraft,reviewDecision,statusCheckRollup,headRefName"
+PR_FIELDS = "number,title,state,url,isDraft,reviewDecision,statusCheckRollup,headRefName,headRefOid"
 
 
 def pr_view(p):
@@ -851,7 +853,7 @@ def pr_view(p):
           else "passing" if checks else "none")
     state = "DRAFT" if p.get("isDraft") and p.get("state") == "OPEN" else p.get("state")
     return {"number": p.get("number"), "title": p.get("title"), "state": state, "url": p.get("url"),
-            "branch": p.get("headRefName"), "review": p.get("reviewDecision") or None, "ci": ci}
+            "branch": p.get("headRefName"), "head": p.get("headRefOid"), "review": p.get("reviewDecision") or None, "ci": ci}
 
 
 def gh_json(root, *args):
@@ -875,6 +877,122 @@ def leg_prs(root, remotes):
                 seen.add(p.get("number"))
                 out.append(pr_view(p))
     return sorted(out, key=lambda p: p["number"] or 0, reverse=True)
+
+
+# --------------------------------------------------------------------------- the review before the merge
+
+REVIEW_ROUNDS = 2       # rounds that find bugs, before what is left goes to the tower rather than a third round
+BUGS_RE = re.compile(r"\ABUGS:\s*(\d+)\s*$", re.M)
+
+
+def parse_round(text):
+    """A reviewer's round file: its first line `BUGS: <n>`, then `## Bugs` with one `### B<i> <title>` per bug.
+    The count has to agree with the headings, so a round cannot say 0 over a list of bugs, or the reverse."""
+    text = text.lstrip("﻿").lstrip()
+    m = BUGS_RE.match(text.splitlines()[0] if text else "")
+    if not m:
+        raise ValueError("a round file starts with the line `BUGS: <n>`")
+    bugs = re.search(r"^##\s+Bugs\s*$(.*?)(?=^##\s|\Z)", text, re.M | re.S)
+    titles = re.findall(r"^###\s+B\d+\b\s*(.*\S)", bugs.group(1), re.M) if bugs else []
+    if len(titles) != int(m.group(1)):
+        raise ValueError(f"the first line says {m.group(1)} bug(s) and `## Bugs` lists {len(titles)}")
+    questions = re.search(r"^##\s+Questions\s*$(.*?)(?=^##\s|\Z)", text, re.M | re.S)
+    return {"bugs": len(titles), "titles": titles,
+            "questions": len(re.findall(r"^\s*[-*]\s+\S|^###\s", questions.group(1), re.M)) if questions else 0}
+
+
+APPROACH = {"approach": "on approach", "goaround": "go-around", "holding": "holding", "tower": "to the tower",
+            "cleared": "cleared to land", "gate": "at the gate"}
+
+
+def approach(reviews, prs):
+    """Where a leg's pull request stands, in the plan's words: on approach (a review round is due on its head),
+    go-around (the last round found bugs, or CI fails, and the fixes are not pushed yet), holding (accepted,
+    CI not finished), to the tower (the rounds are spent and bugs are left), cleared to land (accepted at its head and
+    CI green: the merge is the controller's), at the gate (merged). None without a PR."""
+    pr = next((p for p in prs or [] if p.get("state") in ("OPEN", "DRAFT", "MERGED")), None)
+    if not pr:
+        return None
+    if pr["state"] == "MERGED":
+        stage, why = "gate", "merged"
+    else:
+        mine = [r for r in reviews or [] if r.get("pr") == pr["number"]]
+        last = mine[-1] if mine else None
+        spent = sum(1 for r in mine if r.get("bugs")) >= REVIEW_ROUNDS
+        if not last:
+            stage, why = "approach", "review round 1 is due"
+        elif last["bugs"] and spent:
+            stage, why = "tower", f"round {last['round']} still found {last['bugs']} bug(s), and the rounds are spent"
+        elif pr.get("head") and last.get("head") != pr["head"]:
+            stage, why = "approach", f"review round {last['round'] + 1} is due: commits since round {last['round']}"
+        elif last["bugs"]:
+            stage, why = "goaround", f"round {last['round']} found {last['bugs']} bug(s): fixing"
+        elif pr.get("ci") == "failing":
+            stage, why = "goaround", f"round {last['round']} accepted it, and CI fails"
+        elif pr.get("ci") == "passing":
+            stage, why = "cleared", f"round {last['round']} accepted it and CI is green: the merge is the controller's"
+        else:
+            stage, why = "holding", f"round {last['round']} accepted it; CI is {pr.get('ci') or 'none'}"
+    return {"stage": stage, "label": APPROACH[stage], "why": why, "pr": pr["number"], "url": pr.get("url")}
+
+
+def cmd_review(a):
+    """Records a review round of a leg's pull request: the reviewer's round file, the PR head it read, and the
+    outcome in the plan's log. With --post the round goes on the PR as a comment, for whoever merges it."""
+    w = need(a.name)
+    text = sys.stdin.read() if a.file == "-" else Path(a.file).read_text(encoding="utf-8")
+    try:
+        r = parse_round(text)
+    except ValueError as e:
+        sys.exit(f"pilot: {e}")
+    root = config()["repos"].get(w.get("repo"))
+    g = collateral_now(w) or {}
+    if a.pr:
+        p = gh_json(root, "pr", "view", str(a.pr), "--json", PR_FIELDS) if root else None
+        pr = pr_view(p) if p else None
+    else:
+        pr = next((p for p in g.get("prs") or [] if p["state"] in ("OPEN", "DRAFT")), None)
+    if not pr or pr["state"] not in ("OPEN", "DRAFT"):
+        sys.exit(f"pilot: {a.name} has no open pull request{f' #{a.pr}' if a.pr else ''}; push its branch and open one first")
+    if g.get("head") and pr.get("head") and not pr["head"].startswith(g["head"]):
+        sys.exit(f"pilot: {a.name}'s branch is at {g['head']} and PR #{pr['number']} at {pr['head'][:8]}: push it, and "
+                 f"have the round read what the PR holds")
+    reviews = [x for x in w.get("reviews") or [] if x.get("pr") == pr["number"]]
+    n = a.round or len(reviews) + 1
+    if not 1 <= n <= len(reviews) + 1:
+        sys.exit(f"pilot: round {n} of PR #{pr['number']}: the next round is {len(reviews) + 1}")
+    d = REVIEWS / a.name
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"pr{pr['number']}-round{n}.md"
+    path.write_text(text, encoding="utf-8")
+    rec = {"round": n, "bugs": r["bugs"], "titles": r["titles"], "questions": r["questions"], "pr": pr["number"],
+           "url": pr.get("url"), "head": pr.get("head"), "at": time.time(), "file": str(path)}
+    w["reviews"] = [x for x in w.get("reviews") or [] if x.get("pr") != pr["number"]] + reviews[:n - 1] + [rec]
+    save(w)
+    if a.post:
+        c = subprocess.run(["gh", "pr", "comment", str(pr["number"]), "--body-file", str(path)], cwd=str(root),
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        print(f"posted on PR #{pr['number']}" if c.returncode == 0 else f"pilot: posting failed: {c.stderr.strip()}")
+    st = approach(w["reviews"], [pr])
+    head = (pr.get("head") or "")[:8]
+    if not r["bugs"]:
+        outcome = "accepted"
+        todo = (f"Accepted. CI on PR #{pr['number']} is {pr['ci']}. Once it is green (`gh pr checks {pr['number']} --watch`, "
+                f"in the background), put `- **Merge PR #{pr['number']}?**` in `## Waiting on the controller`, with the rounds "
+                f"and CI's state.")
+    elif st["stage"] == "tower":
+        outcome = f"{r['bugs']} bug(s) left after {REVIEW_ROUNDS} rounds that found bugs: to the tower"
+        todo = (f"The rounds are spent. Put the bugs in `## Waiting on the controller` with the round file ({path}) and "
+                f"your recommendation for each: fix, follow-up issue, or accept.")
+    else:
+        outcome = f"{r['bugs']} bug(s): go-around"
+        todo = (f"Send the worker the fix items R{n} B1..B{r['bugs']} (each a checklist item: a failing test first, then "
+                f"the smallest fix, one commit per bug, no push). Check them as a landed leg, push, and run round {n + 1}.")
+    plan_log(w.get("plan"), f"Review round {n} of {a.name} (PR #{pr['number']} at {head}): {outcome}"
+             + (f"; {r['questions']} question(s)" if r["questions"] else "") + (f". Bugs: {'; '.join(r['titles'])}" if r["titles"] else "") + ".")
+    print(f"{a.name}: round {n} of PR #{pr['number']} at {head}: {outcome}\n{todo}")
+    if st["stage"] == "tower":
+        sys.exit(2)
 
 
 _prs, _prs_busy = {}, set()
@@ -995,6 +1113,7 @@ def worker_status(w, rows=None):
         "lastError": tail[-1]["text"] if tail and tail[-1]["kind"] == "error" else None,
         "spend": sp, "overBudget": bool(w.get("budget")) and sp["weighted"] >= w["budget"],
         "lastActivity": last, "now": now, "rev": path.stat().st_size if path else 0,
+        "approach": approach(w.get("reviews"), (collateral(w) or {}).get("prs")),
         "unread": state in ("done", "blocked") and unread(w, (row or {}).get("status") == "busy", last),
         "checklist": checklist([s.get("sessionId") for s in sessions_of(w)]),
         "remote": f"https://claude.ai/code/{rec['bridgeSessionId']}" if rec.get("bridgeSessionId") else None,
@@ -1769,7 +1888,8 @@ def cmd_list(a):
         print("no workers")
     for s in ws:
         b = f"/{s['budget'] / 1e6:.0f}M" if s["budget"] else ""
-        flag = ("  OVER BUDGET" if s["overBudget"] else "") + ("  UNREAD: stopped after its pilot last logged it" if s["unread"] else "")
+        ap = s.get("approach")
+        flag = (f"  PR #{ap['pr']} {ap['label'].upper()}" if ap else "") + ("  OVER BUDGET" if s["overBudget"] else "") + ("  UNREAD: stopped after its pilot last logged it" if s["unread"] else "")
         age = f"{(time.time() - s['lastActivity']) / 60:.0f}m ago" if s["lastActivity"] else "-"
         doing = (s["now"] or {}).get("tool") or ("said" if s["now"] else "")
         print(f"{s['name']:<20} {s['id']:<9} {s['state']:<9} {s['spend']['weighted'] / 1e6:6.2f}M{b:<5} last {age:<8} {doing}{flag}")
@@ -1798,6 +1918,14 @@ def cmd_result(a):
             print(f"  {l}")
     out = outside_line(report(w["sessionId"]) if w.get("sessionId") else "")
     print(f"--- outside the worktree: {out or 'the report does not say'}")
+    ap = approach(w.get("reviews"), g.get("prs"))
+    if ap:
+        print(f"--- PR #{ap['pr']}: {ap['label']}: {ap['why']}")
+        for r in w.get("reviews") or []:
+            if r.get("pr") == ap["pr"]:
+                print(f"  round {r['round']} at {(r.get('head') or '')[:8]}: {r['bugs']} bug(s)")
+                for i, x in enumerate(r.get("titles") or [], 1):
+                    print(f"    B{i}: {x}")
 
 
 def cmd_type(a):
@@ -1884,6 +2012,9 @@ def leg_state(w):
         return "warn", "blocked"
     if head == "DONE" and left:
         return "warn", f"done, {left} item{'s' if left > 1 else ''} open"
+    ap = w.get("approach")
+    if head == "DONE" and ap:     # its PR's review, once it has one
+        return {"gate": "good", "cleared": "good", "goaround": "warn", "tower": "warn"}.get(ap["stage"], "working"), ap["label"]
     if head == "DONE":
         return "good", "landed"
     return "planned", "turn ended" if w.get("state") == "done" or fin else (w.get("state") or "unknown")
@@ -2856,6 +2987,13 @@ def main():
     s.add_argument("tokens", type=int, help="the new budget, absolute")
     s.add_argument("--reason", required=True, help="what is left, and why it needs this much")
     s.set_defaults(fn=cmd_refuel)
+    s = sub.add_parser("review", help="record a review round of a leg's pull request, from the reviewer's round file")
+    s.add_argument("name")
+    s.add_argument("--file", required=True, help="the round file (first line `BUGS: <n>`), or - for stdin")
+    s.add_argument("--round", type=int, help="default: the next round; the last round's number re-records it")
+    s.add_argument("--pr", type=int, help="default: the leg's open pull request")
+    s.add_argument("--post", action="store_true", help="also post the round on the PR as a comment")
+    s.set_defaults(fn=cmd_review)
     s = sub.add_parser("budget")
     s.add_argument("name")
     s.add_argument("tokens", type=int)

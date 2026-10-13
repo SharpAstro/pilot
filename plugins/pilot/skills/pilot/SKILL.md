@@ -110,7 +110,7 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
    - Still no agreement: it goes to the tower, with both positions.
 
    **The tower (the controller) decides only** what you and the co-pilot could not agree on, a budget raise
-   (rule 11), the flight's scope or objective, anything a brief or your permissions do not allow (merging,
+   (rule 12), the flight's scope or objective, anything a brief or your permissions do not allow (merging,
    a push to the default branch, a force-push, another repo, an outside service), anything irreversible, and what the controller meant when their
    own words are ambiguous. Put each in `## Waiting on the controller`, then end your turn: the answers
    arrive as a message from `pilot-dashboard`, or the controller types them in your terminal. Never use
@@ -133,10 +133,37 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
    pull request against the default branch, following the repo's `CLAUDE.md` for its conventions (labels,
    title, versioning). The description says what the leg did and what you checked. Don't ask the tower
    first; a landed leg's push and PR are part of flying it. Never push to the default branch, never
-   force-push, and never merge: the merge goes to `## Waiting on the controller` as
-   `- **Merge PR #<n>?** <what it changes, CI's state>.`, since in many repos merging is what publishes.
-   A leg that needs the merged or published change waits on that answer. Workers never push; you do.
-11. **Fuel goes through the watchtower.** Every worker has a budget in weighted tokens (default 10M; see
+   force-push, and never merge: since in many repos merging is what publishes, the merge is the
+   controller's, and it is asked for only once the PR has been reviewed (rule 11). A leg that needs the
+   merged or published change waits on that answer. Workers never push; you do.
+11. **Review before the merge, at most two go-arounds.** Once the PR is open, review it with the reviewer, an
+    Opus subagent this plugin ships: `Agent` with subagent type `reviewer` (it may be listed as
+    `pilot:reviewer`); with neither, `Agent` with `model: "opus"` and the rules in this plugin's
+    `agents/reviewer.md`. A fresh one every round. Give it the PR number and URL, the worktree, the base,
+    the round number, the path of the leg's brief (`<state>/briefs/<leg>.md`), the leg's row (goal and
+    *Done when*) and the worker's checklist as `result` prints it. Never give it an earlier round's
+    findings or your own opinion of the code: the review is worth what its independence is worth.
+    - Save its answer as it is to a file and record it:
+      `python <pilot.py> review <leg> --file <round file> --post`. That checks the round file (its
+      `BUGS: <n>` against its list), pins the PR head it read, logs the round in the plan and posts it on
+      the PR for whoever merges. It refuses a round when the branch has commits the PR does not: push first.
+    - **Bugs: go-around.** Send the worker each bug as a checklist item `R<round> B<i>: <title>`, with the
+      reviewer's evidence: a failing test first, then the smallest fix, one commit per bug, no push. Check
+      the fixes as rule 10 says, push them (a fast-forward, never a force-push), and run the next round.
+      A QUESTION is yours to settle (with the co-pilot, rule 9) or the tower's; NOTED and PREFERENCE items
+      are not fix work, though a NOTED one may become a follow-up issue or a leg on the route.
+    - **No bugs: accepted.** Watch CI in the background (`gh pr checks <n> --watch`). A failing check is a
+      go-around like a bug. A green CI on the reviewed head is "tests pass", whether or not a local run
+      finished.
+    - **Cleared to land** is review accepted and CI green, on the same head: only then put
+      `- **Merge PR #<n>?** <what it changes; the rounds and their bugs; CI's state>.` in
+      `## Waiting on the controller`. A commit pushed after the accepted round makes the next round due.
+    - **Rounds that find bugs stop at two.** When the second still finds bugs, `review` exits 2: put them
+      in `## Waiting on the controller` with the round file and your recommendation for each (fix, follow-up
+      issue, or accept as is), rather than a third round.
+    The dashboard and `list` show where each PR stands: on approach (a round is due), go-around (fixing),
+    holding (accepted, CI running), to the tower, cleared to land, at the gate (merged).
+12. **Fuel goes through the watchtower.** Every worker has a budget in weighted tokens (default 10M; see
     `~/.pilot/pilot.json`). At the budget its tools are refused and it writes a report. When a worker is
     near it with much of its checklist left, or out of it, ask for more:
     `python <pilot.py> refuel <leg> <N> --reason "<what is left, and why it needs this much>"` (N absolute).
@@ -148,13 +175,13 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
     progress justify it; then message the worker. When it does not (exit 2), it says why: put the raise in
     `## Waiting on the controller` with that and your recommendation. Never use `budget` yourself; it is
     the controller's override.
-12. **Leave alone what is not yours**: Claude Code's own files under `~/.claude` (its daemon lock, settings,
+13. **Leave alone what is not yours**: Claude Code's own files under `~/.claude` (its daemon lock, settings,
     session records) and the controller's `~/.pilot/pilot.json`. When one stands in your way, put it in
     `## Waiting on the controller` with what you found and what you would change: a repo a leg needs that
     `pilot.json` does not list, or a stale daemon lock, which `pilot.py start` names and the dashboard
     offers the controller a button for. A pilot once deleted a stale lock and added a repo to `pilot.json`
     itself; both were right, and both were the controller's to do.
-13. **Clean up** with `python <pilot.py> rm <leg>` once its branch has been pushed or the controller says to
+14. **Clean up** with `python <pilot.py> rm <leg>` once its branch has been pushed or the controller says to
     drop it. Never drop a worker's commits without asking. The record stays in the dashboard's history.
 
 `python <pilot.py> list` shows every worker's state, spend and last activity. The controller's dashboard

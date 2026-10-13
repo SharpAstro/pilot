@@ -230,6 +230,89 @@ class UnreadTests(Case):
         self.assertFalse(pilot.unread(self.worker("leg-b"), False, time.time()))
 
 
+ROUND_2_BUGS = """BUGS: 2
+
+PR #7 at abcdef12, round 1. Two defects.
+
+## Checklist
+- [x] build green: CI
+- [ ] no hand sites left: one remains (B2)
+
+## Bugs
+### B1 Saving drops the last row
+src/a.cs:10. Trace.
+### B2 One hand site left
+src/b.cs:4.
+
+## Questions
+- does the cache survive a reload?
+
+## Read
+src/a.cs, src/b.cs
+"""
+
+
+class ReviewTests(Case):
+    def pr(self, head="abcdef1234", state="OPEN", ci="passing", number=7):
+        return {"number": number, "state": state, "head": head, "ci": ci, "url": f"https://x/pull/{number}"}
+
+    def test_a_round_file_states_its_bugs_and_lists_them(self):
+        r = pilot.parse_round(ROUND_2_BUGS)
+        self.assertEqual((r["bugs"], r["questions"]), (2, 1))
+        self.assertEqual(r["titles"], ["Saving drops the last row", "One hand site left"])
+        self.assertEqual(pilot.parse_round("BUGS: 0\n\n## Checklist\n- [x] all\n")["bugs"], 0)
+        with self.assertRaises(ValueError):
+            pilot.parse_round(ROUND_2_BUGS.replace("BUGS: 2", "BUGS: 0"))      # says none over a list of two
+        with self.assertRaises(ValueError):
+            pilot.parse_round("Looks good to me.\n")
+
+    def test_where_a_pr_stands(self):
+        stage = lambda reviews, pr: (pilot.approach(reviews, [pr]) or {}).get("stage")
+        r1 = {"round": 1, "pr": 7, "head": "abcdef1234", "bugs": 2}
+        ok = {"round": 2, "pr": 7, "head": "1111111111", "bugs": 0}
+        self.assertIsNone(pilot.approach([], []))
+        self.assertEqual(stage([], self.pr()), "approach")
+        self.assertEqual(stage([r1], self.pr()), "goaround")
+        self.assertEqual(stage([r1], self.pr(head="1111111111")), "approach")      # fixes pushed: round 2 due
+        self.assertEqual(stage([r1, ok], self.pr(head="1111111111")), "cleared")
+        self.assertEqual(stage([r1, ok], self.pr(head="1111111111", ci="running")), "holding")
+        self.assertEqual(stage([r1, ok], self.pr(head="1111111111", ci="failing")), "goaround")
+        self.assertEqual(stage([r1, ok], self.pr(head="2222222222")), "approach")  # pushed after acceptance
+        self.assertEqual(stage([r1, {**ok, "bugs": 1}], self.pr(head="1111111111")), "tower")
+        self.assertEqual(stage([r1], self.pr(state="MERGED")), "gate")
+        self.assertEqual(stage([r1], self.pr(number=8)), "approach")              # a round of another PR
+
+    def test_review_records_the_round_and_logs_it(self):
+        self.config(repos={"web-app": str(ROOT)})
+        self.plan("p1", "# Flight plan: x\n\n## Log\n\n- 2026-10-13 20:52 Plan opened.\n")
+        self.worker("leg-a", plan="p1", branch="b")
+        f = ROOT / "round.md"
+        f.write_text(ROUND_2_BUGS, encoding="utf-8")
+        old = pilot.collateral_now
+        pilot.collateral_now = lambda w: {"head": "abcdef12", "prs": [self.pr()]}
+        try:
+            run = lambda **kw: pilot.cmd_review(types.SimpleNamespace(name="leg-a", file=str(f), round=None, pr=None, post=False, **kw))
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                run()
+            self.assertIn("go-around", out.getvalue())
+            w = pilot.load("leg-a")
+            self.assertEqual([(r["round"], r["bugs"], r["head"]) for r in w["reviews"]], [(1, 2, "abcdef1234")])
+            self.assertTrue(Path(w["reviews"][0]["file"]).exists())
+            self.assertIn("Review round 1 of leg-a (PR #7 at abcdef12): 2 bug(s): go-around", self.log_of("p1")[-1])
+            pilot.collateral_now = lambda w: {"head": "99999999", "prs": [self.pr()]}
+            with self.assertRaises(SystemExit):     # the branch has commits the PR does not
+                run()
+            pilot.collateral_now = lambda w: {"head": "11111111", "prs": [self.pr(head="1111111111")]}
+            f.write_text(ROUND_2_BUGS.replace("BUGS: 2", "BUGS: 1").replace("### B2 One hand site left\n", ""), encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as ex:
+                run()                               # round 2 still finds one: the rounds are spent
+            self.assertEqual(ex.exception.code, 2)
+            self.assertEqual(len(pilot.load("leg-a")["reviews"]), 2)
+            self.assertIn("to the tower", self.log_of("p1")[-1])
+        finally:
+            pilot.collateral_now = old
+
+
 class SpendTests(Case):
     def test_weighted_tokens_count_each_message_once_across_files_and_subagents(self):
         main = self.transcript("w1", [usage("m1", inp=100, out=10), usage("m1", inp=100, out=10),
