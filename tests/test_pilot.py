@@ -45,6 +45,8 @@ class Case(unittest.TestCase):
         pilot._meters.clear()
         pilot._replayed.clear()
         pilot._git.clear()
+        pilot._stamps.clear()
+        pilot._schedules.clear()
         self.rows = []
         self._agents, pilot.agents = pilot.agents, lambda: self.rows
 
@@ -377,6 +379,112 @@ class ReviewTests(Case):
             self.assertIn("to the tower", self.log_of("p1")[-1])
         finally:
             pilot.collateral_now = old
+
+
+class FlightTimeTests(Case):
+    """Departure, ETA, schedule and delay: active time with long gaps capped, the projection, the schedule's file."""
+
+    def at(self, sid, minutes, start="2026-10-13T09:00:00"):
+        """A transcript with one record at each of these minutes past 09:00 UTC; returns 09:00's timestamp."""
+        t0 = pilot.datetime.datetime.fromisoformat(start + "+00:00")
+        self.transcript(sid, [{"type": "assistant", "timestamp": (t0 + pilot.datetime.timedelta(minutes=m)).isoformat().replace("+00:00", "Z")}
+                              for m in minutes])
+        return t0.timestamp()
+
+    def leg(self, state, active=0, done=0, total=0, started=1000.0, last=None, name="x"):
+        return {"state": state, "active": active, "done": done, "total": total, "started": started, "last": last, "name": name}
+
+    def test_a_long_gap_counts_at_most_the_cap(self):
+        self.assertEqual(pilot.GAP_CAP, 600)
+        self.assertEqual(pilot.active_seconds([0, 60, 120]), 120)
+        self.assertEqual(pilot.active_seconds([0, 60, 60 + 8 * 3600, 60 + 8 * 3600 + 30]), 60 + 600 + 30)   # asleep overnight
+        self.assertEqual(pilot.active_seconds([300, 0, 60]), 300)        # in any order
+        self.assertEqual(pilot.active_seconds([5]), 0)
+        self.assertEqual(pilot.active_seconds([0, 3600], cap=60), 60)
+
+    def test_a_legs_active_time_is_read_from_all_its_sessions(self):
+        self.at("s-a", [0, 2, 4])
+        self.at("s-a2", [4, 300, 301])                  # its `say` copy repeats minute 4, then picks up hours later
+        w = {"name": "a", "sessions": [{"sessionId": "s-a"}, {"sessionId": "s-a2"}], "started": 1.0,
+             "reportHead": "DONE", "checklist": [{"status": "completed"}]}
+        t = pilot.leg_timing(w)
+        self.assertEqual(t["state"], "landed")
+        self.assertEqual(t["active"], 4 * 60 + 600 + 60)
+        self.assertEqual((t["done"], t["total"]), (1, 1))
+        self.assertEqual(pilot.leg_timing(None), {"state": "unflown"})
+
+    def test_eta_of_a_leg_in_the_air_at_its_own_rate(self):
+        t = pilot.project_eta([self.leg("flying", active=1200, done=2, total=6)], now=10_000)
+        self.assertEqual(t["departed"], 1000.0)
+        self.assertEqual(t["eta"], 10_000 + 4 * 600)       # 4 items left, 10 minutes each
+        self.assertIn("4 of 6 items left", t["basis"])
+
+    def test_legs_not_flown_take_the_landed_legs_mean(self):
+        legs = [self.leg("landed", active=3600, done=6, total=6, started=500.0),
+                self.leg("landed", active=1800, done=3, total=3),
+                self.leg("flying", active=600, done=0, total=5),    # none done: the landed legs' rate, 10m an item
+                self.leg("unflown"), self.leg("unflown")]
+        t = pilot.project_eta(legs, now=10_000)
+        self.assertEqual(t["departed"], 500.0)
+        self.assertEqual(t["eta"], 10_000 + 5 * 600 + 2 * 2700)
+        self.assertIn("2 legs not flown at 45m each", t["basis"])
+
+    def test_no_eta_without_anything_to_time_by(self):
+        t = pilot.project_eta([self.leg("flying", active=600, done=0, total=4), self.leg("unflown")], now=10_000)
+        self.assertIsNone(t["eta"])
+        self.assertIn("no ETA yet", t["noEta"])
+        t = pilot.project_eta([self.leg("flying", active=600, done=1, total=4), self.leg("unflown")], now=10_000)
+        self.assertIsNone(t["eta"])                         # the leg in the air can be timed, the one not flown cannot
+        self.assertIn("1 not flown", t["noEta"])
+        t = pilot.project_eta([self.leg("unflown")], now=10_000)
+        self.assertEqual((t["departed"], t["eta"], t["noEta"]), (None, None, "not departed"))
+
+    def test_a_flight_whose_legs_all_landed_shows_its_arrival(self):
+        t = pilot.project_eta([self.leg("landed", active=60, last=5000.0), self.leg("landed", active=60, last=7000.0)], now=10_000)
+        self.assertEqual((t["arrived"], t["eta"]), (7000.0, None))
+
+    def test_the_schedule_is_set_once_survives_a_reload_and_is_never_rewritten(self):
+        self.plan("p1", PLAN)
+        self.assertIsNone(pilot.schedule("p1", None))                     # nothing to schedule by yet
+        self.assertFalse(pilot.SCHEDULES.exists())
+        self.assertEqual(pilot.schedule("p1", 50_000.0), 50_000.0)
+        self.assertEqual(pilot.read_json(pilot.SCHEDULES)["p1"]["eta"], 50_000.0)   # on disk: a restart reads it back
+        self.assertEqual(pilot.schedule("p1", 90_000.0), 50_000.0)         # a later ETA never moves it
+        logged = [l for l in self.log_of("p1") if "Schedule set" in l]
+        self.assertEqual(len(logged), 1)
+        self.assertIn(time.strftime("%H:%M", time.localtime(50_000.0)), logged[0])
+
+    def test_a_missing_or_corrupt_schedule_file_is_no_schedules(self):
+        pilot.SCHEDULES.write_text("{not json", encoding="utf-8")
+        self.assertEqual(pilot.schedule("p2", 70_000.0), 70_000.0)
+        self.assertEqual(pilot.read_json(pilot.SCHEDULES)["p2"]["eta"], 70_000.0)
+        pilot.SCHEDULES.write_text("[1, 2]", encoding="utf-8")
+        self.assertEqual(pilot.schedule("p2", 80_000.0), 80_000.0)
+
+    def test_a_preview_keeps_its_schedules_in_memory(self):
+        self.assertEqual(pilot.schedule("p3", 60_000.0, persist=False), 60_000.0)
+        self.assertEqual(pilot.schedule("p3", 61_000.0, persist=False), 60_000.0)
+        self.assertFalse(pilot.SCHEDULES.exists())
+
+    def test_delay_is_the_eta_now_against_the_schedule(self):
+        self.plan("p1", PLAN)
+        t0 = self.at("s-a", [0, 10, 20])                     # 20 active minutes, 2 of 4 items: 20 more to go
+        w = {"name": "fix", "plan": "p1", "sessionId": "s-a", "state": "working", "started": t0,
+             "checklist": [{"status": "completed"}, {"status": "completed"}, {"status": "pending"}, {"status": "pending"}]}
+        legs = [{"leg": "fix"}]
+        first = pilot.flight_times("p1", legs, [w])
+        self.assertEqual(first["departed"], t0)
+        self.assertEqual(first["scheduled"], first["eta"])
+        self.assertAlmostEqual(first["delay"], 0, delta=1)
+        self.at("s-a", [0, 10, 20, 30])                      # 10 more active minutes, no item done: it slips
+        late = pilot.flight_times("p1", legs, [w])
+        self.assertEqual(late["scheduled"], first["scheduled"])
+        self.assertGreater(late["delay"], 9 * 60)
+        done = {**w, "checklist": [{"status": "completed"}] * 4, "reportHead": "DONE", "state": "done"}
+        early = pilot.flight_times("p1", legs, [done])
+        self.assertIsNone(early["eta"])
+        self.assertEqual(early["arrived"], t0 + 30 * 60)
+        self.assertLess(early["delay"], 0)                   # landed before its schedule: early is negative
 
 
 class SpendTests(Case):
