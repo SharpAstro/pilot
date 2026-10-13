@@ -589,10 +589,11 @@ function planCard(p, s) {
   // alone, an active one starts open. A fold you set stays as you left it.
   const many = (s.plans || []).length > 1;
   return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" ${fold("plan:" + p.sessionId, !!p.waiting || (!many && planActive(p, s)))}>
-    <summary class="cardhead"><span><b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}</span> ${status}</span>
+    <summary class="cardhead"><span><b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
       <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} · ` : ""}plan updated ${esc(ago(p.updated))}
       ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
+    ${timesCard(p.times)}
     ${(p.prs || []).length ? `<div class="prline"><span class="sub">pull requests the plan names:</span> ${p.prs.map(x => prChip(x, true)).join(" ")}</div>` : ""}
     ${p.waiting ? waitingHtml(p, ps) : ""}
     ${yourMove && !atGate && ps.said ? `<details class="lastsaid" ${fold("said:" + p.sessionId, true)}><summary>its turn ended ${esc(ago(Date.parse(ps.said.at) / 1000))} with nothing in the air; its last message</summary>${md(ps.said.text)}</details>` : pilotNow(ps)}
@@ -731,6 +732,29 @@ function routeChart(p, s) {
 // An airplane pointing right, about 30 by 24, centred on its middle.
 const PLANE = "M15,0 L5,-2.2 L-1,-12 L-5,-12 L-2,-2.2 L-9,-2.2 L-12.5,-7 L-15,-7 L-13,0 L-15,7 L-12.5,7 L-9,2.2 L-2,2.2 L-5,12 L-1,12 L5,2.2 Z";
 
+// A flight's times, pilot.py's flight_times(): when its first leg took off, its ETA projected from active time
+// (or, once every leg has landed, its arrival), and its delay against its schedule, the first ETA it had.
+// Early is a negative delay. A time on another day than today says which day.
+const tclock = ts => new Date(ts * 1000).toDateString() === new Date().toDateString() ? hhmm(ts) : dayhhmm(ts);
+function delayHtml(d) {
+  if (d == null) return "";
+  const m = Math.round(Math.abs(d) / 60), span = m < 90 ? `${m}m` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}`;
+  return m < 1 ? `<span class="early">on time</span>` : `<span class="${d > 0 ? "late" : "early"}">${d > 0 ? "+" : "−"}${span}</span>`;
+}
+function timesLine(t) {
+  if (!t?.departed) return "";
+  const end = t.arrived ? `ARR ${tclock(t.arrived)}` : t.eta ? `ETA ${tclock(t.eta)}` : "no ETA yet";
+  return `<span class="ftimes" title="${esc(t.noEta || t.basis || "")}">DEP ${tclock(t.departed)} · ${end}${t.delay != null ? ` · ${delayHtml(t.delay)}` : ""}</span>`;
+}
+function timesCard(t) {
+  if (!t?.departed) return "";
+  const late = t.delay == null ? "" : ` (${delayHtml(t.delay)}${Math.abs(t.delay) >= 60 ? (t.delay > 0 ? " late" : " early") : ""})`;
+  return `<div class="times ftimes"><span><b>departed</b>${esc(when(t.departed))}</span>
+    ${t.arrived ? `<span><b>arrived</b>${esc(when(t.arrived))}${late}</span>` : t.eta ? `<span><b>ETA</b>${esc(when(t.eta))}${late}</span>` : `<span><b>ETA</b>${esc(t.noEta || "no ETA yet")}</span>`}
+    <span><b>scheduled</b>${t.scheduled ? esc(when(t.scheduled)) : "not yet: the first ETA sets it"}</span>
+    ${t.basis ? `<span class="basis sub">${t.arrived ? "" : "ETA from "}${esc(t.basis)}</span>` : ""}</div>`;
+}
+
 // Where a flight is: its legs as stops along one route, in the plan's order, the last stop its destination. The
 // plane flies the first leg that has not landed, as far along it as that leg's checklist is, and holds in amber
 // while that leg waits on you. Before the first takeoff it stands at the gate; when every leg is done it has landed.
@@ -777,7 +801,7 @@ function flightStrip(p, s) {
   const svg = `<svg viewBox="0 0 ${W} 86" role="img" aria-label="${esc(status.replace(/<[^>]+>/g, ""))}">${lines.join("")}${gate}${stops.join("")}
     <g transform="translate(${plane.x.toFixed(1)},${plane.y})"><g${bob}><path d="${PLANE}" style="fill:${color};stroke:var(--page);stroke-width:1"/></g></g></svg>`;
   return `<div class="flight" data-plan="${esc(p.sessionId)}" title="Open its flight plan">
-    <div class="fhead"><b>${p.flight ? esc(p.flight) : "Flight"}</b> ${esc(p.title)} <span class="sub">· ${status}${flightGit(p, s)}</span></div>${svg}</div>`;
+    <div class="fhead"><b>${p.flight ? esc(p.flight) : "Flight"}</b> ${esc(p.title)} <span class="sub">· ${status}${flightGit(p, s)}</span>${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</div>${svg}</div>`;
 }
 
 function flightsHtml(s) {

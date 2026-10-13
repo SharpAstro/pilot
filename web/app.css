@@ -193,6 +193,15 @@ ul.checklist li.in_progress span:first-child { color: var(--fill); }
 @keyframes bob { 50% { transform: translateY(-2.5px); } }
 @media (prefers-reduced-motion: reduce) { .flight .bob { animation: none; } }
 
+/* flight times: departure, ETA or arrival, and delay, on a flight's strip and its plan card */
+.ftimes { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink-2); }
+.ftimes .late { color: var(--serious); font-weight: 600; }
+.ftimes .early { color: var(--good-text); font-weight: 600; }
+.plan .times { margin: 6px 0 2px; font-size: 13px; display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: baseline; }
+.plan .times b { font-weight: 600; color: var(--ink-2); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; margin-right: 4px; }
+.plan .times .basis { flex-basis: 100%; }
+/* end flight times */
+
 /* session view */
 .sess-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 4px 0 12px; }
 .sess-head .title { font-size: 18px; font-weight: 700; }
