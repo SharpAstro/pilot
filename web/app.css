@@ -72,6 +72,7 @@ nav a.on { background: var(--page); color: var(--ink); font-weight: 600; box-sha
 .name { font-weight: 600; overflow-wrap: anywhere; }
 .name small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
 .chip { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.row .chip, .chip.move { white-space: normal; }    /* the state column is 130px; a long state wraps rather than run into the meter */
 .chip.working { color: var(--fill); } .chip.blocked { color: var(--ink); } .chip.done { color: var(--good-text); } .chip.failed { color: var(--crit); } .chip.other { color: var(--muted); }
 .chip.blocked::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); margin-right: 6px; }
 .meter { display: grid; gap: 3px; }
@@ -178,6 +179,19 @@ ul.checklist li.in_progress span:first-child { color: var(--fill); }
 .graph text { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--ink); }
 .graph text.sm { font-size: 11px; fill: var(--ink-2); }
 .graph .edge { fill: none; stroke: var(--axis); stroke-width: 1.5; }
+.flight { padding: 10px 14px 2px; border-top: 1px solid var(--hair); cursor: pointer; }
+.flight:first-child { border-top: 0; }
+.flight:hover { background: var(--ring); }
+.flight .fhead { font-size: 13px; }
+.flight svg { display: block; width: 100%; height: auto; }
+.flight text { font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--ink-2); }
+.flight line { stroke-width: 2.5; stroke-linecap: round; }
+.flight line.flown { stroke: var(--good); }
+.flight line.ahead { stroke: var(--axis); stroke-dasharray: 6 5; }
+.flight .stop[data-href] { cursor: pointer; }
+.flight .bob { animation: bob 2.4s ease-in-out infinite; }
+@keyframes bob { 50% { transform: translateY(-2.5px); } }
+@media (prefers-reduced-motion: reduce) { .flight .bob { animation: none; } }
 
 /* session view */
 .sess-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 4px 0 12px; }

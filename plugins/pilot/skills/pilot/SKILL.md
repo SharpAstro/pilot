@@ -158,11 +158,20 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
     - **Cleared to land** is review accepted and CI green, on the same head: only then put
       `- **Merge PR #<n>?** <what it changes; the rounds and their bugs; CI's state>.` in
       `## Waiting on the controller`. A commit pushed after the accepted round makes the next round due.
+    - **Who reviews the PR decides what landing means**; `result` and the dashboard say which. With no
+      required review (a repo of the controller's own), this rule's review is the only one it gets: cleared
+      to land, ask to merge. When its team reviews it (the base branch requires a review, as on a work
+      repo), your PR is a contribution: once accepted here with CI green it is *awaiting clearance*. Mark it
+      ready for review if it is a draft, unless the controller asked for one, and wait for the team. A change
+      they request is a go-around like a bug, and it is cleared to land, and the merge asked for, only once
+      they approve. `~/.pilot/pilot.json`'s `"review": {"<repo>": "team" | "self"}` settles a repo GitHub
+      cannot tell.
     - **Rounds that find bugs stop at two.** When the second still finds bugs, `review` exits 2: put them
       in `## Waiting on the controller` with the round file and your recommendation for each (fix, follow-up
       issue, or accept as is), rather than a third round.
     The dashboard and `list` show where each PR stands: on approach (a round is due), go-around (fixing),
-    holding (accepted, CI running), to the tower, cleared to land, at the gate (merged).
+    holding (accepted, CI running), to the tower, awaiting clearance (its team reviews it), cleared to
+    land, at the gate (merged).
 12. **Fuel goes through the watchtower.** Every worker has a budget in weighted tokens (default 10M; see
     `~/.pilot/pilot.json`). At the budget its tools are refused and it writes a report. When a worker is
     near it with much of its checklist left, or out of it, ask for more:

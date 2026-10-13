@@ -224,6 +224,26 @@ class UnreadTests(Case):
         pilot.plan_log("p1", "leg-a LANDED: checked and pushed.")
         self.assertFalse(pilot.unread(w, False, time.time() - 5))
 
+    def test_untimed_records_after_its_turn_do_not_make_a_leg_unread(self):
+        """Claude Code appends last-prompt and cost-state records to a transcript after the turn ends, which moves
+        the file's time past the pilot's log line. When the leg stopped is its last timestamped event."""
+        self.plan("p1", "# Flight plan: x\n\n## Log\n\n- 2026-10-13 21:35 leg-a LANDED: checked.\n")
+        w = self.worker("leg-a", plan="p1")
+        stopped = time.mktime(time.strptime("2026-10-13 21:31", "%Y-%m-%d %H:%M"))
+        ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(stopped))
+        p = self.transcript("sess-leg-a", [
+            {"type": "assistant", "timestamp": ts, "message": {"id": "m1", "content": [{"type": "text", "text": "DONE: all of it"}]}},
+            {"type": "last-prompt"}, {"type": "cost-state"}])
+        os.utime(p, (stopped + 1500, stopped + 1500))         # the file touched 25 minutes after its turn
+        row = {"id": w["id"], "sessionId": w["sessionId"], "state": "done", "status": "idle"}
+        self.assertFalse(pilot.worker_status(w, [row])["unread"])
+        # A message after the pilot's 21:35 line is something it has not seen.
+        p.write_text(p.read_text(encoding="utf-8") + json.dumps({"type": "assistant", "timestamp": time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(stopped + 1800)), "message": {"id": "m2", "content": [
+            {"type": "text", "text": "DONE: and one more thing"}]}}) + "\n", encoding="utf-8")
+        pilot._meters.clear()
+        self.assertTrue(pilot.worker_status(w, [row])["unread"])
+
     def test_a_leg_its_plan_never_names_or_without_a_plan_is_not_unread(self):
         self.plan("p1", "# Flight plan: x\n\n## Log\n\n- 2026-10-13 20:52 Plan opened.\n")
         self.assertFalse(pilot.unread(self.worker("leg-a", plan="p1"), False, time.time()))
@@ -253,8 +273,8 @@ src/a.cs, src/b.cs
 
 
 class ReviewTests(Case):
-    def pr(self, head="abcdef1234", state="OPEN", ci="passing", number=7):
-        return {"number": number, "state": state, "head": head, "ci": ci, "url": f"https://x/pull/{number}"}
+    def pr(self, head="abcdef1234", state="OPEN", ci="passing", number=7, **kw):
+        return {"number": number, "state": state, "head": head, "ci": ci, "url": f"https://x/pull/{number}", **kw}
 
     def test_a_round_file_states_its_bugs_and_lists_them(self):
         r = pilot.parse_round(ROUND_2_BUGS)
@@ -281,6 +301,14 @@ class ReviewTests(Case):
         self.assertEqual(stage([r1, {**ok, "bugs": 1}], self.pr(head="1111111111")), "tower")
         self.assertEqual(stage([r1], self.pr(state="MERGED")), "gate")
         self.assertEqual(stage([r1], self.pr(number=8)), "approach")              # a round of another PR
+
+    def test_a_pr_its_team_reviews_waits_for_their_approval(self):
+        stage = lambda pr: (pilot.approach([{"round": 1, "pr": 7, "head": "1111111111", "bugs": 0}], [pr]) or {}).get("stage")
+        team = dict(head="1111111111", reviewer="team")
+        self.assertEqual(stage(self.pr(**team, review="REVIEW_REQUIRED")), "clearance")   # accepted and green: theirs next
+        self.assertEqual(stage(self.pr(**team, review="CHANGES_REQUESTED")), "clearance")
+        self.assertEqual(stage(self.pr(**team, review="APPROVED")), "cleared")
+        self.assertEqual(stage(self.pr(head="1111111111", reviewer="self")), "cleared")   # the flight is its review
 
     def test_review_records_the_round_and_logs_it(self):
         self.config(repos={"web-app": str(ROOT)})
@@ -566,6 +594,15 @@ class PullRequestTests(Case):
         self.assertEqual(pr(statusCheckRollup=[{"status": "IN_PROGRESS"}, {"conclusion": "FAILURE"}])["ci"], "failing")
         self.assertEqual(pr(isDraft=True)["state"], "DRAFT")
         self.assertEqual(pr(isDraft=True, state="MERGED")["state"], "MERGED")
+
+    def test_a_required_review_means_the_team_reviews_it(self):
+        pr = lambda repo, decision: pilot.pr_view({"number": 1, "state": "OPEN", "reviewDecision": decision}, repo)["reviewer"]
+        self.assertEqual(pr("drawboard-pdf-sdk", "REVIEW_REQUIRED"), "team")
+        self.assertEqual(pr("drawboard-pdf-sdk", "APPROVED"), "team")
+        self.assertEqual(pr("tianwen", ""), "self")             # no branch rule: the pilot and co-pilot review it
+        self.config(review={"tianwen": "team", "web-app": "self"})
+        self.assertEqual(pr("tianwen", ""), "team")             # a team that reviews by convention
+        self.assertEqual(pr("web-app", "REVIEW_REQUIRED"), "self")
 
     def test_a_plan_names_prs_by_repo_and_number(self):
         self.config(repos={"DIR.Lib": str(ROOT), "tianwen": str(ROOT)})

@@ -842,15 +842,24 @@ def collateral_now(w):
             "ahead": int(git("rev-list", "--count", f"{w['base']}..{sha}") or 0) if w.get("base") else None,
             "unpushed": int(git("rev-list", "--count", sha, "--not", "--remotes") or 0),
             "remotes": remotes[:5], "dirty": len(dirty), "dirtyFiles": dirty[:20],
-            "prs": leg_prs(root, remotes[:5]) if remotes and shutil.which("gh") else []}
+            "prs": leg_prs(root, remotes[:5], w.get("repo")) if remotes and shutil.which("gh") else []}
 
 
 PR_FIELDS = "number,title,state,url,isDraft,reviewDecision,statusCheckRollup,headRefName,headRefOid"
 
 
-def pr_view(p):
+def reviewer(repo, decision):
+    """Who reviews a pull request. "team": someone else must, which GitHub shows by giving it a review decision
+    (its base branch requires a review), as on a work repo. "self": the flight's own review loop, the pilot and
+    its co-pilot, is the review, as on a repo of the user's own with no required review; its next step is a
+    merge. ~/.pilot/pilot.json's "review": {"<repo>": "team" | "self"} overrides it, for a team that reviews by
+    convention without a branch rule."""
+    return (config().get("review") or {}).get(repo) or ("team" if decision else "self")
+
+
+def pr_view(p, repo=None):
     """A pull request as the dashboard shows it: number, title, state (OPEN, MERGED, CLOSED, or DRAFT), its link,
-    and its checks folded to one word: passing, failing, running, or none."""
+    its checks folded to one word (passing, failing, running, or none), and who reviews it."""
     checks = [(c.get("conclusion") or c.get("state") or "").upper() for c in p.get("statusCheckRollup") or []]
     running = [(c.get("status") or "").upper() for c in p.get("statusCheckRollup") or []]
     ci = ("failing" if any(c in ("FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED") for c in checks)
@@ -858,7 +867,8 @@ def pr_view(p):
           else "passing" if checks else "none")
     state = "DRAFT" if p.get("isDraft") and p.get("state") == "OPEN" else p.get("state")
     return {"number": p.get("number"), "title": p.get("title"), "state": state, "url": p.get("url"),
-            "branch": p.get("headRefName"), "head": p.get("headRefOid"), "review": p.get("reviewDecision") or None, "ci": ci}
+            "branch": p.get("headRefName"), "head": p.get("headRefOid"), "review": p.get("reviewDecision") or None, "ci": ci,
+            "reviewer": reviewer(repo, p.get("reviewDecision"))}
 
 
 def gh_json(root, *args):
@@ -871,7 +881,7 @@ def gh_json(root, *args):
         return None
 
 
-def leg_prs(root, remotes):
+def leg_prs(root, remotes, repo=None):
     """The pull requests opened from any remote branch that holds the leg's tip: a pilot pushes a leg under a
     name of its own (feat/<topic>), so the worktree branch's name finds nothing. Newest first."""
     out, seen = [], set()
@@ -880,7 +890,7 @@ def leg_prs(root, remotes):
         for p in gh_json(root, "pr", "list", "--state", "all", "--head", head, "--limit", "3", "--json", PR_FIELDS) or []:
             if p.get("number") not in seen:
                 seen.add(p.get("number"))
-                out.append(pr_view(p))
+                out.append(pr_view(p, repo))
     return sorted(out, key=lambda p: p["number"] or 0, reverse=True)
 
 
@@ -907,14 +917,15 @@ def parse_round(text):
 
 
 APPROACH = {"approach": "on approach", "goaround": "go-around", "holding": "holding", "tower": "to the tower",
-            "cleared": "cleared to land", "gate": "at the gate"}
+            "clearance": "awaiting clearance", "cleared": "cleared to land", "gate": "at the gate"}
 
 
 def approach(reviews, prs):
     """Where a leg's pull request stands, in the plan's words: on approach (a review round is due on its head),
     go-around (the last round found bugs, or CI fails, and the fixes are not pushed yet), holding (accepted,
-    CI not finished), to the tower (the rounds are spent and bugs are left), cleared to land (accepted at its head and
-    CI green: the merge is the controller's), at the gate (merged). None without a PR."""
+    CI not finished), to the tower (the rounds are spent and bugs are left), awaiting clearance (accepted and CI green,
+    and its team, who review it, have not approved it yet), cleared to land (accepted at its head and CI green, and
+    approved by its team if it has one: the merge is the controller's), at the gate (merged). None without a PR."""
     pr = next((p for p in prs or [] if p.get("state") in ("OPEN", "DRAFT", "MERGED")), None)
     if not pr:
         return None
@@ -934,6 +945,10 @@ def approach(reviews, prs):
             stage, why = "goaround", f"round {last['round']} found {last['bugs']} bug(s): fixing"
         elif pr.get("ci") == "failing":
             stage, why = "goaround", f"round {last['round']} accepted it, and CI fails"
+        elif pr.get("ci") == "passing" and pr.get("reviewer") == "team" and pr.get("review") != "APPROVED":
+            stage, why = "clearance", (f"round {last['round']} accepted it and CI is green; its team reviews it next"
+                                       + (": mark it ready for review" if pr["state"] == "DRAFT" else "")
+                                       + (", and they asked for changes" if pr.get("review") == "CHANGES_REQUESTED" else ""))
         elif pr.get("ci") == "passing":
             stage, why = "cleared", f"round {last['round']} accepted it and CI is green: the merge is the controller's"
         else:
@@ -1023,7 +1038,7 @@ def mentioned_prs(text, ttl=60):
                 with _git_slots:
                     try:
                         p = gh_json(repos[key[0]], "pr", "view", str(key[1]), "--json", PR_FIELDS)
-                        _prs[key] = {"at": time.time(), "pr": {**pr_view(p), "repo": key[0]} if p else None}
+                        _prs[key] = {"at": time.time(), "pr": {**pr_view(p, key[0]), "repo": key[0]} if p else None}
                     finally:
                         _prs_busy.discard(key)
                 HUB.poke()
@@ -1102,6 +1117,10 @@ def worker_status(w, rows=None):
     if path:
         last = max([path.stat().st_mtime] + [p.stat().st_mtime for p in subagent_files(sid)])
     ev = tail_events(sid, n=60) if sid else []
+    # When it stopped, for `unread`: its last timestamped event. The file's time will not do, since Claude Code
+    # appends untimed records (last-prompt, cost-state) to a transcript long after its turn has ended.
+    stopped = next((datetime.datetime.fromisoformat(str(e["at"]).replace("Z", "+00:00")).timestamp()
+                    for e in reversed(ev) if e.get("at")), None)
     now = doing_now(ev)
     said = [e for e in ev if e["kind"] == "said"]
     tail = [e for e in ev if e["kind"] in ("said", "error")]
@@ -1119,7 +1138,7 @@ def worker_status(w, rows=None):
         "spend": sp, "overBudget": bool(w.get("budget")) and sp["weighted"] >= w["budget"],
         "lastActivity": last, "now": now, "rev": path.stat().st_size if path else 0,
         "approach": approach(w.get("reviews"), (collateral(w) or {}).get("prs")),
-        "unread": state in ("done", "blocked") and unread(w, (row or {}).get("status") == "busy", last),
+        "unread": state in ("done", "blocked") and unread(w, (row or {}).get("status") == "busy", stopped or last),
         "checklist": checklist([s.get("sessionId") for s in sessions_of(w)]),
         "remote": f"https://claude.ai/code/{rec['bridgeSessionId']}" if rec.get("bridgeSessionId") else None,
         "git": collateral(w), "outside": outside_line(said[-1]["text"]) if said else None,
@@ -1921,6 +1940,11 @@ def cmd_result(a):
               + (f"; UNCOMMITTED: {g['dirty']} file(s)" if g["dirty"] else ""))
         for l in g["dirtyFiles"]:
             print(f"  {l}")
+        for pr in g.get("prs") or []:
+            print(f"--- PR #{pr['number']} ({pr['state'].lower()}, checks {pr['ci']}"
+                  + (f", {pr['review'].lower().replace('_', ' ')}" if pr.get("review") else "") + "): "
+                  + ("its team reviews it, so it goes to them, and is merged once approved" if pr.get("reviewer") == "team"
+                     else "no review is required, so yours and the co-pilot's is its review, and then it is merged") + f"  {pr['url']}")
     out = outside_line(report(w["sessionId"]) if w.get("sessionId") else "")
     print(f"--- outside the worktree: {out or 'the report does not say'}")
     ap = approach(w.get("reviews"), g.get("prs"))
@@ -2698,7 +2722,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 name, ctype = STATIC[path]
                 return self.send(200, (WEB / name).read_bytes(), ctype)
             if path == "/api/state":
-                return self.send(200, HUB.body.encode())
+                return self.send(200, HUB.wait(0, timeout=60)[1].encode())   # the first snapshot, not the "{}" before it
             if path == "/api/stream":
                 return self.state_stream()
             m = re.match(r"^/api/sessions/([0-9a-f-]{36})(?:/agents/([0-9a-f]{6,40}))?/stream$", path)
@@ -2730,7 +2754,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def state_stream(self):
         """Server-sent events: the whole state, sent again only when it changed."""
         self.sse()
-        seen = -1
+        seen = 0          # version 0 is the "{}" placeholder from before the first snapshot: never send it
         while True:
             version, body = HUB.wait(seen)
             if version != seen:

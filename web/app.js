@@ -34,13 +34,12 @@ const clock = iso => iso ? new Date(iso).toLocaleTimeString([], {hour: "2-digit"
 const when = t => t ? new Date(t * 1000).toLocaleString([], {weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"}) : "";
 // A <details data-k> keeps the reader's open or closed choice when put() rebuilds it. Only a choice that
 // differs from its default (data-open="1" when open by default) is kept, so the default still moves: a plan
-// that lands folds away unless the reader opened it. Folding a plan redraws the radar, which hides its legs.
+// that lands folds away unless the reader opened it.
 const opened = new Map();
 document.addEventListener("toggle", e => {
   const d = e.target, k = d.dataset?.k;
   if (!k) return;
   if (d.open === (d.dataset.open === "1")) opened.delete(k); else opened.set(k, d.open);
-  if (k.startsWith("plan:") && S) render();
 }, true);
 function put(el, html) {
   if (!el || el._html === html) return;
@@ -178,10 +177,17 @@ const screenHtml = rows => rows.map(row => row.map(([text, a]) => {
 
 // ------------------------------------------------------------------ shared pieces
 
+// Claude Code keeps a job's last state after its session ends, so a worker whose turn ended on its budget stays
+// "blocked" for good, even once it is refuelled, has reported DONE and has its checklist complete. Ended, DONE and
+// complete, it waits on no one.
+function waitsOnYou(w) {
+  return w.state === "blocked" && !(!w.pid && w.reportHead === "DONE" && !openItems(w.checklist || []).length);
+}
+
 function stateOf(w) {
   if (w.state === "working") return {cls: "working", label: "● working", stroke: "var(--fill)", tint: "var(--tint-fill)"};
-  if (w.state === "blocked") return {cls: "blocked", label: "waiting on you", stroke: "var(--warn)", tint: "var(--tint-warn)"};
-  if (w.state === "done" || w.final) {
+  if (waitsOnYou(w)) return {cls: "blocked", label: "waiting on you", stroke: "var(--warn)", tint: "var(--tint-warn)"};
+  if (w.state === "done" || w.state === "blocked" || w.final) {
     const head = w.reportHead || w.final?.reportHead, open = openItems(w.checklist || w.final?.checklist).length;
     if (head === "FAILED") return {cls: "failed", label: "✗ failed", stroke: "var(--crit)", tint: "var(--tint-crit)"};
     if (head === "BLOCKED") return {cls: "blocked", label: "blocked: needs you", stroke: "var(--warn)", tint: "var(--tint-warn)"};
@@ -222,7 +228,7 @@ function meter(sp, budget) {
 }
 
 function doing(w) {
-  if (w.state === "blocked" && w.detail) return `<span class="doing"><b>needs you:</b> ${esc(w.detail)}</span>`;
+  if (waitsOnYou(w) && w.detail) return `<span class="doing"><b>needs you:</b> ${esc(w.detail)}</span>`;
   if (w.state === "working" && w.now) return w.now.kind === "tool"
     ? `<span class="doing"><b>${esc(w.now.tool)}</b> ${esc(w.now.summary || w.now.text || "")}</span>` : `<span class="doing">${esc(w.now.text)}</span>`;
   if (w.detail) return `<span class="doing">${esc(w.detail)}</span>`;
@@ -363,7 +369,7 @@ const NOTE_ICON = {waiting: "🟡", done: "✅", failed: "❌", died: "❌", bud
 function renderTop() {
   const r = parse();
   for (const a of document.querySelectorAll("nav a")) a.classList.toggle("on", a.dataset.nav === (r.view === "session" ? "" : r.view));
-  if (!S) return;
+  if (!S?.workers) return;     // not loaded yet: an older server sends "{}" before its first snapshot
   // Whether a refuel can be approved by the watchtower right now, or has to come to you.
   // Refuelling's switch, which is not the autopilot's: auto lets the watchtower approve a refuel within its
   // gates (held while the account has no headroom), manual sends every refuel to the tower.
@@ -383,7 +389,7 @@ function renderTop() {
   const over = S.workers.filter(w => w.overBudget);
   const waiting = [...S.pilots.filter(p => p.status === "waiting").map(p => ({name: `pilot ${p.name}`, href: `#/s/${p.sessionId}`})),
                    ...(S.plans || []).filter(p => p.waiting).map(p => ({name: p.title, href: `#/s/${p.sessionId}`})),
-                   ...S.workers.filter(w => w.state === "blocked").map(w => ({name: w.name, href: `#/w/${w.name}`}))];
+                   ...S.workers.filter(waitsOnYou).map(w => ({name: w.name, href: `#/w/${w.name}`}))];
   // S.stale: pilot.py changed since this server started. A snapshot without refuel's mode is from a server
   // older than that check.
   const stale = S.stale || (S.refuel && !("mode" in S.refuel));
@@ -520,13 +526,41 @@ function legState(s, name) {
   return {st: {cls: "other", label: "planned", stroke: "var(--axis)", tint: "var(--surface)", planned: true}};
 }
 
+// What "your move" is, once the pilot's turn has ended with nothing in the air: the items waiting on the
+// controller; for a landed flight, its open pull requests and what each needs; else the last line of the
+// pilot's last message, which is where a pilot says what it is waiting for.
+function yourMoveOf(p, s, ps) {
+  if (p.waiting) { const n = waitingItems(p.waiting).items.length; return `your move: answer ${n} item${n === 1 ? "" : "s"} below`; }
+  const legs = p.legs.map(l => legState(s, l.leg));
+  const prs = [...new Map(legs.flatMap(({w, h}) => (w || h)?.git?.prs || []).map(x => [x.url, x])).values()]
+    .filter(x => x.state !== "MERGED" && x.state !== "CLOSED");
+  const link = x => `<a href="${esc(x.url)}" target="_blank" rel="noopener">#${esc(x.number)}</a>`;
+  const landed = legs.length && legs.every(({st}) => st.cls === "done");
+  // A team-reviewed PR goes to its reviewers and is merged once approved; a self-reviewed one (the pilot and
+  // its co-pilot are its review, as on a repo of your own) is merged once its checks pass.
+  const green = x => x.ci === "passing" ? " (checks green)" : "";
+  // While the flight's own review of a PR is under way (a round due, a go-around, CI running), the move is the pilot's.
+  const aps = new Map(legs.map(({w, h}) => (w || h)?.approach).filter(Boolean).map(a => [a.pr, a]));
+  const step = x => ["approach", "goaround", "holding"].includes(aps.get(x.number)?.stage) ? `${link(x)}: ${esc(aps.get(x.number).why)} (the pilot's)`
+    : aps.get(x.number)?.stage === "tower" ? `${link(x)}: its review rounds are spent; decide the bugs left`
+    : x.ci === "failing" ? `${link(x)}: checks failing` : x.ci === "running" ? `${link(x)}: checks running`
+    : x.reviewer === "self" ? `${x.state === "DRAFT" ? "mark ready and merge" : "merge"} ${link(x)}${green(x)}`
+    : x.state === "DRAFT" ? `mark ${link(x)} ready for review${green(x)}`
+    : x.review === "APPROVED" ? `merge ${link(x)}` : x.review === "CHANGES_REQUESTED" ? `${link(x)}: changes requested`
+    : `${link(x)} waits on its reviewers`;
+  if (landed && prs.length) return "landed · your move: " + prs.map(step).join(", ");
+  // No open PR known (none, or not looked up yet): the pilot's own words say what it is waiting for.
+  const last = String(ps?.said?.text || "").split("\n").map(l => l.replace(/[*`]/g, "").replace(/^[\s#>-]+/, "").trim()).filter(Boolean).pop();
+  return `${landed ? "landed · " : ""}your move${last ? `: ${esc(last.length > 110 ? last.slice(0, 107) + "…" : last)}` : ""}`;
+}
+
 function planCard(p, s) {
   const legs = p.legs.map(l => {
     const {w, h, st} = legState(s, l.leg);
     const sp = w ? w.spend : h ? h.final?.spend : null;
     const link = w ? `#/w/${esc(w.name)}` : h ? `#/s/${esc(h.sessionId)}` : "";
     return `<tr${link ? ` class="click" data-href="${link}"` : ""}><td><b>${esc(l.leg)}</b></td><td>${md(l.goal)}</td><td>${esc(l.after.join(", ") || "-")}</td>
-      <td>${md(l.doneWhen)}</td><td><span class="chip ${st.cls}">${esc(st.label)}</span>${w && (w.state === "working" || w.state === "blocked") ? doing(w) : ""}${checkLine(w ? w.checklist : h?.final?.checklist)}${gitLine((w || h)?.git, (w || h)?.approach)}</td><td class="num">${sp ? esc(M(sp.weighted)) : ""}</td></tr>`;
+      <td>${md(l.doneWhen)}</td><td><span class="chip ${st.cls}">${esc(st.label)}</span>${w && (w.state === "working" || waitsOnYou(w)) ? doing(w) : ""}${checkLine(w ? w.checklist : h?.final?.checklist)}${gitLine((w || h)?.git, (w || h)?.approach)}</td><td class="num">${sp ? esc(M(sp.weighted)) : ""}</td></tr>`;
   }).join("");
   const log = p.log.slice(-12).reverse().map(l => `<li>${esc(l)}</li>`).join("");
   const ps = p.pilotState, waiting = ps?.status === "waiting";
@@ -537,13 +571,14 @@ function planCard(p, s) {
   const where = `answer in the pilot's terminal${ps?.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : ""}`;
   return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" ${fold("plan:" + p.sessionId, planActive(p, s) || !!p.waiting)}>
     <summary class="cardhead"><span><b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}</span></span>
-      <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} ` : ""}${yourMove ? `<span class="chip blocked">your move</span>` : pilotChip(ps, flying)} · plan updated ${esc(ago(p.updated))}
+      <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} ` : ""}${yourMove ? `<span class="chip blocked move" title="${esc(ps.said?.text || "")}">${yourMoveOf(p, s, ps)}</span>` : pilotChip(ps, flying)} · plan updated ${esc(ago(p.updated))}
       ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
     ${(p.prs || []).length ? `<div class="prline"><span class="sub">pull requests the plan names:</span> ${p.prs.map(x => prChip(x, true)).join(" ")}</div>` : ""}
     ${p.waiting ? waitingHtml(p, ps) : ""}
     ${yourMove && ps.said ? `<details class="lastsaid" ${fold("said:" + p.sessionId, true)}><summary>its turn ended ${esc(ago(Date.parse(ps.said.at) / 1000))} with nothing in the air; its last message</summary>${md(ps.said.text)}</details>` : pilotNow(ps)}
     ${p.notes ? `<details ${fold("notes:" + p.sessionId, waiting)}><summary>the pilot's notes: what it found and why the route is this shape</summary>${md(p.notes, true)}</details>` : ""}
+    ${p.legs.length > 1 ? `<details ${fold("chart:" + p.sessionId, true)}><summary>the route as a chart: each leg after the legs it waits for</summary><div class="graph">${routeChart(p, s)}</div></details>` : ""}
     <div class="tablewrap"><table><thead><tr><th>Leg</th><th>Goal</th><th>After</th><th>Done when</th><th>Status</th><th class="num">Spend</th></tr></thead>
       <tbody>${legs || `<tr><td colspan="6" class="sub">No legs yet. The pilot adds them to the Route table.</td></tr>`}</tbody></table></div>
     ${log ? `<details ${fold("log:" + p.sessionId, true)}><summary>flight log: decisions, questions and answers, legs taking off and landing</summary><ul class="log">${log}</ul></details>` : ""}</details>`;
@@ -613,7 +648,6 @@ async function sendAnswers(sid) {
 
 // A plan is open by default while it is in the air: its pilot runs, or a worker flies one of its legs.
 const planActive = (p, s) => p.live || p.legs.some(l => s.workers.some(w => w.name === l.leg && w.pid));
-const planOpen = (p, s) => opened.has("plan:" + p.sessionId) ? opened.get("plan:" + p.sessionId) : planActive(p, s);
 
 // "3 legs: 1 working, 2 planned", for a plan folded to one line.
 function legTally(p, s) {
@@ -627,81 +661,110 @@ function legTally(p, s) {
   return `${p.legs.length} leg${p.legs.length > 1 ? "s" : ""}: ` + Object.entries(n).map(([k, v]) => `${v} ${k}`).join(", ");
 }
 
-// ------------------------------------------------------------------ graph
+// ------------------------------------------------------------------ the route chart, and the flights
 
-// Every plan's legs hang under its pilot, chained by After; workers on no plan hang under the pilot that
-// named itself when it started them. A planned leg no worker flies yet is drawn dashed.
-function graphSvg(s) {
-  const items = [], roots = new Map(), onPlan = new Set(), folded = new Set();
-  for (const p of s.plans || []) {
-    const open = planOpen(p, s);
-    roots.set("p:" + p.sessionId, {label: p.flight ? `${p.flight} ${p.title}` : p.title, sub: open ? "pilot" : `collapsed · ${legTally(p, s)} · click to open`,
-                                   folded: !open, plan: p.sessionId});
-    if (!open) folded.add(p.sessionId);
-    for (const l of p.legs) {
-      onPlan.add(l.leg);
-      if (!open) continue;                     // a folded plan keeps its box and hides its legs
-      const {w, st} = legState(s, l.leg);
-      items.push({name: l.leg, after: l.after, root: "p:" + p.sessionId, w, st, started: w?.started || Infinity});
-    }
-  }
-  for (const w of s.workers) if (!onPlan.has(w.name) && !folded.has(w.plan)) {
-    const root = w.plan && roots.has("p:" + w.plan) ? "p:" + w.plan : "q:" + (w.pilot || "pilot");
-    if (!roots.has(root)) roots.set(root, {label: w.pilot || "pilot", sub: "pilot"});
-    items.push({name: w.name, after: w.after || [], root, w, st: stateOf(w), started: w.started || 0});
-  }
-  if (!items.length && !roots.size) return `<div class="empty">The graph fills in from the flight plan's route, and from workers as the pilot starts them. A leg with an After hangs under the leg it waits for.</div>`;
+// One plan's legs, chained by After, drawn inside its plan. A planned leg no worker flies yet is dashed.
+function routeChart(p, s) {
+  const items = p.legs.map(l => { const {w, st} = legState(s, l.leg); return {name: l.leg, after: l.after, w, st, started: w?.started || Infinity}; });
+  if (!items.length) return "";
   const byName = new Map(items.map(x => [x.name, x])), depthOf = new Map();
   const depth = (x, path = new Set()) => {
     if (depthOf.has(x.name)) return depthOf.get(x.name);
-    if (path.has(x.name)) return 1;
+    if (path.has(x.name)) return 0;
     path.add(x.name);
     const deps = x.after.filter(d => byName.has(d));
-    const d = deps.length ? 1 + Math.max(...deps.map(n => depth(byName.get(n), path))) : 1;
+    const d = deps.length ? 1 + Math.max(...deps.map(n => depth(byName.get(n), path))) : 0;
     depthOf.set(x.name, d);
     return d;
   };
   items.forEach(x => depth(x));
-  const layers = [[...roots].map(([key, r]) => ({key, pilot: r}))];
-  for (const x of [...items].sort((a, b) => a.started - b.started)) (layers[depthOf.get(x.name)] ||= []).push({key: "w:" + x.name, x});
-  const NW = 196, NH = 62, GX = 26, GY = 48, PAD = 8;
-  const widest = Math.max(...layers.map(l => (l || []).length));
-  const width = widest * (NW + GX) - GX + 2 * PAD, height = layers.length * (NH + GY) - GY + 2 * PAD;
+  const layers = [];
+  for (const x of [...items].sort((a, b) => a.started - b.started)) (layers[depthOf.get(x.name)] ||= []).push(x);
+  // Left to right, like the flight: a leg's depth in After is its column, and legs of one depth stack.
+  const NW = 150, NH = 62, GX = 28, GY = 14, PAD = 8;
+  const tallest = Math.max(...layers.map(l => (l || []).length));
+  const width = layers.length * (NW + GX) - GX + 2 * PAD, height = tallest * (NH + GY) - GY + 2 * PAD;
   const pos = new Map();
-  layers.forEach((l, i) => (l || []).forEach((n, j) => {
-    const rowW = l.length * (NW + GX) - GX;
-    pos.set(n.key, {x: PAD + (width - 2 * PAD - rowW) / 2 + j * (NW + GX), y: PAD + i * (NH + GY)});
+  layers.forEach((l, i) => (l || []).forEach((x, j) => {
+    const colH = l.length * (NH + GY) - GY;
+    pos.set(x.name, {x: PAD + i * (NW + GX), y: PAD + (height - 2 * PAD - colH) / 2 + j * (NH + GY)});
   }));
   const edges = [];
-  for (const x of items) {
-    const deps = x.after.filter(d => byName.has(d));
-    for (const from of deps.length ? deps.map(d => "w:" + d) : [x.root]) {
-      const a = pos.get(from), b = pos.get("w:" + x.name);
-      if (!a || !b) continue;
-      const x1 = a.x + NW / 2, y1 = a.y + NH, x2 = b.x + NW / 2, y2 = b.y;
-      edges.push(`<path class="edge" d="M${x1},${y1} C${x1},${y1 + GY / 2} ${x2},${y2 - GY / 2} ${x2},${y2}"/>`);
-    }
+  for (const x of items) for (const d of x.after.filter(d => byName.has(d))) {
+    const a = pos.get(d), b = pos.get(x.name);
+    const x1 = a.x + NW, y1 = a.y + NH / 2, x2 = b.x, y2 = b.y + NH / 2;
+    edges.push(`<path class="edge" d="M${x1},${y1} C${x1 + GX / 2},${y1} ${x2 - GX / 2},${y2} ${x2},${y2}"/>`);
   }
-  const clip = (s, n) => s.length > n ? s.slice(0, n - 1) + "…" : s;
-  const nodes = [];
-  for (const l of layers) for (const n of l || []) {
-    const {x, y} = pos.get(n.key);
-    if (n.pilot) {
-      const r = n.pilot, dash = r.folded ? ";stroke-dasharray:5 4;opacity:.7" : "";
-      nodes.push(`<g class="node"${r.plan ? ` data-plan="${esc(r.plan)}"` : ""}><title>${esc(r.label)}${r.plan ? (r.folded ? ": click to open its plan" : ": click to go to its plan") : ""}</title><rect class="box" x="${x}" y="${y}" width="${NW}" height="${NH}" rx="8" style="fill:var(--surface);stroke:var(--ink-2);stroke-width:1.5${dash}"/>
-        <text x="${x + 12}" y="${y + 24}" font-weight="700">${esc(clip(r.label, 24))}</text><text class="sm" x="${x + 12}" y="${y + 44}">${esc(clip(r.sub, 30))}</text></g>`);
-      continue;
-    }
-    const {w, st, name} = n.x, f = w && w.budget ? Math.min(1, w.spend.weighted / w.budget) : 0;
+  const clip = (t, n) => t.length > n ? t.slice(0, n - 1) + "…" : t;
+  const nodes = items.map(({w, st, name}) => {
+    const {x, y} = pos.get(name), f = w && w.budget ? Math.min(1, w.spend.weighted / w.budget) : 0;
     const dash = st.planned ? ";stroke-dasharray:5 4" : "";
-    nodes.push(`<g class="node"${w ? ` data-href="#/w/${esc(w.name)}"` : ""}><title>${esc(w?.detail || (st.planned ? "planned, not started" : ""))}</title>
+    return `<g class="node"${w ? ` data-href="#/w/${esc(w.name)}"` : ""}><title>${esc(w?.detail || (st.planned ? "planned, not started" : ""))}</title>
       <rect class="box" x="${x}" y="${y}" width="${NW}" height="${NH}" rx="8" style="fill:${st.tint};stroke:${st.stroke};stroke-width:1.5${dash}"/>
-      <text x="${x + 12}" y="${y + 20}" font-weight="700">${esc(clip(name, 24))}</text>
+      <text x="${x + 12}" y="${y + 20}" font-weight="700">${esc(clip(name, 18))}</text>
       <text class="sm" x="${x + 12}" y="${y + 37}">${esc(st.label)}${w ? ` · ${esc(M(w.spend.weighted))}` : ""}</text>
       ${w ? `<rect x="${x + 12}" y="${y + 47}" width="${NW - 24}" height="4" rx="2" style="fill:var(--track)"/>
-      <rect x="${x + 12}" y="${y + 47}" width="${Math.max(2, (NW - 24) * f)}" height="4" rx="2" style="fill:${f >= 1 ? "var(--crit)" : f >= .75 ? "var(--warn)" : "var(--fill)"}"/>` : ""}</g>`);
+      <rect x="${x + 12}" y="${y + 47}" width="${Math.max(2, (NW - 24) * f)}" height="4" rx="2" style="fill:${f >= 1 ? "var(--crit)" : f >= .75 ? "var(--warn)" : "var(--fill)"}"/>` : ""}</g>`;
+  });
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="the route">${edges.join("")}${nodes.join("")}</svg>`;
+}
+
+// An airplane pointing right, about 30 by 24, centred on its middle.
+const PLANE = "M15,0 L5,-2.2 L-1,-12 L-5,-12 L-2,-2.2 L-9,-2.2 L-12.5,-7 L-15,-7 L-13,0 L-15,7 L-12.5,7 L-9,2.2 L-2,2.2 L-5,12 L-1,12 L5,2.2 Z";
+
+// Where a flight is: its legs as stops along one route, in the plan's order, the last stop its destination. The
+// plane flies the first leg that has not landed, as far along it as that leg's checklist is, and holds in amber
+// while that leg waits on you. Before the first takeoff it stands at the gate; when every leg is done it has landed.
+function flightStrip(p, s) {
+  const legs = p.legs.map(l => ({name: l.leg, ...legState(s, l.leg)}));
+  const W = 1000, Y = 50, X0 = 34, XN = W - 74, n = Math.max(1, legs.length), seg = (XN - X0) / n;   // past XN: where it parks
+  const xAt = i => X0 + (i + 1) * seg;                  // stop i ends leg i; -1 is the gate
+  const c = legs.findIndex(l => l.st.cls !== "done"), cur = c < 0 ? null : legs[c];
+  const items = cur?.w?.checklist || [], frac = items.length ? (items.length - openItems(items).length) / items.length : .5;
+  let plane, color, status;
+  if (!legs.length) { plane = {x: X0, y: Y}; color = "var(--muted)"; status = "no route yet"; }
+  else if (!cur) { plane = {x: XN + 40, y: Y}; color = "var(--good)"; status = "landed"; }
+  else if (cur.st.planned) {
+    plane = {x: c ? xAt(c - 1) : X0, y: Y}; color = "var(--muted)";
+    status = c ? `on the ground at ${esc(legs[c - 1].name)} · next: ${esc(cur.name)}` : `at the gate · first: ${esc(cur.name)}`;
+  } else {
+    plane = {x: (c ? xAt(c - 1) : X0) + seg * Math.min(.9, Math.max(.1, frac)), y: Y - 15};
+    const hold = cur.st.cls === "blocked", fail = cur.st.cls === "failed", flying = cur.st.cls === "working";
+    if (!flying && !hold) plane.y = Y;                  // its turn ended short of DONE: the flight stands there
+    color = fail ? "var(--crit)" : hold ? "var(--warn)" : flying ? "var(--fill)" : "var(--muted)";
+    const prog = items.length ? ` (${items.length - openItems(items).length} of ${items.length})` : "";
+    status = fail ? `${esc(cur.name)} failed` : hold ? `holding · ${esc(cur.name)}: ${esc(cur.st.label)}`
+      : flying ? `en route · leg ${c + 1} of ${legs.length}: ${esc(cur.name)}${prog}`
+      : `stopped at leg ${c + 1} of ${legs.length}: ${esc(cur.name)}, ${esc(cur.st.label)}`;
   }
-  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="pilot and workers">${edges.join("")}${nodes.join("")}</svg>`;
+  const lines = [], stops = [];
+  legs.forEach((l, i) => {
+    const a = i ? xAt(i - 1) : X0, b = xAt(i), cls = l.st.cls;
+    if (cls === "done") lines.push(`<line x1="${a}" y1="${Y}" x2="${b}" y2="${Y}" class="flown"/>`);
+    else if (i === c && !l.st.planned) {
+      lines.push(`<line x1="${a}" y1="${Y}" x2="${plane.x}" y2="${Y}" class="flown" style="stroke:${color}"/>`);
+      lines.push(`<line x1="${plane.x}" y1="${Y}" x2="${b}" y2="${Y}" class="ahead"/>`);
+    } else lines.push(`<line x1="${a}" y1="${Y}" x2="${b}" y2="${Y}" class="ahead"/>`);
+    const fill = cls === "done" ? "var(--good)" : cls === "failed" ? "var(--crit)" : cls === "blocked" ? "var(--warn)" : "var(--surface)";
+    const stroke = cls === "working" ? "var(--fill)" : cls === "done" ? "var(--good)" : cls === "blocked" ? "var(--warn)" : cls === "failed" ? "var(--crit)" : "var(--axis)";
+    const room = Math.max(4, Math.floor(seg / 6.6)), name = l.name.length > room ? l.name.slice(0, room - 1) + "…" : l.name;
+    stops.push(`<g${l.w ? ` data-href="#/w/${esc(l.w.name)}"` : ""} class="stop"><title>${esc(l.name)}: ${esc(l.st.label)}</title>
+      ${i === n - 1 ? `<circle cx="${b}" cy="${Y}" r="11" style="fill:none;stroke:${stroke};stroke-width:1.5"/>` : ""}
+      <circle cx="${b}" cy="${Y}" r="6.5" style="fill:${fill};stroke:${stroke};stroke-width:2${l.st.planned ? ";stroke-dasharray:3 2" : ""}"/>
+      <text x="${b}" y="${Y + 28}" text-anchor="middle">${esc(name)}</text></g>`);
+  });
+  const gate = `<rect x="${X0 - 4}" y="${Y - 4}" width="8" height="8" rx="2" style="fill:var(--axis)"/><text x="${X0}" y="${Y + 28}" text-anchor="middle">gate</text>`;
+  const bob = plane.y < Y ? ` class="bob"` : "";
+  const svg = `<svg viewBox="0 0 ${W} 86" role="img" aria-label="${esc(status.replace(/<[^>]+>/g, ""))}">${lines.join("")}${gate}${stops.join("")}
+    <g transform="translate(${plane.x.toFixed(1)},${plane.y})"><g${bob}><path d="${PLANE}" style="fill:${color};stroke:var(--page);stroke-width:1"/></g></g></svg>`;
+  return `<div class="flight" data-plan="${esc(p.sessionId)}" title="Open its flight plan">
+    <div class="fhead"><b>${p.flight ? esc(p.flight) : "Flight"}</b> ${esc(p.title)} <span class="sub">· ${status}${flightGit(p, s)}</span></div>${svg}</div>`;
+}
+
+function flightsHtml(s) {
+  const plans = s.plans || [];
+  return plans.length ? plans.map(p => flightStrip(p, s)).join("")
+    : `<div class="empty">No flights. A pilot files one with <code>pilot plan</code>; each leg of its route becomes a stop here.</div>`;
 }
 
 // ------------------------------------------------------------------ views
@@ -717,7 +780,7 @@ VIEWS.overview = (root, r) => {
     <div class="card pad bcast"><b>Intercom</b>
       <textarea class="s-btext" rows="1" placeholder="A message to live sessions: it reaches each at its next step, mid-turn too. Ctrl+Enter sends."></textarea>
       <select class="s-bto"></select><button class="primary s-bsend">Send</button><div class="sub s-bnote"></div></div>
-    <h2>Radar</h2><div class="card graph s-graph"></div>
+    <h2>Flights</h2><div class="card flights s-flights"></div>
     <h2>Summary</h2>
     <div class="card pad"><div class="cardhead"><b>All workers</b><span><span class="sub s-stamp"></span> <button data-sum="*" class="s-btn">Summarise</button></span></div>
       <div class="summary s-sum" style="margin-top:6px"></div></div>
@@ -763,7 +826,7 @@ VIEWS.overview = (root, r) => {
       const card = focusPlan && document.getElementById("plan-" + focusPlan);
       // Below the sticky top bar, whose height depends on how it wraps.
       if (card) { window.scrollTo(0, card.getBoundingClientRect().top + scrollY - ($(".top")?.offsetHeight || 0) - 8); focusPlan = null; }
-      put($(".s-graph", root), graphSvg(s));
+      put($(".s-flights", root), flightsHtml(s));
       place($(".s-workers", root), s.workers.map(w => ({key: w.name, href: `#/w/${w.name}`, fill: v => {
         put(v.name, `${esc(w.name)}<small>${esc(w.branch)} · ${esc(w.id)} · ${esc(ago(w.lastActivity))}</small>`);
         put(v.chip, chip(w)); put(v.meter, meter(w.spend, w.budget)); put(v.doing, doing(w)); put(v.actions, actions(w, true));
@@ -1097,7 +1160,7 @@ VIEWS.session = (root, r) => {
       loadAgents(w ? w.rev : p ? p.rev : 0);
       // The live line: what it is doing now (Claude Code's own one-line detail for a worker), or what it is
       // waiting on you for, and how long this turn has run.
-      const x = w || p, waitingOn = w ? w.state === "blocked" : p?.status === "waiting";
+      const x = w || p, waitingOn = w ? waitsOnYou(w) : p?.status === "waiting";
       liveText = r.agent || !x ? ""
         : waitingOn ? `<span class="pulse wait"></span><b>waiting on you</b> ${esc(w ? w.detail || "" : p.ask?.questions?.[0]?.question || p.waitingFor || "")}`
         : (w ? w.state === "working" : p.busy) ? `<span class="pulse"></span>${w?.detail ? esc(w.detail) : x.now ? nowText(x.now) : "working"}` : "";
@@ -1315,7 +1378,7 @@ function render() {
     current = {key, view: VIEWS[r.view](root, r)};
     window.scrollTo(0, 0);
   }
-  if (S) current.view.update(S);
+  if (S?.workers) current.view.update(S);
 }
 
 async function summarise(key) {
@@ -1337,7 +1400,7 @@ async function restartServer(btn) {
   btn.textContent = "it has not come back: look at its terminal";
 }
 
-// A plan's box on the radar: unfold its card (a folded plan leaves only that box) and scroll to it.
+// A flight on the Flights strip: unfold its plan's card and scroll to it.
 function openPlan(sid) {
   opened.set("plan:" + sid, true);
   render();
