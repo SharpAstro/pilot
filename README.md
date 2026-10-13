@@ -133,7 +133,7 @@ While it is on, the dashboard sends it each live plan's `## Waiting on the contr
 change, through the intercom, and it answers the pilot with `pilot tell --as autopilot`, marked as its
 answers on your behalf. It may decide engineering questions, reviews (approving a design document to build
 on), route changes within a flight's objective, and refuels up to 3 times a leg's first budget
-(`pilot budget` refuses it more). It never pushes, merges, opens a PR, deletes anything or sets a new
+(`pilot budget` refuses it more). It never merges, pushes to a default branch, deletes anything or sets a new
 objective: those stay in the plan for you. In auto mode the classifier checks every command it runs, with
 its whole transcript as context; a refused one leaves that item for you. Switching it off stops the
 session. The routing runs in the dashboard, so the dashboard has to run too.
@@ -288,6 +288,12 @@ Traps found on the way:
   pilot's screen reads whole (an emoji spans two cells and reads as `?`). Only pilots: a background worker
   has no console. It began as a script that re-linked dropped Remote Control sessions by typing
   `/remote-control` into them; auto mode refused that script, so this was built on the owner's say-so.
+- **A stale daemon lock stops every background session.** `~/.claude/daemon.lock` named pid 42084, which
+  Windows had since given to an unrelated process, so `claude --bg` started no daemon and no worker
+  started. The lock records the daemon's pid and its process's start time (`procStartFt`, a FILETIME), so
+  `pilot.py` compares both, and a process that has exited but is still held open counts as gone.
+  `start` refuses with the reason, the dashboard shows it with a button that removes the lock (only while it
+  is still the stale one), and the pilot leaves it to the controller: it is Claude Code's file.
 - **Windows Terminal splits its command line on `;`.** A launch command with the first message inline broke
   in two ("error 0x80070002 when launching ..."). Launch passes the message in a file and escapes `;`.
 - **Headless Edge captures before the page's fetches land** when an event stream is open, whatever

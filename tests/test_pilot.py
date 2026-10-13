@@ -408,6 +408,36 @@ class HookTests(Case):
         self.assertFalse((pilot.ASKS / "s9.json").exists())
 
 
+class DaemonLockTests(Case):
+    def lock(self, pid, ft):
+        pilot.write_json(pilot.DAEMON_LOCK, {"pid": pid, "procStartFt": ft, "version": "2.1.296"})
+
+    def test_no_lock_or_a_live_daemon_is_not_stale(self):
+        self.assertIsNone(pilot.daemon_lock())
+        ft, _ = pilot.process_identity(os.getpid())
+        self.lock(os.getpid(), str(ft))
+        self.assertIsNone(pilot.daemon_lock())
+
+    def test_a_reused_pid_is_stale(self):
+        self.lock(os.getpid(), "1")                  # this process, but not the one that took the lock
+        stale = pilot.daemon_lock()
+        self.assertIn("a different process", stale["why"])
+        self.assertIn(Path(sys.executable).name.lower(), stale["why"].lower())
+
+    def test_a_gone_daemon_is_stale(self):
+        p = subprocess.Popen([sys.executable, "-c", "pass"])
+        p.wait()
+        self.lock(p.pid, "1")
+        self.assertIn("is not running", pilot.daemon_lock()["why"])
+
+    def test_start_refuses_and_names_the_lock(self):
+        self.lock(os.getpid(), "1")
+        with self.assertRaises(SystemExit) as e:
+            pilot.cmd_start(types.SimpleNamespace(name="leg", after=None))
+        self.assertIn("daemon lock", str(e.exception))
+        self.assertTrue(pilot.DAEMON_LOCK.exists(), "pilot.py never removes it itself")
+
+
 class TrackTests(Case):
     def test_leg_states(self):
         two = [{"status": "completed"}, {"status": "in_progress"}]

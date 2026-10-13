@@ -372,7 +372,11 @@ function renderTop() {
   // S.stale: pilot.py changed since this server started. A snapshot without refuel's mode is from a server
   // older than that check.
   const stale = S.stale || (S.refuel && !("mode" in S.refuel));
+  const lock = S.daemonLock;
   put($("#alerts"),
+    (lock ? `<p class="warnline">⚠ Claude Code's daemon lock is stale: ${esc(lock.why)}. No worker or background session can start until
+      it goes. <button class="s-clearlock" data-pid="${esc(lock.pid)}" data-ft="${esc(lock.procStartFt)}">Remove the stale lock</button>
+      <span class="sub">${esc(lock.path)}</span></p>` : "") +
     (stale ? `<p class="warnline amber">This dashboard is running older code than <code>pilot.py</code> on disk, so newer buttons may answer "not found". ${S.restartable
       ? `<button class="s-restart">Restart now</button> or press R in its terminal.` : `Restart it: <code>pilot dashboard</code>.`}</p>` : "") +
     (over.length ? `<p class="warnline">⚠ Over budget: ${over.map(w => `<a href="#/w/${esc(w.name)}">${esc(w.name)}</a>`).join(", ")}. Their tools are refused until the budget is raised (<code>pilot budget NAME N</code>).</p>` : "") +
@@ -1302,6 +1306,13 @@ document.addEventListener("click", async e => {
   const t = e.target.closest("button, a, [data-href]");
   if (!t) return;
   if (t.classList.contains("s-restart")) return restartServer(t);
+  if (t.classList.contains("s-clearlock")) {
+    if (!confirm("Remove Claude Code's stale daemon lock? The next background session then starts a new daemon.")) return;
+    t.disabled = true;
+    try { await post("/api/daemon-lock/clear", {pid: Number(t.dataset.pid), procStartFt: t.dataset.ft}); }
+    catch (e) { t.textContent = e.message; }
+    return;
+  }
   if (t.id === "bell") { $("#panel").hidden = !$("#panel").hidden; return; }
   if (t.id === "readall") { await post("/api/notifications/read").catch(() => {}); return; }
   if (t.id === "desk") { if ("Notification" in window) await Notification.requestPermission(); renderTop(); return; }

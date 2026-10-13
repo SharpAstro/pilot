@@ -134,6 +134,63 @@ def agents():
     return _agents_cache["rows"]
 
 
+DAEMON_LOCK = PROFILE / "daemon.lock"
+
+
+def process_identity(pid):
+    """(creation time as a Windows FILETIME, image path) of a live process, or None when there is none. Elsewhere
+    the creation time is unknown, so only whether the pid is live is told."""
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+            return (None, None)
+        except OSError:
+            return None
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.windll.kernel32
+    k32.OpenProcess.restype = wintypes.HANDLE
+    h = k32.OpenProcess(0x1000, False, pid)                  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return None
+    try:
+        # A process that has exited stays openable while anything holds a handle to it: it is gone all the same.
+        code = wintypes.DWORD()
+        if not k32.GetExitCodeProcess(h, ctypes.byref(code)) or code.value != 259:      # STILL_ACTIVE
+            return None
+        c, e, k, u = (wintypes.FILETIME() for _ in range(4))
+        if not k32.GetProcessTimes(h, ctypes.byref(c), ctypes.byref(e), ctypes.byref(k), ctypes.byref(u)):
+            return None
+        buf, n = ctypes.create_unicode_buffer(1024), wintypes.DWORD(1024)
+        k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n))
+        return ((c.dwHighDateTime << 32) | c.dwLowDateTime, buf.value)
+    finally:
+        k32.CloseHandle(h)
+
+
+def daemon_lock():
+    """Claude Code's daemon lock, when it is stale: it names a daemon that is gone, so `claude --bg` will not
+    start one and no worker starts (measured: a lock left pointing at a pid Windows had since given to an
+    unrelated process). The lock records the daemon's pid and its process's start time, so a reused pid shows
+    as a different start time. None when there is no lock or its daemon is live."""
+    lock = read_json(DAEMON_LOCK)
+    if not isinstance(lock, dict) or not isinstance(lock.get("pid"), int):
+        return None
+    pid, ft = lock["pid"], str(lock.get("procStartFt") or "")
+    live = process_identity(pid)
+    if live is None:
+        why = f"its daemon, pid {pid}, is not running"
+    elif live[0] is not None and ft and str(live[0]) != ft:
+        why = f"pid {pid} is now {Path(live[1] or '?').name}, a different process from the daemon that took the lock"
+    else:
+        return None
+    return {"path": str(DAEMON_LOCK), "pid": pid, "procStartFt": ft, "why": why}
+
+
+DAEMON_LOCK_HELP = ("It is Claude Code's own file, so pilot.py does not remove it on its own: the controller removes it with "
+                    "the dashboard's button, or deletes it, and then the next `claude --bg` starts a daemon.")
+
+
 def session_record(pid):
     """<profile>/sessions/<pid>.json, which carries the Remote Control session id."""
     return read_json(PROFILE / "sessions" / f"{pid}.json", {}) if pid else {}
@@ -1275,6 +1332,10 @@ def cmd_start(a):
     for dep in a.after or []:
         if not load(dep):
             sys.exit(f"pilot: --after {dep}: no worker of that name")
+    stale = daemon_lock()
+    if stale:
+        sys.exit(f"pilot: Claude Code's daemon lock ({stale['path']}) is stale: {stale['why']}. Until it goes, no background "
+                 f"session starts. {DAEMON_LOCK_HELP} Put it in `## Waiting on the controller`; don't remove it yourself.")
     # The pilot runs in its repo's main checkout, so that is where its workers start. Falling back to the first
     # configured repo would quietly fly a leg in somebody else's repo.
     top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
@@ -1499,8 +1560,8 @@ For each item:
    recommendation unless you find a reason against it. You may decide engineering questions, reviews
    (approving a design document to build on), route changes within the flight's objective, and refuels up
    to {cap} times a leg's first budget (`python {pilot} budget <leg> <N>`, which refuses more).
-3. Never decide, and leave for the controller: pushing, merging, a pull request, removing a worktree or a
-   branch, deleting anything, a new objective for a flight, or anything else that cannot be undone.
+3. Never decide, and leave for the controller: merging, a push to the default branch or a force-push,
+   removing a worktree or a branch, deleting anything, a new objective for a flight, or anything else that cannot be undone.
 4. Answer the pilot with `python {pilot} tell "<pilot name>" --as autopilot -m "<message>"`. Start the
    message with "The autopilot's answers, on the controller's behalf (they are away):", then one line per
    item: the question, your decision, and why in a sentence. For an item you leave, say that it waits for
@@ -2338,6 +2399,7 @@ class Hub:
                     snap["autopilot"] = autopilot_view()
                     snap["stale"] = Path(__file__).stat().st_mtime != CODE_MTIME
                     snap["restartable"] = SUPERVISED
+                    snap["daemonLock"] = daemon_lock()
                     self.route_autopilot(snap)
                     sids = [s["sessionId"] for s in snap["workers"] + snap["pilots"] if s.get("sessionId")]
                     last_fp = fingerprint(sids)
@@ -2558,6 +2620,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.send(409, {"error": str(e)})
             HUB.poke()
             return self.send(200, out)
+        if self.path == "/api/daemon-lock/clear":
+            # Removed only while it is still the stale lock the page showed: a daemon that started since has its own.
+            stale = daemon_lock()
+            if not stale or stale["pid"] != body.get("pid") or stale["procStartFt"] != body.get("procStartFt"):
+                return self.send(409, {"error": "the lock is no longer the stale one shown; reload"})
+            DAEMON_LOCK.unlink(missing_ok=True)
+            blackbox(f"Controller removed Claude Code's stale daemon lock: {stale['why']}", actor="controller")
+            HUB.poke()
+            return self.send(200, {"ok": True})
         if self.path == "/api/restart":
             if not SUPERVISED:
                 return self.send(409, {"error": "this dashboard has no supervisor to start it again: stop it and run `pilot dashboard`"})
