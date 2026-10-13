@@ -579,7 +579,7 @@ def brief_input(inp):
 
 # How Claude Code words a call it refused, and who refused it (measured on this machine's transcripts).
 DENIALS = [
-    (re.compile(r"^pilot budget: "), "pilot's budget"),
+    (re.compile(r"pilot budget: "), "pilot's budget"),
     (re.compile(r"pilot: don't ask in the terminal"), "pilot's ask hook"),
     (re.compile(r"SAM-REPLY-GATE"), "the reply gate"),
     (re.compile(r"denied by the Claude Code auto mode classifier"), "auto mode"),
