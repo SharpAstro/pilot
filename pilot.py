@@ -11,6 +11,7 @@ what they have spent, gates their spend, delivers your messages, summarises them
   python pilot.py log TEXT              a line in the flight plan's Log, stamped with the time now
   python pilot.py track [--out F] [--url U]   its tracking page, to publish as an artifact; --url records where
   python pilot.py connect FLIGHT... [--remove]   flights this one connects from: its legs wait for them to land
+  python pilot.py archive FLIGHT [--restore] [--force]   the controller's: a flight off the Overview onto History
   python pilot.py start NAME --brief FILE|- [--repo R] [--model M] [--effort E] [--budget N]
                          [--pilot NAME] [--after NAME]...
   python pilot.py list [--json]
@@ -350,7 +351,8 @@ def plan_log(sid, text):
 
 ACTORS = (("Controller", "controller"), ("Autopilot", "autopilot"), ("Watchtower", "watchtower"),
           ("Pilot asks", "pilot"), ("Pilot to ", "pilot"), ("Pilot woken", "pilot.py"), ("Asked in the terminal", "pilot"), ("Decided", "pilot"),
-          ("Leg ", "pilot.py"), ("Budget for ", "pilot.py"), ("Plan opened", "pilot.py"), ("Dashboard to ", "pilot.py"))
+          ("Leg ", "pilot.py"), ("Budget for ", "pilot.py"), ("Plan opened", "pilot.py"), ("Dashboard to ", "pilot.py"),
+          ("Archived by the controller", "controller"), ("Restored by the controller", "controller"))
 
 
 def blackbox(text, actor=None, plan=None, flight=None, **data):
@@ -563,6 +565,122 @@ def set_priority(ids):
     return out
 
 
+# --------------------------------------------------------------------------- the flight archive
+
+# Not the worker archive (ARCHIVE, a removed leg's record): these are whole flights, plans the controller has put
+# away. A plan is only marked, never moved, so its file, log, schedule, black box lines and flight number stay
+# where everything reads them, and a `Connects:` to it still resolves by its own state.
+FLIGHT_ARCHIVE = STATE / "archived-flights.json"   # by plan id: {"<sid>": {"at": t, "place": i or None, "flying": [legs]}}
+
+
+def archived_flights():
+    """The archived flights by plan id. A missing or unreadable file is none archived."""
+    v = read_json(FLIGHT_ARCHIVE, {})
+    return {k: x for k, x in v.items() if isinstance(x, dict)} if isinstance(v, dict) else {}
+
+
+class FlightFlying(ValueError):
+    """An archive refused because legs of the flight are still flying; `legs` names them."""
+    def __init__(self, text, legs):
+        super().__init__(text)
+        self.legs = legs
+
+
+def find_flight(key):
+    """A plan id, from a flight number (any case) or a plan id."""
+    key = str(key or "").strip()
+    if re.match(r"^[A-Za-z0-9-]{1,64}$", key) and plan_path(key).exists():
+        return key
+    plans = flight_plans()
+    hit = plans.get(key) or next((v for f, v in plans.items() if f.lower() == key.lower()), None)
+    if not hit:
+        raise ValueError(f"pilot: no flight plan has the number {key}")
+    return hit[0]
+
+
+def flight_name(sid):
+    text = plan_path(sid).read_text(encoding="utf-8")
+    plan = parse_plan(text)
+    return f"{plan['flight'] or sid} ({plan['title']})"
+
+
+def flying_legs(sid, workers=None):
+    """The legs of a flight still in the air, working or waiting on the controller, as the pilots' `flying` has it."""
+    if workers is None:
+        mine = [w for w in registered() if w.get("plan") == sid]
+        workers = [worker_status(w) for w in mine] if mine else []
+    return [w["name"] for w in workers if w.get("plan") == sid and w.get("state") in ("working", "blocked")]
+
+
+def archive_flight(key, force=False, workers=None):
+    """Archives a flight: it leaves the Overview, the Flights strips and the controller's order, and History lists it.
+    Its place in the order is kept for a restore. Legs still flying refuse it, unless `force`: the controller
+    may give up on a flight. Logged in the plan and the black box."""
+    sid = find_flight(key)
+    name, book = flight_name(sid), archived_flights()
+    if sid in book:
+        raise ValueError(f"pilot: {name} is archived already")
+    flying = flying_legs(sid, workers)
+    if flying and not force:
+        raise FlightFlying(f"pilot: {name} has legs still flying: {', '.join(flying)}. Archiving it gives up on them; "
+                           f"`python pilot.py archive --force {key}` archives it anyway.", flying)
+    order = priority()
+    book[sid] = {"at": time.time(), "place": order.index(sid) if sid in order else None, "flying": flying}
+    write_json(FLIGHT_ARCHIVE, book)
+    if sid in order:
+        write_json(PRIORITY, [x for x in order if x != sid])
+    plan_log(sid, "Archived by the controller" + (f", with {', '.join(flying)} still flying" if flying else ""))
+    return sid
+
+
+def restore_flight(key):
+    """Puts an archived flight back as it was: at its old place in the controller's order when it had one, else
+    after every other flight."""
+    sid = find_flight(key)
+    book = archived_flights()
+    rec = book.pop(sid, None)
+    if rec is None:
+        raise ValueError(f"pilot: {flight_name(sid)} is not archived")
+    order = [x for x in priority() if x != sid]
+    if isinstance(rec.get("place"), int):
+        order.insert(min(rec["place"], len(order)), sid)
+    else:                    # last: the flights as listed, by order then last touched, then it
+        rest = [p.stem for p in sorted(PLANS.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+                if p.stem != sid and p.stem not in book]
+        order = [p["sessionId"] for p in by_priority([{"sessionId": x} for x in rest])] + [sid]
+    write_json(PRIORITY, order)
+    write_json(FLIGHT_ARCHIVE, book)
+    plan_log(sid, "Restored by the controller")
+    return sid
+
+
+def flight_history(workers, gone=()):
+    """The archived flights for the History page, newest archived first: number, title, times and how each leg ended."""
+    out = []
+    for sid, rec in sorted(archived_flights().items(), key=lambda kv: kv[1].get("at") or 0, reverse=True):
+        p = plan_path(sid)
+        if not p.exists():
+            out.append({"sessionId": sid, "archivedAt": rec.get("at"), "missing": True, "title": "(plan file gone)", "legs": []})
+            continue
+        plan = parse_plan(p.read_text(encoding="utf-8"))
+        live = {w["name"]: w for w in workers if w.get("plan") == sid}
+        old = {}
+        for a in gone:                # newest first: a leg flown twice counts its last worker
+            if a.get("plan") == sid and a.get("name") not in old:
+                old[a["name"]] = a
+        legs = []
+        for l in plan["legs"]:
+            cls, label = leg_state(live.get(l["leg"]) or old.get(l["leg"]))
+            legs.append({"leg": l["leg"], "cls": cls, "label": label, "altOf": l.get("altOf") or ""})
+        try:
+            times = flight_times(sid, plan["legs"], workers, gone)
+        except Exception as e:        # like the strips', worth less than the rest of the page
+            times = {"error": f"{type(e).__name__}: {e}"}
+        out.append({"sessionId": sid, "archivedAt": rec.get("at"), "flyingAtArchive": rec.get("flying") or [],
+                    "flight": plan["flight"], "title": plan["title"], "objective": plan["objective"], "legs": legs, "times": times})
+    return out
+
+
 def plans_view(rows, workers, seen=None):
     """Flight plans whose pilot is live, or that a current worker flies a leg of, or touched this week. A live
     pilot comes with what it is doing (session_view), reusing `seen`, the pilots already looked at."""
@@ -570,9 +688,12 @@ def plans_view(rows, workers, seen=None):
     asleep_rows = {r.get("sessionId"): r for r in rows if asleep(r)}
     flown = {w.get("plan") for w in workers if w.get("plan")}
     seen = seen or {}
+    shelved = archived_flights()            # the controller's archived flights are on History, not here
     out = []
     for p in sorted(PLANS.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
         sid, mtime = p.stem, p.stat().st_mtime
+        if sid in shelved:
+            continue
         if sid not in live and sid not in flown and time.time() - mtime > 7 * 86400:
             continue
         text = p.read_text(encoding="utf-8")
@@ -1632,6 +1753,7 @@ def snapshot():
     for p in ps:
         p["flying"] = [w["name"] for w in workers if w.get("plan") == p["sessionId"] and w["state"] in ("working", "blocked")]
     return {"workers": workers, "pilots": ps, "limits": limits(), "history": history,
+            "flightHistory": flight_history(workers, archived(200)),
             "plans": plans_view(rows, workers, {p["sessionId"]: p for p in ps})}
 
 
@@ -1652,7 +1774,7 @@ def fingerprint(session_ids):
         return tuple(out)
     sessions = [*PROFILE.glob("sessions/*.json"), *PROFILE.glob("jobs/*/state.json"), PROFILE / "daemon" / "roster.json",
                 *WORKERS.glob("*.json"), *ARCHIVE.glob("*.json")]
-    content = [PROFILE / "rate-limits.json", SUMMARIES, PRIORITY, *PLANS.glob("*.md"), *ASKS.glob("*.json")]
+    content = [PROFILE / "rate-limits.json", SUMMARIES, PRIORITY, FLIGHT_ARCHIVE, *PLANS.glob("*.md"), *ASKS.glob("*.json")]
     for sid in session_ids:
         main = transcript(sid)
         if main:
@@ -2065,6 +2187,10 @@ def move_plan(old, new):
     if isinstance(book, dict) and old in book:   # and its schedule, so its delay still counts from its first ETA
         book[new] = book.pop(old)
         write_json(SCHEDULES, book)
+    shelf = archived_flights()
+    if old in shelf:                     # and stays archived, if the controller archived it
+        shelf[new] = shelf.pop(old)
+        write_json(FLIGHT_ARCHIVE, shelf)
 
 
 def wake_pilot(old, why):
@@ -2874,6 +3000,23 @@ def cmd_connect(a):
     print(f"recorded: {line}" if now else "recorded: no connections")
 
 
+def cmd_archive(a):
+    """The controller archives a flight, or restores one. A pilot never archives a flight itself."""
+    me = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if sender() != "Controller" or (me and any(me in [s.get("sessionId") for s in sessions_of(w)] for w in registered())):
+        sys.exit("pilot: only the controller archives a flight; a pilot may suggest it in its last report once the flight has landed")
+    try:
+        sid = restore_flight(a.flight) if a.restore else archive_flight(a.flight, force=a.force)
+    except ValueError as e:
+        sys.exit(str(e))
+    name = flight_name(sid)
+    if a.restore:
+        print(f"{name} restored: back on the Overview and the Flights strips, in its old place in the order, or last without one")
+    else:
+        print(f"{name} archived: off the Overview and the Flights strips, and listed on History. Its plan is kept at "
+              f"{plan_path(sid)}; `python pilot.py archive --restore {a.flight}` puts it back.")
+
+
 def cmd_summary(a):
     try:
         print(summarize(a.name)["text"])
@@ -3257,10 +3400,11 @@ class Hub:
             return
         rows = {r.get("sessionId"): r for r in agents()}
         done = read_json(WAKES, {})
+        shelved = archived_flights()          # a flight the controller archived is given up on: its pilot sleeps on
         for w in snap["workers"]:
             pid = w.get("plan")
             key = f"{w['name']}:{int(w.get('lastActivity') or 0)}"
-            if not w.get("unread") or not asleep(rows.get(pid)) or done.get(pid) == key or pid in self.waking:
+            if pid in shelved or not w.get("unread") or not asleep(rows.get(pid)) or done.get(pid) == key or pid in self.waking:
                 continue
             self.waking.add(pid)
 
@@ -3555,6 +3699,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.send(400, {"error": str(e)})
             HUB.poke()
             return self.send(200, {"ok": True, "order": order})
+        m = re.match(r"^/api/flights/([A-Za-z0-9-]{1,64})/(archive|restore)$", self.path)
+        if m:
+            try:
+                sid = restore_flight(m.group(1)) if m.group(2) == "restore" else archive_flight(m.group(1), force=bool(body.get("force")))
+            except FlightFlying as e:      # the page asks again, naming the legs
+                return self.send(409, {"error": str(e), "flying": e.legs})
+            except ValueError as e:
+                return self.send(409, {"error": str(e)})
+            HUB.poke()
+            return self.send(200, {"ok": True, "sessionId": sid})
         if self.path == "/api/refuel":
             mode = set_refuel_mode(str(body.get("mode") or "auto"))
             HUB.poke()
@@ -3786,6 +3940,11 @@ def main():
     s.add_argument("--remove", action="store_true", help="take these connections off the plan")
     s.add_argument("--session", help="a pilot session id; default: the session this runs in")
     s.set_defaults(fn=cmd_connect)
+    s = sub.add_parser("archive", help="the controller's: archive a flight off the Overview onto History, or restore it")
+    s.add_argument("flight", help="its flight number, e.g. PIL2, or its plan id")
+    s.add_argument("--restore", action="store_true", help="put an archived flight back, in its old place in the order")
+    s.add_argument("--force", action="store_true", help="archive it with legs still flying: give up on the flight")
+    s.set_defaults(fn=cmd_archive)
     s = sub.add_parser("dashboard")
     s.add_argument("--port", type=int, help="default 5181; with --preview, the first free one from 5182")
     s.add_argument("--preview", action="store_true", help="a second dashboard for checking a change: no notices, session streams close")
