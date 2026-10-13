@@ -1229,5 +1229,150 @@ class TrackTests(Case):
                          "<ul><li><b>a</b> <code>b</code> &lt;x&gt; wrapped</li></ul>\n<h3>H</h3>\n<p>para</p>")
 
 
+LANES = """# Flight plan: Lanes
+
+Flight: WA2
+
+Objective: Fork, join and an alternate.
+
+Pilot session: s1
+
+## Route
+
+| Leg | Goal | After | Done when | Alt of |
+|---|---|---|---|---|
+| scaffold | Lay out the module | - | builds | |
+| api | Write the API | scaffold | tests pass | - |
+| ui | Write the UI | scaffold | tests pass | |
+| api-b | The API another way | scaffold | tests pass | `api` |
+| ship | Wire them up | api, ui | e2e passes | |
+
+## Log
+
+- 2026-10-13 09:00 Plan opened.
+"""
+
+
+class AlternateTests(Case):
+    """Lanes from After (a fork and a join), the optional `Alt of` column, an alternate apart from the route
+    until it is taken, and `start --divert`."""
+
+    def archive(self, leg, head="DONE", **kw):
+        pilot.write_json(pilot.ARCHIVE / f"{leg}-1.json", {"name": leg, "plan": "s1", "archivedAt": 1, "started": 1000.0, **kw,
+                         "final": {"reportHead": head, "checklist": [{"status": "completed", "subject": "x"}]}})
+
+    def states(self):
+        legs = pilot.parse_plan(pilot.plan_path("s1").read_text(encoding="utf-8"))["legs"]
+        return pilot.flight_legs("s1", legs, [pilot.worker_status(w, self.rows) for w in pilot.registered()], pilot.archived())
+
+    def start(self, name, divert=None, launch=False):
+        """`pilot.py start` from pilot session s1. With `launch`, a fake `claude --bg` lets it take off."""
+        a = types.SimpleNamespace(name=name, after=None, divert=divert, repo="r", brief=str(ROOT / "brief.md"),
+                                  model=None, effort=None, budget=None, pilot="pilot-x")
+        with contextlib.ExitStack() as st:
+            st.enter_context(unittest.mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s1"}))
+            if not launch:
+                pilot.write_json(pilot.DAEMON_LOCK, {"pid": os.getpid(), "procStartFt": "1"})   # stops it past the checks
+                with self.assertRaises(SystemExit) as e:
+                    pilot.cmd_start(a)
+                pilot.DAEMON_LOCK.unlink()
+                return str(e.exception)
+            (ROOT / "repo" / ".git").mkdir(parents=True, exist_ok=True)
+            (ROOT / "brief.md").write_text("Do it.", encoding="utf-8")
+            self.config(repos={"r": str(ROOT / "repo")})
+            st.enter_context(unittest.mock.patch.object(pilot, "claude", lambda *x, **k: types.SimpleNamespace(
+                returncode=0, stdout="backgrounded · deadbeef", stderr="")))
+            st.enter_context(unittest.mock.patch.object(pilot, "session_of", lambda j: f"sess-{name}"))
+            st.enter_context(unittest.mock.patch.object(pilot, "base_branch", lambda r: "main"))
+            st.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            pilot.cmd_start(a)
+            return pilot.load(name)
+
+    def test_the_alt_of_column_is_optional(self):
+        self.assertEqual([l["altOf"] for l in pilot.parse_plan(PLAN)["legs"]], ["", ""], "a 4-column route has none")
+        legs = pilot.parse_plan(LANES)["legs"]
+        self.assertEqual([(l["leg"], l["altOf"]) for l in legs],
+                         [("scaffold", ""), ("api", ""), ("ui", ""), ("api-b", "api"), ("ship", "")])
+        self.assertEqual(legs[4]["after"], ["api", "ui"])
+        self.assertEqual(legs[4]["doneWhen"], "e2e passes")
+        self.assertIn("| Leg | Goal | After | Done when | Alt of |", pilot.PLAN_TEMPLATE)
+
+    def test_lanes_fork_and_join_by_depth_and_an_alternate_takes_its_primarys(self):
+        d = pilot.route_depths(pilot.parse_plan(LANES)["legs"])
+        self.assertEqual(d, {"scaffold": 0, "api": 1, "ui": 1, "ship": 2, "api-b": 1})
+        # Lanes need not share their After; a leg after an alternate waits, for depth, on its primary.
+        legs = [{"leg": "a", "after": [], "altOf": ""}, {"leg": "b", "after": [], "altOf": ""},
+                {"leg": "c", "after": ["a"], "altOf": ""}, {"leg": "a2", "after": [], "altOf": "a"},
+                {"leg": "d", "after": ["c", "b", "a2"], "altOf": ""}, {"leg": "x", "after": ["y"], "altOf": ""},
+                {"leg": "y", "after": ["x"], "altOf": ""}]
+        d = pilot.route_depths(legs)
+        self.assertEqual((d["a"], d["b"], d["c"], d["a2"], d["d"]), (0, 0, 1, 0, 2))
+        self.assertIsInstance(d["x"], int, "a cycle does not loop")
+
+    def test_an_unflown_alternate_never_keeps_the_flight_from_landing(self):
+        self.plan("s1", LANES)
+        for leg in ("scaffold", "api", "ui", "ship"):
+            self.archive(leg)
+        st = self.states()
+        self.assertEqual([(s["leg"], s["taken"]) for s in st if s["altOf"]], [("api-b", False)])
+        self.assertEqual(pilot.flight_landed(st), (True, []))
+        self.assertEqual(len(pilot.flown(st)), 4)
+        times = pilot.flight_times("s1", pilot.parse_plan(LANES)["legs"], [], pilot.archived())
+        self.assertEqual(times["basis"], "all 4 legs landed")
+        self.assertIn("Landed: all 4 legs", pilot.track_html("s1"))
+        self.assertIn("alternate, not taken", pilot.track_html("s1"))
+
+    def test_a_failed_primary_with_a_landed_alternate_counts_as_done(self):
+        self.plan("s1", LANES)
+        for leg in ("scaffold", "ui", "ship"):
+            self.archive(leg)
+        self.archive("api", head="FAILED")
+        landed, left = pilot.flight_landed(self.states())
+        self.assertFalse(landed)
+        self.assertEqual(left, ["api: failed"])
+        self.archive("api-b", divertedFrom="api", divertReason="the old client cannot be fixed")
+        st = self.states()
+        self.assertEqual(pilot.flight_landed(st), (True, []))
+        self.assertEqual([s["leg"] for s in pilot.flown(st)], ["scaffold", "api-b", "ui", "ship"])
+        page = pilot.track_html("s1")
+        self.assertIn("diverted from api: the old client cannot be fixed", page)
+        self.assertIn("Landed: all 4 legs", page)
+
+    def test_an_alternate_removed_before_it_landed_is_no_longer_taken(self):
+        self.plan("s1", LANES)
+        self.archive("api", head="FAILED")
+        self.archive("api-b", head="FAILED", divertedFrom="api")
+        st = {s["leg"]: s for s in self.states()}
+        self.assertFalse(st["api-b"]["taken"])
+        self.assertIn("api", [s["leg"] for s in pilot.flown(list(st.values()))])
+
+    def test_start_takes_an_alternate_only_on_a_diversion(self):
+        self.plan("s1", LANES)
+        self.assertIn("api-b is an alternate for api; take it only on a diversion", self.start("api-b"))
+        self.assertIn("api is no alternate on the route", self.start("api", divert="why not"))
+        self.worker("api", plan="s1")
+        self.rows = [{"id": "job-api", "sessionId": "sess-api", "state": "working", "status": "busy", "pid": 1}]
+        self.assertIn("cannot divert api to api-b: api is flying", self.start("api-b", divert="too slow"))
+        self.rows = [{"id": "job-api", "sessionId": "sess-api", "state": "blocked", "status": "idle", "pid": 1}]
+        self.assertIn("cannot divert api to api-b: api is waiting on you", self.start("api-b", divert="too slow"))
+        self.rows = [{"id": "job-api", "sessionId": "sess-api", "state": "done", "status": "idle", "pid": 1}]
+        self.assertIn("daemon lock", self.start("api-b", divert="stopped"), "stopped: past to the next check")
+        (pilot.WORKERS / "api.json").unlink()
+        self.assertIn("daemon lock", self.start("api-b", divert="never flew"), "planned: allowed")
+        self.archive("api", head="FAILED")
+        w = self.start("api-b", divert="the old client cannot be fixed", launch=True)
+        self.assertEqual((w["divertedFrom"], w["divertReason"]), ("api", "the old client cannot be fixed"))
+        self.assertIn("Leg api diverted to api-b: the old client cannot be fixed", self.log_of("s1")[-2])
+        self.assertIn("Leg api-b took off", self.log_of("s1")[-1])
+        self.assertTrue({s["leg"]: s for s in self.states()}["api-b"]["taken"])
+
+    def test_start_refuses_a_primary_while_its_alternate_has_a_worker(self):
+        self.plan("s1", LANES)
+        self.worker("api-b", plan="s1", divertedFrom="api", divertReason="x")
+        self.assertIn("api was diverted to api-b; `pilot.py rm api-b` first to undo the diversion", self.start("api"))
+        (pilot.WORKERS / "api-b.json").unlink()                     # rm undoes it
+        self.assertIn("daemon lock", self.start("api"))
+
+
 if __name__ == "__main__":
     unittest.main()
