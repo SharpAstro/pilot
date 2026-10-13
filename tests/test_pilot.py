@@ -212,6 +212,16 @@ class PlanTests(Case):
         self.assertEqual(actors["Decided: one leg per concern. Co-pilot agreed."], "pilot")
 
 
+class LogTests(Case):
+    def test_log_stamps_the_time_now(self):
+        self.plan("p1", "# Flight plan: x\n\n## Log\n\n- 2026-10-13 20:52 Plan opened.\n")
+        with contextlib.redirect_stdout(io.StringIO()):
+            pilot.cmd_log(types.SimpleNamespace(text=["Decided:", "three", "legs."], session="p1"))
+        self.assertEqual(self.log_of("p1")[-1], f"{time.strftime('%Y-%m-%d %H:%M')} Decided: three legs.")
+        with self.assertRaises(SystemExit):
+            pilot.cmd_log(types.SimpleNamespace(text=["x"], session="no-such-plan"))
+
+
 class UnreadTests(Case):
     def test_a_leg_that_stopped_after_its_pilot_last_logged_it_is_unread(self):
         self.plan("p1", "# Flight plan: x\n\n## Log\n\n- 2026-10-13 20:52 Asked leg-a for a docs commit.\n"

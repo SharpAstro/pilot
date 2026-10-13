@@ -453,7 +453,7 @@ function place(list, items, empty, rows) {
 // An idle pilot with legs in the air is following them: it wakes when one of them ends its turn.
 function pilotChip(ps, flying = []) {
   if (!ps) return `<span class="chip other">pilot not running</span>`;
-  if (ps.status === "waiting") return `<span class="chip blocked" title="${esc(ps.waitingFor || "")}">waiting on you${ps.since ? ` · ${esc(ago(ps.since).replace(" ago", ""))}` : ""}</span>`;
+  if (ps.status === "waiting") return `<span class="chip blocked" title="${esc(ps.waitingFor || "")}">waiting on ${S.autopilot?.enabled ? "the autopilot" : "you"}${ps.since ? ` · ${esc(ago(ps.since).replace(" ago", ""))}` : ""}</span>`;
   if (ps.busy) return `<span class="chip working">● working</span>`;
   return `<span class="chip other">${flying.length ? `idle, following ${esc(flying.join(", "))}` : "idle"}</span>`;
 }
@@ -498,6 +498,7 @@ function approachChip(ap) {
 function gitLine(g, ap) {
   if (!g) return "";
   const tip = `${g.branch}${g.head ? ` at ${g.head}` : ""}, from ${g.base || "?"}. Remote branches as of the repo's last fetch or push.`;
+  if (g.pending) return `<div class="gitline sub" title="${esc(tip)}">⎇ branch not made yet</div>`;
   if (g.gone) return `<div class="gitline sub" title="${esc(tip)}">⎇ branch deleted</div>`;
   if (g.error) return `<div class="gitline sub" title="${esc(g.error)}">⎇ git could not read it</div>`;
   const bits = [g.ahead ? `${g.ahead} commit${g.ahead === 1 ? "" : "s"}` : `<span class="sub">no commits</span>`];
@@ -529,8 +530,14 @@ function legState(s, name) {
 // What "your move" is, once the pilot's turn has ended with nothing in the air: the items waiting on the
 // controller; for a landed flight, its open pull requests and what each needs; else the last line of the
 // pilot's last message, which is where a pilot says what it is waiting for.
+// With the autopilot on, what waits on the controller is the autopilot's to decide, a merge excepted (it never merges).
 function yourMoveOf(p, s, ps) {
-  if (p.waiting) { const n = waitingItems(p.waiting).items.length; return `your move: answer ${n} item${n === 1 ? "" : "s"} below`; }
+  const auto = S.autopilot?.enabled;
+  if (p.waiting) {
+    const items = waitingItems(p.waiting).items, merges = items.filter(i => /^\**\s*merge/i.test(i)).length, n = items.length - (auto ? merges : 0);
+    if (auto && !n) return `your move: ${merges === 1 ? "a merge" : `${merges} merges`} below`;
+    return `${auto ? "autopilot's move" : "your move"}: answer ${n} item${n === 1 ? "" : "s"} below${auto && merges ? `, and ${merges === 1 ? "a merge" : `${merges} merges`} for you` : ""}`;
+  }
   const legs = p.legs.map(l => legState(s, l.leg));
   const prs = [...new Map(legs.flatMap(({w, h}) => (w || h)?.git?.prs || []).map(x => [x.url, x])).values()]
     .filter(x => x.state !== "MERGED" && x.state !== "CLOSED");
@@ -549,9 +556,11 @@ function yourMoveOf(p, s, ps) {
     : x.review === "APPROVED" ? `merge ${link(x)}` : x.review === "CHANGES_REQUESTED" ? `${link(x)}: changes requested`
     : `${link(x)} waits on its reviewers`;
   if (landed && prs.length) return "landed · your move: " + prs.map(step).join(", ");
+  // Every leg landed and nothing left open: the flight is done, whatever the pilot's last words were.
+  if (landed) return "";
   // No open PR known (none, or not looked up yet): the pilot's own words say what it is waiting for.
   const last = String(ps?.said?.text || "").split("\n").map(l => l.replace(/[*`]/g, "").replace(/^[\s#>-]+/, "").trim()).filter(Boolean).pop();
-  return `${landed ? "landed · " : ""}your move${last ? `: ${esc(last.length > 110 ? last.slice(0, 107) + "…" : last)}` : ""}`;
+  return `${auto ? "autopilot's move" : "your move"}${last ? `: ${esc(last.length > 110 ? last.slice(0, 107) + "…" : last)}` : ""}`;
 }
 
 function planCard(p, s) {
@@ -567,16 +576,20 @@ function planCard(p, s) {
   const flying = p.legs.map(l => l.leg).filter(n => s.workers.some(w => w.name === n && w.state === "working"));
   const fold = (k, def) => `data-k="${esc(k)}"${def ? ` data-open="1"` : ""}${(opened.has(k) ? opened.get(k) : def) ? " open" : ""}`;
   // The pilot's turn has ended and nothing is in the air: whatever happens next is up to the controller.
-  const yourMove = p.live && ps?.status === "idle" && !flying.length;
+  const move = p.live && ps?.status === "idle" && !flying.length ? yourMoveOf(p, s, ps) : null;
+  const yourMove = !!move, atGate = move === "";
+  // The flight's state sits by its name: whose move it is, the pilot at work, or landed.
+  const status = atGate ? `<span class="chip done">✓ landed</span>`
+    : yourMove ? `<span class="chip blocked move" title="${esc(ps.said?.text || "")}">${move}</span>` : pilotChip(ps, flying);
   const where = `answer in the pilot's terminal${ps?.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : ""}`;
   return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" ${fold("plan:" + p.sessionId, planActive(p, s) || !!p.waiting)}>
-    <summary class="cardhead"><span><b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}</span></span>
-      <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} ` : ""}${yourMove ? `<span class="chip blocked move" title="${esc(ps.said?.text || "")}">${yourMoveOf(p, s, ps)}</span>` : pilotChip(ps, flying)} · plan updated ${esc(ago(p.updated))}
+    <summary class="cardhead"><span><b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}</span> ${status}</span>
+      <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} · ` : ""}plan updated ${esc(ago(p.updated))}
       ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
     ${(p.prs || []).length ? `<div class="prline"><span class="sub">pull requests the plan names:</span> ${p.prs.map(x => prChip(x, true)).join(" ")}</div>` : ""}
     ${p.waiting ? waitingHtml(p, ps) : ""}
-    ${yourMove && ps.said ? `<details class="lastsaid" ${fold("said:" + p.sessionId, true)}><summary>its turn ended ${esc(ago(Date.parse(ps.said.at) / 1000))} with nothing in the air; its last message</summary>${md(ps.said.text)}</details>` : pilotNow(ps)}
+    ${yourMove && !atGate && ps.said ? `<details class="lastsaid" ${fold("said:" + p.sessionId, true)}><summary>its turn ended ${esc(ago(Date.parse(ps.said.at) / 1000))} with nothing in the air; its last message</summary>${md(ps.said.text)}</details>` : pilotNow(ps)}
     ${p.notes ? `<details ${fold("notes:" + p.sessionId, waiting)}><summary>the pilot's notes: what it found and why the route is this shape</summary>${md(p.notes, true)}</details>` : ""}
     ${p.legs.length > 1 ? `<details ${fold("chart:" + p.sessionId, true)}><summary>the route as a chart: each leg after the legs it waits for</summary><div class="graph">${routeChart(p, s)}</div></details>` : ""}
     <div class="tablewrap"><table><thead><tr><th>Leg</th><th>Goal</th><th>After</th><th>Done when</th><th>Status</th><th class="num">Spend</th></tr></thead>

@@ -46,8 +46,9 @@ tools:
   (lowercase, digits, hyphens). *After* names the legs it waits for, or `-`. *Done when* is the command
   or check that proves it. Escape a `|` inside a cell as `\|`.
 - `## Log`: stays the last section. `pilot.py` appends to it itself when a leg takes off, is messaged,
-  re-budgeted, stopped or removed. Add a line yourself for each decision you make, starting `- ` with
-  the time.
+  re-budgeted, stopped or removed. Log each decision you make with `python <pilot.py> log "<text>"`,
+  which stamps it with the time now; never write a time yourself (a pilot's guessed times once ran 20
+  minutes ahead of the clock, and the log read out of order).
 
 The controller may edit the plan. Read it again before you start each leg.
 

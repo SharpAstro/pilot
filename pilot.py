@@ -7,6 +7,7 @@ running whether or not a terminal is open. This file starts workers the same way
 what they have spent, gates their spend, delivers your messages, summarises them and serves the dashboard.
 
   python pilot.py plan [--title T]     the pilot session's flight plan: its path, made from the template once
+  python pilot.py log TEXT              a line in the flight plan's Log, stamped with the time now
   python pilot.py track [--out F] [--url U]   its tracking page, to publish as an artifact; --url records where
   python pilot.py start NAME --brief FILE|- [--repo R] [--model M] [--effort E] [--budget N]
                          [--pilot NAME] [--after NAME]...
@@ -834,6 +835,9 @@ def collateral_now(w):
            "worktree": bool(w.get("worktree")) and Path(w["worktree"]).is_dir()}
     sha = git("rev-parse", "--verify", "--quiet", f"refs/heads/{br}")
     if not sha:
+        # A leg that has just taken off has no branch yet: Claude Code makes its worktree once the session starts.
+        if not out["worktree"] and time.time() - (w.get("started") or 0) < 900:
+            return {**out, "pending": True}
         return {**out, "gone": True}
     remotes = [r for r in (git("for-each-ref", "--contains", sha, "--format=%(refname:short)", "refs/remotes") or "").splitlines()
                if "/" in r and not r.endswith("/HEAD")]
@@ -2006,6 +2010,19 @@ def cmd_budget(a):
     print(f"{a.name}: budget {a.tokens:,} weighted tokens")
 
 
+def cmd_log(a):
+    """Appends a line to this pilot session's flight plan's Log, stamped with the time now: a pilot writing the
+    time itself guesses it, and its log once ran 20 minutes ahead of the clock, out of order."""
+    sid = a.session or pilot_session()
+    if not sid or not plan_path(sid).exists():
+        sys.exit("pilot: no flight plan for this session; run `plan` first, or pass --session")
+    text = " ".join(a.text).strip()
+    if not text:
+        sys.exit("pilot: nothing to log")
+    plan_log(sid, text)
+    print(f"logged: {time.strftime('%Y-%m-%d %H:%M')} {text}")
+
+
 def cmd_plan(a):
     """Prints the path of this pilot session's flight plan, creating it from the template the first time."""
     sid = a.session or pilot_session()
@@ -3034,6 +3051,10 @@ def main():
     s.add_argument("--title", help="the plan's title, used when it is created")
     s.add_argument("--session", help="a pilot session id; default: the session this runs in")
     s.set_defaults(fn=cmd_plan)
+    s = sub.add_parser("log", help="append a line to this pilot session's flight plan's Log, stamped with the time now")
+    s.add_argument("text", nargs="+")
+    s.add_argument("--session", help="a pilot session id; default: the session this runs in")
+    s.set_defaults(fn=cmd_log)
     s = sub.add_parser("track", help="render the flight's tracking page to publish as an artifact, or record its URL")
     s.add_argument("--out", help="where to write the page; default <state>/track/<session>.html")
     s.add_argument("--url", help="record the artifact URL it was published at on the plan's Tracking: line")
