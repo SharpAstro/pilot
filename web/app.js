@@ -711,10 +711,19 @@ async function sendAnswers(sid) {
   if (!p?.pilot) return;
   const picked = waitingItems(p.waiting).items.map(it => [it, answers.get(`${sid}|${it.title}`)]).filter(([, a]) => a);
   if (!picked.length) return;
-  const text = `The controller's answers to items in your plan's "Waiting on the controller" section, sent from the dashboard:\n`
-    + picked.map(([it, a]) => `- ${it.title}: ${a.kind === "accept" ? `accepted your recommendation (${it.rec})` : a.value}`).join("\n")
-    + `\nTake each answered item out of the section, log the answer, and carry on.`;
   sentNote.set(sid, "sending…"); render();
+  // What the controller submits here is done here: a Merge answer to a merge item is the merge itself, run by
+  // the dashboard, since a pilot told "Merge" is refused it (another session's message carries no authority).
+  const merged = new Map();
+  for (const [it, a] of picked) {
+    const n = (/\bmerge PR #(\d+)/i.exec(it.title) || [])[1], said = a.kind === "accept" ? it.rec : a.value;
+    if (!n || !/^\s*merge(d)?\b/i.test(said || "")) continue;
+    try { const j = await post("/api/merge", {plan: sid, pr: Number(n)}); merged.set(it.title, `merged by the dashboard (rebase, guarded on ${j.head})`); }
+    catch (e) { sentNote.set(sid, `not sent: merging PR #${n} failed: ${e.message}`); render(); return; }
+  }
+  const text = `The controller's answers to items in your plan's "Waiting on the controller" section, sent from the dashboard:\n`
+    + picked.map(([it, a]) => `- ${it.title}: ${merged.get(it.title) || (a.kind === "accept" ? `accepted your recommendation (${it.rec})` : a.value)}`).join("\n")
+    + `\nTake each answered item out of the section, log the answer, and carry on.`;
   try {
     const j = await post("/api/intercom", {to: [p.pilot], text, answered: {plan: sid, titles: picked.map(([it]) => it.title)}});
     for (const [it] of picked) answers.delete(`${sid}|${it.title}`);
