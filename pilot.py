@@ -3486,13 +3486,14 @@ def launch(path, resume=None, where="terminal", message="", as_pilot=True, hold=
     if where == "background" and not known[path]["trusted"]:
         raise ValueError("a background session needs the directory's workspace trust accepted: open claude there once")
     added = {"registered": register_repo(path)} if as_pilot else {}
-    # Plan only: a resumed pilot with a plan holds at once. Otherwise the plan it opens holds, asked for by the
+    # Plan only: a pilot resumed in a terminal with a plan holds at once. Otherwise the plan it opens holds, asked for by the
     # session it resumes (an interactive resume keeps the id), else by the directory: a new session's id is not
     # known until it is up, and a background one's is bound to the hold once it is.
     pending = False
     if hold:
         added["hold"] = True
-        if resume and plan_path(resume).exists():
+        # A background resume continues as a copy under a new id, whose plan is the one to hold: booked and bound below.
+        if resume and where != "background" and plan_path(resume).exists():
             hold_plan(resume, "Holding at the gate: launched to plan only, awaiting clearance for takeoff from the controller")
         else:
             pending = True
