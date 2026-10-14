@@ -1408,6 +1408,71 @@ class TranscriptTests(Case):
         self.assertEqual([(e["kind"], e["agentId"]) for e in ev], [("handback", "a286c796cdd8c0752")])
         self.assertEqual(ev[0]["text"], "Agree: fold leg 0 into leg B.\n\n- commit the capture tool first")
 
+    PNG = b"\x89PNG\r\n\x1a\nfixture"
+    SID = "0f0e0d0c-0b0a-4908-8706-050403020100"
+
+    def image_transcript(self):
+        """A pasted image in a prompt, then a Read of a PNG whose result carries it, and a svg nobody may serve."""
+        import base64
+        def img(data, media="image/png"):
+            return {"type": "image", "source": {"type": "base64", "media_type": media, "data": base64.b64encode(data).decode()}}
+        return self.transcript(self.SID, [
+            {"type": "user", "message": {"content": "look"}},
+            {"type": "user", "message": {"content": [{"type": "text", "text": "this one"}, img(self.PNG)]}},
+            {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "r", "name": "Read", "input": {"file_path": "a.png"}}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "r", "content": [
+                {"type": "text", "text": ""}, img(b"GIF89a-x", "image/gif"), img(b"<svg/>", "image/svg+xml")]}]}},
+        ])
+
+    def test_image_refs_carry_their_lines_offset(self):
+        p = self.image_transcript()
+        data = p.read_bytes()
+        starts = [0] + [i + 1 for i, b in enumerate(data) if b == 0x0A][:-1]     # each line's first byte
+        events, end = pilot.read_events(p)
+        self.assertEqual(end, len(data))
+        self.assertEqual([e for e in events if e["kind"] == "image"], [{"kind": "image", "at": None, "ref": f"{starts[1]}.1", "from": "user"}])
+        res = next(e for e in events if e["kind"] == "result")
+        self.assertEqual(res["images"], [f"{starts[3]}.0.1"], "the gif only: never the svg")
+        # Read from a later offset, the refs are the same: they are offsets in the file, not in the chunk read.
+        later, _ = pilot.read_events(p, starts[1])
+        self.assertEqual([e.get("ref") for e in later if e["kind"] == "image"], [f"{starts[1]}.1"])
+        self.assertNotIn("images", pilot.events_of(json.loads(data.splitlines()[3])), "no offset, no ref")
+
+    def test_the_image_route_serves_bytes_by_ref(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        p = self.image_transcript()
+        data = p.read_bytes()
+        starts = [0] + [i + 1 for i, b in enumerate(data) if b == 0x0A][:-1]
+        sub = p.parent / self.SID / "subagents"
+        sub.mkdir(parents=True)
+        shutil.copy(p, sub / "agent-abc123.jsonl")
+        srv = pilot.http.server.ThreadingHTTPServer(("127.0.0.1", 0), pilot.Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            def get(path):
+                try:
+                    with urllib.request.urlopen(f"http://127.0.0.1:{srv.server_address[1]}/api/sessions/{self.SID}{path}") as r:
+                        return r.status, r.headers, r.read()
+                except urllib.error.HTTPError as e:
+                    with e:
+                        return e.code, e.headers, e.read()
+            code, h, body = get(f"/image/{starts[1]}.1")
+            self.assertEqual((code, h["Content-Type"], body), (200, "image/png", self.PNG))
+            self.assertEqual(h["X-Content-Type-Options"], "nosniff")
+            self.assertIn("max-age", h["Cache-Control"])
+            self.assertEqual(get(f"/image/{starts[3]}.0.1")[::2], (200, b"GIF89a-x"))
+            self.assertEqual(get(f"/agents/abc123/image/{starts[3]}.0.1")[::2], (200, b"GIF89a-x"), "a subagent's transcript too")
+            self.assertEqual(get(f"/image/{starts[1] + 5}.1")[0], 404, "a mid-line offset")
+            self.assertEqual(get(f"/image/{starts[3]}.0.2")[0], 404, "svg is not served")
+            self.assertEqual(get(f"/image/{starts[1]}.0")[0], 404, "a text block is no image")
+            self.assertEqual(get(f"/image/{len(data) + 10}.0")[0], 404, "past the end")
+            self.assertEqual(get(f"/agents/ffffff/image/{starts[1]}.1")[0], 404, "no such subagent")
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
     def test_report_head_word_and_outside_line(self):
         self.assertEqual(pilot.head_word("**DONE** all green"), "DONE")
         self.assertEqual(pilot.head_word("BLOCKEDish"), None)
