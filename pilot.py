@@ -1687,6 +1687,7 @@ def worker_status(w, rows=None):
         "lastError": tail[-1]["text"] if tail and tail[-1]["kind"] == "error" else None,
         "spend": sp, "overBudget": bool(w.get("budget")) and sp["weighted"] >= w["budget"],
         "lastActivity": last, "now": now, "rev": path.stat().st_size if path else 0,
+        "stoppedAt": stopped,             # its transcript's last event: the file itself is touched after a turn ends
         "approach": approach(w.get("reviews"), (collateral(w) or {}).get("prs")),
         # Its turn has ended (done or blocked): stopped, even while Claude Code still calls it busy, as it does
         # while a background task it started is attached. ephemeris reported BLOCKED so, and its pilot slept on.
@@ -4020,12 +4021,13 @@ class Hub:
         self.tell_ci(snap, rows, done, shelved)
         for w in snap["workers"]:
             pid = w.get("plan")
-            key = f"{w['name']}:{int(w.get('lastActivity') or 0)}"
+            since = w.get("stoppedAt") or w.get("lastActivity") or 0   # once per stop, timed from the stop itself
+            key = f"{w['name']}:{int(since)}"
             row = rows.get(pid)
             if pid in shelved or not w.get("unread") or done.get(pid) == key or pid in self.waking:
                 continue
             idle = row and row.get("pid") and row.get("status") != "busy"
-            if not asleep(row) and not (idle and time.time() - (w.get("lastActivity") or 0) > NUDGE_AFTER):
+            if not asleep(row) and not (idle and time.time() - since > NUDGE_AFTER):
                 continue
             self.waking.add(pid)
             if idle:
