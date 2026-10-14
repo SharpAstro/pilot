@@ -362,3 +362,10 @@ tr.click { cursor: pointer; } tr.click:hover td { background: color-mix(in srgb,
 }
 .plan .planfoot { display: flex; justify-content: flex-end; margin-top: 8px; }
 .plan .planfoot button.arch { font-size: 12px; padding: 3px 10px; color: var(--ink-2); }
+/* A flight holding at the gate: launched to plan only, until the controller clears it for takeoff. */
+.chip.hold { color: var(--ink); border: 1px dashed var(--fill); border-radius: 999px; padding: 0 7px; }
+.chip.hold::before { content: "⏸ "; color: var(--fill); }
+.plan .clearance { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin: 8px 0 4px;
+  padding: 8px 12px; border: 1px dashed var(--axis); border-radius: 8px; }
+.plan .clearance.ready { border-color: var(--fill); border-style: solid; }
+.plan .clearance .times { margin: 4px 0 0; }

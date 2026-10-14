@@ -616,8 +616,11 @@ function planCard(p, s) {
   const settled = !flying.length ? yourMoveOf(p, s, ps) : null;
   const move = p.live && ps?.status === "idle" ? settled : settled === "" ? "" : null;
   const yourMove = !!move, atGate = move === "";
-  // The flight's state sits by its name: whose move it is, the pilot at work, or landed.
-  const status = atGate ? `<span class="chip done">✓ landed</span>`
+  // The flight's state sits by its name: whose move it is, the pilot at work, or landed. A flight holding at the
+  // gate says so first: ready once its pilot has a route and has ended its turn, else still being planned.
+  const ready = holdReady(p);
+  const status = p.hold ? `${holdChip(p, ready)}${ready ? "" : ` ${p.asleep ? `<span class="chip other">pilot asleep</span>` : pilotChip(ps)}`}`
+    : atGate ? `<span class="chip done">✓ landed</span>`
     : yourMove ? `<span class="chip blocked move" title="${esc(ps.said?.text || "")}">${move}</span>` : p.asleep ? `<span class="chip other" title="Its background session has ended. The dashboard wakes it, as a copy, when one of its legs stops or a message comes for it.">pilot asleep${flying.length ? `, wakes when ${esc(flying.join(", "))} stops` : ""}</span>` : pilotChip(ps, flying);
   const where = `answer in the pilot's terminal${ps?.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : ""}`;
   // With more than one flight each starts folded, so the page reads as a list of flights, unless it waits on you;
@@ -628,7 +631,7 @@ function planCard(p, s) {
       <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} · ` : ""}plan updated ${esc(ago(p.updated))}
       ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
-    ${timesCard(p.times)}
+    ${p.hold ? clearanceCard(p, ready) : timesCard(p.times)}
     ${connectsCard(p)}
     ${(p.prs || []).length ? `<div class="prline"><span class="sub">pull requests the plan names:</span> ${p.prs.map(x => prChip(x, true)).join(" ")}</div>` : ""}
     ${p.waiting ? waitingHtml(p, ps) : ""}
@@ -789,6 +792,20 @@ function timesCard(t) {
     ${t.basis ? `<span class="basis sub">${t.arrived ? "" : "ETA from "}${esc(t.basis)}</span>` : ""}</div>`;
 }
 
+// A flight launched to plan only holds at the gate (its plan's Hold: line) until the controller clears it: its
+// pilot plans, then ends its turn. Ready once it has a route and its pilot has stopped planning; it has no
+// departure, so no ETA either. Cleared for takeoff lifts the hold and tells the pilot, or wakes it.
+const holdReady = p => !!p.hold && p.legs.length > 0 && !p.pilotState?.busy && p.pilotState?.status !== "waiting";
+const holdChip = (p, ready) => `<span class="chip hold" title="Holding at the gate: no leg takes off until you clear it for takeoff">${ready ? "ready · awaiting clearance" : "planning · holding for clearance"}</span>`;
+function clearanceCard(p, ready) {
+  const name = `${p.flight ? `Flight ${p.flight}` : "this flight"} · ${p.title}`;
+  return `<div class="clearance${ready ? " ready" : ""}"><div><b>Holding at the gate</b> <span class="sub">${ready
+      ? `the route is planned and the pilot has ended its turn: ${p.legs.filter(l => !l.altOf).length} leg${p.legs.filter(l => !l.altOf).length === 1 ? "" : "s"} wait for your clearance`
+      : "the pilot is still planning; no leg takes off until you clear it"}</span>
+    <div class="times ftimes"><span><b>departure</b>none yet</span><span><b>ETA</b>${esc(p.times?.noEta || "awaiting clearance: no departure yet")}</span></div></div>
+    <button class="primary" data-clear="${esc(p.sessionId)}" data-name="${esc(name)}" title="Lift the hold, log it, and tell the pilot to take off (waking it if its session has ended)">Cleared for takeoff</button></div>`;
+}
+
 // The flights a flight connects from, pilot.py's connection(): its legs take off only once each has landed, so
 // one not landed yet reads waiting, and a number no flight has reads as the error it is. Once it has landed it is
 // plain. Each opens its own flight's plan.
@@ -869,6 +886,7 @@ function flightStrip(p, s) {
     planes.push({x: fromAt.x, y: fromAt.y, color: "var(--muted)"});
     const names = next.map(l => esc(l.name)).join(", ");
     status = route.some(l => !l.st.planned) ? `on the ground${names ? ` · next: ${names}` : ""}` : `at the gate${names ? ` · first: ${names}` : ""}`;
+    if (p.hold) status = `holding at the gate${names ? ` · first: ${names}` : ""} · no departure until cleared`;
   } else {
     const named = (cls, f) => air.filter(l => l.st.cls === cls).map(f);
     const prog = l => { const it = l.w?.checklist || []; return it.length ? ` (${it.length - openItems(it).length} of ${it.length})` : ""; };
@@ -916,7 +934,7 @@ function flightStrip(p, s) {
   const planesHtml = planes.map(pl => `<g transform="translate(${pl.x.toFixed(1)},${pl.y.toFixed(1)})"><g${pl.up ? ` class="bob"` : ""}><path d="${PLANE}" style="fill:${pl.color};stroke:var(--page);stroke-width:1"/></g></g>`).join("");
   const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(status.replace(/<[^>]+>/g, ""))}">${tracks.join("")}${gateHtml}${stops.join("")}${planesHtml}</svg>`;
   return `<div class="flight" data-plan="${esc(p.sessionId)}" data-order="${esc(p.sessionId)}" title="Open its flight plan">
-    <div class="fhead">${reorderHtml(p, s)}<b>${p.flight ? esc(p.flight) : "Flight"}</b> ${connectsHtml(p)} ${esc(p.title)} <span class="sub">· ${status}${flightGit(p, s)}</span>${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</div>${svg}</div>`;
+    <div class="fhead">${reorderHtml(p, s)}<b>${p.flight ? esc(p.flight) : "Flight"}</b> ${connectsHtml(p)} ${esc(p.title)} ${p.hold ? holdChip(p, holdReady(p)) : ""}<span class="sub">· ${status}${flightGit(p, s)}</span>${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</div>${svg}</div>`;
 }
 
 // ------------------------------------------------------------------ the controller's order of flights
@@ -1527,6 +1545,7 @@ VIEWS.launch = root => {
         <label><input type="radio" name="where" value="background"> in the background: reach it with attach or Remote Control</label></div>
       <label>First message (optional)<textarea class="s-msg" placeholder="What this flight is for. Sent as the session's first prompt."></textarea></label>
       <label class="inline"><input type="checkbox" class="s-aspilot" checked> start it as the pilot (<code>/pilot:pilot</code>)</label>
+      <label class="inline"><input type="checkbox" class="s-hold"> plan only, wait for clearance: the pilot plans the flight, then holds at the gate until you clear it for takeoff</label>
       <div class="bar2"><span class="sub s-result"></span><button class="primary s-go">Launch</button></div></div>`;
   const sel = $(".s-proj", root), list = $(".s-sessions", root);
   let projects = [];
@@ -1557,6 +1576,8 @@ VIEWS.launch = root => {
     $(".s-filter", root).focus();
   })();
   $(".s-filter", root).addEventListener("input", () => fill(sel.value));
+  // Plan only holds a pilot's flight: without the pilot it means nothing.
+  $(".s-aspilot", root).addEventListener("change", e => { $(".s-hold", root).disabled = !e.target.checked; if (!e.target.checked) $(".s-hold", root).checked = false; });
   sel.addEventListener("change", loadSessions);
   // After a launch, the page waits for the session to come up, then goes to its flight plan once the pilot has
   // opened one, or to its session page when it was not started as the pilot. A new session is the first in that
@@ -1569,7 +1590,7 @@ VIEWS.launch = root => {
     try {
       const resume = $('input[name="sess"]:checked', root)?.value || null, asPilot = $(".s-aspilot", root).checked;
       const j = await post("/api/launch", {path: sel.value, resume, where: $('input[name="where"]:checked', root).value,
-        message: $(".s-msg", root).value, asPilot});
+        message: $(".s-msg", root).value, asPilot, hold: asPilot && $(".s-hold", root).checked});
       pending = {path: norm(sel.value), resume, job: j.id || null, asPilot, at: Date.now(), where: j.where};
       put($(".s-result", root), (j.where === "terminal" ? "opened in a new Windows Terminal tab"
         : `started in the background as ${esc(j.id)}: <button data-copy="claude attach ${esc(j.id)}">copy attach</button>`)
@@ -1689,6 +1710,15 @@ document.addEventListener("click", async e => {
         try { await post(`/api/flights/${sid}/archive`, {force: true}); } catch (err2) { alert(err2.message); }
       } else if (!legs?.length) alert(err.message);
     } finally { t.disabled = false; }
+    return;
+  }
+  // Clearing a flight held at the gate is the controller's: one confirm, then the hold is lifted and its pilot told.
+  if (t.dataset.clear) {
+    e.preventDefault();
+    if (!confirm(`Clear ${t.dataset.name} for takeoff? The hold is lifted and its pilot is told to take off (woken if its session has ended).`)) return;
+    t.disabled = true; t.textContent = "clearing…";
+    try { const j = await post(`/api/flights/${t.dataset.clear}/clear`); t.textContent = `cleared: ${j.reached}`; }
+    catch (err) { alert(err.message); t.disabled = false; t.textContent = "Cleared for takeoff"; }
     return;
   }
   if (t.dataset.restore) {
