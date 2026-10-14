@@ -555,7 +555,8 @@ function renderTop() {
   // The machine in the title and by the brand: the laptop's tab and the desktop's (over --lan) both read "Pilot".
   // And what the flights are up to, as Claude Code's own tab shows it: ✋ something waits on you, a turning glyph
   // while a leg or a flight's pilot works (a session flying nothing, such as this terminal, does not count).
-  const flying = S.workers.some(w => w.pid && w.status === "busy")
+  // A worker has no status, only its state (as the flight's light reads it); a pilot has a status.
+  const flying = S.workers.some(w => w.pid && w.state === "working")
     || S.pilots.some(p => p.status === "busy" && (S.plans || []).some(x => x.sessionId === p.sessionId));
   tabTitle = {lead: waiting.length ? "✋ " : "", spin: !waiting.length && flying,
               rest: (n.unread ? `(${n.unread}) ` : "") + "Pilot" + (S.host ? ` · ${S.host}` : "")};
