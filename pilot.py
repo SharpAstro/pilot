@@ -3182,6 +3182,11 @@ def cmd_budget(a):
         if a.tokens > first * AUTOPILOT_CAP:
             sys.exit(f"pilot: the autopilot may raise {a.name} to at most {first * AUTOPILOT_CAP:,} ({AUTOPILOT_CAP} times its "
                      f"first budget); leave this raise for the controller")
+        # It only raises: answering the same item a second after the controller did, it once set 12.5M over the
+        # controller's 13M.
+        if a.tokens <= (w.get("budget") or 0):
+            print(f"{a.name}: budget already {w['budget']:,}, at or above {a.tokens:,}; the autopilot never lowers one, so left as is")
+            return
     set_budget(a.name, a.tokens)
     print(f"{a.name}: budget {a.tokens:,} weighted tokens")
 
