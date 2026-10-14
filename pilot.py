@@ -2661,6 +2661,11 @@ def cmd_plan(a):
         # Launched to plan only: the plan opens holding, whether or not the pilot passed --hold itself.
         if take_hold(sid, top, os.getcwd()):
             hold_plan(sid, "Holding at the gate: launched to plan only, awaiting clearance for takeoff from the controller")
+    flown = [w["name"] for w in registered() if w.get("plan") == sid] if getattr(a, "hold", False) else []
+    if flown:                  # a hold is for a flight still at the gate: one with legs out has departed
+        flight = parse_plan(p.read_text(encoding="utf-8"))["flight"] or "this flight"
+        sys.exit(f"pilot: {flight} has already taken off ({', '.join(flown)}), so it cannot hold at the gate; "
+                 f"a flight holds for clearance only before its first leg takes off")
     if getattr(a, "hold", False) and hold_plan(sid):
         print("holding at the gate: no leg takes off until the controller clears the flight", file=sys.stderr)
     print(p)
