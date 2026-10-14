@@ -676,15 +676,10 @@ def flight_history(workers, gone=()):
             out.append({"sessionId": sid, "archivedAt": rec.get("at"), "missing": True, "title": "(plan file gone)", "legs": []})
             continue
         plan = parse_plan(p.read_text(encoding="utf-8"))
-        live = {w["name"]: w for w in workers if w.get("plan") == sid}
-        old = {}
-        for a in gone:                # newest first: a leg flown twice counts its last worker
-            if a.get("plan") == sid and a.get("name") not in old:
-                old[a["name"]] = a
-        legs = []
-        for l in plan["legs"]:
-            cls, label = leg_state(live.get(l["leg"]) or old.get(l["leg"]))
-            legs.append({"leg": l["leg"], "cls": cls, "label": label, "altOf": l.get("altOf") or ""})
+        # The strips' leg states: a removed leg's PR review read as theirs is (flight_legs), and an alternate
+        # not taken left out, as flown() leaves it off the route.
+        legs = [{"leg": s["leg"], "cls": s["cls"], "label": s["label"], "altOf": s["altOf"]}
+                for s in flight_legs(sid, plan["legs"], workers, gone) if not s["altOf"] or s["taken"]]
         try:
             times = flight_times(sid, plan["legs"], workers, gone)
         except Exception as e:        # like the strips', worth less than the rest of the page
@@ -1299,11 +1294,16 @@ def collateral_now(w):
     remotes = [r for r in (git("for-each-ref", "--contains", sha, "--format=%(refname:short)", "refs/remotes") or "").splitlines()
                if "/" in r and not r.endswith("/HEAD")]
     dirty = [l for l in (git("status", "--porcelain", cwd=w["worktree"]) or "").splitlines() if l.strip()] if out["worktree"] else []
-    return {**out, "head": sha[:8],
-            "ahead": int(git("rev-list", "--count", f"{w['base']}..{sha}") or 0) if w.get("base") else None,
+    ahead = int(git("rev-list", "--count", f"{w['base']}..{sha}") or 0) if w.get("base") else None
+    prs = leg_prs(root, remotes[:5], w.get("repo")) if remotes else []
+    # No remote branch holds its tip, or none of them has a PR: a squash- or rebase-merged PR whose branch was
+    # deleted on merge, then pruned by a fetch. GitHub still knows the PR by its tip. A repo with no remote has
+    # no PR to find.
+    if prs == [] and ahead != 0 and git("remote"):
+        prs = sha_prs(root, sha, w.get("repo"))
+    return {**out, "head": sha[:8], "tip": sha, "ahead": ahead,
             "unpushed": int(git("rev-list", "--count", sha, "--not", "--remotes") or 0),
-            "remotes": remotes[:5], "dirty": len(dirty), "dirtyFiles": dirty[:20],
-            "prs": leg_prs(root, remotes[:5], w.get("repo")) if remotes else []}
+            "remotes": remotes[:5], "dirty": len(dirty), "dirtyFiles": dirty[:20], "prs": prs}
 
 
 PR_FIELDS = "number,title,state,url,isDraft,reviewDecision,statusCheckRollup,headRefName,headRefOid"
@@ -1332,8 +1332,12 @@ def pr_view(p, repo=None):
             "reviewer": reviewer(repo, p.get("reviewDecision"))}
 
 
+def gh_run(root, *args):
+    return subprocess.run(["gh", *args], cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+
+
 def gh_json(root, *args):
-    r = subprocess.run(["gh", *args], cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    r = gh_run(root, *args)
     if r.returncode != 0:
         return None
     try:
@@ -1358,6 +1362,41 @@ def leg_prs(root, remotes, repo=None):
             if p.get("number") not in seen:
                 seen.add(p.get("number"))
                 out.append(pr_view(p, repo))
+    return sorted(out, key=lambda p: p["number"] or 0, reverse=True)
+
+
+def sha_prs(root, sha, repo=None):
+    """The pull requests that hold a leg's tip, found by the commit rather than by a branch: GitHub keeps a PR's
+    refs/pull/N/head after its branch is deleted, so a squash- or rebase-merged leg is still found. First
+    commits/<sha>/pulls (every PR whose commits include it), then, if none has the tip as its head, a search of
+    merged PRs for it. A tip GitHub has never seen (422, "No commit found") has none. Newest first. None when gh
+    is missing or a lookup fails, as leg_prs: unknown, never absent."""
+    if not shutil.which("gh"):
+        return None
+    r = gh_run(root, "api", f"repos/{{owner}}/{{repo}}/commits/{sha}/pulls")
+    if r.returncode != 0:
+        if not re.search(r"No commit found", (r.stderr or "") + (r.stdout or "")):
+            return None
+        listed = []
+    else:
+        try:
+            listed = json.loads(r.stdout or "[]")
+        except ValueError:
+            return None
+        if not isinstance(listed, list):
+            return None
+    out, seen = [], set()
+    for n in sorted({p.get("number") for p in listed if isinstance(p, dict) and p.get("number")}, reverse=True)[:3]:
+        p = gh_json(root, "pr", "view", str(n), "--json", PR_FIELDS)
+        if p is None:
+            return None
+        seen.add(n)
+        out.append(pr_view(p, repo))
+    if not any(p["head"] == sha for p in out):
+        found = gh_json(root, "pr", "list", "--state", "merged", "--search", sha, "--limit", "3", "--json", PR_FIELDS)
+        if found is None:
+            return None
+        out += [pr_view(p, repo) for p in found if p.get("number") not in seen]
     return sorted(out, key=lambda p: p["number"] or 0, reverse=True)
 
 
@@ -2752,8 +2791,13 @@ def flight_landed(states):
         if ap and ap["stage"] != "gate":
             return f"#{ap['pr']} {ap['label']}"
         n = g.get("ahead")
-        if n and not any(p.get("state") == "MERGED" for p in g["prs"]):
-            return f"{n} commit{'s' if n != 1 else ''} on no merged pull request"
+        # A merged PR lands the leg only if it merged the leg's tip: not commits pushed after it, nor an old PR
+        # of a branch name used again.
+        tip = g.get("tip") or g.get("head") or ""
+        if n and not any(p.get("state") == "MERGED" and tip and (p.get("head") or "").startswith(tip) for p in g["prs"]):
+            other = [f"#{p.get('number')}" for p in g["prs"] if p.get("state") == "MERGED"]
+            return (f"{n} commit{'s' if n != 1 else ''} on no merged pull request"
+                    + (f" ({', '.join(other)} merged at another head)" if other else ""))
         return None
     left = [f"{s['leg']}: {why}" for s in states for why in [still_open(s)] if why]
     return bool(states) and not left, left or ([] if states else ["no legs on its route yet"])
@@ -3181,10 +3225,15 @@ def cmd_rm(a):
     w = need(a.name)
     s = worker_status(w)
     rep = report(w["sessionId"]) if w.get("sessionId") else ""
-    commits = ""
-    if Path(w["worktree"]).exists():
-        commits = subprocess.run(["git", "-C", w["worktree"], "log", "--oneline", "-30", f"{w.get('base') or 'origin/HEAD'}..HEAD"],
-                                 capture_output=True, text=True).stdout.strip()
+    # Its commits past its base, from its worktree, or once that is gone from its branch in the repo. None when
+    # neither can be read: "" would say it had none, and flight_landed would land it on that.
+    base, root = w.get("base") or "origin/HEAD", config()["repos"].get(w.get("repo"))
+    where = ([w["worktree"], f"{base}..HEAD"] if Path(w["worktree"]).exists() else
+             [root, f"{base}..refs/heads/{w['branch']}"] if root and w.get("branch") else None)
+    commits = None
+    if where:
+        r = subprocess.run(["git", "-C", str(where[0]), "log", "--oneline", "-30", where[1]], capture_output=True, text=True)
+        commits = r.stdout.strip() if r.returncode == 0 else None
     if Path(w["worktree"]).exists():
         print(f"deleting {w['worktree']} with its session: a big worktree takes minutes", flush=True)
     ok = True
