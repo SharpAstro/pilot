@@ -803,6 +803,17 @@ class HoldTests(Case):
         self.assertEqual(pilot.parse_plan(pilot.plan_path(sid).read_text(encoding="utf-8"))["hold"], "awaiting clearance")
         self.assertEqual(pilot.live_holds(), [])
 
+    def test_a_background_resume_holds_the_copys_plan_not_the_old_one(self):
+        sid = "1" * 8 + "-0000-0000-0000-" + "1" * 12
+        (ROOT / "proj").mkdir(exist_ok=True)
+        (ROOT / "proj" / f"{sid}.jsonl").write_text("", encoding="utf-8")
+        self.plan(sid, PLAN)
+        self.launch("background", resume=sid, sid="copy-sid")      # --bg --resume continues as a copy
+        self.assertNotIn("Hold:", pilot.plan_path(sid).read_text(encoding="utf-8"))
+        p = self.open_plan("copy-sid", top="C:/repos/web-app")
+        self.assertEqual(pilot.parse_plan(p.read_text(encoding="utf-8"))["hold"], "awaiting clearance")
+        self.assertEqual(pilot.live_holds(), [])
+
     def test_without_the_option_nothing_holds_and_plan_only_needs_a_pilot(self):
         out, sent = self.launch("background", hold=False)
         self.assertNotIn("hold", out)
