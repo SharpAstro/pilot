@@ -338,7 +338,7 @@ class ConnectionTests(Case):
         self.plan("s2", CONNECTED)
         msg = self.start()
         self.assertIn("WA1 connects from TIA2", msg)
-        self.assertIn("TIA2 (Theme tokens): 0 of 1 legs landed; still open: build: planned", msg)
+        self.assertIn("TIA2 (Theme tokens): 0 of 1 legs done; still open: build: planned", msg)
         self.assertIn("put it to the controller in `## Waiting on the controller`", msg)
         self.assertFalse(pilot.WORKERS.exists() and list(pilot.WORKERS.glob("*.json")), "nothing took off")
 
@@ -756,8 +756,8 @@ class HoldTests(Case):
         self.assertNotIn("Hold:", pilot.plan_path("s1").read_text(encoding="utf-8"))
         self.plan("s2", CONNECTED.replace("Flight: TIA2", "Flight: TIA2\n\nHold: awaiting clearance"))
         self.rows = [{"name": "pilot-tia", "sessionId": "s2", "kind": "interactive", "pid": 7}]
-        pilot.intercom = lambda names, text, sender="Controller": (_ for _ in ()).throw(ValueError("the relay failed (1)"))
-        self.assertIn("could not be reached (the relay failed (1))", self.clear("TIA2"))
+        pilot.intercom = lambda names, text, sender="Controller": (_ for _ in ()).throw(ValueError("the intercom failed (1)"))
+        self.assertIn("could not be reached (the intercom failed (1))", self.clear("TIA2"))
         self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nHold: awaiting clearance"))
         self.rows = [{"name": "pilot-web", "sessionId": "s1", "kind": "background", "pid": None}]
 
@@ -1080,7 +1080,7 @@ class ReviewTests(Case):
                 run()                               # round 2 still finds one: the rounds are spent
             self.assertEqual(ex.exception.code, 2)
             self.assertEqual(len(pilot.load("leg-a")["reviews"]), 2)
-            self.assertIn("to the tower", self.log_of("p1")[-1])
+            self.assertIn("to the controller", self.log_of("p1")[-1])
         finally:
             pilot.collateral_now = old
 
@@ -1274,9 +1274,9 @@ class TranscriptTests(Case):
                           "only an error result is a refusal")
 
     def test_a_refusal_by_the_wiring_is_a_gate(self):
-        cases = [("pilot budget: this worker has spent 10,000,000 of its 10,000,000 weighted tokens.", "pilot's budget", False),
+        cases = [("pilot budget: this worker has spent 10,000,000 of its 10,000,000 weighted tokens.", "pilot.py's budget", False),
                  ("pilot: don't ask in the terminal. A prompt there blocks you", "pilot's ask hook", True),
-                 ("PreToolUse:Bash hook error: pilot budget: this worker has spent 10,000,000", "pilot's budget", False),
+                 ("PreToolUse:Bash hook error: pilot budget: this worker has spent 10,000,000", "pilot.py's budget", False),
                  ("PreToolUse:Bash hook error: SAM-REPLY-GATE: reply first", "the reply gate", True),
                  ("This session is isolated in the worktree C:/repo/.claude/worktrees/w-x", "Claude Code", False),
                  ("denied by the Claude Code auto mode classifier", "auto mode", False)]
@@ -1398,7 +1398,7 @@ class RefuelTests(Case):
         self.assertIn("manual", why)
         self.assertEqual(self.asked, [])
         self.assertEqual(pilot.load("fix")["budget"], 10_000_000)
-        self.assertIn("Watchtower sent to the tower", self.log_of("s1")[-1])
+        self.assertIn("Watchtower sent to the controller", self.log_of("s1")[-1])
 
     def test_a_refuel_needs_a_reason_and_a_raise(self):
         with self.assertRaises(ValueError):
@@ -1607,7 +1607,7 @@ class TrackTests(Case):
                  ({"state": "working"}, ("working", "flying")),
                  ({"state": "blocked"}, ("warn", "waiting on you")),
                  ({"state": "done", "reportHead": "DONE", "checklist": two}, ("warn", "done, 1 item open")),
-                 ({"state": "done", "reportHead": "DONE", "checklist": two[:1]}, ("good", "landed")),
+                 ({"state": "done", "reportHead": "DONE", "checklist": two[:1]}, ("good", "done")),
                  ({"state": "done", "reportHead": "BLOCKED"}, ("warn", "blocked")),
                  ({"final": {"reportHead": "FAILED"}}, ("bad", "failed")),
                  ({"state": "done"}, ("planned", "turn ended"))]
@@ -1624,7 +1624,7 @@ class TrackTests(Case):
         page = pilot.track_html("s1")
         self.assertIn("Flight WA1 · Export fixes", page)
         self.assertIn("Waiting on you: 2 items", page)
-        self.assertIn("landed · removed", page)
+        self.assertIn("done · removed", page)
         self.assertIn(">flying<", page)
         self.assertIn("spend 1.0M of 10M", page)
         self.assertNotIn("<script>", page)
@@ -1749,7 +1749,7 @@ class AlternateTests(Case):
         self.assertEqual(pilot.flight_landed(st), (True, []))
         self.assertEqual(len(pilot.flown(st)), 4)
         times = pilot.flight_times("s1", pilot.parse_plan(LANES)["legs"], [], pilot.archived())
-        self.assertEqual(times["basis"], "all 4 legs landed")
+        self.assertEqual(times["basis"], "all 4 legs done")
         self.assertIn("Landed: all 4 legs", pilot.track_html("s1"))
         self.assertIn("alternate, not taken", pilot.track_html("s1"))
 
@@ -1945,7 +1945,7 @@ class FlightHistoryLegTests(Case):
         pilot.archive_flight("WA1")
         self.assertEqual(self.legs(), [("design", "planned", "planned"), ("fix", "working", "on approach")])
         self.git["prs"][0]["state"] = "MERGED"
-        self.assertEqual(self.legs()[1], ("fix", "good", "at the gate"))
+        self.assertEqual(self.legs()[1], ("fix", "good", "landed"))
 
     def test_an_alternate_not_taken_is_left_out(self):
         self.plan("s1", LANES)
