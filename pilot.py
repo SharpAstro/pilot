@@ -743,7 +743,7 @@ def plans_view(rows, workers, seen=None):
             continue
         text = p.read_text(encoding="utf-8")
         out.append({"sessionId": sid, "path": str(p), "updated": mtime, "live": sid in live, "asleep": asleep(asleep_rows.get(sid)),
-                    "pilot": (live.get(sid) or {}).get("name"),
+                    "pilot": (live.get(sid) or asleep_rows.get(sid) or {}).get("name"),
                     "pilotState": (seen.get(sid) or session_view(live[sid])) if sid in live else None,
                     "prs": mentioned_prs(re.split(r"^##\s+Log\s*$", text, maxsplit=1, flags=re.M)[0]),   # not the log's history
                     # Items the controller has answered stay in the plan until its pilot takes them out; until then
@@ -4753,7 +4753,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send(200, {"ok": True, "enabled": st.get("enabled")})
         if self.path == "/api/intercom":
             names = body.get("to") if isinstance(body.get("to"), list) else []
-            known = {p["name"] for p in pilots()} | {agent_name(w) for w in registered()}
+            known = {p["name"] for p in pilots()} | {agent_name(w) for w in registered()} \
+                | {r.get("name") for r in agents() if asleep(r) and plan_path(r.get("sessionId")) and plan_path(r.get("sessionId")).exists()}
             if not names or any(n not in known for n in names):
                 return self.send(400, {"error": f"send only to live pilots and workers: {', '.join(sorted(known)) or 'none'}"})
             try:
@@ -4783,21 +4784,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self.send(200, {"ok": True, "merged": n, "head": pr["headRefOid"][:8], "already": True})
                 if not pr or pr.get("state") != "OPEN":
                     return self.send(409, {"error": f"PR #{n} is {(pr or {}).get('state', 'not found')}"})
-                r = subprocess.run(["gh", "pr", "merge", str(n), "--rebase", "--match-head-commit", pr["headRefOid"]], cwd=str(root),
-                                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+                run = lambda how: subprocess.run(["gh", "pr", "merge", str(n), how, "--match-head-commit", pr["headRefOid"]], cwd=str(root),
+                                                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+                how = "rebase"
+                r = run("--rebase")
+                # A branch with a merge commit in it (brought up to date by merging its base, as PIL3's #15 was to
+                # resolve a conflict) cannot be rebased: squash it, which keeps main's history linear all the same.
+                if r.returncode != 0 and "can't be rebased" in (r.stderr or r.stdout):
+                    how, r = "squash", run("--squash")
                 if r.returncode != 0:
                     return self.send(502, {"error": (r.stderr or r.stdout).strip()[:400]})
             head = pr["headRefOid"][:8]
-            plan_log(sid, f"Controller merged PR #{n} from the dashboard (rebase, guarded on {head}): {pr.get('url')}")
+            plan_log(sid, f"Controller merged PR #{n} from the dashboard ({how}, guarded on {head}): {pr.get('url')}")
             rec = read_json(ANSWERED, {})
             waiting = split_waiting(plan_path(sid).read_text(encoding="utf-8"))[0] if plan_path(sid).exists() else ""
             for title in re.findall(r"^\s*[-*]\s+\*\*(.+?)\*\*", waiting, re.M):
                 if f"PR #{n}" in title:
                     rec.setdefault(sid, {})[title] = time.time()
             write_json(ANSWERED, rec)
-            pilot = next((x["name"] for x in pilots() if x.get("sessionId") == sid), None)
+            # Its pilot, live or parked: the intercom wakes a parked one with the news.
+            pilot = next((x.get("name") for x in agents() if x.get("sessionId") == sid and (x.get("pid") or asleep(x))), None)
             if pilot:
-                threading.Thread(target=lambda: intercom([pilot], f"The controller merged PR #{n} from the dashboard (rebase, guarded on "
+                threading.Thread(target=lambda: intercom([pilot], f"The controller merged PR #{n} from the dashboard ({how}, guarded on "
                                                          f"{head}). Take its merge item out of your plan, log it, and carry on.",
                                                          sender="Dashboard"), daemon=True).start()
             HUB.poke()

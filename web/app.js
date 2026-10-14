@@ -794,7 +794,7 @@ function waitingHtml(p, ps) {
     return `<li>${prLinks(md(it.text, true), p.repoUrl)}${mergeBtn ? `<div class="choices">${mergeBtn}</div>` : ""}<div class="choices">${choices}<input class="reply" data-answer="${esc(sid)}" data-item="${i}"
       placeholder="${choices ? "or your own answer" : "your answer"}" value="${esc(a?.kind === "text" ? a.value : "")}"></div></li>`;
   }).join("");
-  const can = p.live && p.pilot;
+  const can = (p.live || p.asleep) && p.pilot;     // a parked pilot is woken by the message
   const left = unanswered(p).length;
   return `<div class="ask${left ? "" : " done"}"><div class="cardhead"><b>${left ? "Waiting on you" : "Answered, with the pilot"}</b><span class="sub">from the plan · answer here, in the pilot's terminal${where}</span></div>
     ${intro ? md(intro, true) : ""}<ol class="items">${rows}</ol>
