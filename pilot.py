@@ -3581,6 +3581,7 @@ class Hub:
         rows = {r.get("sessionId"): r for r in agents()}
         done = read_json(WAKES, {})
         shelved = archived_flights()          # a flight the controller archived is given up on: its pilot sleeps on
+        self.tell_ci(snap, rows, done, shelved)
         for w in snap["workers"]:
             pid = w.get("plan")
             key = f"{w['name']}:{int(w.get('lastActivity') or 0)}"
@@ -3614,6 +3615,49 @@ class Hub:
                                           f"Read its report: python {(HERE / 'pilot.py').as_posix()} result {w['name']}")
                     d = read_json(WAKES, {})
                     d[new or pid] = key
+                    write_json(WAKES, d)
+                except Exception:
+                    pass
+                finally:
+                    self.waking.discard(pid)
+                    self.poke()
+            threading.Thread(target=go, daemon=True).start()
+
+    def tell_ci(self, snap, rows, done, shelved):
+        """A pilot is told when its leg's PR turns cleared to land (review accepted at its head, CI green) without a
+        merge question in its plan, or when CI fails on it: CI finishing is no event a pilot hears, and its own watch
+        dies with its process or under memory pressure (TIA2's #1563 sat green with nobody to ask for the merge).
+        Woken if asleep, through the intercom if idle; once per PR and stage."""
+        for w in snap["workers"]:
+            ap, pid = w.get("approach") or {}, w.get("plan")
+            failing = ap.get("stage") == "goaround" and "CI fails" in (ap.get("why") or "")
+            if ap.get("stage") != "cleared" and not failing:
+                continue
+            path = plan_path(pid)
+            if not path or not path.exists() or pid in shelved or pid in self.waking:
+                continue
+            if not failing and f"PR #{ap['pr']}" in split_waiting(path.read_text(encoding="utf-8"))[0]:
+                continue                       # the merge is already asked
+            key = f"ci:{w['name']}:{ap['pr']}:{ap['stage']}"
+            row = rows.get(pid)
+            idle = row and row.get("pid") and row.get("status") != "busy"
+            if done.get(f"{pid}|ci") == key or not (asleep(row) or idle):
+                continue
+            text = (f"CI fails on PR #{ap['pr']} of leg {w['name']}, after its review was accepted: a go-around, as rule 11 says."
+                    if failing else
+                    f"PR #{ap['pr']} of leg {w['name']} is cleared to land: its review was accepted at its head and CI is green. "
+                    f"Put the merge to the controller in your plan: - **Merge PR #{ap['pr']}?** <what it changes; the rounds; CI's state>.")
+            self.waking.add(pid)
+
+            def go(pid=pid, key=key, text=text, row=row, idle=idle):
+                try:
+                    if idle:
+                        intercom([row.get("name")], text, sender="Dashboard")
+                        new = pid
+                    else:
+                        new = wake_pilot(pid, text) or pid
+                    d = read_json(WAKES, {})
+                    d[f"{new}|ci"] = key
                     write_json(WAKES, d)
                 except Exception:
                     pass
