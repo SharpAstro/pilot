@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Reviews the pull request a pilot opened for a landed leg, one round per launch, before the merge goes to the controller. Reads every changed line of the PR against the leg's brief, its Done when and its checklist, and returns a round file the pilot records with `pilot.py review`. Finds product defects and unmet checklist items with proof; it never fixes, commits, pushes or posts anything.
+description: Reviews the pull request a pilot opened for a done leg, one round per launch, before the merge goes to the controller. Reads every changed line of the PR against the leg's brief, its Done when and its checklist, and returns a round file the pilot records with `pilot.py review`. Finds product defects and unmet checklist items with proof; it never fixes, commits, pushes or posts anything.
 tools: Read, Grep, Glob, Bash
 model: opus
 ---
