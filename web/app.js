@@ -922,10 +922,13 @@ function flightStrip(p, s) {
   const colorOf = l => l.st.cls === "failed" ? "var(--crit)" : l.st.cls === "blocked" ? "var(--warn)" : l.st.cls === "working" ? "var(--fill)" : "var(--muted)";
   // In the air: a leg of the route as flown that has a worker and is not done.
   const air = route.filter(l => !l.st.planned && l.st.cls !== "done");
+  // Stacked: in the air on legs that have not landed (pilot.py's leg_landings). Its plane is hollow and says what it
+  // is stacked on, and its track stays dashed, so it never reads as flying ahead of a route not flown yet.
+  const stackedOn = l => p.landed?.[l.name]?.stackedOn || [];
   const planes = air.map(l => {
     const t = Math.min(.9, Math.max(.1, progress(l))), pt = curve(at(main(l)), pos.get(l.name)).at(t);
     const up = l.st.cls === "working" || l.st.cls === "blocked";    // its turn ended short of DONE: it stands there
-    return {x: pt.x, y: pt.y - (up ? 15 : 0), up, color: colorOf(l), name: l.name, t};
+    return {x: pt.x, y: pt.y - (up ? 15 : 0), up, color: colorOf(l), name: l.name, t, on: stackedOn(l)};
   });
   const allDone = route.length > 0 && route.every(l => l.st.cls === "done");
   let status;
@@ -948,7 +951,8 @@ function flightStrip(p, s) {
   } else {
     const named = (cls, f) => air.filter(l => l.st.cls === cls).map(f);
     const prog = l => { const it = l.w?.checklist || []; return it.length ? ` (${it.length - openItems(it).length} of ${it.length})` : ""; };
-    const flying = named("working", l => esc(l.name) + prog(l)), hold = named("blocked", l => `${esc(l.name)}: ${esc(l.st.label)}`);
+    const on = l => stackedOn(l).length ? ` stacked on ${esc(stackedOn(l).join(", "))}` : "";
+    const flying = named("working", l => esc(l.name) + prog(l) + on(l)), hold = named("blocked", l => `${esc(l.name)}: ${esc(l.st.label)}`);
     const failed = named("failed", l => esc(l.name)), stopped = named("other", l => `${esc(l.name)}, ${esc(l.st.label)}`);
     status = [flying.length && `${flying.length} flying: ${flying.join(", ")}`, hold.length && `waiting · ${hold.join("; ")}`,
               failed.length && `failed: ${failed.join(", ")}`, stopped.length && `stopped: ${stopped.join("; ")}`].filter(Boolean).join(" · ");
@@ -965,7 +969,7 @@ function flightStrip(p, s) {
       else {
         tracks.push(`<path d="${c.d}" class="trk ahead${alt}"/>`);
         // Flown so far, up to its plane: the same curve, drawn to the plane's share of it.
-        if (pl && n === main(l)) tracks.push(`<path d="${c.d}" pathLength="1" class="trk" style="stroke:${pl.color};stroke-dasharray:${pl.t.toFixed(3)} 2"/>`);
+        if (pl && !pl.on.length && n === main(l)) tracks.push(`<path d="${c.d}" pathLength="1" class="trk" style="stroke:${pl.color};stroke-dasharray:${pl.t.toFixed(3)} 2"/>`);
       }
     }
   }
@@ -994,7 +998,10 @@ function flightStrip(p, s) {
       <circle cx="${dest.x}" cy="${dest.y}" r="4" style="fill:${stroke}"/></g>`);
   }
   const gateHtml = `<rect x="${X0 - 4}" y="${Y - 4}" width="8" height="8" rx="2" style="fill:var(--axis)"/><text x="${X0}" y="${Y + 22}" text-anchor="middle">${p.hold ? "gate" : "departure"}</text>`;
-  const planesHtml = planes.map(pl => `<g transform="translate(${pl.x.toFixed(1)},${pl.y.toFixed(1)})"><g${pl.up ? ` class="bob"` : ""}><path d="${PLANE}" style="fill:${pl.color};stroke:var(--page);stroke-width:1"/></g></g>`).join("");
+  const planesHtml = planes.map(pl => `<g transform="translate(${pl.x.toFixed(1)},${pl.y.toFixed(1)})">${pl.on?.length
+      ? `<title>${esc(`${pl.name}: stacked on ${pl.on.join(", ")}, not landed yet`)}</title><g${pl.up ? ` class="bob"` : ""}><path d="${PLANE}" style="fill:var(--surface);stroke:${pl.color};stroke-width:1.5"/></g>
+         <text y="-20" text-anchor="middle" class="stacked">stacked on ${esc(pl.on.join(", "))}</text>`
+      : `<g${pl.up ? ` class="bob"` : ""}><path d="${PLANE}" style="fill:${pl.color};stroke:var(--page);stroke-width:1"/></g>`}</g>`).join("");
   const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(status.replace(/<[^>]+>/g, ""))}">${tracks.join("")}${gateHtml}${stops.join("")}${planesHtml}</svg>`;
   return `<div class="flight" data-plan="${esc(p.sessionId)}" data-order="${esc(p.sessionId)}" title="Open its flight plan">
     <div class="fhead">${reorderHtml(p, s)}<b>${p.flight ? esc(p.flight) : "Flight"}</b> ${connectsHtml(p)} ${esc(p.title)} ${p.hold ? holdChip(p, holdReady(p)) : ""}<span class="sub">· ${status}${flightGit(p, s)}</span>${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</div>${svg}</div>`;

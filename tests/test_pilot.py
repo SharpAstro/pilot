@@ -442,17 +442,42 @@ class ConnectionTests(Case):
         self.landed()
         flags = lambda: next(p for p in pilot.plans_view([], []) if p["sessionId"] == "s2")["landed"]
         merged = {"number": 7, "state": "MERGED", "head": "abc123"}
-        cases = [({"ahead": 2, "tip": "abc123", "prs": [merged], "remotes": []}, {"landed": True, "why": None}),
-                 ({"ahead": 0, "prs": [], "remotes": []}, {"landed": True, "why": None}),
+        cases = [({"ahead": 2, "tip": "abc123", "prs": [merged], "remotes": []}, {"landed": True, "why": None, "stackedOn": []}),
+                 ({"ahead": 0, "prs": [], "remotes": []}, {"landed": True, "why": None, "stackedOn": []}),
                  ({"ahead": 2, "tip": "abc123", "prs": [{"number": 7, "state": "OPEN", "head": "abc123"}], "remotes": []},
-                  {"landed": False, "why": "on approach"}),
-                 ({"ahead": 2, "prs": [], "remotes": []}, {"landed": False, "why": "2 commits on no merged pull request"}),
-                 ({"ahead": 2, "prs": None, "remotes": ["origin/feat/x"]}, {"landed": False, "why": "its pull requests not read yet"})]
+                  {"landed": False, "why": "on approach", "stackedOn": []}),
+                 ({"ahead": 2, "prs": [], "remotes": []}, {"landed": False, "why": "2 commits on no merged pull request", "stackedOn": []}),
+                 ({"ahead": 2, "prs": None, "remotes": ["origin/feat/x"]}, {"landed": False, "why": "its pull requests not read yet", "stackedOn": []})]
         for git, want in cases:
             self.git = git
             got = flags()
             self.assertEqual(got["build"], want, git)
-            self.assertEqual(got["ship"], {"landed": False, "why": "planned"}, "a leg not flown has not landed")
+            self.assertEqual(got["ship"], {"landed": False, "why": "planned", "stackedOn": []}, "a leg not flown has not landed")
+
+    def test_a_leg_flying_on_legs_not_landed_is_stacked_on_them(self):
+        legs = [{"leg": "audit", "after": [], "altOf": ""}, {"leg": "rename", "after": ["audit"], "altOf": ""},
+                {"leg": "strip", "after": ["rename", "audit"], "altOf": ""}, {"leg": "ship", "after": ["strip"], "altOf": ""}]
+        done = lambda leg, git: {"leg": leg, "w": {"reportHead": "DONE"}, "cls": "good", "label": "done", "git": git, "altOf": "", "taken": False}
+        flying = lambda leg: {"leg": leg, "w": {"state": "working"}, "cls": "working", "label": "flying", "git": None, "altOf": "", "taken": False}
+        planned = lambda leg: {"leg": leg, "w": None, "cls": "planned", "label": "planned", "git": None, "altOf": "", "taken": False}
+        unmerged, merged = {"ahead": 2, "prs": []}, {"ahead": 0, "prs": []}
+        # PIL2's: audit flying again (a rebase) and rename done, not landed, while strip flies on both.
+        got = pilot.leg_landings(legs, [flying("audit"), done("rename", unmerged), flying("strip"), planned("ship")])
+        self.assertEqual({k: v["stackedOn"] for k, v in got.items()}, {"audit": [], "rename": ["audit"], "strip": ["rename", "audit"], "ship": []})
+        # Once audit has landed, strip is stacked on rename alone; once rename has too, on nothing.
+        got = pilot.leg_landings(legs, [done("audit", merged), done("rename", unmerged), flying("strip"), planned("ship")])
+        self.assertEqual(got["strip"]["stackedOn"], ["rename"])
+        self.assertEqual(got["rename"]["stackedOn"], [], "a leg on landed legs is not stacked")
+        got = pilot.leg_landings(legs, [done("audit", merged), done("rename", merged), flying("strip"), planned("ship")])
+        self.assertEqual(got["strip"]["stackedOn"], [])
+        # A leg after one not flown yet is not stacked: it waits, it builds on nothing.
+        got = pilot.leg_landings(legs, [planned("audit"), planned("rename"), flying("strip"), planned("ship")])
+        self.assertEqual(got["strip"]["stackedOn"], [])
+        # An After naming a diverted primary is stacked on the alternate taken for it.
+        alt = [*legs, {"leg": "rename-b", "after": ["audit"], "altOf": "rename"}]
+        st = [done("audit", merged), {**planned("rename"), "cls": "bad", "label": "failed", "w": {}}, flying("strip"), planned("ship"),
+              {**done("rename-b", unmerged), "altOf": "rename", "taken": True}]
+        self.assertEqual(pilot.leg_landings(alt, st)["strip"]["stackedOn"], ["rename-b"])
 
     def test_the_tracking_page_tells_done_from_landed(self):
         self.plan("s2", CONNECTED)
