@@ -4311,19 +4311,26 @@ class Hub:
         for w in snap["workers"]:
             ap, pid = w.get("approach") or {}, w.get("plan")
             failing = ap.get("stage") == "goaround" and "CI fails" in (ap.get("why") or "")
-            if ap.get("stage") != "cleared" and not failing:
+            # CI finished on a head pushed after the last accepted round (a fix the controller let the pilot check
+            # itself, as on TIA2's #1564): the PR reads "on approach", but its pilot waits on exactly this.
+            pr = next((x for x in (w.get("git") or {}).get("prs") or [] if x.get("number") == ap.get("pr")), {})
+            finished = ap.get("stage") == "approach" and "since round" in (ap.get("why") or "") and pr.get("ci") in ("passing", "failing")
+            if ap.get("stage") != "cleared" and not failing and not finished:
                 continue
             path = plan_path(pid)
             if not path or not path.exists() or pid in shelved or pid in self.waking:
                 continue
             if not failing and f"PR #{ap['pr']}" in split_waiting(path.read_text(encoding="utf-8"))[0]:
                 continue                       # the merge is already asked
-            key = f"ci:{w['name']}:{ap['pr']}:{ap['stage']}"
+            key = f"ci:{w['name']}:{ap['pr']}:{ap['stage']}:{(pr.get('head') or '')[:8] if finished else ''}"
             row = rows.get(pid)
             idle = row and row.get("pid") and row.get("status") != "busy"
             if done.get(f"{pid}|ci") == key or not (asleep(row) or idle):
                 continue
-            text = (f"CI fails on PR #{ap['pr']} of leg {w['name']}, after its review was accepted: a go-around, as rule 11 says."
+            text = (f"CI is {pr.get('ci')} on PR #{ap['pr']} of leg {w['name']} at {(pr.get('head') or '')[:8]}, a head pushed after "
+                    f"its last review round. Carry on as your plan and the controller's answer say: the merge item if green, "
+                    f"a go-around if failing." if finished else
+                    f"CI fails on PR #{ap['pr']} of leg {w['name']}, after its review was accepted: a go-around, as rule 11 says."
                     if failing else
                     f"PR #{ap['pr']} of leg {w['name']} is cleared to land: its review was accepted at its head and CI is green. "
                     f"Put the merge to the controller in your plan: - **Merge PR #{ap['pr']}?** <what it changes; the rounds; CI's state>.")
