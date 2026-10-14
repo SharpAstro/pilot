@@ -67,6 +67,16 @@ exists, puts it on the plan's `Connects:` line and logs it; never write that lin
 leg of that flight has landed and its PRs are merged, `pilot.py start` refuses your legs and says what is
 still open. There is no way past it: wait, or put it to the controller in `## Waiting on the controller`.
 
+**Holding for clearance.** A flight launched to plan only holds at the gate: the plan's `Hold: awaiting
+clearance` line, which `pilot.py` writes and removes; never write or remove it yourself. Your launch message
+says so, and the plan opens holding (`python <pilot.py> plan --hold` puts a plan you already have on hold). While
+it holds, plan the flight fully: scout, write the route, write each leg's brief to a file in your scratchpad,
+settle your questions with the co-pilot (and put the tower's in `## Waiting on the controller`), and publish the
+tracking page. Then end your turn without starting any leg: `pilot.py start` refuses every one while the flight
+holds, and there is no way past it. The controller clears the flight (`pilot.py clear <flight>`, or the plan
+card's **Cleared for takeoff**), which lifts the hold, logs it, and tells you to take off: a message through the
+intercom, or a wake if your session had ended. Then read the plan again and take off as rule 3 says.
+
 The controller may edit the plan. Read it again before you start each leg.
 
 ## The tracking page
