@@ -168,9 +168,9 @@ Code's own project list.
 | `~/.claude/projects/...` | transcripts, where Claude Code always keeps them; `rm` leaves them, so History can open them |
 
 Nothing is installed into `~/.claude`, and nothing is committed to the repos workers fly in. A repo joins
-`~/.pilot/pilot.json` by itself, under its folder's name, when a pilot opens its flight plan there, however
-the pilot was started (the `pilot` command, the dashboard's launch, a bare `/pilot:pilot`); you can also
-add one by hand. Open `claude` there once, so its workspace trust is accepted.
+`~/.pilot/pilot.json` by itself, under its folder's name, as soon as a pilot session starts there (the pilot
+plugin's SessionStart hook), however it was started (the `pilot` command, the dashboard's launch, a resume),
+and again when a pilot opens its flight plan there; you can also add one by hand. Open `claude` there once, so its workspace trust is accepted.
 A worker starts in the repo whose main checkout the pilot runs in; `start` refuses a checkout that is not
 listed, rather than fly the leg somewhere else.
 

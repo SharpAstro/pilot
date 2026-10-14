@@ -4,7 +4,10 @@
       {
         "matcher": "AskUserQuestion",
         "hooks": [
-          { "type": "command", "command": "python -I \"${CLAUDE_PLUGIN_ROOT}/../../pilot.py\" hook-ask" }
+          {
+            "type": "command",
+            "command": "python -I \"${CLAUDE_PLUGIN_ROOT}/../../pilot.py\" hook-ask"
+          }
         ]
       }
     ],
@@ -12,7 +15,20 @@
       {
         "matcher": "AskUserQuestion",
         "hooks": [
-          { "type": "command", "command": "python -I \"${CLAUDE_PLUGIN_ROOT}/../../pilot.py\" hook-ask" }
+          {
+            "type": "command",
+            "command": "python -I \"${CLAUDE_PLUGIN_ROOT}/../../pilot.py\" hook-ask"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -I \"${CLAUDE_PLUGIN_ROOT}/../../pilot.py\" hook-start"
+          }
         ]
       }
     ]

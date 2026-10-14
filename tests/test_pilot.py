@@ -1486,6 +1486,30 @@ class TranscriptTests(Case):
 NOW = time.mktime((2026, 10, 14, 12, 0, 0, 0, 0, -1))     # a Wednesday, noon local
 
 
+class StartHookTests(Case):
+    def test_a_pilot_session_registers_its_repo_as_it_starts(self):
+        repo = Path(tempfile.mkdtemp()) / "monorepo"
+        self.addCleanup(shutil.rmtree, repo.parent, True)
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        (repo / "src").mkdir()
+        self.config(repos={})
+        out = self.hook(pilot.cmd_hook_start, {"session_id": "s1", "cwd": str(repo / "src"), "hook_event_name": "SessionStart"})
+        self.assertEqual(list(pilot.config()["repos"]), ["monorepo"])
+        self.assertIn("as monorepo", out)
+        self.assertEqual(self.hook(pilot.cmd_hook_start, {"session_id": "s1", "cwd": str(repo)}), "", "once")
+
+
+class PilotsTests(Case):
+    def test_a_pilot_between_turns_is_still_listed_and_a_finished_job_is_not(self):
+        self.config(repos={"web-app": "C:/x/web-app"})
+        self.plan("s1", PLAN)
+        row = lambda sid, name: {"name": name, "sessionId": sid, "pid": 7, "cwd": "C:/x/web-app", "kind": "background",
+                                 "status": "idle", "state": "done"}
+        listed = [p["name"] for p in pilot.pilots([row("s1", "pilot-web"), row("s9", "a-finished-job")])]
+        self.assertEqual(listed, ["pilot-web"], "Claude Code calls a pilot's job done after every turn")
+
+
 class MarchOnTests(Case):
     """Refuelling's march on: the first flights in the controller's order fly on whatever the account's usage, and
     the rest circle in a holding pattern while it is short. A session a usage limit stopped is resumed once there

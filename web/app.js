@@ -143,6 +143,10 @@ const M = n => !n ? "0" : n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" :
 const ago = t => { if (!t) return "never"; const s = Date.now() / 1000 - t; return s < 60 ? "just now" : s < 3600 ? Math.round(s / 60) + "m ago" : s < 86400 ? (s / 3600).toFixed(1) + "h ago" : Math.round(s / 86400) + "d ago"; };
 const clock = iso => iso ? new Date(iso).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"}) : "";
 const when = t => t ? new Date(t * 1000).toLocaleString([], {weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"}) : "";
+// A clock time, for telling a session asleep at the wheel from one that just moved: 14:52 today, else with its day.
+const stamp = t => !t ? "" : new Date(t * 1000).toDateString() === new Date().toDateString()
+  ? new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", hour12: false}) : when(t);
+const stampIso = iso => stamp(Date.parse(iso) / 1000);
 // A <details data-k> keeps the reader's open or closed choice when put() rebuilds it. Only a choice that
 // differs from its default (data-open="1" when open by default) is kept, so the default still moves: a plan
 // that lands folds away unless the reader opened it.
@@ -511,7 +515,7 @@ function renderTop() {
     ⛽ refuel: ${manual ? "all to me" : march ? `march on${circling ? ` · ${circling} holding` : ""}` : held ? "all to me · held" : "watchtower may approve"}</button>` : "";
   put($("#limits"), limitsHtml(S.limits) + fuel);
   // The autopilot's switch: off, starting, standby or working, and how many decisions it has made since on.
-  const ap = S.autopilot || {}, apState = !ap.enabled ? "off" : !ap.live ? (Date.now() / 1000 - (ap.since || 0) < 90 ? "starting" : "asleep, wakes for items") : ap.status === "busy" ? "deciding" : "standby";
+  const ap = S.autopilot || {}, apState = !ap.enabled ? "off" : !ap.live ? (Date.now() / 1000 - (ap.since || 0) < 90 ? "starting" : "parked, wakes for items") : ap.status === "busy" ? "deciding" : "standby";
   put($("#autopilot"), `<button class="ap ${ap.enabled ? "on" : ""}" data-autopilot="${ap.enabled ? "off" : "on"}" title="${esc(ap.enabled
       ? `On since ${when(ap.since)}. It decides the controller's items in your place: all but irreversible. ${ap.decisions?.length || 0} decision(s) so far; the Black box has them. Click to switch it off.`
       : "Off. Switch it on when you leave: an Opus 5.5 session decides what waits on you, all but irreversible (never pushes, merges, deletes, or sets a new objective), each step checked by auto mode's classifier.")}">
@@ -598,9 +602,9 @@ function place(list, items, empty, rows) {
 // An idle pilot with legs in the air is following them: it wakes when one of them ends its turn.
 function pilotChip(ps, flying = []) {
   if (!ps) return `<span class="chip other">pilot not running</span>`;
-  if (ps.status === "waiting") return `<span class="chip blocked" title="${esc(ps.waitingFor || "")}">waiting on ${S.autopilot?.enabled ? "the autopilot" : "you"}${ps.since ? ` · ${esc(ago(ps.since).replace(" ago", ""))}` : ""}</span>`;
-  if (ps.busy) return `<span class="chip working">● working</span>`;
-  return `<span class="chip other">${flying.length ? `idle, following ${esc(flying.join(", "))}` : "idle"}</span>`;
+  if (ps.status === "waiting") return `<span class="chip blocked" title="${esc(ps.waitingFor || "")}">waiting on ${S.autopilot?.enabled ? "the autopilot" : "you"}${ps.since ? ` since ${esc(stamp(ps.since))} · ${esc(ago(ps.since).replace(" ago", ""))}` : ""}</span>`;
+  if (ps.busy) return `<span class="chip working">● working${ps.since ? ` since ${esc(stamp(ps.since))}` : ""}</span>`;
+  return `<span class="chip other">${flying.length ? `idle, following ${esc(flying.join(", "))}` : "idle"}${ps.since ? ` since ${esc(stamp(ps.since))}` : ""}</span>`;
 }
 
 // The first line of a reply, without its Markdown: enough to say what it was about.
@@ -739,12 +743,26 @@ function yourMoveOf(p, s, ps) {
     : x.review === "APPROVED" ? `merge ${link(x)}` : x.review === "CHANGES_REQUESTED" ? `${link(x)}: changes requested`
     : `${link(x)} waits on its reviewers`;
   if (allDone && prs.length) return "done · your move: " + prs.map(step).join(", ");
-  // Every leg done and nothing left open: the flight has landed, whatever the pilot's last words were. Only once
-  // every leg's git has been read, though: until then its PRs are unknown, not absent.
-  if (allDone && legs.every(({w, h}) => (w || h)?.git)) return "";
+  // Every leg done and nothing left open: the flight has landed, whatever the pilot's last words were, once every
+  // leg has (merged, or nothing to merge). Only once every leg's git has been read, though: until then its PRs are
+  // unknown, not absent. Done legs whose commits are on no merged PR, with none open (PSG1, kept local), are
+  // neither landed nor anyone's move to read from the pilot's last sentence: the card says what keeps them.
+  if (allDone && legs.every(({w, h}) => (w || h)?.git)) {
+    const unlanded = flownLegs(p, s).map(l => l.leg).filter(n => !landedOf(p, n));
+    return unlanded.length ? `done · not landed: ${esc(unlanded.join(", "))} on no merged pull request, none open` : "";
+  }
   // No open PR known (none, or not looked up yet): the pilot's own words say what it is waiting for.
   const last = String(ps?.said?.text || "").split("\n").map(l => l.replace(/[*`]/g, "").replace(/^[\s#>-]+/, "").trim()).filter(Boolean).pop();
   return `${allDone ? "done · " : ""}${auto ? "autopilot's move" : "your move"}${last ? `: ${esc(last.length > 110 ? last.slice(0, 107) + "…" : last)}` : ""}`;
+}
+
+// A background pilot whose turn has ended: its process exits with the turn, so it is parked, not broken. It says
+// what it is parked on: your answer, a leg in the air, or nothing (the flight is done or holds).
+function parkedChip(p, flying) {
+  const why = "Its turn has ended, so its background session exits until needed. The dashboard wakes it, as a copy, when you answer, a leg stops, or CI on its PR finishes.";
+  if (unanswered(p).length) return `<span class="chip blocked" title="${esc(why)}">waiting on you · pilot parked until you answer</span>`;
+  if (flying.length) return `<span class="chip other" title="${esc(why)}">pilot parked · wakes when ${esc(flying.join(", "))} stops</span>`;
+  return `<span class="chip other" title="${esc(why)}">pilot parked</span>`;
 }
 
 function planCard(p, s) {
@@ -772,16 +790,16 @@ function planCard(p, s) {
   // The flight's state sits by its name: whose move it is, the pilot at work, or landed. A flight holding at the
   // gate says so first: ready once its pilot has a route and has ended its turn, else still being planned.
   const ready = holdReady(p);
-  const status = p.hold ? `${holdChip(p, ready)}${ready ? "" : ` ${p.asleep ? `<span class="chip other">pilot asleep</span>` : pilotChip(ps)}`}`
+  const status = p.hold ? `${holdChip(p, ready)}${ready ? "" : ` ${p.asleep ? `<span class="chip other">pilot parked</span>` : pilotChip(ps)}`}`
     : landed ? `<span class="chip done">✓ landed</span>`
-    : yourMove ? `<span class="chip blocked move" title="${esc(ps.said?.text || "")}">${move}</span>` : p.asleep ? `<span class="chip other" title="Its background session has ended. The dashboard wakes it, as a copy, when one of its legs stops or a message comes for it.">pilot asleep${flying.length ? `, wakes when ${esc(flying.join(", "))} stops` : ""}</span>` : pilotChip(ps, flying);
+    : yourMove ? `<span class="chip blocked move" title="${esc(ps.said?.text || "")}">${move}</span>` : p.asleep ? parkedChip(p, flying) : pilotChip(ps, flying);
   const where = `answer in the pilot's terminal${ps?.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : ""}`;
   // With more than one flight each starts folded, so the page reads as a list of flights, unless it waits on you;
   // alone, an active one starts open. A fold you set stays as you left it.
   const many = (s.plans || []).length > 1;
   return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" data-order="${esc(p.sessionId)}" ${fold("plan:" + p.sessionId, !!p.waiting || (!many && planActive(p, s)))}>
     <summary class="cardhead"><span>${reorderHtml(p, s)}<b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> ${connectsHtml(p)}${marchChip(p)} <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
-      <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} · ` : ""}plan updated ${esc(ago(p.updated))}
+      <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} · ` : ""}plan updated ${esc(stamp(p.updated))} (${esc(ago(p.updated))})
       ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
     ${p.hold ? clearanceCard(p, ready) : timesCard(p.times)}
@@ -1280,11 +1298,11 @@ VIEWS.overview = (root, r) => {
       if (card) { window.scrollTo(0, card.getBoundingClientRect().top + scrollY - ($(".top")?.offsetHeight || 0) - 8); focusPlan = null; }
       put($(".s-flights", root), flightsHtml(s));
       place($(".s-workers", root), s.workers.map(w => ({key: w.name, href: `#/w/${w.name}`, fill: v => {
-        put(v.name, `${esc(w.name)}<small>${esc(w.branch)} · ${esc(w.id)} · ${esc(ago(w.lastActivity))}</small>`);
+        put(v.name, `${esc(w.name)}<small>${esc(w.branch)} · ${esc(w.id)} · ${w.lastActivity ? `${esc(stamp(w.lastActivity))} (${esc(ago(w.lastActivity))})` : "never"}</small>`);
         put(v.chip, chip(w)); put(v.meter, meter(w.spend, w.budget)); put(v.doing, doing(w)); put(v.actions, actions(w, true));
       }})), $(".s-wempty", root), rowsW);
       place($(".s-pilots", root), s.pilots.map(p => ({key: p.sessionId, href: `#/s/${p.sessionId}`, fill: v => {
-        put(v.name, `${esc(p.name)}<small>${esc(p.kind)} · ${esc(ago(p.lastActivity))}</small>`);
+        put(v.name, `${esc(p.name)}<small>${esc(p.kind)} · ${p.lastActivity ? `${esc(stamp(p.lastActivity))} (${esc(ago(p.lastActivity))})` : "never"}</small>`);
         put(v.chip, pilotChip(p)); put(v.meter, meter(p.spend, 0));
         put(v.doing, p.status === "waiting" ? `<span class="doing"><b>needs you:</b> ${esc(p.ask?.questions?.[0]?.question || p.waitingFor || "input")}</span>`
           : p.now ? `<span class="doing">${nowText(p.now)}</span>` : "");
@@ -1413,9 +1431,9 @@ VIEWS.session = (root, r) => {
         const parts = ev.text.replace(/\r/g, "").split("\n# Brief\n"), text = parts.slice(-1)[0], lines = text.split("\n");
         const body = lines.length > 12 ? folded(md(lines.slice(0, 8).join("\n")), `… +${lines.length - 8} lines (click to expand)`, md(text)) : md(text);
         return prompt(div, ev.queued ? "queued" : "", (parts.length > 1
-          ? `<details><summary>worker instructions</summary><pre>${esc(parts.slice(0, -1).join("\n# Brief\n"))}</pre></details>` : "") + body + thumbs(ev.images || []));
+          ? `<details><summary>worker instructions</summary><pre>${esc(parts.slice(0, -1).join("\n# Brief\n"))}</pre></details>` : "") + body + thumbs(ev.images || []), ev.at);
       }
-      case "message": return prompt(div, `message from ${ev.sender}`, md(ev.text) + thumbs(ev.images || []));
+      case "message": return prompt(div, `message from ${ev.sender}`, md(ev.text) + thumbs(ev.images || []), ev.at);
       // A subagent's final report, handed back to this session: its words, not the user's.
       case "handback": return row("●", "t-handback", `<div class="t-label">report from a subagent${ev.agentId ? ` · ${agentLink(ev.agentId)}` : ""}</div>${md(ev.text)}`);
       case "said": return row("●", "said", md(ev.text));
@@ -1432,7 +1450,7 @@ VIEWS.session = (root, r) => {
         div.innerHTML = n > 14 ? `<details><summary>output · ${n} lines</summary><pre class="out">${ansi(text)}</pre></details>` : `<pre class="out">${ansi(text)}</pre>`;
         return div;
       }
-      case "turn": div.innerHTML = `<hr>turn ended${ev.ms ? ` · ${Math.round(ev.ms / 1000)} s` : ""}`; return div;
+      case "turn": div.innerHTML = `<hr>turn ended${ev.at ? ` ${esc(stampIso(ev.at))}` : ""}${ev.ms ? ` · ${Math.round(ev.ms / 1000)} s` : ""}`; return div;
       case "compact": div.innerHTML = `<hr>context compacted`; return div;
       case "notice": return row("●", "t-notice", esc(ev.text));
       case "recap": div.innerHTML = `<div class="meta">Claude Code's recap</div><div class="body">${md(ev.text)}</div>`; return div;
@@ -1442,9 +1460,10 @@ VIEWS.session = (root, r) => {
   }
 
   // A prompt, a message from another session: `>` and the words, as the terminal shows a user turn.
-  function prompt(div, label, html) {
+  function prompt(div, label, html, at) {
     div.classList.add("t-prompt");
-    div.innerHTML = `<span class="t-gt">&gt;</span><div class="t-body">${label ? `<div class="t-label">${esc(label)}</div>` : ""}${html}</div>`;
+    const t = at ? stampIso(at) : "";
+    div.innerHTML = `<span class="t-gt">&gt;</span><div class="t-body">${label || t ? `<div class="t-label">${esc([label, t].filter(Boolean).join(" · "))}</div>` : ""}${html}</div>`;
     return div;
   }
 
@@ -1579,7 +1598,9 @@ VIEWS.session = (root, r) => {
       const name = w ? w.name : p ? p.name : h ? `${h.name} (removed)` : (r.sid || "").slice(0, 8);
       titleName = name; setTitle();
       stream.classList.toggle("idle", !(w ? w.state === "working" : p?.busy));
-      put($(".s-chip", root), w ? chip(w) : p ? pilotChip(p) : h ? chip(h) : "");
+      const moved = w ? w.lastActivity : p ? p.lastActivity : h ? h.archivedAt : null;
+      put($(".s-chip", root), (w ? chip(w) : p ? pilotChip(p) : h ? chip(h) : "")
+        + (moved ? ` <span class="sub" title="its transcript's last write">last moved ${esc(stamp(moved))} (${esc(ago(moved))})</span>` : ""));
       put($(".s-meter", root), w ? meter(w.spend, w.budget) : p ? meter(p.spend, 0) : h ? meter(h.final?.spend, 0) : "");
       put($(".s-actions", root), w ? actions(w, true) : p ? actions(p, false) : "");
       const plan = (s.plans || []).find(x => x.sessionId === (p ? p.sessionId : r.sid));

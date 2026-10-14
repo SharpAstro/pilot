@@ -257,6 +257,16 @@ def registered():
     return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(WORKERS.glob("*.json"))]
 
 
+def move_plan_refs(old, new):
+    """Points the removed legs' records at a plan's new id: a woken pilot's plan moves to its copy's session id,
+    and TIA2's merged ephemeris, removed under an id two wakes back, read as planned on the strip."""
+    for f in ARCHIVE.glob("*.json"):
+        r = read_json(f)
+        if isinstance(r, dict) and r.get("plan") == old:
+            r["plan"] = new
+            write_json(f, r)
+
+
 def archived(limit=100):
     rows = [read_json(p) for p in ARCHIVE.glob("*.json")]
     return sorted((r for r in rows if r), key=lambda r: r.get("archivedAt") or 0, reverse=True)[:limit]
@@ -1775,7 +1785,20 @@ def unread(w, busy, last):
         if m and w["name"] in line:
             t = time.mktime(time.strptime(m.group(1), "%Y-%m-%d %H:%M"))
             seen = t if seen is None else max(seen, t)
-    return seen is not None and last > seen + 120     # the log keeps minutes, the transcript seconds
+    if seen is None or last <= seen + 120:            # the log keeps minutes, the transcript seconds
+        return False
+    # Its pilot may have read the leg and said so without a log line (nothing new to log): a reply of its own
+    # after the stop that names the leg is a look too, so the strip does not say "pilot hasn't looked" at it.
+    for e in reversed(tail_events(w.get("plan"), n=40) if w.get("plan") else []):
+        try:
+            at = datetime.datetime.fromisoformat(str(e.get("at")).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            continue
+        if at < last:
+            break
+        if e.get("kind") == "said" and w["name"] in (e.get("text") or ""):
+            return False
+    return True
 
 
 def worker_status(w, rows=None):
@@ -1830,7 +1853,11 @@ def pilots(rows=None):
     roots = list(config()["repos"].values())
     out = []
     for r in rows:
-        if r.get("pid") and any(same_path(r.get("cwd"), root) for root in roots) and r.get("state") != "done":
+        # Claude Code calls a background session's job done once a turn ends, though its process lives on, idle: a
+        # pilot (a session with a flight plan) between turns is still the pilot. Left out, its page lost its chip and
+        # the overview its row, just when the controller looks to see whether it is asleep at the wheel.
+        pilot_between_turns = r.get("sessionId") and plan_path(r["sessionId"]).exists()
+        if r.get("pid") and any(same_path(r.get("cwd"), root) for root in roots) and (r.get("state") != "done" or pilot_between_turns):
             path = transcript(r["sessionId"])
             out.append({"name": r.get("name"), "id": r.get("id"), "sessionId": r.get("sessionId"), "kind": r.get("kind"),
                         "cwd": r.get("cwd"), "startedAt": r.get("startedAt"),
@@ -2724,6 +2751,7 @@ def move_plan(old, new):
     src = plan_path(old)
     plan_path(new).write_text(src.read_text(encoding="utf-8").replace(f"Pilot session: {old}", f"Pilot session: {new}"), encoding="utf-8")
     src.unlink()
+    move_plan_refs(old, new)
     for w in registered():
         if w.get("plan") == old:
             w["plan"] = new
@@ -3909,6 +3937,22 @@ def hook_error():
         f.write(f"--- {time.strftime('%Y-%m-%dT%H:%M:%S')}\n{traceback.format_exc()}")
 
 
+def cmd_hook_start(_a):
+    """SessionStart, in the pilot plugin: the repo a pilot session starts in joins pilot.json, however it was
+    started (the `pilot` command, the dashboard, a resume). The controller started `pilot` in the monorepo to
+    register it, and nothing did until the session opened its plan, which it had not been asked to yet. Prints a
+    line for the session's context only when it adds one; an error is logged, never in the way of the session."""
+    try:
+        p = json.loads(sys.stdin.buffer.read().decode("utf-8") or "{}")
+        cwd = p.get("cwd") or os.getcwd()
+        top = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
+        added = register_repo(top) if top else None
+        if added:
+            print(f"pilot.py: {top} was added to {CONFIG} as {added}, so its legs may start here.")
+    except Exception:
+        hook_error()
+
+
 def cmd_hook_ask(_a):
     """PreToolUse and PostToolUse on AskUserQuestion, in the pilot plugin. A pilot with a flight plan is
     refused the question and sent to the plan's `## Waiting on the controller` instead: a terminal prompt
@@ -4374,19 +4418,26 @@ class Hub:
         for w in snap["workers"]:
             ap, pid = w.get("approach") or {}, w.get("plan")
             failing = ap.get("stage") == "goaround" and "CI fails" in (ap.get("why") or "")
-            if ap.get("stage") != "cleared" and not failing:
+            # CI finished on a head pushed after the last accepted round (a fix the controller let the pilot check
+            # itself, as on TIA2's #1564): the PR reads "on approach", but its pilot waits on exactly this.
+            pr = next((x for x in (w.get("git") or {}).get("prs") or [] if x.get("number") == ap.get("pr")), {})
+            finished = ap.get("stage") == "approach" and "since round" in (ap.get("why") or "") and pr.get("ci") in ("passing", "failing")
+            if ap.get("stage") != "cleared" and not failing and not finished:
                 continue
             path = plan_path(pid)
             if not path or not path.exists() or pid in shelved or pid in self.waking:
                 continue
             if not failing and f"PR #{ap['pr']}" in split_waiting(path.read_text(encoding="utf-8"))[0]:
                 continue                       # the merge is already asked
-            key = f"ci:{w['name']}:{ap['pr']}:{ap['stage']}"
+            key = f"ci:{w['name']}:{ap['pr']}:{ap['stage']}:{(pr.get('head') or '')[:8] if finished else ''}"
             row = rows.get(pid)
             idle = row and row.get("pid") and row.get("status") != "busy"
             if done.get(f"{pid}|ci") == key or not (asleep(row) or idle):
                 continue
-            text = (f"CI fails on PR #{ap['pr']} of leg {w['name']}, after its review was accepted: a go-around, as rule 11 says."
+            text = (f"CI is {pr.get('ci')} on PR #{ap['pr']} of leg {w['name']} at {(pr.get('head') or '')[:8]}, a head pushed after "
+                    f"its last review round. Carry on as your plan and the controller's answer say: the merge item if green, "
+                    f"a go-around if failing." if finished else
+                    f"CI fails on PR #{ap['pr']} of leg {w['name']}, after its review was accepted: a go-around, as rule 11 says."
                     if failing else
                     f"PR #{ap['pr']} of leg {w['name']} is cleared to land: its review was accepted at its head and CI is green. "
                     f"Put the merge to the controller in your plan: - **Merge PR #{ap['pr']}?** <what it changes; the rounds; CI's state>.")
@@ -5044,6 +5095,7 @@ def main():
     s.set_defaults(fn=cmd_dashboard)
     sub.add_parser("hook-budget").set_defaults(fn=cmd_hook_budget)
     sub.add_parser("hook-ask").set_defaults(fn=cmd_hook_ask)
+    sub.add_parser("hook-start").set_defaults(fn=cmd_hook_start)
     s = sub.add_parser("console-io", help="internal: read a console's screen, or type into it, by process id")
     s.add_argument("pid", type=int)
     s.add_argument("--text")
