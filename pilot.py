@@ -1412,7 +1412,7 @@ def collateral_now(w):
             "remotes": remotes[:5], "dirty": len(dirty), "dirtyFiles": dirty[:20], "prs": prs}
 
 
-PR_FIELDS = "number,title,state,url,isDraft,reviewDecision,statusCheckRollup,headRefName,headRefOid"
+PR_FIELDS = "number,title,state,url,isDraft,reviewDecision,statusCheckRollup,headRefName,headRefOid,mergeable"
 
 
 def reviewer(repo, decision):
@@ -1435,6 +1435,7 @@ def pr_view(p, repo=None):
     state = "DRAFT" if p.get("isDraft") and p.get("state") == "OPEN" else p.get("state")
     return {"number": p.get("number"), "title": p.get("title"), "state": state, "url": p.get("url"),
             "branch": p.get("headRefName"), "head": p.get("headRefOid"), "review": p.get("reviewDecision") or None, "ci": ci,
+            "conflicts": p.get("mergeable") == "CONFLICTING",
             "reviewer": reviewer(repo, p.get("reviewDecision"))}
 
 
@@ -1558,6 +1559,9 @@ def approach(reviews, prs):
             stage, why = "approach", f"review round {last['round'] + 1} is due: commits since round {last['round']}"
         elif last["bugs"]:
             stage, why = "goaround", f"round {last['round']} found {last['bugs']} bug(s): fixing"
+        elif pr.get("conflicts"):
+            # Main moved on while it waited (PIL3's #15 sat cleared to land, unmergeable, until the controller saw it on GitHub).
+            stage, why = "goaround", f"round {last['round']} accepted it, and it conflicts with its base: bring it up to date"
         elif pr.get("ci") == "failing":
             stage, why = "goaround", f"round {last['round']} accepted it, and CI fails"
         elif pr.get("ci") == "passing" and pr.get("reviewer") == "team" and pr.get("review") != "APPROVED":
@@ -4354,7 +4358,7 @@ class Hub:
         Woken if asleep, through the intercom if idle; once per PR and stage."""
         for w in snap["workers"]:
             ap, pid = w.get("approach") or {}, w.get("plan")
-            failing = ap.get("stage") == "goaround" and "CI fails" in (ap.get("why") or "")
+            failing = ap.get("stage") == "goaround" and ("CI fails" in (ap.get("why") or "") or "conflicts with its base" in (ap.get("why") or ""))
             # CI finished on a head pushed after the last accepted round (a fix the controller let the pilot check
             # itself, as on TIA2's #1564): the PR reads "on approach", but its pilot waits on exactly this.
             pr = next((x for x in (w.get("git") or {}).get("prs") or [] if x.get("number") == ap.get("pr")), {})
@@ -4366,7 +4370,7 @@ class Hub:
                 continue
             if not failing and f"PR #{ap['pr']}" in split_waiting(path.read_text(encoding="utf-8"))[0]:
                 continue                       # the merge is already asked
-            key = f"ci:{w['name']}:{ap['pr']}:{ap['stage']}:{(pr.get('head') or '')[:8] if finished else ''}"
+            key = f"ci:{w['name']}:{ap['pr']}:{ap['stage']}:{'conflict' if 'conflicts' in (ap.get('why') or '') else ''}:{(pr.get('head') or '')[:8]}"
             row = rows.get(pid)
             idle = row and row.get("pid") and row.get("status") != "busy"
             if done.get(f"{pid}|ci") == key or not (asleep(row) or idle):
@@ -4374,7 +4378,10 @@ class Hub:
             text = (f"CI is {pr.get('ci')} on PR #{ap['pr']} of leg {w['name']} at {(pr.get('head') or '')[:8]}, a head pushed after "
                     f"its last review round. Carry on as your plan and the controller's answer say: the merge item if green, "
                     f"a go-around if failing." if finished else
-                    f"CI fails on PR #{ap['pr']} of leg {w['name']}, after its review was accepted: a go-around, as rule 11 says."
+                    (f"PR #{ap['pr']} of leg {w['name']} conflicts with its base, after its review was accepted: bring it up to date "
+                     f"by merging the base into its branch (never a force-push), check the result, and ask for the merge again."
+                     if "conflicts" in (ap.get("why") or "") else
+                     f"CI fails on PR #{ap['pr']} of leg {w['name']}, after its review was accepted: a go-around, as rule 11 says.")
                     if failing else
                     f"PR #{ap['pr']} of leg {w['name']} is cleared to land: its review was accepted at its head and CI is green. "
                     f"Put the merge to the controller in your plan: - **Merge PR #{ap['pr']}?** <what it changes; the rounds; CI's state>.")
