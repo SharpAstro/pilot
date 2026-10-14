@@ -640,6 +640,192 @@ class FlightArchiveTests(Case):
             srv.server_close()
 
 
+class HoldTests(Case):
+    """A flight launched to plan only holds at the gate on its plan's `Hold:` line: `start` refuses its legs until
+    the controller clears it, which lifts the line, logs it and tells or wakes the pilot."""
+
+    def setUp(self):
+        super().setUp()
+        self.told, self.woken = [], []
+        self._fns = pilot.intercom, pilot.wake_pilot
+        pilot.intercom = lambda names, text, sender="Controller": self.told.append((names, text)) or "delivered"
+        pilot.wake_pilot = lambda old, why: self.woken.append((old, why)) or "new-sid-1234"
+
+    def tearDown(self):
+        pilot.intercom, pilot.wake_pilot = self._fns
+        super().tearDown()
+
+    def start(self, sid="s1"):
+        with unittest.mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": sid}):
+            with self.assertRaises(SystemExit) as e:
+                pilot.cmd_start(types.SimpleNamespace(name="leg", after=None))
+        return str(e.exception)
+
+    def clear(self, flight="WA1"):
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            pilot.cmd_clear(types.SimpleNamespace(flight=flight))
+        return out.getvalue()
+
+    def open_plan(self, sid="s1", hold=False, top=""):
+        with unittest.mock.patch.object(pilot.subprocess, "run", lambda *a, **kw: types.SimpleNamespace(stdout=top)), \
+                contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()):
+            pilot.cmd_plan(types.SimpleNamespace(session=sid, title="Held", hold=hold))
+        return Path(out.getvalue().strip())
+
+    def test_the_hold_line_parses_and_is_neither_notes_nor_waiting(self):
+        text = PLAN.replace("Recommend: 16M.\n", "Recommend: 16M.\nHold: awaiting clearance\n")
+        p = pilot.parse_plan(text)
+        self.assertEqual(p["hold"], "awaiting clearance")
+        self.assertNotIn("Hold", p["waiting"])
+        self.assertEqual(p["waiting"].count("\n- "), 1, "the waiting list ends at the header line")
+        self.assertEqual(p["notes"], "The exporter rounds rotation twice; that is the bug.")
+        self.assertIsNone(pilot.parse_plan(PLAN)["hold"])
+
+    def test_plan_hold_files_the_line_once_under_the_flight_and_logs_it(self):
+        self.plan("s1", PLAN)
+        self.open_plan(hold=True)
+        self.open_plan(hold=True)
+        text = pilot.plan_path("s1").read_text(encoding="utf-8")
+        self.assertEqual(text.count("Hold:"), 1)
+        self.assertIn("Flight: WA1\n\nHold: awaiting clearance\n", text)
+        self.assertTrue(self.log_of("s1")[-1].endswith("Holding at the gate: awaiting clearance for takeoff from the controller"))
+        p = self.open_plan("s9", hold=True)
+        self.assertEqual(pilot.parse_plan(p.read_text(encoding="utf-8"))["hold"], "awaiting clearance", "a new plan opens holding")
+
+    def test_start_is_refused_while_held_and_goes_on_once_cleared(self):
+        self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nHold: awaiting clearance"))
+        msg = self.start()
+        self.assertEqual(msg, pilot.HOLD_REFUSAL.format(flight="WA1"))
+        self.assertIn("WA1 is holding at the gate, awaiting clearance for takeoff from the controller", msg)
+        self.assertIn("end your turn without starting a leg", msg)
+        self.assertFalse(pilot.WORKERS.exists() and list(pilot.WORKERS.glob("*.json")), "nothing took off")
+        self.clear()
+        pilot.write_json(pilot.DAEMON_LOCK, {"pid": os.getpid(), "procStartFt": "1"})
+        self.assertIn("daemon lock", self.start(), "past the hold, to the next check")
+
+    def test_clear_lifts_the_hold_logs_it_and_tells_a_live_pilot(self):
+        self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nHold: awaiting clearance"))
+        self.rows = [{"name": "pilot-web", "sessionId": "s1", "kind": "interactive", "pid": 42}]
+        out = self.clear("wa1")
+        self.assertEqual(out.strip(), "WA1 (Export fixes) cleared for takeoff: told its pilot pilot-web through the intercom")
+        text = pilot.plan_path("s1").read_text(encoding="utf-8")
+        self.assertNotIn("Hold:", text)
+        self.assertIn("Flight: WA1\n\nObjective:", text)
+        self.assertTrue(self.log_of("s1")[-1].endswith("Cleared for takeoff by the controller"))
+        bb = [json.loads(l) for l in pilot.BLACKBOX.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual((bb[-1]["text"], bb[-1]["actor"], bb[-1]["flight"]), ("Cleared for takeoff by the controller", "controller", "WA1"))
+        self.assertEqual(self.told, [(["pilot-web"], pilot.CLEARED.format(flight="WA1"))])
+        self.assertIn("Take off", self.told[0][1])
+        self.assertEqual(self.woken, [])
+        with self.assertRaises(SystemExit) as e:
+            self.clear()
+        self.assertEqual(str(e.exception), "pilot: WA1 (Export fixes) is not holding for clearance")
+
+    def test_clear_wakes_a_pilot_whose_session_has_ended(self):
+        self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nHold: awaiting clearance"))
+        self.rows = [{"name": "pilot-web", "sessionId": "s1", "kind": "background", "pid": None}]
+        self.assertIn("cleared for takeoff: woke its pilot as new-sid-", self.clear())
+        self.assertEqual(self.woken, [("s1", pilot.CLEARED.format(flight="WA1"))])
+        self.assertEqual(self.told, [])
+        self.rows = []
+        self.plan("s2", CONNECTED.replace("Flight: TIA2", "Flight: TIA2\n\nHold: awaiting clearance"))
+        self.assertIn("its pilot is not running", self.clear("TIA2"))
+
+    def test_clear_refuses_an_unknown_flight_and_a_pilot(self):
+        with self.assertRaises(SystemExit) as e:
+            self.clear("ZZ9")
+        self.assertEqual(str(e.exception), "pilot: no flight plan has the number ZZ9")
+        self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nHold: awaiting clearance"))
+        with unittest.mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s1"}):
+            with self.assertRaises(SystemExit) as e:
+                self.clear()
+        self.assertIn("only the controller clears a flight for takeoff", str(e.exception))
+        self.assertIn("Hold:", pilot.plan_path("s1").read_text(encoding="utf-8"))
+
+    def launch(self, where="terminal", resume=None, hold=True, as_pilot=True, sid="bg-sid"):
+        projects = [{"path": "C:/repos/web-app", "trusted": True}]
+        sent = []
+        with unittest.mock.patch.object(pilot, "known_projects", lambda: projects), \
+                unittest.mock.patch.object(pilot, "register_repo", lambda path: None), \
+                unittest.mock.patch.object(pilot, "project_dir", lambda path: ROOT / "proj"), \
+                unittest.mock.patch.object(pilot, "claude", lambda *a, **kw: sent.append((a, kw.get("stdin")))), \
+                unittest.mock.patch.object(pilot, "backgrounded", lambda r: "job1"), \
+                unittest.mock.patch.object(pilot, "session_of", lambda job: sid), \
+                unittest.mock.patch.object(pilot.shutil, "which", lambda name: "wt.exe"), \
+                unittest.mock.patch.object(pilot.subprocess, "Popen", lambda *a, **kw: sent.append((a, None))):
+            out = pilot.launch("C:/repos/web-app", resume, where, "Export fixes", as_pilot, hold)
+        return out, sent
+
+    def test_the_launch_option_opens_the_new_pilots_plan_held_and_tells_it(self):
+        out, sent = self.launch("background")
+        self.assertEqual((out["where"], out["hold"]), ("background", True))
+        self.assertTrue(sent[0][1].startswith("/pilot:pilot Export fixes\n\nPlan only:"), sent[0][1])
+        self.assertIn("plan --hold", sent[0][1])
+        self.assertTrue(self.open_plan("other-sid", top="C:/repos/web-app").exists())
+        self.assertIsNone(pilot.parse_plan(pilot.plan_path("other-sid").read_text(encoding="utf-8"))["hold"],
+                          "another session in that directory is not the one launched")
+        p = self.open_plan("bg-sid", top="C:/repos/web-app")
+        self.assertEqual(pilot.parse_plan(p.read_text(encoding="utf-8"))["hold"], "awaiting clearance")
+        self.assertIn("launched to plan only", self.log_of("bg-sid")[-1])
+        self.assertEqual(pilot.live_holds(), [], "the hold is used up")
+
+    def test_a_terminal_launch_holds_the_next_plan_opened_in_its_directory(self):
+        out, sent = self.launch("terminal")
+        self.assertTrue(out["hold"])
+        msg = next(f for f in (pilot.STATE / "launch").glob("*.txt")).read_text(encoding="utf-8")
+        self.assertIn("Plan only: this flight holds at the gate", msg)
+        p = self.open_plan("tab-sid", top="C:\\repos\\web-app")
+        self.assertEqual(pilot.parse_plan(p.read_text(encoding="utf-8"))["hold"], "awaiting clearance")
+        self.assertIsNone(pilot.parse_plan(self.open_plan("next-sid", top="C:/repos/web-app").read_text(encoding="utf-8"))["hold"])
+
+    def test_a_launch_resuming_a_pilot_with_a_plan_holds_it_at_once(self):
+        sid = "0" * 8 + "-0000-0000-0000-" + "0" * 12
+        (ROOT / "proj").mkdir(exist_ok=True)
+        (ROOT / "proj" / f"{sid}.jsonl").write_text("", encoding="utf-8")
+        self.plan(sid, PLAN)
+        self.launch("terminal", resume=sid)
+        self.assertEqual(pilot.parse_plan(pilot.plan_path(sid).read_text(encoding="utf-8"))["hold"], "awaiting clearance")
+        self.assertEqual(pilot.live_holds(), [])
+
+    def test_without_the_option_nothing_holds_and_plan_only_needs_a_pilot(self):
+        out, sent = self.launch("background", hold=False)
+        self.assertNotIn("hold", out)
+        self.assertNotIn("Plan only", sent[0][1])
+        self.assertEqual(pilot.live_holds(), [])
+        with self.assertRaises(ValueError):
+            self.launch("background", as_pilot=False)
+
+    def test_the_dashboard_says_a_held_flight_has_no_departure_and_the_endpoint_clears_it(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nHold: awaiting clearance"))
+        p = pilot.plans_view([], [])[0]
+        self.assertEqual((p["hold"], p["times"]["departed"], p["times"]["noEta"]), ("awaiting clearance", None, "awaiting clearance: no departure yet"))
+        self.assertIn("Waiting on you: 2 items", pilot.track_html("s1"), "what waits on the controller comes first")
+        self.plan("s1", re.sub(r"## Waiting on the controller\n\n(- .*\n)+", "", pilot.plan_path("s1").read_text(encoding="utf-8")))
+        self.assertIn("Holding at the gate: ready, awaiting clearance", pilot.track_html("s1"))
+        srv = pilot.http.server.ThreadingHTTPServer(("127.0.0.1", 0), pilot.Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            def post(path):
+                req = urllib.request.Request(f"http://127.0.0.1:{srv.server_address[1]}{path}", b"{}",
+                                             {"Content-Type": "application/json", "X-Pilot": "1"}, method="POST")
+                try:
+                    with urllib.request.urlopen(req) as r:
+                        return r.status, json.loads(r.read())
+                except urllib.error.HTTPError as e:
+                    with e:
+                        return e.code, json.loads(e.read())
+            self.assertEqual(post("/api/flights/WA1/clear"), (200, {"ok": True, "sessionId": "s1", "reached": "its pilot is not running; tell it to take off when it is back"}))
+            self.assertIsNone(pilot.parse_plan(pilot.plan_path("s1").read_text(encoding="utf-8"))["hold"])
+            self.assertEqual(post("/api/flights/WA1/clear")[0], 409)
+            self.assertEqual(post("/api/flights/ZZ9/clear")[0], 409)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+
 class WakeTests(Case):
     def test_a_sleeping_pilot_wakes_as_a_copy_and_its_plan_and_legs_move_with_it(self):
         self.plan("old-sid", "# Flight plan: x\n\nPilot session: old-sid\n\n## Log\n\n- 2026-10-14 08:00 Plan opened.\n")
