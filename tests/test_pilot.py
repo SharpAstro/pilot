@@ -667,9 +667,13 @@ class HoldTests(Case):
         return out.getvalue()
 
     def open_plan(self, sid="s1", hold=False, top="", cwd="C:/elsewhere"):
-        with unittest.mock.patch.object(pilot.subprocess, "run", lambda *a, **kw: types.SimpleNamespace(stdout=top)),                 unittest.mock.patch.object(pilot.os, "getcwd", lambda: cwd), \
+        """`plan` as the pilot session `sid` runs it: no --session, its id from the environment."""
+        with unittest.mock.patch.object(pilot.subprocess, "run", lambda *a, **kw: types.SimpleNamespace(stdout=top)), \
+                unittest.mock.patch.object(pilot.os, "getcwd", lambda: cwd), \
+                unittest.mock.patch.object(pilot, "register_repo", lambda path: None), \
+                unittest.mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": sid}), \
                 contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()):
-            pilot.cmd_plan(types.SimpleNamespace(session=sid, title="Held", hold=hold))
+            pilot.cmd_plan(types.SimpleNamespace(session=None, title="Held", hold=hold))
         return Path(out.getvalue().strip())
 
     def test_the_hold_line_parses_and_is_neither_notes_nor_waiting(self):
@@ -810,6 +814,17 @@ class HoldTests(Case):
         p = self.open_plan("nogit-sid", top="", cwd=r"C:\notes")
         self.assertEqual(pilot.parse_plan(p.read_text(encoding="utf-8"))["hold"], "awaiting clearance")
         self.assertEqual(pilot.live_holds(), [])
+
+    def test_plan_with_session_takes_no_hold_booked_by_directory(self):
+        self.launch("terminal")                                   # booked by directory, for the launched pilot
+        with contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()), \
+                unittest.mock.patch.object(pilot.subprocess, "run", lambda *a, **kw: types.SimpleNamespace(stdout="C:/repos/web-app")), \
+                unittest.mock.patch.object(pilot.os, "getcwd", lambda: "C:/repos/web-app"):
+            pilot.cmd_plan(types.SimpleNamespace(session="ctl-sid", title="By hand", hold=False))
+        self.assertIsNone(pilot.parse_plan(Path(out.getvalue().strip()).read_text(encoding="utf-8"))["hold"])
+        self.assertEqual(len(pilot.live_holds()), 1, "left for the launched pilot")
+        p = self.open_plan("tab-sid", top="", cwd="C:/repos/web-app")
+        self.assertEqual(pilot.parse_plan(p.read_text(encoding="utf-8"))["hold"], "awaiting clearance")
 
     def test_a_launch_resuming_a_pilot_with_a_plan_holds_it_at_once(self):
         sid = "0" * 8 + "-0000-0000-0000-" + "0" * 12
