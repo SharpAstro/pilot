@@ -775,6 +775,25 @@ function parkedChip(p, flying) {
   return `<span class="chip other" title="${esc(why)}">pilot parked</span>`;
 }
 
+// A flight's light, before its name: the colour of what most needs looking at in it, as its legs' chips have them
+// (a leg failed, red; waiting on you, or a leg on its pilot, amber; at work, blue; landed, green; every leg done and
+// not landed, a green ring; else grey), blinking while a leg or its pilot works.
+function flightLight(p, s, ps, flying, move, landed) {
+  const sts = p.legs.filter(l => !l.altOf || altTaken(s, l)).map(l => legState(s, l.leg).st);
+  const working = flying.length > 0 || !!ps?.busy;
+  // A move that is yours (or the autopilot's) by name; "answers sent" and "reading its legs' pull requests" are not.
+  const onYou = unanswered(p).length > 0 || ps?.status === "waiting" || /your move|autopilot's move/.test(move || "")
+    || sts.some(st => st.label === "waiting on you");
+  const allDone = sts.length > 0 && sts.every(st => st.cls === "done");
+  const [cls, why] = sts.some(st => st.cls === "failed") ? ["failed", "a leg failed"]
+    : onYou ? ["blocked", "waiting on you"]
+    : working ? ["working", flying.length ? `flying: ${flying.join(", ")}` : "its pilot is working"]
+    : sts.some(st => st.cls === "blocked") ? ["blocked", "a leg waits on its pilot"]
+    : landed ? ["done", "landed"] : allDone ? ["ring", "every leg done, not landed"]
+    : ["idle", p.hold ? "holding at the gate" : p.asleep ? "pilot parked" : "idle"];
+  return `<span class="light ${cls}${working ? " blink" : ""}" title="${esc(why + (working && cls !== "working" ? "; working" : ""))}"></span>`;
+}
+
 function planCard(p, s) {
   const legs = p.legs.map(l => {
     const {w, h, st} = legState(s, l.leg);
@@ -804,13 +823,16 @@ function planCard(p, s) {
     : landed ? `<span class="chip done">✓ landed</span>`
     : yourMove ? `<span class="chip blocked move" title="${esc(ps.said?.text || "")}">${move}</span>` : p.asleep ? parkedChip(p, flying) : pilotChip(ps, flying);
   const where = `answer in the pilot's terminal${ps?.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : ""}`;
+  // Where the flight is, in its summary: a folded card is the flights list, one line and its route each.
+  const strip = p.legs.length ? routeStrip(p, s) : null;
   // With more than one flight each starts folded, so the page reads as a list of flights, unless it waits on you;
   // alone, an active one starts open. A fold you set stays as you left it.
   const many = (s.plans || []).length > 1;
   return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" data-order="${esc(p.sessionId)}" ${fold("plan:" + p.sessionId, !!p.waiting || (!many && planActive(p, s)))}>
-    <summary class="cardhead"><span>${reorderHtml(p, s)}<b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> ${connectsHtml(p)}${marchChip(p)}${amendChip(p)} <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
+    <summary class="cardhead"><span>${reorderHtml(p, s)}<b>${flightLight(p, s, ps, flying, move, landed)}${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> ${connectsHtml(p)}${marchChip(p)}${amendChip(p)} <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
       <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} · ` : ""}plan updated ${esc(stamp(p.updated))} (${esc(ago(p.updated))})
-      ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
+      ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span>
+      ${strip ? `<div class="strip">${strip.note ? `<div class="sub snote">${strip.note}</div>` : ""}${strip.svg}</div>` : ""}</summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
     ${p.hold ? clearanceCard(p, ready) : timesCard(p.times)}
     ${connectsCard(p)}
@@ -819,12 +841,12 @@ function planCard(p, s) {
     ${amendmentsHtml(p, s, fold)}
     ${yourMove && !landed && ps.said ? `<details class="lastsaid" ${fold("said:" + p.sessionId, true)}><summary>its turn ended ${esc(ago(Date.parse(ps.said.at) / 1000))} with nothing in the air; its last message</summary>${md(ps.said.text)}</details>` : pilotNow(ps)}
     ${p.notes ? `<details ${fold("notes:" + p.sessionId, waiting)}><summary>the pilot's notes: what it found and why the route is this shape</summary>${md(p.notes, true)}</details>` : ""}
-    ${p.legs.length > 1 ? `<details ${fold("chart:" + p.sessionId, true)}><summary>the route as a chart: each leg after the legs it waits for</summary><div class="graph" data-scroll="route:${esc(p.sessionId)}">${routeChart(p, s)}</div></details>` : ""}
+    ${p.legs.length > 1 ? `<details ${fold("chart:" + p.sessionId, false)}><summary>the route as a chart: each leg after the legs it waits for</summary><div class="graph" data-scroll="route:${esc(p.sessionId)}">${routeChart(p, s)}</div></details>` : ""}
     <div class="tablewrap"><table><thead><tr><th>Leg</th><th>Goal</th><th>After</th><th>Done when</th><th>Status</th><th class="num">Spend</th></tr></thead>
       <tbody>${legs || `<tr><td colspan="6" class="sub">No legs yet. The pilot adds them to the Route table.</td></tr>`}</tbody></table></div>
     ${log ? `<details ${fold("log:" + p.sessionId, true)}><summary>flight log: decisions, questions and answers, legs taking off and finishing</summary><ul class="log">${log}</ul></details>` : ""}
     ${landed ? "" : amendFormHtml(p)}
-    <div class="planfoot">${landed ? "" : amendButtonHtml(p)}<button class="arch" data-archive="${esc(p.sessionId)}" data-name="${esc(p.flight ? `Flight ${p.flight}` : "this flight")} · ${esc(p.title)}" title="Off the Overview and the Flights strips, onto History; nothing is deleted, and History restores it">Archive flight…</button></div></details>`;
+    <div class="planfoot">${landed ? "" : amendButtonHtml(p)}<button class="arch" data-archive="${esc(p.sessionId)}" data-name="${esc(p.flight ? `Flight ${p.flight}` : "this flight")} · ${esc(p.title)}" title="Off the Overview, onto History; nothing is deleted, and History restores it">Archive flight…</button></div></details>`;
 }
 
 // ------------------------------------------------------------------ amending a flight
@@ -1017,7 +1039,7 @@ function legTally(p, s) {
     + (alts ? ` · ${alts} alternate${alts > 1 ? "s" : ""}` : "");
 }
 
-// ------------------------------------------------------------------ the route chart, and the flights
+// ------------------------------------------------------------------ the route chart, and the route strip
 
 // One plan's legs, chained by After, drawn inside its plan. A planned leg no worker flies yet is dashed, and so is
 // an alternate, in its primary's column. A done leg is solid green, on a solid green edge, only once it has landed;
@@ -1133,7 +1155,7 @@ function connectsCard(p) {
 // every one landed, it holds over the destination, which stays a dashed ring. A leg reads flown (a solid stop on a solid green line) only
 // once it has landed, its PR merged or nothing to land; done and not landed yet it is a hollow green stop on a dashed
 // green line.
-function flightStrip(p, s) {
+function routeStrip(p, s) {
   const depth = p.depths || routeDepths(p.legs);
   const legs = p.legs.map(l => ({...l, name: l.leg, d: depth[l.leg] || 0, ...legState(s, l.leg)}));
   const by = new Map(legs.map(l => [l.name, l]));
@@ -1150,7 +1172,9 @@ function flightStrip(p, s) {
   const ends = legs.filter(l => primary(l) && !waitedOn.has(l.name));
   const join = ends.length > 1;
   const LANE = 44, rows = Math.max(1, ...col.map(c => c.length));
-  const W = 1000, H = 86 + (rows - 1) * LANE, Y = 50 + (rows - 1) * LANE / 2, X0 = 34, XN = W - 74;   // past XN: where it parks
+  // Drawn at about the card's own width, so its labels keep their size and a one-lane route stays a short line on a
+  // wide screen; a resize redraws it.
+  const W = Math.round(Math.min(2400, Math.max(640, ($("#view")?.clientWidth || 1040) - 40))), H = 80 + (rows - 1) * LANE, Y = 44 + (rows - 1) * LANE / 2, X0 = 34, XN = W - 74;   // past XN: where it parks
   const seg = (XN - X0) / (cols + (join ? 1 : 0)), xAt = d => X0 + (d + 1) * seg;
   const pos = new Map(), gate = {x: X0, y: Y}, dest = join ? {x: xAt(cols), y: Y} : null;
   col.forEach((c, d) => c.forEach((l, i) => pos.set(l.name, {x: xAt(d), y: Y + (i - (c.length - 1) / 2) * LANE})));
@@ -1260,14 +1284,14 @@ function flightStrip(p, s) {
       ? `<title>${esc(`${pl.name}: stacked on ${pl.on.join(", ")}, not landed yet`)}</title><g${pl.up ? ` class="bob"` : ""}><path d="${PLANE}" style="fill:var(--surface);stroke:${pl.color};stroke-width:1.5"/></g>
          <text y="-20" text-anchor="middle" class="stacked">stacked on ${esc(pl.on.join(", "))}</text>`
       : `<g${pl.up ? ` class="bob"` : ""}><path d="${PLANE}" style="fill:${pl.color};stroke:var(--page);stroke-width:1"/></g>`}</g>`).join("");
-  const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(status.replace(/<[^>]+>/g, ""))}">${tracks.join("")}${gateHtml}${stops.join("")}${planesHtml}</svg>`;
-  return `<div class="flight" data-plan="${esc(p.sessionId)}" data-order="${esc(p.sessionId)}" title="Open its flight plan">
-    <div class="fhead">${reorderHtml(p, s)}<b>${p.flight ? esc(p.flight) : "Flight"}</b> ${connectsHtml(p)} ${esc(p.title)} ${p.hold ? holdChip(p, holdReady(p)) : ""}${marchChip(p)}<span class="sub">· ${status}${flightGit(p, s)}</span>${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</div>${svg}</div>`;
+  const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(status.replace(/<[^>]+>/g, ""))}"><title>${esc(status.replace(/<[^>]+>/g, ""))}</title>${tracks.join("")}${gateHtml}${stops.join("")}${planesHtml}</svg>`;
+  // Its words, over the drawing, only while legs fly or wait to: done, landed and held, the card's own chips say.
+  return {svg, note: air.length || (!allDone && legs.length && !p.hold) ? status : ""};
 }
 
 // ------------------------------------------------------------------ the controller's order of flights
 
-// Flights list in the controller's priority order, pilot.py's priority.json, the strips and the plan cards alike.
+// Flights list in the controller's priority order, pilot.py's priority.json.
 // A flight's grip drags it up or down its list: pointer events, so a finger works as a mouse does (the grip takes
 // no scrolling touch). Its ▲▼ buttons move it one place, for a keyboard or a hand that would rather tap. Either
 // sends the whole order to POST /api/priority; the list shows it at once and redraws from the server's state.
@@ -1322,12 +1346,6 @@ document.addEventListener("pointercancel", drop);
 // The grip only drags: a click on it neither opens the flight's plan nor folds its card.
 document.addEventListener("click", e => { if (e.target.closest("[data-grip]")) { e.preventDefault(); e.stopPropagation(); } }, true);
 
-function flightsHtml(s) {
-  const plans = s.plans || [];
-  return plans.length ? plans.map(p => flightStrip(p, s)).join("")
-    : `<div class="empty">No flights. A pilot files one with <code>pilot plan</code>; each leg of its route becomes a stop here.</div>`;
-}
-
 // ------------------------------------------------------------------ views
 
 const VIEWS = {};
@@ -1341,7 +1359,6 @@ VIEWS.overview = (root, r) => {
     <div class="card pad bcast" data-attach-to="intercom"><b>Intercom</b>
       <textarea class="s-btext" rows="1" placeholder="A message to live sessions: it reaches each at its next step, mid-turn too. Paste or drop images. Ctrl+Enter sends."></textarea>
       <select class="s-bto"></select><button class="primary s-bsend">Send</button>${tray("intercom")}<div class="sub s-bnote"></div></div>
-    <h2>Flights</h2><div class="card flights s-flights"></div>
     <h2>Summary</h2>
     <div class="card pad"><div class="cardhead"><b>All workers</b><span><span class="sub s-stamp"></span> <button data-sum="*" class="s-btn">Summarise</button></span></div>
       <div class="summary s-sum" style="margin-top:6px"></div></div>
@@ -1388,7 +1405,6 @@ VIEWS.overview = (root, r) => {
       const card = focusPlan && document.getElementById("plan-" + focusPlan);
       // Below the sticky top bar, whose height depends on how it wraps.
       if (card) { window.scrollTo(0, card.getBoundingClientRect().top + scrollY - ($(".top")?.offsetHeight || 0) - 8); focusPlan = null; }
-      put($(".s-flights", root), flightsHtml(s));
       place($(".s-workers", root), s.workers.map(w => ({key: w.name, href: `#/w/${w.name}`, fill: v => {
         put(v.name, `${esc(w.name)}<small>${esc(w.branch)} · ${esc(w.id)} · ${w.lastActivity ? `${esc(stamp(w.lastActivity))} (${esc(ago(w.lastActivity))})` : "never"}</small>`);
         put(v.chip, chip(w)); put(v.meter, meter(w.spend, w.budget)); put(v.doing, doing(w)); put(v.actions, actions(w, true));
@@ -2013,7 +2029,7 @@ async function restartServer(btn) {
   btn.textContent = "it has not come back: look at its terminal";
 }
 
-// A flight on the Flights strip: unfold its plan's card and scroll to it.
+// A flight named elsewhere (a connection's chip): unfold its plan's card and scroll to it.
 function openPlan(sid) {
   opened.set("plan:" + sid, true);
   render();
@@ -2058,7 +2074,7 @@ document.addEventListener("click", async e => {
   if (t.dataset.archive) {
     e.preventDefault();
     const sid = t.dataset.archive, name = t.dataset.name;
-    if (!confirm(`Archive ${name}? It leaves the Overview and the Flights strips and is listed on History, where Restore puts it back. Nothing is deleted.`)) return;
+    if (!confirm(`Archive ${name}? It leaves the Overview and is listed on History, where Restore puts it back. Nothing is deleted.`)) return;
     t.disabled = true;
     try { await post(`/api/flights/${sid}/archive`); }
     catch (err) {
@@ -2154,7 +2170,7 @@ document.addEventListener("click", async e => {
     $("#panel").hidden = true;
   }
   if (t.tagName === "A" || t.tagName === "BUTTON") return;
-  if (t.dataset.href && !getSelection().toString()) location.hash = t.dataset.href;
+  if (t.dataset.href && !getSelection().toString()) { e.preventDefault(); location.hash = t.dataset.href; }   // not the card's fold too
 });
 document.addEventListener("click", e => { if (!e.target.closest(".bellwrap")) $("#panel").hidden = true; }, true);
 // A reply typed for a waiting item replaces that item's choice. It updates its neighbours in place rather
@@ -2178,6 +2194,9 @@ document.addEventListener("keydown", e => {
   if (sid && e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendAmendment(sid); }
 });
 window.addEventListener("hashchange", render);
+// The route strips are drawn at the page's width: a resize redraws them once it settles.
+let resized;
+window.addEventListener("resize", () => { clearTimeout(resized); resized = setTimeout(render, 250); });
 setInterval(render, 30000);        // only the "5m ago" texts move between states
 render();
 connect();

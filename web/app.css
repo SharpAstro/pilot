@@ -182,29 +182,37 @@ ul.checklist li.in_progress span:first-child { color: var(--fill); }
 .graph text { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--ink); }
 .graph text.sm { font-size: 11px; fill: var(--ink-2); }
 .graph .edge { fill: none; stroke: var(--axis); stroke-width: 1.5; }
-.flight { padding: 10px 14px 2px; border-top: 1px solid var(--hair); cursor: pointer; }
-.flight:first-child { border-top: 0; }
-.flight:hover { background: var(--ring); }
-.flight .fhead { font-size: 13px; }
-.flight svg { display: block; width: 100%; height: auto; }
-.flight text { font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--ink-2); }
+/* A flight's route, in its plan card's summary: on its own line under the card's head. */
+.strip { flex-basis: 100%; margin-top: 4px; }
+.strip .snote { font-size: 13px; }
+.strip svg { display: block; width: 100%; height: auto; }
+/* A flight's light, before its name: its most pressing state's colour, blinking while anything in it works. */
+.light { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin: 0 7px 0 1px; vertical-align: 1px; background: var(--muted); }
+.light.working { background: var(--fill); }
+.light.blocked { background: var(--warn); }
+.light.failed { background: var(--crit); }
+.light.done { background: var(--good); }
+.light.ring { background: none; box-shadow: inset 0 0 0 2px var(--good); }
+.light.blink { animation: pulse 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .light.blink { animation: none; } }
+.strip text { font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--ink-2); }
 /* A leg's track: from each leg it waits for (or the gate) to its stop, so lanes fork and join. */
-.flight .trk { fill: none; stroke-width: 2.5; stroke-linecap: round; }
-.flight .trk.flown { stroke: var(--good); }
-.flight .trk.ahead { stroke: var(--axis); stroke-dasharray: 6 5; }
+.strip .trk { fill: none; stroke-width: 2.5; stroke-linecap: round; }
+.strip .trk.flown { stroke: var(--good); }
+.strip .trk.ahead { stroke: var(--axis); stroke-dasharray: 6 5; }
 /* A leg done but not landed (its PR not merged yet): green, but dashed, so it never reads as flown. */
-.flight .trk.done { stroke: var(--good); stroke-dasharray: 6 5; }
-.flight text.stacked { font-size: 10px; font-style: italic; }
+.strip .trk.done { stroke: var(--good); stroke-dasharray: 6 5; }
+.strip text.stacked { font-size: 10px; font-style: italic; }
 .graph .edge.flown { stroke: var(--good); }
 .graph .edge.done { stroke: var(--good); stroke-dasharray: 6 5; }
 /* An alternate leg: dashed beside its primary, faint until it is taken. */
-.flight .trk.alt { stroke-dasharray: 2 4; stroke-width: 2; }
-.flight .stop.out { opacity: .6; }
-.flight .stop.alt text { font-style: italic; }
-.flight .stop[data-href] { cursor: pointer; }
-.flight .bob { animation: bob 2.4s ease-in-out infinite; }
+.strip .trk.alt { stroke-dasharray: 2 4; stroke-width: 2; }
+.strip .stop.out { opacity: .6; }
+.strip .stop.alt text { font-style: italic; }
+.strip .stop[data-href] { cursor: pointer; }
+.strip .bob { animation: bob 2.4s ease-in-out infinite; }
 @keyframes bob { 50% { transform: translateY(-2.5px); } }
-@media (prefers-reduced-motion: reduce) { .flight .bob { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .strip .bob { animation: none; } }
 /* Reordering flights by priority: a grip to drag, by mouse or finger, and ▲▼ to move one place. */
 .reorder { display: inline-flex; align-items: center; gap: 2px; margin-right: 8px; vertical-align: middle; }
 .reorder .grip { cursor: grab; touch-action: none; user-select: none; color: var(--muted); font-size: 16px; line-height: 1; padding: 4px 6px; border-radius: 6px; }
@@ -422,5 +430,5 @@ tr.click { cursor: pointer; } tr.click:hover td { background: color-mix(in srgb,
   border-radius: 6px; border: 1px solid var(--ring); background: var(--surface); color: var(--ink); box-sizing: border-box; }
 .plan .amendform .sendrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .plan .amendnote { margin: 8px 0 0; text-align: right; }
-.flight .amended path { fill: var(--surface); stroke: var(--fill); stroke-width: 1.5; }
-.flight .amended text { font-size: 10px; font-weight: 700; fill: var(--fill); }
+.strip .amended path { fill: var(--surface); stroke: var(--fill); stroke-width: 1.5; }
+.strip .amended text { font-size: 10px; font-weight: 700; fill: var(--fill); }
