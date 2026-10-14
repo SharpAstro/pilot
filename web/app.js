@@ -671,6 +671,9 @@ function waitingItems(src) {
   })};
 }
 
+// "PR #n" in a plan's text, linked to the flight's repo on GitHub.
+const prLinks = (html, url) => url ? html.replace(/\bPR #(\d+)\b/g, (m, n) => `<a href="${esc(url)}/pull/${n}" target="_blank" rel="noopener">${m}</a>`) : html;
+
 // The plan's waiting items not yet answered from here.
 const unanswered = p => waitingItems(p.waiting).items.filter(it => !(p.answered || {})[it.title]);
 
@@ -682,13 +685,17 @@ function waitingHtml(p, ps) {
     const sent = (p.answered || {})[it.title];
     if (sent) return `<li class="answered">${md(it.text, true)}<div class="sub">✓ answered ${esc(clock(sent * 1000))}; with the pilot, which takes it out of its plan at its next step</div></li>`;
     const a = answers.get(`${sid}|${it.title}`);
+    // A merge question gets the controller's own merge button: the dashboard runs it, as a pilot may not.
+    const mpr = (/\bmerge PR #(\d+)/i.exec(it.title) || [])[1];
+    const mergeBtn = mpr && p.repoUrl ? `<button class="primary" data-merge="${esc(sid)}" data-pr="${esc(mpr)}">Merge #${esc(mpr)} (rebase)</button>
+      <a href="${esc(p.repoUrl)}/pull/${esc(mpr)}" target="_blank" rel="noopener">PR #${esc(mpr)} ↗</a>` : "";
     if (a) n++;
     const btn = (kind, value, label, rec) => `<button class="choice${a?.kind === kind && a.value === value ? " on" : ""}${rec ? " rec" : ""}"
       data-answer="${esc(sid)}" data-item="${i}" data-kind="${kind}" data-value="${esc(value)}" title="${esc(rec ? `recommended: ${it.rec}` : value)}">${esc(label)}</button>`;
     const plain = s => s.replace(/[`*]/g, ""), short = plain(it.recShort);
     const choices = it.options.length ? it.options.map(o => btn("option", o, plain(o), o === it.recShort || it.rec.startsWith(o))).join("")
       : it.rec ? btn("accept", it.rec, `accept: ${short.length > 40 ? short.slice(0, 39) + "…" : short}`, true) : "";
-    return `<li>${md(it.text, true)}<div class="choices">${choices}<input class="reply" data-answer="${esc(sid)}" data-item="${i}"
+    return `<li>${prLinks(md(it.text, true), p.repoUrl)}${mergeBtn ? `<div class="choices">${mergeBtn}</div>` : ""}<div class="choices">${choices}<input class="reply" data-answer="${esc(sid)}" data-item="${i}"
       placeholder="${choices ? "or your own answer" : "your answer"}" value="${esc(a?.kind === "text" ? a.value : "")}"></div></li>`;
   }).join("");
   const can = p.live && p.pilot;
@@ -1746,6 +1753,14 @@ document.addEventListener("click", async e => {
     return;
   }
   if (t.dataset.sendanswers) { sendAnswers(t.dataset.sendanswers); return; }
+  if (t.dataset.merge) {
+    // The controller's own merge: the dashboard runs gh pr merge --rebase, guarded on the PR's head, and tells the pilot.
+    if (!confirm(`Rebase-merge PR #${t.dataset.pr}? The dashboard runs it now and tells the pilot.`)) return;
+    t.disabled = true; t.textContent = "merging…";
+    try { const j = await post("/api/merge", {plan: t.dataset.merge, pr: Number(t.dataset.pr)}); t.textContent = `merged #${j.merged} at ${j.head}`; }
+    catch (err) { t.disabled = false; t.textContent = `Merge #${t.dataset.pr} (rebase)`; alert(err.message); }
+    return;
+  }
   if (t.dataset.refuel) {
     try { await post("/api/refuel", {mode: t.dataset.refuel}); } catch (err) { alert(err.message); }
     return;

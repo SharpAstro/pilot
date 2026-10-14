@@ -689,6 +689,31 @@ def flight_history(workers, gone=()):
     return out
 
 
+_repo_urls = {}
+
+
+def plan_repo(sid, rows=None):
+    """The configured repo a flight flies in: its legs' (live or removed), else its pilot's working directory."""
+    for w in registered() + archived(200):
+        if w.get("plan") == sid and w.get("repo"):
+            return w["repo"]
+    row = next((r for r in rows or agents() if r.get("sessionId") == sid), None)
+    for name, root in config()["repos"].items():
+        if row and same_path(row.get("cwd"), root):
+            return name
+    return None
+
+
+def repo_url(name):
+    """A configured repo's https URL on GitHub, from its origin remote; None when it has none there."""
+    if name not in _repo_urls:
+        root = config()["repos"].get(name)
+        r = subprocess.run(["git", "-C", str(root), "remote", "get-url", "origin"], capture_output=True, text=True) if root else None
+        m = re.search(r"github\.com[:/]([^/\s]+/[^/\s]+?)(?:\.git)?\s*$", r.stdout if r and r.returncode == 0 else "")
+        _repo_urls[name] = f"https://github.com/{m.group(1)}" if m else None
+    return _repo_urls[name]
+
+
 def plans_view(rows, workers, seen=None):
     """Flight plans whose pilot is live, or that a current worker flies a leg of, or touched this week. A live
     pilot comes with what it is doing (session_view), reusing `seen`, the pilots already looked at."""
@@ -712,6 +737,7 @@ def plans_view(rows, workers, seen=None):
                     # Items the controller has answered stay in the plan until its pilot takes them out; until then
                     # they are with the pilot, not waiting on the controller.
                     "answered": {k: v for k, v in (read_json(ANSWERED, {}).get(sid) or {}).items() if k and k in text},
+                    "repoUrl": repo_url(plan_repo(sid, rows)),
                     **parse_plan(text)})
     out = by_priority(out)[:10]
     gone = archived(200)
@@ -4037,6 +4063,36 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 write_json(ANSWERED, rec)
             HUB.poke()
             return self.send(200, {"ok": True, "result": out})
+        if self.path == "/api/merge":
+            # The controller's own click: a merge a pilot is refused (its okay arrives as another session's message,
+            # which carries no authority), so the dashboard runs it, guarded on the head the controller was shown.
+            sid, n = str(body.get("plan") or ""), int(body.get("pr") or 0)
+            name = plan_repo(sid)
+            root = config()["repos"].get(name) if name else None
+            if not root or not n:
+                return self.send(400, {"error": "no such flight or pull request"})
+            pr = gh_json(root, "pr", "view", str(n), "--json", "state,headRefOid,url,mergeable")
+            if not pr or pr.get("state") != "OPEN":
+                return self.send(409, {"error": f"PR #{n} is {(pr or {}).get('state', 'not found')}"})
+            r = subprocess.run(["gh", "pr", "merge", str(n), "--rebase", "--match-head-commit", pr["headRefOid"]], cwd=str(root),
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+            if r.returncode != 0:
+                return self.send(502, {"error": (r.stderr or r.stdout).strip()[:400]})
+            head = pr["headRefOid"][:8]
+            plan_log(sid, f"Controller merged PR #{n} from the dashboard (rebase, guarded on {head}): {pr.get('url')}")
+            rec = read_json(ANSWERED, {})
+            waiting = split_waiting(plan_path(sid).read_text(encoding="utf-8"))[0] if plan_path(sid).exists() else ""
+            for title in re.findall(r"^\s*[-*]\s+\*\*(.+?)\*\*", waiting, re.M):
+                if f"PR #{n}" in title:
+                    rec.setdefault(sid, {})[title] = time.time()
+            write_json(ANSWERED, rec)
+            pilot = next((x["name"] for x in pilots() if x.get("sessionId") == sid), None)
+            if pilot:
+                threading.Thread(target=lambda: intercom([pilot], f"The controller merged PR #{n} from the dashboard (rebase, guarded on "
+                                                         f"{head}). Take its merge item out of your plan, log it, and carry on.",
+                                                         sender="Dashboard"), daemon=True).start()
+            HUB.poke()
+            return self.send(200, {"ok": True, "merged": n, "head": head})
         if self.path == "/api/launch":
             try:
                 out = launch(str(body.get("path") or ""), body.get("resume") or None, "background" if body.get("where") == "background" else "terminal",
