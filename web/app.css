@@ -58,6 +58,9 @@ nav a.on { background: var(--page); color: var(--ink); font-weight: 600; box-sha
 .note:first-child { border-top: 0; }
 .note.unread { background: var(--tint-fill); }
 .note .when { color: var(--muted); font-size: 11px; }
+.note .settled { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.note .times { color: var(--muted); font-size: 11px; }
+.note.flash { outline: 2px solid var(--ring); outline-offset: -2px; }
 #alerts, #errors { max-width: 1240px; margin: 0 auto; padding: 0 16px; }
 .warnline { margin: 12px 0 0; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--crit); background: var(--tint-crit); }
 .warnline.amber { border-color: var(--warn); background: var(--tint-warn); }
