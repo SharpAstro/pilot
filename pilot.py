@@ -275,7 +275,7 @@ PLAN_TEMPLATE = """# Flight plan: {title}
 
 Flight: {flight}
 
-Objective: (one or two sentences: what this flight is for, and how you will know it landed)
+Objective: (one or two sentences: what this flight is for, and how you will know it is done)
 
 Pilot session: {sid}
 
@@ -475,14 +475,14 @@ def route_depths(legs):
 
 
 def alt_taken(w, live):
-    """Whether an alternate leg has been taken: its worker runs, or a removed one landed. Removing an
+    """Whether an alternate leg has been taken: its worker runs, or a removed one is done. Removing an
     alternate's worker before it lands undoes the diversion."""
     return bool(w) and (live or leg_state(w)[0] == "good")
 
 
 def flown(states):
     """The route as flown, from flight_legs: each primary leg, or, once it has been diverted, its taken
-    alternates in its place (any one of them landed lands it). An alternate not taken is no part of it, so it
+    alternates in its place (any one of them done counts for it). An alternate not taken is no part of it, so it
     never keeps a flight from landing nor counts as a leg."""
     taken = {}
     for s in states:
@@ -764,7 +764,7 @@ def plans_view(rows, workers, seen=None):
 
 # Active time counts each gap between two of a leg's transcript records at most this long. Bash's longest
 # foreground timeout is 10 minutes, so a silence longer than that is not work: a machine asleep, a worker
-# waiting on its pilot or the tower, a turn that ended.
+# waiting on its pilot or the controller, a turn that ended.
 GAP_CAP = 10 * 60
 SCHEDULES = STATE / "schedules.json"   # each flight's schedule, its first ETA, by plan id: {"<sid>": {"eta": t, "set": t}}
 STAMP_RE = re.compile(rb'"timestamp":\s*"([^"]+)"')
@@ -820,8 +820,8 @@ def leg_moments(w):
 
 
 def leg_timing(w):
-    """What a route leg gives the flight's times: unflown (no worker yet), flying, or landed (DONE with its
-    checklist complete), its active time, checklist items done of total, and when it started and last moved."""
+    """What a route leg gives the flight's times: unflown (no worker yet), flying, or done (DONE with its
+    checklist complete; its state value is still `landed`), its active time, checklist items done of total, and when it started and last moved."""
     if not w:
         return {"state": "unflown"}
     fin = w.get("final") or {}
@@ -839,11 +839,11 @@ def _mins(s):
 
 
 def project_eta(legs, now=None):
-    """The flight's departure, and its ETA or, once every leg has landed, its arrival. A leg in the air has its
-    open items left at its own rate, items done per active second, or the landed legs' rate before it has done
-    one; with no checklist yet it takes the landed legs' mean active time, less what it has flown. Legs in the
+    """The flight's departure, and its ETA or, once every leg is done, its arrival. A leg in the air has its
+    open items left at its own rate, items done per active second, or the done legs' rate before it has done
+    one; with no checklist yet it takes the done legs' mean active time, less what it has flown. Legs in the
     air fly side by side, so the longest of them counts; legs not flown follow one after another, each at the
-    landed legs' mean. With nothing to time a leg by, there is no ETA yet, and `noEta` says why."""
+    done legs' mean. With nothing to time a leg by, there is no ETA yet, and `noEta` says why."""
     now = time.time() if now is None else now
     landed = [l for l in legs if l["state"] == "landed"]
     flying = [l for l in legs if l["state"] == "flying"]
@@ -855,7 +855,7 @@ def project_eta(legs, now=None):
         return out
     if not flying and not unflown:
         out["arrived"] = max((l["last"] for l in landed if l.get("last")), default=None)
-        out["basis"] = f"all {len(landed)} leg{'s' if len(landed) != 1 else ''} landed"
+        out["basis"] = f"all {len(landed)} leg{'s' if len(landed) != 1 else ''} done"
         return out
     timed = [l for l in landed if l["active"] > 0]
     mean = sum(l["active"] for l in timed) / len(timed) if timed else None
@@ -867,19 +867,19 @@ def project_eta(legs, now=None):
         if l["total"] and rate:
             air.append((l["total"] - l["done"]) / rate)
             why.append(f"{l.get('name') or 'a leg'}: {l['total'] - l['done']} of {l['total']} items left at "
-                       f"{_mins(1 / rate)} an item ({'its own rate' if own else 'the landed legs’ rate'})")
+                       f"{_mins(1 / rate)} an item ({'its own rate' if own else 'the done legs’ rate'})")
         elif mean is not None:
             air.append(max(0, mean - l["active"]))
-            why.append(f"{l.get('name') or 'a leg'}: no checklist yet, the landed legs’ mean {_mins(mean)}")
+            why.append(f"{l.get('name') or 'a leg'}: no checklist yet, the done legs’ mean {_mins(mean)}")
         else:
-            out["noEta"] = f"no ETA yet: {l.get('name') or 'a leg'} has no item done and no leg has landed to time it by"
+            out["noEta"] = f"no ETA yet: {l.get('name') or 'a leg'} has no item done and no leg is done to time it by"
             return out
     if unflown and mean is None:
-        out["noEta"] = f"no ETA yet: no leg has landed to time the {len(unflown)} not flown by"
+        out["noEta"] = f"no ETA yet: no leg is done to time the {len(unflown)} not flown by"
         return out
     if unflown:
         why.append(f"{len(unflown)} leg{'s' if len(unflown) != 1 else ''} not flown at {_mins(mean)} each, "
-                   f"the mean of {len(timed)} landed")
+                   f"the mean of {len(timed)} done")
     out["eta"] = now + max(air, default=0) + len(unflown) * (mean or 0)
     out["basis"] = "; ".join(why) + f" (active time, a gap counted at most {GAP_CAP // 60}m)"
     return out
@@ -1020,7 +1020,7 @@ def brief_input(inp):
 
 # How Claude Code words a call it refused, and who refused it (measured on this machine's transcripts).
 DENIALS = [
-    (re.compile(r"pilot budget: "), "pilot's budget"),
+    (re.compile(r"pilot budget: "), "pilot.py's budget"),
     (re.compile(r"pilot: don't ask in the terminal"), "pilot's ask hook"),
     (re.compile(r"SAM-REPLY-GATE"), "the reply gate"),
     (re.compile(r"denied by the Claude Code auto mode classifier"), "auto mode"),
@@ -1428,7 +1428,7 @@ def sha_prs(root, sha, repo=None):
 
 # --------------------------------------------------------------------------- the review before the merge
 
-REVIEW_ROUNDS = 2       # rounds that find bugs, before what is left goes to the tower rather than a third round
+REVIEW_ROUNDS = 2       # rounds that find bugs, before what is left goes to the controller rather than a third round
 BUGS_RE = re.compile(r"\ABUGS:\s*(\d+)\s*$", re.M)
 
 
@@ -1448,16 +1448,19 @@ def parse_round(text):
             "questions": len(re.findall(r"^\s*[-*]\s+\S|^###\s", questions.group(1), re.M)) if questions else 0}
 
 
-APPROACH = {"approach": "on approach", "goaround": "go-around", "holding": "holding", "tower": "to the tower",
-            "clearance": "awaiting clearance", "cleared": "cleared to land", "gate": "at the gate"}
+# The stage keys are kept as they are stored and served; only their labels follow the glossary. The PR is on
+# final while CI runs ("holding" is the plan-only hold's word), in team review while its team reviews it, and
+# landed once merged ("at the gate" is the plan-only hold's too).
+APPROACH = {"approach": "on approach", "goaround": "go-around", "holding": "on final", "tower": "to the controller",
+            "clearance": "team review", "cleared": "cleared to land", "gate": "landed"}
 
 
 def approach(reviews, prs):
     """Where a leg's pull request stands, in the plan's words: on approach (a review round is due on its head),
-    go-around (the last round found bugs, or CI fails, and the fixes are not pushed yet), holding (accepted,
-    CI not finished), to the tower (the rounds are spent and bugs are left), awaiting clearance (accepted and CI green,
+    go-around (the last round found bugs, or CI fails, and the fixes are not pushed yet), on final (accepted,
+    CI not finished), to the controller (the rounds are spent and bugs are left), team review (accepted and CI green,
     and its team, who review it, have not approved it yet), cleared to land (accepted at its head and CI green, and
-    approved by its team if it has one: the merge is the controller's), at the gate (merged). None without a PR."""
+    approved by its team if it has one: the merge is the controller's), landed (merged). None without a PR."""
     pr = next((p for p in prs or [] if p.get("state") in ("OPEN", "DRAFT", "MERGED")), None)
     if not pr:
         return None
@@ -1533,13 +1536,13 @@ def cmd_review(a):
                 f"in the background), put `- **Merge PR #{pr['number']}?**` in `## Waiting on the controller`, with the rounds "
                 f"and CI's state.")
     elif st["stage"] == "tower":
-        outcome = f"{r['bugs']} bug(s) left after {REVIEW_ROUNDS} rounds that found bugs: to the tower"
+        outcome = f"{r['bugs']} bug(s) left after {REVIEW_ROUNDS} rounds that found bugs: to the controller"
         todo = (f"The rounds are spent. Put the bugs in `## Waiting on the controller` with the round file ({path}) and "
                 f"your recommendation for each: fix, follow-up issue, or accept.")
     else:
         outcome = f"{r['bugs']} bug(s): go-around"
         todo = (f"Send the worker the fix items R{n} B1..B{r['bugs']} (each a checklist item: a failing test first, then "
-                f"the smallest fix, one commit per bug, no push). Check them as a landed leg, push, and run round {n + 1}.")
+                f"the smallest fix, one commit per bug, no push). Check them as a done leg, push, and run round {n + 1}.")
     plan_log(w.get("plan"), f"Review round {n} of {a.name} (PR #{pr['number']} at {head}): {outcome}"
              + (f"; {r['questions']} question(s)" if r["questions"] else "") + (f". Bugs: {'; '.join(r['titles'])}" if r["titles"] else "") + ".")
     print(f"{a.name}: round {n} of PR #{pr['number']} at {head}: {outcome}\n{todo}")
@@ -1872,7 +1875,7 @@ def fingerprint(session_ids):
     return stats(sessions), stats(content)
 
 
-# --------------------------------------------------------------------------- notifications
+# --------------------------------------------------------------------------- notices
 
 FOLD_SECONDS = 60           # an identical notice for the same session within this is the same notice, counted again
 JUDGE_SECONDS = 60          # Haiku looks over the unread notices at most this often, and only once they have changed
@@ -2007,7 +2010,7 @@ def still_needed(n, ctx):
     return "still waiting on the controller"
 
 
-JUDGE_PROMPT = """You tidy a notification bell for the person who controls background coding workers (legs, each in
+JUDGE_PROMPT = """You tidy the bell of notices for the person who controls background coding workers (legs, each in
 a flight run by a pilot). Below are the notices they have not read yet, oldest first, and the state now. Name
 the notices that no longer need the person: made moot by a later notice or by the state now (a leg that has
 reported again since, a pilot or leg working again, a question no longer asked). Never name a notice about a
@@ -2544,9 +2547,9 @@ def say(name, text):
     return w
 
 
-RELAY = "pilot-dashboard"      # the name the relay sends as
+RELAY = "pilot-dashboard"      # the name the intercom sends as
 
-RELAY_PROMPT = """You relay messages for the person who runs these sessions. For each recipient below, call the
+RELAY_PROMPT = """You carry messages over the intercom for the person who runs these sessions. For each recipient below, call the
 SendMessage tool once, with `to` set to the recipient's name exactly as written and `message` set to the
 text between the two {mark} lines exactly as written: change nothing, add nothing, keep every line. Do
 nothing else. Then answer with one line per recipient: its name, a colon, then "delivered", or "failed:"
@@ -2661,7 +2664,7 @@ def intercom(names, text, sender="Controller"):
     try:
         out = json.loads(r.stdout).get("result") or ""
     except ValueError:
-        raise ValueError(f"the relay failed ({r.returncode}): {(r.stdout + r.stderr).strip()[:400]}")
+        raise ValueError(f"the intercom failed ({r.returncode}): {(r.stdout + r.stderr).strip()[:400]}")
     lines = text.strip().splitlines()
     first = lines[0][:140] + ("..." if len(lines) > 1 or len(lines[0]) > 140 else "")
     rows = {x.get("name"): x for x in agents()}
@@ -2673,16 +2676,16 @@ def intercom(names, text, sender="Controller"):
 
 
 WATCHTOWER_PROMPT = """You are the watchtower over coding workers that each fly one leg of a piece of work. A pilot asks
-for more fuel, a higher token budget, for one worker. The account has headroom; that was checked. Judge
-whether this request is justified, or must go to the tower, the person who runs the work.
+for a refuel, a higher token budget, for one worker. The account has headroom; that was checked. Judge
+whether this request is justified, or must go to the controller, the person who runs the work.
 
 APPROVE when the reason names what is left, the checklist shows real progress for what has been spent,
 and the amount is in proportion to what is left at the rate it has been spending.
-TOWER when the reason is vague, the worker shows little progress for its spend (stuck on one item, going
+CONTROLLER when the reason is vague, the worker shows little progress for its spend (stuck on one item, going
 round in circles), or the amount looks out of proportion.
 
 Answer with exactly two lines and nothing else:
-VERDICT: APPROVE or TOWER
+VERDICT: APPROVE or CONTROLLER
 WHY: one sentence the person will read.
 
 The request:
@@ -2691,7 +2694,7 @@ The request:
 
 def watchtower(w, tokens, reason, account):
     """A Haiku verdict on a refuel request: one `claude -p` with no tools, no MCP servers and no saved session,
-    like a summary. Returns (approved, why); anything it cannot answer goes to the tower."""
+    like a summary. Returns (approved, why); anything it cannot answer goes to the controller."""
     s = worker_status(w)
     plan = parse_plan(plan_path(w["plan"]).read_text(encoding="utf-8")) if w.get("plan") and plan_path(w["plan"]).exists() else {}
     leg = next((l for l in plan.get("legs", []) if l["leg"] == w["name"]), {})
@@ -2710,26 +2713,26 @@ def watchtower(w, tokens, reason, account):
         out = json.loads(r.stdout).get("result") or ""
     except (ValueError, subprocess.TimeoutExpired) as e:
         return False, f"the watchtower could not answer ({e})"
-    verdict, why = re.search(r"VERDICT:\s*(APPROVE|TOWER)", out), re.search(r"WHY:\s*(.+)", out)
+    verdict, why = re.search(r"VERDICT:\s*(APPROVE|CONTROLLER)", out), re.search(r"WHY:\s*(.+)", out)
     return bool(verdict and verdict.group(1) == "APPROVE"), (why.group(1).strip() if why else out.strip()[:300])
 
 
 def refuel_mode():
     """auto (the default): the watchtower may approve a refuel within its gates. manual: every refuel goes to
-    the tower, the controller or, while it is on, the autopilot. Switched from the dashboard's top bar."""
+    the controller or, while it is on, the autopilot. Switched from the dashboard's top bar."""
     return "manual" if (read_json(REFUEL_MODE, {}) or {}).get("mode") == "manual" else "auto"
 
 
 def set_refuel_mode(mode):
     mode = "manual" if mode == "manual" else "auto"
     write_json(REFUEL_MODE, {"mode": mode, "at": time.time()})
-    blackbox(f"Refuelling set to {mode}: " + ("every refuel goes to the tower" if mode == "manual"
+    blackbox(f"Refuelling set to {mode}: " + ("every refuel goes to the controller" if mode == "manual"
                                               else "the watchtower may approve refuels within its gates"), actor="controller")
     return mode
 
 
 def refuel(name, tokens, reason):
-    """A pilot's request for more fuel for a worker. The gates come first and need no model: fresh usage
+    """A pilot's request for a refuel of a worker. The gates come first and need no model: fresh usage
     figures with headroom in both windows, and at most maxFactor times the leg's first budget. Past them,
     the watchtower judges the reason against the worker's progress. Returns (approved, why); approved means
     the budget is raised. Either way the plan's log says what happened and why."""
@@ -2751,14 +2754,14 @@ def refuel(name, tokens, reason):
         approved, why = watchtower(w, tokens, reason, account)
     if approved:
         set_budget(name, tokens)
-    plan_log(w.get("plan"), f"Watchtower {'approved' if approved else 'sent to the tower'}: refuel {name} to {tokens:,}. "
+    plan_log(w.get("plan"), f"Watchtower {'approved' if approved else 'sent to the controller'}: refuel {name} to {tokens:,}. "
                             f"{why.rstrip('.')}. Asked because: {reason}")
     return approved, why
 
 
 AUTOPILOT_NAME, AUTOPILOT_MODEL, AUTOPILOT_CAP = "autopilot", "claude-opus-5-5", 3
 
-AUTOPILOT_BRIEF = """You are the autopilot. The person who runs these flights, the controller (the tower), is away, asleep,
+AUTOPILOT_BRIEF = """You are the autopilot. The person who runs these flights, the controller, is away, asleep,
 and has switched you on to decide in their place until they switch you off. Pilots fly flights: each keeps
 a flight plan, starts workers on legs and settles engineering questions with a co-pilot. What a pilot
 cannot settle goes in its plan's `## Waiting on the controller` section, and while you are on, the
@@ -2812,7 +2815,7 @@ def autopilot_on():
         st = {"id": job, "sessionId": session_of(job), "sent": {}}
     st.update(enabled=True, since=time.time())
     write_json(AUTOPILOT, st)
-    blackbox("Autopilot switched on: it decides the tower's items until switched off", actor="controller")
+    blackbox("Autopilot switched on: it decides the controller's items until switched off", actor="controller")
     return st
 
 
@@ -2892,14 +2895,14 @@ def cmd_list(a):
 
 
 def cmd_result(a):
-    """The worker's report, then its checklist. An item still open means the leg has not landed, whatever
+    """The worker's report, then its checklist. An item still open means the leg is not done, whatever
     the report's first line says."""
     w = need(a.name)
     print(report(w["sessionId"]) if w.get("sessionId") else "(no session yet)")
     items = checklist([s.get("sessionId") for s in sessions_of(w)])
     if items:
         left = open_items(items)
-        print(f"\n--- checklist: {len(items) - len(left)} of {len(items)} completed" + (f"; OPEN: {len(left)}, so it has not landed" if left else ""))
+        print(f"\n--- checklist: {len(items) - len(left)} of {len(items)} completed" + (f"; OPEN: {len(left)}, so it is not done" if left else ""))
         for i in items:
             print(f"  [{'x' if i['status'] == 'completed' else '>' if i['status'] == 'in_progress' else ' '}] {i['subject']}")
     g = collateral_now(w) or {}
@@ -3079,7 +3082,7 @@ def leg_state(w):
     if head == "DONE" and ap:     # its PR's review, once it has one
         return {"gate": "good", "cleared": "good", "goaround": "warn", "tower": "warn"}.get(ap["stage"], "working"), ap["label"]
     if head == "DONE":
-        return "good", "landed"
+        return "good", "done"
     return "planned", "turn ended" if w.get("state") == "done" or fin else (w.get("state") or "unknown")
 
 
@@ -3112,9 +3115,9 @@ def flight_legs(sid, legs, workers, gone=(), fresh=False):
 
 
 def flight_landed(states):
-    """Whether a flight has landed, from flight_legs: every leg on its route landed and every pull request its
-    legs opened at the gate, merged. A leg cleared to land waits on its merge still. A leg's git not read yet
-    (none, pending, an error, or its PRs unknown) is not landed either: until then its PRs are unknown, not
+    """Whether a flight has landed, from flight_legs: every leg on its route done and every pull request its
+    legs opened landed (merged). A leg cleared to land waits on its merge still. A leg's git not read yet
+    (none, pending, an error, or its PRs unknown) has not landed either: until then its PRs are unknown, not
     absent, as the dashboard has it (4463789). And a leg's commits past its base land only on a merged PR,
     DONE and unpushed or not: a flight connects from this one for that change merged. With what is still open.
     The route is the one flown: an alternate not taken does not count, and a taken one stands for its primary."""
@@ -3167,7 +3170,7 @@ def connection(flight, workers, gone=(), plans=None, fresh=False):
     states = flown(states)
     good = sum(1 for s in states if s["cls"] == "good")
     state = ("landed" if landed else "no legs on its route yet" if not states else
-             f"all {len(states)} legs landed, pull requests not merged" if good == len(states) else f"{good} of {len(states)} legs landed")
+             f"all {len(states)} legs done, pull requests not merged" if good == len(states) else f"{good} of {len(states)} legs done")
     return {"flight": flight, "known": True, "sessionId": sid, "title": plan["title"], "landed": landed, "state": state, "open": left}
 
 
@@ -3316,15 +3319,15 @@ def track_html(sid):
     elif plan["hold"]:
         banner = ("planned", f"Holding at the gate: {'ready, ' if n else ''}awaiting clearance for takeoff")
     elif counts.get("working"):
-        banner = ("working", f"In the air: {counts['working']} of {n} leg{'s' if n != 1 else ''} flying, {counts.get('good', 0)} landed")
+        banner = ("working", f"In the air: {counts['working']} of {n} leg{'s' if n != 1 else ''} flying, {counts.get('good', 0)} done")
     elif landed:
         banner = ("good", f"Landed: all {n} legs")
     elif n and counts.get("good") == n:      # landed waits for the PRs: one cleared to land is not merged yet
-        banner = ("working", f"All {n} legs landed; not at the gate: {', '.join(left)}")
+        banner = ("working", f"All {n} legs done; not landed: {', '.join(left)}")
     elif counts.get("warn") or counts.get("bad"):
-        banner = ("warn", f"{counts.get('warn', 0) + counts.get('bad', 0)} leg(s) need a decision; {counts.get('good', 0)} of {n} landed")
+        banner = ("warn", f"{counts.get('warn', 0) + counts.get('bad', 0)} leg(s) need a decision; {counts.get('good', 0)} of {n} done")
     else:
-        banner = ("planned", f"{counts.get('good', 0)} of {n} legs landed" if n else "No legs on the route yet")
+        banner = ("planned", f"{counts.get('good', 0)} of {n} legs done" if n else "No legs on the route yet")
     title = f"Flight {plan['flight']}" if plan["flight"] else "Flight plan"
     log = "".join(f"<li>{_inline(l)}</li>" for l in reversed(plan["log"][-10:]))
     now = time.strftime("%Y-%m-%d %H:%M")
@@ -3488,8 +3491,8 @@ def take_hold(sid, *dirs):
 def tell_pilot(sid, text):
     """Gets word to a flight's pilot: through the intercom when it is live (an interactive pilot whose turn has
     ended too: the message starts its next turn), or by waking it as a copy when its background session has
-    ended. Says which, or that it could not be reached: the hold is lifted by then, so a failed wake or relay
-    (`claude --bg` exits, the relay raises, claude is not on PATH) is reported, never raised."""
+    ended. Says which, or that it could not be reached: the hold is lifted by then, so a failed wake or intercom
+    (`claude --bg` exits, the intercom raises, claude is not on PATH) is reported, never raised."""
     _agents_cache["at"] = 0
     row = next((r for r in agents() if r.get("sessionId") == sid), None)
     try:
@@ -4057,7 +4060,7 @@ class Hub:
 
     def route_autopilot(self, snap):
         """While the autopilot is on and up, sends it each live plan's waiting items once per change, through
-        the intercom, in a thread so the watcher never waits on the relay. A failed send is tried again a
+        the intercom, in a thread so the watcher never waits on it. A failed send is tried again a
         minute later: a new session is not reachable for its first 20 to 40 seconds."""
         # An autopilot whose session has ended is still on: the intercom wakes it with what it is sent.
         if self.preview or not snap["autopilot"]["enabled"]:
