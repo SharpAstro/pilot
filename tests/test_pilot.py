@@ -436,6 +436,38 @@ class ConnectionTests(Case):
         p = next(p for p in pilot.plans_view([], []) if p["sessionId"] == "s1")
         self.assertEqual((p["connections"][0]["landed"], p["connections"][0]["state"]), (True, "landed"))
 
+    def test_the_dashboard_gets_each_legs_landed_flag(self):
+        self.plan("s2", CONNECTED.replace("| build | Build the tokens | - | tests pass |",
+                                          "| build | Build the tokens | - | tests pass |\n| ship | Ship them | build | shipped |"))
+        self.landed()
+        flags = lambda: next(p for p in pilot.plans_view([], []) if p["sessionId"] == "s2")["landed"]
+        merged = {"number": 7, "state": "MERGED", "head": "abc123"}
+        cases = [({"ahead": 2, "tip": "abc123", "prs": [merged], "remotes": []}, {"landed": True, "why": None}),
+                 ({"ahead": 0, "prs": [], "remotes": []}, {"landed": True, "why": None}),
+                 ({"ahead": 2, "tip": "abc123", "prs": [{"number": 7, "state": "OPEN", "head": "abc123"}], "remotes": []},
+                  {"landed": False, "why": "on approach"}),
+                 ({"ahead": 2, "prs": [], "remotes": []}, {"landed": False, "why": "2 commits on no merged pull request"}),
+                 ({"ahead": 2, "prs": None, "remotes": ["origin/feat/x"]}, {"landed": False, "why": "its pull requests not read yet"})]
+        for git, want in cases:
+            self.git = git
+            got = flags()
+            self.assertEqual(got["build"], want, git)
+            self.assertEqual(got["ship"], {"landed": False, "why": "planned"}, "a leg not flown has not landed")
+
+    def test_the_tracking_page_tells_done_from_landed(self):
+        self.plan("s2", CONNECTED)
+        self.landed()
+        self.git = {"ahead": 2, "tip": "abc123", "prs": [], "remotes": [], "unpushed": 2, "dirty": 0}     # DONE, unpushed
+        page = pilot.track_html("s2")
+        self.assertIn('<span class="chip done">done, not landed · removed</span>', page)
+        self.assertIn('<div class="sub">not landed: 2 commits on no merged pull request</div>', page)
+        self.assertIn("All 1 legs done; not landed: build: 2 commits on no merged pull request", page)
+        self.git.update(prs=[{"number": 7, "state": "MERGED", "head": "abc123"}], remotes=["origin/feat/x"], unpushed=0)
+        page = pilot.track_html("s2")
+        self.assertIn('<span class="chip good">landed · removed</span>', page)
+        self.assertNotIn("not landed", page)
+        self.assertIn("Landed: all 1 legs", page)
+
 
 class PriorityTests(Case):
     """The controller's order of flights, in priority.json: it orders the dashboard's flights, and only
@@ -1649,7 +1681,7 @@ class TrackTests(Case):
         page = pilot.track_html("s1")
         self.assertIn("Flight WA1 · Export fixes", page)
         self.assertIn("Waiting on you: 2 items", page)
-        self.assertIn("done · removed", page)
+        self.assertIn("done, not landed · removed", page, "its pull requests not read: done, not landed")
         self.assertIn(">flying<", page)
         self.assertIn("spend 1.0M of 10M", page)
         self.assertNotIn("<script>", page)
