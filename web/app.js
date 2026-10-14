@@ -112,7 +112,9 @@ document.addEventListener("paste", e => {
   const key = e.target.closest?.("[data-attach-to]")?.dataset.attachTo;
   const files = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith("image/"));
   if (!key || !files.length) return;
-  e.preventDefault(); attach(key, files);
+  // A paste from Word or a browser carries the text too: it is pasted as usual, and only an image alone stops it.
+  if (!e.clipboardData.getData("text/plain")) e.preventDefault();
+  attach(key, files);
 });
 document.addEventListener("dragover", e => {
   if (e.target.closest?.("[data-attach-to]") && [...(e.dataTransfer?.types || [])].includes("Files")) e.preventDefault();
