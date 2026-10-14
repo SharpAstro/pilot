@@ -2037,6 +2037,10 @@ def judge_prompt(unread, snap, ctx):
     for pl in snap.get("plans") or []:
         lines.append(f"- flight {pl.get('flight') or pl.get('title')} (plan:{pl['sessionId']}): waiting on the controller: "
                      + (" / ".join(waiting_bullets(pl.get("waiting"))) or "nothing"))
+    for sid, waiting in ctx["plans"].items():    # a plan a notice is about that is off the Overview
+        if sid not in {pl["sessionId"] for pl in snap.get("plans") or []}:
+            lines.append(f"- plan:{sid}: waiting on the controller: "
+                         + ("(cannot be read)" if waiting is None else " / ".join(waiting_bullets(waiting)) or "nothing"))
     for (repo, num), st in ctx["prs"].items():
         lines.append(f"- {repo} #{num}: {st}")
     return "\n".join(lines)

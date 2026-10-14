@@ -1956,5 +1956,311 @@ class FlightHistoryLegTests(Case):
         self.assertEqual([l[0] for l in self.legs()], ["scaffold", "api", "ui", "api-b", "ship"])
 
 
+WAITING_PLAN = """# Flight plan: Notices
+
+Flight: NT1
+
+## Route
+
+| Leg | Goal | After | Done when |
+|---|---|---|---|
+| a | x | - | y |
+
+## Waiting on the controller
+
+{items}
+
+## Log
+"""
+
+
+class NoticeTests(Case):
+    """The bell acks a notice on its own once later ones supersede it: folded, settled by rule, judged by Haiku
+    (stubbed; the real one is never called), and kept by the guard whatever Haiku says."""
+
+    def setUp(self):
+        super().setUp()
+        self.n = pilot.Notices()
+        self.n.spawn = lambda fn: fn()            # the judge's thread, run in line
+        self.snap = {"workers": [], "pilots": [], "plans": [], "autopilot": {}}
+        self.prs = {}
+        self.config(repos={"web-app": str(ROOT)})
+        self._mentioned, pilot.mentioned_prs = pilot.mentioned_prs, lambda text, ttl=60: [
+            {"repo": r, "number": k, "state": self.prs[(r, k)]} for r, k in pilot.pr_refs(text) if (r, k) in self.prs]
+
+    def tearDown(self):
+        pilot.mentioned_prs = self._mentioned
+        super().tearDown()
+
+    def note(self, id, kind, text, subject, at=None, head=None, read=False, items=None, worker="a"):
+        n = {"id": id, "at": at or float(len(self.n.items) + 1), "kind": kind, "worker": worker, "sessionId": "s-" + worker,
+             "text": text, "read": read, "href": None, "subject": subject, "head": head, **({"items": items} if items else {})}
+        self.n.items.append(n)
+        return n
+
+    def by(self, id):
+        return next(i for i in self.n.items if i["id"] == id)
+
+    def settle(self):
+        return self.n.settle(pilot.notice_context(self.snap, self.n.items))
+
+    def waiting(self, sid, *items):
+        self.plan(sid, WAITING_PLAN.format(items="\n".join(f"- {i}" for i in items)))
+
+    def leg(self, name, state):
+        self.snap["workers"] = [w for w in self.snap["workers"] if w["name"] != name] + [
+            {"name": name, "state": state, "sessionId": "s-" + name, "lastActivity": None, "overBudget": False, "budget": 1}]
+
+    def update(self, at):
+        with unittest.mock.patch.object(pilot.time, "time", lambda: at):
+            return self.n.update(self.snap)
+
+    # ---- folding
+
+    def test_an_identical_notice_for_the_same_session_within_a_minute_is_one(self):
+        p = {"sessionId": "P", "name": "pp", "status": "busy", "flying": [], "said": None}
+        self.snap["pilots"] = [p]
+        self.update(1000)                                   # the first look records it, no notice
+        for at, status in [(1001, "idle"), (1004, "busy"), (1006, "idle"), (1009, "busy"), (1012, "idle")]:
+            p["status"] = status
+            self.update(at)
+        self.assertEqual(len(self.n.items), 1)
+        self.assertEqual((self.n.items[0]["times"], self.n.items[0]["last"]), (3, 1012))
+        self.assertEqual(json.loads(pilot.NOTICES.read_text(encoding="utf-8"))["items"][0]["times"], 3)   # on disk, not just shown
+        p["status"] = "busy"
+        self.update(1050)
+        p["status"] = "idle"
+        self.update(1080)                                   # 68 s after the last fold: a notice of its own
+        self.assertEqual(len(self.n.items), 2)
+        self.assertEqual(self.n.items[0]["settled"], f"superseded by {self.n.items[1]['id']}")   # a pilot's later turn ended
+
+    def test_another_session_or_another_text_is_not_folded(self):
+        self.note("t1", "turn", "pilot pp ended its turn, nothing in the air", "pilot:P", at=1000)
+        fresh, folded = self.n.fold([{"id": "t2", "at": 1010, "kind": "turn", "worker": "b", "sessionId": "s-b",
+                                      "text": "pilot pp ended its turn, nothing in the air"},
+                                     {"id": "t3", "at": 1010, "kind": "turn", "worker": "a", "sessionId": "s-a",
+                                      "text": "pilot pp ended its turn, nothing in the air: more"}], 1010)
+        self.assertEqual(([f["id"] for f in fresh], folded), (["t2", "t3"], 0))
+
+    # ---- deterministic rules
+
+    def test_a_later_done_supersedes_the_legs_earlier_done_blocked_and_turn_ended_but_not_a_failure(self):
+        self.leg("a", "done")
+        self.note("t1", "turn", "a: turn ended", "leg:a", head="turn")
+        self.note("t2", "failed", "a: FAILED", "leg:a", head="FAILED")
+        self.note("t3", "waiting", "a: BLOCKED", "leg:a", head="BLOCKED")
+        self.note("t4", "done", "b: DONE", "leg:b", head="DONE", worker="b")
+        self.note("t5", "done", "a: DONE", "leg:a", head="DONE")
+        self.assertEqual(self.settle(), 2)
+        self.assertEqual([(i["id"], i["read"], i.get("settled")) for i in self.n.items],
+                         [("t1", True, "superseded by t5"), ("t2", False, None), ("t3", True, "superseded by t5"),
+                          ("t4", False, None), ("t5", False, None)])
+        self.assertEqual(self.by("t1")["settledBy"], "t5")
+
+    def test_a_later_blocked_supersedes_an_earlier_done(self):
+        self.leg("a", "done")
+        self.note("t1", "done", "a: DONE", "leg:a", head="DONE")
+        self.note("t2", "waiting", "a: BLOCKED", "leg:a", head="BLOCKED")
+        self.settle()
+        self.assertEqual((self.by("t1")["settled"], self.by("t2")["read"]), ("superseded by t2", False))
+
+    def test_notices_from_before_subjects_are_read_from_their_wording(self):
+        self.leg("a", "done")
+        old = {"id": "t1", "at": 1, "kind": "done", "worker": "a", "sessionId": "s-a", "text": "a: DONE (x)", "read": False, "href": None}
+        self.n.items.append(old)
+        self.note("t2", "done", "a: DONE", "leg:a", head="DONE")
+        self.settle()
+        self.assertEqual(old["settled"], "superseded by t2")
+        self.assertEqual(pilot.notice_subject({"worker": "pp", "text": "pilot pp is waiting on you: x", "href": "#/s/P"}), "pilot:P")
+        self.assertEqual(pilot.notice_subject({"worker": "Notices", "text": "Notices: the pilot is waiting on you", "href": "#/s/P"}), "plan:P")
+
+    def test_a_waiting_item_settles_once_it_leaves_the_plans_waiting_section(self):
+        self.waiting("s1", "Which database?", "Ship on Friday?")
+        self.note("t1", "waiting", "Notices: the pilot is waiting on you", "plan:s1", items="- Which database?\n- Ship on Friday?")
+        self.settle()
+        self.assertFalse(self.by("t1")["read"])
+        self.waiting("s1", "Ship on Friday?")             # one answered, one still there
+        self.settle()
+        self.assertFalse(self.by("t1")["read"])
+        self.waiting("s1", "Something new")
+        self.settle()
+        self.assertEqual(self.by("t1")["settled"], "answered")
+
+    def test_a_later_plan_notice_listing_the_same_items_supersedes(self):
+        self.waiting("s1", "Which database?", "Ship on Friday?")
+        self.note("t1", "waiting", "Notices: the pilot is waiting on you", "plan:s1", items="- Which database?")
+        self.note("t2", "waiting", "Notices: the pilot is waiting on you", "plan:s1", items="- Which database?\n- Ship on Friday?")
+        self.settle()
+        self.assertEqual(self.by("t1")["settled"], "superseded by t2")
+        self.assertFalse(self.by("t2")["read"])
+
+    def test_a_question_settles_once_the_pilot_or_leg_moved_on(self):
+        self.snap["pilots"] = [{"sessionId": "P", "status": "waiting"}]
+        self.leg("a", "blocked")
+        self.leg("b", "done")
+        self.note("t1", "waiting", "pilot pp is waiting on you: merge?", "pilot:P", worker="pp")
+        self.note("t2", "waiting", "a is waiting on you", "leg:a", head="ASK")
+        self.note("t3", "waiting", "b: BLOCKED", "leg:b", head="BLOCKED", worker="b")
+        self.settle()
+        self.assertEqual([i["read"] for i in self.n.items], [False, False, False])
+        self.snap["pilots"][0]["status"] = "busy"
+        self.leg("a", "working")
+        self.leg("b", "working")
+        self.settle()
+        self.assertEqual([i.get("settled") for i in self.n.items], ["answered"] * 3)
+
+    def test_a_merge_question_settles_once_its_pr_merged(self):
+        self.waiting("s1", "Merge web-app #8?")
+        self.note("t1", "waiting", "Notices: the pilot is waiting on you", "plan:s1", items="- Merge web-app #8?")
+        self.prs[("web-app", 8)] = "OPEN"
+        self.settle()
+        self.assertFalse(self.by("t1")["read"])
+        self.prs[("web-app", 8)] = "MERGED"
+        self.settle()
+        self.assertEqual(self.by("t1")["settled"], "merged")
+
+    def test_a_plan_notice_with_a_merge_and_an_open_question_waits_for_both(self):
+        self.waiting("s1", "Merge web-app #8?", "Which database?")
+        self.note("t1", "waiting", "Notices: the pilot is waiting on you", "plan:s1", items="- Merge web-app #8?\n- Which database?")
+        self.prs[("web-app", 8)] = "MERGED"
+        self.settle()
+        self.assertFalse(self.by("t1")["read"])
+
+    def test_settling_through_update_is_saved(self):
+        self.leg("a", "done")
+        self.update(1000)
+        self.note("t1", "done", "a: DONE", "leg:a", head="DONE")
+        self.note("t2", "done", "a: DONE", "leg:a", head="DONE")
+        self.update(1001)
+        saved = json.loads(pilot.NOTICES.read_text(encoding="utf-8"))["items"]
+        self.assertEqual([(i["id"], i.get("settled")) for i in saved], [("t1", "superseded by t2"), ("t2", None)])
+
+    # ---- the guard
+
+    def test_the_guard_keeps_failures_waiting_items_and_merge_questions(self):
+        self.waiting("s1", "Which database?", "Merge web-app #8?")
+        self.prs[("web-app", 8)] = "OPEN"
+        self.snap["pilots"] = [{"sessionId": "P", "status": "waiting"}]
+        self.leg("a", "done")
+        kept = [self.note("f1", "failed", "a: FAILED", "leg:a", head="FAILED"),
+                self.note("f2", "died", "a stopped on an error: 529", "leg:a"),
+                self.note("f3", "budget", "a reached its budget and was told to report", "leg:a"),
+                self.note("f4", "turn", "a: the budget raise was refused", "leg:a"),
+                self.note("w1", "waiting", "Notices: the pilot is waiting on you", "plan:s1", items="- Which database?"),
+                self.note("w2", "waiting", "Notices: the pilot is waiting on you", "plan:s1", items="- Merge web-app #8?"),
+                self.note("w3", "waiting", "pilot pp is waiting on you: merge web-app #8?", "pilot:P", worker="pp"),
+                self.note("w4", "waiting", "a: BLOCKED", "leg:a", head="BLOCKED"),
+                self.note("w5", "waiting", "Old: the pilot is waiting on you", "plan:gone", items="- x")]
+        ctx = pilot.notice_context(self.snap, kept)
+        self.assertEqual({n["id"]: pilot.still_needed(n, ctx) for n in kept},
+                         {"f1": "a failure", "f2": "a failure", "f3": "a failure", "f4": "a failure",
+                          "w1": "an item still waiting on the controller", "w2": "an unanswered merge question",
+                          "w3": "an unanswered merge question", "w4": "still waiting on the controller",
+                          "w5": "an item still waiting on the controller"})
+        free = [self.note("q1", "quiet", "a has written nothing for 30 minutes", "leg:a"),
+                self.note("q2", "waiting", "pilot zz is waiting on you: x", "pilot:Z", worker="zz")]   # its session is gone
+        self.assertEqual([pilot.still_needed(n, ctx) for n in free], [None, None])
+
+    # ---- Haiku
+
+    def judge_with(self, answer, now=10_000):
+        prompts = []
+
+        def fake(prompt, timeout=150):
+            prompts.append(prompt)
+            if isinstance(answer, Exception):
+                raise answer
+            return {"result": answer}
+        with unittest.mock.patch.object(pilot, "haiku", fake), \
+                unittest.mock.patch.object(pilot, "claude", lambda *a, **k: self.fail("the real claude was called")):
+            asked = self.n.judge(self.snap, now=now)
+        return asked, prompts
+
+    def judged_setup(self):
+        self.waiting("s1", "Which database?")
+        self.prs[("web-app", 8)] = "OPEN"
+        self.leg("a", "done")
+        self.note("t1", "quiet", "a has written nothing for 30 minutes", "leg:a", at=100)
+        self.note("t2", "done", "a: DONE", "leg:a", head="DONE", at=200)
+        self.note("t3", "turn", "b: turn ended", "leg:b", head="turn", worker="b", at=210)
+        self.note("t4", "quiet", "c has written nothing", "leg:c", read=True, worker="c", at=220)
+        self.note("t5", "waiting", "Notices: the pilot is waiting on you", "plan:s1", items="- Which database?", at=230)
+        self.note("t6", "failed", "c: FAILED", "leg:c", head="FAILED", worker="c", at=240)
+        self.note("t7", "waiting", "pilot pp is waiting on you: merge web-app #8?", "pilot:P", worker="pp", at=250)
+        self.snap["pilots"] = [{"sessionId": "P", "name": "pp", "status": "waiting"}]
+
+    def test_haiku_acks_the_ids_it_names_with_its_reasons(self):
+        self.judged_setup()
+        asked, prompts = self.judge_with("t1 | superseded by t2\nt3 | b was removed; nothing left to do\n")
+        self.assertTrue(asked)
+        self.assertEqual((self.by("t1")["settled"], self.by("t1")["settledBy"], self.by("t1")["settledByJudge"]),
+                         ("superseded by t2", "t2", True))
+        self.assertEqual((self.by("t3")["read"], self.by("t3")["settled"]), (True, "b was removed; nothing left to do"))
+        self.assertNotIn("settledBy", self.by("t3"))
+        self.assertFalse(self.by("t2")["read"])
+        self.assertIn("t1 | ", prompts[0])
+        self.assertNotIn("t4 | ", prompts[0])               # read already: not asked about
+        self.assertIn("- leg a: done", prompts[0])
+        self.assertIn("waiting on the controller: which database?", prompts[0])
+        self.assertIn("- web-app #8: OPEN", prompts[0])
+        self.assertEqual(json.loads(pilot.NOTICES.read_text(encoding="utf-8"))["items"][0]["settled"], "superseded by t2")
+
+    def test_unknown_and_already_read_ids_are_ignored(self):
+        self.judged_setup()
+        self.judge_with("zz | no such notice\nt4 | already read\nt1 | stale\nt1 | twice")
+        self.assertEqual(self.by("t1")["settled"], "stale")
+        self.assertNotIn("settled", self.by("t4"))
+        self.assertFalse(any(i.get("id") == "zz" for i in self.n.items))
+
+    def test_the_guard_drops_what_haiku_names_that_still_needs_the_controller(self):
+        self.judged_setup()
+        self.judge_with("t5 | the pilot will decide\nt6 | it was retried\nt7 | superseded by t2\nt1 | superseded by t2")
+        self.assertEqual([self.by(i)["read"] for i in ("t5", "t6", "t7")], [False, False, False])
+        self.assertTrue(self.by("t1")["read"])
+
+    def test_a_failed_slow_or_malformed_call_acks_nothing(self):
+        for answer in (RuntimeError("claude exited 1"), subprocess.TimeoutExpired("claude", 90),
+                       "Sure! t1 can go.", "", "t1 | superseded by t2\nand t3 too"):
+            pilot.NOTICES.unlink(missing_ok=True)
+            self.n = pilot.Notices()
+            self.n.spawn = lambda fn: fn()
+            self.judged_setup()
+            asked, _ = self.judge_with(answer)
+            self.assertTrue(asked)
+            self.assertEqual([i["id"] for i in self.n.items if i["read"]], ["t4"], answer)
+            self.assertFalse(self.n.judging)
+        self.assertEqual(pilot.parse_judgement("NONE"), [])
+        self.assertEqual(pilot.parse_judgement("```\nt1 | stale\n```"), [("t1", "stale")])
+
+    def test_haiku_is_asked_only_when_unread_changed_and_at_most_once_a_minute(self):
+        self.judged_setup()
+        self.assertTrue(self.judge_with("NONE", now=10_000)[0])
+        self.assertFalse(self.judge_with("NONE", now=10_100)[0])     # nothing changed
+        self.note("t8", "quiet", "d has written nothing", "leg:d", worker="d", at=300)
+        self.assertFalse(self.judge_with("NONE", now=10_030)[0])     # changed, but within the minute
+        self.assertTrue(self.judge_with("NONE", now=10_061)[0])
+        self.note("t9", "quiet", "e has written nothing", "leg:e", worker="e", at=310)
+        self.n.judging = True                                        # a call still in flight
+        self.assertFalse(self.judge_with("NONE", now=10_200)[0])
+        self.n.judging = False
+        for i in self.n.items:
+            i["read"] = True
+        self.assertFalse(self.judge_with("NONE", now=10_300)[0])     # nothing unread: nothing to ask
+
+    def test_its_own_acks_do_not_count_as_a_change(self):
+        self.judged_setup()
+        self.judge_with("t1 | stale", now=10_000)
+        self.assertFalse(self.judge_with("NONE", now=10_100)[0])
+
+    def test_the_judge_never_runs_in_the_watchers_thread(self):
+        started = []
+        n = pilot.Notices()
+        n.spawn = started.append
+        n.items.append({"id": "t1", "at": 1, "kind": "quiet", "worker": "a", "text": "x", "read": False})
+        with unittest.mock.patch.object(pilot, "haiku", lambda *a, **k: self.fail("asked in the watcher's thread")):
+            self.assertTrue(n.judge(self.snap, now=10_000))
+        self.assertEqual(len(started), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
