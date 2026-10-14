@@ -91,6 +91,17 @@ and the black box, and tells the pilot to take off: through the intercom while i
 when its background session has ended. A hold asked for at launch waits up to an hour, in `<state>/holds.json`, for
 the launched pilot to open its plan.
 
+**Amendments** are how you redirect a flight once it is planned, instead of messages its pilot may lose track of
+(on TIA2 one leg grew by eleven requests that way, and its refuel was argued afterwards). `pilot amend <flight>
+"<request>"`, or `POST /api/flights/<flight>/amend` with `{"text": ...}`, files the request, kept to one line, in
+the plan's `## Amendments` right before the route, as `A1`, `A2`, ... (never reused), stamped and *open*; logs
+"Amendment A<n> from the controller" in the plan and the black box; and then tells the pilot as `clear` does, so a
+failed wake loses nothing. Only the controller amends, a held flight too. The pilot classifies each with its
+co-pilot, **fold** into a leg, a new **leg**, or a new **flight** for you to launch, changes the route, and records
+it with `pilot classify <id> fold|leg|flight [--leg <leg>] --why "<why>"`, which writes an indented `Class:` line
+under it (other lines there stay) and logs it as the pilot's. The dashboard's plan data gives each a state: open,
+classified, done once its leg is done, or *to the controller* for a new flight.
+
 The CLI is the pilot's, and yours:
 
 ```powershell
@@ -99,6 +110,8 @@ pilot track --out <scratch>/track.html   # its tracking page, for the pilot to p
 pilot track --url <artifact url>    # where it was published: the plan's Tracking: line
 pilot plan --hold                   # hold this flight at the gate (Hold: awaiting clearance): plan only, start refuses every leg
 pilot clear PIL2                    # the controller's: clear a holding flight for takeoff; its pilot is told, or woken, to take off
+pilot amend PIL2 "<request>"        # the controller's: file amendment A<n> in the plan; its pilot is told, or woken, to classify it
+pilot classify A1 fold --leg fix --why "<why>"   # the pilot's: fold | leg | flight, recorded under the amendment and logged
 pilot connect TIA2 [--remove]       # a flight this one waits for, on the plan's Connects: line; start holds until it lands
 pilot start fix-export --brief brief.md --pilot "<pilot session name>" [--after other-leg]
 pilot start fix-export-b --brief b.md --pilot "<name>" --divert "<why>"   # take an alternate (the route's Alt of column) in its primary's place, logged
@@ -240,7 +253,8 @@ python -m unittest discover tests      # from the repo root; under a second
 ```
 
 The offline suite runs `pilot.py`'s own logic against fixtures and needs no Claude Code, no daemon and
-no account. It covers parsing plans (the route, the waiting section, the notes, header lines), flight
+no account. It covers parsing plans (the route, the waiting section, the notes, header lines), amendments (filing,
+classifying, their validations and states, the controller-only guard and the route that files one), flight
 numbers, the plan log and the black box, weighted spend, checklists rebuilt from a transcript, who refused a
 call (and whether it was the wiring's gate), which subagent an Agent call started, the refuel gates and headroom projections, the budget and ask hooks, the tracking page, transcript images by reference (their refs and the route that serves them), and images the controller attaches (the upload route, the path that makes one an image, the plan log line). Each test
 gets its own empty `PILOT_STATE` and `CLAUDE_CONFIG_DIR` in a temporary folder, and `claude agents` is
