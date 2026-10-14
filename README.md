@@ -100,7 +100,12 @@ failed wake loses nothing. Only the controller amends, a held flight too. The pi
 co-pilot, **fold** into a leg, a new **leg**, or a new **flight** for you to launch, changes the route, and records
 it with `pilot classify <id> fold|leg|flight [--leg <leg>] --why "<why>"`, which writes an indented `Class:` line
 under it (other lines there stay) and logs it as the pilot's. The dashboard's plan data gives each a state: open,
-classified, done once its leg is done, or *to the controller* for a new flight.
+classified, done once its leg is done, or *to the controller* for a new flight. A fold's fuel is
+`pilot amend-budget <leg> <tokens> --amendment <id>`, the leg's pilot's only: the amendment's own estimate, an
+increment, added to the leg's budget on your authority, with no watchtower and whatever the refuel switch says. It
+needs account headroom (none on march on, for a marching flight) and keeps the amendment's additions, its calls
+added up, within `amendFactor` (1.5) times the leg's first budget; past either it goes to you (exit 2). Applied,
+it writes one `Budget: +<N> to <leg>` line under the amendment and logs "Amendment A<n> budget: ..." with the cap.
 
 The CLI is the pilot's, and yours:
 
@@ -112,6 +117,7 @@ pilot plan --hold                   # hold this flight at the gate (Hold: awaiti
 pilot clear PIL2                    # the controller's: clear a holding flight for takeoff; its pilot is told, or woken, to take off
 pilot amend PIL2 "<request>"        # the controller's: file amendment A<n> in the plan; its pilot is told, or woken, to classify it
 pilot classify A1 fold --leg fix --why "<why>"   # the pilot's: fold | leg | flight, recorded under the amendment and logged
+pilot amend-budget fix 3000000 --amendment A1    # the pilot's: add a fold's estimate (an increment) on your authority, within its cap
 pilot connect TIA2 [--remove]       # a flight this one waits for, on the plan's Connects: line; start holds until it lands
 pilot start fix-export --brief brief.md --pilot "<pilot session name>" [--after other-leg]
 pilot start fix-export-b --brief b.md --pilot "<name>" --divert "<why>"   # take an alternate (the route's Alt of column) in its primary's place, logged
@@ -254,7 +260,9 @@ python -m unittest discover tests      # from the repo root; under a second
 
 The offline suite runs `pilot.py`'s own logic against fixtures and needs no Claude Code, no daemon and
 no account. It covers parsing plans (the route, the waiting section, the notes, header lines), amendments (filing,
-classifying, their validations and states, the controller-only guard and the route that files one), flight
+classifying, their validations and states, the controller-only guard and the route that files one; a fold's
+`amend-budget`, its cap added up across calls, headroom, the manual switch, its guards, and refuel's cap and
+watchtower counting the amendments), flight
 numbers, the plan log and the black box, weighted spend, checklists rebuilt from a transcript, who refused a
 call (and whether it was the wiring's gate), which subagent an Agent call started, the refuel gates and headroom projections, the budget and ask hooks, the tracking page, transcript images by reference (their refs and the route that serves them), and images the controller attaches (the upload route, the path that makes one an image, the plan log line). Each test
 gets its own empty `PILOT_STATE` and `CLAUDE_CONFIG_DIR` in a temporary folder, and `claude agents` is
@@ -273,7 +281,7 @@ overshoot by one message, never more.
 **Refuelling.** A pilot asks for more with `pilot refuel <leg> <N> --reason`, and the reason is required.
 Gates come first and need no model: the usage figures are fresh (at most 30 minutes old), both windows
 are under 80% and not projected to run dry before they reset (the status line's rules), and N is at most
-twice the leg's first budget. The 7-day projection holds a refuel only once the week is 50% used and the dry
+twice the leg's first budget, counted with what its fold amendments added (`amend-budget`). The 7-day projection holds a refuel only once the week is 50% used and the dry
 day is at most 3 days off: early in the week it is a guess from a few days' burn. Past them the **watchtower**, one Haiku call with no tools (about 3 s),
 reads the leg's goal and Done when, the checklist, the spend, the worker's last message and the reason,
 and approves or sends it to the controller. It checks the reason against the checklist: in testing it refused a
@@ -285,7 +293,7 @@ headroom; **march on** is for when you have several accounts and switch as one r
 *all to me*) sends every refuel to the controller, you or the autopilot while it is on. The switch is stored as
 `auto`, `override` or `manual` in `<state>/refuel.json`, and each change is in the black box.
 `~/.pilot/pilot.json` takes `"refuel": {"maxUsedPct": 80, "maxFactor": 2, "maxAgeMinutes": 30, "weekDryPct": 50,
-"weekDryDays": 3, "marchOn": 1}`.
+"weekDryDays": 3, "marchOn": 1, "amendFactor": 1.5}`.
 
 **March on.** The first `marchOn` flights in your order (default 1; drag a flight up to choose), counting only
 flights still flying, march on whatever the account's usage, and their strips and cards say *marching on*:
