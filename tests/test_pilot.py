@@ -1574,6 +1574,43 @@ class AddReposTests(Case):
         self.assertEqual(pilot.config()["repos"], {})
 
 
+class CloseTests(Case):
+    """pilot close: a leg its pilot checked done itself reads done, whatever its worker last reported, until the
+    worker takes another turn. uwp-sdk's BLOCKED stood for a day after its pilot had repacked and checked it."""
+
+    def test_a_closed_blocked_leg_reads_done_until_its_worker_talks_again(self):
+        import argparse
+        self.plan("p1", "# Flight plan: x\n\n## Log\n\n")
+        w = self.worker("uwp-sdk", plan="p1")
+        said = lambda at, text: {"type": "assistant", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at)),
+                                 "message": {"id": f"m{at}", "content": [{"type": "text", "text": text}]}}
+        p = self.transcript("sess-uwp-sdk", [said(int(time.time()) - 3600, "BLOCKED: the UWP workload is missing")])
+        row = {"id": w["id"], "sessionId": w["sessionId"], "state": "blocked", "status": "idle"}
+        self.assertEqual(pilot.leg_state(pilot.worker_status(w, [row])), ("warn", "waiting on its pilot"))
+        with unittest.mock.patch.object(pilot, "agents", lambda: [row]):
+            with self.assertRaises(SystemExit):
+                pilot.cmd_close(argparse.Namespace(name="uwp-sdk", why="checked"))
+            pilot.cmd_close(argparse.Namespace(name="uwp-sdk", why="repacked 14.0.0-3d.1; hashes and exports checked"))
+        s = pilot.worker_status(pilot.load("uwp-sdk"), [row])
+        self.assertEqual((s["state"], pilot.leg_state(s), s["unread"]), ("done", ("good", "closed by its pilot"), False))
+        self.assertIn("closed by its pilot: repacked", s["detail"])
+        self.assertIn("Leg uwp-sdk closed by its pilot's check (its worker last reported BLOCKED): repacked",
+                      pilot.plan_path("p1").read_text(encoding="utf-8"))
+        # Its worker takes another turn: what it says stands again.
+        p.write_text(p.read_text(encoding="utf-8") + json.dumps(said(int(time.time()) + 60, "BLOCKED: again")) + "\n", encoding="utf-8")
+        pilot._meters.clear()
+        s = pilot.worker_status(pilot.load("uwp-sdk"), [row])
+        self.assertEqual((s["closed"], s["state"]), (None, "blocked"))
+
+    def test_a_flying_leg_is_not_closed(self):
+        import argparse
+        w = self.worker("fix")
+        row = {"id": w["id"], "sessionId": w["sessionId"], "state": "working", "status": "busy"}
+        with unittest.mock.patch.object(pilot, "agents", lambda: [row]), self.assertRaises(SystemExit):
+            pilot.cmd_close(argparse.Namespace(name="fix", why="the pilot thinks it is done already"))
+        self.assertNotIn("closed", pilot.load("fix"))
+
+
 class MergeTargetTests(Case):
     """The controller's merge runs in the repo its waiting item names the PR in, not the flight's first leg's."""
 

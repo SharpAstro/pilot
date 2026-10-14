@@ -123,6 +123,7 @@ pilot start fix-export --brief brief.md --pilot "<pilot session name>" [--after 
 pilot start fix-export-b --brief b.md --pilot "<name>" --divert "<why>"   # take an alternate (the route's Alt of column) in its primary's place, logged
 pilot list                          # state, weighted spend vs budget, last activity, current tool
 pilot result fix-export             # the worker's report
+pilot close fix-export --why "<the check>"   # the pilot's: a leg it checked done itself, whatever the worker last reported
 pilot tell w-fix-export -m "also cover rotated pages"   # through the intercom, mid-turn too
 pilot say fix-export "also cover rotated pages"   # your message, as a user turn (its turn must have ended)
 pilot review fix-export --file round1.md --post   # record a review round of its PR (and post it there)

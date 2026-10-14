@@ -25,6 +25,7 @@ what they have spent, gates their spend, delivers your messages, summarises them
   python pilot.py say NAME TEXT|-      your message to a worker whose turn has ended, as a user turn
   python pilot.py review NAME --file F [--post]   record a review round of the leg's PR, from the reviewer's file
   python pilot.py budget NAME N        a new ceiling in weighted tokens (absolute, not an increment)
+  python pilot.py close NAME --why W   a leg its pilot checked done itself, whatever the worker last reported
   python pilot.py summary [NAME]       a Haiku summary of one worker, or of all of them
   python pilot.py stop NAME            stop it; the conversation is kept
   python pilot.py rm NAME              delete it (its worktree too, when Claude Code says that is safe) and
@@ -2074,6 +2075,10 @@ def worker_status(w, rows=None):
     rec = session_record(row.get("pid")) if row and row.get("pid") else {}
     state = (row or {}).get("state") or ("gone" if not row else (row.get("status") or "?"))
     job = job_state(w["id"])
+    # Closed by its pilot (cmd_close): done, whatever its last report said, until it takes another turn.
+    closed = w.get("closed") if w.get("closed") and state != "working" and (stopped or 0) <= w["closed"]["at"] else None
+    if closed:
+        state, job = "done", {**job, "detail": f"closed by its pilot: {closed['why']}"}
     return {
         **{k: w.get(k) for k in ("name", "id", "sessionId", "repo", "worktree", "branch", "base", "model", "effort",
                                  "budget", "started", "pilot", "after", "plan", "divertedFrom", "divertReason")}, "agent": agent_name(w),
@@ -2091,7 +2096,8 @@ def worker_status(w, rows=None):
         "approach": approach(w.get("reviews"), (collateral(w) or {}).get("prs")),
         # Its turn has ended (done or blocked): stopped, even while Claude Code still calls it busy, as it does
         # while a background task it started is attached. ephemeris reported BLOCKED so, and its pilot slept on.
-        "unread": state in ("done", "blocked") and unread(w, False, stopped or last),
+        "unread": state in ("done", "blocked") and not closed and unread(w, False, stopped or last),
+        "closed": closed,
         "checklist": checklist([s.get("sessionId") for s in sessions_of(w)]),
         "remote": f"https://claude.ai/code/{rec['bridgeSessionId']}" if rec.get("bridgeSessionId") else None,
         "git": collateral(w), "outside": outside_line(said[-1]["text"]) if said else None,
@@ -3588,6 +3594,26 @@ def cmd_budget(a):
     print(f"{a.name}: budget {a.tokens:,} weighted tokens")
 
 
+def cmd_close(a):
+    """A leg its pilot checked done itself: the worker reported BLOCKED, or DONE with checklist items open, and the
+    pilot ran what was left and checked every Done-when clause. uwp-sdk's worker reported the UWP workload missing;
+    the pilot installed nothing, found it installed, repacked and checked at 19:05, and the leg was closed in the
+    plan's text, but the worker's BLOCKED stood: its flight's light stayed amber, its strip said "waiting on its
+    pilot", and the next morning the summary still asked the controller to install it. Recorded on the worker,
+    logged in its plan. It stands until the worker takes another turn."""
+    w = need(a.name)
+    if len(a.why.strip()) < 20:
+        sys.exit("pilot: --why says what the check was, 20 characters or more")
+    s = worker_status(w)
+    if s["state"] == "working":
+        sys.exit(f"pilot: {a.name} is flying; its own report closes it")
+    w["closed"] = {"at": time.time(), "why": a.why.strip(), "by": os.environ.get("CLAUDE_CODE_SESSION_ID") or "the controller"}
+    save(w)
+    plan_log(w.get("plan"), f"Leg {a.name} closed by its pilot's check (its worker last reported "
+                            f"{s.get('reportHead') or s['state']}): {a.why.strip()}")
+    print(f"{a.name}: closed; it reads done until its worker takes another turn")
+
+
 EDGE = [Path(os.environ.get(v, "")) / "Microsoft/Edge/Application/msedge.exe" for v in ("ProgramFiles(x86)", "ProgramFiles")]
 
 
@@ -3675,6 +3701,8 @@ def leg_state(w):
     fin = w.get("final") or {}
     if w.get("state") == "working":
         return "working", "flying"
+    if w.get("closed") or fin.get("closed"):
+        return "good", "closed by its pilot"
     if w.get("state") == "blocked":
         return "warn", "waiting on you" if w.get("prompt") or not (w.get("plan") or w.get("pilot")) else "waiting on its pilot"
     head, items = w.get("reportHead") or fin.get("reportHead"), w.get("checklist") or fin.get("checklist") or []
@@ -4260,7 +4288,7 @@ def cmd_rm(a):
     if not ok:
         sys.exit("pilot: claude rm failed; the worker's record is kept")
     w["archivedAt"] = time.time()
-    w["final"] = {"state": s["state"], "detail": s.get("detail"), "spend": s["spend"], "reportHead": s.get("reportHead"),
+    w["final"] = {"state": s["state"], "detail": s.get("detail"), "spend": s["spend"], "reportHead": s.get("reportHead"), "closed": s.get("closed"),
                   "report": rep[:6000], "commits": commits, "checklist": checklist([x.get("sessionId") for x in sessions_of(w)])}
     write_json(ARCHIVE / f"{a.name}-{int(w['archivedAt'])}.json", w)
     (WORKERS / f"{a.name}.json").unlink(missing_ok=True)
@@ -5599,6 +5627,10 @@ def main():
     s.add_argument("name")
     s.add_argument("tokens", type=int)
     s.set_defaults(fn=cmd_budget)
+    s = sub.add_parser("close", help="a leg its pilot checked done itself, whatever its worker last reported")
+    s.add_argument("name")
+    s.add_argument("--why", required=True, help="the check: what was run and what it showed, 20 characters or more")
+    s.set_defaults(fn=cmd_close)
     s = sub.add_parser("summary")
     s.add_argument("name", nargs="?")
     s.set_defaults(fn=cmd_summary)

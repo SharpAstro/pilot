@@ -153,7 +153,9 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
    answer to the worker. Only what rule 9 sends to the controller goes to them. A worker blocked on a
    refused command is never told, by a brief or a message, to reach it another way (a script, another shell,
    environment variables): run the step yourself if your own permissions allow it and log that you did,
-   or it goes to the controller.
+   or it goes to the controller. Once what was left is done and you have checked every Done-when clause
+   yourself, close the leg: `pilot close <leg> --why "<what you ran and what it showed>"`. Until then the
+   worker's last BLOCKED stands, and the dashboard and the summary keep putting it to the controller.
 9. **Decide engineering questions yourself, with the co-pilot.** Design, test strategy, file layout,
    naming, which reading of a spec to follow, how to split a leg: these are yours, not the controller's.
    For each one that matters, ask the co-pilot, a Sonnet subagent this plugin ships: `Agent` with subagent

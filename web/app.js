@@ -322,6 +322,8 @@ const waitsOnPilot = w => blockedTurn(w) && !waitsOnYou(w);
 
 function stateOf(w) {
   if (w.state === "working") return {cls: "working", label: "● working", stroke: "var(--fill)", tint: "var(--tint-fill)"};
+  // Its pilot checked it done itself (pilot close), whatever the worker last reported.
+  if (w.closed || w.final?.closed) return {cls: "done", label: "✓ closed by its pilot", stroke: "var(--good)", tint: "var(--tint-good)"};
   if (waitsOnYou(w)) return {cls: "blocked", label: "waiting on you", stroke: "var(--warn)", tint: "var(--tint-warn)"};
   if (waitsOnPilot(w)) return {cls: "blocked", label: "waiting on its pilot", stroke: "var(--warn)", tint: "var(--tint-warn)"};
   if (w.state === "done" || w.state === "blocked" || w.final) {
