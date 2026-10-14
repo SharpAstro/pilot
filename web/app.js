@@ -58,6 +58,87 @@ document.addEventListener("click", e => {
   const img = e.target.closest?.("img.thumb[data-full]");
   if (img) { e.stopPropagation(); lightbox(img.dataset.full); }
 }, true);
+
+// Images attached to a message box: pasted (Ctrl+V), dropped or picked, each uploaded at once to /api/uploads,
+// which keeps it under <state>/uploads, and shown as a thumbnail with a remove button until the box sends. The
+// server writes each into the message as its path and a line telling the session to open it with Read. A box
+// is a key: its tray (`data-attach`) and the elements that take a paste or a drop (`data-attach-to`) name it.
+const UPLOAD_MAX = 10 * 1024 * 1024;
+const attached = new Map(), attachNote = new Map();
+const attachedIds = key => (attached.get(key) || []).map(a => a.id);
+const trayHtml = key => `${(attached.get(key) || []).map((a, i) => `<span class="att"><img class="thumb" src="${esc(a.url)}" alt="attached image" data-full="${esc(a.url)}">`
+  + `<button class="att-rm" data-attach-rm="${esc(key)}" data-i="${i}" title="remove this image">×</button></span>`).join("")}`
+  + `<label class="att-pick" title="attach images: or paste (Ctrl+V) or drop them on the box">+ image<input type="file" accept="${IMAGE_TYPES.join(",")}" multiple data-attach-pick="${esc(key)}" hidden></label>`
+  + (attachNote.get(key) ? `<span class="sub att-note">${esc(attachNote.get(key))}</span>` : "");
+// `?attach=<upload name>,…`: every box starts with those uploads attached, fetched and uploaded again as a paste
+// is, for a screenshot of a box before it sends.
+const seedAttach = (new URLSearchParams(location.search).get("attach") || "").split(",").filter(n => /^[0-9a-f]{32}\.(png|jpe?g|gif|webp)$/.test(n));
+const seeded = new Set();
+const tray = key => {
+  if (seedAttach.length && !seeded.has(key)) {
+    seeded.add(key);
+    Promise.all(seedAttach.map(n => fetch(`/api/uploads/${n}`).then(r => r.blob()).then(b => new File([b], n, {type: b.type}))))
+      .then(files => attach(key, files));
+  }
+  return `<div class="attach" data-attach="${esc(key)}">${trayHtml(key)}</div>`;
+};
+// The trays are redrawn in place, not by a render: a box being typed in is never redrawn under the cursor.
+function drawTrays(key) { for (const el of document.querySelectorAll(`[data-attach="${CSS.escape(key)}"]`)) el.innerHTML = trayHtml(key); }
+function clearAttached(key) { attached.delete(key); attachNote.delete(key); drawTrays(key); }
+// A box with an upload still in flight refuses to send: the image would land after the box was cleared, and ride
+// with its next message, perhaps to another session.
+const uploading = new Map();
+const stillUploading = key => (uploading.get(key) || 0) > 0;
+async function attach(key, files) {
+  uploading.set(key, (uploading.get(key) || 0) + 1);
+  try { await attachAll(key, files); } finally { uploading.set(key, uploading.get(key) - 1); }
+}
+async function attachAll(key, files) {
+  for (const f of [...files]) {
+    if (!IMAGE_TYPES.includes(f.type)) { attachNote.set(key, `${f.name || "that file"}: only PNG, JPEG, GIF or WebP images`); continue; }
+    if (f.size > UPLOAD_MAX) { attachNote.set(key, `${f.name || "that image"}: over 10 MB`); continue; }
+    attachNote.set(key, "uploading…"); drawTrays(key);
+    try {
+      const r = await fetch("/api/uploads", {method: "POST", headers: {"X-Pilot": "1", "Content-Type": f.type}, body: f});
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      attached.set(key, [...(attached.get(key) || []), {id: j.id, url: j.url}]);
+      attachNote.delete(key);
+    } catch (e) { attachNote.set(key, `not attached: ${e.message}`); }
+  }
+  drawTrays(key);
+}
+document.addEventListener("paste", e => {
+  const key = e.target.closest?.("[data-attach-to]")?.dataset.attachTo;
+  const files = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith("image/"));
+  if (!key || !files.length) return;
+  // A paste from Word or a browser carries the text too: it is pasted as usual, and only an image alone stops it.
+  if (!e.clipboardData.getData("text/plain")) e.preventDefault();
+  attach(key, files);
+});
+document.addEventListener("dragover", e => {
+  if (e.target.closest?.("[data-attach-to]") && [...(e.dataTransfer?.types || [])].includes("Files")) e.preventDefault();
+});
+document.addEventListener("drop", e => {
+  const key = e.target.closest?.("[data-attach-to]")?.dataset.attachTo;
+  if (!key || !e.dataTransfer?.files?.length) return;
+  e.preventDefault(); attach(key, e.dataTransfer.files);
+});
+document.addEventListener("change", e => {
+  const key = e.target.dataset?.attachPick;
+  if (key) { attach(key, e.target.files); e.target.value = ""; }
+});
+document.addEventListener("click", e => {
+  const b = e.target.closest?.("[data-attach-rm]");
+  if (!b) return;
+  e.preventDefault();
+  const key = b.dataset.attachRm, list = [...(attached.get(key) || [])];
+  list.splice(+b.dataset.i, 1);
+  attached.set(key, list); drawTrays(key);
+});
+// A plan log or black box line names its images as `[image uploads/<name>]`: drawn as thumbnails, not as words.
+const UPLOAD_TAG = /\s?\[image uploads\/([0-9a-f]{32}\.(?:png|jpe?g|gif|webp))\]/g;
+const withImages = (text, draw) => draw(String(text).replace(UPLOAD_TAG, "")) + thumbs([...String(text).matchAll(UPLOAD_TAG)].map(m => `/api/uploads/${m[1]}`));
 const M = n => !n ? "0" : n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n);
 const ago = t => { if (!t) return "never"; const s = Date.now() / 1000 - t; return s < 60 ? "just now" : s < 3600 ? Math.round(s / 60) + "m ago" : s < 86400 ? (s / 3600).toFixed(1) + "h ago" : Math.round(s / 86400) + "d ago"; };
 const clock = iso => iso ? new Date(iso).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"}) : "";
@@ -707,7 +788,7 @@ function planCard(p, s) {
     return `<tr class="${link ? "click" : ""}${l.altOf ? " altleg" : ""}"${link ? ` data-href="${link}"` : ""}><td><b>${esc(l.leg)}</b>${alt}</td><td>${md(l.goal)}</td><td>${esc(l.after.join(", ") || "-")}</td>
       <td>${md(l.doneWhen)}</td><td>${out ? `<span class="chip other">alternate, not taken</span>` : `<span class="chip ${st.cls}"${st.cls === "done" && !landedOf(p, l.leg) ? ` title="${esc(`not landed: ${unlandedWhy(p, l.leg)}`)}"` : ""}>${esc(status)}</span>`}${why}${w && (w.state === "working" || blockedTurn(w)) ? doing(w) : ""}${checkLine(w ? w.checklist : h?.final?.checklist)}${gitLine((w || h)?.git, (w || h)?.approach)}</td><td class="num">${sp ? esc(M(sp.weighted)) : ""}</td></tr>`;
   }).join("");
-  const log = p.log.slice(-12).reverse().map(l => `<li>${esc(l)}</li>`).join("");
+  const log = p.log.slice(-12).reverse().map(l => `<li>${withImages(l, esc)}</li>`).join("");
   const ps = p.pilotState, waiting = ps?.status === "waiting";
   const flying = p.legs.map(l => l.leg).filter(n => s.workers.some(w => w.name === n && w.state === "working"));
   const fold = (k, def) => `data-k="${esc(k)}"${def ? ` data-open="1"` : ""}${(opened.has(k) ? opened.get(k) : def) ? " open" : ""}`;
@@ -796,9 +877,9 @@ function waitingHtml(p, ps) {
   }).join("");
   const can = (p.live || p.asleep) && p.pilot;     // a parked pilot is woken by the message
   const left = unanswered(p).length;
-  return `<div class="ask${left ? "" : " done"}"><div class="cardhead"><b>${left ? "Waiting on you" : "Answered, with the pilot"}</b><span class="sub">from the plan · answer here, in the pilot's terminal${where}</span></div>
+  return `<div class="ask${left ? "" : " done"}" data-attach-to="answers:${esc(sid)}"><div class="cardhead"><b>${left ? "Waiting on you" : "Answered, with the pilot"}</b><span class="sub">from the plan · answer here, in the pilot's terminal${where}</span></div>
     ${intro ? md(intro, true) : ""}<ol class="items">${rows}</ol>
-    <div class="sendrow"><button class="primary" data-sendanswers="${esc(sid)}"${n && can ? "" : " disabled"}>Send ${n || ""} answer${n === 1 ? "" : "s"} to the pilot</button>
+    ${tray(`answers:${sid}`)}<div class="sendrow"><button class="primary" data-sendanswers="${esc(sid)}"${n && can ? "" : " disabled"}>Send ${n || ""} answer${n === 1 ? "" : "s"} to the pilot</button>
       <span class="sub">${esc(sentNote.get(sid) || (can ? "through the intercom; it reaches the pilot at its next step" : "the pilot is not running"))}</span></div></div>`;
 }
 
@@ -808,6 +889,7 @@ async function sendAnswers(sid) {
   // An item already answered here (merged with its own button, say) is not sent again.
   const picked = unanswered(p).map(it => [it, answers.get(`${sid}|${it.title}`)]).filter(([, a]) => a);
   if (!picked.length) return;
+  if (stillUploading(`answers:${sid}`)) { sentNote.set(sid, "image still uploading"); render(); return; }
   sentNote.set(sid, "sending…"); render();
   // What the controller submits here is done here: a Merge answer to a merge item is the merge itself, run by
   // the dashboard, since a pilot told "Merge" is refused it (another session's message carries no authority).
@@ -822,8 +904,9 @@ async function sendAnswers(sid) {
     + picked.map(([it, a]) => `- ${it.title}: ${merged.get(it.title) || (a.kind === "accept" ? `accepted your recommendation (${it.rec})` : a.value)}`).join("\n")
     + `\nTake each answered item out of the section, log the answer, and carry on.`;
   try {
-    const j = await post("/api/intercom", {to: [p.pilot], text, answered: {plan: sid, titles: picked.map(([it]) => it.title)}});
+    const j = await post("/api/intercom", {to: [p.pilot], text, images: attachedIds(`answers:${sid}`), answered: {plan: sid, titles: picked.map(([it]) => it.title)}});
     for (const [it] of picked) answers.delete(`${sid}|${it.title}`);
+    clearAttached(`answers:${sid}`);
     sentNote.set(sid, `sent ${picked.length}: ${j.result}`);
   } catch (e) { sentNote.set(sid, `not sent: ${e.message}`); }
   render();
@@ -1173,9 +1256,9 @@ VIEWS.overview = (root, r) => {
   if (focusPlan) opened.set("plan:" + focusPlan, true);
   root.innerHTML = `
     <div class="s-plans"></div>
-    <div class="card pad bcast"><b>Intercom</b>
-      <textarea class="s-btext" rows="1" placeholder="A message to live sessions: it reaches each at its next step, mid-turn too. Ctrl+Enter sends."></textarea>
-      <select class="s-bto"></select><button class="primary s-bsend">Send</button><div class="sub s-bnote"></div></div>
+    <div class="card pad bcast" data-attach-to="intercom"><b>Intercom</b>
+      <textarea class="s-btext" rows="1" placeholder="A message to live sessions: it reaches each at its next step, mid-turn too. Paste or drop images. Ctrl+Enter sends."></textarea>
+      <select class="s-bto"></select><button class="primary s-bsend">Send</button>${tray("intercom")}<div class="sub s-bnote"></div></div>
     <h2>Flights</h2><div class="card flights s-flights"></div>
     <h2>Summary</h2>
     <div class="card pad"><div class="cardhead"><b>All workers</b><span><span class="sub s-stamp"></span> <button data-sum="*" class="s-btn">Summarise</button></span></div>
@@ -1190,10 +1273,11 @@ VIEWS.overview = (root, r) => {
   const bto = $(".s-bto", root), btext = $(".s-btext", root), bnote = $(".s-bnote", root);
   bto.addEventListener("change", () => { picked = bto.value; });
   async function broadcast() {
-    const t = targets.find(([label]) => label === bto.value), text = btext.value.trim();
-    if (!t || !text) return;
+    if (stillUploading("intercom")) { put(bnote, "image still uploading"); return; }
+    const t = targets.find(([label]) => label === bto.value), text = btext.value.trim(), images = attachedIds("intercom");
+    if (!t || !(text || images.length)) return;
     $(".s-bsend", root).disabled = true; put(bnote, `sending to ${esc(t[1].join(", "))}…`);
-    try { const j = await post("/api/intercom", {to: t[1], text}); btext.value = ""; put(bnote, esc(j.result)); }
+    try { const j = await post("/api/intercom", {to: t[1], text, images}); btext.value = ""; clearAttached("intercom"); put(bnote, esc(j.result)); }
     catch (e) { put(bnote, `<span style="color:var(--crit)">${esc(e.message)}</span>`); }
     $(".s-bsend", root).disabled = false;
   }
@@ -1239,6 +1323,7 @@ VIEWS.overview = (root, r) => {
 };
 
 VIEWS.session = (root, r) => {
+  const sayKey = `say:${r.worker || r.sid}`;          // its message box's attached images, kept per session page
   root.innerHTML = `
     <div class="sess-head"><a href="#/" class="btn">← overview</a><span class="title s-title"></span><span class="s-chip"></span>
       <div class="s-meter"></div><div class="s-actions"></div></div>
@@ -1253,7 +1338,7 @@ VIEWS.session = (root, r) => {
             <label class="sub"><input type="checkbox" class="s-tenter" checked> then Enter</label><button class="primary s-tsend">Type</button>
             <span class="keys"><button data-tkey="up" title="Up arrow">↑</button><button data-tkey="down" title="Down arrow">↓</button><button data-tkey="enter">Enter</button><button data-tkey="esc" title="Esc cancels a prompt, and mid-turn it interrupts the turn">Esc</button></span></div>
           <div class="sub s-tnote"></div></details>
-        <div class="say s-say" hidden><textarea class="s-text" placeholder="Message this session. Ctrl+Enter sends."></textarea>
+        <div class="say s-say" hidden data-attach-to="${sayKey}"><textarea class="s-text" placeholder="Message this session. Paste or drop images. Ctrl+Enter sends."></textarea>${tray(sayKey)}
           <div class="bar2"><span class="sub s-hint"></span><label class="sub s-asturn" hidden title="Stops it and continues it with your words as a user turn, in a new session id. Only once its turn has ended."><input type="checkbox" class="s-asturnbox"> as my own turn</label>
             <button class="primary s-send">Send</button></div></div>
         <!-- Long values (file lists, the leg's goal) get the main column's width, under the stream, not the side's. -->
@@ -1356,9 +1441,9 @@ VIEWS.session = (root, r) => {
         const parts = ev.text.replace(/\r/g, "").split("\n# Brief\n"), text = parts.slice(-1)[0], lines = text.split("\n");
         const body = lines.length > 12 ? folded(md(lines.slice(0, 8).join("\n")), `… +${lines.length - 8} lines (click to expand)`, md(text)) : md(text);
         return prompt(div, ev.queued ? "queued" : "", (parts.length > 1
-          ? `<details><summary>worker instructions</summary><pre>${esc(parts.slice(0, -1).join("\n# Brief\n"))}</pre></details>` : "") + body, ev.at);
+          ? `<details><summary>worker instructions</summary><pre>${esc(parts.slice(0, -1).join("\n# Brief\n"))}</pre></details>` : "") + body + thumbs(ev.images || []), ev.at);
       }
-      case "message": return prompt(div, `message from ${ev.sender}`, md(ev.text), ev.at);
+      case "message": return prompt(div, `message from ${ev.sender}`, md(ev.text) + thumbs(ev.images || []), ev.at);
       // A subagent's final report, handed back to this session: its words, not the user's.
       case "handback": return row("●", "t-handback", `<div class="t-label">report from a subagent${ev.agentId ? ` · ${agentLink(ev.agentId)}` : ""}</div>${md(ev.text)}`);
       case "said": return row("●", "said", md(ev.text));
@@ -1481,19 +1566,20 @@ VIEWS.session = (root, r) => {
   // Through the intercom by default: it reaches the session at its next step, mid-turn too, without stopping
   // it. "As my own turn" is the old way for a worker whose turn has ended: stop it, continue it with your words.
   async function send() {
-    const box = $(".s-text", root), text = box.value.trim(), hint = $(".s-hint", root);
-    if (!text || !(sayTo || worker)) return;
+    const box = $(".s-text", root), text = box.value.trim(), hint = $(".s-hint", root), images = attachedIds(sayKey);
+    if (stillUploading(sayKey)) { put(hint, "image still uploading"); return; }
+    if (!(text || images.length) || !(sayTo || worker)) return;
     const btn = $(".s-send", root), asTurn = !!worker && (!sayTo || (!$(".s-asturn", root).hidden && $(".s-asturnbox", root).checked));
     btn.disabled = true; put(hint, "delivering…");
     try {
       if (asTurn) {
-        const j = await post(`/api/workers/${worker}/say`, {text});
+        const j = await post(`/api/workers/${worker}/say`, {text, images});
         put(hint, `delivered as your turn; it continues as ${esc(j.id)}`);
       } else {
-        const j = await post("/api/intercom", {to: [sayTo], text});
+        const j = await post("/api/intercom", {to: [sayTo], text, images});
         put(hint, `intercom: ${esc(j.result)}`);
       }
-      box.value = "";
+      box.value = ""; clearAttached(sayKey);
     } catch (e) { put(hint, `<span style="color:var(--crit)">${esc(e.message)}</span>`); }
     btn.disabled = false;
   }
@@ -1605,7 +1691,7 @@ VIEWS.blackbox = root => {
     const rows = all.filter(e => (who === "all" || e.actor === who) && (flight === "all" || e.flight === flight));
     put($(".s-count", root), `${rows.length} of ${all.length}`);
     put($(".s-rows", root), rows.slice(0, 500).map(e => `<tr><td class="nowrap">${esc(when(e.at))}</td><td><span class="who ${esc(e.actor)}">${esc(e.actor)}</span></td>
-      <td>${esc(e.flight || "")}</td><td>${md(e.text, true)}</td></tr>`).join(""));
+      <td>${esc(e.flight || "")}</td><td>${withImages(e.text, t => md(t, true))}</td></tr>`).join(""));
     $(".s-empty", root).hidden = rows.length > 0;
   }
   root.addEventListener("click", e => { const w = e.target.closest("[data-who]")?.dataset.who; if (w) { who = w; draw(); } });
