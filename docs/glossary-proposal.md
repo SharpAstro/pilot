@@ -1,13 +1,38 @@
-# Glossary — PROPOSAL
+# Glossary — ADOPTED
 
-> **This is a proposal, not the vocabulary in force.** Nothing has been renamed. The controller picks a
-> word per row; a later leg (terms-rename) applies the choices.
-> Counts and file:line examples are taken at 10c56fc, this branch's head before the review fixes.
+> **This is the vocabulary in force.** It began as a proposal (terms-audit); the controller chose, and the
+> terms-rename leg applied the choices to README.md, the skill, the agents, pilot.py's user-facing strings
+> and web/, as labels and prose only. The file keeps its name.
+> Counts and file:line examples are taken at 10c56fc, before the rename; they say how widely each word was in use.
 > Count method: whole word, case-insensitive, the term plus a plain -s plural and no other inflection. A
 > letter, digit, underscore or hyphen on either side, or a dot joining it to a name, makes it part of another
 > word, so `worker_status`, `w-<leg>`, `co-pilot`, `watchtower`, `pilot.py` and `.strip()` do not count as
 > worker, leg, pilot, tower, pilot or strip. The files are README.md, plugins/pilot/skills/pilot/SKILL.md,
 > plugins/pilot/agents/*.md, pilot.py (comments and docstrings included), web/app.js and web/index.html.
+
+## The controller's choices
+
+1. **Adopt the proposal as proposed**: controller (*tower* retired everywhere, including the PR stage label
+   "to the tower", now "to the controller"), autopilot, pilot (*pilot.py* for the tool, as in "pilot.py's
+   budget"), co-pilot in prose, worker / leg, flight / flight plan, connection (the dashboard's server link
+   is the *stream*), intercom (*relay* retired), notice, budget / refuel (*fuel* not as a noun), removed for
+   workers and archive for flights, *radar* retired.
+2. **done / landed**: a leg whose checklist is complete is **done**; **landed** means its PR is merged
+   (replacing "at the gate" for a merged PR), and a flight has landed when every leg's PR has. Read order:
+   on approach → cleared to land → landed.
+3. **"At the gate", "holding" and "awaiting clearance" belong to the plan-only hold only.** A PR waiting on
+   its team's review is in **team review**. The PR stage that was *holding* (accepted, CI running) is now
+   **on final**, so the stages read: on approach → go-around → on final → (team review) → cleared to land →
+   landed, with *to the controller* when the rounds are spent.
+4. **Keep watchtower** for the refuel approver (no *dispatcher*).
+
+No stored name changed: the stage keys `approach`, `goaround`, `holding`, `tower`, `clearance`, `cleared`,
+`gate`; the leg-time state `"landed"` and `connections[].landed`; `Hold: awaiting clearance`, `plan --hold`
+and `clear`; `copilot`; `pilot-dashboard`; `notifications.json` and `/api/notifications/read`; `archive/` and
+`archivedAt`; refuel.json's `auto`/`manual`; the black box's `actor` values (the Black box page labels that
+field *who*). Each is mapped to its label where a person sees it. A black-box entry's `actor` is taken from
+the start of its text (`ACTORS` in pilot.py), so the reworded log lines keep their prefixes, and a test pins
+each one's actor.
 
 ## The table
 
@@ -16,9 +41,9 @@ API path. **none** means only prose, help text and UI labels change.
 
 | Term | Means | Proposed word | Other words in use (to retire) | Compat impact |
 |---|---|---|---|---|
-| The person | You: you answer what is waiting, merge, set budgets, stop and archive | **controller** (198: README.md:42, SKILL.md:8, pilot.py:3525) | *the tower* (38, and *tower* alone 48: README.md:42, SKILL.md:143, copilot.md:11), *flight controller* (2: SKILL.md:8), *the person who runs the work* (4: copilot.md:11, pilot.py:2677), *you* | The PR stage key `"tower"` (pilot.py:1451) is a JSON value in `/api/state`. Keep the key and change only its label "to the tower" → "to the controller". Otherwise none. |
+| The person | You: you answer what is waiting, merge, set budgets, stop and archive | **controller** (198: README.md:42, SKILL.md:8, pilot.py:3525). *Adopted.* | *the tower* (38, and *tower* alone 48: README.md:42, SKILL.md:143, copilot.md:11), *flight controller* (2: SKILL.md:8), *the person who runs the work* (4: copilot.md:11, pilot.py:2677), *you* | The PR stage key `"tower"` (pilot.py:1451) is a JSON value in `/api/state`. Keep the key and change only its label "to the tower" → "to the controller". Otherwise none. |
 | The controller's stand-in | Opus session answering the waiting items while you are away | **autopilot** (86: README.md:187, pilot.py:74) | — | none |
-| The refuel approver | One Haiku call that approves a refuel or passes it to the controller | **watchtower** (28: README.md:262, pilot.py:2754), or **dispatcher** if *tower* is retired (in aviation, the dispatcher signs off the fuel) | *the refuel gates* is its no-model pre-checks (README.md:259); keep that as **gates** | Renaming it changes the black box's `who` value `watchtower` (stored in blackbox.jsonl; filter at app.js:1460). |
+| The refuel approver | One Haiku call that approves a refuel or passes it to the controller | **watchtower** (28: README.md:262, pilot.py:2754). *Adopted: kept, not dispatcher.* | *the refuel gates* is its no-model pre-checks (README.md:259); keep that as **gates** | Renaming it changes the black box's `actor` value `watchtower` (the page labels it *who*) (stored in blackbox.jsonl; filter at app.js:1460). |
 | The refuel switch | auto (watchtower may approve) / manual (all to the controller) | **auto / manual** for the stored values. Label it "watchtower may approve / all to me" | *auto* clashes with *autopilot* and Claude Code's *auto mode* (app.js:376-382, README.md:267) | Stored in refuel.json and `/api/refuel`. Change only the UI label. |
 | The planning session | The Claude session that keeps the plan and starts legs | **pilot** (565) | It also names the product (README.md:1, index.html:6), the pwsh function (README.md:57) and pilot.py as a refuser ("pilot's budget", README.md:132). In prose, write **pilot.py** for the tool. | none |
 | Second-opinion subagent | Read-only Sonnet subagent | **co-pilot** in prose | *copilot* (3) only as the identifier; *co-pilot* has 21 | `copilot` is the subagent type and the file `agents/copilot.md`. Keep it. |
@@ -29,10 +54,10 @@ API path. **none** means only prose, help text and UI labels change.
 | The legs table | `## Route` | **route** (83) | *routing* for the autopilot's dispatch (README.md:196) | none |
 | A backup leg / taking it | A leg in *Alt of*; `start --divert` | **alternate** / **divert**. These are two different things, both clear. | — | none |
 | Flight dependency | Another flight whose merge this one waits for | **connection** (`connect`, `Connects:`) | *connection* also means the dashboard's server link (index.html:21 "connection to the dashboard server", "connecting…"). Call that one **stream**. | none (UI label). Flight side: the JSON key `connections` stays. |
-| Leg finished, checklist complete | DONE, nothing open, nothing uncommitted | **done** (the DONE report; the Overview table's state, README.md:131) | *landed* for a leg (102 in all, a leg's and a flight's: pilot.py:831, SKILL.md:151, README.md:22). *Landed* also means a flight whose PRs are all merged (pilot.py:3115), and a leg "lands" *before* its PR goes "on approach" and gets "cleared to land". | **Yes.** `"landed"` is a leg-time state (pilot.py:832) and a key in `connections[]` (pilot.py:752). Both are in `/api/state` and the tests. |
-| PR merged | The last review stage | **landed** (the flight is landed when every leg has landed) | *at the gate* (39: pilot.py:1452, SKILL.md:209) | Stage key `"gate"` (pilot.py:1451). Keep the key, change the label. |
-| PR review stages | Round due / fixing / CI running / rounds spent | **on approach / go-around / holding / to the controller** | *go around* is unused. *Holding* also names the plan-only hold (pilot.py:3429). | none (labels; keys `approach`, `goaround`, `holding`, `tower` stay) |
-| PR accepted and green, waiting on the team | Team review pending | **team review** | *awaiting clearance* (pilot.py:1458, SKILL.md:199), which also names the plan-only hold | none (label; key `clearance` stays) |
+| Leg finished, checklist complete | DONE, nothing open, nothing uncommitted | **done** (the DONE report; the Overview table's state, README.md:131). *Adopted.* | *landed* for a leg (102 in all, a leg's and a flight's: pilot.py:831, SKILL.md:151, README.md:22). *Landed* also means a flight whose PRs are all merged (pilot.py:3115), and a leg "lands" *before* its PR goes "on approach" and gets "cleared to land". | **Yes.** `"landed"` is a leg-time state (pilot.py:832) and a key in `connections[]` (pilot.py:752). Both are in `/api/state` and the tests. |
+| PR merged | The last review stage | **landed** (the flight is landed when every leg has landed). *Adopted.* | *at the gate* (39: pilot.py:1452, SKILL.md:209) | Stage key `"gate"` (pilot.py:1451). Keep the key, change the label. |
+| PR review stages | Round due / fixing / CI running / rounds spent | **on approach / go-around / on final / to the controller**. *Adopted, with* on final *for* holding. | *go around* is unused. *Holding* also names the plan-only hold (pilot.py:3429), which keeps it. | none (labels; keys `approach`, `goaround`, `holding`, `tower` stay) |
+| PR accepted and green, waiting on the team | Team review pending | **team review**. *Adopted.* | *awaiting clearance* (pilot.py:1458, SKILL.md:199), which also names the plan-only hold | none (label; key `clearance` stays) |
 | PR ready for your merge | Accepted, CI green, team approved | **cleared to land** (12) | — | none |
 | Plan-only flight | Launched to plan, no leg may start until cleared | **held at the gate, awaiting clearance**. *At the gate* and *awaiting clearance* then mean only this. | *holding* for this state (pilot.py:3317, README.md:100) | `Hold: awaiting clearance` is a plan-file line (pilot.py:415) and `--hold`/`clear` are CLI. Keep all three. |
 | Lifting the hold | `pilot clear` / the card button | **cleared for takeoff** (10) | — | none |
@@ -46,15 +71,15 @@ API path. **none** means only prose, help text and UI labels change.
 | Decision log | blackbox.jsonl, Black box page | **black box** (17) | — | none |
 | Token ceiling / raising it | `budget` (controller's override) / `refuel` (pilot's request) | **budget** for the number, **refuel** for a raise | *fuel* (11: README.md:132 "Fuel does not wake", SKILL.md:210 "Fuel goes through"), except the ⛽ icon and "tank" | none |
 
-## Renames that are compatibility changes
+## Renames that would have been compatibility changes (none was made)
 
-Only these touch a CLI command or flag, a file name, a JSON key or value, or an API path. Every other row
+Only these would touch a CLI command or flag, a file name, a JSON key or value, or an API path. Every other row
 changes prose, help text and UI labels only.
 
 1. **leg "landed" → "done"**, if the keys move with the word. Affected: the leg-time state value `"landed"`
    (pilot.py:832) and `connections[].landed` (pilot.py:752) in `/api/state`, read by app.js and the tests.
    It can be done label-only, keeping the keys.
-2. **watchtower → dispatcher**. Affected: the black box's `who` value, which is already stored in
+2. **watchtower → dispatcher**. Affected: the black box's `actor` value (labelled *who* on the page), which is already stored in
    blackbox.jsonl, and the Black box filter list (app.js:1460). Old rows would need mapping on read.
 3. **PR stage keys** `gate`, `clearance`, `tower`. The proposal keeps them and changes only their labels;
    renaming them changes `/api/state`.
@@ -66,7 +91,7 @@ changes prose, help text and UI labels only.
    - the `archive/` folder and `archivedAt` key for removed workers;
    - refuel.json's `auto`/`manual`.
 
-## Recommendation
+## Why (the proposal's recommendation, as adopted)
 
 Make one word mean one thing, and keep aviation order. Today a leg "lands" when its checklist is done
 (pilot.py:831), and only afterwards does its PR go "on approach" and get "cleared to land". "At the gate",
@@ -76,12 +101,11 @@ The fix:
 - A finished leg is **done**, which matches its DONE report.
 - **Landed** means merged, so a flight lands when every leg has landed. That is already how
   `flight_landed` decides it.
-- The PR runs **on approach → go-around → holding → (team review) → cleared to land → landed**.
+- The PR runs **on approach → go-around → on final → (team review) → cleared to land → landed**.
 - **At the gate, awaiting clearance** belongs only to a flight not yet cleared for takeoff, which is where
   aviation puts the gate.
-- Retire *tower* for **controller**. With *tower* gone, *watchtower* has no partner, so rename it
-  **dispatcher**, or keep it if the black-box value matters more.
+- Retire *tower* for **controller**. *Watchtower* stays (the controller's choice 4).
 - Retire *relay*, *radar*, *fuel* as a noun, and *archive* for a removed worker.
 
-Do all of this as labels and prose first, keeping every key, file and API path, so terms-rename touches no
+All of this was done as labels and prose, keeping every key, file and API path, so terms-rename touched no
 stored state.
