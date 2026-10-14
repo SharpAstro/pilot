@@ -91,6 +91,11 @@ class Case(unittest.TestCase):
     def log_of(self, sid):
         return pilot.parse_plan(pilot.plan_path(sid).read_text(encoding="utf-8"))["log"]
 
+    def last_box(self):
+        """The black box's last entry: its text and the actor blackbox() took from it."""
+        e = json.loads(pilot.BLACKBOX.read_text(encoding="utf-8").splitlines()[-1])
+        return e["text"], e["actor"]
+
 
 def usage(mid, inp=0, cw=0, cr=0, out=0, ts="2026-10-13T01:00:00Z"):
     return {"type": "assistant", "timestamp": ts, "message": {"id": mid, "usage": {
@@ -234,6 +239,20 @@ class PlanTests(Case):
         actors = {e["text"]: e["actor"] for e in view}
         self.assertEqual(actors["Controller answered (Push): Yes"], "controller")
         self.assertEqual(actors["Decided: one leg per concern. Co-pilot agreed."], "pilot")
+
+    def test_the_glossary_rewording_keeps_every_log_lines_actor(self):
+        # blackbox() takes an actor from the start of a line's text (ACTORS); terms-rename reworded these lines'
+        # tails, never their prefixes, so each keeps the actor it had. The refuel switch and the autopilot's pass
+        # their own actor (controller) besides; the refuel test pins the switch's.
+        cases = [("Watchtower approved: refuel fix to 16,000,000. ok. Asked because: x", "watchtower"),
+                 ("Watchtower sent to the controller: refuel fix to 12,000,000. manual. Asked because: x", "watchtower"),
+                 ("Review round 2 of leg-a (PR #7 at 11111111): 1 bug(s) left after 2 rounds that found bugs: to the controller.", "pilot.py"),
+                 ("Refuelling set to manual: every refuel goes to the controller", "pilot.py")]
+        for text, actor in cases:
+            pilot.blackbox(text)
+            self.assertEqual(self.last_box(), (text, actor))
+        pilot.blackbox("Autopilot switched on: it decides the controller's items until switched off", actor="controller")
+        self.assertEqual(self.last_box()[1], "controller")
 
 
 CONNECTED = """# Flight plan: Theme tokens
@@ -1081,6 +1100,9 @@ class ReviewTests(Case):
             self.assertEqual(ex.exception.code, 2)
             self.assertEqual(len(pilot.load("leg-a")["reviews"]), 2)
             self.assertIn("to the controller", self.log_of("p1")[-1])
+            text, actor = self.last_box()           # reworded from "to the tower": still pilot.py's line
+            self.assertTrue(text.startswith("Review round 2 of leg-a") and text.endswith("to the controller; 1 question(s). Bugs: Saving drops the last row."), text)
+            self.assertEqual(actor, "pilot.py")
         finally:
             pilot.collateral_now = old
 
@@ -1387,18 +1409,21 @@ class RefuelTests(Case):
         self.assertEqual(self.refuel(16_000_000), (True, "progress justifies it"))
         self.assertEqual(pilot.load("fix")["budget"], 16_000_000)
         self.assertIn("Watchtower approved: refuel fix to 16,000,000", self.log_of("s1")[-1])
+        self.assertEqual(self.last_box()[1], "watchtower")
 
     def test_gates_hold_without_asking_the_watchtower(self):
         approved, why = self.refuel(25_000_000)
         self.assertFalse(approved)
         self.assertIn("past 2 times", why)
         pilot.set_refuel_mode("manual")
+        self.assertEqual(self.last_box(), ("Refuelling set to manual: every refuel goes to the controller", "controller"))
         approved, why = self.refuel(12_000_000)
         self.assertFalse(approved)
         self.assertIn("manual", why)
         self.assertEqual(self.asked, [])
         self.assertEqual(pilot.load("fix")["budget"], 10_000_000)
         self.assertIn("Watchtower sent to the controller", self.log_of("s1")[-1])
+        self.assertEqual(self.last_box()[1], "watchtower")      # reworded from "sent to the tower"
 
     def test_a_refuel_needs_a_reason_and_a_raise(self):
         with self.assertRaises(ValueError):
