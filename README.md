@@ -228,7 +228,8 @@ python pilot.py screenshot s/<session id> --port <its port> --out <scratch dir>/
 then reads the PNG. `screenshot` finds Edge itself: a worktree-isolated worker is refused Edge run by its
 path, since Claude Code cannot tell a command named at runtime from git, and was right not to get round
 that through PowerShell. `?nostream` takes the state once; `--preview` closes a session page's stream, which
-would otherwise keep headless Edge from ever settling.
+would otherwise keep headless Edge from ever settling. `?bell` opens the bell, so a full URL such as
+`http://127.0.0.1:5182/?nostream&bell#/` shows it.
 
 ## Tests
 

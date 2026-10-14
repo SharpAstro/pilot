@@ -355,6 +355,7 @@ function summaryParts(key, s) {
 
 let S = null;
 function connect() {
+  if (new URLSearchParams(location.search).has("bell")) $("#panel").hidden = false;   // the bell open: for a screenshot of it
   if (new URLSearchParams(location.search).has("nostream")) {    // one look and no stream: for headless screenshots
     fetch("/api/state").then(r => r.json()).then(s => { S = s; conn(true); render(); });
     return;
