@@ -800,7 +800,7 @@ const holdChip = (p, ready) => `<span class="chip hold" title="Holding at the ga
 function clearanceCard(p, ready) {
   const name = `${p.flight ? `Flight ${p.flight}` : "this flight"} · ${p.title}`;
   return `<div class="clearance${ready ? " ready" : ""}"><div><b>Holding at the gate</b> <span class="sub">${ready
-      ? `the route is planned and the pilot has ended its turn: ${p.legs.filter(l => !l.altOf).length} leg${p.legs.filter(l => !l.altOf).length === 1 ? "" : "s"} wait for your clearance`
+      ? `the route is planned and ${p.live || p.asleep ? "the pilot has ended its turn" : "the pilot is not running"}: ${p.legs.filter(l => !l.altOf).length} leg${p.legs.filter(l => !l.altOf).length === 1 ? "" : "s"} wait for your clearance`
       : "the pilot is still planning; no leg takes off until you clear it"}</span>
     <div class="times ftimes"><span><b>departure</b>none yet</span><span><b>ETA</b>${esc(p.times?.noEta || "awaiting clearance: no departure yet")}</span></div></div>
     <button class="primary" data-clear="${esc(p.sessionId)}" data-name="${esc(name)}" title="Lift the hold, log it, and tell the pilot to take off (waking it if its session has ended)">Cleared for takeoff</button></div>`;
