@@ -40,6 +40,7 @@ Windows notes, all measured on CLI 2.1.296:
     copy. Only the session that made the worktree owns it, so `rm` removes the copies first.
 """
 import argparse
+import base64
 import datetime
 import glob
 import html
@@ -1083,8 +1084,20 @@ def tagged(c, name):
     return m.group(1) if m else ""
 
 
-def events_of(e):
-    """One transcript record as the events the session view shows."""
+# The image types the session view draws, served only as these: never svg (it can carry script), never a url source.
+IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+
+def image_block(b):
+    """A content block that is an image the view may draw: base64 and of an allowed type."""
+    src = b.get("source") if isinstance(b, dict) and b.get("type") == "image" else None
+    return isinstance(src, dict) and src.get("type") == "base64" and src.get("media_type") in IMAGE_TYPES
+
+
+def events_of(e, offset=None):
+    """One transcript record as the events the session view shows. With `offset`, the byte offset its line
+    starts at, its images go by reference: `<offset>.<i>` for content block i, `<offset>.<i>.<j>` for image j
+    inside tool_result block i, which `/api/sessions/<sid>/image/<ref>` serves, so a stream never carries base64."""
     out = []
     t, ts = e.get("type"), e.get("timestamp")
     msg = e.get("message") if isinstance(e.get("message"), dict) else {}
@@ -1096,9 +1109,11 @@ def events_of(e):
     if t == "assistant" and (e.get("error") or e.get("isApiErrorMessage")):
         ev("error", text=f"{e.get('error') or 'API error'}: {flat(c)[:2000]}")
     elif t == "assistant" and isinstance(c, list):
-        for b in c:
+        for i, b in enumerate(c):
             k = b.get("type") if isinstance(b, dict) else None
-            if k == "text" and b.get("text", "").strip():
+            if image_block(b) and offset is not None:
+                ev("image", ref=f"{offset}.{i}", **{"from": t})
+            elif k == "text" and b.get("text", "").strip():
                 ev("said", text=b["text"][:20000])
             elif k == "thinking" and b.get("thinking", "").strip():
                 ev("thinking", text=b["thinking"][:8000])
@@ -1110,14 +1125,19 @@ def events_of(e):
         user_text(c, ev)
     elif t == "user" and isinstance(c, list):
         tur = e.get("toolUseResult") if isinstance(e.get("toolUseResult"), dict) else {}
-        for b in c:
+        for i, b in enumerate(c):
             if not isinstance(b, dict):
                 continue
             if b.get("type") == "tool_result":
                 text = flat(b.get("content"))
                 denied = next((who for rx, who in DENIALS if rx.search(text)), None) if b.get("is_error") else None
+                inner = b.get("content") if isinstance(b.get("content"), list) else []
+                images = [f"{offset}.{i}.{j}" for j, x in enumerate(inner) if image_block(x)] if offset is not None else []
                 ev("result", id=b.get("tool_use_id"), error=bool(b.get("is_error")), denied=denied,
-                   agentId=tur.get("agentId"), text=text[:12000], **({"gate": True} if denied in GATES else {}))
+                   agentId=tur.get("agentId"), text=text[:12000], **({"gate": True} if denied in GATES else {}),
+                   **({"images": images} if images else {}))
+            elif image_block(b) and offset is not None:
+                ev("image", ref=f"{offset}.{i}", **{"from": t})
             elif b.get("type") == "text" and not e.get("isMeta") and b.get("text", "").strip():
                 user_text(b["text"], ev)
     elif t == "attachment":
@@ -1145,14 +1165,51 @@ def read_events(path, offset=0):
         return [], offset
     end = chunk.rfind(b"\n") + 1
     out = []
-    for line in chunk[:end].splitlines():
+    pos = 0
+    while pos < end:                         # each line with the exact byte offset it starts at, for image refs
+        nl = chunk.index(b"\n", pos)
+        line, at = chunk[pos:nl], offset + pos
+        pos = nl + 1
         try:
             e = json.loads(line)
         except ValueError:
             continue
         if isinstance(e, dict):
-            out += events_of(e)
+            out += events_of(e, at)
     return out, offset + end
+
+
+def transcript_image(path, ref):
+    """The bytes and media type of the image a ref names in a transcript, or None. The ref's offset must start a
+    line that parses as one JSON record, and the block it names must be an allowed base64 image."""
+    m = re.fullmatch(r"(\d+)\.(\d+)(?:\.(\d+))?", ref)
+    if not m:
+        return None
+    offset, i, j = int(m.group(1)), int(m.group(2)), m.group(3)
+    try:
+        with open(path, "rb") as f:
+            if offset:                       # a ref must start a line: the byte before it is a newline
+                f.seek(offset - 1)
+                if f.read(1) != b"\n":
+                    return None
+            else:
+                f.seek(0)
+            line = f.readline()
+        e = json.loads(line)
+    except (OSError, ValueError):
+        return None
+    msg = e.get("message") if isinstance(e, dict) else None
+    c = msg.get("content") if isinstance(msg, dict) else None
+    b = c[i] if isinstance(c, list) and i < len(c) else None
+    if j is not None:
+        inner = b.get("content") if isinstance(b, dict) and b.get("type") == "tool_result" else None
+        b = inner[int(j)] if isinstance(inner, list) and int(j) < len(inner) else None
+    if not image_block(b):
+        return None
+    try:
+        return base64.b64decode(b["source"].get("data") or "", validate=True), b["source"]["media_type"]
+    except (ValueError, TypeError):
+        return None
 
 
 def spawns(staff_dir):
@@ -4213,12 +4270,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with open(STATE / "requests.log", "a", encoding="utf-8") as f:
                 f.write(f"{time.strftime('%H:%M:%S')} {threading.current_thread().name} {fmt % a}\n")
 
-    def send(self, code, body, ctype="application/json"):
+    def send(self, code, body, ctype="application/json", cache="no-store", headers=()):
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
+        for k, v in headers:
+            self.send_header(k, v)
         self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(data)
@@ -4254,6 +4313,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             m = re.match(r"^/api/sessions/([0-9a-f-]{36})(?:/agents/([0-9a-f]{6,40}))?/stream$", path)
             if m:
                 return self.session_stream(m.group(1), m.group(2))
+            m = re.match(r"^/api/sessions/([0-9a-f-]{36})(?:/agents/([0-9a-f]{6,40}))?/image/([0-9.]{3,40})$", path)
+            if m:
+                return self.session_image(*m.groups())
             m = re.match(r"^/api/sessions/([0-9a-f-]{36})/agents$", path)
             if m:
                 return self.send(200, subagents(m.group(1)))
@@ -4290,10 +4352,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(b": ping\n\n")
                 self.wfile.flush()
 
+    @staticmethod
+    def session_path(sid, agent_id):
+        """A session's transcript, or one of its subagents', and the session's own (None, None if it has none)."""
+        main = transcript(sid)
+        return (main.parent / sid / "subagents" / f"agent-{agent_id}.jsonl" if main and agent_id else main), main
+
+    def session_image(self, sid, agent_id, ref):
+        """One image from a transcript by its ref (see events_of). A transcript line never changes once written,
+        so the browser may keep it."""
+        path, _ = self.session_path(sid, agent_id)
+        got = transcript_image(path, ref) if path and path.exists() else None
+        if not got:
+            return self.send(404, {"error": "no such image"})
+        return self.send(200, got[0], got[1], cache="private, max-age=31536000, immutable",
+                         headers=[("X-Content-Type-Options", "nosniff")])
+
     def session_stream(self, sid, agent_id):
         """Server-sent events: one transcript's last 400 events, then each new batch as it is written."""
-        main = transcript(sid)
-        path = main.parent / sid / "subagents" / f"agent-{agent_id}.jsonl" if main and agent_id else main
+        path, main = self.session_path(sid, agent_id)
         if not path or not path.exists():
             return self.send(404, {"error": "no such transcript"})
         self.sse()
