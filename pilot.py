@@ -1790,7 +1790,11 @@ def pilots(rows=None):
     roots = list(config()["repos"].values())
     out = []
     for r in rows:
-        if r.get("pid") and any(same_path(r.get("cwd"), root) for root in roots) and r.get("state") != "done":
+        # Claude Code calls a background session's job done once a turn ends, though its process lives on, idle: a
+        # pilot (a session with a flight plan) between turns is still the pilot. Left out, its page lost its chip and
+        # the overview its row, just when the controller looks to see whether it is asleep at the wheel.
+        pilot_between_turns = r.get("sessionId") and plan_path(r["sessionId"]).exists()
+        if r.get("pid") and any(same_path(r.get("cwd"), root) for root in roots) and (r.get("state") != "done" or pilot_between_turns):
             path = transcript(r["sessionId"])
             out.append({"name": r.get("name"), "id": r.get("id"), "sessionId": r.get("sessionId"), "kind": r.get("kind"),
                         "cwd": r.get("cwd"), "startedAt": r.get("startedAt"),
