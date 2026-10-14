@@ -711,6 +711,13 @@ def classify_amendment(sid, aid, cls, leg, why):
             raise ValueError(f"pilot: no leg {leg} on the route" + ("; add the new leg's row first" if cls == "leg" else ""))
     else:
         leg = ""                    # a new flight is the controller's to launch, on no leg of this one
+    # A Budget line keeps an amendment where it is: moved, the next amend-budget would overwrite the line, and its
+    # leg would keep the raise but lose it from its refuel cap. Keyed on the line, not the class: a hand-edited plan
+    # may carry one on another class.
+    a = next(a for a in plan["amendments"] if a["id"] == aid)
+    if isinstance(a["budget"], int) and (cls, leg) != (a["class"], a["leg"]):
+        raise ValueError(f"pilot: {aid}'s budget was already added to {a['budgetLeg']}, so {aid} stays there; new scope "
+                         f"elsewhere is a new amendment, which comes from the controller: put it in `## Waiting on the controller`")
     why = one_line(why)
     if len(why) < 20:
         raise ValueError("pilot: give the reason with --why: why this class, in a sentence")
