@@ -85,7 +85,15 @@ const tray = key => {
 // The trays are redrawn in place, not by a render: a box being typed in is never redrawn under the cursor.
 function drawTrays(key) { for (const el of document.querySelectorAll(`[data-attach="${CSS.escape(key)}"]`)) el.innerHTML = trayHtml(key); }
 function clearAttached(key) { attached.delete(key); attachNote.delete(key); drawTrays(key); }
+// A box with an upload still in flight refuses to send: the image would land after the box was cleared, and ride
+// with its next message, perhaps to another session.
+const uploading = new Map();
+const stillUploading = key => (uploading.get(key) || 0) > 0;
 async function attach(key, files) {
+  uploading.set(key, (uploading.get(key) || 0) + 1);
+  try { await attachAll(key, files); } finally { uploading.set(key, uploading.get(key) - 1); }
+}
+async function attachAll(key, files) {
   for (const f of [...files]) {
     if (!IMAGE_TYPES.includes(f.type)) { attachNote.set(key, `${f.name || "that file"}: only PNG, JPEG, GIF or WebP images`); continue; }
     if (f.size > UPLOAD_MAX) { attachNote.set(key, `${f.name || "that image"}: over 10 MB`); continue; }
@@ -851,6 +859,7 @@ async function sendAnswers(sid) {
   // An item already answered here (merged with its own button, say) is not sent again.
   const picked = unanswered(p).map(it => [it, answers.get(`${sid}|${it.title}`)]).filter(([, a]) => a);
   if (!picked.length) return;
+  if (stillUploading(`answers:${sid}`)) { sentNote.set(sid, "image still uploading"); render(); return; }
   sentNote.set(sid, "sending…"); render();
   // What the controller submits here is done here: a Merge answer to a merge item is the merge itself, run by
   // the dashboard, since a pilot told "Merge" is refused it (another session's message carries no authority).
@@ -1234,6 +1243,7 @@ VIEWS.overview = (root, r) => {
   const bto = $(".s-bto", root), btext = $(".s-btext", root), bnote = $(".s-bnote", root);
   bto.addEventListener("change", () => { picked = bto.value; });
   async function broadcast() {
+    if (stillUploading("intercom")) { put(bnote, "image still uploading"); return; }
     const t = targets.find(([label]) => label === bto.value), text = btext.value.trim(), images = attachedIds("intercom");
     if (!t || !(text || images.length)) return;
     $(".s-bsend", root).disabled = true; put(bnote, `sending to ${esc(t[1].join(", "))}…`);
@@ -1526,6 +1536,7 @@ VIEWS.session = (root, r) => {
   // it. "As my own turn" is the old way for a worker whose turn has ended: stop it, continue it with your words.
   async function send() {
     const box = $(".s-text", root), text = box.value.trim(), hint = $(".s-hint", root), images = attachedIds(sayKey);
+    if (stillUploading(sayKey)) { put(hint, "image still uploading"); return; }
     if (!(text || images.length) || !(sayTo || worker)) return;
     const btn = $(".s-send", root), asTurn = !!worker && (!sayTo || (!$(".s-asturn", root).hidden && $(".s-asturnbox", root).checked));
     btn.disabled = true; put(hint, "delivering…");
