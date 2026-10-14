@@ -4281,6 +4281,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         host = self.headers.get("Host", "")
         if not self.local() or self.headers.get("X-Pilot") != "1" or self.headers.get("Origin", f"http://{host}") != f"http://{host}":
             return self.send(403, {"error": "forbidden"})
+        # A preview on the live state only reads: its buttons are real (Merge merges a PR, Archive archives), and a
+        # worker checking a change clicks them. On a scratch PILOT_STATE it may write, which is how a worker tries one.
+        if self.preview and not os.environ.get("PILOT_STATE"):
+            return self.send(403, {"error": "a preview on the live state is read-only: run it with PILOT_STATE=<scratch dir> to try a button"})
         size = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(size) or b"{}") if size else {}
         m = re.match(r"^/api/workers/([a-z0-9-]+)/(stop|say|budget)$", self.path)
