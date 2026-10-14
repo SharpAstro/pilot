@@ -692,6 +692,14 @@ class HoldTests(Case):
         p = self.open_plan("s9", hold=True)
         self.assertEqual(pilot.parse_plan(p.read_text(encoding="utf-8"))["hold"], "awaiting clearance", "a new plan opens holding")
 
+    def test_plan_hold_is_refused_once_a_leg_has_taken_off(self):
+        self.plan("s1", PLAN)
+        self.worker("design", plan="s1")
+        with self.assertRaises(SystemExit) as e:
+            self.open_plan(hold=True)
+        self.assertIn("WA1 has already taken off (design)", str(e.exception))
+        self.assertNotIn("Hold:", pilot.plan_path("s1").read_text(encoding="utf-8"))
+
     def test_start_is_refused_while_held_and_goes_on_once_cleared(self):
         self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nHold: awaiting clearance"))
         msg = self.start()
