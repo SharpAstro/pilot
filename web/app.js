@@ -28,6 +28,36 @@ window.addEventListener("unhandledrejection", e => oops(e.reason && e.reason.sta
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+
+// Images: the types pilot.py serves (its IMAGE_TYPES), drawn as small thumbnails that open full size in a
+// lightbox (Esc or a click closes it). A transcript's image is fetched by reference, never carried in the stream.
+const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+const imageUrl = (sid, agent, ref) => `/api/sessions/${sid}${agent ? `/agents/${agent}` : ""}/image/${encodeURIComponent(ref)}`;
+const thumbs = urls => urls.length ? `<div class="thumbs">${urls.map(u =>
+  `<img class="thumb" src="${esc(u)}" loading="lazy" decoding="async" alt="image" title="click for full size" data-full="${esc(u)}">`).join("")}</div>` : "";
+// A thumbnail that fails to load (the transcript moved, a bad ref) says so instead of a broken-image icon.
+document.addEventListener("error", e => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || !img.classList.contains("thumb")) return;
+  const span = document.createElement("span");
+  span.className = "thumb broken";
+  span.textContent = "image unavailable";
+  img.replaceWith(span);
+}, true);
+function lightbox(url) {
+  const box = document.createElement("div");
+  box.className = "lightbox";
+  box.innerHTML = `<img src="${esc(url)}" alt="image"><a href="${esc(url)}" target="_blank" rel="noopener">open in a new tab</a>`;
+  const close = () => { box.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = e => { if (e.key === "Escape") close(); };
+  box.addEventListener("click", e => { if (!e.target.closest("a")) close(); });
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(box);
+}
+document.addEventListener("click", e => {
+  const img = e.target.closest?.("img.thumb[data-full]");
+  if (img) { e.stopPropagation(); lightbox(img.dataset.full); }
+}, true);
 const M = n => !n ? "0" : n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n);
 const ago = t => { if (!t) return "never"; const s = Date.now() / 1000 - t; return s < 60 ? "just now" : s < 3600 ? Math.round(s / 60) + "m ago" : s < 86400 ? (s / 3600).toFixed(1) + "h ago" : Math.round(s / 86400) + "d ago"; };
 const clock = iso => iso ? new Date(iso).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"}) : "";
@@ -1266,7 +1296,7 @@ VIEWS.session = (root, r) => {
         t.el.classList.replace("run", bad ? "err" : "ok");
         const host = $(".t-res", t.el);
         host.className = "t-res" + (bad ? " err" : ""); host.hidden = false;
-        host.innerHTML = result(ev, t.ev);
+        host.innerHTML = result(ev, t.ev) + thumbs((ev.images || []).map(ref => imageUrl(sid, r.agent, ref)));
         if (ev.agentId && !t.ev.agentId) $(".t-agent", t.el).innerHTML = agentLink(ev.agentId);
         return null;
       }
@@ -1288,6 +1318,10 @@ VIEWS.session = (root, r) => {
       // A subagent's final report, handed back to this session: its words, not the user's.
       case "handback": return row("●", "t-handback", `<div class="t-label">report from a subagent${ev.agentId ? ` · ${agentLink(ev.agentId)}` : ""}</div>${md(ev.text)}`);
       case "said": return row("●", "said", md(ev.text));
+      case "image": {
+        const html = thumbs([imageUrl(sid, r.agent, ev.ref)]);
+        return ev.from === "user" ? prompt(div, "", html) : row("●", "said", html);
+      }
       // `!` commands the user ran in the session, their output, and slash commands, as a terminal shows them.
       case "shell": div.innerHTML = `<div class="shellline"><span class="bang">!</span>${esc(ev.text)}</div>`; return div;
       case "command": div.innerHTML = `<div class="shellline cmd">${esc(ev.text)}</div>`; return div;
@@ -1321,7 +1355,7 @@ VIEWS.session = (root, r) => {
         <details><summary>what it said</summary><pre>${esc(ev.text)}</pre></details></div>`;
     }
     const lines = ev.text.trim() ? ev.text.replace(/\s+$/, "").split("\n") : [];
-    if (!lines.length) return `<div class="t-dim">(No output)</div>`;
+    if (!lines.length) return ev.images?.length ? "" : `<div class="t-dim">(No output)</div>`;
     const read = tool?.tool === "Read" && !ev.error;
     const head = read ? [`Read ${lines.length.toLocaleString()} lines`] : lines.slice(0, PREVIEW), rest = lines.length - head.length;
     return folded(head.map(l => `<div class="t-line">${plain(l) || " "}</div>`).join(""),
