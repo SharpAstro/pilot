@@ -254,6 +254,16 @@ def registered():
     return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(WORKERS.glob("*.json"))]
 
 
+def move_plan_refs(old, new):
+    """Points the removed legs' records at a plan's new id: a woken pilot's plan moves to its copy's session id,
+    and TIA2's merged ephemeris, removed under an id two wakes back, read as planned on the strip."""
+    for f in ARCHIVE.glob("*.json"):
+        r = read_json(f)
+        if isinstance(r, dict) and r.get("plan") == old:
+            r["plan"] = new
+            write_json(f, r)
+
+
 def archived(limit=100):
     rows = [read_json(p) for p in ARCHIVE.glob("*.json")]
     return sorted((r for r in rows if r), key=lambda r: r.get("archivedAt") or 0, reverse=True)[:limit]
@@ -1712,7 +1722,20 @@ def unread(w, busy, last):
         if m and w["name"] in line:
             t = time.mktime(time.strptime(m.group(1), "%Y-%m-%d %H:%M"))
             seen = t if seen is None else max(seen, t)
-    return seen is not None and last > seen + 120     # the log keeps minutes, the transcript seconds
+    if seen is None or last <= seen + 120:            # the log keeps minutes, the transcript seconds
+        return False
+    # Its pilot may have read the leg and said so without a log line (nothing new to log): a reply of its own
+    # after the stop that names the leg is a look too, so the strip does not say "pilot hasn't looked" at it.
+    for e in reversed(tail_events(w.get("plan"), n=40) if w.get("plan") else []):
+        try:
+            at = datetime.datetime.fromisoformat(str(e.get("at")).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            continue
+        if at < last:
+            break
+        if e.get("kind") == "said" and w["name"] in (e.get("text") or ""):
+            return False
+    return True
 
 
 def worker_status(w, rows=None):
@@ -2661,6 +2684,7 @@ def move_plan(old, new):
     src = plan_path(old)
     plan_path(new).write_text(src.read_text(encoding="utf-8").replace(f"Pilot session: {old}", f"Pilot session: {new}"), encoding="utf-8")
     src.unlink()
+    move_plan_refs(old, new)
     for w in registered():
         if w.get("plan") == old:
             w["plan"] = new
