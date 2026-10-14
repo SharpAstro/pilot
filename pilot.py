@@ -3100,7 +3100,7 @@ def tell_pilot(sid, text):
     """Gets word to a flight's pilot: through the intercom when it is live (an interactive pilot whose turn has
     ended too: the message starts its next turn), or by waking it as a copy when its background session has
     ended. Says which, or that it could not be reached: the hold is lifted by then, so a failed wake or relay
-    (`claude --bg` exits, the relay raises) is reported, never raised."""
+    (`claude --bg` exits, the relay raises, claude is not on PATH) is reported, never raised."""
     _agents_cache["at"] = 0
     row = next((r for r in agents() if r.get("sessionId") == sid), None)
     try:
@@ -3110,7 +3110,7 @@ def tell_pilot(sid, text):
         if row and row.get("pid") and row.get("name"):
             intercom([row["name"]], text)
             return f"told its pilot {row['name']} through the intercom"
-    except (ValueError, SystemExit, subprocess.TimeoutExpired) as e:
+    except (ValueError, SystemExit, subprocess.TimeoutExpired, OSError) as e:   # OSError: claude not on PATH
         return f"hold lifted, but its pilot could not be reached ({e}); tell it to take off"
     return "its pilot is not running; tell it to take off when it is back"
 
