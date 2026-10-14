@@ -3066,6 +3066,22 @@ class AmendBudgetTests(Case):
         self.assertEqual(pilot.load("fix")["budget"], 10_000_000)
         self.assertEqual([a["budget"] for a in pilot.parse_plan(pilot.plan_path("s1").read_text(encoding="utf-8"))["amendments"]], ["", "", "", ""])
 
+    def test_classify_keeps_a_budgeted_amendment_on_its_leg(self):
+        # Moved, its Budget line would be overwritten by the next amend-budget: fix would keep the raise but its
+        # refuel cap lose it, and the amendment get a second full cap.
+        self.assertEqual(self.run_cmd(3_000_000)[0], 0)
+        before = pilot.plan_path("s1").read_text(encoding="utf-8")
+        for cls, leg in (("fold", "design"), ("leg", "design"), ("flight", None)):
+            with self.assertRaises(ValueError) as e:
+                pilot.classify_amendment("s1", "A1", cls, leg, "the labels belong somewhere else after all")
+            self.assertIn("A1's budget was already added to fix, so A1 stays there", str(e.exception))
+            self.assertIn("## Waiting on the controller", str(e.exception))
+        self.assertEqual(pilot.plan_path("s1").read_text(encoding="utf-8"), before, "a refused classify changes nothing")
+        self.assertEqual(pilot.classify_amendment("s1", "A1", "fold", "fix", "the labels and their rounding, the same exporter"), "A1")
+        self.assertIn("  - Class: fold · Leg: fix · Why: the labels and their rounding, the same exporter\n  - Budget: +3,000,000 to fix\n",
+                      pilot.plan_path("s1").read_text(encoding="utf-8"))
+        self.assertEqual((self.amendment()["budget"], self.amendment()["budgetLeg"]), (3_000_000, "fix"))
+
     def test_refuels_cap_counts_the_amendments_additions(self):
         asked = []
         pilot.watchtower = lambda w, t, r, a: (asked.append(t) or (True, "progress justifies it"))
