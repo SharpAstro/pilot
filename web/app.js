@@ -1197,14 +1197,17 @@ VIEWS.session = (root, r) => {
           <div class="sub s-tnote"></div></details>
         <div class="say s-say" hidden><textarea class="s-text" placeholder="Message this session. Ctrl+Enter sends."></textarea>
           <div class="bar2"><span class="sub s-hint"></span><label class="sub s-asturn" hidden title="Stops it and continues it with your words as a user turn, in a new session id. Only once its turn has ended."><input type="checkbox" class="s-asturnbox"> as my own turn</label>
-            <button class="primary s-send">Send</button></div></div></div>
+            <button class="primary s-send">Send</button></div></div>
+        <!-- Long values (file lists, the leg's goal) get the main column's width, under the stream, not the side's. -->
+        <div class="infos">
+        <div class="card pad s-gitcard" hidden><div class="cardhead"><b>What it leaves</b><span class="sub s-gitn"></span></div><dl class="s-git" style="margin-top:8px"></dl></div>
+        <div class="card pad"><b>Session</b><dl class="s-info" style="margin-top:8px"></dl></div>
+        </div></div>
       <div class="side"><div class="card pad s-ctl" hidden><b>Controls</b>
           <div class="ctlrow"><label>budget, weighted tokens <input class="s-budget" inputmode="numeric" placeholder="e.g. 20M"></label><button class="s-setbudget">set</button></div>
           <div class="ctlrow s-fill"></div>
           <div class="sub s-ctlhint"></div></div>
         <div class="card pad s-checkcard" hidden><div class="cardhead"><b>Checklist</b><span class="sub s-checkn"></span></div><ul class="checklist s-check"></ul></div>
-        <div class="card pad s-gitcard" hidden><div class="cardhead"><b>What it leaves</b><span class="sub s-gitn"></span></div><dl class="s-git" style="margin-top:8px"></dl></div>
-        <div class="card pad"><b>Session</b><dl class="s-info" style="margin-top:8px"></dl></div>
         <div class="card pad"><b>Subagents</b><div class="s-agents" style="margin-top:6px"><span class="sub">none</span></div></div></div>
     </div>`;
   const stream = $(".s-stream", root), tools = new Map();

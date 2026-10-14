@@ -332,8 +332,9 @@ td.nowrap { white-space: nowrap; color: var(--ink-2); }
 .denied .who { color: var(--crit); font-weight: 600; font-size: 12px; }
 .denied pre { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .side .card { margin-bottom: 12px; }
-.side dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 0; font-size: 12px; }
-.side dt { color: var(--muted); } .side dd { margin: 0; overflow-wrap: anywhere; }
+.side dl, .infos dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 0; font-size: 12px; }
+.side dt, .infos dt { color: var(--muted); } .side dd, .infos dd { margin: 0; overflow-wrap: anywhere; }
+.infos { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-top: 12px; align-items: start; }
 .agent { display: block; padding: 6px 0; border-top: 1px solid var(--hair); text-decoration: none; color: var(--ink); font-size: 12px; }
 .agent:first-child { border-top: 0; }
 .agent small { color: var(--muted); display: block; }

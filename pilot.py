@@ -720,7 +720,7 @@ def plans_view(rows, workers, seen=None):
     pilot comes with what it is doing (session_view), reusing `seen`, the pilots already looked at."""
     live = {r.get("sessionId"): r for r in rows if r.get("pid")}
     asleep_rows = {r.get("sessionId"): r for r in rows if asleep(r)}
-    flown = {w.get("plan") for w in workers if w.get("plan")}
+    with_legs = {w.get("plan") for w in workers if w.get("plan")}
     seen = seen or {}
     shelved = archived_flights()            # the controller's archived flights are on History, not here
     out = []
@@ -728,7 +728,7 @@ def plans_view(rows, workers, seen=None):
         sid, mtime = p.stem, p.stat().st_mtime
         if sid in shelved:
             continue
-        if sid not in live and sid not in flown and time.time() - mtime > 7 * 86400:
+        if sid not in live and sid not in with_legs and time.time() - mtime > 7 * 86400:
             continue
         text = p.read_text(encoding="utf-8")
         out.append({"sessionId": sid, "path": str(p), "updated": mtime, "live": sid in live, "asleep": asleep(asleep_rows.get(sid)),
@@ -755,7 +755,10 @@ def plans_view(rows, workers, seen=None):
         # Each leg's landing, leg_unlanded's: the strip and the chart draw a leg flown only once it has landed, and a
         # done one not landed yet as done. What keeps one from landing is its tip; a landed leg has none.
         try:
-            p["landed"] = leg_landings(p["legs"], flight_legs(p["sessionId"], p["legs"], workers, gone))
+            states = flight_legs(p["sessionId"], p["legs"], workers, gone)
+            p["landed"] = leg_landings(p["legs"], states)
+            # Every leg of the route as flown is done (DONE, checklist complete), merged or not: nothing is left to fly.
+            p["legsDone"] = bool(states) and all(leg_timing(x["w"])["state"] == "landed" for x in flown(states))
         except Exception as e:          # without it every leg reads not landed, which is the safe way round
             p["landed"], p["landedError"] = {}, f"{type(e).__name__}: {e}"
         try:
@@ -2763,10 +2766,13 @@ def refuel_config():
 
 
 def flight_done(p):
-    """Whether every leg of a plan (plans_view's) has landed: such a flight spends nothing and takes no place
-    among those marching on."""
+    """Whether a plan (plans_view's) has nothing left to fly, so it takes no place among those marching on and never
+    circles: every leg done (merged or not; a merge waits on the controller, and spends nothing) or landed, or no
+    pilot session to fly it, live or asleep. DPS1, its six legs done and its PR awaiting the merge, read holding."""
     landed = p.get("landed") or {}          # leg -> {landed, why, stackedOn}, from leg_landings
-    return bool(p.get("legs")) and all((landed.get(l["leg"]) or {}).get("landed") for l in p["legs"])
+    if not (p.get("live") or p.get("asleep")):
+        return True
+    return bool(p.get("legs")) and (bool(p.get("legsDone")) or all((landed.get(l["leg"]) or {}).get("landed") for l in p["legs"]))
 
 
 def marching(plans=None):

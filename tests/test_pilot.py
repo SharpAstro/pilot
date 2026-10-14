@@ -1506,7 +1506,7 @@ class MarchOnTests(Case):
         self.assertNotIn("s2", pilot.read_json(pilot.HOLDING))
 
     def snap(self, ok, workers=()):
-        plans = [{"sessionId": s, "legs": [{"leg": "leg"}], "landed": {}, "live": False, "asleep": False} for s in ("s1", "s2")]
+        plans = [{"sessionId": s, "legs": [{"leg": "leg"}], "landed": {}, "live": True} for s in ("s1", "s2")]
         return {"plans": plans, "workers": list(workers), "refuel": {"ok": ok}}
 
     def test_a_session_a_usage_limit_stopped_is_resumed_once_there_is_room(self):
@@ -1537,10 +1537,17 @@ class MarchOnTests(Case):
         self.assertEqual(lim["at"], datetime.datetime(2026, 10, 14, 1, tzinfo=datetime.timezone.utc).timestamp())
         self.assertIsNone(pilot.worker_status(pilot.load("fix2"), [])["limited"])
 
-    def test_a_landed_flight_takes_no_place_among_those_marching(self):
-        plans = [{"sessionId": "s1", "legs": [{"leg": "a"}], "landed": {"a": {"landed": True, "why": "", "stackedOn": []}}},
-                 {"sessionId": "s2", "legs": [{"leg": "b"}], "landed": {"b": {"landed": False, "why": "flying", "stackedOn": []}}}]
-        self.assertEqual(pilot.marching(plans), ["s2"])
+    def test_a_flight_with_nothing_left_to_fly_neither_marches_nor_circles(self):
+        leg = lambda landed, why: {"landed": landed, "why": why, "stackedOn": []}
+        plans = [{"sessionId": "s1", "live": True, "legs": [{"leg": "a"}], "landed": {"a": leg(True, "")}},
+                 {"sessionId": "s2", "live": True, "legs": [{"leg": "b"}], "landed": {"b": leg(False, "on no merged PR")}, "legsDone": True},
+                 {"sessionId": "s3", "live": False, "asleep": False, "legs": [{"leg": "c"}], "landed": {"c": leg(False, "planned")}},
+                 {"sessionId": "s4", "asleep": True, "legs": [{"leg": "d"}], "landed": {"d": leg(False, "flying")}},
+                 {"sessionId": "s5", "live": True, "legs": [{"leg": "e"}], "landed": {"e": leg(False, "flying")}}]
+        self.assertEqual(pilot.marching(plans), ["s4"], "landed, done awaiting the merge, and no pilot: none of them")
+        hub = pilot.Hub()
+        snap = self.march(hub, {"plans": plans, "workers": [], "refuel": {"ok": False}})
+        self.assertEqual(snap["refuel"]["holding"], ["s5"], "only a flight with something left to fly circles")
 
     def test_room_is_fresh_figures_under_full_or_a_full_window_past_its_reset(self):
         self.usage(30, 85, age=60)
