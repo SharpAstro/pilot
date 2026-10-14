@@ -678,7 +678,7 @@ def amend_flight(key, request):
     sid = find_flight(key)
     aid = add_amendment(sid, request)
     flight = parse_plan(plan_path(sid).read_text(encoding="utf-8"))["flight"] or "this flight"
-    return sid, aid, tell_pilot(sid, AMENDED.format(id=aid, flight=flight, text=one_line(request)))
+    return sid, aid, tell_pilot(sid, AMENDED.format(id=aid, flight=flight, text=one_line(request)), when_back=f"classify {aid}")
 
 
 def classify_amendment(sid, aid, cls, leg, why):
@@ -3977,23 +3977,26 @@ def take_hold(sid, *dirs):
     return bool(hit)
 
 
-def tell_pilot(sid, text):
+def tell_pilot(sid, text, when_back=None):
     """Gets word to a flight's pilot: through the intercom when it is live (an interactive pilot whose turn has
     ended too: the message starts its next turn), or by waking it as a copy when its background session has
-    ended. Says which, or that it could not be reached: the hold is lifted by then, so a failed wake or intercom
-    (`claude --bg` exits, the intercom raises, claude is not on PATH) is reported, never raised."""
+    ended. Says which, or that it could not be reached: what it was told is recorded by then (a clear's hold is
+    lifted), so a failed wake or intercom (`claude --bg` exits, the intercom raises, claude is not on PATH) is
+    reported, never raised. `when_back` is what to tell the pilot once it is back; without it, a clear's take off.
+    An amendment passes its own, as "take off" on a held flight would send it off without clearance."""
     _agents_cache["at"] = 0
     row = next((r for r in agents() if r.get("sessionId") == sid), None)
     try:
         if asleep(row):
             new = wake_pilot(sid, text)
-            return f"woke its pilot as {new[:8]}" if new else "its pilot could not be woken; tell it to take off when it is back"
+            return f"woke its pilot as {new[:8]}" if new else f"its pilot could not be woken; tell it to {when_back or 'take off'} when it is back"
         if row and row.get("pid") and row.get("name"):
             intercom([row["name"]], text)
             return f"told its pilot {row['name']} through the intercom"
     except (ValueError, SystemExit, subprocess.TimeoutExpired, OSError) as e:   # OSError: claude not on PATH
-        return f"hold lifted, but its pilot could not be reached ({e}); tell it to take off"
-    return "its pilot is not running; tell it to take off when it is back"
+        return f"its pilot could not be reached ({e}); tell it to {when_back} when it is back" if when_back \
+            else f"hold lifted, but its pilot could not be reached ({e}); tell it to take off"
+    return f"its pilot is not running; tell it to {when_back or 'take off'} when it is back"
 
 
 def clear_flight(key):
