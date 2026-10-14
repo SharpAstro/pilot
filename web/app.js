@@ -430,7 +430,7 @@ function renderTop() {
     ⛽ refuel: ${manual ? "all to me" : march ? `march on${circling ? ` · ${circling} holding` : ""}` : held ? "all to me · held" : "watchtower may approve"}</button>` : "";
   put($("#limits"), limitsHtml(S.limits) + fuel);
   // The autopilot's switch: off, starting, standby or working, and how many decisions it has made since on.
-  const ap = S.autopilot || {}, apState = !ap.enabled ? "off" : !ap.live ? (Date.now() / 1000 - (ap.since || 0) < 90 ? "starting" : "asleep, wakes for items") : ap.status === "busy" ? "deciding" : "standby";
+  const ap = S.autopilot || {}, apState = !ap.enabled ? "off" : !ap.live ? (Date.now() / 1000 - (ap.since || 0) < 90 ? "starting" : "parked, wakes for items") : ap.status === "busy" ? "deciding" : "standby";
   put($("#autopilot"), `<button class="ap ${ap.enabled ? "on" : ""}" data-autopilot="${ap.enabled ? "off" : "on"}" title="${esc(ap.enabled
       ? `On since ${when(ap.since)}. It decides the controller's items in your place: all but irreversible. ${ap.decisions?.length || 0} decision(s) so far; the Black box has them. Click to switch it off.`
       : "Off. Switch it on when you leave: an Opus 5.5 session decides what waits on you, all but irreversible (never pushes, merges, deletes, or sets a new objective), each step checked by auto mode's classifier.")}">
@@ -666,6 +666,15 @@ function yourMoveOf(p, s, ps) {
   return `${allDone ? "done · " : ""}${auto ? "autopilot's move" : "your move"}${last ? `: ${esc(last.length > 110 ? last.slice(0, 107) + "…" : last)}` : ""}`;
 }
 
+// A background pilot whose turn has ended: its process exits with the turn, so it is parked, not broken. It says
+// what it is parked on: your answer, a leg in the air, or nothing (the flight is done or holds).
+function parkedChip(p, flying) {
+  const why = "Its turn has ended, so its background session exits until needed. The dashboard wakes it, as a copy, when you answer, a leg stops, or CI on its PR finishes.";
+  if (unanswered(p).length) return `<span class="chip blocked" title="${esc(why)}">waiting on you · pilot parked until you answer</span>`;
+  if (flying.length) return `<span class="chip other" title="${esc(why)}">pilot parked · wakes when ${esc(flying.join(", "))} stops</span>`;
+  return `<span class="chip other" title="${esc(why)}">pilot parked</span>`;
+}
+
 function planCard(p, s) {
   const legs = p.legs.map(l => {
     const {w, h, st} = legState(s, l.leg);
@@ -691,9 +700,9 @@ function planCard(p, s) {
   // The flight's state sits by its name: whose move it is, the pilot at work, or landed. A flight holding at the
   // gate says so first: ready once its pilot has a route and has ended its turn, else still being planned.
   const ready = holdReady(p);
-  const status = p.hold ? `${holdChip(p, ready)}${ready ? "" : ` ${p.asleep ? `<span class="chip other">pilot asleep</span>` : pilotChip(ps)}`}`
+  const status = p.hold ? `${holdChip(p, ready)}${ready ? "" : ` ${p.asleep ? `<span class="chip other">pilot parked</span>` : pilotChip(ps)}`}`
     : landed ? `<span class="chip done">✓ landed</span>`
-    : yourMove ? `<span class="chip blocked move" title="${esc(ps.said?.text || "")}">${move}</span>` : p.asleep ? `<span class="chip other" title="Its background session has ended. The dashboard wakes it, as a copy, when one of its legs stops or a message comes for it.">pilot asleep${flying.length ? `, wakes when ${esc(flying.join(", "))} stops` : ""}</span>` : pilotChip(ps, flying);
+    : yourMove ? `<span class="chip blocked move" title="${esc(ps.said?.text || "")}">${move}</span>` : p.asleep ? parkedChip(p, flying) : pilotChip(ps, flying);
   const where = `answer in the pilot's terminal${ps?.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : ""}`;
   // With more than one flight each starts folded, so the page reads as a list of flights, unless it waits on you;
   // alone, an active one starts open. A fold you set stays as you left it.
