@@ -972,7 +972,7 @@ function flightStrip(p, s) {
     stops.push(`<g class="stop"><title>destination: every lane joins here</title><circle cx="${dest.x}" cy="${dest.y}" r="11" style="fill:none;stroke:${stroke};stroke-width:1.5"/>
       <circle cx="${dest.x}" cy="${dest.y}" r="4" style="fill:${stroke}"/></g>`);
   }
-  const gateHtml = `<rect x="${X0 - 4}" y="${Y - 4}" width="8" height="8" rx="2" style="fill:var(--axis)"/><text x="${X0}" y="${Y + 22}" text-anchor="middle">gate</text>`;
+  const gateHtml = `<rect x="${X0 - 4}" y="${Y - 4}" width="8" height="8" rx="2" style="fill:var(--axis)"/><text x="${X0}" y="${Y + 22}" text-anchor="middle">${p.hold ? "gate" : "departure"}</text>`;
   const planesHtml = planes.map(pl => `<g transform="translate(${pl.x.toFixed(1)},${pl.y.toFixed(1)})"><g${pl.up ? ` class="bob"` : ""}><path d="${PLANE}" style="fill:${pl.color};stroke:var(--page);stroke-width:1"/></g></g>`).join("");
   const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(status.replace(/<[^>]+>/g, ""))}">${tracks.join("")}${gateHtml}${stops.join("")}${planesHtml}</svg>`;
   return `<div class="flight" data-plan="${esc(p.sessionId)}" data-order="${esc(p.sessionId)}" title="Open its flight plan">
