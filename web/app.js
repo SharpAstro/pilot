@@ -546,6 +546,11 @@ function legState(s, name) {
   return {st: {cls: "other", label: "planned", stroke: "var(--axis)", tint: "var(--surface)", planned: true}};
 }
 
+// Whether a leg has landed, pilot.py's leg_unlanded() sent as p.landed: once its PR is merged at its tip, or it has
+// no commits to land. Done is not landed. A leg the server has not judged, or could not, reads not landed.
+const landedOf = (p, name) => !!p.landed?.[name]?.landed;
+const unlandedWhy = (p, name) => p.landed?.[name]?.why || p.landedError || "its pull requests not read yet";
+
 // An alternate leg, filed in the plan's Alt of column, is taken once a worker flies it, or a removed one is done:
 // pilot.py's alt_taken. Removing its worker before it is done undoes the diversion.
 function altTaken(s, l) { const {w, h, st} = legState(s, l.leg); return !!w || (!!h && st.cls === "done"); }
@@ -770,7 +775,8 @@ function legTally(p, s) {
 // ------------------------------------------------------------------ the route chart, and the flights
 
 // One plan's legs, chained by After, drawn inside its plan. A planned leg no worker flies yet is dashed, and so is
-// an alternate, in its primary's column.
+// an alternate, in its primary's column. A done leg is solid green, on a solid green edge, only once it has landed;
+// done and not landed yet it is hollow and dashed green, on a dashed green edge.
 function routeChart(p, s) {
   const items = p.legs.map(l => { const {w, st} = legState(s, l.leg); return {name: l.leg, after: l.after, altOf: l.altOf, w, st, started: w?.started || Infinity}; });
   if (!items.length) return "";
@@ -791,15 +797,18 @@ function routeChart(p, s) {
   for (const x of items) for (const d of x.after.filter(d => byName.has(d))) {
     const a = pos.get(d), b = pos.get(x.name);
     const x1 = a.x + NW, y1 = a.y + NH / 2, x2 = b.x, y2 = b.y + NH / 2;
-    edges.push(`<path class="edge" d="M${x1},${y1} C${x1 + GX / 2},${y1} ${x2 - GX / 2},${y2} ${x2},${y2}"/>`);
+    const done = x.st.cls === "done" ? (landedOf(p, x.name) ? " flown" : " done") : "";
+    edges.push(`<path class="edge${done}" d="M${x1},${y1} C${x1 + GX / 2},${y1} ${x2 - GX / 2},${y2} ${x2},${y2}"/>`);
   }
   const clip = (t, n) => t.length > n ? t.slice(0, n - 1) + "…" : t;
   const nodes = items.map(({w, st, name, altOf}) => {
     const {x, y} = pos.get(name), f = w && w.budget ? Math.min(1, w.spend.weighted / w.budget) : 0;
-    const dash = altOf ? ";stroke-dasharray:2 3" : st.planned ? ";stroke-dasharray:5 4" : "";
-    const label = altOf && !altTaken(s, {leg: name}) ? `alt of ${altOf}` : st.label;
-    return `<g class="node"${w ? ` data-href="#/w/${esc(w.name)}"` : ""}><title>${esc(w?.detail || (altOf ? `alternate for ${altOf}, taken only on a diversion` : st.planned ? "planned, not started" : ""))}</title>
-      <rect class="box" x="${x}" y="${y}" width="${NW}" height="${NH}" rx="8" style="fill:${st.tint};stroke:${st.stroke};stroke-width:1.5${dash}"/>
+    const landed = st.cls === "done" && landedOf(p, name), unlanded = st.cls === "done" && !landed;
+    const dash = altOf ? ";stroke-dasharray:2 3" : st.planned || unlanded ? ";stroke-dasharray:5 4" : "";
+    const label = altOf && !altTaken(s, {leg: name}) ? `alt of ${altOf}` : landed ? st.label.replace("✓ done", "✓ landed") : st.label;
+    const tip = unlanded ? `done, not landed: ${unlandedWhy(p, name)}` : landed ? "landed" : w?.detail || (altOf ? `alternate for ${altOf}, taken only on a diversion` : st.planned ? "planned, not started" : "");
+    return `<g class="node"${w ? ` data-href="#/w/${esc(w.name)}"` : ""}><title>${esc(tip)}</title>
+      <rect class="box" x="${x}" y="${y}" width="${NW}" height="${NH}" rx="8" style="fill:${unlanded ? "var(--surface)" : st.tint};stroke:${st.stroke};stroke-width:1.5${dash}"/>
       <text x="${x + 12}" y="${y + 20}" font-weight="700">${esc(clip(name, 18))}</text>
       <text class="sm" x="${x + 12}" y="${y + 37}">${esc(label)}${w ? ` · ${esc(M(w.spend.weighted))}` : ""}</text>
       ${w ? `<rect x="${x + 12}" y="${y + 47}" width="${NW - 24}" height="4" rx="2" style="fill:var(--track)"/>
@@ -873,7 +882,9 @@ function connectsCard(p) {
 // waiting on you, failed or stopped) has its plane, as far along its track as its checklist, amber while it waits
 // on you; an alternate only once taken, and a primary no longer once diverted. Before the first takeoff one plane
 // stands at departure (at the gate while held for clearance); between legs it stands on the ground; when every
-// leg of the route as flown is done it parks past the end.
+// leg of the route as flown is done it parks past the end. A leg reads flown (a solid stop on a solid green line) only
+// once it has landed, its PR merged or nothing to land; done and not landed yet it is a hollow green stop on a dashed
+// green line.
 function flightStrip(p, s) {
   const depth = p.depths || routeDepths(p.legs);
   const legs = p.legs.map(l => ({...l, name: l.leg, d: depth[l.leg] || 0, ...legState(s, l.leg)}));
@@ -919,7 +930,11 @@ function flightStrip(p, s) {
   const allDone = route.length > 0 && route.every(l => l.st.cls === "done");
   let status;
   if (!legs.length) { planes.push({x: X0, y: Y, color: "var(--muted)"}); status = "no route yet"; }
-  else if (allDone) { planes.push({x: XN + 40, y: Y, color: "var(--good)"}); status = "all legs done"; }
+  else if (allDone) {
+    const up = route.filter(l => !landedOf(p, l.name)).map(l => esc(l.name));
+    planes.push({x: XN + 40, y: Y, color: "var(--good)"});
+    status = up.length ? `all legs done · not landed: ${up.join(", ")}` : "all legs landed";
+  }
   else if (!air.length) {
     // On the ground: at departure before the first takeoff (at the gate if held), else where the next legs leave from.
     // A leg waited on is done once what flies in its place (itself, or its taken alternate) is.
@@ -944,7 +959,9 @@ function flightStrip(p, s) {
     const b = pos.get(l.name), alt = l.altOf ? " alt" : "", pl = planeOf.get(l.name);
     for (const n of from(l)) {
       const c = curve(at(n), b);
-      if (l.st.cls === "done" && (onRoute.has(l.name) || !l.altOf)) tracks.push(`<path d="${c.d}" class="trk flown${alt}"/>`);
+      // Flown only once landed: a done leg whose PR has not merged is on a dashed line, so nothing a plane has
+      // still to fly reads as flown ahead of it.
+      if (l.st.cls === "done" && (onRoute.has(l.name) || !l.altOf)) tracks.push(`<path d="${c.d}" class="trk ${landedOf(p, l.name) ? "flown" : "done"}${alt}"/>`);
       else {
         tracks.push(`<path d="${c.d}" class="trk ahead${alt}"/>`);
         // Flown so far, up to its plane: the same curve, drawn to the plane's share of it.
@@ -954,14 +971,17 @@ function flightStrip(p, s) {
   }
   if (dest) for (const e of ends) {
     const stand = route.find(r => r.name === e.name || r.altOf === e.name) || e, c = curve(pos.get(stand.name), dest);
-    tracks.push(`<path d="${c.d}" class="trk ${stand.st.cls === "done" ? "flown" : "ahead"}"/>`);
+    tracks.push(`<path d="${c.d}" class="trk ${stand.st.cls !== "done" ? "ahead" : landedOf(p, stand.name) ? "flown" : "done"}"/>`);
   }
   for (const l of legs) {
     const {x, y} = pos.get(l.name), cls = l.st.cls, out = l.altOf && !onRoute.has(l.name);
-    const fill = out ? "var(--surface)" : cls === "done" ? "var(--good)" : cls === "failed" ? "var(--crit)" : cls === "blocked" ? "var(--warn)" : "var(--surface)";
+    // A done leg's stop is solid once it has landed; done and not landed yet it is hollow, ringed green.
+    const landed = cls === "done" && landedOf(p, l.name);
+    const fill = out ? "var(--surface)" : landed ? "var(--good)" : cls === "failed" ? "var(--crit)" : cls === "blocked" ? "var(--warn)" : "var(--surface)";
     const stroke = out ? "var(--axis)" : cls === "working" ? "var(--fill)" : cls === "done" ? "var(--good)" : cls === "blocked" ? "var(--warn)" : cls === "failed" ? "var(--crit)" : "var(--axis)";
     const room = Math.max(4, Math.floor(seg / 6.6)), name = l.name.length > room ? l.name.slice(0, room - 1) + "…" : l.name;
-    const tip = l.altOf ? `${l.name}: alternate for ${l.altOf}, ${out ? "not taken" : `taken: ${l.st.label}`}` : `${l.name}: ${l.st.label}`;
+    const label = landed ? l.st.label.replace("✓ done", "✓ landed") : cls === "done" ? `${l.st.label}, not landed: ${unlandedWhy(p, l.name)}` : l.st.label;
+    const tip = l.altOf ? `${l.name}: alternate for ${l.altOf}, ${out ? "not taken" : `taken: ${label}`}` : `${l.name}: ${label}`;
     const dash = l.altOf ? ";stroke-dasharray:2 2" : l.st.planned ? ";stroke-dasharray:3 2" : "";
     stops.push(`<g${l.w ? ` data-href="#/w/${esc(l.w.name)}"` : ""} class="stop${l.altOf ? " alt" : ""}${out ? " out" : ""}"><title>${esc(tip)}</title>
       ${!join && ends.length === 1 && ends[0] === l ? `<circle cx="${x}" cy="${y}" r="11" style="fill:none;stroke:${stroke};stroke-width:1.5"/>` : ""}
