@@ -12,6 +12,8 @@ what they have spent, gates their spend, delivers your messages, summarises them
   python pilot.py track [--out F] [--url U]   its tracking page, to publish as an artifact; --url records where
   python pilot.py connect FLIGHT... [--remove]   flights this one connects from: its legs wait for them to land
   python pilot.py archive FLIGHT [--restore] [--force]   the controller's: a flight off the Overview onto History
+  python pilot.py plan --hold          hold this flight at the gate: plan only, no leg takes off until cleared
+  python pilot.py clear FLIGHT         the controller's: clear a holding flight for takeoff, and tell its pilot
   python pilot.py start NAME --brief FILE|- [--repo R] [--model M] [--effort E] [--budget N]
                          [--pilot NAME] [--after NAME]...
   python pilot.py list [--json]
@@ -352,7 +354,8 @@ def plan_log(sid, text):
 ACTORS = (("Controller", "controller"), ("Autopilot", "autopilot"), ("Watchtower", "watchtower"),
           ("Pilot asks", "pilot"), ("Pilot to ", "pilot"), ("Pilot woken", "pilot.py"), ("Asked in the terminal", "pilot"), ("Decided", "pilot"),
           ("Leg ", "pilot.py"), ("Budget for ", "pilot.py"), ("Plan opened", "pilot.py"), ("Dashboard to ", "pilot.py"),
-          ("Archived by the controller", "controller"), ("Restored by the controller", "controller"))
+          ("Archived by the controller", "controller"), ("Restored by the controller", "controller"),
+          ("Cleared for takeoff by the controller", "controller"), ("Holding at the gate", "pilot.py"))
 
 
 def blackbox(text, actor=None, plan=None, flight=None, **data):
@@ -406,6 +409,9 @@ def blackbox_view(limit=1500):
 FLIGHT_RE = re.compile(r"^Flight:\s*(\S+)", re.M)
 # The flights this one connects from, comma-separated: its legs take off only once each of them has landed.
 CONNECTS_RE = re.compile(r"^Connects:[ \t]*(.*)$", re.M)
+# A flight launched to plan only holds at the gate on this line until the controller clears it for takeoff.
+HOLD_RE = re.compile(r"^Hold:[ \t]*(.*)$", re.M)
+HOLD_LINE = "Hold: awaiting clearance"
 OBJECTIVE_RE = re.compile(r"^Objective:\s*(.+(?:\n(?!\s*\n|#|\|)[^\n]+)*)", re.M)   # it may wrap, up to a blank line
 # The plan's list of what the pilot is waiting on the controller for, under any of these headings.
 WAITING_RE = re.compile(r"(waiting on (the controller|you)|open questions|questions for the controller)\b", re.I)
@@ -441,7 +447,7 @@ def parse_plan(text):
             log[-1] += " " + ln.strip()
     return {"title": title.group(1).strip() if title else "untitled", "objective": " ".join(objective.group(1).split()) if objective else "",
             "flight": (FLIGHT_RE.search(text) or [None, None])[1], "tracking": (TRACKING_RE.search(text) or [None, None])[1],
-            "connects": plan_connects(text), "legs": legs, "log": log[-40:], "notes": plan_notes(split_waiting(text)[1]), "waiting": split_waiting(text)[0]}
+            "connects": plan_connects(text), "hold": plan_hold(text), "legs": legs, "log": log[-40:], "notes": plan_notes(split_waiting(text)[1]), "waiting": split_waiting(text)[0]}
 
 
 def route_depths(legs):
@@ -496,6 +502,12 @@ def plan_connects(text):
     return [f for f in re.split(r"[,\s]+", m.group(1)) if f] if m else []
 
 
+def plan_hold(text):
+    """What a plan's `Hold:` line says (`awaiting clearance`), or None when the flight is not holding."""
+    m = HOLD_RE.search(text)
+    return (m.group(1).strip() or "awaiting clearance") if m else None
+
+
 def split_waiting(text):
     """The plan's `## Waiting on the controller` section, and the rest of the plan without it. The section
     ends at the next heading, or where its list ends: a paragraph after the list, or the `Pilot session:`
@@ -509,7 +521,7 @@ def split_waiting(text):
                 continue
         elif inside:
             blank, item = not line.strip(), re.match(r"^([-*]|\d+[.)])\s", line)
-            if not (line.startswith(("Pilot session:", "Flight:", "Tracking:", "Connects:")) or (listed and gap and not blank and not item and not line[:1].isspace())):
+            if not (line.startswith(("Pilot session:", "Flight:", "Tracking:", "Connects:", "Hold:")) or (listed and gap and not blank and not item and not line[:1].isspace())):
                 waiting.append(line)
                 listed, gap = listed or bool(item), blank
                 continue
@@ -530,7 +542,7 @@ def plan_notes(text):
             if part not in ("route", "log"):     # a section of the pilot's own
                 out.append(line)
             continue
-        if part == "log" or line.startswith("# ") or re.match(r"^(Pilot session|Flight|Tracking|Connects):", line) or line.lstrip().startswith("|"):
+        if part == "log" or line.startswith("# ") or re.match(r"^(Pilot session|Flight|Tracking|Connects|Hold):", line) or line.lstrip().startswith("|"):
             continue
         if part == "route" and line.strip() and "#### On the route" not in out:
             out.append("#### On the route")
@@ -718,6 +730,8 @@ def plans_view(rows, workers, seen=None):
             p["times"] = flight_times(p["sessionId"], p["legs"], workers, gone)
         except Exception as e:          # a flight's times are worth less than the rest of the dashboard
             p["times"] = {"error": f"{type(e).__name__}: {e}"}
+        if p["hold"] and not p["times"].get("departed"):   # no departure until it is cleared: no ETA to invent
+            p["times"]["noEta"] = "awaiting clearance: no departure yet"
     return out
 
 
@@ -2051,6 +2065,10 @@ def cmd_start(a):
         if not load(dep):
             sys.exit(f"pilot: --after {dep}: no worker of that name")
     divert = diversion(pilot_session(), a.name, getattr(a, "divert", None))
+    # A flight launched to plan only holds at the gate until the controller clears it. No flag gets past it.
+    p = plan_path(pilot_session())
+    if p and p.exists() and HOLD_RE.search(p.read_text(encoding="utf-8")):
+        sys.exit(HOLD_REFUSAL.format(flight=parse_plan(p.read_text(encoding="utf-8"))["flight"] or "this flight"))
     # A flight that connects from another waits for it to land: its change has to be merged before this one's
     # legs build on it. There is no flag past this; the controller decides, through the plan's waiting section.
     hold = connection_hold(pilot_session())
@@ -2641,6 +2659,11 @@ def cmd_plan(a):
         repo = next((k for k, v in config()["repos"].items() if same_path(v, top)), Path(top or os.getcwd()).name)
         p.write_text(PLAN_TEMPLATE.format(title=a.title or "untitled", flight=flight_code(repo), sid=sid,
                                           now=time.strftime("%Y-%m-%d %H:%M")), encoding="utf-8")
+        # Launched to plan only: the plan opens holding, whether or not the pilot passed --hold itself.
+        if take_hold(sid, top):
+            hold_plan(sid, "Holding at the gate: launched to plan only, awaiting clearance for takeoff from the controller")
+    if getattr(a, "hold", False) and hold_plan(sid):
+        print("holding at the gate: no leg takes off until the controller clears the flight", file=sys.stderr)
     print(p)
 
 
@@ -2897,6 +2920,8 @@ def track_html(sid):
     if plan["waiting"]:
         k = len(re.findall(r"^\s*[-*]\s", plan["waiting"], re.M)) or 1
         banner = ("warn", f"Waiting on you: {k} item{'s' if k > 1 else ''}")
+    elif plan["hold"]:
+        banner = ("planned", f"Holding at the gate: {'ready, ' if n else ''}awaiting clearance for takeoff")
     elif counts.get("working"):
         banner = ("working", f"In the air: {counts['working']} of {n} leg{'s' if n != 1 else ''} flying, {counts.get('good', 0)} landed")
     elif landed:
@@ -2999,6 +3024,98 @@ def cmd_connect(a):
     plan_log(sid, f"{'No longer connects from' if a.remove else 'Connects from'} {', '.join(flights)}"
                   + (f": its legs take off once {', '.join(now)} {'has' if len(now) == 1 else 'have'} landed" if now else ""))
     print(f"recorded: {line}" if now else "recorded: no connections")
+
+
+# --------------------------------------------------------------------------- holding for clearance
+
+# A flight launched to plan only holds at the gate: its pilot scouts, writes the route and the briefs, settles its
+# questions with the co-pilot, then ends its turn; `start` refuses every leg until the controller clears it.
+HOLDS = STATE / "holds.json"     # holds asked for at launch, for a plan not opened yet: [{"at", "session", "dir"}]
+HOLD_WINDOW = 3600               # a hold asked for by directory waits this long for the launched pilot's plan
+
+HOLD_REFUSAL = ("pilot: {flight} is holding at the gate, awaiting clearance for takeoff from the controller (the plan's "
+                "`Hold:` line), so no leg takes off yet. Meanwhile finish planning: the route, a brief per leg written to a "
+                "file, the co-pilot's questions settled, the tracking page published. Then end your turn without starting "
+                "a leg; the controller's clearance wakes you with word to take off.")
+
+CLEARED = ("(pilot.py) Flight {flight} is cleared for takeoff by the controller: the hold is lifted. Take off: read "
+           "your flight plan again, start the legs that wait for nothing as your rules say, subscribe to each, and follow them.")
+
+
+def hold_plan(sid, why="Holding at the gate: awaiting clearance for takeoff from the controller"):
+    """Puts a plan on hold with its `Hold:` line, under its `Flight:` line, and logs it; False if it already holds."""
+    p = plan_path(sid)
+    t = p.read_text(encoding="utf-8")
+    if HOLD_RE.search(t):
+        return False
+    m = FLIGHT_RE.search(t) or re.search(r"^#\s.*$", t, re.M)
+    at = m.end() if m else 0
+    p.write_text(t[:at] + f"\n\n{HOLD_LINE}" + t[at:], encoding="utf-8")
+    plan_log(sid, why)
+    return True
+
+
+def live_holds():
+    return [h for h in (read_json(HOLDS, []) or []) if isinstance(h, dict) and time.time() - (h.get("at") or 0) < HOLD_WINDOW]
+
+
+def ask_hold(session=None, path=None):
+    """Records a hold asked for at launch, for the launched pilot's plan to open with: by its session id when it
+    is known (a background launch, a resume), else by the directory it was launched in."""
+    write_json(HOLDS, live_holds() + [{"at": time.time(), "session": session, "dir": path}])
+
+
+def take_hold(sid, top):
+    """Whether a hold was asked for at launch for this new plan: its session's, else the oldest one for its
+    directory with no session named. It is used up either way."""
+    book = live_holds()
+    hit = next((h for h in book if h.get("session") == sid), None) or \
+        next((h for h in book if not h.get("session") and top and h.get("dir") and same_path(h["dir"], top)), None)
+    if hit:
+        book.remove(hit)
+        write_json(HOLDS, book)
+    return bool(hit)
+
+
+def tell_pilot(sid, text):
+    """Gets word to a flight's pilot: through the intercom when it is live (an interactive pilot whose turn has
+    ended too: the message starts its next turn), or by waking it as a copy when its background session has
+    ended. Says which, or that it could not be reached."""
+    _agents_cache["at"] = 0
+    row = next((r for r in agents() if r.get("sessionId") == sid), None)
+    if asleep(row):
+        new = wake_pilot(sid, text)
+        return f"woke its pilot as {new[:8]}" if new else "its pilot could not be woken; tell it to take off when it is back"
+    if row and row.get("pid") and row.get("name"):
+        intercom([row["name"]], text)
+        return f"told its pilot {row['name']} through the intercom"
+    return "its pilot is not running; tell it to take off when it is back"
+
+
+def clear_flight(key):
+    """The controller clears a holding flight for takeoff: the `Hold:` line comes off, it is logged in the plan
+    and the black box, and its pilot is told to take off, or woken to. Returns (plan id, how the pilot was reached)."""
+    sid = find_flight(key)
+    p = plan_path(sid)
+    t = p.read_text(encoding="utf-8")
+    if not HOLD_RE.search(t):
+        raise ValueError(f"pilot: {flight_name(sid)} is not holding for clearance")
+    p.write_text(re.sub(r"\n*^Hold:.*$", "", t, count=1, flags=re.M), encoding="utf-8")
+    plan_log(sid, "Cleared for takeoff by the controller")
+    flight = parse_plan(p.read_text(encoding="utf-8"))["flight"] or "this flight"
+    return sid, tell_pilot(sid, CLEARED.format(flight=flight))
+
+
+def cmd_clear(a):
+    """The controller clears a flight held at the gate for takeoff. A pilot never clears its own."""
+    me = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if sender() != "Controller" or (me and any(me in [s.get("sessionId") for s in sessions_of(w)] for w in registered())):
+        sys.exit("pilot: only the controller clears a flight for takeoff; a holding pilot finishes planning and ends its turn")
+    try:
+        sid, reached = clear_flight(a.flight)
+    except ValueError as e:
+        sys.exit(str(e))
+    print(f"{flight_name(sid)} cleared for takeoff: {reached}")
 
 
 def cmd_archive(a):
@@ -3340,23 +3457,51 @@ def register_repo(path):
     return name
 
 
-def launch(path, resume=None, where="terminal", message="", as_pilot=True):
+LAUNCH_HOLD = ("Plan only: this flight holds at the gate until the controller clears it for takeoff. Open your flight plan "
+               "with `plan --hold`, plan it fully (the route, a brief per leg written to a file, the co-pilot's questions "
+               "settled, the tracking page published), then end your turn without starting any leg. The clearance comes "
+               "to you as a message; then take off.")
+
+
+def launch(path, resume=None, where="terminal", message="", as_pilot=True, hold=False):
     """Starts a pilot session in a directory Claude Code knows, new or resuming one of its sessions: in a new
     Windows Terminal tab (interactive, yours to type into), or in the background (reached by attach or
-    Remote Control). The pilot plugin is loaded either way."""
+    Remote Control). The pilot plugin is loaded either way. With `hold`, the pilot is launched to plan only: its
+    plan opens holding at the gate, and it is told so."""
     known = {p["path"]: p for p in known_projects()}
     path = (path or "").replace("\\", "/")
     if path not in known:
         raise ValueError("that directory is not one Claude Code has a record of")
     if resume and (not re.fullmatch(r"[0-9a-f-]{36}", resume) or not (project_dir(path) / f"{resume}.jsonl").exists()):
         raise ValueError("no such session in that directory")
+    if hold and not as_pilot:
+        raise ValueError("plan only holds a pilot's flight: start it as the pilot")
+    if hold:
+        message = f"{message.strip()}\n\n{LAUNCH_HOLD}".strip()
     text = ((f"/pilot:pilot {message}" if message.strip() else "/pilot:pilot") if as_pilot else message).strip()
     args = ["--plugin-dir", str(HERE / "plugins" / "pilot")] + (["--resume", resume] if resume else [])
+    if where == "background" and not known[path]["trusted"]:
+        raise ValueError("a background session needs the directory's workspace trust accepted: open claude there once")
     added = {"registered": register_repo(path)} if as_pilot else {}
+    # Plan only: a resumed pilot with a plan holds at once. Otherwise the plan it opens holds, asked for by the
+    # session it resumes (an interactive resume keeps the id), else by the directory: a new session's id is not
+    # known until it is up, and a background one's is bound to the hold once it is.
+    pending = False
+    if hold:
+        added["hold"] = True
+        if resume and plan_path(resume).exists():
+            hold_plan(resume, "Holding at the gate: launched to plan only, awaiting clearance for takeoff from the controller")
+        else:
+            pending = True
+            ask_hold(resume if where != "background" else None, path)
     if where == "background":
-        if not known[path]["trusted"]:
-            raise ValueError("a background session needs the directory's workspace trust accepted: open claude there once")
         job = backgrounded(claude("--bg", "-n", f"pilot-{Path(path).name}"[:40], *args, stdin=text or None, cwd=path, timeout=120))
+        sid = session_of(job) if pending else None
+        book = live_holds()
+        mine = next((h for h in reversed(book) if not h.get("session") and h.get("dir") == path), None) if sid else None
+        if mine:
+            mine["session"] = sid
+            write_json(HOLDS, book)
         return {"where": "background", "id": job, **added}
     # Windows Terminal splits its own command line on ';', so the first message travels in a file instead.
     first = ""
@@ -3722,6 +3867,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.send(400, {"error": str(e)})
             HUB.poke()
             return self.send(200, {"ok": True, "order": order})
+        m = re.match(r"^/api/flights/([A-Za-z0-9-]{1,64})/clear$", self.path)
+        if m:
+            try:
+                sid, reached = clear_flight(m.group(1))
+            except (ValueError, subprocess.TimeoutExpired) as e:
+                return self.send(409, {"error": str(e)})
+            HUB.poke()
+            return self.send(200, {"ok": True, "sessionId": sid, "reached": reached})
         m = re.match(r"^/api/flights/([A-Za-z0-9-]{1,64})/(archive|restore)$", self.path)
         if m:
             try:
@@ -3757,7 +3910,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/api/launch":
             try:
                 out = launch(str(body.get("path") or ""), body.get("resume") or None, "background" if body.get("where") == "background" else "terminal",
-                             str(body.get("message") or ""), bool(body.get("asPilot", True)))
+                             str(body.get("message") or ""), bool(body.get("asPilot", True)), bool(body.get("hold")))
             except (ValueError, SystemExit) as e:
                 return self.send(409, {"error": str(e)})
             HUB.poke()
@@ -3941,6 +4094,7 @@ def main():
     s = sub.add_parser("plan")
     s.add_argument("--title", help="the plan's title, used when it is created")
     s.add_argument("--session", help="a pilot session id; default: the session this runs in")
+    s.add_argument("--hold", action="store_true", help="hold the flight at the gate: plan only, until the controller clears it for takeoff")
     s.set_defaults(fn=cmd_plan)
     s = sub.add_parser("screenshot", help="a headless Edge screenshot of a dashboard page, for checking a change on the preview")
     s.add_argument("url", help="a full URL, or a route on the preview without its #/: 's/<session id>', 'w/<leg>', '' for the overview")
@@ -3968,6 +4122,9 @@ def main():
     s.add_argument("--restore", action="store_true", help="put an archived flight back, in its old place in the order")
     s.add_argument("--force", action="store_true", help="archive it with legs still flying: give up on the flight")
     s.set_defaults(fn=cmd_archive)
+    s = sub.add_parser("clear", help="the controller's: clear a flight holding at the gate for takeoff, and tell its pilot")
+    s.add_argument("flight", help="its flight number, e.g. PIL2, or its plan id")
+    s.set_defaults(fn=cmd_clear)
     s = sub.add_parser("dashboard")
     s.add_argument("--port", type=int, help="default 5181; with --preview, the first free one from 5182")
     s.add_argument("--preview", action="store_true", help="a second dashboard for checking a change: no notices, session streams close")
