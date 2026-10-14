@@ -2156,7 +2156,8 @@ class Notices:
         fresh, folded = [], 0
         for n in new:
             who = n.get("sessionId") or n.get("worker")
-            same = next((i for i in reversed(self.items) if i["kind"] == n["kind"] and i["text"] == n["text"]
+            # Only into an unread one: a question asked again after it was answered is new, not hidden in a read one.
+            same = next((i for i in reversed(self.items) if not i.get("read") and i["kind"] == n["kind"] and i["text"] == n["text"]
                          and (i.get("sessionId") or i.get("worker")) == who and now - (i.get("last") or i["at"]) < FOLD_SECONDS), None)
             if same:
                 same["times"], same["last"], folded = (same.get("times") or 1) + 1, now, folded + 1
