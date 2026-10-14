@@ -2753,7 +2753,7 @@ class AmendmentTests(Case):
         pilot.tell_pilot = self._tell
         super().tearDown()
 
-    def tell(self, sid, text):
+    def tell(self, sid, text, when_back=None):
         # Called after the write: the amendment is in the plan by the time its pilot is told.
         self.told.append((sid, text, [a["id"] for a in pilot.parse_plan(pilot.plan_path(sid).read_text(encoding="utf-8"))["amendments"]]))
         return "told its pilot pilot-x through the intercom"
@@ -2794,11 +2794,35 @@ class AmendmentTests(Case):
         self.assertIn("Amendment A1 to flight WA1 was filed by the controller: Also export the page labels", text)
         self.assertIn("pilot classify A1", text)
 
-    def test_a_failed_tell_loses_nothing(self):
-        self.plan("s1", PLAN)
-        pilot.tell_pilot = lambda sid, text: "its pilot is not running; tell it to take off when it is back"
-        self.assertIn("A1 filed; its pilot is not running", self.amend("Also export the page labels"))
+    def test_a_failed_tell_loses_nothing_and_never_says_take_off(self):
+        # The real tell_pilot, its pilot not running: on a held flight, "take off" would send it off uncleared.
+        self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nHold: awaiting clearance"))
+        pilot.tell_pilot, self.rows = self._tell, []
+        out = self.amend("Also export the page labels")
+        self.assertEqual(out, "WA1 (Export fixes): amendment A1 filed; its pilot is not running; tell it to classify A1 when it is back\n")
         self.assertEqual(pilot.parse_plan(self.text())["amendments"][0]["status"], "open")
+        self.assertEqual(pilot.parse_plan(self.text())["hold"], "awaiting clearance")
+        with unittest.mock.patch.object(pilot, "intercom", unittest.mock.Mock(side_effect=ValueError("no agent named pilot-x"))):
+            self.rows = [{"name": "pilot-x", "sessionId": "s1", "kind": "interactive", "state": "idle", "pid": 4242, "cwd": str(ROOT)}]
+            _, _, reached = pilot.amend_flight("WA1", "Rotate thumbnails too")
+        self.assertEqual(reached, "its pilot could not be reached (no agent named pilot-x); tell it to classify A2 when it is back")
+        with unittest.mock.patch.object(pilot, "wake_pilot", lambda old, why: None), \
+                unittest.mock.patch.object(pilot, "asleep", lambda row: True):
+            _, _, reached = pilot.amend_flight("WA1", "Add a PDF/A mode")
+        self.assertEqual(reached, "its pilot could not be woken; tell it to classify A3 when it is back")
+        for r in (out, reached):
+            self.assertNotIn("take off", r)
+            self.assertNotIn("hold lifted", r)
+
+    def test_clear_keeps_its_own_wording_for_a_pilot_it_cannot_reach(self):
+        pilot.tell_pilot = self._tell
+        self.assertEqual(pilot.tell_pilot("s1", "x"), "its pilot is not running; tell it to take off when it is back")
+        with unittest.mock.patch.object(pilot, "wake_pilot", lambda old, why: None), \
+                unittest.mock.patch.object(pilot, "asleep", lambda row: True):
+            self.assertEqual(pilot.tell_pilot("s1", "x"), "its pilot could not be woken; tell it to take off when it is back")
+        with unittest.mock.patch.object(pilot, "intercom", unittest.mock.Mock(side_effect=ValueError("gone"))):
+            self.rows = [{"name": "pilot-x", "sessionId": "s1", "kind": "interactive", "state": "idle", "pid": 4242, "cwd": str(ROOT)}]
+            self.assertEqual(pilot.tell_pilot("s1", "x"), "hold lifted, but its pilot could not be reached (gone); tell it to take off")
 
     def test_the_request_is_one_line_and_cannot_open_a_heading(self):
         self.plan("s1", PLAN)
