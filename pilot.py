@@ -78,6 +78,7 @@ REFUEL_MODE = STATE / "refuel.json"        # {"mode": "auto" or "manual"}: may t
 ASKS = STATE / "asks"                       # the question a pilot is waiting on you for, by session id
 NOTICES = STATE / "notifications.json"
 SUMMARIES = STATE / "summaries.json"
+UPLOADS = STATE / "uploads"                # images the controller pasted, dropped or picked in a message box
 PROFILE = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,29}$")
 QUIET_SECONDS = 30 * 60
@@ -1098,6 +1099,64 @@ def image_block(b):
     return isinstance(src, dict) and src.get("type") == "base64" and src.get("media_type") in IMAGE_TYPES
 
 
+# Images the controller attaches to a message: the bytes are sniffed, never the claimed type or name, and saved under
+# a random id with the extension its magic bytes give. A message carries each as its absolute path.
+UPLOAD_MAX = 10 * 1024 * 1024
+UPLOAD_MAGIC = ((b"\x89PNG\r\n\x1a\n", "png"), (b"\xff\xd8\xff", "jpg"), (b"GIF87a", "gif"), (b"GIF89a", "gif"))
+UPLOAD_NAME = r"([0-9a-f]{32})\.(png|jpg|jpeg|gif|webp)"
+UPLOAD_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}
+
+
+def upload_ext(data):
+    """The extension an image's magic bytes give, or None when it is none of the allowed types."""
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return next((ext for magic, ext in UPLOAD_MAGIC if data.startswith(magic)), None)
+
+
+def save_upload(data):
+    """Saves an uploaded image as `<state>/uploads/<random hex>.<ext>`; returns its name and absolute path."""
+    ext = upload_ext(data)
+    if not ext:
+        raise ValueError("not a PNG, JPEG, GIF or WebP image")
+    UPLOADS.mkdir(parents=True, exist_ok=True)
+    name = f"{os.urandom(16).hex()}.{ext}"
+    (UPLOADS / name).write_bytes(data)
+    return name, (UPLOADS / name).as_posix()
+
+
+def upload_message(text, paths):
+    """A message with images attached: per image, its absolute path and a line telling the session to open it."""
+    tail = "\n".join(f"Image attached: {p}\nOpen it with your Read tool to see it." for p in paths)
+    return "\n\n".join(x for x in (text.strip(), tail) if x)
+
+
+def uploads_in(text):
+    """The uploads a message names, as file names, in order and once each: only paths under this state's uploads
+    folder with an upload's own name, whichever slashes and case they are written in, never any other path."""
+    root = re.escape(UPLOADS.as_posix()).replace("/", r"[\\/]+")
+    out = []
+    for m in re.finditer(root + r"[\\/]+" + UPLOAD_NAME + r"(?![\w.])", text, re.I):
+        name = f"{m.group(1).lower()}.{m.group(2).lower()}"
+        if name not in out:
+            out.append(name)
+    return out
+
+
+def message_text(body):
+    """A message box's text with its attached images, which it sends as the names the upload route gave them;
+    each must be an upload that is there."""
+    names = body.get("images") if isinstance(body.get("images"), list) else []
+    if any(not isinstance(n, str) or not re.fullmatch(UPLOAD_NAME, n) or not (UPLOADS / n).is_file() for n in names):
+        raise ValueError("an attached image is not an upload: attach it again")
+    return upload_message(str(body.get("text") or ""), [(UPLOADS / n).as_posix() for n in names])
+
+
+def upload_tail(text):
+    """The images of a message, for a plan log line that keeps only its first line: ` [image uploads/<name>]` each."""
+    return "".join(f" [image uploads/{n}]" for n in uploads_in(text))
+
+
 def events_of(e, offset=None):
     """One transcript record as the events the session view shows. With `offset`, the byte offset its line
     starts at, its images go by reference: `<offset>.<i>` for content block i, `<offset>.<i>.<j>` for image j
@@ -1108,6 +1167,8 @@ def events_of(e, offset=None):
     c = msg.get("content")
 
     def ev(kind, **kw):
+        if kind in ("prompt", "message"):        # images the controller attached, by the path the message names
+            kw.update({"images": [f"/api/uploads/{n}" for n in uploads_in(kw["text"])]} if uploads_in(kw["text"]) else {})
         out.append({"kind": kind, "at": ts, **kw})
 
     if t == "assistant" and (e.get("error") or e.get("isApiErrorMessage")):
@@ -2623,7 +2684,7 @@ def say(name, text, who=None):
     save(w)
     lines = text.strip().splitlines()
     more = "..." if len(lines) > 1 or len(lines[0]) > 140 else ""
-    plan_log(w.get("plan"), f"{who or sender()} to {name}: {lines[0][:140]}{more}")
+    plan_log(w.get("plan"), f"{who or sender()} to {name}: {lines[0][:140]}{more}{upload_tail(text)}")
     return w
 
 
@@ -2751,7 +2812,7 @@ def intercom(names, text, sender="Controller"):
     for n in names:
         w = next((x for x in registered() if agent_name(x) == n), None)
         plan = w.get("plan") if w else (rows.get(n) or {}).get("sessionId")
-        plan_log(plan, f"{sender} to {n} (intercom): {first}")
+        plan_log(plan, f"{sender} to {n} (intercom): {first}{upload_tail(text)}")
     return out
 
 
@@ -4504,6 +4565,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             m = re.match(r"^/api/sessions/([0-9a-f-]{36})(?:/agents/([0-9a-f]{6,40}))?/image/([0-9.]{3,40})$", path)
             if m:
                 return self.session_image(*m.groups())
+            m = re.fullmatch(r"/api/uploads/" + UPLOAD_NAME, path)
+            if m:
+                return self.upload(m.group(0).rsplit("/", 1)[1], m.group(2))
             m = re.match(r"^/api/sessions/([0-9a-f-]{36})/agents$", path)
             if m:
                 return self.send(200, subagents(m.group(1)))
@@ -4556,6 +4620,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.send(200, got[0], got[1], cache="private, max-age=31536000, immutable",
                          headers=[("X-Content-Type-Options", "nosniff")])
 
+    def upload(self, name, ext):
+        """An image the controller attached, by its name alone: an upload never changes once saved."""
+        f = UPLOADS / name
+        if not f.is_file():
+            return self.send(404, {"error": "no such upload"})
+        return self.send(200, f.read_bytes(), UPLOAD_TYPES[ext], cache="private, max-age=31536000, immutable",
+                         headers=[("X-Content-Type-Options", "nosniff")])
+
     def session_stream(self, sid, agent_id):
         """Server-sent events: one transcript's last 400 events, then each new batch as it is written."""
         path, main = self.session_path(sid, agent_id)
@@ -4598,6 +4670,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.preview and not os.environ.get("PILOT_STATE"):
             return self.send(403, {"error": "a preview on the live state is read-only: run it with PILOT_STATE=<scratch dir> to try a button"})
         size = int(self.headers.get("Content-Length") or 0)
+        if self.path == "/api/uploads":
+            # An image as the raw body: its size is checked before it is read, its type by its own bytes.
+            if not 0 < size <= UPLOAD_MAX:
+                return self.send(413 if size else 400, {"error": f"an image must be 1 byte to {UPLOAD_MAX // 2**20} MB"})
+            try:
+                name, abspath = save_upload(self.rfile.read(size))
+            except ValueError as e:
+                return self.send(415, {"error": str(e)})
+            return self.send(200, {"ok": True, "id": name, "path": abspath, "url": f"/api/uploads/{name}"})
         body = json.loads(self.rfile.read(size) or b"{}") if size else {}
         m = re.match(r"^/api/workers/([a-z0-9-]+)/(stop|say|budget)$", self.path)
         if m:
@@ -4616,7 +4697,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 HUB.poke()
                 return self.send(200, {"ok": True, "budget": tokens})
             try:
-                w = say(w["name"], str(body.get("text") or ""))
+                w = say(w["name"], message_text(body))
             except (ValueError, SystemExit) as e:
                 return self.send(409, {"error": str(e)})
             HUB.poke()
@@ -4685,7 +4766,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not names or any(n not in known for n in names):
                 return self.send(400, {"error": f"send only to live pilots and workers: {', '.join(sorted(known)) or 'none'}"})
             try:
-                out = intercom(names, str(body.get("text") or ""))
+                text = message_text(body)
+            except ValueError as e:
+                return self.send(400, {"error": str(e)})
+            try:
+                out = intercom(names, text)
             except (ValueError, subprocess.TimeoutExpired) as e:
                 return self.send(502, {"error": str(e)})
             ans = body.get("answered") if isinstance(body.get("answered"), dict) else {}

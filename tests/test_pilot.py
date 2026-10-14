@@ -2600,5 +2600,109 @@ class NoticeTests(Case):
         self.assertEqual(len(started), 1)
 
 
+
+class UploadTests(Case):
+    """Images the controller attaches to a message: uploaded raw, typed by their own bytes, saved under a random id
+    in <state>/uploads, sent as their path, and recognised as images only at that path."""
+
+    IMAGES = {"png": b"\x89PNG\r\n\x1a\n" + b"x" * 20, "jpg": b"\xff\xd8\xff\xe0" + b"x" * 20, "gif": b"GIF89a" + b"x" * 20,
+              "webp": b"RIFF\x10\x00\x00\x00WEBPVP8 " + b"x" * 20}
+
+    def serve(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        srv = pilot.http.server.ThreadingHTTPServer(("127.0.0.1", 0), pilot.Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        base = f"http://127.0.0.1:{srv.server_address[1]}"
+
+        def call(path, data=None, ctype="image/png", headers={"X-Pilot": "1"}):
+            req = urllib.request.Request(base + path, data, {"Content-Type": ctype, **headers}, method="POST" if data is not None else "GET")
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, r.headers, r.read()
+            except urllib.error.HTTPError as e:
+                with e:
+                    return e.code, e.headers, e.read()
+        return call
+
+    def test_the_upload_route_takes_each_allowed_type_by_its_bytes(self):
+        call = self.serve()
+        for ext, data in self.IMAGES.items():
+            code, _, body = call("/api/uploads", data, ctype="image/svg+xml")      # the claimed type is ignored
+            self.assertEqual(code, 200, ext)
+            j = json.loads(body)
+            self.assertRegex(j["id"], rf"^[0-9a-f]{{32}}\.{ext}$")
+            self.assertEqual(Path(j["path"]), pilot.UPLOADS / j["id"])
+            self.assertTrue(Path(j["path"]).is_absolute())
+            self.assertEqual(Path(j["path"]).read_bytes(), data)
+            code, h, got = call(j["url"])
+            self.assertEqual((code, got), (200, data))
+            self.assertEqual(h["Content-Type"], pilot.UPLOAD_TYPES[ext])
+            self.assertEqual(h["X-Content-Type-Options"], "nosniff")
+            self.assertIn("immutable", h["Cache-Control"])
+
+    def test_the_upload_route_refuses_other_bytes_oversize_and_strangers(self):
+        call = self.serve()
+        self.assertEqual(call("/api/uploads", b"<svg onload=alert(1)/>", ctype="image/png")[0], 415)
+        self.assertEqual(call("/api/uploads", b"GIF8", ctype="image/gif")[0], 415, "a truncated magic")
+        self.assertEqual(call("/api/uploads", b"", ctype="image/png")[0], 400)
+        with unittest.mock.patch.object(pilot, "UPLOAD_MAX", 30):
+            self.assertEqual(call("/api/uploads", self.IMAGES["png"] + b"y" * 20)[0], 413)
+        self.assertEqual(call("/api/uploads", self.IMAGES["png"], headers={})[0], 403, "only the dashboard's page uploads")
+        self.assertFalse(pilot.UPLOADS.exists() and any(pilot.UPLOADS.iterdir()), "nothing refused was saved")
+
+    def test_the_upload_get_route_takes_an_uploads_name_and_nothing_else(self):
+        call = self.serve()
+        name = json.loads(call("/api/uploads", self.IMAGES["png"])[2])["id"]
+        (pilot.STATE / "secret.png").write_bytes(self.IMAGES["png"])
+        self.assertEqual(call(f"/api/uploads/{name}")[0], 200)
+        for bad in ("../secret.png", "..%2Fsecret.png", "..%5Csecret.png", f"x/{name}", "secret.png", f"{name[:-4]}.svg",
+                    f"{name}.png", f"{'0' * 32}.png", f"%2E%2E/{name}", f"{name.upper()}"):
+            self.assertEqual(call(f"/api/uploads/{bad}")[0], 404, bad)
+
+    def test_an_upload_path_in_a_prompt_or_message_is_an_image_and_no_other_path_is(self):
+        a, b = "a" * 32, "b" * 32
+        text = (f"look at these\n{pilot.UPLOADS / (a + '.png')}\nOpen it with your Read tool to see it.\n"
+                f"{pilot.UPLOADS.as_posix()}/{b}.jpg and again {pilot.UPLOADS / (a + '.png')}\n"
+                f"C:/Users/x/Pictures/{'c' * 32}.png {pilot.STATE / ('d' * 32 + '.png')} {pilot.UPLOADS / ('e' * 32 + '.svg')} "
+                f"{pilot.UPLOADS / ('f' * 31 + '.png')} {pilot.UPLOADS / ('a' * 33 + '.png')}")
+        ev = pilot.events_of({"type": "user", "message": {"content": text}})
+        self.assertEqual(ev[0]["kind"], "prompt")
+        self.assertEqual(ev[0]["images"], [f"/api/uploads/{a}.png", f"/api/uploads/{b}.jpg"])
+        msg = pilot.events_of({"type": "user", "message": {"content":
+            f'<cross-session-message from-name="pilot-dashboard">Another Claude session sent a message: {pilot.UPLOADS / (b + ".gif")}</cross-session-message>'}})
+        self.assertEqual((msg[0]["kind"], msg[0]["images"]), ("message", [f"/api/uploads/{b}.gif"]))
+        plain = pilot.events_of({"type": "user", "message": {"content": f"see C:/Users/x/Pictures/{a}.png"}})
+        self.assertNotIn("images", plain[0], "an image path outside the uploads folder is only words")
+        said = pilot.events_of({"type": "assistant", "message": {"content": [{"type": "text", "text": str(pilot.UPLOADS / (a + ".png"))}]}})
+        self.assertNotIn("images", said[0], "only what the controller sent")
+
+    def test_a_message_names_each_image_and_how_to_open_it(self):
+        names = [pilot.save_upload(self.IMAGES["png"])[0], pilot.save_upload(self.IMAGES["gif"])[0]]
+        text = pilot.message_text({"text": "  compare these  ", "images": names})
+        paths = [(pilot.UPLOADS / n).as_posix() for n in names]
+        self.assertEqual(text, f"compare these\n\nImage attached: {paths[0]}\nOpen it with your Read tool to see it.\n"
+                               f"Image attached: {paths[1]}\nOpen it with your Read tool to see it.")
+        self.assertEqual(pilot.message_text({"text": "no images"}), "no images")
+        for bad in (["../secret.png"], [f"{'0' * 32}.png"], [7]):
+            with self.assertRaises(ValueError):
+                pilot.message_text({"text": "x", "images": bad})
+
+    def test_the_plan_log_line_carries_the_images(self):
+        self.plan("s1", PLAN)
+        self.worker("fix", plan="s1")
+        names = [pilot.save_upload(self.IMAGES["png"])[0], pilot.save_upload(self.IMAGES["webp"])[0]]
+        text = pilot.message_text({"text": "this is what I see", "images": names})
+        out = json.dumps({"result": "w-fix: delivered"})
+        with unittest.mock.patch.object(pilot, "claude", lambda *a, **kw: types.SimpleNamespace(returncode=0, stdout=out, stderr="")):
+            pilot.intercom(["w-fix"], text)
+        line = self.log_of("s1")[-1]
+        self.assertTrue(line.endswith(f"Controller to w-fix (intercom): this is what I see... [image uploads/{names[0]}] [image uploads/{names[1]}]"), line)
+        self.assertIn(f"[image uploads/{names[1]}]", self.last_box()[0])
+
+
 if __name__ == "__main__":
     unittest.main()
