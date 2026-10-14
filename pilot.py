@@ -4959,6 +4959,7 @@ class Hub:
                     snap["stale"] = Path(__file__).stat().st_mtime != CODE_MTIME
                     snap["restartable"] = SUPERVISED
                     snap["daemonLock"] = daemon_lock()
+                    snap["host"] = socket.gethostname()   # which machine's dashboard a tab is, with two open
                     self.march_on(snap)
                     self.wake_pilots(snap)
                     self.route_autopilot(snap)

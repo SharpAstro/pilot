@@ -552,7 +552,9 @@ function renderTop() {
   const n = S.notifications || {unread: 0, items: []};
   const badge = $("#badge");
   badge.hidden = !n.unread; badge.textContent = n.unread > 99 ? "99+" : n.unread;
-  document.title = (n.unread ? `(${n.unread}) ` : "") + "Pilot";
+  // The machine in the title and by the brand: the laptop's tab and the desktop's (over --lan) both read "Pilot".
+  document.title = (n.unread ? `(${n.unread}) ` : "") + "Pilot" + (S.host ? ` · ${S.host}` : "");
+  put($(".brand"), `Pilot${S.host ? ` <small class="host">${esc(S.host)}</small>` : ""}`);
   const shown = new Map(n.items.map(i => [i.id, i]));
   put($("#notes"), n.items.length ? n.items.map(i => `<div class="note ${i.read ? "" : "unread"}" data-note="${esc(i.id)}" data-href="${esc(i.href || `#/w/${i.worker}`)}">
       <span>${NOTE_ICON[i.kind] || "•"}</span><div>${esc(i.text)}${i.times > 1 ? ` <span class="times">×${i.times}</span>` : ""}<div class="when">${esc(when(i.at))}</div>${settledLine(i, shown)}</div></div>`).join("")
@@ -1494,14 +1496,13 @@ VIEWS.overview = (root, r) => {
   let focusPlan = r?.plan || null;
   if (focusPlan) opened.set("plan:" + focusPlan, true);
   root.innerHTML = `
+    <div class="card pad"><div class="cardhead"><b>Summary</b><span><span class="sub s-stamp"></span> <button data-sum="*" class="s-btn">Summarise</button></span></div>
+      <div class="summary s-sum" style="margin-top:6px"></div></div>
     <div class="flightsbar s-layout"></div>
     <div class="s-plans"></div>
     <div class="card pad bcast" data-attach-to="intercom"><b>Intercom</b>
       <textarea class="s-btext" rows="1" placeholder="A message to live sessions: it reaches each at its next step, mid-turn too. Paste or drop images. Ctrl+Enter sends."></textarea>
       <select class="s-bto"></select><button class="primary s-bsend">Send</button>${tray("intercom")}<div class="sub s-bnote"></div></div>
-    <h2>Summary</h2>
-    <div class="card pad"><div class="cardhead"><b>All workers</b><span><span class="sub s-stamp"></span> <button data-sum="*" class="s-btn">Summarise</button></span></div>
-      <div class="summary s-sum" style="margin-top:6px"></div></div>
     <h2>Workers</h2><div class="card"><div class="list s-workers"></div>
       <div class="empty s-wempty">No workers. The pilot starts them with <code>pilot start NAME --brief FILE</code>.</div></div>
     <h2>Sessions in the main checkout</h2><div class="card"><div class="list s-pilots"></div>
