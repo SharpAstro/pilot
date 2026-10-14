@@ -1023,6 +1023,22 @@ class WakeTests(Case):
             self.assertIsNone(pilot.wake_pilot("p1", "why"))
 
 
+class DropWaitingTests(Case):
+    def test_a_merged_pr_item_leaves_the_plan_and_the_others_stay(self):
+        self.plan("p1", "# Flight plan: x\n\n## Waiting on the controller\n\n"
+                        "- **Merge PR #15?** Images, wrapped\n  onto a second line. Options: Merge | Hold.\n"
+                        "- **Keep the toggle?** Options: Yes | No.\n\n## Route\n\n## Log\n\n- 2026-10-14 21:00 Plan opened.\n")
+        pilot.drop_waiting("p1", lambda t: "merge pr #15" in t.lower())
+        text = pilot.plan_path("p1").read_text(encoding="utf-8")
+        self.assertNotIn("PR #15", text)
+        self.assertNotIn("second line", text)
+        self.assertIn("Keep the toggle?", pilot.split_waiting(text)[0])
+        pilot.drop_waiting("p1", lambda t: "toggle" in t.lower())
+        text = pilot.plan_path("p1").read_text(encoding="utf-8")
+        self.assertNotIn("## Waiting on the controller", text)
+        self.assertEqual(self.log_of("p1"), ["2026-10-14 21:00 Plan opened."])
+
+
 class LogTests(Case):
     def test_log_stamps_the_time_now(self):
         self.plan("p1", "# Flight plan: x\n\n## Log\n\n- 2026-10-13 20:52 Plan opened.\n")

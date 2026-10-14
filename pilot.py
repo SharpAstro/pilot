@@ -524,6 +524,33 @@ def plan_hold(text):
     return (m.group(1).strip() or "awaiting clearance") if m else None
 
 
+def drop_waiting(sid, match):
+    """Takes the plan's waiting items whose bold title `match`es out of its `## Waiting on the controller`, and the
+    heading with them once none is left. A merge the dashboard has run leaves its pilot nothing to answer: PIL3's
+    "Merge PR #15?" stood on its card after the merge, its pilot parked on a landed flight and never to remove it."""
+    path = plan_path(sid)
+    if not path or not path.exists():
+        return
+    lines, out, inside, skip = path.read_text(encoding="utf-8").splitlines(), [], False, False
+    for line in lines:
+        h = re.match(r"^(##|###)\s+(\S.*?)\s*$", line)
+        if h:
+            inside, skip = h.group(1) == "##" and bool(WAITING_RE.match(h.group(2))), False
+        elif inside and re.match(r"^\s*[-*]\s", line):
+            m = re.match(r"^\s*[-*]\s+\*\*(.+?)\*\*", line)
+            skip = bool(m and match(m.group(1)))
+        elif inside and skip and line.strip() and line[:1].isspace():
+            pass                                  # an item wrapped onto the next line goes with it
+        elif inside and not line.strip():
+            skip = False
+        if not (inside and skip):
+            out.append(line)
+    text = "\n".join(out) + "\n"
+    if not split_waiting(text)[0].strip():        # nothing left waiting: the heading goes too
+        text = re.sub(r"^##\s+Waiting on the controller\s*\n+", "", text, flags=re.M)
+    path.write_text(text, encoding="utf-8")
+
+
 def split_waiting(text):
     """The plan's `## Waiting on the controller` section, and the rest of the plan without it. The section
     ends at the next heading, or where its list ends: a paragraph after the list, or the `Pilot session:`
@@ -4900,6 +4927,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if f"PR #{n}" in title:
                     rec.setdefault(sid, {})[title] = time.time()
             write_json(ANSWERED, rec)
+            drop_waiting(sid, lambda title: f"merge pr #{n}" in title.lower())
             # Its pilot, live or parked: the intercom wakes a parked one with the news.
             pilot = next((x.get("name") for x in agents() if x.get("sessionId") == sid and (x.get("pid") or asleep(x))), None)
             if pilot:
