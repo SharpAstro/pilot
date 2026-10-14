@@ -956,6 +956,8 @@ def plans_view(rows, workers, seen=None):
         if sid not in live and sid not in with_legs and time.time() - mtime > 7 * 86400:
             continue
         text = p.read_text(encoding="utf-8")
+        repo = plan_repo(sid, rows)
+        root = config()["repos"].get(repo) if repo else None
         out.append({"sessionId": sid, "path": str(p), "updated": mtime, "live": sid in live, "asleep": asleep(asleep_rows.get(sid)),
                     "pilot": (live.get(sid) or asleep_rows.get(sid) or {}).get("name"),
                     "pilotState": (seen.get(sid) or session_view(live[sid])) if sid in live else None,
@@ -963,7 +965,10 @@ def plans_view(rows, workers, seen=None):
                     # Items the controller has answered stay in the plan until its pilot takes them out; until then
                     # they are with the pilot, not waiting on the controller.
                     "answered": {k: v for k, v in (read_json(ANSWERED, {}).get(sid) or {}).items() if k and k in text},
-                    "repoUrl": repo_url(plan_repo(sid, rows)),
+                    "repoUrl": repo_url(repo),
+                    # Its repo's directory, with forward slashes as the launch form's projects have it: where a new
+                    # flight an amendment hands back starts, a parked pilot's flight too.
+                    "repoPath": str(root).replace("\\", "/") if root else "",
                     **parse_plan(text)})
     out = by_priority(out)[:10]
     gone = archived(200)
