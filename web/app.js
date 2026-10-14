@@ -849,6 +849,9 @@ const amendState = a => ({
   "to the controller": ["blocked", "to you: launch it as a flight"],
 })[a.state] || ["other", a.state || a.status];
 
+// A fold's Budget line, pilot.py's {budget, budgetLeg}: the tokens it has added to that leg so far, as the plan has it.
+const ambudget = a => `+${Number(a.budget).toLocaleString("en-US")}${a.budgetLeg ? ` to ${a.budgetLeg}` : ""}`;
+
 // The amendments a leg was changed by: classified fold or leg into it. The strip marks its stop with them.
 const amendedLegs = p => {
   const by = new Map();
@@ -867,7 +870,7 @@ function amendmentsHtml(p, s, fold) {
     const [cls, label] = amendState(a);
     const launch = a.class === "flight" ? `<button data-launchamend="${esc(p.sessionId)}" data-id="${esc(a.id)}" title="Open the launch form with this request as the new flight's first message; you launch it">Launch as a flight…</button>` : "";
     return `<li class="amend ${esc(a.state.replace(/\s+/g, "-"))}"><div class="amhead"><b>${esc(a.id)}</b> <span class="sub">${esc(a.at)}</span>
-      <span class="amclass ${esc(a.class || "none")}">${esc(amendClass(a))}</span> <span class="chip ${cls}">${esc(label)}</span>${a.budget ? ` <span class="ambudget" title="its budget">⛽ ${esc(a.budget)}</span>` : ""}</div>
+      <span class="amclass ${esc(a.class || "none")}">${esc(amendClass(a))}</span> <span class="chip ${cls}">${esc(label)}</span>${a.budget ? ` <span class="ambudget" title="weighted tokens this fold has added to its leg's budget so far">⛽ ${esc(ambudget(a))}</span>` : ""}</div>
       <div class="amtext">${md(a.text, true)}</div>${a.why ? `<div class="sub amwhy">why: ${esc(a.why)}</div>` : ""}${launch ? `<div class="choices">${launch}</div>` : ""}</li>`;
   }).join("");
   const sum = [`${as.length} amendment${as.length === 1 ? "" : "s"}`, open && `${open} open, waiting on the pilot`, mine && `${mine} for you to launch`].filter(Boolean).join(" · ");
