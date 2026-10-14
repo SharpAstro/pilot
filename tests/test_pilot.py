@@ -1258,6 +1258,14 @@ class FlightTimeTests(Case):
         self.assertEqual(pilot.schedule("p3", 61_000.0, persist=False), 60_000.0)
         self.assertFalse(pilot.SCHEDULES.exists())
 
+    def test_a_preview_reads_the_real_schedules_and_writes_none(self):
+        self.plan("p4", PLAN)
+        self.assertEqual(pilot.schedule("p4", 50_000.0), 50_000.0)
+        disk = pilot.SCHEDULES.read_bytes()
+        self.assertEqual(pilot.schedule("p4", 90_000.0, persist=False), 50_000.0, "its delay is the dashboard's")
+        self.assertEqual(pilot.schedule("p5", 60_000.0, persist=False), 60_000.0)
+        self.assertEqual(pilot.SCHEDULES.read_bytes(), disk)
+
     def test_delay_is_the_eta_now_against_the_schedule(self):
         self.plan("p1", PLAN)
         t0 = self.at("s-a", [0, 10, 20])                     # 20 active minutes, 2 of 4 items: 20 more to go

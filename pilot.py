@@ -898,9 +898,12 @@ def schedule(sid, eta, persist=True):
     """A flight's schedule: its first ETA, taken the first time one can be computed and never rewritten. It is
     kept in <state>/schedules.json by plan id, not in the plan, which pilots edit by hand; a missing or
     unreadable file counts as no schedules. Setting one logs it in the plan, as an audit copy."""
-    book = read_json(SCHEDULES, {}) if persist else _schedules
-    book = book if isinstance(book, dict) else {}
-    have = book.get(sid)
+    disk = read_json(SCHEDULES, {})
+    disk = disk if isinstance(disk, dict) else {}
+    book = disk if persist else _schedules
+    # A preview reads the real schedules too, so its delays are the dashboard's: starting empty, it set every
+    # flight's schedule to its ETA that moment and called a flight two hours late "on time".
+    have = book.get(sid) or (None if persist else disk.get(sid))
     if isinstance(have, dict) and isinstance(have.get("eta"), (int, float)):
         return have["eta"]
     if eta is None:
