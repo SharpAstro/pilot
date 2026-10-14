@@ -227,17 +227,24 @@ const screenHtml = rows => rows.map(row => row.map(([text, a]) => {
 // Claude Code keeps a job's last state after its session ends, so a worker whose turn ended on its budget stays
 // "blocked" for good, even once it is refuelled, has reported DONE and has its checklist complete. Ended, DONE and
 // complete, it waits on no one.
-function waitsOnYou(w) {
+// Claude Code calls a job blocked when its turn ended needing an answer. A worker in a flight asks its pilot, whose
+// decision it is (only what the pilot cannot settle reaches you, through its plan), so it waits on its pilot: PIL1's
+// uwp-sdk, holding for its pilot to rerun a pack, read "waiting on you". Only a prompt in its own terminal (a
+// question, a permission), or a worker no pilot flies, waits on you.
+function blockedTurn(w) {
   return w.state === "blocked" && !(!w.pid && w.reportHead === "DONE" && !openItems(w.checklist || []).length);
 }
+const waitsOnYou = w => blockedTurn(w) && (!!w.prompt || !w.plan);
+const waitsOnPilot = w => blockedTurn(w) && !waitsOnYou(w);
 
 function stateOf(w) {
   if (w.state === "working") return {cls: "working", label: "● working", stroke: "var(--fill)", tint: "var(--tint-fill)"};
   if (waitsOnYou(w)) return {cls: "blocked", label: "waiting on you", stroke: "var(--warn)", tint: "var(--tint-warn)"};
+  if (waitsOnPilot(w)) return {cls: "blocked", label: "waiting on its pilot", stroke: "var(--warn)", tint: "var(--tint-warn)"};
   if (w.state === "done" || w.state === "blocked" || w.final) {
     const head = w.reportHead || w.final?.reportHead, open = openItems(w.checklist || w.final?.checklist).length;
     if (head === "FAILED") return {cls: "failed", label: "✗ failed", stroke: "var(--crit)", tint: "var(--tint-crit)"};
-    if (head === "BLOCKED") return {cls: "blocked", label: "blocked: needs you", stroke: "var(--warn)", tint: "var(--tint-warn)"};
+    if (head === "BLOCKED") return {cls: "blocked", label: w.plan || w.pilot ? "blocked: its pilot decides" : "blocked: needs you", stroke: "var(--warn)", tint: "var(--tint-warn)"};
     // DONE with checklist items still open is not done: the pilot sends it back or makes them a leg.
     if (head === "DONE" && open) return {cls: "blocked", label: `DONE, ${open} item${open > 1 ? "s" : ""} open`, stroke: "var(--warn)", tint: "var(--tint-warn)"};
     // Stopped after the plan's log last named it: its pilot has not looked, so nothing will happen until it does.
@@ -276,6 +283,7 @@ function meter(sp, budget) {
 
 function doing(w) {
   if (waitsOnYou(w) && w.detail) return `<span class="doing"><b>needs you:</b> ${esc(w.detail)}</span>`;
+  if (waitsOnPilot(w) && w.detail) return `<span class="doing"><b>asks its pilot:</b> ${esc(w.detail)}</span>`;
   if (w.state === "working" && w.now) return w.now.kind === "tool"
     ? `<span class="doing"><b>${esc(w.now.tool)}</b> ${esc(w.now.summary || w.now.text || "")}</span>` : `<span class="doing">${esc(w.now.text)}</span>`;
   if (w.detail) return `<span class="doing">${esc(w.detail)}</span>`;
@@ -670,6 +678,8 @@ function yourMoveOf(p, s, ps) {
     const unlanded = flownLegs(p, s).map(l => l.leg).filter(n => !landedOf(p, n));
     return unlanded.length ? `done · not landed: ${esc(unlanded.join(", "))} on no merged pull request, none open` : "";
   }
+  // Every leg done but its git not read yet (the first seconds after a start): say so, not the pilot's last line.
+  if (allDone) return "done · reading its legs' pull requests";
   // No open PR known (none, or not looked up yet): the pilot's own words say what it is waiting for.
   const last = String(ps?.said?.text || "").split("\n").map(l => l.replace(/[*`]/g, "").replace(/^[\s#>-]+/, "").trim()).filter(Boolean).pop();
   return `${allDone ? "done · " : ""}${auto ? "autopilot's move" : "your move"}${last ? `: ${esc(last.length > 110 ? last.slice(0, 107) + "…" : last)}` : ""}`;
@@ -695,7 +705,7 @@ function planCard(p, s) {
     const status = st.cls === "done" && landedOf(p, l.leg) ? st.label.replace("✓ done", "✓ landed") : st.label;
     const why = (w || h)?.divertedFrom ? `<div class="sub">diverted from ${esc((w || h).divertedFrom)}: ${esc((w || h).divertReason || "")}</div>` : "";
     return `<tr class="${link ? "click" : ""}${l.altOf ? " altleg" : ""}"${link ? ` data-href="${link}"` : ""}><td><b>${esc(l.leg)}</b>${alt}</td><td>${md(l.goal)}</td><td>${esc(l.after.join(", ") || "-")}</td>
-      <td>${md(l.doneWhen)}</td><td>${out ? `<span class="chip other">alternate, not taken</span>` : `<span class="chip ${st.cls}"${st.cls === "done" && !landedOf(p, l.leg) ? ` title="${esc(`not landed: ${unlandedWhy(p, l.leg)}`)}"` : ""}>${esc(status)}</span>`}${why}${w && (w.state === "working" || waitsOnYou(w)) ? doing(w) : ""}${checkLine(w ? w.checklist : h?.final?.checklist)}${gitLine((w || h)?.git, (w || h)?.approach)}</td><td class="num">${sp ? esc(M(sp.weighted)) : ""}</td></tr>`;
+      <td>${md(l.doneWhen)}</td><td>${out ? `<span class="chip other">alternate, not taken</span>` : `<span class="chip ${st.cls}"${st.cls === "done" && !landedOf(p, l.leg) ? ` title="${esc(`not landed: ${unlandedWhy(p, l.leg)}`)}"` : ""}>${esc(status)}</span>`}${why}${w && (w.state === "working" || blockedTurn(w)) ? doing(w) : ""}${checkLine(w ? w.checklist : h?.final?.checklist)}${gitLine((w || h)?.git, (w || h)?.approach)}</td><td class="num">${sp ? esc(M(sp.weighted)) : ""}</td></tr>`;
   }).join("");
   const log = p.log.slice(-12).reverse().map(l => `<li>${esc(l)}</li>`).join("");
   const ps = p.pilotState, waiting = ps?.status === "waiting";
@@ -839,7 +849,7 @@ function legTally(p, s) {
   const n = {};
   for (const l of route) {
     const {st} = legState(s, l.leg);
-    const word = st.planned ? "planned" : {working: "working", blocked: "waiting on you", done: "done", failed: "failed"}[st.cls] || "ended";
+    const word = st.planned ? "planned" : {working: "working", blocked: st.label === "waiting on you" ? "waiting on you" : "waiting on its pilot", done: "done", failed: "failed"}[st.cls] || "ended";
     n[word] = (n[word] || 0) + 1;
   }
   const alts = p.legs.filter(l => l.altOf && !altTaken(s, l)).length;
@@ -1564,6 +1574,7 @@ VIEWS.session = (root, r) => {
       const x = w || p, waitingOn = w ? waitsOnYou(w) : p?.status === "waiting";
       liveText = r.agent || !x ? ""
         : waitingOn ? `<span class="pulse wait"></span><b>waiting on you</b> ${esc(w ? w.detail || "" : p.ask?.questions?.[0]?.question || p.waitingFor || "")}`
+        : w && waitsOnPilot(w) ? `<span class="pulse wait"></span><b>waiting on its pilot</b> ${esc(w.detail || "")}`
         : (w ? w.state === "working" : p.busy) ? `<span class="pulse"></span>${w?.detail ? esc(w.detail) : x.now ? nowText(x.now) : "working"}` : "";
       if (!turnAt && w?.started) turnAt = w.started * 1000;    // the turn began before the backlog: since it started
       tick();

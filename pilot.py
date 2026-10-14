@@ -1771,6 +1771,8 @@ def worker_status(w, rows=None):
         "budget0": w.get("budget0") or config().get("budget") or w.get("budget"),
         "sessions": len(sessions_of(w)),
         "state": state, "busy": (row or {}).get("status") == "busy", "pid": (row or {}).get("pid"),
+        # A prompt in its own terminal, a question or a permission, which only a person can answer.
+        "prompt": (row or {}).get("status") == "waiting",
         "detail": job["detail"], "reportHead": head_word(said[-1]["text"]) if said else None,
         "lastError": tail[-1]["text"] if tail and tail[-1]["kind"] == "error" else None,
         "limited": limit_stop(ev),        # its turn ended on a usage limit: march on resumes it once there is room
@@ -2010,7 +2012,7 @@ def notice_head(n):
     m = re.match(rf"{name}: (DONE|BLOCKED|FAILED|turn ended)\b", text)
     if m:
         return "turn" if m.group(1) == "turn ended" else m.group(1)
-    return "ASK" if re.match(rf"{name} is waiting on you\b", text) else None
+    return "ASK" if re.match(rf"{name} is waiting on (you|its pilot)\b", text) else None
 
 
 def waiting_bullets(text):
@@ -2203,7 +2205,9 @@ class Notices:
             quiet = st == "working" and bool(w["lastActivity"]) and now - w["lastActivity"] > QUIET_SECONDS
             if prev is not None:
                 if st == "blocked" and prev.get("state") != "blocked":
-                    add("waiting", w, f"{w['name']} is waiting on you" + (f": {w['detail']}" if w.get("detail") else ""), head="ASK")
+                    # A worker in a flight asks its pilot; only a prompt in its terminal, or no pilot, waits on you.
+                    whom = "you" if w.get("prompt") or not w.get("plan") else "its pilot"
+                    add("waiting", w, f"{w['name']} is waiting on {whom}" + (f": {w['detail']}" if w.get("detail") else ""), head="ASK")
                 if st == "done" and prev.get("state") not in ("done", None) and prev.get("sid") == w.get("sessionId"):
                     head = w.get("reportHead")
                     kind = {"DONE": "done", "BLOCKED": "waiting", "FAILED": "failed"}.get(head, "turn")
@@ -3265,7 +3269,7 @@ def leg_state(w):
     if w.get("state") == "working":
         return "working", "flying"
     if w.get("state") == "blocked":
-        return "warn", "waiting on you"
+        return "warn", "waiting on you" if w.get("prompt") or not (w.get("plan") or w.get("pilot")) else "waiting on its pilot"
     head, items = w.get("reportHead") or fin.get("reportHead"), w.get("checklist") or fin.get("checklist") or []
     left = len(open_items(items))
     if head == "FAILED":

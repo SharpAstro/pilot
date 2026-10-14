@@ -1924,6 +1924,8 @@ class TrackTests(Case):
         cases = [(None, ("planned", "planned")),
                  ({"state": "working"}, ("working", "flying")),
                  ({"state": "blocked"}, ("warn", "waiting on you")),
+                 ({"state": "blocked", "plan": "s1"}, ("warn", "waiting on its pilot")),
+                 ({"state": "blocked", "plan": "s1", "prompt": True}, ("warn", "waiting on you")),
                  ({"state": "done", "reportHead": "DONE", "checklist": two}, ("warn", "done, 1 item open")),
                  ({"state": "done", "reportHead": "DONE", "checklist": two[:1]}, ("good", "done")),
                  ({"state": "done", "reportHead": "BLOCKED"}, ("warn", "blocked")),
@@ -2103,7 +2105,7 @@ class AlternateTests(Case):
         self.rows = [{"id": "job-api", "sessionId": "sess-api", "state": "working", "status": "busy", "pid": 1}]
         self.assertIn("cannot divert api to api-b: api is flying", self.start("api-b", divert="too slow"))
         self.rows = [{"id": "job-api", "sessionId": "sess-api", "state": "blocked", "status": "idle", "pid": 1}]
-        self.assertIn("cannot divert api to api-b: api is waiting on you", self.start("api-b", divert="too slow"))
+        self.assertIn("cannot divert api to api-b: api is waiting on its pilot", self.start("api-b", divert="too slow"))
         self.rows = [{"id": "job-api", "sessionId": "sess-api", "state": "done", "status": "idle", "pid": 1}]
         self.assertIn("daemon lock", self.start("api-b", divert="stopped"), "stopped: past to the next check")
         (pilot.WORKERS / "api.json").unlink()
