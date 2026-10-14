@@ -4582,7 +4582,7 @@ def main():
     s.add_argument("--message", "-m", required=True, help="the message, or - for stdin")
     s.add_argument("--as", dest="as_", choices=["controller", "autopilot"], default="controller", help="who it is from, for the logs")
     s.set_defaults(fn=cmd_tell)
-    s = sub.add_parser("refuel", help="ask for more fuel: the watchtower approves it, or it goes to the tower")
+    s = sub.add_parser("refuel", help="ask for a refuel: the watchtower approves it, or it goes to the controller")
     s.add_argument("name")
     s.add_argument("tokens", type=int, help="the new budget, absolute")
     s.add_argument("--reason", required=True, help="what is left, and why it needs this much")
