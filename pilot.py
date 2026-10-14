@@ -958,17 +958,19 @@ def plans_view(rows, workers, seen=None):
         text = p.read_text(encoding="utf-8")
         repo = plan_repo(sid, rows)
         root = config()["repos"].get(repo) if repo else None
+        row = live.get(sid) or asleep_rows.get(sid) or {}
         out.append({"sessionId": sid, "path": str(p), "updated": mtime, "live": sid in live, "asleep": asleep(asleep_rows.get(sid)),
-                    "pilot": (live.get(sid) or asleep_rows.get(sid) or {}).get("name"),
+                    "pilot": row.get("name"),
                     "pilotState": (seen.get(sid) or session_view(live[sid])) if sid in live else None,
                     "prs": mentioned_prs(re.split(r"^##\s+Log\s*$", text, maxsplit=1, flags=re.M)[0]),   # not the log's history
                     # Items the controller has answered stay in the plan until its pilot takes them out; until then
                     # they are with the pilot, not waiting on the controller.
                     "answered": {k: v for k, v in (read_json(ANSWERED, {}).get(sid) or {}).items() if k and k in text},
                     "repoUrl": repo_url(repo),
-                    # Its repo's directory, with forward slashes as the launch form's projects have it: where a new
-                    # flight an amendment hands back starts, a parked pilot's flight too.
-                    "repoPath": str(root).replace("\\", "/") if root else "",
+                    # Where a new flight an amendment hands back starts, with forward slashes as the launch form's
+                    # projects have it: its pilot's directory, parked or live, as the dashboard takes a live one's;
+                    # else its legs' repo. PIL1's pilot sits in the monorepo, its first leg flew in the SDK.
+                    "repoPath": str(row.get("cwd") or root or "").replace("\\", "/"),
                     **parse_plan(text)})
     out = by_priority(out)[:10]
     gone = archived(200)

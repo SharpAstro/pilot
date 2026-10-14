@@ -450,6 +450,9 @@ class ConnectionTests(Case):
         pilot.write_json(pilot.ARCHIVE / "build-1.json", {"name": "build", "plan": "s1", "archivedAt": 1, "repo": "web-app"})
         self.assertEqual(path(), str(root).replace("\\", "/"))
         self.assertNotIn("\\", path())
+        mono = ROOT / "monorepo"                         # parked in another repo than its legs flew in: the pilot's
+        self.rows = [{"sessionId": "s1", "cwd": str(mono), "name": "pilot-mono", "kind": "background"}]
+        self.assertEqual(path(), str(mono).replace("\\", "/"))
 
     def test_the_dashboard_gets_each_legs_landed_flag(self):
         self.plan("s2", CONNECTED.replace("| build | Build the tokens | - | tests pass |",
