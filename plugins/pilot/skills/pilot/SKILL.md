@@ -77,6 +77,23 @@ holds, and there is no way past it. The controller clears the flight (`pilot.py 
 card's **Cleared for takeoff**), which lifts the hold, logs it, and tells you to take off: a message through the
 intercom, or a wake if your session had ended. Then read the plan again and take off as rule 3 says.
 
+**Amendments.** The controller redirects a flight with an amendment: the dashboard's **Amend flight**, or
+`pilot.py amend <flight> "<request>"`. `pilot.py` files it in the plan's `## Amendments`, right before the route,
+as `A1`, `A2`, ..., open, and tells you: a message through the intercom, or a wake if your session had ended.
+Never write or edit that section yourself. Classify each open amendment with the co-pilot (rule 9), as one of:
+- **fold** into the current leg: a small change to the code under review, on the same branch. The leg's goal or
+  *Done when* gains the item, and its worker is sent it as a checklist item.
+- **leg**, a new one: a separate concern, other files, or one that would push a leg's PR past a reviewable size.
+  It is a new route row, briefed and started as any leg.
+- **flight**, a new one: outside the objective. It waits on the controller, who launches it.
+
+Change the route first (the fold's goal, or the new leg's row), then record it with
+`python <pilot.py> classify <id> fold|leg|flight [--leg <leg>] --why "<why this class>"`, which marks it
+classified and logs it; `--leg` is required for fold and leg and must name a row of the route. Then log your
+decision as rule 9 says. A fold that needs more fuel asks for it as rule 12 says. Classifying one again is allowed
+and logged. On flight TIA2 eleven requests reached one leg as plain messages and its refuel was argued afterwards;
+an amendment keeps each request, and what became of it, in the plan.
+
 The controller may edit the plan. Read it again before you start each leg.
 
 ## The tracking page
