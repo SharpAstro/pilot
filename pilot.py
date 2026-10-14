@@ -14,6 +14,8 @@ what they have spent, gates their spend, delivers your messages, summarises them
   python pilot.py archive FLIGHT [--restore] [--force]   the controller's: a flight off the Overview onto History
   python pilot.py plan --hold          hold this flight at the gate: plan only, no leg takes off until cleared
   python pilot.py clear FLIGHT         the controller's: clear a holding flight for takeoff, and tell its pilot
+  python pilot.py amend FLIGHT TEXT    the controller's: file an amendment (A1, A2, ...) in the plan, and tell its pilot
+  python pilot.py classify ID fold|leg|flight [--leg L] --why TEXT   the pilot's: record how it classified one
   python pilot.py start NAME --brief FILE|- [--repo R] [--model M] [--effort E] [--budget N]
                          [--pilot NAME] [--after NAME]...
   python pilot.py list [--json]
@@ -371,13 +373,20 @@ ACTORS = (("Controller", "controller"), ("Autopilot", "autopilot"), ("Watchtower
           ("Pilot asks", "pilot"), ("Pilot to ", "pilot"), ("Pilot woken", "pilot.py"), ("Asked in the terminal", "pilot"), ("Decided", "pilot"),
           ("Leg ", "pilot.py"), ("Budget for ", "pilot.py"), ("Plan opened", "pilot.py"), ("Dashboard to ", "pilot.py"),
           ("Archived by the controller", "controller"), ("Restored by the controller", "controller"),
-          ("Cleared for takeoff by the controller", "controller"), ("Holding at the gate", "pilot.py"))
+          ("Cleared for takeoff by the controller", "controller"), ("Holding at the gate", "pilot.py"),
+          # An amendment's two lines differ only past its id, so these two are patterns, not prefixes.
+          (re.compile(r"Amendment A\d+ from the controller"), "controller"), (re.compile(r"Amendment A\d+ classified"), "pilot"))
+
+
+def actor_of(text, default):
+    """Who a log line's text says acted, by ACTORS, a prefix or a pattern matched at its start; else `default`."""
+    return next((a for p, a in ACTORS if (p.match(text) if isinstance(p, re.Pattern) else text.startswith(p))), default)
 
 
 def blackbox(text, actor=None, plan=None, flight=None, **data):
     """The flight recorder: one JSON line per decision or event, append-only, in <state>/blackbox.jsonl.
     Who acted is the controller, the autopilot, the watchtower, a pilot, or pilot.py itself."""
-    actor = actor or next((a for prefix, a in ACTORS if text.startswith(prefix)), "pilot.py")
+    actor = actor or actor_of(text, "pilot.py")
     try:
         STATE.mkdir(parents=True, exist_ok=True)
         with open(BLACKBOX, "a", encoding="utf-8") as f:
@@ -416,7 +425,7 @@ def blackbox_view(limit=1500):
             if (p.stem, what) in known:
                 continue
             at = time.mktime(time.strptime(when, "%Y-%m-%d %H:%M"))
-            actor = next((a for prefix, a in ACTORS if what.startswith(prefix)), "pilot")
+            actor = actor_of(what, "pilot")
             out.append({"at": at, "actor": actor, "flight": flight, "plan": p.stem, "text": what, "fromPlan": True})
     out.sort(key=lambda e: e.get("at") or 0, reverse=True)
     return out[:limit]
@@ -463,7 +472,8 @@ def parse_plan(text):
             log[-1] += " " + ln.strip()
     return {"title": title.group(1).strip() if title else "untitled", "objective": " ".join(objective.group(1).split()) if objective else "",
             "flight": (FLIGHT_RE.search(text) or [None, None])[1], "tracking": (TRACKING_RE.search(text) or [None, None])[1],
-            "connects": plan_connects(text), "hold": plan_hold(text), "legs": legs, "log": log[-40:], "notes": plan_notes(split_waiting(text)[1]), "waiting": split_waiting(text)[0]}
+            "connects": plan_connects(text), "hold": plan_hold(text), "legs": legs, "log": log[-40:], "notes": plan_notes(split_waiting(text)[1]), "waiting": split_waiting(text)[0],
+            "amendments": plan_amendments(text)}
 
 
 def route_depths(legs):
@@ -555,15 +565,145 @@ def plan_notes(text):
         h = re.match(r"^##\s+(\S.*?)\s*$", line)
         if h:
             part = h.group(1).lower()
-            if part not in ("route", "log"):     # a section of the pilot's own
+            if part not in ("route", "log", "amendments"):     # a section of the pilot's own
                 out.append(line)
             continue
-        if part == "log" or line.startswith("# ") or re.match(r"^(Pilot session|Flight|Tracking|Connects|Hold):", line) or line.lstrip().startswith("|"):
+        if part in ("log", "amendments") or line.startswith("# ") or re.match(r"^(Pilot session|Flight|Tracking|Connects|Hold):", line) or line.lstrip().startswith("|"):
             continue
         if part == "route" and line.strip() and "#### On the route" not in out:
             out.append("#### On the route")
         out.append(line)
     return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+
+
+# --------------------------------------------------------------------------- amendments
+
+# The controller redirects a flight with amendments, each a line of the plan's `## Amendments`, which sits right
+# before `## Route`. pilot.py writes the line, stamped; the pilot classifies it, and an indented line under it says
+# how. Any other indented line under it (a fold's budget) is left alone by a classify.
+#   - **A1** · 2026-10-14 21:30 · open · <the controller's request, one line>
+#   - **A2** · 2026-10-14 21:45 · classified · <request>
+#     - Class: fold · Leg: orrery · Why: <the pilot's reason, one line>
+AMENDMENT_RE = re.compile(r"^- \*\*(A\d+)\*\* · (\d{4}-\d\d-\d\d \d\d:\d\d) · (open|classified) · (.*)$")
+AMEND_CLASS_RE = re.compile(r"^\s+- Class:\s*(\w*)(?: · Leg:\s*(.*?))?(?: · Why:\s*(.*?))?\s*$")
+AMEND_CLASSES = ("fold", "leg", "flight")
+
+AMENDED = ("(pilot.py) Amendment {id} to flight {flight} was filed by the controller: {text} -- Classify it as your "
+           "skill says (Amendments): with the co-pilot, fold it into a leg, make it a new leg, or hand it back as a new "
+           "flight; change the route first, then `pilot classify {id} fold|leg|flight [--leg L] --why \"...\"`.")
+
+
+def one_line(text):
+    """A request or reason as one line, every run of whitespace and newlines one space: in the plan it can then
+    never open a heading or an item of its own."""
+    return " ".join(str(text or "").split())
+
+
+def amendments_part(text):
+    """Where a plan's `## Amendments` section is, (start, end), from its heading to the next; None without one."""
+    m = re.search(r"^##\s+Amendments\s*$\n?(.*?)(?=^##\s|\Z)", text, re.M | re.S)
+    return (m.start(), m.end()) if m else None
+
+
+def plan_amendments(text):
+    """A plan's amendments in order: {id, at, text, status, class, leg, why, budget}. An open one has no class,
+    leg or why; budget is a fold's, from a line of its own, and empty without one."""
+    part, out = amendments_part(text), []
+    for ln in (text[part[0]:part[1]] if part else "").splitlines():
+        m = AMENDMENT_RE.match(ln)
+        if m:
+            out.append({"id": m.group(1), "at": m.group(2), "status": m.group(3), "text": m.group(4).strip(),
+                        "class": "", "leg": "", "why": "", "budget": ""})
+            continue
+        c = AMEND_CLASS_RE.match(ln)
+        if c and out:
+            out[-1].update({"class": c.group(1) or "", "leg": (c.group(2) or "").strip(), "why": (c.group(3) or "").strip()})
+    return out
+
+
+def add_amendment(sid, request):
+    """Files the controller's request as the plan's next amendment, open, and logs it; returns its id. Ids go
+    A1, A2, ... and are never reused. The section is made the first time, right before `## Route` (else before
+    `## Log`, else at the end)."""
+    request = one_line(request)
+    if not request:
+        raise ValueError("pilot: an amendment needs the request: what the controller wants changed")
+    p = plan_path(sid)
+    t = p.read_text(encoding="utf-8")
+    aid = f"A{max([int(a['id'][1:]) for a in plan_amendments(t)] + [0]) + 1}"
+    line = f"- **{aid}** · {time.strftime('%Y-%m-%d %H:%M')} · open · {request}\n"
+    part = amendments_part(t)
+    if part:
+        body = t[part[0]:part[1]].rstrip()
+        t = t[:part[0]] + body + ("\n" if "\n- " in body or "\n  " in body else "\n\n") + line + "\n" + t[part[1]:].lstrip("\n")
+    else:
+        at = re.search(r"^##\s+Route\s*$", t, re.M) or re.search(r"^##\s+Log\s*$", t, re.M)
+        sec = f"## Amendments\n\n{line}"
+        t = t[:at.start()] + sec + "\n" + t[at.start():] if at else t.rstrip("\n") + "\n\n" + sec
+    p.write_text(t, encoding="utf-8")
+    plan_log(sid, f"Amendment {aid} from the controller: {request}")
+    return aid
+
+
+def amend_flight(key, request):
+    """The controller amends a flight, a held one too: the request is recorded in its plan first, then its pilot
+    is told, or woken, so a failed wake loses nothing. Returns (plan id, amendment id, how the pilot was reached)."""
+    sid = find_flight(key)
+    aid = add_amendment(sid, request)
+    flight = parse_plan(plan_path(sid).read_text(encoding="utf-8"))["flight"] or "this flight"
+    return sid, aid, tell_pilot(sid, AMENDED.format(id=aid, flight=flight, text=one_line(request)))
+
+
+def classify_amendment(sid, aid, cls, leg, why):
+    """The pilot records how it classified an amendment: its status becomes classified and its Class line says
+    the class, the leg (for fold and leg, a row of the route: a new leg's row is added first) and why. Any other
+    line under it stays. Classifying it again is allowed, and logged as the first time was."""
+    t = plan_path(sid).read_text(encoding="utf-8")
+    plan = parse_plan(t)
+    aid = str(aid or "").strip().upper()
+    if not any(a["id"] == aid for a in plan["amendments"]):
+        raise ValueError(f"pilot: this flight has no amendment {aid}" + (f"; it has {', '.join(a['id'] for a in plan['amendments'])}" if plan["amendments"] else ""))
+    if cls not in AMEND_CLASSES:
+        raise ValueError(f"pilot: an amendment is classified fold, leg or flight, not {cls}")
+    leg = (leg or "").strip()
+    if cls in ("fold", "leg"):
+        if not leg:
+            raise ValueError(f"pilot: a {cls} amendment names its leg with --leg" + ("; add the new leg's row to the route first" if cls == "leg" else ""))
+        if leg not in [l["leg"] for l in plan["legs"]]:
+            raise ValueError(f"pilot: no leg {leg} on the route" + ("; add the new leg's row first" if cls == "leg" else ""))
+    else:
+        leg = ""                    # a new flight is the controller's to launch, on no leg of this one
+    why = one_line(why)
+    if len(why) < 20:
+        raise ValueError("pilot: give the reason with --why: why this class, in a sentence")
+    start, end = amendments_part(t)
+    lines, out, i = t[start:end].splitlines(keepends=True), [], 0
+    while i < len(lines):
+        m = AMENDMENT_RE.match(lines[i].rstrip("\n"))
+        out.append(lines[i] if not m or m.group(1) != aid else f"- **{aid}** · {m.group(2)} · classified · {m.group(4)}\n")
+        i += 1
+        if not m or m.group(1) != aid:
+            continue
+        under = []                  # the lines under it but its Class line, which is written anew first
+        while i < len(lines) and lines[i][:1].isspace() and lines[i].strip():
+            if not AMEND_CLASS_RE.match(lines[i].rstrip("\n")):
+                under.append(lines[i])
+            i += 1
+        out += [f"  - Class: {cls}" + (f" · Leg: {leg}" if leg else "") + f" · Why: {why}\n", *under]
+    plan_path(sid).write_text(t[:start] + "".join(out) + t[end:], encoding="utf-8")
+    plan_log(sid, f"Amendment {aid} classified {cls}" + (f" into {leg}" if leg else "") + f": {why}")
+    return aid
+
+
+def amendment_states(amendments, states):
+    """Each amendment's `state` for the dashboard: open; classified; done once its leg is done (DONE, checklist
+    complete, as the plan card counts a leg done); or `to the controller` for a new flight, which it launches.
+    `states` is flight_legs' for the plan."""
+    done = {s["leg"] for s in states if s.get("w") and leg_timing(s["w"])["state"] == "landed"}
+    for a in amendments:
+        a["state"] = "open" if a["status"] != "classified" else "to the controller" if a["class"] == "flight" \
+            else "done" if a["leg"] in done else "classified"
+    return amendments
 
 
 def priority():
@@ -773,8 +913,10 @@ def plans_view(rows, workers, seen=None):
             p["landed"] = leg_landings(p["legs"], states)
             # Every leg of the route as flown is done (DONE, checklist complete), merged or not: nothing is left to fly.
             p["legsDone"] = bool(states) and all(leg_timing(x["w"])["state"] == "landed" for x in flown(states))
+            amendment_states(p["amendments"], states)
         except Exception as e:          # without it every leg reads not landed, which is the safe way round
             p["landed"], p["landedError"] = {}, f"{type(e).__name__}: {e}"
+            amendment_states(p["amendments"], [])
         try:
             p["times"] = flight_times(p["sessionId"], p["legs"], workers, gone)
         except Exception as e:          # a flight's times are worth less than the rest of the dashboard
@@ -3841,6 +3983,30 @@ def cmd_clear(a):
     print(f"{flight_name(sid)} cleared for takeoff: {reached}")
 
 
+def cmd_amend(a):
+    """The controller amends a flight: a request recorded in its plan, and its pilot told. A pilot never files one."""
+    me = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if sender() != "Controller" or (me and any(me in [s.get("sessionId") for s in sessions_of(w)] for w in registered())):
+        sys.exit("pilot: amendments come from the controller; a pilot classifies them with `pilot classify`")
+    try:
+        sid, aid, reached = amend_flight(a.flight, " ".join(a.request))
+    except ValueError as e:
+        sys.exit(str(e))
+    print(f"{flight_name(sid)}: amendment {aid} filed; {reached}")
+
+
+def cmd_classify(a):
+    """The pilot records how it classified an amendment of its flight: fold, leg or flight, the leg, and why."""
+    sid = a.session or pilot_session()
+    if not sid or not plan_path(sid).exists():
+        sys.exit("pilot: no flight plan for this session; run `plan` first, or pass --session")
+    try:
+        aid = classify_amendment(sid, a.id, a.cls, a.leg, a.why)
+    except ValueError as e:
+        sys.exit(str(e))
+    print(f"amendment {aid} classified {a.cls}" + (f" into {a.leg}" if a.leg and a.cls != "flight" else ""))
+
+
 def cmd_archive(a):
     """The controller archives a flight, or restores one. A pilot never archives a flight itself."""
     me = os.environ.get("CLAUDE_CODE_SESSION_ID")
@@ -4813,6 +4979,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.send(409, {"error": str(e)})
             HUB.poke()
             return self.send(200, {"ok": True, "sessionId": sid, "reached": reached})
+        m = re.match(r"^/api/flights/([A-Za-z0-9-]{1,64})/amend$", self.path)
+        if m:
+            try:
+                sid, aid, reached = amend_flight(m.group(1), body.get("text"))
+            except (ValueError, subprocess.TimeoutExpired) as e:
+                return self.send(409, {"error": str(e)})
+            HUB.poke()
+            return self.send(200, {"ok": True, "sessionId": sid, "id": aid, "reached": reached})
         m = re.match(r"^/api/flights/([A-Za-z0-9-]{1,64})/(archive|restore)$", self.path)
         if m:
             try:
@@ -5117,6 +5291,17 @@ def main():
     s = sub.add_parser("clear", help="the controller's: clear a flight holding at the gate for takeoff, and tell its pilot")
     s.add_argument("flight", help="its flight number, e.g. PIL2, or its plan id")
     s.set_defaults(fn=cmd_clear)
+    s = sub.add_parser("amend", help="the controller's: file an amendment to a flight, a change to what it flies, and tell its pilot")
+    s.add_argument("flight", help="its flight number, e.g. PIL2, or its plan id")
+    s.add_argument("request", nargs="+", help="what the controller wants changed; kept as one line")
+    s.set_defaults(fn=cmd_amend)
+    s = sub.add_parser("classify", help="the pilot's: record an amendment's class (fold, leg or flight), its leg and why")
+    s.add_argument("id", help="the amendment, e.g. A1")
+    s.add_argument("cls", choices=AMEND_CLASSES, metavar="fold|leg|flight")
+    s.add_argument("--leg", help="the route's leg it folds into, or the new leg's row; for fold and leg")
+    s.add_argument("--why", required=True, help="why this class, one line of 20 characters or more")
+    s.add_argument("--session", help="a pilot session id; default: the session this runs in")
+    s.set_defaults(fn=cmd_classify)
     s = sub.add_parser("dashboard")
     s.add_argument("--port", type=int, help="default 5181; with --preview, the first free one from 5182")
     s.add_argument("--preview", action="store_true", help="a second dashboard for checking a change: no notices, session streams close")
