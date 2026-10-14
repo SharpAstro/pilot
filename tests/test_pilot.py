@@ -1574,6 +1574,19 @@ class AddReposTests(Case):
         self.assertEqual(pilot.config()["repos"], {})
 
 
+class MergeTargetTests(Case):
+    """The controller's merge runs in the repo its waiting item names the PR in, not the flight's first leg's."""
+
+    def test_the_named_repo_wins_and_an_unlisted_one_is_refused(self):
+        self.config(repos={"Console.Lib": "C:/r/Console.Lib", "SdlVulkan.Renderer": "C:/r/SdlVulkan.Renderer"})
+        with unittest.mock.patch.object(pilot, "plan_repo", lambda sid, rows=None: "Console.Lib"):
+            self.assertEqual(pilot.merge_target("s1", "SharpAstro/SdlVulkan.Renderer"), ("SdlVulkan.Renderer", "C:/r/SdlVulkan.Renderer"))
+            self.assertEqual(pilot.merge_target("s1", "sdlvulkan.renderer")[0], "SdlVulkan.Renderer", "pilot.json's name, any case")
+            self.assertEqual(pilot.merge_target("s1"), ("Console.Lib", "C:/r/Console.Lib"), "named nowhere: the flight's own")
+            with self.assertRaises(ValueError):
+                pilot.merge_target("s1", "SharpAstro/DIR.Lib")
+
+
 class StartHookTests(Case):
     def test_a_pilot_session_registers_its_repo_as_it_starts(self):
         repo = Path(tempfile.mkdtemp()) / "monorepo"

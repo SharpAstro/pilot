@@ -935,6 +935,22 @@ def plan_repo(sid, rows=None):
     return None
 
 
+def merge_target(sid, repo=None):
+    """The repo a controller's merge runs in, (name, root): the one its waiting item names the pull request in
+    ("owner/name", as pilot.json lists the name), else the flight's own. A flight spans repos and its own is only
+    its first leg's: TIA2's "Merge PR #135?" named SharpAstro/SdlVulkan.Renderer#135, and its button asked
+    Console.Lib for a #135. A named repo pilot.json does not list raises ValueError."""
+    repos = config()["repos"]
+    if repo:
+        short = str(repo).strip().rstrip("/").rsplit("/", 1)[-1].lower()
+        name = next((k for k in repos if k.lower() == short), None)
+        if not name:
+            raise ValueError(f"{repo} is not in pilot.json")
+    else:
+        name = plan_repo(sid)
+    return name, repos.get(name) if name else None
+
+
 def repo_url(name):
     """A configured repo's https URL on GitHub, from its origin remote; None when it has none there."""
     if name not in _repo_urls:
@@ -5325,15 +5341,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/api/merge":
             # The controller's own click: a merge a pilot is refused (its okay arrives as another session's message,
             # which carries no authority), so the dashboard runs it, guarded on the head the controller was shown.
-            sid, n = str(body.get("plan") or ""), int(body.get("pr") or 0)
-            name = plan_repo(sid)
-            root = config()["repos"].get(name) if name else None
+            sid, n, want = str(body.get("plan") or ""), int(body.get("pr") or 0), str(body.get("repo") or "").strip()
+            try:
+                name, root = merge_target(sid, want)
+            except ValueError as e:
+                return self.send(400, {"error": str(e)})
             if not root or not n:
                 return self.send(400, {"error": "no such flight or pull request"})
             # One merge at a time: the item's button and Send answers can both ask for it at once, and gh answers a
             # merge of a PR that has just merged with success, so #11 was logged and announced twice.
             with MERGE_LOCK:
                 pr = gh_json(root, "pr", "view", str(n), "--json", "state,headRefOid,url,mergeable")
+                # The PR the item named, not one of the same number in a checkout pilot.json calls by that name.
+                if pr and want and "/" in want and f"/{want.lower()}/pull/{n}" not in (pr.get("url") or "").lower():
+                    return self.send(409, {"error": f"#{n} in {name}'s checkout is {pr.get('url')}, not {want}#{n}"})
                 if pr and pr.get("state") == "MERGED":
                     return self.send(200, {"ok": True, "merged": n, "head": pr["headRefOid"][:8], "already": True})
                 if not pr or pr.get("state") != "OPEN":
@@ -5349,7 +5370,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if r.returncode != 0:
                     return self.send(502, {"error": (r.stderr or r.stdout).strip()[:400]})
             head = pr["headRefOid"][:8]
-            plan_log(sid, f"Controller merged PR #{n} from the dashboard ({how}, guarded on {head}): {pr.get('url')}")
+            plan_log(sid, f"Controller merged PR #{n} of {name} from the dashboard ({how}, guarded on {head}): {pr.get('url')}")
             rec = read_json(ANSWERED, {})
             waiting = split_waiting(plan_path(sid).read_text(encoding="utf-8"))[0] if plan_path(sid).exists() else ""
             for title in re.findall(r"^\s*[-*]\s+\*\*(.+?)\*\*", waiting, re.M):
@@ -5360,7 +5381,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # Its pilot, live or parked: the intercom wakes a parked one with the news.
             pilot = next((x.get("name") for x in agents() if x.get("sessionId") == sid and (x.get("pid") or asleep(x))), None)
             if pilot:
-                threading.Thread(target=lambda: intercom([pilot], f"The controller merged PR #{n} from the dashboard ({how}, guarded on "
+                threading.Thread(target=lambda: intercom([pilot], f"The controller merged PR #{n} of {name} from the dashboard ({how}, guarded on "
                                                          f"{head}). Take its merge item out of your plan, log it, and carry on.",
                                                          sender="Dashboard"), daemon=True).start()
             HUB.poke()

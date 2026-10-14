@@ -966,7 +966,26 @@ function waitingItems(src) {
 }
 
 // "PR #n" in a plan's text, linked to the flight's repo on GitHub.
-const prLinks = (html, url) => url ? html.replace(/\bPR #(\d+)\b/g, (m, n) => `<a href="${esc(url)}/pull/${n}" target="_blank" rel="noopener">${m}</a>`) : html;
+// The pull requests a text names with their repo, `SharpAstro/SdlVulkan.Renderer#135` or its URL, each number to its
+// "owner/name"; a number named in two repos maps to null. A flight spans repos, and its plan's own (repoUrl) is only
+// its first leg's: TIA2's "Merge PR #135?" was SdlVulkan.Renderer's, and its link and button went to Console.Lib.
+function namedPrs(text) {
+  const out = new Map();
+  for (const m of String(text || "").matchAll(/\b([\w.-]+)\/([\w.-]+)(?:#|\/pull\/)(\d+)\b/g)) {
+    const repo = `${m[1]}/${m[2]}`, had = out.get(m[3]);
+    out.set(m[3], had === undefined || had === repo ? repo : null);
+  }
+  return out;
+}
+const ghPull = (repo, n) => `https://github.com/${repo}/pull/${n}`;
+
+// Links in a waiting item's HTML: each `owner/name#N` to its own PR, and a bare "PR #N" to the repo the item names
+// it in, else the flight's own; one named in two repos is left unlinked rather than guessed.
+function prLinks(html, url, text) {
+  const named = namedPrs(text), a = (href, m) => `<a href="${esc(href)}" target="_blank" rel="noopener">${m}</a>`;
+  return html.replace(/\b([\w.-]+\/[\w.-]+)#(\d+)\b/g, (m, r, n) => a(ghPull(r, n), m))
+    .replace(/\bPR #(\d+)\b/g, (m, n) => named.get(n) ? a(ghPull(named.get(n), n), m) : !named.has(n) && url ? a(`${url}/pull/${n}`, m) : m);
+}
 
 // The plan's waiting items not yet answered from here.
 const unanswered = p => waitingItems(p.waiting).items.filter(it => !(p.answered || {})[it.title]);
@@ -996,16 +1015,18 @@ function waitingHtml(p, ps) {
     if (sent) return `<li class="answered">${md(it.text, true)}<div class="sub">✓ answered ${esc(clock(sent * 1000))}; with the pilot, which takes it out of its plan at its next step</div>${addBtn}</li>`;
     const a = answers.get(`${sid}|${it.title}`);
     // A merge question gets the controller's own merge button: the dashboard runs it, as a pilot may not.
-    const mpr = (/\bmerge PR #(\d+)/i.exec(it.title) || [])[1];
-    const mergeBtn = mpr && p.repoUrl ? `<button class="primary" data-merge="${esc(sid)}" data-pr="${esc(mpr)}">Merge #${esc(mpr)} (rebase)</button>
-      <a href="${esc(p.repoUrl)}/pull/${esc(mpr)}" target="_blank" rel="noopener">PR #${esc(mpr)} ↗</a>` : "";
+    // In the repo the item names it in, said on the button; the flight's own when it names none; none when two.
+    const mpr = (/\bmerge PR #(\d+)/i.exec(it.title) || [])[1], mrepo = mpr ? namedPrs(it.text).get(mpr) : undefined;
+    const mhref = mrepo ? ghPull(mrepo, mpr) : mrepo === undefined && p.repoUrl ? `${p.repoUrl}/pull/${mpr}` : "";
+    const mergeBtn = mpr && mhref ? `<button class="primary" data-merge="${esc(sid)}" data-pr="${esc(mpr)}"${mrepo ? ` data-repo="${esc(mrepo)}"` : ""}>Merge ${esc(mrepo ? mrepo.split("/")[1] : "")}#${esc(mpr)} (rebase)</button>
+      <a href="${esc(mhref)}" target="_blank" rel="noopener">PR #${esc(mpr)} ↗</a>` : "";
     if (a) n++;
     const btn = (kind, value, label, rec) => `<button class="choice${a?.kind === kind && a.value === value ? " on" : ""}${rec ? " rec" : ""}"
       data-answer="${esc(sid)}" data-item="${i}" data-kind="${kind}" data-value="${esc(value)}" title="${esc(rec ? `recommended: ${it.rec}` : value)}">${esc(label)}</button>`;
     const plain = s => s.replace(/[`*]/g, ""), short = plain(it.recShort);
     const choices = it.options.length ? it.options.map(o => btn("option", o, plain(o), o === it.recShort || it.rec.startsWith(o))).join("")
       : it.rec ? btn("accept", it.rec, `accept: ${short.length > 40 ? short.slice(0, 39) + "…" : short}`, true) : "";
-    return `<li>${prLinks(md(it.text, true), p.repoUrl)}${mergeBtn ? `<div class="choices">${mergeBtn}</div>` : ""}${addBtn}<div class="choices">${choices}<input class="reply" data-answer="${esc(sid)}" data-item="${i}"
+    return `<li>${prLinks(md(it.text, true), p.repoUrl, it.text)}${mergeBtn ? `<div class="choices">${mergeBtn}</div>` : ""}${addBtn}<div class="choices">${choices}<input class="reply" data-answer="${esc(sid)}" data-item="${i}"
       placeholder="${choices ? "or your own answer" : "your answer"}" value="${esc(a?.kind === "text" ? a.value : "")}"></div></li>`;
   }).join("");
   const can = (p.live || p.asleep) && p.pilot;     // a parked pilot is woken by the message
@@ -1030,7 +1051,9 @@ async function sendAnswers(sid) {
   for (const [it, a] of picked) {
     const n = (/\bmerge PR #(\d+)/i.exec(it.title) || [])[1], said = a.kind === "accept" ? it.rec : a.value;
     if (!n || !/^\s*merge(d)?\b/i.test(said || "")) continue;
-    try { const j = await post("/api/merge", {plan: sid, pr: Number(n)}); merged.set(it.title, `merged by the dashboard (rebase, guarded on ${j.head})`); }
+    const repo = namedPrs(it.text).get(n);
+    if (repo === null) continue;                     // named in two repos: the pilot sorts out which
+    try { const j = await post("/api/merge", {plan: sid, pr: Number(n), repo}); merged.set(it.title, `merged by the dashboard (rebase, guarded on ${j.head})`); }
     catch (e) { sentNote.set(sid, `not sent: merging PR #${n} failed: ${e.message}`); render(); return; }
   }
   const text = `The controller's answers to items in your plan's "Waiting on the controller" section, sent from the dashboard:\n`
@@ -2253,7 +2276,7 @@ document.addEventListener("click", async e => {
     // The controller's own merge: the dashboard runs gh pr merge --rebase, guarded on the PR's head, and tells the pilot.
     if (!confirm(`Rebase-merge PR #${t.dataset.pr}? The dashboard runs it now and tells the pilot.`)) return;
     t.disabled = true; t.textContent = "merging…";
-    try { const j = await post("/api/merge", {plan: t.dataset.merge, pr: Number(t.dataset.pr)}); t.textContent = `merged #${j.merged} at ${j.head}`; }
+    try { const j = await post("/api/merge", {plan: t.dataset.merge, pr: Number(t.dataset.pr), repo: t.dataset.repo}); t.textContent = `merged #${j.merged} at ${j.head}`; }
     catch (err) { t.disabled = false; t.textContent = `Merge #${t.dataset.pr} (rebase)`; alert(err.message); }
     return;
   }
