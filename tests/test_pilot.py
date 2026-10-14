@@ -390,7 +390,7 @@ class ConnectionTests(Case):
         self.assertEqual(pilot.flight_landed(leg({"ahead": 2, "prs": []})), (False, ["build: 2 commits on no merged pull request"]))
         open_pr = {"number": 7, "state": "OPEN"}
         self.assertFalse(pilot.flight_landed(leg({"ahead": 1, "prs": [open_pr]}))[0])
-        self.assertEqual(pilot.flight_landed(leg({"ahead": 2, "prs": [{"number": 7, "state": "MERGED"}]})), (True, []))
+        self.assertEqual(pilot.flight_landed(leg({"ahead": 2, "tip": "abc123", "prs": [{"number": 7, "state": "MERGED", "head": "abc123"}]})), (True, []))
         self.assertEqual(pilot.flight_landed(leg({"ahead": 0, "prs": []})), (True, []), "no commits past its base, or all on it: landed")
 
     def test_a_removed_legs_deleted_branch_lands_only_with_no_commits(self):
@@ -405,7 +405,7 @@ class ConnectionTests(Case):
         self.landed()
         self.git = {"ahead": 3, "prs": [], "remotes": []}      # DONE, unpushed
         self.assertIn("build: 3 commits on no merged pull request", self.start())
-        self.git = {"ahead": 3, "prs": [{"number": 7, "state": "MERGED"}], "remotes": ["origin/feat/x"]}
+        self.git = {"ahead": 3, "tip": "abc123", "prs": [{"number": 7, "state": "MERGED", "head": "abc123"}], "remotes": ["origin/feat/x"]}
         self.assertIsNone(pilot.connection_hold("s1"))
 
     def test_the_dashboard_gets_each_connection_and_whether_it_landed(self):
@@ -1803,6 +1803,157 @@ class AlternateTests(Case):
         self.assertIn("api was diverted to api-b; `pilot.py rm api-b` first to undo the diversion", self.start("api"))
         (pilot.WORKERS / "api-b.json").unlink()                     # rm undoes it
         self.assertIn("daemon lock", self.start("api"))
+
+
+class LandedLookupTests(Case):
+    """A leg whose PR was squash- or rebase-merged and its branch deleted on merge (as tianwen does), then pruned
+    by a fetch: no remote branch holds its tip, so its PRs are found by the tip itself."""
+
+    def setUp(self):
+        super().setUp()
+        self.repo = Path(tempfile.mkdtemp(prefix="lookup-repo-", dir=ROOT))   # one each: git's read-only objects outlive rmtree on Windows
+        self.git("init", "-q", "-b", "main")
+        self.git("commit", "-q", "--allow-empty", "-m", "base")
+        self.git("checkout", "-q", "-b", "worktree-w-build")
+        self.git("commit", "-q", "--allow-empty", "-m", "the fix")
+        self.tip = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "main")
+        self.git("remote", "add", "origin", "https://github.com/example/web-app.git")   # never fetched: no remote refs
+        self.config(repos={"web-app": str(self.repo)})
+        self.w = {"name": "build", "repo": "web-app", "branch": "worktree-w-build", "base": "main",
+                  "worktree": str(self.repo / "gone"), "started": 0}
+        self.asked = []
+        self.answers = {}
+
+    def git(self, *a):
+        return subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@t", *a],
+                              check=True, capture_output=True, text=True).stdout.strip()
+
+    def gh(self, root, *a):
+        """A fake gh: each kind of call (api, view, list) answers from self.answers as (code, stdout, stderr)."""
+        self.asked.append(a)
+        kind = "api" if a[0] == "api" else a[1]
+        code, out, err = self.answers.get(kind, (0, "[]", ""))
+        if kind == "view":
+            out = json.dumps(out[int(a[2])]) if isinstance(out, dict) else out
+        return types.SimpleNamespace(returncode=code, stdout=out, stderr=err)
+
+    def pr(self, number, state="MERGED", head=None, branch="feat/fix"):
+        return {"number": number, "state": state, "headRefName": branch, "headRefOid": head or self.tip, "url": f"u/{number}"}
+
+    def read(self):
+        with unittest.mock.patch.object(pilot, "gh_run", self.gh), unittest.mock.patch.object(pilot.shutil, "which", lambda n: "gh"):
+            return pilot.collateral_now(self.w)
+
+    def landed(self, g):
+        return pilot.flight_landed([{"leg": "build", "w": {"reportHead": "DONE"}, "cls": "good", "label": "landed", "git": g}])
+
+    def test_a_squash_merged_leg_with_no_tracking_ref_lands(self):
+        self.answers = {"api": (0, json.dumps([{"number": 12, "head": {"sha": self.tip}}]), ""),
+                        "view": (0, {12: self.pr(12)}, "")}
+        g = self.read()
+        self.assertEqual((g["remotes"], g["ahead"], g["tip"]), ([], 1, self.tip))
+        self.assertEqual([(p["number"], p["state"], p["head"]) for p in g["prs"]], [(12, "MERGED", self.tip)])
+        self.assertEqual(self.asked[0], ("api", f"repos/{{owner}}/{{repo}}/commits/{self.tip}/pulls"))
+        self.assertEqual(len(self.asked), 2, "the tip is the PR's head: no search after")
+        self.assertEqual(self.landed(g), (True, []))
+
+    def test_the_search_finds_a_merged_pr_the_commit_endpoint_does_not(self):
+        self.answers = {"api": (0, "[]", ""), "list": (0, json.dumps([self.pr(14)]), "")}
+        g = self.read()
+        self.assertEqual(self.asked[1][:6], ("pr", "list", "--state", "merged", "--search", self.tip))
+        self.assertEqual([p["number"] for p in g["prs"]], [14])
+        self.assertEqual(self.landed(g), (True, []))
+
+    def test_an_unmerged_tip_with_no_ref_stays_open(self):
+        self.answers = {"api": (1, "", f"gh: No commit found for SHA: {self.tip} (HTTP 422)")}
+        g = self.read()
+        self.assertEqual(g["prs"], [], "a tip GitHub never saw has no PR: known, not unknown")
+        self.assertEqual(self.landed(g), (False, ["build: 1 commit on no merged pull request"]))
+
+    def test_gh_failing_on_the_sha_lookup_stays_unknown(self):
+        for answers in ({"api": (1, "", "gh: HTTP 502")}, {"api": (0, "not json", "")},
+                        {"api": (0, json.dumps([{"number": 12}]), ""), "view": (1, "", "gh: HTTP 502")},
+                        {"api": (0, "[]", ""), "list": (1, "", "gh: rate limited")}):
+            self.answers, self.asked = answers, []
+            g = self.read()
+            self.assertIsNone(g["prs"], answers)
+            self.assertEqual(self.landed(g), (False, ["build: its pull requests not read yet"]), answers)
+        with unittest.mock.patch.object(pilot.shutil, "which", lambda n: None):
+            self.assertIsNone(pilot.sha_prs(self.repo, self.tip))
+
+    def test_a_merged_pr_whose_head_is_not_the_tip_does_not_count(self):
+        old = self.pr(5, head="0" * 40, branch="worktree-w-build")       # a branch name used again, or commits pushed after
+        self.answers = {"api": (0, json.dumps([{"number": 5}]), ""), "view": (0, {5: old}, ""),
+                        "list": (0, json.dumps([old]), "")}
+        g = self.read()
+        self.assertEqual([p["number"] for p in g["prs"]], [5], "the search's answer is not counted twice")
+        self.assertEqual(self.landed(g), (False, ["build: 1 commit on no merged pull request (#5 merged at another head)"]))
+        g["prs"].append({"number": 6, "state": "MERGED", "head": self.tip})
+        self.assertEqual(self.landed(g), (True, []))
+
+    def test_a_repo_with_no_remote_asks_github_nothing(self):
+        self.git("remote", "remove", "origin")
+        g = self.read()
+        self.assertEqual((g["prs"], self.asked), ([], []))
+
+    def test_rm_reads_a_gone_worktrees_commits_from_its_branch_and_none_once_that_is_gone(self):
+        def rm():
+            self.worker("build", plan="s1", base="main", branch="worktree-w-build", worktree=str(self.repo / "gone"),
+                        sessions=[{"id": "job-build", "sessionId": "sess-build"}])
+            fake = lambda *a, timeout=60, **_: types.SimpleNamespace(returncode=0, stdout="", stderr="")
+            with unittest.mock.patch.object(pilot, "claude", fake), contextlib.redirect_stdout(io.StringIO()):
+                pilot.cmd_rm(types.SimpleNamespace(name="build"))
+            rec = max(pilot.ARCHIVE.glob("build-*.json"), key=lambda p: p.stat().st_mtime_ns)
+            commits = json.loads(rec.read_text(encoding="utf-8"))["final"]["commits"]
+            rec.unlink()
+            return commits
+        self.assertEqual(rm(), self.git("log", "--oneline", "main..worktree-w-build"))
+        self.assertIn("the fix", rm())
+        self.git("branch", "-q", "-D", "worktree-w-build")
+        self.assertIsNone(rm(), "unreadable, not \"\": that would say it had no commits")
+        st = [{"leg": "build", "w": {"final": {"reportHead": "DONE", "commits": None}}, "cls": "good", "label": "landed",
+               "git": {"gone": True, "repo": "web-app", "branch": "worktree-w-build"}}]
+        self.assertEqual(pilot.flight_landed(st), (False, ["build: its branch is deleted, so its commits cannot be read"]))
+
+
+class FlightHistoryLegTests(Case):
+    """History reads an archived flight's legs as the strips do: flight_legs' states and flown()'s route."""
+
+    def setUp(self):
+        super().setUp()
+        self.git = {"ahead": 1, "prs": [], "remotes": []}
+        self._git_fns = pilot.collateral_now, pilot.collateral
+        pilot.collateral_now, pilot.collateral = (lambda w: self.git), (lambda w, ttl=20: self.git)
+
+    def tearDown(self):
+        pilot.collateral_now, pilot.collateral = self._git_fns
+        super().tearDown()
+
+    def removed(self, leg, plan="s1"):
+        pilot.write_json(pilot.ARCHIVE / f"{leg}-1.json", {"name": leg, "plan": plan, "archivedAt": 1, "started": 1000.0,
+                         "repo": "web-app", "branch": f"worktree-w-{leg}",
+                         "final": {"reportHead": "DONE", "checklist": [{"status": "completed", "subject": "x"}]}})
+
+    def legs(self):
+        return [(l["leg"], l["cls"], l["label"]) for l in pilot.flight_history([], pilot.archived(200))[0]["legs"]]
+
+    def test_a_removed_leg_whose_pr_is_in_review_has_not_landed(self):
+        self.plan("s1", PLAN)
+        self.removed("fix")
+        self.git["prs"] = [{"number": 7, "state": "OPEN", "head": "abc", "ci": "passing", "reviewer": "self"}]
+        pilot.archive_flight("WA1")
+        self.assertEqual(self.legs(), [("design", "planned", "planned"), ("fix", "working", "on approach")])
+        self.git["prs"][0]["state"] = "MERGED"
+        self.assertEqual(self.legs()[1], ("fix", "good", "at the gate"))
+
+    def test_an_alternate_not_taken_is_left_out(self):
+        self.plan("s1", LANES)
+        self.removed("scaffold")
+        pilot.archive_flight("WA2")
+        self.assertEqual([l[0] for l in self.legs()], ["scaffold", "api", "ui", "ship"])
+        self.removed("api-b")                                   # a removed alternate that landed was taken
+        self.assertEqual([l[0] for l in self.legs()], ["scaffold", "api", "ui", "api-b", "ship"])
 
 
 if __name__ == "__main__":
