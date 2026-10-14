@@ -2642,7 +2642,6 @@ class NoticeTests(Case):
         self.assertEqual(len(started), 1)
 
 
-
 class UploadTests(Case):
     """Images the controller attaches to a message: uploaded raw, typed by their own bytes, saved under a random id
     in <state>/uploads, sent as their path, and recognised as images only at that path."""
@@ -2754,6 +2753,194 @@ class UploadTests(Case):
         line = self.log_of("s1")[-1]
         self.assertTrue(line.endswith(f"Controller to w-fix (intercom): this is what I see... [image uploads/{names[0]}] [image uploads/{names[1]}]"), line)
         self.assertIn(f"[image uploads/{names[1]}]", self.last_box()[0])
+
+
+class AmendmentTests(Case):
+    """The controller's amendments to a flight: `amend` files one in the plan's `## Amendments` and tells the pilot,
+    `classify` records the pilot's class, leg and why, and parse_plan reads them back for the dashboard."""
+
+    def setUp(self):
+        super().setUp()
+        self.told = []
+        self._tell = pilot.tell_pilot
+        pilot.tell_pilot = self.tell
+
+    def tearDown(self):
+        pilot.tell_pilot = self._tell
+        super().tearDown()
+
+    def tell(self, sid, text):
+        # Called after the write: the amendment is in the plan by the time its pilot is told.
+        self.told.append((sid, text, [a["id"] for a in pilot.parse_plan(pilot.plan_path(sid).read_text(encoding="utf-8"))["amendments"]]))
+        return "told its pilot pilot-x through the intercom"
+
+    def text(self, sid="s1"):
+        return pilot.plan_path(sid).read_text(encoding="utf-8")
+
+    def amend(self, request, flight="WA1", me=None):
+        env = {"CLAUDE_CODE_SESSION_ID": me} if me else {}
+        with unittest.mock.patch.dict(os.environ, env, clear=False), contextlib.redirect_stdout(io.StringIO()) as out:
+            if not me:
+                os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+            pilot.cmd_amend(types.SimpleNamespace(flight=flight, request=[request]))
+        return out.getvalue()
+
+    def classify(self, aid, cls, leg=None, why="the change touches only the exporter's rounding"):
+        return pilot.classify_amendment("s1", aid, cls, leg, why)
+
+    def test_amend_appends_a1_then_a2_in_a_section_before_the_route(self):
+        self.plan("s1", PLAN)
+        out = self.amend("Also export the page labels")
+        self.assertEqual(out, "WA1 (Export fixes): amendment A1 filed; told its pilot pilot-x through the intercom\n")
+        self.amend("Rotate thumbnails too")
+        t = self.text()
+        self.assertLess(t.index("## Amendments"), t.index("## Route"))
+        self.assertLess(t.index("## Waiting on the controller"), t.index("## Amendments"))
+        self.assertRegex(t, r"## Amendments\n\n- \*\*A1\*\* · \d{4}-\d\d-\d\d \d\d:\d\d · open · Also export the page labels\n"
+                            r"- \*\*A2\*\* · \d{4}-\d\d-\d\d \d\d:\d\d · open · Rotate thumbnails too\n\n## Route\n")
+        self.assertEqual([a["id"] for a in pilot.parse_plan(t)["amendments"]], ["A1", "A2"])
+        self.assertTrue(self.log_of("s1")[-1].endswith("Amendment A2 from the controller: Rotate thumbnails too"))
+        self.assertEqual(self.last_box(), ("Amendment A2 from the controller: Rotate thumbnails too", "controller"))
+
+    def test_tell_pilot_is_called_after_the_write_with_the_request(self):
+        self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nHold: awaiting clearance"))   # a held flight takes one too
+        self.amend("Also export the page labels")
+        [(sid, text, seen)] = self.told
+        self.assertEqual((sid, seen), ("s1", ["A1"]), "the plan held A1 before its pilot was told")
+        self.assertIn("Amendment A1 to flight WA1 was filed by the controller: Also export the page labels", text)
+        self.assertIn("pilot classify A1", text)
+
+    def test_a_failed_tell_loses_nothing(self):
+        self.plan("s1", PLAN)
+        pilot.tell_pilot = lambda sid, text: "its pilot is not running; tell it to take off when it is back"
+        self.assertIn("A1 filed; its pilot is not running", self.amend("Also export the page labels"))
+        self.assertEqual(pilot.parse_plan(self.text())["amendments"][0]["status"], "open")
+
+    def test_the_request_is_one_line_and_cannot_open_a_heading(self):
+        self.plan("s1", PLAN)
+        self.amend("## Route\n\nexport   labels\n- and thumbnails")
+        p = pilot.parse_plan(self.text())
+        self.assertEqual(p["amendments"][0]["text"], "## Route export labels - and thumbnails")
+        self.assertEqual([l["leg"] for l in p["legs"]], ["design", "fix"], "the route is still the one route")
+        self.assertEqual(len(re.findall(r"^## Route", self.text(), re.M)), 1)
+        with self.assertRaises(SystemExit) as e:
+            self.amend(" \n ")
+        self.assertIn("needs the request", str(e.exception))
+
+    def test_a_plan_without_a_route_gets_the_section_before_its_log_or_at_the_end(self):
+        self.plan("s1", "# Flight plan: x\n\nFlight: WA1\n\n## Log\n\n- 2026-10-13 09:00 Plan opened.\n")
+        self.amend("Do the other thing as well")
+        self.assertLess(self.text().index("## Amendments"), self.text().index("## Log"))
+        self.plan("s1", "# Flight plan: x\n\nFlight: WA1\n")
+        self.amend("Do the other thing as well")
+        self.assertRegex(self.text(), r"^# Flight plan: x\n\nFlight: WA1\n\n## Amendments\n\n- \*\*A1\*\* .* · open · Do the other thing as well\n\n## Log\n")
+
+    def test_the_round_trip_keeps_an_unknown_line_under_an_amendment(self):
+        self.plan("s1", PLAN)
+        self.amend("Also export the page labels")
+        self.amend("Rotate thumbnails too")
+        a = pilot.parse_plan(self.text())["amendments"]
+        self.assertEqual({k: a[0][k] for k in ("id", "status", "class", "leg", "why", "budget")},
+                         {"id": "A1", "status": "open", "class": "", "leg": "", "why": "", "budget": ""})
+        # A later line of the next leg's (a fold's budget) sits under A1; a classify keeps it.
+        self.plan("s1", self.text().replace("· Also export the page labels\n", "· Also export the page labels\n  - Budget: +2M to fix\n"))
+        self.classify("A1", "fold", "fix", "a small change to\nthe exporter under review")
+        t = self.text()
+        self.assertIn("· classified · Also export the page labels\n  - Class: fold · Leg: fix · Why: a small change to the exporter under review\n"
+                      "  - Budget: +2M to fix\n- **A2**", t)
+        self.classify("A1", "flight", "fix", "outside the objective after all: the labels are a feature")
+        t = self.text()
+        self.assertIn("  - Class: flight · Why: outside the objective after all: the labels are a feature\n  - Budget: +2M to fix\n", t)
+        self.assertEqual(t.count("- Class:"), 1, "a reclassify rewrites the Class line, never adds one")
+        a = pilot.parse_plan(t)["amendments"]
+        self.assertEqual((a[0]["status"], a[0]["class"], a[0]["leg"], a[0]["why"]),
+                         ("classified", "flight", "", "outside the objective after all: the labels are a feature"))
+        self.assertEqual((a[1]["status"], a[1]["class"]), ("open", ""))
+        self.assertEqual(self.log_of("s1")[-2][17:], "Amendment A1 classified fold into fix: a small change to the exporter under review")
+        self.assertEqual(self.last_box(), ("Amendment A1 classified flight: outside the objective after all: the labels are a feature", "pilot"))
+
+    def test_classify_validates_the_id_class_leg_and_why(self):
+        self.plan("s1", PLAN)
+        self.amend("Also export the page labels")
+        before = self.text()
+        for args, said in [(("A9", "fold", "fix"), "no amendment A9; it has A1"),
+                           (("A1", "move", "fix"), "fold, leg or flight, not move"),
+                           (("A1", "fold", None), "a fold amendment names its leg with --leg"),
+                           (("A1", "leg", "labels"), "no leg labels on the route; add the new leg's row first"),
+                           (("A1", "fold", "nope"), "no leg nope on the route")]:
+            with self.assertRaises(ValueError) as e:
+                self.classify(*args)
+            self.assertIn(said, str(e.exception))
+        with self.assertRaises(ValueError) as e:
+            self.classify("A1", "fold", "fix", "too short\n")
+        self.assertIn("--why", str(e.exception))
+        self.assertEqual(self.text(), before, "a refused classify changes nothing")
+        self.assertEqual(self.classify("a1", "leg", "design", "a separate concern in other files entirely"), "A1")
+
+    def test_cmd_classify_finds_the_plan_as_log_does(self):
+        self.plan("s1", PLAN)
+        self.amend("Also export the page labels")
+        with unittest.mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s1"}), contextlib.redirect_stdout(io.StringIO()) as out:
+            pilot.cmd_classify(types.SimpleNamespace(session=None, id="A1", cls="fold", leg="fix", why="the exporter's rounding, the same branch"))
+        self.assertEqual(out.getvalue(), "amendment A1 classified fold into fix\n")
+        with unittest.mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "nobody"}), self.assertRaises(SystemExit) as e:
+            pilot.cmd_classify(types.SimpleNamespace(session=None, id="A1", cls="fold", leg="fix", why="x" * 30))
+        self.assertIn("no flight plan for this session", str(e.exception))
+
+    def test_amend_is_the_controllers_only(self):
+        self.plan("s1", PLAN)
+        with self.assertRaises(SystemExit) as e:
+            self.amend("Also export the page labels", me="s1")     # the pilot of s1, which has a plan
+        self.assertEqual(str(e.exception), "pilot: amendments come from the controller; a pilot classifies them with `pilot classify`")
+        self.assertEqual(pilot.parse_plan(self.text())["amendments"], [])
+        self.assertEqual(self.told, [])
+        with self.assertRaises(SystemExit) as e:
+            self.amend("Also export the page labels", flight="ZZ9")
+        self.assertEqual(str(e.exception), "pilot: no flight plan has the number ZZ9")
+
+    def test_the_amendments_are_not_notes_and_each_has_a_state(self):
+        self.plan("s1", PLAN)
+        for r in ("Also export the page labels", "Rotate thumbnails too", "Add a PDF/A mode", "Rewrite the design note"):
+            self.amend(r)
+        self.classify("A2", "fold", "fix")
+        self.classify("A3", "flight")
+        self.classify("A4", "fold", "design")
+        notes = pilot.parse_plan(self.text())["notes"]
+        self.assertNotIn("Amendments", notes)
+        self.assertNotIn("page labels", notes)
+        self.assertIn("The exporter rounds rotation twice", notes)
+        self.worker("design", plan="s1", state="done", reportHead="DONE")     # done, as the plan card counts it
+        p = pilot.plans_view([], pilot.registered())[0]
+        self.assertNotIn("landedError", p)
+        self.assertEqual([(a["id"], a["state"]) for a in p["amendments"]],
+                         [("A1", "open"), ("A2", "classified"), ("A3", "to the controller"), ("A4", "done")])
+
+    def test_the_endpoint_amends_and_says_how_the_pilot_was_reached(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        self.plan("s1", PLAN)
+        srv = pilot.http.server.ThreadingHTTPServer(("127.0.0.1", 0), pilot.Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            def post(path, body):
+                req = urllib.request.Request(f"http://127.0.0.1:{srv.server_address[1]}{path}", json.dumps(body).encode("utf-8"),
+                                             {"Content-Type": "application/json", "X-Pilot": "1"}, method="POST")
+                try:
+                    with urllib.request.urlopen(req) as r:
+                        return r.status, json.loads(r.read())
+                except urllib.error.HTTPError as e:
+                    with e:
+                        return e.code, json.loads(e.read())
+            self.assertEqual(post("/api/flights/WA1/amend", {"text": "Also export\nthe page labels"}),
+                             (200, {"ok": True, "sessionId": "s1", "id": "A1", "reached": "told its pilot pilot-x through the intercom"}))
+            self.assertEqual(post("/api/flights/s1/amend", {"text": "Rotate thumbnails too"})[1]["id"], "A2")
+            self.assertEqual(post("/api/flights/WA1/amend", {"text": ""})[0], 409)
+            self.assertEqual(post("/api/flights/ZZ9/amend", {"text": "anything at all"})[0], 409)
+            self.assertEqual([a["text"] for a in pilot.parse_plan(self.text())["amendments"]], ["Also export the page labels", "Rotate thumbnails too"])
+        finally:
+            srv.shutdown()
+            srv.server_close()
 
 
 if __name__ == "__main__":
