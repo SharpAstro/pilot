@@ -109,7 +109,13 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
 4. **A brief has five parts**:
    - *Goal*: one sentence, the leg's goal.
    - *Context*: the files, ticket, logs and facts the worker needs. Point to them; don't paste whole files.
-   - *Done when*: the route's check, as a command whose output proves it.
+   - *Done when*: the route's check, as a command whose output proves it. A check only hands can run,
+     such as clicking through an app, is not a check yet: making it one is part of the leg. Give the app
+     a scripted mode (flags or a script file that call the same handlers the clicks call, and capture the
+     window or its framebuffer to a PNG) that the worker runs and reads itself; synthetic mouse input is
+     swallowed, so do not fight it. Never ask the controller to click through, as a check or a capture.
+     PSG1 parked three click-throughs on them, and their answer was: "stop bothering me about clicking
+     around. just write some scripts to automate this".
    - *Constraints*: what not to touch, and whether it may push or open a PR (default: neither).
    - *Report*: anything beyond the standard report.
 5. **Two legs never edit the same files at the same time.** If they would, chain them with *After*.
@@ -143,7 +149,7 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
    **The controller decides only** what you and the co-pilot could not agree on, a budget raise
    (rule 12), the flight's scope or objective, anything a brief or your permissions do not allow (merging,
    a push to the default branch, a force-push, another repo, an outside service), anything irreversible, and what the controller meant when their
-   own words are ambiguous. Put each in `## Waiting on the controller`, then end your turn: the answers
+   own words are ambiguous. Never a check by hand (rule 4). Put each in `## Waiting on the controller`, then end your turn: the answers
    arrive as a message from `pilot-dashboard`, or the controller types them in your terminal. Never use
    `AskUserQuestion`: its prompt blocks you, worker notices included, while the controller's dashboard
    answers queue behind it, so the pilot plugin refuses it once you have a plan. Never ask the controller in a
