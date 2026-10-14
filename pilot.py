@@ -72,6 +72,7 @@ PRIORITY = STATE / "priority.json"         # the controller's order of flights, 
 FLIGHTS = STATE / "flights.json"           # the last flight number given out, per repo code
 BLACKBOX = STATE / "blackbox.jsonl"        # every decision and event, append-only, across all flights
 AUTOPILOT = STATE / "autopilot.json"       # the autopilot's switch, session, and what it has been sent
+MARCH = STATE / "march.json"            # on march on: the flights marching and their sessions, for the worker hooks
 REFUEL_MODE = STATE / "refuel.json"        # {"mode": "auto" or "manual"}: may the watchtower approve refuels
 ASKS = STATE / "asks"                       # the question a pilot is waiting on you for, by session id
 NOTICES = STATE / "notifications.json"
@@ -1685,6 +1686,7 @@ def worker_status(w, rows=None):
         "state": state, "busy": (row or {}).get("status") == "busy", "pid": (row or {}).get("pid"),
         "detail": job["detail"], "reportHead": head_word(said[-1]["text"]) if said else None,
         "lastError": tail[-1]["text"] if tail and tail[-1]["kind"] == "error" else None,
+        "limited": limit_stop(ev),        # its turn ended on a usage limit: march on resumes it once there is room
         "spend": sp, "overBudget": bool(w.get("budget")) and sp["weighted"] >= w["budget"],
         "lastActivity": last, "now": now, "rev": path.stat().st_size if path else 0,
         "stoppedAt": stopped,             # its transcript's last event: the file itself is touched after a turn ends
@@ -1745,7 +1747,7 @@ def session_view(r):
         ask = pending_question(ev)
     now, said = doing_now(ev), next((e for e in reversed(ev) if e["kind"] == "said"), None)
     return {"said": {"text": said["text"][:8000], "at": said["at"]} if said else None, "checklist": checklist([sid]), "status": status, "busy": status == "busy", "waitingFor": r.get("waitingFor") or rec.get("waitingFor"),
-            "since": since, "now": now, "ask": ask,
+            "since": since, "now": now, "ask": ask, "limited": limit_stop(ev),
             "remote": f"https://claude.ai/code/{rec['bridgeSessionId']}" if rec.get("bridgeSessionId") else None}
 
 
@@ -1806,7 +1808,7 @@ def dry_at(five, start, now, used):
 
 
 REFUEL = {"maxUsedPct": 80, "maxFactor": 2, "maxAgeMinutes": 30,     # ~/.pilot/pilot.json "refuel" overrides
-          "weekDryPct": 50, "weekDryDays": 3}
+          "weekDryPct": 50, "weekDryDays": 3, "marchOn": 1}
 
 
 def headroom(now=None):
@@ -2470,6 +2472,14 @@ def cmd_start(a):
     hold = connection_hold(pilot_session())
     if hold:
         sys.exit(hold)
+    # On march on, a flight not among the first in the controller's order circles while the account is short.
+    if march_state(pilot_session()) == "hold":
+        held = read_json(HOLDING, {}) or {}
+        held[pilot_session()] = time.time()
+        write_json(HOLDING, held)
+        sys.exit(f"pilot: holding pattern: the account is short and this flight is not among the first "
+                 f"{refuel_config()['marchOn']} in the controller's order, so no leg takes off. End your turn; you are "
+                 f"told when the hold lifts (the account has headroom again, or the controller moves this flight up).")
     stale = daemon_lock()
     if stale:
         sys.exit(f"pilot: Claude Code's daemon lock ({stale['path']}) is stale: {stale['why']}. Until it goes, no background "
@@ -2523,7 +2533,7 @@ def cmd_start(a):
     print(f"  message it:  SendMessage to \"{w['agent']}\"   |   you: pilot.py tell \"{w['agent']}\" -m ...  or  claude attach {w['id']}")
 
 
-def say(name, text):
+def say(name, text, who=None):
     """Your message to a worker as a user turn. Its session is stopped and continued with the message, which
     Claude Code does in a new session id holding the whole conversation; the worker's record moves there.
     A worker mid-turn, or waiting on a permission prompt or a question, is refused: stopping it would cut
@@ -2553,7 +2563,7 @@ def say(name, text):
     save(w)
     lines = text.strip().splitlines()
     more = "..." if len(lines) > 1 or len(lines[0]) > 140 else ""
-    plan_log(w.get("plan"), f"{sender()} to {name}: {lines[0][:140]}{more}")
+    plan_log(w.get("plan"), f"{who or sender()} to {name}: {lines[0][:140]}{more}")
     return w
 
 
@@ -2729,16 +2739,91 @@ def watchtower(w, tokens, reason, account):
 
 def refuel_mode():
     """auto (the default): the watchtower may approve a refuel within its gates. manual: every refuel goes to
-    the controller or, while it is on, the autopilot. Switched from the dashboard's top bar."""
-    return "manual" if (read_json(REFUEL_MODE, {}) or {}).get("mode") == "manual" else "auto"
+    the controller or, while it is on, the autopilot. override, labelled march on: the controller has several
+    accounts and switches when one runs short, so the first flights in their order fly on whatever the account's
+    usage, and the rest go into a holding pattern while it is short. Switched from the dashboard's top bar."""
+    mode = (read_json(REFUEL_MODE, {}) or {}).get("mode")
+    return mode if mode in ("manual", "override") else "auto"
 
 
 def set_refuel_mode(mode):
-    mode = "manual" if mode == "manual" else "auto"
+    mode = mode if mode in ("manual", "override") else "auto"
     write_json(REFUEL_MODE, {"mode": mode, "at": time.time()})
-    blackbox(f"Refuelling set to {mode}: " + ("every refuel goes to the controller" if mode == "manual"
-                                              else "the watchtower may approve refuels within its gates"), actor="controller")
+    n = refuel_config()["marchOn"]
+    blackbox(f"Refuelling set to {'march on' if mode == 'override' else mode}: " + (
+        "every refuel goes to the controller" if mode == "manual" else
+        f"the first {n} flight{'s' if n != 1 else ''} in the order fly on whatever the account's usage, and the rest "
+        f"hold while it is short" if mode == "override" else
+        "the watchtower may approve refuels within its gates"), actor="controller")
     return mode
+
+
+def refuel_config():
+    return {**REFUEL, **(config().get("refuel") or {})}
+
+
+def flight_done(p):
+    """Whether every leg of a plan (plans_view's) has landed: such a flight spends nothing and takes no place
+    among those marching on."""
+    landed = p.get("landed") or {}          # leg -> {landed, why, stackedOn}, from leg_landings
+    return bool(p.get("legs")) and all((landed.get(l["leg"]) or {}).get("landed") for l in p["legs"])
+
+
+def marching(plans=None):
+    """The flights that march on: the first marchOn flights in the controller's order still flying. From the
+    dashboard's plans when given; else from what the dashboard last wrote, while it is fresh; else from the order
+    and the plan files alone, which cannot tell a landed flight."""
+    n = refuel_config()["marchOn"]
+    if plans is not None:
+        return [p["sessionId"] for p in plans if not flight_done(p)][:n]
+    m = read_json(MARCH, {}) or {}
+    if isinstance(m, dict) and isinstance(m.get("flights"), list) and time.time() - (m.get("at") or 0) < 300:
+        return m["flights"]
+    shelved = archived_flights()
+    files = sorted(PLANS.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True) if PLANS.exists() else []
+    return [p["sessionId"] for p in by_priority([{"sessionId": f.stem} for f in files if f.stem not in shelved])][:n]
+
+
+def march_state(sid, ok=None):
+    """On march on, a flight's place: "march" (among the first in the order: the account's usage holds nothing),
+    "hold" (the rest while the account is short: a holding pattern) or None (headroom, or another mode)."""
+    if refuel_mode() != "override" or not sid:
+        return None
+    if sid in marching():
+        return "march"
+    ok = headroom()[0] if ok is None else ok
+    return None if ok else "hold"
+
+
+HOLDING = STATE / "holding.json"     # flights whose start the holding pattern refused, so their pilots hear when it lifts
+
+
+def limit_stop(ev):
+    """The usage limit a session's turn ended on, {text, at}, when the last thing it said or met was that: Claude Code
+    records "You've hit your session limit · resets 9:10pm" as an API error, rate_limit, and the turn ends there."""
+    last = next((e for e in reversed(ev) if e["kind"] in ("said", "error")), None)
+    if not (last and last["kind"] == "error" and last["text"].startswith("rate_limit")):
+        return None
+    try:
+        at = datetime.datetime.fromisoformat(str(last.get("at")).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        at = 0
+    return {"text": last["text"].split(": ", 1)[-1][:200], "at": at}
+
+
+def account_room(since, now=None):
+    """Whether a session a usage limit stopped at `since` can go on: usage figures written after the stop with every
+    window under 100% (the controller switched accounts, or a window reset), or every full window past its reset."""
+    now = time.time() if now is None else now
+    d = read_json(PROFILE / "rate-limits.json") or {}
+    wins = [v for v in ((d.get("rate_limits") or {}) if isinstance(d, dict) else {}).values()
+            if isinstance(v, dict) and isinstance(v.get("used_percentage"), (int, float))]
+    if not wins:
+        return False
+    full = [v for v in wins if v["used_percentage"] >= 100]
+    if not full:
+        return (d.get("written_at") or 0) > since
+    return all(isinstance(v.get("resets_at"), (int, float)) and v["resets_at"] < now for v in full)
 
 
 def refuel(name, tokens, reason):
@@ -2752,11 +2837,17 @@ def refuel(name, tokens, reason):
         raise ValueError("give the reason: what is left, and why it needs this much")
     if tokens <= (w.get("budget") or 0):
         raise ValueError(f"{name}'s budget is already {w.get('budget') or 0:,}; a refuel raises it")
-    cfg = {**REFUEL, **(config().get("refuel") or {})}
+    cfg = refuel_config()
     first = w.get("budget0") or config().get("budget") or w.get("budget") or 0
     ok, account = headroom()
+    ms = march_state(w.get("plan"), ok)
+    short = account
+    if ms == "march":       # the controller switches accounts when one runs short
+        ok, account = True, ["march on: the controller switches accounts when one runs short, so usage holds nothing"]
     gates = (["refuelling is on manual: the controller decides each one"] if refuel_mode() == "manual" else []) + \
-            ([] if ok else [f"the account is short: {'; '.join(account)}"]) + \
+            ([f"holding pattern: the account is short ({'; '.join(short)}) and this flight is not among the first "
+              f"{cfg['marchOn']} in the controller's order; it holds until the account has headroom or the controller "
+              f"moves it up"] if ms == "hold" else [] if ok else [f"the account is short: {'; '.join(account)}"]) + \
             ([] if tokens <= first * cfg["maxFactor"] else [f"{tokens:,} is past {cfg['maxFactor']} times the leg's first budget ({first:,})"])
     if gates:
         approved, why = False, "; ".join(gates)
@@ -4007,6 +4098,7 @@ class Hub:
         self.running = set()             # summaries in flight, by key
         self.routing, self.route_failed = set(), {}   # plans being sent to the autopilot; when a send last failed
         self.waking = set()                            # pilots being woken
+        self.limit_tried, self.march_last = {}, None   # when a usage-limit resume was last tried, by stop; march.json as written
         self.preview = False
 
     def poke(self):
@@ -4023,12 +4115,15 @@ class Hub:
         done = read_json(WAKES, {})
         shelved = archived_flights()          # a flight the controller archived is given up on: its pilot sleeps on
         self.tell_ci(snap, rows, done, shelved)
+        override = refuel_mode() == "override"
         for w in snap["workers"]:
             pid = w.get("plan")
             since = w.get("stoppedAt") or w.get("lastActivity") or 0   # once per stop, timed from the stop itself
             key = f"{w['name']}:{int(since)}"
             row = rows.get(pid)
             if pid in shelved or not w.get("unread") or done.get(pid) == key or pid in self.waking:
+                continue
+            if override and w.get("limited"):     # march_on resumes it; its pilot has nothing to decide
                 continue
             idle = row and row.get("pid") and row.get("status") != "busy"
             if not asleep(row) and not (idle and time.time() - since > NUDGE_AFTER):
@@ -4062,6 +4157,86 @@ class Hub:
                     pass
                 finally:
                     self.waking.discard(pid)
+                    self.poke()
+            threading.Thread(target=go, daemon=True).start()
+
+    def march_on(self, snap):
+        """Refuelling's march on. Says which flights march (the first in the controller's order still flying) and
+        which circle in a holding pattern (the rest, while the account is short), and writes the marching flights'
+        sessions to march.json for the worker hooks. Resumes a session a usage limit stopped once the account has
+        room: a marching flight's as soon as the figures show room (the controller switched accounts, or the window
+        reset), the rest's only with headroom. Tells a pilot whose start the holding pattern refused when its hold
+        lifts. Resumes and tells run in threads, once each; a preview only reads."""
+        plans, ok = snap.get("plans") or [], snap["refuel"]["ok"]
+        override = refuel_mode() == "override"
+        flights = marching(plans) if override else []
+        snap["refuel"]["marching"] = flights
+        snap["refuel"]["holding"] = [p["sessionId"] for p in plans if override and not ok
+                                     and p["sessionId"] not in flights and not flight_done(p)]
+        if self.preview:
+            return
+        mine = {"flights": flights, "sessions": flights + [w["sessionId"] for w in snap["workers"]
+                                                           if w.get("plan") in flights and w.get("sessionId")]}
+        if mine != self.march_last or time.time() - (read_json(MARCH, {}) or {}).get("at", 0) > 120:
+            write_json(MARCH, {"at": time.time(), **mine})
+            self.march_last = mine
+        rows = {r.get("sessionId"): r for r in agents()}
+        jobs = []
+        held = read_json(HOLDING, {}) or {}
+        for sid in list(held) if isinstance(held, dict) else []:
+            if override and not ok and sid not in flights:
+                continue
+            why = ("refuelling is no longer on march on" if not override else "the controller moved it up among those "
+                   "marching on" if sid in flights else "the account has headroom again")
+            jobs.append((f"lift:{sid}", "lift", sid, rows.get(sid),
+                         f"(pilot.py) Your flight is out of the holding pattern: {why}. Start the legs it held."))
+        if override:
+            done = read_json(WAKES, {})
+            due = [(w.get("plan"), "worker", w["name"], w["limited"], None) for w in snap["workers"]
+                   if w.get("limited") and not w.get("busy") and w.get("state") != "working"]
+            for p in plans:
+                row = rows.get(p["sessionId"])
+                if not row or row.get("status") == "busy":
+                    continue
+                lim = (p.get("pilotState") or {}).get("limited") if p.get("live") else \
+                    limit_stop(tail_events(p["sessionId"], n=30)) if p.get("asleep") else None
+                if lim:
+                    due.append((p["sessionId"], "pilot", p["sessionId"], lim, row))
+            for plan, kind, who, lim, row in due:
+                key = f"limit:{who}:{int(lim['at'])}"
+                if done.get(key) or time.time() - self.limit_tried.get(key, 0) < 300:
+                    continue
+                if not (account_room(lim["at"]) if plan in flights else ok and account_room(lim["at"])):
+                    continue
+                jobs.append((key, kind, who, row, f"(pilot.py) A usage limit cut your last turn off ({lim['text']}). The "
+                                                  f"account has room again: the controller switched accounts, or the "
+                                                  f"window reset. Carry on where you stopped."))
+        for key, kind, who, row, text in jobs:
+            if key in self.waking:
+                continue
+            self.waking.add(key)
+            self.limit_tried[key] = time.time()
+
+            def go(key=key, kind=kind, who=who, row=row, text=text):
+                try:
+                    if kind == "worker":
+                        say(who, text, who="Dashboard")
+                    elif asleep(row):
+                        wake_pilot(who, text)
+                    elif row and row.get("pid"):
+                        intercom([row.get("name")], text, sender="Dashboard")
+                    if kind == "lift":
+                        h = read_json(HOLDING, {}) or {}
+                        h.pop(who, None)
+                        write_json(HOLDING, h)
+                    else:
+                        d = read_json(WAKES, {})
+                        d[key] = time.time()
+                        write_json(WAKES, d)
+                except Exception:
+                    pass                      # tried again after limit_tried's five minutes
+                finally:
+                    self.waking.discard(key)
                     self.poke()
             threading.Thread(target=go, daemon=True).start()
 
@@ -4187,6 +4362,7 @@ class Hub:
                     snap["stale"] = Path(__file__).stat().st_mtime != CODE_MTIME
                     snap["restartable"] = SUPERVISED
                     snap["daemonLock"] = daemon_lock()
+                    self.march_on(snap)
                     self.wake_pilots(snap)
                     self.route_autopilot(snap)
                     sids = [s["sessionId"] for s in snap["workers"] + snap["pilots"] if s.get("sessionId")]

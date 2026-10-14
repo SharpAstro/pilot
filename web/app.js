@@ -385,15 +385,19 @@ function renderTop() {
   for (const a of document.querySelectorAll("nav a")) a.classList.toggle("on", a.dataset.nav === (r.view === "session" ? "" : r.view));
   if (!S?.workers) return;     // not loaded yet: an older server sends "{}" before its first snapshot
   // Whether a refuel can be approved by the watchtower right now, or has to come to you.
-  // Refuelling's switch, which is not the autopilot's: auto lets the watchtower approve a refuel within its
-  // gates (held while the account has no headroom), manual sends every refuel to the controller. The stored
-  // values stay auto and manual; the button reads what each means to you.
-  const rf = S.refuel || {}, manual = rf.mode === "manual", held = !manual && !rf.ok;
-  const fuel = S.refuel ? `<button class="fuel ${manual ? "manual" : held ? "held" : "auto"}" data-refuel="${manual ? "auto" : "manual"}" title="${esc(manual
-    ? "Refuelling: manual. Every refuel request comes to you, or to the autopilot while it is on. Click for auto, where the watchtower may approve them."
-    : held ? `Refuelling: auto, but held now: ${(rf.why || []).join("; ")}. Until there is headroom, refuels come to you. Click for manual.`
-    : `Refuelling: auto. The watchtower may approve a refuel when the reason and the worker's progress justify it (${(rf.why || []).join("; ")}). Click for manual.`)}">
-    ⛽ refuel: ${manual ? "all to me" : held ? "all to me · held" : "watchtower may approve"}</button>` : "";
+  // Refuelling's switch, which is not the autopilot's, cycles through three: auto lets the watchtower approve a
+  // refuel within its gates (held while the account has no headroom); march on (stored as override) is for when you
+  // switch accounts as one runs short, so the first flights in your order fly on whatever the account's usage and
+  // the rest circle in a holding pattern while it is short; manual sends every refuel to you. The stored values
+  // stay auto, override and manual; the button reads what each means to you.
+  const rf = S.refuel || {}, manual = rf.mode === "manual", march = rf.mode === "override", held = !manual && !march && !rf.ok;
+  const circling = (rf.holding || []).length, next = manual ? "auto" : march ? "manual" : "override";
+  const fuel = S.refuel ? `<button class="fuel ${manual ? "manual" : march ? "march" : held ? "held" : "auto"}" data-refuel="${next}" title="${esc(manual
+    ? "Refuelling: all to me. Every refuel request comes to you, or to the autopilot while it is on. Click for watchtower may approve."
+    : march ? `Refuelling: march on. You switch accounts when one runs short, so the first ${(rf.marching || []).length || ""} flight${(rf.marching || []).length === 1 ? "" : "s"} in your order (drag to choose) fly on whatever the account's usage: the watchtower judges their refuels on progress alone, Sam's rate-limit gate lets their workers be, and a session a usage limit stopped is resumed once the figures show room. While the account is short the rest circle in a holding pattern: no leg takes off, no refuel is approved, nothing is resumed, until there is headroom or you move them up${rf.ok ? "" : ` (short now: ${(rf.why || []).join("; ")})`}. Click for all to me.`
+    : held ? `Refuelling: watchtower may approve, but held now: ${(rf.why || []).join("; ")}. Until there is headroom, refuels come to you. Click for march on, if you can switch accounts.`
+    : `Refuelling: watchtower may approve. It approves a refuel when the reason and the worker's progress justify it (${(rf.why || []).join("; ")}). Click for march on.`)}">
+    ⛽ refuel: ${manual ? "all to me" : march ? `march on${circling ? ` · ${circling} holding` : ""}` : held ? "all to me · held" : "watchtower may approve"}</button>` : "";
   put($("#limits"), limitsHtml(S.limits) + fuel);
   // The autopilot's switch: off, starting, standby or working, and how many decisions it has made since on.
   const ap = S.autopilot || {}, apState = !ap.enabled ? "off" : !ap.live ? (Date.now() / 1000 - (ap.since || 0) < 90 ? "starting" : "asleep, wakes for items") : ap.status === "busy" ? "deciding" : "standby";
@@ -665,7 +669,7 @@ function planCard(p, s) {
   // alone, an active one starts open. A fold you set stays as you left it.
   const many = (s.plans || []).length > 1;
   return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" data-order="${esc(p.sessionId)}" ${fold("plan:" + p.sessionId, !!p.waiting || (!many && planActive(p, s)))}>
-    <summary class="cardhead"><span>${reorderHtml(p, s)}<b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> ${connectsHtml(p)} <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
+    <summary class="cardhead"><span>${reorderHtml(p, s)}<b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> ${connectsHtml(p)}${marchChip(p)} <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
       <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} · ` : ""}plan updated ${esc(ago(p.updated))}
       ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
@@ -772,6 +776,15 @@ const planActive = (p, s) => p.live || p.legs.some(l => s.workers.some(w => w.na
 
 // "3 legs: 1 working, 2 planned", for a plan folded to one line. The legs are the route as flown; an alternate
 // not taken is told apart after them.
+// On march on, a flight's place: among the first in your order it marches on whatever the account's usage; the
+// rest circle in a holding pattern while the account is short.
+function marchChip(p) {
+  const rf = S.refuel || {};
+  if ((rf.holding || []).includes(p.sessionId)) return ` <span class="chip blocked" title="March on: the account is short and this flight is not among the first in your order, so no leg takes off, no refuel is approved and nothing a usage limit stopped is resumed. It flies on once the account has headroom, or when you drag it up.">holding pattern</span>`;
+  if ((rf.marching || []).includes(p.sessionId)) return ` <span class="chip working" title="March on: among the first flights in your order, so the account's usage holds nothing. Switch accounts when one runs short; a session a usage limit stopped is resumed once the figures show room.">marching on</span>`;
+  return "";
+}
+
 function legTally(p, s) {
   const route = flownLegs(p, s);
   if (!route.length) return "no legs yet";
@@ -1026,7 +1039,7 @@ function flightStrip(p, s) {
       : `<g${pl.up ? ` class="bob"` : ""}><path d="${PLANE}" style="fill:${pl.color};stroke:var(--page);stroke-width:1"/></g>`}</g>`).join("");
   const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(status.replace(/<[^>]+>/g, ""))}">${tracks.join("")}${gateHtml}${stops.join("")}${planesHtml}</svg>`;
   return `<div class="flight" data-plan="${esc(p.sessionId)}" data-order="${esc(p.sessionId)}" title="Open its flight plan">
-    <div class="fhead">${reorderHtml(p, s)}<b>${p.flight ? esc(p.flight) : "Flight"}</b> ${connectsHtml(p)} ${esc(p.title)} ${p.hold ? holdChip(p, holdReady(p)) : ""}<span class="sub">· ${status}${flightGit(p, s)}</span>${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</div>${svg}</div>`;
+    <div class="fhead">${reorderHtml(p, s)}<b>${p.flight ? esc(p.flight) : "Flight"}</b> ${connectsHtml(p)} ${esc(p.title)} ${p.hold ? holdChip(p, holdReady(p)) : ""}${marchChip(p)}<span class="sub">· ${status}${flightGit(p, s)}</span>${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</div>${svg}</div>`;
 }
 
 // ------------------------------------------------------------------ the controller's order of flights

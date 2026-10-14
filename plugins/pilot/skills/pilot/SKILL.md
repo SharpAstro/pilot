@@ -225,6 +225,11 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
     progress justify it; then message the worker. When it does not (exit 2), it says why: put the raise in
     `## Waiting on the controller` with that and your recommendation. Never use `budget` yourself; it is
     the controller's override.
+    The controller may set refuelling to **march on**, when they switch accounts as one runs short. The first
+    flights in their order then fly on whatever the account's usage, and the watchtower judges your refuels on
+    progress alone. While the account is short, every other flight is in a **holding pattern**: `start` refuses
+    its legs and a refuel waits. Then end your turn, and put nothing in the waiting section for it: the dashboard
+    tells you when the hold lifts. A turn a usage limit cut off is resumed for you, once there is room.
 13. **Leave alone what is not yours**: Claude Code's own files under `~/.claude` (its daemon lock, settings,
     session records) and the controller's `~/.pilot/pilot.json`. When one stands in your way, put it in
     `## Waiting on the controller` with what you found and what you would change: another repo a leg needs

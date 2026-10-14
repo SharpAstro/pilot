@@ -263,6 +263,7 @@ button.fuel { font-size: 12px; padding: 3px 9px; border-radius: 6px; white-space
 button.fuel.auto { color: var(--good-text); border-color: var(--good); }
 button.fuel.held { color: var(--ink-2); border-style: dashed; }
 button.fuel.manual { color: var(--ink); border-color: var(--warn); }
+button.fuel.march { color: var(--ink); border-color: var(--fill); font-weight: 600; }
 button.fill { color: var(--good-text); border-color: var(--good); white-space: nowrap; }
 .warnline button.fill { font-size: 12px; padding: 1px 8px; margin-left: 2px; }
 #autopilot button.ap.on { background: var(--tint-fill); border-color: var(--fill); color: var(--fill); font-weight: 600; }

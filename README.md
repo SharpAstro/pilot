@@ -265,12 +265,35 @@ reads the leg's goal and Done when, the checklist, the spend, the worker's last 
 and approves or sends it to the controller. It checks the reason against the checklist: in testing it refused a
 request whose reason claimed a step was finished that the checklist still had in progress. Either way the
 plan's log has the verdict and the reason, and the bell has every refuel. The top bar's ⛽ says which way
-a refuel would go right now, and is a switch: **auto** (the default, labelled *watchtower may approve*) lets the
-watchtower approve within its gates, shown as *all to me · held* while the account has no headroom; **manual**
-(labelled *all to me*) sends every refuel to the controller, you or the autopilot while it is on. The switch is
-stored as `auto` or `manual` in `<state>/refuel.json`, and each change is in the black
-box. `~/.pilot/pilot.json` takes `"refuel": {"maxUsedPct": 80, "maxFactor": 2,
-"maxAgeMinutes": 30, "weekDryPct": 50, "weekDryDays": 3}`.
+a refuel would go right now, and is a switch that cycles through three: **auto** (the default, labelled *watchtower
+may approve*) lets the watchtower approve within its gates, shown as *all to me · held* while the account has no
+headroom; **march on** is for when you have several accounts and switch as one runs short; **manual** (labelled
+*all to me*) sends every refuel to the controller, you or the autopilot while it is on. The switch is stored as
+`auto`, `override` or `manual` in `<state>/refuel.json`, and each change is in the black box.
+`~/.pilot/pilot.json` takes `"refuel": {"maxUsedPct": 80, "maxFactor": 2, "maxAgeMinutes": 30, "weekDryPct": 50,
+"weekDryDays": 3, "marchOn": 1}`.
+
+**March on.** The first `marchOn` flights in your order (default 1; drag a flight up to choose), counting only
+flights still flying, march on whatever the account's usage, and their strips and cards say *marching on*:
+
+- **Refuels.** The watchtower judges their refuels on the worker's progress alone, told that usage holds nothing.
+  The cap of twice a leg's first budget stays.
+- **Sam's rate-limit gate** lets their workers be: the dashboard lists their sessions in `<state>/march.json`,
+  and `kit.sh` skips the gate for those.
+- **Usage limits.** A session of theirs that a usage limit stopped ("You've hit your session limit · resets
+  9:10pm", which Claude Code records as a `rate_limit` error) is resumed once the figures show room: written after
+  the stop with every window under 100% (you switched accounts, or the window reset), or every full window past
+  its reset. A worker is resumed with `say`, a pilot through the intercom, or woken if its session has ended. Each
+  stop is resumed once, and a failed attempt is tried again five minutes later.
+
+While the account is short, every other flight circles in a **holding pattern**, and its strip and card say so:
+
+- `start` refuses its legs and tells its pilot to end its turn.
+- Its refuels wait.
+- Nothing of it that a usage limit stopped is resumed.
+
+Once the account has headroom again, or you move a held flight up, or leave march on, the dashboard tells each
+pilot whose start was refused that its hold has lifted. With headroom, march on flies every flight as auto does.
 
 A Haiku summary is one `claude -p --model haiku` with no tools, no MCP servers, no settings and no saved
 session: about 4k tokens and 2 s for one worker, measured.

@@ -37,4 +37,18 @@ if [ "$1" = "big_read_guard.sh" ]; then
     printf '%s' "$input" | bash "$kit/$1"
     exit $?
 fi
+
+# On refuelling's march on the controller switches accounts when one runs short, so the account's usage holds
+# nothing for a marching flight: its sessions, listed in <state>/march.json by the dashboard, skip Sam's
+# rate-limit gate. Every other session goes through it as it is.
+if [ "$1" = "agent_ratelimit_gate.sh" ]; then
+    input="$(cat)"
+    march="$(cygpath -u "${PILOT_STATE:-${LOCALAPPDATA:-$USERPROFILE/AppData/Local}/pilot}")/march.json"
+    sid="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)"
+    if [ -n "$sid" ] && [ -f "$march" ] && jq -e --arg s "$sid" '(.sessions // []) | index($s) != null' "$march" >/dev/null 2>&1; then
+        exit 0
+    fi
+    printf '%s' "$input" | bash "$kit/$1"
+    exit $?
+fi
 exec bash "$kit/$1"

@@ -8,6 +8,7 @@ real ones: PILOT_STATE and CLAUDE_CONFIG_DIR point into a temporary folder befor
 `claude agents` is replaced by a fixed list of rows.
 """
 import contextlib
+import datetime
 import io
 import json
 import os
@@ -1418,6 +1419,137 @@ class TranscriptTests(Case):
 
 
 NOW = time.mktime((2026, 10, 14, 12, 0, 0, 0, 0, -1))     # a Wednesday, noon local
+
+
+class MarchOnTests(Case):
+    """Refuelling's march on: the first flights in the controller's order fly on whatever the account's usage, and
+    the rest circle in a holding pattern while it is short. A session a usage limit stopped is resumed once there
+    is room, and a held pilot hears when its hold lifts."""
+
+    def setUp(self):
+        super().setUp()
+        self.plan("s1", PLAN)
+        self.plan("s2", PLAN.replace("Flight: WA1", "Flight: WA2"))
+        pilot.set_priority(["s1", "s2"])
+        pilot.set_refuel_mode("override")
+        self.worker("fix", plan="s1")
+        self.worker("fix2", plan="s2")
+        self.calls = []
+        self._fns = pilot.say, pilot.intercom, pilot.wake_pilot, pilot.watchtower
+        pilot.say = lambda name, text, who=None: self.calls.append(("say", name, who))
+        pilot.intercom = lambda names, text, sender="Controller": self.calls.append(("tell", names[0], text))
+        pilot.wake_pilot = lambda old, why: self.calls.append(("wake", old, why))
+        pilot.watchtower = lambda w, t, r, a: (self.calls.append(("tower", w["name"], a)) or (True, "progress justifies it"))
+        self._now = unittest.mock.patch.object(pilot.time, "time", lambda: NOW)
+        self._now.start()
+
+    def tearDown(self):
+        self._now.stop()
+        pilot.say, pilot.intercom, pilot.wake_pilot, pilot.watchtower = self._fns
+        super().tearDown()
+
+    def march(self, hub, snap):
+        """The dashboard's march_on, its threads run where they start."""
+        class Now:
+            def __init__(self, target, daemon=None, **_):
+                self.target = target
+
+            def start(self):
+                self.target()
+        with unittest.mock.patch.object(pilot.threading, "Thread", Now):
+            hub.march_on(snap)
+        return snap
+
+    def usage(self, five, week, age=60, five_reset=3600):
+        pilot.write_json(pilot.PROFILE / "rate-limits.json", {"written_at": NOW - age, "rate_limits": {
+            "five_hour": {"used_percentage": five, "resets_at": NOW + five_reset},
+            "seven_day": {"used_percentage": week, "resets_at": NOW + 4 * 86400}}})
+
+    def test_the_first_flight_marches_and_the_rest_hold_only_while_the_account_is_short(self):
+        self.usage(30, 85)                          # the week is past 80%: short
+        self.assertEqual(pilot.marching(), ["s1"])
+        self.assertEqual((pilot.march_state("s1"), pilot.march_state("s2")), ("march", "hold"))
+        self.usage(20, 30)
+        self.assertEqual((pilot.march_state("s1"), pilot.march_state("s2")), ("march", None))
+        pilot.set_refuel_mode("auto")
+        self.assertIsNone(pilot.march_state("s1"))
+        self.assertIn("march on", [json.loads(l)["text"] for l in pilot.BLACKBOX.read_text(encoding="utf-8").splitlines()][-2])
+
+    def test_a_marching_flights_refuel_ignores_the_account_and_a_holding_ones_waits(self):
+        self.usage(30, 85)
+        self.assertEqual(pilot.refuel("fix", 16_000_000, "the API and its tests are left, about 3M each"), (True, "progress justifies it"))
+        self.assertIn("march on", self.calls[-1][2][0], "the watchtower is told usage holds nothing")
+        approved, why = pilot.refuel("fix2", 16_000_000, "the API and its tests are left, about 3M each")
+        self.assertFalse(approved)
+        self.assertIn("holding pattern", why)
+        self.assertEqual(pilot.load("fix2")["budget"], 10_000_000)
+
+    def test_start_circles_in_a_holding_pattern_and_the_pilot_hears_when_it_lifts(self):
+        self.usage(30, 85)
+        with unittest.mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s2"}), self.assertRaises(SystemExit) as e:
+            pilot.cmd_start(types.SimpleNamespace(name="leg", after=None))
+        self.assertIn("holding pattern", str(e.exception))
+        self.assertIn("s2", pilot.read_json(pilot.HOLDING))
+        pilot.write_json(pilot.DAEMON_LOCK, {"pid": os.getpid(), "procStartFt": "1"})
+        with unittest.mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s1"}), self.assertRaises(SystemExit) as e:
+            pilot.cmd_start(types.SimpleNamespace(name="leg", after=None))
+        self.assertIn("daemon lock", str(e.exception), "the marching flight goes on to the next check")
+        pilot.DAEMON_LOCK.unlink()
+        self.rows = [{"name": "pilot-two", "sessionId": "s2", "pid": 7, "status": "idle", "kind": "interactive"}]
+        hub = pilot.Hub()
+        self.march(hub, self.snap(ok=False))
+        self.assertEqual(self.calls, [], "still short: it circles")
+        self.usage(20, 30)
+        self.march(hub, self.snap(ok=True))
+        self.assertEqual(self.calls[0][:2], ("tell", "pilot-two"))
+        self.assertIn("out of the holding pattern: the account has headroom again", self.calls[0][2])
+        self.assertNotIn("s2", pilot.read_json(pilot.HOLDING))
+
+    def snap(self, ok, workers=()):
+        plans = [{"sessionId": s, "legs": [{"leg": "leg"}], "landed": {}, "live": False, "asleep": False} for s in ("s1", "s2")]
+        return {"plans": plans, "workers": list(workers), "refuel": {"ok": ok}}
+
+    def test_a_session_a_usage_limit_stopped_is_resumed_once_there_is_room(self):
+        stop = {"text": "You've hit your session limit · resets 9:10pm (Australia/Sydney)", "at": NOW - 600}
+        workers = [{"name": n, "plan": p, "sessionId": f"sess-{n}", "state": "done", "busy": False, "limited": stop}
+                   for n, p in (("fix", "s1"), ("fix2", "s2"))]
+        hub = pilot.Hub()
+        self.usage(100, 85, age=900)                # figures from before the stop, the window full: no room
+        snap = self.march(hub, self.snap(False, workers))
+        self.assertEqual(self.calls, [])
+        self.assertEqual((snap["refuel"]["marching"], snap["refuel"]["holding"]), (["s1"], ["s2"]))
+        self.assertEqual(pilot.read_json(pilot.MARCH)["sessions"], ["s1", "sess-fix"], "for the worker hooks")
+        self.usage(30, 85)                          # another account: room, though the week is still short
+        self.march(hub, self.snap(False, workers))
+        self.assertEqual(self.calls, [("say", "fix", "Dashboard")], "the marching flight's worker, not the holding one's")
+        self.march(hub, self.snap(False, workers))
+        self.assertEqual(len(self.calls), 1, "once per stop")
+        self.usage(20, 30)
+        self.march(hub, self.snap(True, workers))
+        self.assertEqual(self.calls[-1], ("say", "fix2", "Dashboard"), "with headroom the rest go on too")
+
+    def test_a_usage_limit_is_read_from_the_transcript(self):
+        self.transcript("sess-fix", [{"type": "assistant", "timestamp": "2026-10-14T01:00:00Z", "error": "rate_limit",
+                                      "isApiErrorMessage": True, "message": {"role": "assistant", "model": "<synthetic>",
+                                      "content": [{"type": "text", "text": "You've hit your session limit · resets 9:10pm"}]}}])
+        lim = pilot.worker_status(pilot.load("fix"), [])["limited"]
+        self.assertEqual(lim["text"], "You've hit your session limit · resets 9:10pm")
+        self.assertEqual(lim["at"], datetime.datetime(2026, 10, 14, 1, tzinfo=datetime.timezone.utc).timestamp())
+        self.assertIsNone(pilot.worker_status(pilot.load("fix2"), [])["limited"])
+
+    def test_a_landed_flight_takes_no_place_among_those_marching(self):
+        plans = [{"sessionId": "s1", "legs": [{"leg": "a"}], "landed": {"a": {"landed": True, "why": "", "stackedOn": []}}},
+                 {"sessionId": "s2", "legs": [{"leg": "b"}], "landed": {"b": {"landed": False, "why": "flying", "stackedOn": []}}}]
+        self.assertEqual(pilot.marching(plans), ["s2"])
+
+    def test_room_is_fresh_figures_under_full_or_a_full_window_past_its_reset(self):
+        self.usage(30, 85, age=60)
+        self.assertTrue(pilot.account_room(NOW - 600))
+        self.assertFalse(pilot.account_room(NOW - 30), "figures from before the stop say nothing")
+        self.usage(100, 40, five_reset=-60)
+        self.assertTrue(pilot.account_room(NOW - 30), "the full window has reset")
+        self.usage(100, 40, five_reset=600)
+        self.assertFalse(pilot.account_room(NOW - 600))
 
 
 class RefuelTests(Case):
