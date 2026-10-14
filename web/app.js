@@ -70,7 +70,18 @@ const trayHtml = key => `${(attached.get(key) || []).map((a, i) => `<span class=
   + `<button class="att-rm" data-attach-rm="${esc(key)}" data-i="${i}" title="remove this image">×</button></span>`).join("")}`
   + `<label class="att-pick" title="attach images: or paste (Ctrl+V) or drop them on the box">+ image<input type="file" accept="${IMAGE_TYPES.join(",")}" multiple data-attach-pick="${esc(key)}" hidden></label>`
   + (attachNote.get(key) ? `<span class="sub att-note">${esc(attachNote.get(key))}</span>` : "");
-const tray = key => `<div class="attach" data-attach="${esc(key)}">${trayHtml(key)}</div>`;
+// `?attach=<upload name>,…`: every box starts with those uploads attached, fetched and uploaded again as a paste
+// is, for a screenshot of a box before it sends.
+const seedAttach = (new URLSearchParams(location.search).get("attach") || "").split(",").filter(n => /^[0-9a-f]{32}\.(png|jpe?g|gif|webp)$/.test(n));
+const seeded = new Set();
+const tray = key => {
+  if (seedAttach.length && !seeded.has(key)) {
+    seeded.add(key);
+    Promise.all(seedAttach.map(n => fetch(`/api/uploads/${n}`).then(r => r.blob()).then(b => new File([b], n, {type: b.type}))))
+      .then(files => attach(key, files));
+  }
+  return `<div class="attach" data-attach="${esc(key)}">${trayHtml(key)}</div>`;
+};
 // The trays are redrawn in place, not by a render: a box being typed in is never redrawn under the cursor.
 function drawTrays(key) { for (const el of document.querySelectorAll(`[data-attach="${CSS.escape(key)}"]`)) el.innerHTML = trayHtml(key); }
 function clearAttached(key) { attached.delete(key); attachNote.delete(key); drawTrays(key); }
