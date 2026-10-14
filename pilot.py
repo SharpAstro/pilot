@@ -3964,7 +3964,11 @@ def launch(path, resume=None, where="terminal", message="", as_pilot=True, hold=
             pending = True
             ask_hold(resume if where != "background" else None, path)
     if where == "background":
-        job = backgrounded(claude("--bg", "-n", f"pilot-{Path(path).name}"[:40], *args, stdin=text or None, cwd=path, timeout=120))
+        # A name no live session holds: the intercom addresses sessions by name, and PIL3's pilot, launched while
+        # PIL2's still ran in the same repo, was a second "pilot-pilot" its nudges never reliably reached.
+        base, taken = f"pilot-{Path(path).name}"[:36], {r.get("name") for r in agents() if r.get("pid")}
+        name = base if base not in taken else next(f"{base}-{i}" for i in range(2, 100) if f"{base}-{i}" not in taken)
+        job = backgrounded(claude("--bg", "-n", name, *args, stdin=text or None, cwd=path, timeout=120))
         sid = session_of(job) if pending else None
         book = live_holds()
         mine = next((h for h in reversed(book) if not h.get("session") and h.get("dir") == path), None) if sid else None
