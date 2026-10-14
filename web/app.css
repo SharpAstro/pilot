@@ -254,6 +254,16 @@ ul.checklist li.in_progress span:first-child { color: var(--fill); }
 .connect.waiting::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); margin-right: 5px; }
 .connect.unknown { border-color: var(--crit); color: var(--crit); cursor: help; }
 .plan .connects { margin: 6px 0 2px; font-size: 13px; }
+.plan .connects > div + div { margin-top: 4px; }
+.connect.onward { border-style: dashed; }
+/* A connection on a route strip, at its departure (from) or its end (onward); and the card it names, lit while the
+   pointer is on it. */
+.strip .conn { cursor: pointer; }
+.strip .conn text { font-weight: 600; }
+.strip .conn.waiting text { fill: var(--serious); }
+.strip .conn.unknown text { fill: var(--crit); }
+.strip .conn:hover text { text-decoration: underline; }
+.plan.linked { box-shadow: 0 0 0 2px var(--fill); }
 /* end connections */
 
 /* session view */

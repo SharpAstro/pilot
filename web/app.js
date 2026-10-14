@@ -797,7 +797,8 @@ function flightLight(p, s, ps, flying, move, landed) {
     : working ? ["working", flying.length ? `flying: ${flying.join(", ")}` : "its pilot is working"]
     : sts.some(st => st.cls === "blocked") ? ["blocked", "a leg waits on its pilot"]
     : landed ? ["done", "landed"] : allDone ? ["ring", "every leg done, not landed"]
-    : ["idle", p.hold ? "holding at the gate" : p.asleep ? "pilot parked" : "idle"];
+    : ["idle", p.hold ? "holding at the gate" : (p.connections || []).some(c => !c.landed)
+        ? `connecting: waits for ${(p.connections || []).filter(c => !c.landed).map(c => c.flight).join(", ")} to land` : p.asleep ? "pilot parked" : "idle"];
   return `<span class="light ${cls}${working ? " blink" : ""}" title="${esc(why + (working && cls !== "working" ? "; working" : ""))}"></span>`;
 }
 
@@ -836,13 +837,13 @@ function planCard(p, s) {
   // Where the flight is, in its summary: a folded card is the flights list, one line and its route each.
   const span = gridSpan(p), strip = p.legs.length ? routeStrip(p, s, stripWidth(opened.has(k) ? opened.get(k) : def, span)) : null;
   return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" data-order="${esc(p.sessionId)}"${span > 1 ? ` style="--span:${span}"` : ""} ${fold(k, def)}>
-    <summary class="cardhead"><span>${reorderHtml(p, s)}<b>${flightLight(p, s, ps, flying, move, landed)}${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> ${connectsHtml(p)}${marchChip(p)}${amendChip(p)} <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
+    <summary class="cardhead"><span>${reorderHtml(p, s)}<b>${flightLight(p, s, ps, flying, move, landed)}${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> ${connectsHtml(p)}${onwardHtml(p, s)}${marchChip(p)}${amendChip(p)} <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
       <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} · ` : ""}plan updated ${esc(stamp(p.updated))} (${esc(ago(p.updated))})
       ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span>
       ${strip ? `<div class="strip">${strip.note ? `<div class="sub snote">${strip.note}</div>` : ""}${strip.svg}</div>` : ""}</summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
     ${p.hold ? clearanceCard(p, ready) : timesCard(p.times)}
-    ${connectsCard(p)}
+    ${connectsCard(p, s)}
     ${(p.prs || []).length ? `<div class="prline"><span class="sub">pull requests the plan names:</span> ${p.prs.map(x => prChip(x, true)).join(" ")}</div>` : ""}
     ${p.waiting ? waitingHtml(p, ps) : ""}
     ${repoAskHtml(p)}
@@ -1169,13 +1170,34 @@ function connectChip(c) {
   return `<span class="connect ${cls}"${c.sessionId ? ` data-plan="${esc(c.sessionId)}"` : ""} title="${esc(tip)}">⇠ ${esc(c.flight)}${c.landed ? "" : c.known ? " · waiting" : " · no such flight"}</span>`;
 }
 const connectsHtml = p => (p.connections || []).map(connectChip).join(" ");
-function connectsCard(p) {
-  const cs = p.connections || [];
-  if (!cs.length) return "";
-  const held = cs.filter(c => !c.landed);
-  return `<div class="connects"><span class="sub">connects from</span> ${cs.map(c => `${connectChip(c)} <span class="sub">${esc(c.title ? `${c.title}: ` : "")}${esc(c.state)}</span>`).join(" · ")}
-    ${held.length ? `<span class="sub">— its legs take off once ${held.map(c => esc(c.flight)).join(", ")} ${held.length > 1 ? "have" : "has"} landed</span>` : ""}</div>`;
+
+// The other side: the flights that connect from this one, read off their own Connects lines. Each waits for this
+// one to land before its legs take off, so its chip says so until it has, and opens that flight.
+const onwardOf = (p, s) => !p.flight ? [] : (s.plans || []).flatMap(q => (q.connections || []).filter(c => c.flight === p.flight)
+  .map(c => ({flight: q.flight || q.title, sessionId: q.sessionId, title: q.title, landed: c.landed})));
+function onwardChip(o) {
+  const tip = `${o.flight}${o.title ? ` · ${o.title}` : ""} connects from this flight: ${o.landed ? "this one has landed, so its legs may take off" : "its legs take off once this one has landed"}`;
+  return `<span class="connect onward" data-plan="${esc(o.sessionId)}" title="${esc(tip)}">⇢ ${esc(o.flight)}</span>`;
 }
+const onwardHtml = (p, s) => onwardOf(p, s).map(onwardChip).join(" ");
+
+function connectsCard(p, s) {
+  const cs = p.connections || [], on = onwardOf(p, s);
+  if (!cs.length && !on.length) return "";
+  const held = cs.filter(c => !c.landed), waiting = on.filter(o => !o.landed);
+  return `<div class="connects">${cs.length ? `<div><span class="sub">connects from</span> ${cs.map(c => `${connectChip(c)} <span class="sub">${esc(c.title ? `${c.title}: ` : "")}${esc(c.state)}</span>`).join(" · ")}
+    ${held.length ? `<span class="sub">: its legs take off once ${held.map(c => esc(c.flight)).join(", ")} ${held.length > 1 ? "have" : "has"} landed</span>` : ""}</div>` : ""}
+    ${on.length ? `<div><span class="sub">connecting on</span> ${on.map(o => `${onwardChip(o)}${o.title ? ` <span class="sub">${esc(o.title)}</span>` : ""}`).join(" · ")}
+    ${waiting.length ? `<span class="sub">: ${waiting.length > 1 ? "they wait" : "it waits"} for this flight to land</span>` : ""}</div>` : ""}</div>`;
+}
+
+// A connection named on a card (a chip, or its end of a route) lights the other flight's card while the pointer
+// is on it, so the pair reads as one in a long list or a grid.
+document.addEventListener("mouseover", e => {
+  const sid = e.target.closest?.("[data-plan]")?.dataset.plan;
+  for (const c of document.querySelectorAll(".plan.linked")) if (c.id !== "plan-" + sid) c.classList.remove("linked");
+  if (sid) document.getElementById("plan-" + sid)?.classList.add("linked");
+});
 
 // Where a flight is: its route from departure, left to right, a leg's depth in After its column (pilot.py's
 // route_depths). Legs of one depth fly side by side as lanes: the route forks where several legs wait on one, and
@@ -1256,6 +1278,8 @@ function routeStrip(p, s, width) {
     planes.push({x: fromAt.x, y: fromAt.y, color: "var(--muted)"});
     const names = next.map(l => esc(l.name)).join(", ");
     status = route.some(l => !l.st.planned) ? `on the ground${names ? ` · next: ${names}` : ""}` : `before departure${names ? ` · first: ${names}` : ""}`;
+    const held = (p.connections || []).filter(c => !c.landed);
+    if (held.length && !route.some(l => !l.st.planned)) status = `connecting: waits for ${held.map(c => esc(c.flight)).join(", ")} to land${names ? ` · first: ${names}` : ""}`;
     if (p.hold) status = `holding at the gate${names ? ` · first: ${names}` : ""} · no departure until cleared`;
   } else {
     const named = (cls, f) => air.filter(l => l.st.cls === cls).map(f);
@@ -1312,7 +1336,21 @@ function routeStrip(p, s, width) {
     stops.push(`<g class="stop"><title>destination: every lane joins here${allDone && !allLanded ? "; not arrived: not every leg has landed" : ""}</title><circle cx="${dest.x}" cy="${dest.y}" r="11" style="fill:none;stroke:${stroke};stroke-width:1.5${dash}"/>
       <circle cx="${dest.x}" cy="${dest.y}" r="4" style="fill:${allLanded ? "var(--good)" : allDone ? "var(--surface)" : stroke}"/></g>`);
   }
-  const gateHtml = `<rect x="${X0 - 4}" y="${Y - 4}" width="8" height="8" rx="2" style="fill:var(--axis)"/><text x="${X0}" y="${Y + 22}" text-anchor="middle">${p.hold ? "gate" : "departure"}</text>`;
+  // Its connections, as an airline's map draws them: each flight it connects from comes in at its departure, amber
+  // until it has landed (its legs wait for it), and each that connects from it leaves from its end. Each opens its
+  // own flight, and lights its card while the pointer is on it.
+  const inbound = p.connections || [], onward = onwardOf(p, s);
+  const endX = dest ? dest.x : ends.length === 1 ? pos.get(ends[0].name).x : XN;
+  const conns = inbound.map((c, i) => `<g class="conn ${c.landed ? "landed" : c.known ? "waiting" : "unknown"}"${c.sessionId ? ` data-plan="${esc(c.sessionId)}"` : ""}>
+      <title>${esc(`connects from ${c.flight}${c.title ? ` · ${c.title}` : ""}: ${c.state}`)}</title>
+      ${i ? "" : `<path d="M2,${Y} L${X0 - 8},${Y}" class="trk ${c.landed ? "flown" : "ahead"}"/>`}
+      <text x="2" y="${Y + 22 + i * 13}">⇠ ${esc(c.flight)}</text></g>`)
+    .concat(onward.map((o, i) => `<g class="conn onward" data-plan="${esc(o.sessionId)}">
+      <title>${esc(`${o.flight}${o.title ? ` · ${o.title}` : ""} connects from this flight: ${o.landed ? "this one has landed" : "its legs take off once this one has landed"}`)}</title>
+      ${i ? "" : `<path d="M${endX + 13},${Y} L${W - 2},${Y}" class="trk ${allLanded ? "flown" : "ahead"}"/>`}
+      <text x="${W - 2}" y="${Y - 14 - i * 13}" text-anchor="end">⇢ ${esc(o.flight)}</text></g>`)).join("");
+  const gateHtml = `${conns}<rect x="${X0 - 4}" y="${Y - 4}" width="8" height="8" rx="2" style="fill:var(--axis)"/>${inbound.length ? ""
+    : `<text x="${X0}" y="${Y + 22}" text-anchor="middle">${p.hold ? "gate" : "departure"}</text>`}`;
   const planesHtml = planes.map(pl => `<g transform="translate(${pl.x.toFixed(1)},${pl.y.toFixed(1)})">${pl.on?.length
       ? `<title>${esc(`${pl.name}: stacked on ${pl.on.join(", ")}, not landed yet`)}</title><g${pl.up ? ` class="bob"` : ""}><path d="${PLANE}" style="fill:var(--surface);stroke:${pl.color};stroke-width:1.5"/></g>
          <text y="-20" text-anchor="middle" class="stacked">stacked on ${esc(pl.on.join(", "))}</text>`
@@ -1394,7 +1432,7 @@ const LAYOUTS = [["grid", "▦ Grid", "tiles across the window, as many to a row
                  ["list", "▤ List", "a card per flight, its route under its head"],
                  ["compact", "☰ Compact", "a line per flight; open one for its route and the rest"]];
 // `?layout=grid` picks one for this page only, for a screenshot of it.
-let layout = [new URLSearchParams(location.search).get("layout"), local("pilot.layout")].find(v => LAYOUTS.some(([k]) => k === v)) || "list";
+let layout = [new URLSearchParams(location.search).get("layout"), local("pilot.layout")].find(v => LAYOUTS.some(([k]) => k === v)) || "grid";   // none chosen yet: the grid
 const GRID_MIN = 440, GRID_GAP = 12;     // as app.css's .plans.grid has them
 
 function setLayout(k) { layout = k; local("pilot.layout", k); render(); }
