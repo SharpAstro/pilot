@@ -1533,7 +1533,14 @@ VIEWS.overview = (root, r) => {
         const legs = p.legs.map(l => s.workers.find(w => w.name === l.leg && w.pid)).filter(Boolean).map(w => w.agent);
         if (p.pilot && pilotsN.includes(p.pilot) && legs.length) targets.push([`${p.title}: pilot and legs`, [p.pilot, ...legs]]);
       }
-      for (const n of [...pilotsN, ...workersN]) targets.push([n, [n]]);
+      // A pilot by its flight, as a worker already is ("TIA2 swapchain"): a session name alone ("pilot-pilot", or the
+      // "pilot-43" Claude Code gave a terminal session) says neither which flight nor whether it flies one.
+      const flightOf = new Map((s.plans || []).filter(p => p.live && p.pilot).map(p => [p.pilot, p.flight]));
+      for (const p of s.pilots) {
+        const where = (p.cwd || "").split(/[\\/]/).pop();
+        targets.push([flightOf.get(p.name) ? `${flightOf.get(p.name)} pilot · ${p.name}` : `${p.name} · no flight, in ${where}`, [p.name]]);
+      }
+      for (const n of workersN) targets.push([n, [n]]);
       if (!targets.some(([l]) => l === picked) && targets.length) picked = targets[0][0];
       put(bto, targets.map(([l, ns]) => `<option${l === picked ? " selected" : ""} value="${esc(l)}">${esc(l)}${ns.length > 1 ? ` (${ns.length})` : ""}</option>`).join("")
         || `<option value="">no live sessions</option>`);
