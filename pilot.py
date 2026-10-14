@@ -2748,6 +2748,18 @@ NUDGE_AFTER = 180                   # seconds a live, idle pilot may leave a sto
 WAKES = STATE / "wakes.json"        # what each wake was for, so one stop wakes a pilot once
 
 
+def held_names(but=None):
+    """Names the intercom must keep apart: every live session's, and every parked pilot's (a session with a flight
+    plan), but `but`'s. Four PIL2-PIL4 pilots were all "pilot-pilot", and a message for a parked one reached another."""
+    return {r.get("name") for r in agents()
+            if r.get("sessionId") != but and (r.get("pid") or (asleep(r) and plan_path(r.get("sessionId")) and plan_path(r.get("sessionId")).exists()))}
+
+
+def unique_name(base, but=None):
+    taken = held_names(but)
+    return base if base not in taken else next(f"{base}-{i}" for i in range(2, 100) if f"{base}-{i}" not in taken)
+
+
 def asleep(row):
     """A background session whose process has ended: one ends with its turn, and a machine that sleeps ends the
     rest. It answers nothing (the intercom cannot reach it) until it is resumed."""
@@ -2789,7 +2801,7 @@ def wake_pilot(old, why):
     text = (f"(pilot.py) Your background session had ended, so you are resumed as a copy of it, to pick this up:\n{why}\n\n"
             f"Your flight plan moved with you to your new session id (`python {(HERE / 'pilot.py').as_posix()} plan` prints it). "
             f"Subscribe again to every worker still flying, then carry on as your rules say; end your turn when nothing is yours to do.")
-    job = backgrounded(claude("--bg", "--resume", old, "-n", row.get("name") or "pilot", "--plugin-dir", str(HERE / "plugins" / "pilot"),
+    job = backgrounded(claude("--bg", "--resume", old, "-n", unique_name(row.get("name") or "pilot", but=old), "--plugin-dir", str(HERE / "plugins" / "pilot"),
                               stdin=text, cwd=row.get("cwd") or str(HERE), timeout=120))
     new = session_of(job)
     if not new:
@@ -4245,8 +4257,7 @@ def launch(path, resume=None, where="terminal", message="", as_pilot=True, hold=
     if where == "background":
         # A name no live session holds: the intercom addresses sessions by name, and PIL3's pilot, launched while
         # PIL2's still ran in the same repo, was a second "pilot-pilot" its nudges never reliably reached.
-        base, taken = f"pilot-{Path(path).name}"[:36], {r.get("name") for r in agents() if r.get("pid")}
-        name = base if base not in taken else next(f"{base}-{i}" for i in range(2, 100) if f"{base}-{i}" not in taken)
+        name = unique_name(f"pilot-{Path(path).name}"[:36])
         job = backgrounded(claude("--bg", "-n", name, *args, stdin=text or None, cwd=path, timeout=120))
         sid = session_of(job) if pending else None
         book = live_holds()
