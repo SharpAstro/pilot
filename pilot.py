@@ -1877,6 +1877,7 @@ def fingerprint(session_ids):
 FOLD_SECONDS = 60           # an identical notice for the same session within this is the same notice, counted again
 JUDGE_SECONDS = 60          # Haiku looks over the unread notices at most this often, and only once they have changed
 NEVER_ACK = ("failed", "died", "budget")    # kinds only the controller clears: a failure, an error, a budget reached
+KEEP_NOTICES = 300          # the newest notices kept, in memory and in notifications.json
 
 
 def notice_subject(n):
@@ -2082,7 +2083,7 @@ class Notices:
         self.spawn = lambda fn: threading.Thread(target=fn, daemon=True).start()
 
     def save(self):
-        write_json(NOTICES, {"items": self.items[-300:], "seen": self.seen})
+        write_json(NOTICES, {"items": self.items[-KEEP_NOTICES:], "seen": self.seen})
 
     def update(self, snap):
         first, seen, now, new = self.seen is None, self.seen or {}, time.time(), []
@@ -2144,6 +2145,7 @@ class Notices:
         with self.lock:
             self.seen = seen
             fresh, folded = self.fold(new, now)
+            del self.items[:-KEEP_NOTICES]          # kept in memory as on disk, so settle does not grow with uptime
             settled = self.settle(ctx, now)
             if fresh or folded or settled or first:
                 self.save()

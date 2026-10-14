@@ -2048,6 +2048,13 @@ class NoticeTests(Case):
         self.assertEqual([i["read"] for i in self.n.items], [True, False])
         self.assertEqual(self.n.view()["unread"], 1)
 
+    def test_only_the_newest_notices_are_kept_in_memory(self):
+        for k in range(pilot.KEEP_NOTICES + 5):
+            self.note(f"n{k}", "quiet", f"q{k}", "leg:a", read=True)
+        self.update(1000)
+        self.assertEqual(len(self.n.items), pilot.KEEP_NOTICES)
+        self.assertEqual(self.n.items[0]["id"], "n5")
+
     def test_another_session_or_another_text_is_not_folded(self):
         self.note("t1", "turn", "pilot pp ended its turn, nothing in the air", "pilot:P", at=1000)
         fresh, folded = self.n.fold([{"id": "t2", "at": 1010, "kind": "turn", "worker": "b", "sessionId": "s-b",
