@@ -1550,18 +1550,24 @@ def cmd_review(a):
 _prs, _prs_busy = {}, set()
 
 
+def pr_refs(text):
+    """The pull requests a text names as `<repo> #<n>` (or `<repo> PR #<n>`), for a repo in ~/.pilot/pilot.json:
+    (repo, number) pairs, each once, in order."""
+    repos = config()["repos"]
+    if not repos or not text:
+        return []
+    names = "|".join(re.escape(k) for k in sorted(repos, key=len, reverse=True))
+    return [(next(k for k in repos if k.lower() == name.lower()), int(num))
+            for name, num in dict.fromkeys(re.findall(rf"(?<![\w.-])({names})\s+(?:PR\s+)?#(\d+)\b", text, re.I))]
+
+
 def mentioned_prs(text, ttl=60):
     """Pull requests a plan names as `<repo> #<n>` (or `<repo> PR #<n>`), for a repo in ~/.pilot/pilot.json, with
     their state: so `DIR.Lib #109` in a waiting item shows whether #109 is merged yet. Read in the background
     and cached like the legs' git state; a PR not read yet is left out until it is."""
     repos = config()["repos"]
-    if not repos or not text:
-        return []
-    names = "|".join(re.escape(k) for k in sorted(repos, key=len, reverse=True))
     out = []
-    for name, num in dict.fromkeys(re.findall(rf"(?<![\w.-])({names})\s+(?:PR\s+)?#(\d+)\b", text, re.I)):
-        repo = next(k for k in repos if k.lower() == name.lower())
-        key = (repo, int(num))
+    for key in pr_refs(text):
         c = _prs.get(key)
         if (not c or time.time() - c["at"] > ttl) and key not in _prs_busy:
             _prs_busy.add(key)
@@ -1868,15 +1874,208 @@ def fingerprint(session_ids):
 
 # --------------------------------------------------------------------------- notifications
 
+FOLD_SECONDS = 60           # an identical notice for the same session within this is the same notice, counted again
+JUDGE_SECONDS = 60          # Haiku looks over the unread notices at most this often, and only once they have changed
+NEVER_ACK = ("failed", "died", "budget")    # kinds only the controller clears: a failure, an error, a budget reached
+
+
+def notice_subject(n):
+    """What a notice is about: `leg:<name>`, `pilot:<session>`, `plan:<session>` or `autopilot`. A notice written
+    before notices carried one gets it from its link and wording."""
+    if n.get("subject"):
+        return n["subject"]
+    href = n.get("href") or ""
+    if n.get("worker") == "autopilot":
+        return "autopilot"
+    if href.startswith("#/s/"):
+        return ("pilot:" if (n.get("text") or "").startswith("pilot ") else "plan:") + href[4:]
+    return "leg:" + (n.get("worker") or "")
+
+
+def notice_head(n):
+    """What a leg's notice says of its turn: DONE, BLOCKED or FAILED from its report, `turn` for a turn that ended
+    with none of them, ASK for a worker stopped on a prompt; None for anything else, or not about a leg."""
+    if "head" in n:
+        return n["head"]
+    if not notice_subject(n).startswith("leg:"):
+        return None
+    name, text = re.escape(n.get("worker") or ""), n.get("text") or ""
+    m = re.match(rf"{name}: (DONE|BLOCKED|FAILED|turn ended)\b", text)
+    if m:
+        return "turn" if m.group(1) == "turn ended" else m.group(1)
+    return "ASK" if re.match(rf"{name} is waiting on you\b", text) else None
+
+
+def waiting_bullets(text):
+    """A waiting section's items, each folded to one lower-case line of words, so a rewrapped item still matches
+    itself. A section with no list is one item."""
+    items = []
+    for ln in (text or "").splitlines():
+        if re.match(r"^([-*]|\d+[.)])\s", ln):
+            items.append([ln.split(None, 1)[1] if len(ln.split(None, 1)) > 1 else ""])
+        elif items and ln.strip():
+            items[-1].append(ln.strip())
+    out = [" ".join(" ".join(i).split()).lower() for i in items]
+    return out or ([" ".join(text.split()).lower()] if text and text.strip() else [])
+
+
+def merge_refs(text):
+    """The pull requests a question asks to merge: those it names, when it says merge."""
+    return pr_refs(text) if re.search(r"\bmerg", text or "", re.I) else []
+
+
+def notice_context(snap, notices):
+    """What the settling rules and the guard read: each leg's state, each pilot's status, the waiting section of
+    every plan one of `notices` is about (from its file, so a plan off the Overview still counts; None when it
+    cannot be read), and the state of every pull request a merge question among them names."""
+    plans, prs = {}, {}
+    for n in notices:
+        s = notice_subject(n)
+        if s.startswith("plan:") and s[5:] not in plans:
+            try:
+                plans[s[5:]] = split_waiting(plan_path(s[5:]).read_text(encoding="utf-8"))[0]
+            except OSError:
+                plans[s[5:]] = None
+        text = f"{n.get('text') or ''}\n{n.get('items') or ''}"
+        if n.get("kind") == "waiting" and merge_refs(text):
+            prs.update({(p["repo"], p["number"]): p.get("state") for p in mentioned_prs(text)})
+    for pl in snap.get("plans") or []:
+        prs.update({(p["repo"], p["number"]): p.get("state") for p in pl.get("prs") or [] if p.get("repo")})
+    return {"legs": {w["name"]: w.get("state") for w in snap.get("workers") or []},
+            "pilots": {p["sessionId"]: p.get("status") for p in snap.get("pilots") or [] if p.get("sessionId")},
+            "plans": plans, "prs": prs}
+
+
+def merged(refs, ctx):
+    return bool(refs) and all(ctx["prs"].get(r) == "MERGED" for r in refs)
+
+
+def waiting_settled(n, ctx):
+    """Why a waiting notice no longer waits on the controller, or None while it may: each of a plan's items it
+    was raised for gone from the plan's waiting section (answered) or a merge whose pull requests have merged;
+    a merge question whose pull requests have; a pilot no longer waiting (answered); a leg off its prompt, or
+    working again after its BLOCKED (answered)."""
+    if n.get("kind") != "waiting":
+        return None
+    s, head = notice_subject(n), notice_head(n)
+    if s.startswith("plan:"):
+        current = ctx["plans"].get(s[5:])
+        if current is None or not n.get("items"):
+            return None                     # a plan not read, or a notice from before notices kept their items
+        now, why = set(waiting_bullets(current)), None
+        for b in waiting_bullets(n["items"]):
+            if b not in now:
+                why = why or "answered"
+            elif merged(merge_refs(b), ctx):
+                why = "merged"
+            else:
+                return None
+        return why
+    if s.startswith("pilot:"):
+        st = ctx["pilots"].get(s[6:])
+        return "answered" if st is not None and st != "waiting" else None
+    if merge_refs(n.get("text")):
+        return "merged" if merged(merge_refs(n.get("text")), ctx) else None
+    if s.startswith("leg:") and s[4:] in ctx["legs"]:
+        st = ctx["legs"][s[4:]]
+        if head == "ASK":
+            return "answered" if st != "blocked" else None
+        if head == "BLOCKED":
+            return "answered" if st == "working" else None
+    return None
+
+
+def still_needed(n, ctx):
+    """Why a notice stays for the controller whatever Haiku says of it, or None. A failure: FAILED, an error, a
+    budget reached or a refused raise. A waiting notice not settled: a plan's item still in its waiting section
+    (or a plan that cannot be read), a merge question whose pull requests have not all merged, a pilot or leg
+    still waiting. Only a waiting pilot or leg no longer on show may go."""
+    if n.get("kind") in NEVER_ACK or notice_head(n) == "FAILED" or re.search(r"\brefus", n.get("text") or "", re.I):
+        return "a failure"
+    if n.get("kind") != "waiting" or waiting_settled(n, ctx):
+        return None
+    s = notice_subject(n)
+    if merge_refs(f"{n.get('text') or ''}\n{n.get('items') or ''}"):
+        return "an unanswered merge question"
+    if s.startswith("plan:"):
+        return "an item still waiting on the controller"
+    if s.startswith("pilot:") and s[6:] not in ctx["pilots"]:
+        return None
+    if s.startswith("leg:") and s[4:] not in ctx["legs"]:
+        return None
+    return "still waiting on the controller"
+
+
+JUDGE_PROMPT = """You tidy a notification bell for the person who controls background coding workers (legs, each in
+a flight run by a pilot). Below are the notices they have not read yet, oldest first, and the state now. Name
+the notices that no longer need the person: made moot by a later notice or by the state now (a leg that has
+reported again since, a pilot or leg working again, a question no longer asked). Never name a notice about a
+failure, an error, a budget, a question still asked, a merge not yet done, or an item still waiting on them.
+When unsure, leave it.
+
+Answer with one line per notice to clear, exactly in one of these two forms:
+<id> | superseded by <id of the later notice>
+<id> | <why it no longer needs them, in one line under 100 characters>
+and nothing else. If none, answer exactly: NONE
+
+"""
+JUDGE_LINE = re.compile(r"^(\S+) \| (\S.{0,159})$")
+
+
+def judge_prompt(unread, snap, ctx):
+    lines = [JUDGE_PROMPT + "Unread notices (id | time | kind | about | text):"]
+    for n in unread:
+        lines.append(f"{n['id']} | {time.strftime('%H:%M:%S', time.localtime(n['at']))} | {n['kind']} | "
+                     f"{notice_subject(n)} | {n['text']}" + (f" (x{n['times']})" if n.get("times") else ""))
+        if n.get("items"):
+            lines += ["    its items: " + ln for ln in n["items"].splitlines()[:20] if ln.strip()]
+    lines += ["", "State now:"]
+    for w in snap.get("workers") or []:
+        lines.append(f"- leg {w['name']}: {w.get('state')}" + (f", last report {w['reportHead']}" if w.get("reportHead") else ""))
+    for p in snap.get("pilots") or []:
+        lines.append(f"- pilot {p.get('name')} (pilot:{p.get('sessionId')}): {p.get('status')}")
+    for pl in snap.get("plans") or []:
+        lines.append(f"- flight {pl.get('flight') or pl.get('title')} (plan:{pl['sessionId']}): waiting on the controller: "
+                     + (" / ".join(waiting_bullets(pl.get("waiting"))) or "nothing"))
+    for (repo, num), st in ctx["prs"].items():
+        lines.append(f"- {repo} #{num}: {st}")
+    return "\n".join(lines)
+
+
+def parse_judgement(text):
+    """Haiku's answer as (id, reason) pairs. Strict: anything but NONE or lines of the asked form (a code fence
+    around them aside) is an error, and acks nothing."""
+    lines = [ln.strip() for ln in (text or "").strip().splitlines() if ln.strip() and not ln.strip().startswith("```")]
+    if lines == ["NONE"]:
+        return []
+    if not lines:
+        raise ValueError("an empty answer")
+    out = []
+    for ln in lines:
+        m = JUDGE_LINE.match(ln)
+        if not m:
+            raise ValueError(f"not a judgement: {ln[:80]}")
+        out.append((m.group(1), m.group(2).strip()))
+    return out
+
+
 class Notices:
     """The notices that pile up while the dashboard runs, kept in <state>/notifications.json: a worker
     waiting on you, a turn ended (DONE, BLOCKED or FAILED), a worker over budget, quiet for 30 minutes, or
     dead on an API, login or limit error, and a pilot waiting on you. The first look at a session records it
-    without a notice."""
+    without a notice.
+
+    The bell shows only what still needs the controller. An identical notice for the same session within a
+    minute is folded into the first (counted in `times`). A later notice, or the state now, settles an earlier
+    one (settle): it is marked read with `settled`, `superseded by <id>` or why, which the bell shows. Then
+    Haiku looks over what is left unread (judge), and the guard (still_needed) keeps whatever it names that
+    still needs the controller."""
 
     def __init__(self):
         d = read_json(NOTICES, {})
         self.items, self.seen, self.lock = d.get("items", []), d.get("seen"), threading.Lock()
+        self.judging, self.judged, self.judged_at = False, None, 0.0
+        self.spawn = lambda fn: threading.Thread(target=fn, daemon=True).start()
 
     def save(self):
         write_json(NOTICES, {"items": self.items[-300:], "seen": self.seen})
@@ -1884,19 +2083,21 @@ class Notices:
     def update(self, snap):
         first, seen, now, new = self.seen is None, self.seen or {}, time.time(), []
 
-        def add(kind, w, text, href=None):
+        def add(kind, w, text, href=None, subject=None, head=None, items=None):
             new.append({"id": f"{int(now * 1000)}-{len(new)}", "at": now, "kind": kind, "worker": w["name"],
-                        "sessionId": w.get("sessionId"), "text": text, "read": False, "href": href})
+                        "sessionId": w.get("sessionId"), "text": text, "read": False, "href": href,
+                        "subject": subject or "leg:" + w["name"], "head": head, **({"items": items} if items else {})})
         for w in snap["workers"]:
             prev, st = seen.get(w["name"]), w["state"]
             quiet = st == "working" and bool(w["lastActivity"]) and now - w["lastActivity"] > QUIET_SECONDS
             if prev is not None:
                 if st == "blocked" and prev.get("state") != "blocked":
-                    add("waiting", w, f"{w['name']} is waiting on you" + (f": {w['detail']}" if w.get("detail") else ""))
+                    add("waiting", w, f"{w['name']} is waiting on you" + (f": {w['detail']}" if w.get("detail") else ""), head="ASK")
                 if st == "done" and prev.get("state") not in ("done", None) and prev.get("sid") == w.get("sessionId"):
                     head = w.get("reportHead")
                     kind = {"DONE": "done", "BLOCKED": "waiting", "FAILED": "failed"}.get(head, "turn")
-                    add(kind, w, f"{w['name']}: {head or 'turn ended'}" + (f" ({w['detail']})" if w.get("detail") else ""))
+                    add(kind, w, f"{w['name']}: {head or 'turn ended'}" + (f" ({w['detail']})" if w.get("detail") else ""),
+                        head=head if kind != "turn" else "turn")
                 if w["overBudget"] and not prev.get("over"):
                     add("budget", w, f"{w['name']} reached its budget and was told to report")
                 if quiet and not prev.get("quiet"):
@@ -1914,31 +2115,129 @@ class Notices:
             if seen.get(key) is not None and p["status"] == "waiting" and seen[key].get("state") != "waiting":
                 q = next(iter((p.get("ask") or {}).get("questions") or []), {})
                 add("waiting", p, f"pilot {p['name']} is waiting on you: {q.get('question') or p.get('waitingFor') or 'input'}",
-                    href=f"#/s/{p['sessionId']}")
+                    href=f"#/s/{p['sessionId']}", subject=key)
             elif seen.get(key, {}).get("state") == "busy" and p["status"] == "idle" and not p.get("flying"):
                 first = next((ln.strip(" #*>-`") for ln in ((p.get("said") or {}).get("text") or "").splitlines() if ln.strip()), "")
                 add("turn", p, f"pilot {p['name']} ended its turn, nothing in the air" + (f": {first[:200]}" if first else ""),
-                    href=f"#/s/{p['sessionId']}")
+                    href=f"#/s/{p['sessionId']}", subject=key)
             seen[key] = {"state": p["status"]}
         ap = snap.get("autopilot") or {}
         last = (seen.get("autopilot") or {}).get("last", 0)
         for d in reversed(ap.get("decisions") or []):
             if seen.get("autopilot") is not None and (d.get("at") or 0) > last:
                 add("done", {"name": "autopilot", "sessionId": ap.get("sessionId")}, d["text"][:240],
-                    href=f"#/s/{ap['sessionId']}" if ap.get("sessionId") else None)
+                    href=f"#/s/{ap['sessionId']}" if ap.get("sessionId") else None, subject="autopilot")
         seen["autopilot"] = {"last": max([last] + [d.get("at") or 0 for d in ap.get("decisions") or []])}
         for pl in snap["plans"]:
             key, items = "plan:" + pl["sessionId"], pl.get("waiting") or ""
             if seen.get(key) is not None and items and items != seen[key].get("waiting"):
                 add("waiting", {"name": pl.get("pilot") or pl["title"], "sessionId": pl["sessionId"]},
-                    f"{pl['title']}: the pilot is waiting on you", href=f"#/s/{pl['sessionId']}")
+                    f"{pl['title']}: the pilot is waiting on you", href=f"#/s/{pl['sessionId']}", subject=key, items=items[:4000])
             seen[key] = {"waiting": items}
         with self.lock:
+            unread = [i for i in self.items if not i["read"]]
+        ctx = notice_context(snap, unread + new)       # files and caches read outside the lock
+        with self.lock:
             self.seen = seen
-            if new or first:
-                self.items += new
+            fresh, folded = self.fold(new, now)
+            settled = self.settle(ctx, now)
+            if fresh or folded or settled or first:
                 self.save()
-        return new
+        return fresh
+
+    def fold(self, new, now):
+        """Adds the new notices, but one identical (kind and text) to a notice for the same session in the last
+        FOLD_SECONDS counts again on that one instead: a pilot flickering between busy and idle ended its turn
+        three times in 12 seconds. Returns the ones added, and how many were folded."""
+        fresh, folded = [], 0
+        for n in new:
+            who = n.get("sessionId") or n.get("worker")
+            same = next((i for i in reversed(self.items) if i["kind"] == n["kind"] and i["text"] == n["text"]
+                         and (i.get("sessionId") or i.get("worker")) == who and now - (i.get("last") or i["at"]) < FOLD_SECONDS), None)
+            if same:
+                same["times"], same["last"], folded = (same.get("times") or 1) + 1, now, folded + 1
+            else:
+                self.items.append(n)
+                fresh.append(n)
+        return fresh, folded
+
+    @staticmethod
+    def mark(n, why, by=None, now=None, judge=False):
+        n.update({"read": True, "settled": why, "settledAt": now or time.time()})
+        if by:
+            n["settledBy"] = by
+        if judge:
+            n["settledByJudge"] = True
+
+    def settle(self, ctx, now=None):
+        """The deterministic rules, over the unread notices; each one settled is marked read with why. For a leg,
+        a later DONE or BLOCKED supersedes an earlier DONE, BLOCKED or turn ended. For a pilot, a later turn ended
+        supersedes an earlier one. For a plan, a later waiting notice holding every item of an earlier one
+        supersedes it. Then a waiting notice settles once it no longer waits (waiting_settled): answered, or
+        merged. A failure is never settled. Returns how many it settled."""
+        count = 0
+        for k, o in enumerate(self.items):
+            if o["read"]:
+                continue
+            s, head, later, by = notice_subject(o), notice_head(o), self.items[k + 1:], None
+            if s.startswith("leg:") and head in ("DONE", "BLOCKED", "turn"):
+                by = next((m for m in reversed(later) if notice_subject(m) == s and notice_head(m) in ("DONE", "BLOCKED")), None)
+            elif s.startswith("pilot:") and o["kind"] == "turn":
+                by = next((m for m in reversed(later) if notice_subject(m) == s and m["kind"] == "turn"), None)
+            elif s.startswith("plan:") and o.get("items"):
+                mine = set(waiting_bullets(o["items"]))
+                by = next((m for m in reversed(later) if notice_subject(m) == s and m.get("items")
+                           and mine <= set(waiting_bullets(m["items"]))), None)
+            why = f"superseded by {by['id']}" if by else waiting_settled(o, ctx)
+            if why:
+                self.mark(o, why, by and by["id"], now)
+                count += 1
+        return count
+
+    def judge(self, snap, now=None):
+        """Asks Haiku which unread notices no longer need the controller, in a thread so the watcher never waits
+        on it: only when the unread notices have changed since it last asked, and at most once in JUDGE_SECONDS.
+        A failed, slow or malformed answer acks nothing. Returns whether it asked."""
+        now = now or time.time()
+        with self.lock:
+            unread = [dict(i) for i in self.items if not i["read"]]
+        key = tuple(i["id"] for i in unread)
+        if not unread or self.judging or key == self.judged or now - self.judged_at < JUDGE_SECONDS:
+            return False
+        self.judging, self.judged, self.judged_at = True, key, now
+        prompt = judge_prompt(unread, snap, notice_context(snap, unread))
+
+        def go():
+            try:
+                self.apply(parse_judgement(haiku(prompt, timeout=90).get("result")), set(key), snap)
+            except (Exception, SystemExit):     # claude missing exits; a failed call acks nothing
+                pass
+            finally:
+                self.judging = False
+                if "HUB" in globals():
+                    HUB.poke()
+        self.spawn(go)
+        return True
+
+    def apply(self, picks, asked, snap):
+        """Marks read what Haiku named: only ids it was asked about that are still unread, and never one the
+        guard (still_needed) keeps, read against the state now. Returns the ids it marked."""
+        with self.lock:
+            byid = {i["id"]: i for i in self.items}
+        ctx = notice_context(snap, [byid[i] for i, _ in picks if i in byid])
+        acked = []
+        with self.lock:
+            for i, why in picks:
+                n = byid.get(i)
+                if n is None or i not in asked or n["read"] or i in acked or still_needed(n, ctx):
+                    continue
+                m = re.fullmatch(r"superseded by (\S+)", why)
+                self.mark(n, why, m.group(1) if m and m.group(1) in byid else None, judge=True)
+                acked.append(i)
+            if acked:
+                self.judged = tuple(x["id"] for x in self.items if not x["read"])
+                self.save()
+        return acked
 
     def view(self):
         with self.lock:
@@ -1994,9 +2293,23 @@ def worker_records(w, events=50):
     return "\n".join(lines)
 
 
+def haiku(prompt, timeout=150):
+    """One `claude -p` on Haiku with no tools, no MCP servers, no settings and no saved session: its JSON
+    result (`result` is the answer), or RuntimeError."""
+    STATE.mkdir(parents=True, exist_ok=True)
+    r = claude("-p", "--model", "haiku", "--tools", "", "--strict-mcp-config", "--no-session-persistence",
+               "--restricted", "--output-format", "json", stdin=prompt, cwd=str(STATE), timeout=timeout)
+    try:
+        d = json.loads(r.stdout)
+    except ValueError:
+        raise RuntimeError((r.stdout + r.stderr).strip()[:500] or f"claude exited {r.returncode}")
+    if d.get("is_error"):
+        raise RuntimeError(str(d.get("result"))[:500])
+    return d
+
+
 def summarize(name=None):
-    """One `claude -p` on Haiku with no tools, no MCP servers, no settings and no saved session. Returns
-    and keeps {text, at, tokens, ms}."""
+    """One Haiku call (haiku) over the workers' records. Returns and keeps {text, at, tokens, ms}."""
     if name:
         w = need(name)
         prompt = SUMMARY_PROMPT.format(what=f"the worker {name}", words=120) + worker_records(w)
@@ -2006,15 +2319,7 @@ def summarize(name=None):
             worker_records(w, events=10) for w in ws) if ws else None
         if not prompt:
             return {"text": "## Needs you\nNothing.\n\n## Where it is\nNo workers.", "at": time.time(), "tokens": 0, "ms": 0}
-    STATE.mkdir(parents=True, exist_ok=True)
-    r = claude("-p", "--model", "haiku", "--tools", "", "--strict-mcp-config", "--no-session-persistence",
-               "--restricted", "--output-format", "json", stdin=prompt, cwd=str(STATE), timeout=150)
-    try:
-        d = json.loads(r.stdout)
-    except ValueError:
-        raise RuntimeError((r.stdout + r.stderr).strip()[:500] or f"claude exited {r.returncode}")
-    if d.get("is_error"):
-        raise RuntimeError(str(d.get("result"))[:500])
+    d = haiku(prompt)
     u = d.get("usage") or {}
     out = {"text": d.get("result") or "", "at": time.time(), "ms": d.get("duration_ms"),
            "tokens": sum(int(u.get(k) or 0) for k in WEIGHTS)}
@@ -3809,6 +4114,8 @@ class Hub:
                     self.dirty = False
                     snap = snapshot()
                     self.notices.update(snap)
+                    if not self.preview:
+                        self.notices.judge(snap)      # in a thread, at most once a minute; a preview never asks
                     snap["notifications"] = self.notices.view()
                     snap["summaries"] = read_json(SUMMARIES, {})
                     snap["running"] = sorted(self.running)
@@ -4205,6 +4512,7 @@ def cmd_dashboard(a):
     STATE.mkdir(parents=True, exist_ok=True)
     if a.preview:
         HUB.notices.update = lambda snap: []
+        HUB.notices.judge = lambda snap, now=None: False      # and never asks Haiku to ack one
         HUB.notices.save = lambda: None
         HUB.preview = Handler.preview = True     # and it routes nothing to the autopilot
     threading.Thread(target=HUB.run, daemon=True).start()
