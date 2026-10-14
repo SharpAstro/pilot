@@ -230,7 +230,7 @@ def same_path(a, b):
 
 def base_branch(root):
     """What a worker's worktree branches from: origin/HEAD, or in a repo with no remote, the branch its main
-    checkout is on, which is what `claude --bg -w` takes then (measured on this repo, which has none)."""
+    checkout is on, which is what `claude --bg -w` takes then (measured on this repo before it had origin)."""
     for ref in ("origin/HEAD", "HEAD"):
         r = subprocess.run(["git", "-C", root, "rev-parse", "--abbrev-ref", ref], capture_output=True, text=True)
         if r.returncode == 0 and r.stdout.strip() and r.stdout.strip() != "HEAD":
