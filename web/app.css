@@ -387,3 +387,13 @@ tr.click { cursor: pointer; } tr.click:hover td { background: color-mix(in srgb,
   padding: 16px; background: rgba(0, 0, 0, 0.8); cursor: zoom-out; }
 .lightbox img { max-width: 100%; max-height: calc(100% - 32px); object-fit: contain; background: #fff; }
 .lightbox a { color: #fff; font-size: 12px; }
+/* A message box's attached images: thumbnails, each with a remove button, and the picker; for every box. */
+.attach { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.bcast .attach { flex-basis: 100%; }
+.plan .ask .attach { margin: 2px 0 6px; }
+.att { position: relative; display: inline-block; }
+.att .thumb { max-width: 120px; max-height: 80px; display: block; }
+.att-rm { position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; padding: 0; border-radius: 50%; font-size: 13px; line-height: 18px; }
+.att-pick { font-size: 12px; color: var(--muted); cursor: pointer; padding: 2px 8px; border: 1px dashed var(--ring); border-radius: 6px; }
+.att-pick:hover { color: var(--ink); }
+.att-note:empty { display: none; }
