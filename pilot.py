@@ -2162,6 +2162,7 @@ Recipients:
 
 # --------------------------------------------------------------------------- waking a session that has ended
 
+NUDGE_AFTER = 180                   # seconds a live, idle pilot may leave a stopped leg unread before it is told
 WAKES = STATE / "wakes.json"        # what each wake was for, so one stop wakes a pilot once
 
 
@@ -3394,8 +3395,10 @@ class Hub:
         self.dirty = True
 
     def wake_pilots(self, snap):
-        """A background pilot that has ended is woken when one of its legs stops after its log last named it (the
-        unread flag): nobody else would tell it, and the leg would sit there done. Once per stop, in a thread."""
+        """A pilot is told when one of its legs stops after its log last named it (the unread flag), once per stop,
+        in a thread: an ended background pilot is woken with it; a live one, idle with the leg unread for
+        NUDGE_AFTER seconds, gets it through the intercom, since a pilot whose subscription to the worker did not
+        survive (resumed, woken) never hears of the stop, and the leg sits there done (TIA1, and TIA2 after a wake)."""
         if self.preview:
             return
         rows = {r.get("sessionId"): r for r in agents()}
@@ -3404,9 +3407,29 @@ class Hub:
         for w in snap["workers"]:
             pid = w.get("plan")
             key = f"{w['name']}:{int(w.get('lastActivity') or 0)}"
-            if pid in shelved or not w.get("unread") or not asleep(rows.get(pid)) or done.get(pid) == key or pid in self.waking:
+            row = rows.get(pid)
+            if pid in shelved or not w.get("unread") or done.get(pid) == key or pid in self.waking:
+                continue
+            idle = row and row.get("pid") and row.get("status") != "busy"
+            if not asleep(row) and not (idle and time.time() - (w.get("lastActivity") or 0) > NUDGE_AFTER):
                 continue
             self.waking.add(pid)
+            if idle:
+                def nudge(pid=pid, w=w, key=key, name=row.get("name")):
+                    try:
+                        intercom([name], f"Leg {w['name']} stopped ({w.get('reportHead') or w.get('state')}) a while ago and your log has "
+                                         f"not named it since; your subscription to it may not have survived. Read its report: "
+                                         f"python {(HERE / 'pilot.py').as_posix()} result {w['name']}", sender="Dashboard")
+                        d = read_json(WAKES, {})
+                        d[pid] = key
+                        write_json(WAKES, d)
+                    except Exception:
+                        pass
+                    finally:
+                        self.waking.discard(pid)
+                        self.poke()
+                threading.Thread(target=nudge, daemon=True).start()
+                continue
 
             def go(pid=pid, w=w, key=key):
                 try:
