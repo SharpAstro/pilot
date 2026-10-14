@@ -80,12 +80,24 @@ function pilot {
 Or launch the pilot from the dashboard's **Launch** page: pick any project Claude Code knows, start a new
 session or resume one, in a new Windows Terminal tab or in the background.
 
+**Plan only, wait for clearance** (a Launch option, or `pilot plan --hold` for a pilot already running) holds the
+flight at the gate: its plan opens with `Hold: awaiting clearance` under `Flight:`, and its pilot is told to plan
+the flight fully (route, briefs written to files, co-pilot questions settled, tracking page published) and then end
+its turn. `pilot start` refuses every leg while it holds. Its strip and plan card read *ready · awaiting clearance*
+once it has a route and the pilot has stopped planning, with no departure and so no ETA; the card's **Cleared for
+takeoff** button, or `pilot clear <flight>`, lifts the hold, logs "Cleared for takeoff by the controller" in the plan
+and the black box, and tells the pilot to take off: through the intercom while it is live, or by waking it as a copy
+when its background session has ended. A hold asked for at launch waits up to an hour, in `<state>/holds.json`, for
+the launched pilot to open its plan.
+
 The CLI is the pilot's, and yours:
 
 ```powershell
 pilot plan --title "Export fixes"   # this pilot session's flight plan: its path, from the template once
 pilot track --out <scratch>/track.html   # its tracking page, for the pilot to publish as an artifact
 pilot track --url <artifact url>    # where it was published: the plan's Tracking: line
+pilot plan --hold                   # hold this flight at the gate (Hold: awaiting clearance): plan only, start refuses every leg
+pilot clear PIL2                    # the controller's: clear a holding flight for takeoff; its pilot is told, or woken, to take off
 pilot connect TIA2 [--remove]       # a flight this one waits for, on the plan's Connects: line; start holds until it lands
 pilot start fix-export --brief brief.md --pilot "<pilot session name>" [--after other-leg]
 pilot start fix-export-b --brief b.md --pilot "<name>" --divert "<why>"   # take an alternate (the route's Alt of column) in its primary's place, logged
@@ -120,7 +132,7 @@ changed. It asks `claude agents` only when a session file moved, or every 30 s.
 | A worker or session | Its whole conversation streaming live, drawn as Claude Code's terminal draws a session (ported from Sam's campaigner): ● what it says, in full; one line per tool call, `Name(what it was asked)`, its dot green, red or blinking while it runs, a click away from its whole input, and its result under a ⎿, three lines of it with the rest a click away (a Read says only how many lines); thinking folded to one line; a live line under it with what it is doing now (Claude Code's own one-line detail) and how long the turn has run; refused calls in red with who refused them (auto mode, a hook, a deny rule, pilot's budget, Claude Code) and the command with a copy button, except a call pilot's ask hook or Sam's reply gate refused, which is the wiring talking and is not drawn; each subagent on a page of its own, linked from the Agent call that started it as soon as it runs, and from the Subagents card; its summary; its leg; a message box that goes through the intercom (or, for a worker whose turn has ended, as your own turn); a budget control, and **⛽ refuel to N**, one more tank of the leg's first budget past what it has spent, in one click (also on its row once it is at 75% and in the over-budget banner; you are the tower, so no watchtower). Fuel does not wake a worker whose turn has ended, so it then asks whether to tell it to carry on; attach, remote and stop. **What it leaves**: its repo, branch and tip, commits past its base, the remote branches holding them, its uncommitted files, and its report's `Outside the worktree:` line (scratch folders, other repos, a WSL clone, config), which no git command can find. For a pilot, a **Terminal** card: its screen, read every 2 s while open, and a line to type into it (an answer, a key, `/remote-control`), after a confirm, logged in the plan. |
 | History | **Flights** the controller archived (a plan card's Archive flight button, confirmed, or `pilot archive`), each with its departure, arrival or last ETA, delay, how its legs ended and a Restore; then removed workers with their result, branch (pushed or not, or deleted), spend, report and commits, and their conversation. |
 | Spend | Weighted tokens per day over 14 days, and the token breakdown per worker. |
-| Launch | Start a pilot in any project from Claude Code's own list, new or resuming one of its sessions. |
+| Launch | Start a pilot in any project from Claude Code's own list, new or resuming one of its sessions; **plan only, wait for clearance** holds its flight at the gate until you clear it. |
 
 The bell collects notices while the dashboard runs: a pilot or worker waiting on you, a turn that ended (DONE,
 BLOCKED or FAILED), a budget reached, 30 quiet minutes, an API, login or limit error. **desktop** turns them
