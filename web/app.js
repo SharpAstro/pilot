@@ -882,7 +882,8 @@ function connectsCard(p) {
 // waiting on you, failed or stopped) has its plane, as far along its track as its checklist, amber while it waits
 // on you; an alternate only once taken, and a primary no longer once diverted. Before the first takeoff one plane
 // stands at departure (at the gate while held for clearance); between legs it stands on the ground; when every
-// leg of the route as flown is done it parks past the end. A leg reads flown (a solid stop on a solid green line) only
+// leg of the route as flown has landed it parks past the end, and the destination fills green; every leg done but not
+// every one landed, it holds over the destination, which stays a dashed ring. A leg reads flown (a solid stop on a solid green line) only
 // once it has landed, its PR merged or nothing to land; done and not landed yet it is a hollow green stop on a dashed
 // green line.
 function flightStrip(p, s) {
@@ -931,12 +932,16 @@ function flightStrip(p, s) {
     return {x: pt.x, y: pt.y - (up ? 15 : 0), up, color: colorOf(l), name: l.name, t, on: stackedOn(l)};
   });
   const allDone = route.length > 0 && route.every(l => l.st.cls === "done");
+  // Arrived only once every leg has landed: the plane parks past the end and the destination fills green.
+  const allLanded = allDone && route.every(l => landedOf(p, l.name));
   let status;
   if (!legs.length) { planes.push({x: X0, y: Y, color: "var(--muted)"}); status = "no route yet"; }
+  else if (allLanded) { planes.push({x: XN + 40, y: Y, color: "var(--good)"}); status = "all legs landed"; }
   else if (allDone) {
-    const up = route.filter(l => !landedOf(p, l.name)).map(l => esc(l.name));
-    planes.push({x: XN + 40, y: Y, color: "var(--good)"});
-    status = up.length ? `all legs done · not landed: ${up.join(", ")}` : "all legs landed";
+    // Every leg done, not every one landed: it has not arrived. Its plane holds over the destination, short of it.
+    const up = route.filter(l => !landedOf(p, l.name)).map(l => esc(l.name)), end = dest || pos.get(ends[0]?.name) || {x: XN, y: Y};
+    planes.push({x: end.x, y: end.y - 15, up: true, color: "var(--muted)"});
+    status = `all legs done · not landed: ${up.join(", ")}`;
   }
   else if (!air.length) {
     // On the ground: at departure before the first takeoff (at the gate if held), else where the next legs leave from.
@@ -988,14 +993,15 @@ function flightStrip(p, s) {
     const tip = l.altOf ? `${l.name}: alternate for ${l.altOf}, ${out ? "not taken" : `taken: ${label}`}` : `${l.name}: ${label}`;
     const dash = l.altOf ? ";stroke-dasharray:2 2" : l.st.planned ? ";stroke-dasharray:3 2" : "";
     stops.push(`<g${l.w ? ` data-href="#/w/${esc(l.w.name)}"` : ""} class="stop${l.altOf ? " alt" : ""}${out ? " out" : ""}"><title>${esc(tip)}</title>
-      ${!join && ends.length === 1 && ends[0] === l ? `<circle cx="${x}" cy="${y}" r="11" style="fill:none;stroke:${stroke};stroke-width:1.5"/>` : ""}
+      ${!join && ends.length === 1 && ends[0] === l ? `<circle cx="${x}" cy="${y}" r="11" style="fill:none;stroke:${stroke};stroke-width:1.5${cls === "done" && !landed ? ";stroke-dasharray:3 2" : ""}"/>` : ""}
       <circle cx="${x}" cy="${y}" r="6.5" style="fill:${fill};stroke:${stroke};stroke-width:2${dash}"/>
       <text x="${x}" y="${y + 22}" text-anchor="middle">${esc(name)}</text></g>`);
   }
   if (dest) {
-    const stroke = allDone ? "var(--good)" : "var(--axis)";
-    stops.push(`<g class="stop"><title>destination: every lane joins here</title><circle cx="${dest.x}" cy="${dest.y}" r="11" style="fill:none;stroke:${stroke};stroke-width:1.5"/>
-      <circle cx="${dest.x}" cy="${dest.y}" r="4" style="fill:${stroke}"/></g>`);
+    // Solid green once every leg has landed; every leg done but not all landed, a dashed green ring with no dot.
+    const stroke = allDone ? "var(--good)" : "var(--axis)", dash = allDone && !allLanded ? ";stroke-dasharray:3 2" : "";
+    stops.push(`<g class="stop"><title>destination: every lane joins here${allDone && !allLanded ? "; not arrived: not every leg has landed" : ""}</title><circle cx="${dest.x}" cy="${dest.y}" r="11" style="fill:none;stroke:${stroke};stroke-width:1.5${dash}"/>
+      <circle cx="${dest.x}" cy="${dest.y}" r="4" style="fill:${allLanded ? "var(--good)" : allDone ? "var(--surface)" : stroke}"/></g>`);
   }
   const gateHtml = `<rect x="${X0 - 4}" y="${Y - 4}" width="8" height="8" rx="2" style="fill:var(--axis)"/><text x="${X0}" y="${Y + 22}" text-anchor="middle">${p.hold ? "gate" : "departure"}</text>`;
   const planesHtml = planes.map(pl => `<g transform="translate(${pl.x.toFixed(1)},${pl.y.toFixed(1)})">${pl.on?.length
