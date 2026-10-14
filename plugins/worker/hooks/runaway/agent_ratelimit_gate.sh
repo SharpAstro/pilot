@@ -19,7 +19,7 @@
 #              it is safe to resume after `resets_at`.
 #   seven_day  is the budget. No amount of waiting inside a week gets it back,
 #              so below its floor the answer is never "resume automatically",
-#              it is "stop and tell Sam". Clearing the throttle still spends
+#              it is "stop and tell the controller". Clearing the throttle still spends
 #              the budget, which is exactly how an unattended resume empties a
 #              week at three in the morning.
 #
@@ -86,7 +86,7 @@ if [ -n "$week_left" ] && [ "$week_left" -le "$WEEKLY_FLOOR" ]; then
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
           permissionDecision: "deny",
-          permissionDecisionReason: ("Agent spawn denied: the 7-DAY allowance is at " + $w + "% remaining, at or below the floor of " + $f + "%. This is the budget, not the throttle -- waiting does not get it back, and spawning more agents is the fastest way to spend what is left. Do not retry, do not spawn a smaller agent instead, and do not schedule a resume. Stop starting new work now, finish or checkpoint what is already running, write the pickup note so the next session can resume from disk, and tell Sam plainly that the weekly window is what stopped you. Whether to spend the remainder is his call, not yours.")
+          permissionDecisionReason: ("Agent spawn denied: the 7-DAY allowance is at " + $w + "% remaining, at or below the floor of " + $f + "%. This is the budget, not the throttle -- waiting does not get it back, and spawning more agents is the fastest way to spend what is left. Do not retry, do not spawn a smaller agent instead, and do not schedule a resume. Stop starting new work now, finish or checkpoint what is already running, write the pickup note so the next session can resume from disk, and tell the controller plainly that the weekly window is what stopped you. Whether to spend the remainder is his call, not yours.")
         },
         systemMessage: ("Agent spawn blocked -- 7-day allowance at " + $w + "% remaining (floor " + $f + "%).")
       }' 2>/dev/null
@@ -102,7 +102,7 @@ if [ "$five_left" -le "$FLOOR" ]; then
           hookSpecificOutput: {
             hookEventName: "PreToolUse",
             permissionDecision: "deny",
-            permissionDecisionReason: ("Agent spawn denied: the 5-hour window is at " + $r + "% remaining, at or below the floor of " + $f + "%." + $when + " This is a CHECKPOINT for the whole tree, not a failure of this one spawn, and it is the one cap that sees the tree -- the per-agent budgets cannot. Do not retry and do not route the work to an already-running agent to get around it. Finish or checkpoint what is in flight, write the pickup note to disk so the work resumes rather than restarts, and report to Sam where the mission stands." + $weekly)
+            permissionDecisionReason: ("Agent spawn denied: the 5-hour window is at " + $r + "% remaining, at or below the floor of " + $f + "%." + $when + " This is a CHECKPOINT for the whole tree, not a failure of this one spawn, and it is the one cap that sees the tree -- the per-agent budgets cannot. Do not retry and do not route the work to an already-running agent to get around it. Finish or checkpoint what is in flight, write the pickup note to disk so the work resumes rather than restarts, and report to the controller where the mission stands." + $weekly)
           },
           systemMessage: ("Agent spawn blocked -- 5-hour window at " + $r + "% remaining (floor " + $f + "%).")
         }' 2>/dev/null

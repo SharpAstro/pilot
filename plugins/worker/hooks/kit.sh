@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Runs one of Sam's runaway-agent hooks for a worker, under Git Bash on Windows: kit.sh <hook>.sh
-# The hooks are copies in runaway/ beside this script, taken unedited from DrawboardLtd/runaway-agent at
-# c4bee6c (2026-10-12), so a worker's guards never depend on where another checkout sits. Anything pilot
-# needs differently is settled here, before his hook, which keeps a refresh a plain copy.
+# The hooks are copies in runaway/ beside this script, taken from DrawboardLtd/runaway-agent at 84260ce
+# (2026-10-15) by refresh.sh, so a worker's guards never depend on where another checkout sits. They are his
+# but for "the controller" in his name's place, as his install.sh --owner does. Anything else pilot needs
+# differently is settled here, before his hook, which keeps a refresh a copy.
 # His hooks need jq, which winget puts in its Links dir; a Claude Code daemon started before jq was
 # installed does not have that on PATH, and a hook without jq fails open, silently.
 links="$(cygpath -u "${LOCALAPPDATA:-$USERPROFILE/AppData/Local}")/Microsoft/WinGet/Links"

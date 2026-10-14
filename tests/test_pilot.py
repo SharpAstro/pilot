@@ -1940,10 +1940,14 @@ class RunawayKitTests(Case):
     def test_every_hook_the_worker_plugin_wires_is_in_the_repo(self):
         hooks = pilot.HERE / "plugins" / "worker" / "hooks"
         wired = set(re.findall(r'kit\.sh\\" (\w+\.sh)', (hooks / "hooks.json").read_text(encoding="utf-8")))
-        self.assertEqual(len(wired), 5, wired)
+        self.assertEqual(len(wired), 6, wired)
         for name in wired:
             self.assertTrue((hooks / "runaway" / name).is_file(), name)
-            self.assertNotIn(b"\r", (hooks / "runaway" / name).read_bytes(), f"{name}: Git Bash fails on a CR")
+            text = (hooks / "runaway" / name).read_bytes()
+            self.assertNotIn(b"\r", text, f"{name}: Git Bash fails on a CR")
+            # refresh.sh puts the controller in Sam's place, as his install.sh --owner does: a refusal that says
+            # "tell Sam" sends a worker to someone it does not answer to. A dated ruling of his stays his.
+            self.assertIsNone(re.search(rb"\bSam\b(?!,? \(?\d{4}-\d\d-\d\d)", text), name)
 
 
 class PullRequestTests(Case):

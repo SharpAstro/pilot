@@ -180,7 +180,7 @@ Code's own project list.
 | `web/` | the dashboard page: `index.html`, `app.js`, `app.css`, no build step |
 | `tests/` | the offline suite: `python -m unittest discover tests`, standard library only, no Claude Code needed (see Tests) |
 | `plugins/pilot/` | the pilot skill, loaded with `--plugin-dir` into the session you want as pilot, and the hook that shows its questions on the dashboard and logs your answers in the plan |
-| `plugins/worker/` | the hooks every worker gets: the budget checkpoint, and Sam's five hooks through `hooks/kit.sh` |
+| `plugins/worker/` | the hooks every worker gets: the budget checkpoint, and six of Sam's hooks through `hooks/kit.sh` |
 | `~/.pilot/pilot.json` | this machine's settings, kept out of the repo since they name local paths: the repos workers may start in, the default model and effort (unset: the account's), the default budget. Missing, it means no repos and a 10M budget |
 | `%LOCALAPPDATA%/pilot/` | runtime state: `plans/<pilot session>.md`, `flights.json` (the last flight number per repo), `blackbox.jsonl` (every decision), `autopilot.json`, `track/` (tracking pages rendered with no `--out`), `workers/`, `archive/` (removed workers), `archived-flights.json` (archived flights, by plan id; their plans stay in `plans/`), `briefs/` (the exact prompt sent), `meters/`, `notifications.json`, `summaries.json`, error logs |
 | `<repo>/.claude/worktrees/w-<leg>` | each worker's worktree, branch `worktree-w-<leg>`; `start` adds the folder to the repo's `.git/info/exclude` |
@@ -426,14 +426,23 @@ Traps found on the way:
   Two were watched firing in a live worker. `big_read_guard.sh` refused a whole `Read` of a 212 KB file.
   `agent_call_budget.sh` let a subagent briefed with `[[CALL_BUDGET=1]]` make its first call, then
   refused the second with its checkpoint text.
-- **They are part of this repo**, in `plugins/worker/hooks/runaway/`, copied unedited from runaway-agent at
-  `c4bee6c` (2026-10-12). Run from a sibling checkout, they failed open on any machine where it was not
-  beside pilot, and on the desktop no worker had them. Taking his fixes is copying the five files again.
+- **They are part of this repo**, in `plugins/worker/hooks/runaway/`, taken from runaway-agent at `84260ce`
+  (2026-10-15). Run from a sibling checkout, they failed open on any machine where it was not beside pilot,
+  and on the desktop no worker had them. Taking his fixes is `bash plugins/worker/hooks/refresh.sh
+  <runaway-agent checkout>`, which copies each file as his commit has it and puts "the controller" where he
+  wrote "Sam", as his own `install.sh --owner` does for anyone else's machine: his rate-limit gate told a
+  worker to "tell Sam" that the weekly window stopped it.
+- **Which six**: his two budgets (`agent_token_budget.sh`, `agent_call_budget.sh`), the rate-limit gate,
+  `big_read_guard.sh`, `fat_result_notice.sh`, and `handback_report_gate.sh`, which refuses a subagent's
+  report that says only "placeholder" or is under 40 characters (twice per agent, then it lets it through):
+  the handback is the whole report, and in his week to 2026-10-13, 14 of 2,634 said only that. Not taken:
+  `sam_reply_gate.sh`, which holds a session to a text reply after a message carrying his launcher's
+  `Message from Sam, mid-run:` prefix. Nothing pilot sends a worker carries one.
 - **Wired through `plugins/worker/hooks/kit.sh`**, which settles what pilot needs differently before his
   hook runs (a PDF read by its `pages`, an image), so the copies stay his. It also puts winget's jq on
   PATH. A Claude Code daemon started before jq was installed does not have it, and his hooks fail open
   without it.
-- **They write state** under `~/.claude/state/` (`spawn-count`, `token-budget`, `fat-result`).
+- **They write state** under `~/.claude/state/` (`spawn-count`, `token-budget`, `fat-result`, `handback-gate`).
 - **Gaps.** `big_read_guard.sh` misses `cat C:/...`, because its regex excludes `:`, and 8.3 short names
   with `~`. `agent_ratelimit_gate.sh` does nothing until the status line writes `rate-limits.json`.
   jq 1.8.2 writes CRLF to pipes. The hooks survive that because `$(...)` strips `\r`, but a new loop that

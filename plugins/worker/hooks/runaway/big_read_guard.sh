@@ -18,7 +18,7 @@
 #
 # Threshold: CLAUDE_BIG_READ_THRESHOLD_BYTES, default 100000 bytes.
 #
-# Measured 2026-09-16 against /home/sam/conditionsapply, the project whose
+# Measured 2026-09-16 against ~/conditionsapply, the project whose
 # own CLAUDE.md names Program.cs as a file that must never be read whole --
 # this is the measurement population this number is grounded in, not a
 # requirement that every installation resemble it. Program.cs is now

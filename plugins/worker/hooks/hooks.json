@@ -15,6 +15,12 @@
         "hooks": [
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/kit.sh\" agent_ratelimit_gate.sh" }
         ]
+      },
+      {
+        "matcher": "SubagentHandback",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/kit.sh\" handback_report_gate.sh" }
+        ]
       }
     ],
     "PostToolUse": [
