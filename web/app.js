@@ -808,7 +808,7 @@ function planCard(p, s) {
   // alone, an active one starts open. A fold you set stays as you left it.
   const many = (s.plans || []).length > 1;
   return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" data-order="${esc(p.sessionId)}" ${fold("plan:" + p.sessionId, !!p.waiting || (!many && planActive(p, s)))}>
-    <summary class="cardhead"><span>${reorderHtml(p, s)}<b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> ${connectsHtml(p)}${marchChip(p)} <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
+    <summary class="cardhead"><span>${reorderHtml(p, s)}<b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> ${connectsHtml(p)}${marchChip(p)}${amendChip(p)}<span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
       <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} · ` : ""}plan updated ${esc(stamp(p.updated))} (${esc(ago(p.updated))})
       ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
@@ -816,13 +816,87 @@ function planCard(p, s) {
     ${connectsCard(p)}
     ${(p.prs || []).length ? `<div class="prline"><span class="sub">pull requests the plan names:</span> ${p.prs.map(x => prChip(x, true)).join(" ")}</div>` : ""}
     ${p.waiting ? waitingHtml(p, ps) : ""}
+    ${amendmentsHtml(p, s, fold)}
     ${yourMove && !landed && ps.said ? `<details class="lastsaid" ${fold("said:" + p.sessionId, true)}><summary>its turn ended ${esc(ago(Date.parse(ps.said.at) / 1000))} with nothing in the air; its last message</summary>${md(ps.said.text)}</details>` : pilotNow(ps)}
     ${p.notes ? `<details ${fold("notes:" + p.sessionId, waiting)}><summary>the pilot's notes: what it found and why the route is this shape</summary>${md(p.notes, true)}</details>` : ""}
     ${p.legs.length > 1 ? `<details ${fold("chart:" + p.sessionId, true)}><summary>the route as a chart: each leg after the legs it waits for</summary><div class="graph" data-scroll="route:${esc(p.sessionId)}">${routeChart(p, s)}</div></details>` : ""}
     <div class="tablewrap"><table><thead><tr><th>Leg</th><th>Goal</th><th>After</th><th>Done when</th><th>Status</th><th class="num">Spend</th></tr></thead>
       <tbody>${legs || `<tr><td colspan="6" class="sub">No legs yet. The pilot adds them to the Route table.</td></tr>`}</tbody></table></div>
     ${log ? `<details ${fold("log:" + p.sessionId, true)}><summary>flight log: decisions, questions and answers, legs taking off and finishing</summary><ul class="log">${log}</ul></details>` : ""}
-    <div class="planfoot"><button class="arch" data-archive="${esc(p.sessionId)}" data-name="${esc(p.flight ? `Flight ${p.flight}` : "this flight")} · ${esc(p.title)}" title="Off the Overview and the Flights strips, onto History; nothing is deleted, and History restores it">Archive flight…</button></div></details>`;
+    ${landed ? "" : amendFormHtml(p)}
+    <div class="planfoot">${landed ? "" : amendButtonHtml(p)}<button class="arch" data-archive="${esc(p.sessionId)}" data-name="${esc(p.flight ? `Flight ${p.flight}` : "this flight")} · ${esc(p.title)}" title="Off the Overview and the Flights strips, onto History; nothing is deleted, and History restores it">Archive flight…</button></div></details>`;
+}
+
+// ------------------------------------------------------------------ amending a flight
+
+// The controller redirects a flight with an amendment, pilot.py's amend_flight: the request is filed in the plan's
+// `## Amendments`, open, and its pilot is told (woken if parked) to classify it with its co-pilot: fold into a leg,
+// a new leg, or a new flight for the controller to launch. pilot.py's amendment_states gives each its state.
+// The form's text and its last result are kept per flight across re-renders, until sent.
+const amendForm = new Map();
+// `?amend=<plan id>[&amendtext=…]`: that flight's form starts open, with that text, for a screenshot of it.
+{ const q = new URLSearchParams(location.search); if (q.get("amend")) amendForm.set(q.get("amend"), {open: true, text: q.get("amendtext") || ""}); }
+
+// A folded card still says when an amendment waits on its pilot.
+const amendChip = p => { const n = (p.amendments || []).filter(a => a.state === "open").length;
+  return n ? ` <span class="chip blocked" title="filed by you, not classified yet: its pilot folds it into a leg, makes it a new leg, or hands it back as a new flight">${n} amendment${n > 1 ? "s" : ""} open</span> ` : ""; };
+
+const amendClass = a => a.class === "fold" ? `fold into ${a.leg}` : a.class === "leg" ? `new leg ${a.leg}` : a.class === "flight" ? "new flight" : "unclassified";
+const amendState = a => ({
+  open: ["blocked", "open · waiting on the pilot to classify it"],
+  classified: ["working", "classified · in the route"],
+  done: ["done", "✓ done: its leg is done"],
+  "to the controller": ["blocked", "to you: launch it as a flight"],
+})[a.state] || ["other", a.state || a.status];
+
+// The amendments a leg was changed by: classified fold or leg into it. The strip marks its stop with them.
+const amendedLegs = p => {
+  const by = new Map();
+  for (const a of p.amendments || []) if (a.status === "classified" && (a.class === "fold" || a.class === "leg") && a.leg) by.set(a.leg, [...(by.get(a.leg) || []), a]);
+  return by;
+};
+
+// The pilot session's directory, for the launch form a new-flight amendment opens: the flight's repo.
+const flightPath = (p, s) => (s.pilots || []).find(x => x.sessionId === p.sessionId)?.cwd || "";
+
+function amendmentsHtml(p, s, fold) {
+  const as = p.amendments || [];
+  if (!as.length) return "";
+  const open = as.filter(a => a.state === "open").length, mine = as.filter(a => a.state === "to the controller").length;
+  const rows = as.map(a => {
+    const [cls, label] = amendState(a);
+    const launch = a.class === "flight" ? `<button data-launchamend="${esc(p.sessionId)}" data-id="${esc(a.id)}" title="Open the launch form with this request as the new flight's first message; you launch it">Launch as a flight…</button>` : "";
+    return `<li class="amend ${esc(a.state.replace(/\s+/g, "-"))}"><div class="amhead"><b>${esc(a.id)}</b> <span class="sub">${esc(a.at)}</span>
+      <span class="amclass ${esc(a.class || "none")}">${esc(amendClass(a))}</span> <span class="chip ${cls}">${esc(label)}</span>${a.budget ? ` <span class="ambudget" title="its budget">⛽ ${esc(a.budget)}</span>` : ""}</div>
+      <div class="amtext">${md(a.text, true)}</div>${a.why ? `<div class="sub amwhy">why: ${esc(a.why)}</div>` : ""}${launch ? `<div class="choices">${launch}</div>` : ""}</li>`;
+  }).join("");
+  const sum = [`${as.length} amendment${as.length === 1 ? "" : "s"}`, open && `${open} open, waiting on the pilot`, mine && `${mine} for you to launch`].filter(Boolean).join(" · ");
+  return `<details class="amends${open ? " open-one" : ""}" ${fold("amend:" + p.sessionId, open > 0)}><summary>amendments: ${esc(sum)}</summary><ol class="amlist">${rows}</ol></details>`;
+}
+
+function amendButtonHtml(p) {
+  return `<button class="amendbtn" data-amendopen="${esc(p.sessionId)}" title="File a change to what this flight flies as an amendment in its plan, and tell its pilot to classify it">Amend flight…</button>`;
+}
+
+function amendFormHtml(p) {
+  const f = amendForm.get(p.sessionId), sid = esc(p.sessionId);
+  if (!f?.open) return f?.note ? `<div class="amendnote sub">${esc(f.note)}</div>` : "";
+  return `<div class="amendform"><div class="cardhead"><b>Amend ${esc(p.flight ? `flight ${p.flight}` : "this flight")}</b><span class="sub">filed in its plan, open; its pilot is told (woken if parked) to fold it into a leg, make it a new leg, or hand it back as a new flight</span></div>
+    <textarea class="amendtext" data-amendtext="${sid}" placeholder="What you want changed, in a line or two. Ctrl+Enter files it.">${esc(f.text || "")}</textarea>
+    <div class="sendrow"><button class="primary" data-amendsend="${sid}"${f.busy ? " disabled" : ""}>${f.busy ? "filing…" : "File the amendment"}</button><button data-amendcancel="${sid}">Cancel</button>
+      <span class="sub">${esc(f.note || "")}</span></div></div>`;
+}
+
+async function sendAmendment(sid) {
+  const f = amendForm.get(sid);
+  const text = (document.querySelector(`textarea[data-amendtext="${CSS.escape(sid)}"]`)?.value ?? f?.text ?? "").trim();
+  if (!f || !text) { if (f) { f.note = "write the request first"; render(); } return; }
+  f.text = text; f.busy = true; f.note = ""; document.activeElement?.blur(); render();
+  try {
+    const j = await post(`/api/flights/${sid}/amend`, {text});
+    amendForm.set(sid, {open: false, text: "", note: `${j.id} filed; ${j.reached}`});
+  } catch (e) { Object.assign(f, {busy: false, note: `not filed: ${e.message}`}); }
+  render();
 }
 
 // ------------------------------------------------------------------ answering the pilot from the dashboard
@@ -1132,7 +1206,7 @@ function flightStrip(p, s) {
     status = [flying.length && `${flying.length} flying: ${flying.join(", ")}`, hold.length && `waiting · ${hold.join("; ")}`,
               failed.length && `failed: ${failed.join(", ")}`, stopped.length && `stopped: ${stopped.join("; ")}`].filter(Boolean).join(" · ");
   }
-  const tracks = [], stops = [];
+  const tracks = [], stops = [], amended = amendedLegs(p);
   const planeOf = new Map(planes.filter(pl => pl.name).map(pl => [pl.name, pl]));
   for (const l of legs) {
     const b = pos.get(l.name), alt = l.altOf ? " alt" : "", pl = planeOf.get(l.name);
@@ -1166,6 +1240,11 @@ function flightStrip(p, s) {
       ${!join && ends.length === 1 && ends[0] === l ? `<circle cx="${x}" cy="${y}" r="11" style="fill:none;stroke:${stroke};stroke-width:1.5${cls === "done" && !landed ? ";stroke-dasharray:3 2" : ""}"/>` : ""}
       <circle cx="${x}" cy="${y}" r="6.5" style="fill:${fill};stroke:${stroke};stroke-width:2${dash}"/>
       <text x="${x}" y="${y + 22}" text-anchor="middle">${esc(name)}</text></g>`);
+    // Where the route was amended: a small diamond over the stop of each leg a classified fold or leg amendment
+    // changed, its tip naming them, with their count when there are several.
+    const am = amended.get(l.name);
+    if (am) stops.push(`<g class="amended"><title>${esc(`${l.name} amended: ${am.map(a => `${a.id} (${a.class === "fold" ? "folded in" : "new leg"}): ${a.text}`).join("; ")}`)}</title>
+      <path d="M${x + 13},${y - 17} l5,5 l-5,5 l-5,-5 Z"/>${am.length > 1 ? `<text x="${x + 20}" y="${y - 15}">${am.length}</text>` : ""}</g>`);
   }
   if (dest) {
     // Solid green once every leg has landed; every leg done but not all landed, a dashed green ring with no dot.
@@ -1830,9 +1909,12 @@ VIEWS.launch = root => {
     if (!shown.length) { put($(".s-projnote", root), ""); list.innerHTML = ""; }
     else if (keep !== want || !list.innerHTML) loadSessions();
   }
+  // A new-flight amendment opens the form with its request as the first message (msg); the rest is the controller's.
+  const q = new URLSearchParams(location.hash.includes("?") ? location.hash.slice(location.hash.indexOf("?") + 1) : "");
+  if (q.get("msg")) $(".s-msg", root).value = q.get("msg");
   (async () => {
     projects = await (await fetch("/api/projects")).json().catch(() => []);
-    fill(new URLSearchParams(location.hash.split("?")[1] || "").get("path"));
+    fill(q.get("path"));
     $(".s-filter", root).focus();
   })();
   $(".s-filter", root).addEventListener("input", () => fill(sel.value));
@@ -1987,6 +2069,25 @@ document.addEventListener("click", async e => {
     catch (err) { alert(err.message); t.disabled = false; t.textContent = "Cleared for takeoff"; }
     return;
   }
+  // Amending a flight is the controller's: the form opens on the card, and filing it records the request and tells the pilot.
+  if (t.dataset.amendopen) {
+    e.preventDefault();
+    const sid = t.dataset.amendopen, f = amendForm.get(sid);
+    amendForm.set(sid, {...f, open: !f?.open, note: f?.open ? f.note : ""});
+    render();
+    if (amendForm.get(sid).open) document.querySelector(`textarea[data-amendtext="${CSS.escape(sid)}"]`)?.focus();
+    return;
+  }
+  if (t.dataset.amendcancel) { amendForm.set(t.dataset.amendcancel, {open: false, text: amendForm.get(t.dataset.amendcancel)?.text || ""}); render(); return; }
+  if (t.dataset.amendsend) { sendAmendment(t.dataset.amendsend); return; }
+  // A new-flight amendment is the controller's to launch: the launch form, opened with the request as its first message.
+  if (t.dataset.launchamend) {
+    const p = (S.plans || []).find(x => x.sessionId === t.dataset.launchamend), a = p?.amendments?.find(x => x.id === t.dataset.id);
+    if (!a) return;
+    const msg = `Amendment ${a.id} to ${p.flight ? `flight ${p.flight}` : "flight"} ${p.title}, handed back as a new flight: ${a.text}`;
+    location.hash = `#/launch?` + new URLSearchParams({path: flightPath(p, S), msg});
+    return;
+  }
   if (t.dataset.restore) {
     t.disabled = true;
     try { await post(`/api/flights/${t.dataset.restore}/restore`); } catch (err) { alert(err.message); t.disabled = false; }
@@ -2051,6 +2152,7 @@ document.addEventListener("click", e => { if (!e.target.closest(".bellwrap")) $(
 // than re-rendering, so the Send button you reach for next is not swapped out under the click.
 document.addEventListener("input", e => {
   const el = e.target;
+  if (el.dataset?.amendtext) { const f = amendForm.get(el.dataset.amendtext); if (f) f.text = el.value; return; }
   if (!el.matches("input.reply[data-answer]")) return;
   const p = (S.plans || []).find(x => x.sessionId === el.dataset.answer), items = p ? waitingItems(p.waiting).items : [];
   const it = items[+el.dataset.item];
@@ -2061,6 +2163,10 @@ document.addEventListener("input", e => {
   const n = items.filter(x => answers.has(`${p.sessionId}|${x.title}`)).length, send = el.closest(".ask")?.querySelector("[data-sendanswers]");
   if (send) { send.disabled = !n || !(p.live && p.pilot); send.textContent = `Send ${n || ""} answer${n === 1 ? "" : "s"} to the pilot`; }
   sentNote.delete(p.sessionId);
+});
+document.addEventListener("keydown", e => {
+  const sid = e.target.dataset?.amendtext;
+  if (sid && e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendAmendment(sid); }
 });
 window.addEventListener("hashchange", render);
 setInterval(render, 30000);        // only the "5m ago" texts move between states
