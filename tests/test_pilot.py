@@ -1519,6 +1519,61 @@ class TranscriptTests(Case):
 NOW = time.mktime((2026, 10, 14, 12, 0, 0, 0, 0, -1))     # a Wednesday, noon local
 
 
+class AddReposTests(Case):
+    """Repos a flight needs that pilot.json does not list: the dashboard finds them named and adds them at a click."""
+
+    def repos(self, *names):
+        base = Path(tempfile.mkdtemp(prefix="repos-"))
+        self.addCleanup(shutil.rmtree, base, True)
+        for n in names:
+            (base / n / ".git").mkdir(parents=True)
+            (base / n / "src").mkdir()
+        return base
+
+    def test_the_repo_roots_a_text_names_that_pilot_json_does_not_list(self):
+        base = self.repos("ToupTek.SDK", "DIR.Lib", "tianwen")
+        fwd = str(base).replace("\\", "/")
+        self.config(repos={"tianwen": str(base / "tianwen")})
+        git_bash = "/" + fwd[0].lower() + fwd[2:]
+        text = (f'Lines for its "repos": "ToupTek.SDK": "{fwd}/ToupTek.SDK", "DIR.Lib": "{base}\\DIR.Lib". '
+                f"Paths: {fwd}/<name>. Its file {fwd}/ToupTek.SDK/src/a.cs, the listed {fwd}/tianwen, "
+                f"again as {git_bash}/DIR.Lib, and {fwd}/Gone.Lib, which is no checkout.")
+        self.assertEqual([r["name"] for r in pilot.unlisted_repos(text)], ["ToupTek.SDK", "DIR.Lib"])
+        self.assertEqual(pilot.unlisted_repos(text)[1]["path"], f"{fwd}/DIR.Lib", "forward slashes, as the launch form has them")
+
+    def test_the_card_gets_the_repos_its_waiting_items_name(self):
+        base = self.repos("Console.Lib")
+        self.config(repos={})
+        self.plan("s1", PLAN.replace("Options: Yes | No. Recommend: Yes.",
+                                     f"Options: Yes | No. Recommend: Yes.\n- **Add {base}\\Console.Lib to pilot.json?** Options: Added | Not now."))
+        p = next(p for p in pilot.plans_view([], []) if p["sessionId"] == "s1")
+        self.assertEqual([r["name"] for r in p["unlisted"]], ["Console.Lib"])
+
+    def test_the_controller_adds_them_and_the_pilot_is_told(self):
+        base = self.repos("ToupTek.SDK", "DIR.Lib")
+        self.config(repos={"DIR.Lib": str(base / "DIR.Lib")})
+        self.plan("s1", PLAN)
+        told = []
+        with unittest.mock.patch.object(pilot, "tell_pilot", lambda sid, text, when_back=None: told.append((sid, text)) or "told"):
+            added, reached = pilot.add_repos([str(base / "ToupTek.SDK"), str(base / "DIR.Lib")], "WA1")
+        root = str(base / "ToupTek.SDK").replace("\\", "/")
+        self.assertEqual((added, reached), ({"ToupTek.SDK": root}, "told"), "DIR.Lib was listed already")
+        self.assertEqual(pilot.config()["repos"]["ToupTek.SDK"], root)
+        self.assertIn("Added to pilot.json by the controller: ToupTek.SDK", pilot.plan_path("s1").read_text(encoding="utf-8"))
+        self.assertEqual(told[0][0], "s1")
+        self.assertIn("The controller added ToupTek.SDK", told[0][1])
+        with unittest.mock.patch.object(pilot, "tell_pilot", lambda *a, **k: self.fail("nothing new: no word")):
+            self.assertEqual(pilot.add_repos([root], "s1"), ({}, None))
+
+    def test_only_a_checkouts_root_is_added(self):
+        base = self.repos("ToupTek.SDK")
+        self.config(repos={})
+        for bad in ([str(base / "ToupTek.SDK" / "src")], ["ToupTek.SDK"], [], "C:/x", [""]):
+            with self.assertRaises(ValueError, msg=bad):
+                pilot.add_repos(bad)
+        self.assertEqual(pilot.config()["repos"], {})
+
+
 class StartHookTests(Case):
     def test_a_pilot_session_registers_its_repo_as_it_starts(self):
         repo = Path(tempfile.mkdtemp()) / "monorepo"

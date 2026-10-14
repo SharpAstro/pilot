@@ -261,7 +261,9 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
 13. **Leave alone what is not yours**: Claude Code's own files under `~/.claude` (its daemon lock, settings,
     session records) and the controller's `~/.pilot/pilot.json`. When one stands in your way, put it in
     `## Waiting on the controller` with what you found and what you would change: another repo a leg needs
-    that `pilot.json` does not list (your own joins it when your session starts), or a stale daemon lock, which `pilot.py start` names and the dashboard
+    that `pilot.json` does not list (your own joins it when your session starts; name each by its root's full
+    path, `C:/Users/.../ToupTek.SDK`, and the dashboard gives the controller a button to add it, which tells you
+    once it has), or a stale daemon lock, which `pilot.py start` names and the dashboard
     offers the controller a button for. A pilot once deleted a stale lock and added a repo to `pilot.json`
     itself; both were right, and both were the controller's to do.
 14. **Clean up** with `python <pilot.py> rm <leg>` once its branch has been pushed or the controller says to

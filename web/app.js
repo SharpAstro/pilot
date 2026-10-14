@@ -845,6 +845,7 @@ function planCard(p, s) {
     ${connectsCard(p)}
     ${(p.prs || []).length ? `<div class="prline"><span class="sub">pull requests the plan names:</span> ${p.prs.map(x => prChip(x, true)).join(" ")}</div>` : ""}
     ${p.waiting ? waitingHtml(p, ps) : ""}
+    ${repoAskHtml(p)}
     ${amendmentsHtml(p, s, fold)}
     ${yourMove && !landed && ps.said ? `<details class="lastsaid" ${fold("said:" + p.sessionId, true)}><summary>its turn ended ${esc(ago(Date.parse(ps.said.at) / 1000))} with nothing in the air; its last message</summary>${md(ps.said.text)}</details>` : pilotNow(ps)}
     ${p.notes ? `<details ${fold("notes:" + p.sessionId, waiting)}><summary>the pilot's notes: what it found and why the route is this shape</summary>${md(p.notes, true)}</details>` : ""}
@@ -854,6 +855,15 @@ function planCard(p, s) {
     ${log ? `<details ${fold("log:" + p.sessionId, true)}><summary>flight log: decisions, questions and answers, legs taking off and finishing</summary><ul class="log">${log}</ul></details>` : ""}
     ${landed ? "" : amendFormHtml(p)}
     <div class="planfoot">${landed ? "" : amendButtonHtml(p)}<button class="arch" data-archive="${esc(p.sessionId)}" data-name="${esc(p.flight ? `Flight ${p.flight}` : "this flight")} · ${esc(p.title)}" title="Off the Overview, onto History; nothing is deleted, and History restores it">Archive flight…</button></div></details>`;
+}
+
+// Repos a flight needs that no waiting item names (its pilot asked in its terminal), and what the last add did.
+function repoAskHtml(p) {
+  const items = p.waiting ? waitingItems(p.waiting).items : [];
+  const rest = (p.unlisted || []).filter(r => !items.some(it => slashed(it.text).includes(r.path.toLowerCase())));
+  const note = repoNote.get(p.sessionId);
+  return rest.length || note ? `<div class="repoask">${rest.length ? `<span class="sub">its pilot names ${rest.length === 1 ? "a repo" : "repos"} pilot.json does not list:</span> ${addReposHtml(p.sessionId, rest)}` : ""}
+    ${note ? `<span class="sub">${esc(note)}</span>` : ""}</div>` : "";
 }
 
 // ------------------------------------------------------------------ amending a flight
@@ -960,13 +970,29 @@ const prLinks = (html, url) => url ? html.replace(/\bPR #(\d+)\b/g, (m, n) => `<
 // The plan's waiting items not yet answered from here.
 const unanswered = p => waitingItems(p.waiting).items.filter(it => !(p.answered || {})[it.title]);
 
+// A path as the server's unlisted repos have it, to find one in a waiting item's text: forward slashes, any case.
+const slashed = s => String(s || "").replace(/\\/g, "/").toLowerCase();
+
+// The controller's own button for repos a flight needs that pilot.json does not list (pilot.py's unlisted_repos),
+// as a merge question gets its merge: one for each, and one for all when there are several. pilot.py adds them
+// and tells the pilot.
+const repoNote = new Map();
+function addReposHtml(sid, repos) {
+  const btn = (rs, primary) => `<button${primary ? ` class="primary"` : ""} data-addrepos="${esc(sid)}" data-paths="${esc(JSON.stringify(rs.map(r => r.path)))}"
+    title="${esc(`add to ~/.pilot/pilot.json, and tell the pilot:\n${rs.map(r => r.path).join("\n")}`)}">Add ${rs.length > 1 ? `all ${rs.length}` : esc(rs[0].name)} to pilot.json</button>`;
+  return (repos.length > 1 ? btn(repos, true) : "") + repos.map(r => btn([r], repos.length === 1)).join("");
+}
+const reposIn = (p, text) => (p.unlisted || []).filter(r => slashed(text).includes(r.path.toLowerCase()));
+
 function waitingHtml(p, ps) {
   const {intro, items} = waitingItems(p.waiting), sid = p.sessionId;
   const where = ps?.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : "";
   let n = 0;
   const rows = items.map((it, i) => {
     const sent = (p.answered || {})[it.title];
-    if (sent) return `<li class="answered">${md(it.text, true)}<div class="sub">✓ answered ${esc(clock(sent * 1000))}; with the pilot, which takes it out of its plan at its next step</div></li>`;
+    // Repos it names that are not listed yet: answered "add them" or not, the button stays until they are.
+    const repos = reposIn(p, it.text), addBtn = repos.length ? `<div class="choices">${addReposHtml(sid, repos)}</div>` : "";
+    if (sent) return `<li class="answered">${md(it.text, true)}<div class="sub">✓ answered ${esc(clock(sent * 1000))}; with the pilot, which takes it out of its plan at its next step</div>${addBtn}</li>`;
     const a = answers.get(`${sid}|${it.title}`);
     // A merge question gets the controller's own merge button: the dashboard runs it, as a pilot may not.
     const mpr = (/\bmerge PR #(\d+)/i.exec(it.title) || [])[1];
@@ -978,7 +1004,7 @@ function waitingHtml(p, ps) {
     const plain = s => s.replace(/[`*]/g, ""), short = plain(it.recShort);
     const choices = it.options.length ? it.options.map(o => btn("option", o, plain(o), o === it.recShort || it.rec.startsWith(o))).join("")
       : it.rec ? btn("accept", it.rec, `accept: ${short.length > 40 ? short.slice(0, 39) + "…" : short}`, true) : "";
-    return `<li>${prLinks(md(it.text, true), p.repoUrl)}${mergeBtn ? `<div class="choices">${mergeBtn}</div>` : ""}<div class="choices">${choices}<input class="reply" data-answer="${esc(sid)}" data-item="${i}"
+    return `<li>${prLinks(md(it.text, true), p.repoUrl)}${mergeBtn ? `<div class="choices">${mergeBtn}</div>` : ""}${addBtn}<div class="choices">${choices}<input class="reply" data-answer="${esc(sid)}" data-item="${i}"
       placeholder="${choices ? "or your own answer" : "your answer"}" value="${esc(a?.kind === "text" ? a.value : "")}"></div></li>`;
   }).join("");
   const can = (p.live || p.asleep) && p.pilot;     // a parked pilot is woken by the message
@@ -2191,6 +2217,16 @@ document.addEventListener("click", async e => {
     t.disabled = true; t.textContent = "merging…";
     try { const j = await post("/api/merge", {plan: t.dataset.merge, pr: Number(t.dataset.pr)}); t.textContent = `merged #${j.merged} at ${j.head}`; }
     catch (err) { t.disabled = false; t.textContent = `Merge #${t.dataset.pr} (rebase)`; alert(err.message); }
+    return;
+  }
+  if (t.dataset.addrepos) {
+    const sid = t.dataset.addrepos;
+    t.disabled = true; t.textContent = "adding…";
+    try {
+      const j = await post("/api/repos", {paths: JSON.parse(t.dataset.paths), plan: sid}), names = Object.keys(j.added);
+      repoNote.set(sid, names.length ? `✓ added ${names.join(", ")} to pilot.json${j.reached ? `; ${j.reached}` : ""}` : "already in pilot.json");
+    } catch (err) { t.disabled = false; alert(err.message); }
+    render();
     return;
   }
   if (t.dataset.refuel) {

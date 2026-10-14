@@ -123,6 +123,7 @@ abbr.ph { text-decoration: underline dotted; text-underline-offset: 2px; cursor:
 .log { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--ink-2); }
 .plan .ask { margin: 10px 0 4px; padding: 10px 12px; border: 1px solid var(--warn); border-radius: 8px; background: var(--tint-warn); }
 .plan .ask .q { margin-top: 8px; }
+.plan .repoask { margin: 8px 0 4px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .plan .ask .hdr { display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2); margin-right: 8px; }
 .plan .ask ul { margin: 4px 0 0; padding-left: 20px; }
 .plan .ask li { margin: 2px 0; }

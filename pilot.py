@@ -972,6 +972,11 @@ def plans_view(rows, workers, seen=None):
                     # else its legs' repo. PIL1's pilot sits in the monorepo, its first leg flew in the SDK.
                     "repoPath": str(row.get("cwd") or root or "").replace("\\", "/"),
                     **parse_plan(text)})
+        # Repos its waiting items or its pilot's open question name that pilot.json does not list: the card offers
+        # the controller a button to add them.
+        ps = out[-1]["pilotState"] or {}
+        asks = " ".join(str(q.get("question") or "") for q in (ps.get("ask") or {}).get("questions") or [])
+        out[-1]["unlisted"] = unlisted_repos(f"{out[-1].get('waiting') or ''} {asks} {ps.get('waitingFor') or ''}")
     out = by_priority(out)[:10]
     gone = archived(200)
     flights = flight_plans() if any(p["connects"] for p in out) else {}
@@ -4536,6 +4541,45 @@ def register_repo(path):
     return name
 
 
+# A repo's root as a plan or a pilot's question names it: a Windows path, either slash, or Git Bash's /c/...
+REPO_PATH = re.compile(r"(?<![\w/])(?:[A-Za-z]:[\\/]|/[a-z]/)[^\s\"'`<>|*?,;()\[\]{}]+")
+
+
+def unlisted_repos(text):
+    """The git checkouts `text` names by path that pilot.json does not list, each {name, path}: a flight that needs
+    sibling repos asks the controller to add them (TIA2 asked for four while planning), and the dashboard offers
+    to at a click. Only a repo's own root counts, never a file or a folder inside one."""
+    out, listed = {}, list(config()["repos"].values())
+    for m in REPO_PATH.finditer(text or ""):
+        path = re.sub(r"^/([a-z])/", lambda g: g.group(1).upper() + ":/", m.group(0).rstrip(".:")).replace("\\", "/").rstrip("/")
+        if path.lower() not in out and Path(path, ".git").exists() and not any(same_path(v, path) for v in listed):
+            out[path.lower()] = {"name": Path(path).name, "path": path}
+    return list(out.values())
+
+
+REPOS_ADDED = ("(pilot.py) The controller added {repos} to pilot.json from the dashboard, so legs may start there now. "
+               "Take out of your plan's Waiting on the controller what asked for them, and fly on.")
+
+
+def add_repos(paths, flight=None):
+    """The controller adds repos to pilot.json from the dashboard, each a git checkout's root, under its folder's
+    name as register_repo has it. With a flight, it is logged in its plan and its pilot is told (woken if parked).
+    Returns (added {name: path}, how the pilot was reached, or None)."""
+    if not isinstance(paths, list) or not paths or not all(isinstance(x, str) and x.strip() for x in paths):
+        raise ValueError("paths must be a list of repo directories")
+    sid = find_flight(flight) if flight else None
+    roots = [x.strip().replace("\\", "/").rstrip("/") for x in paths]
+    for root in roots:
+        if not Path(root).is_absolute() or not Path(root, ".git").exists():
+            raise ValueError(f"{root} is not a git checkout's root")
+    added = {name: root for root in roots if (name := register_repo(root))}
+    if not added or not sid:
+        return added, None
+    names = ", ".join(f"{n} ({r})" for n, r in added.items())
+    plan_log(sid, f"Added to pilot.json by the controller: {names}")
+    return added, tell_pilot(sid, REPOS_ADDED.format(repos=names), when_back="carry on, its repos are in pilot.json")
+
+
 LAUNCH_HOLD = ("Plan only: this flight holds at the gate until the controller clears it for takeoff. Open your flight plan "
                "with `plan --hold`, plan it fully (the route, a brief per leg written to a file, the co-pilot's questions "
                "settled, the tracking page published), then end your turn without starting any leg. The clearance comes "
@@ -5240,6 +5284,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                                          sender="Dashboard"), daemon=True).start()
             HUB.poke()
             return self.send(200, {"ok": True, "merged": n, "head": head})
+        if self.path == "/api/repos":
+            try:
+                added, reached = add_repos(body.get("paths"), body.get("plan") or None)
+            except ValueError as e:
+                return self.send(409, {"error": str(e)})
+            HUB.poke()
+            return self.send(200, {"ok": True, "added": added, "reached": reached})
         if self.path == "/api/launch":
             try:
                 out = launch(str(body.get("path") or ""), body.get("resume") or None, "background" if body.get("where") == "background" else "terminal",
