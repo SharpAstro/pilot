@@ -2660,7 +2660,9 @@ def cmd_plan(a):
         p.write_text(PLAN_TEMPLATE.format(title=a.title or "untitled", flight=flight_code(repo), sid=sid,
                                           now=time.strftime("%Y-%m-%d %H:%M")), encoding="utf-8")
         # Launched to plan only: the plan opens holding, whether or not the pilot passed --hold itself.
-        if take_hold(sid, top, os.getcwd()):
+        # With --session (the controller, by hand) only a hold booked for that session: one booked by directory is
+        # the launched pilot's, whatever directory this runs in.
+        if take_hold(sid, *([] if a.session else [top, os.getcwd()])):
             hold_plan(sid, "Holding at the gate: launched to plan only, awaiting clearance for takeoff from the controller")
     flown = [w["name"] for w in registered() if w.get("plan") == sid] if getattr(a, "hold", False) else []
     if flown:                  # a hold is for a flight still at the gate: one with legs out has departed
