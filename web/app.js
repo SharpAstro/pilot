@@ -41,12 +41,24 @@ document.addEventListener("toggle", e => {
   if (!k) return;
   if (d.open === (d.dataset.open === "1")) opened.delete(k); else opened.set(k, d.open);
 }, true);
+// A wide route chart scrolls on its own to the first leg not landed, until the reader scrolls it; then it keeps the
+// reader's place across the page's re-renders, which otherwise put it back at the start every few seconds.
+const scrolled = new Map();
+function placeScroll(g) {
+  const k = g.dataset.scroll, focus = Number(g.querySelector("[data-focus]")?.dataset.focus || 0);
+  g._auto = true;
+  g.scrollLeft = scrolled.has(k) ? scrolled.get(k) : Math.max(0, focus - g.clientWidth * 0.25);
+  requestAnimationFrame(() => { g._auto = false; });
+  g.addEventListener("scroll", () => { if (!g._auto) scrolled.set(k, g.scrollLeft); }, {passive: true});
+}
+
 function put(el, html) {
   if (!el || el._html === html) return;
   if (dragging && el.contains(dragging.item)) return;   // a flight being dragged: the drop redraws it
   const f = document.activeElement;      // never wipe what the reader is typing: the next render catches up
   if (f && f !== document.body && el.contains(f) && f.matches("input, textarea, select")) return;
   el.innerHTML = html; el._html = html;
+  for (const g of el.querySelectorAll("[data-scroll]")) placeScroll(g);
   for (const d of el.querySelectorAll("details[data-k]")) if (opened.has(d.dataset.k)) d.open = opened.get(d.dataset.k);
 }
 // Copying text with a report's placeholders in it copies what they stand for: a command runs as pasted.
@@ -663,7 +675,7 @@ function planCard(p, s) {
     ${p.waiting ? waitingHtml(p, ps) : ""}
     ${yourMove && !landed && ps.said ? `<details class="lastsaid" ${fold("said:" + p.sessionId, true)}><summary>its turn ended ${esc(ago(Date.parse(ps.said.at) / 1000))} with nothing in the air; its last message</summary>${md(ps.said.text)}</details>` : pilotNow(ps)}
     ${p.notes ? `<details ${fold("notes:" + p.sessionId, waiting)}><summary>the pilot's notes: what it found and why the route is this shape</summary>${md(p.notes, true)}</details>` : ""}
-    ${p.legs.length > 1 ? `<details ${fold("chart:" + p.sessionId, true)}><summary>the route as a chart: each leg after the legs it waits for</summary><div class="graph">${routeChart(p, s)}</div></details>` : ""}
+    ${p.legs.length > 1 ? `<details ${fold("chart:" + p.sessionId, true)}><summary>the route as a chart: each leg after the legs it waits for</summary><div class="graph" data-scroll="route:${esc(p.sessionId)}">${routeChart(p, s)}</div></details>` : ""}
     <div class="tablewrap"><table><thead><tr><th>Leg</th><th>Goal</th><th>After</th><th>Done when</th><th>Status</th><th class="num">Spend</th></tr></thead>
       <tbody>${legs || `<tr><td colspan="6" class="sub">No legs yet. The pilot adds them to the Route table.</td></tr>`}</tbody></table></div>
     ${log ? `<details ${fold("log:" + p.sessionId, true)}><summary>flight log: decisions, questions and answers, legs taking off and finishing</summary><ul class="log">${log}</ul></details>` : ""}
@@ -803,6 +815,8 @@ function routeChart(p, s) {
     edges.push(`<path class="edge${done}" d="M${x1},${y1} C${x1 + GX / 2},${y1} ${x2 - GX / 2},${y2} ${x2},${y2}"/>`);
   }
   const clip = (t, n) => t.length > n ? t.slice(0, n - 1) + "…" : t;
+  const pending = items.filter(x => !(x.st.cls === "done" && landedOf(p, x.name)) && !x.altOf).map(x => pos.get(x.name).x);
+  const focus = pending.length ? Math.min(...pending) : width;
   const nodes = items.map(({w, st, name, altOf}) => {
     const {x, y} = pos.get(name), f = w && w.budget ? Math.min(1, w.spend.weighted / w.budget) : 0;
     const landed = st.cls === "done" && landedOf(p, name), unlanded = st.cls === "done" && !landed;
@@ -816,7 +830,7 @@ function routeChart(p, s) {
       ${w ? `<rect x="${x + 12}" y="${y + 47}" width="${NW - 24}" height="4" rx="2" style="fill:var(--track)"/>
       <rect x="${x + 12}" y="${y + 47}" width="${Math.max(2, (NW - 24) * f)}" height="4" rx="2" style="fill:${f >= 1 ? "var(--crit)" : f >= .75 ? "var(--warn)" : "var(--fill)"}"/>` : ""}</g>`;
   });
-  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="the route">${edges.join("")}${nodes.join("")}</svg>`;
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="the route" data-focus="${focus}">${edges.join("")}${nodes.join("")}</svg>`;
 }
 
 // An airplane pointing right, about 30 by 24, centred on its middle.
