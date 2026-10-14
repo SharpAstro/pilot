@@ -2664,11 +2664,9 @@ def cmd_plan(a):
         # the launched pilot's, whatever directory this runs in.
         if take_hold(sid, *([] if a.session else [top, os.getcwd()])):
             hold_plan(sid, "Holding at the gate: launched to plan only, awaiting clearance for takeoff from the controller")
-    flown = [w["name"] for w in registered() if w.get("plan") == sid] if getattr(a, "hold", False) else []
-    if flown:                  # a hold is for a flight still at the gate: one with legs out has departed
-        flight = parse_plan(p.read_text(encoding="utf-8"))["flight"] or "this flight"
-        sys.exit(f"pilot: {flight} has already taken off ({', '.join(flown)}), so it cannot hold at the gate; "
-                 f"a flight holds for clearance only before its first leg takes off")
+    gone = taken_off(sid) if getattr(a, "hold", False) else None
+    if gone:
+        sys.exit(gone)
     if getattr(a, "hold", False) and hold_plan(sid):
         print("holding at the gate: no leg takes off until the controller clears the flight", file=sys.stderr)
     print(p)
@@ -3047,6 +3045,20 @@ HOLD_REFUSAL = ("pilot: {flight} is holding at the gate, awaiting clearance for 
 
 CLEARED = ("(pilot.py) Flight {flight} is cleared for takeoff by the controller: the hold is lifted. Take off: read "
            "your flight plan again, start the legs that wait for nothing as your rules say, subscribe to each, and follow them.")
+
+
+def taken_off(sid):
+    """Why a flight can no longer hold at the gate, or None: a hold is for a flight before its first leg takes off.
+    It has departed once a leg has a worker, live or removed (`rm` keeps its record), or once its schedule, set
+    from its first ETA, which needs a departure, is recorded."""
+    legs = list(dict.fromkeys(w["name"] for w in [*registered(), *archived(10 ** 6)] if w.get("plan") == sid and w.get("name")))
+    book = read_json(SCHEDULES, {})
+    why = ", ".join(legs) if legs else "its schedule was set when it departed" if isinstance(book, dict) and sid in book else None
+    if not why:
+        return None
+    flight = parse_plan(plan_path(sid).read_text(encoding="utf-8"))["flight"] or "this flight"
+    return (f"pilot: {flight} has already taken off ({why}), so it cannot hold at the gate; "
+            f"a flight holds for clearance only before its first leg takes off")
 
 
 def hold_plan(sid, why="Holding at the gate: awaiting clearance for takeoff from the controller"):
@@ -3488,6 +3500,9 @@ def launch(path, resume=None, where="terminal", message="", as_pilot=True, hold=
         raise ValueError("no such session in that directory")
     if hold and not as_pilot:
         raise ValueError("plan only holds a pilot's flight: start it as the pilot")
+    gone = taken_off(resume) if hold and resume and plan_path(resume).exists() else None
+    if gone:                   # the endpoint answers 409 with it
+        raise ValueError(gone)
     if hold:
         message = f"{message.strip()}\n\n{LAUNCH_HOLD}".strip()
     text = ((f"/pilot:pilot {message}" if message.strip() else "/pilot:pilot") if as_pilot else message).strip()

@@ -826,6 +826,32 @@ class HoldTests(Case):
         p = self.open_plan("tab-sid", top="", cwd="C:/repos/web-app")
         self.assertEqual(pilot.parse_plan(p.read_text(encoding="utf-8"))["hold"], "awaiting clearance")
 
+    def test_a_launch_resuming_a_flight_that_has_taken_off_is_refused(self):
+        sid = "2" * 8 + "-0000-0000-0000-" + "2" * 12
+        (ROOT / "proj").mkdir(exist_ok=True)
+        (ROOT / "proj" / f"{sid}.jsonl").write_text("", encoding="utf-8")
+        self.plan(sid, PLAN)
+        self.worker("design", plan=sid)                           # a leg in the air
+        with self.assertRaises(ValueError) as e:
+            self.launch("terminal", resume=sid)
+        self.assertEqual(str(e.exception), "pilot: WA1 has already taken off (design), so it cannot hold at the gate; "
+                                           "a flight holds for clearance only before its first leg takes off")
+        self.assertNotIn("Hold:", pilot.plan_path(sid).read_text(encoding="utf-8"))
+        self.assertEqual(pilot.live_holds(), [])
+
+    def test_a_flight_whose_legs_landed_and_were_removed_cannot_hold_either(self):
+        self.plan("s1", PLAN)
+        pilot.write_json(pilot.ARCHIVE / "design-1.json", {"name": "design", "plan": "s1", "archivedAt": 1})
+        with self.assertRaises(SystemExit) as e:
+            self.open_plan(hold=True)
+        self.assertIn("WA1 has already taken off (design)", str(e.exception))
+        pilot.ARCHIVE.joinpath("design-1.json").unlink()
+        pilot.write_json(pilot.SCHEDULES, {"s1": {"eta": 1, "set": 1}})   # its departure, kept by its schedule
+        with self.assertRaises(SystemExit) as e:
+            self.open_plan(hold=True)
+        self.assertIn("WA1 has already taken off (its schedule was set when it departed)", str(e.exception))
+        self.assertNotIn("Hold:", pilot.plan_path("s1").read_text(encoding="utf-8"))
+
     def test_a_launch_resuming_a_pilot_with_a_plan_holds_it_at_once(self):
         sid = "0" * 8 + "-0000-0000-0000-" + "0" * 12
         (ROOT / "proj").mkdir(exist_ok=True)
