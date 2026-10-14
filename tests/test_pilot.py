@@ -1486,6 +1486,20 @@ class TranscriptTests(Case):
 NOW = time.mktime((2026, 10, 14, 12, 0, 0, 0, 0, -1))     # a Wednesday, noon local
 
 
+class StartHookTests(Case):
+    def test_a_pilot_session_registers_its_repo_as_it_starts(self):
+        repo = Path(tempfile.mkdtemp()) / "monorepo"
+        self.addCleanup(shutil.rmtree, repo.parent, True)
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        (repo / "src").mkdir()
+        self.config(repos={})
+        out = self.hook(pilot.cmd_hook_start, {"session_id": "s1", "cwd": str(repo / "src"), "hook_event_name": "SessionStart"})
+        self.assertEqual(list(pilot.config()["repos"]), ["monorepo"])
+        self.assertIn("as monorepo", out)
+        self.assertEqual(self.hook(pilot.cmd_hook_start, {"session_id": "s1", "cwd": str(repo)}), "", "once")
+
+
 class PilotsTests(Case):
     def test_a_pilot_between_turns_is_still_listed_and_a_finished_job_is_not(self):
         self.config(repos={"web-app": "C:/x/web-app"})

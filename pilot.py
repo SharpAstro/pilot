@@ -3874,6 +3874,22 @@ def hook_error():
         f.write(f"--- {time.strftime('%Y-%m-%dT%H:%M:%S')}\n{traceback.format_exc()}")
 
 
+def cmd_hook_start(_a):
+    """SessionStart, in the pilot plugin: the repo a pilot session starts in joins pilot.json, however it was
+    started (the `pilot` command, the dashboard, a resume). The controller started `pilot` in the monorepo to
+    register it, and nothing did until the session opened its plan, which it had not been asked to yet. Prints a
+    line for the session's context only when it adds one; an error is logged, never in the way of the session."""
+    try:
+        p = json.loads(sys.stdin.buffer.read().decode("utf-8") or "{}")
+        cwd = p.get("cwd") or os.getcwd()
+        top = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
+        added = register_repo(top) if top else None
+        if added:
+            print(f"pilot.py: {top} was added to {CONFIG} as {added}, so its legs may start here.")
+    except Exception:
+        hook_error()
+
+
 def cmd_hook_ask(_a):
     """PreToolUse and PostToolUse on AskUserQuestion, in the pilot plugin. A pilot with a flight plan is
     refused the question and sent to the plan's `## Waiting on the controller` instead: a terminal prompt
@@ -4992,6 +5008,7 @@ def main():
     s.set_defaults(fn=cmd_dashboard)
     sub.add_parser("hook-budget").set_defaults(fn=cmd_hook_budget)
     sub.add_parser("hook-ask").set_defaults(fn=cmd_hook_ask)
+    sub.add_parser("hook-start").set_defaults(fn=cmd_hook_start)
     s = sub.add_parser("console-io", help="internal: read a console's screen, or type into it, by process id")
     s.add_argument("pid", type=int)
     s.add_argument("--text")
