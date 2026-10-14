@@ -2680,6 +2680,16 @@ class UploadTests(Case):
         said = pilot.events_of({"type": "assistant", "message": {"content": [{"type": "text", "text": str(pilot.UPLOADS / (a + ".png"))}]}})
         self.assertNotIn("images", said[0], "only what the controller sent")
 
+    def test_a_relative_state_still_sends_and_recognises_absolute_paths(self):
+        # A session opens the path from its own working directory, so a relative PILOT_STATE must not leak into it.
+        cwd = ROOT / "relative-cwd"
+        cwd.mkdir(exist_ok=True)
+        code = ("import pilot; n, p = pilot.save_upload(b'GIF89a-x'); t = pilot.message_text({'text': 'x', 'images': [n]}); "
+                "print(pilot.UPLOADS.is_absolute(), pilot.Path(p).is_absolute(), pilot.uploads_in(t) == [n])")
+        env = {**os.environ, "PILOT_STATE": "rel-state", "PYTHONPATH": str(Path(__file__).resolve().parent.parent)}
+        r = subprocess.run([sys.executable, "-c", code], cwd=cwd, env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.stdout.strip(), "True True True", r.stderr)
+
     def test_a_message_names_each_image_and_how_to_open_it(self):
         names = [pilot.save_upload(self.IMAGES["png"])[0], pilot.save_upload(self.IMAGES["gif"])[0]]
         text = pilot.message_text({"text": "  compare these  ", "images": names})

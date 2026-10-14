@@ -78,7 +78,9 @@ REFUEL_MODE = STATE / "refuel.json"        # {"mode": "auto" or "manual"}: may t
 ASKS = STATE / "asks"                       # the question a pilot is waiting on you for, by session id
 NOTICES = STATE / "notifications.json"
 SUMMARIES = STATE / "summaries.json"
-UPLOADS = STATE / "uploads"                # images the controller pasted, dropped or picked in a message box
+# Images the controller pasted, dropped or picked in a message box. Absolute even for a relative PILOT_STATE: a
+# message names each by this path, which the session opens from its own working directory.
+UPLOADS = (STATE / "uploads").resolve()
 PROFILE = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,29}$")
 QUIET_SECONDS = 30 * 60
