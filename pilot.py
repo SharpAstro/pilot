@@ -2796,7 +2796,10 @@ for a refuel, a higher token budget, for one worker. The account has headroom; t
 whether this request is justified, or must go to the controller, the person who runs the work.
 
 APPROVE when the reason names what is left, the checklist shows real progress for what has been spent,
-and the amount is in proportion to what is left at the rate it has been spending.
+and the amount is in proportion to what is left at the rate it has been spending. The amount asked for is the new
+total budget, so judge "left after the raise" (new budget minus spent) against the work the reason names, not
+the raise over the old budget. Work the controller has just added may not be on the checklist yet: a reason
+that names it, and a plan log line that records the controller asking for it, are enough.
 CONTROLLER when the reason is vague, the worker shows little progress for its spend (stuck on one item, going
 round in circles), or the amount looks out of proportion.
 
@@ -2816,7 +2819,9 @@ def watchtower(w, tokens, reason, account):
     leg = next((l for l in plan.get("legs", []) if l["leg"] == w["name"]), {})
     items = s.get("checklist") or []
     lines = [f"- Worker {w['name']}. Leg goal: {leg.get('goal') or '(not on a route)'}. Done when: {leg.get('doneWhen') or '-'}",
-             f"- Budget now {w.get('budget') or 0:,} weighted tokens, spent {s['spend']['weighted']:,}; asking for {tokens:,}.",
+             f"- Budget now {w.get('budget') or 0:,} weighted tokens, spent {s['spend']['weighted']:,}; asking for a new budget of "
+             f"{tokens:,}, which leaves {max(0, tokens - s['spend']['weighted']):,} to spend.",
+             *[f"- Plan log: {l}" for l in plan.get("log", [])[-6:] if "ontroller" in l],
              f"- Reason given: {reason}",
              f"- Checklist: {len(items) - len(open_items(items))} of {len(items)} done" if items else "- Checklist: none kept",
              *[f"  [{'x' if i['status'] == 'completed' else '>' if i['status'] == 'in_progress' else ' '}] {i['subject']}" for i in items],
