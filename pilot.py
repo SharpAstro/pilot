@@ -3079,15 +3079,19 @@ def take_hold(sid, top):
 def tell_pilot(sid, text):
     """Gets word to a flight's pilot: through the intercom when it is live (an interactive pilot whose turn has
     ended too: the message starts its next turn), or by waking it as a copy when its background session has
-    ended. Says which, or that it could not be reached."""
+    ended. Says which, or that it could not be reached: the hold is lifted by then, so a failed wake or relay
+    (`claude --bg` exits, the relay raises) is reported, never raised."""
     _agents_cache["at"] = 0
     row = next((r for r in agents() if r.get("sessionId") == sid), None)
-    if asleep(row):
-        new = wake_pilot(sid, text)
-        return f"woke its pilot as {new[:8]}" if new else "its pilot could not be woken; tell it to take off when it is back"
-    if row and row.get("pid") and row.get("name"):
-        intercom([row["name"]], text)
-        return f"told its pilot {row['name']} through the intercom"
+    try:
+        if asleep(row):
+            new = wake_pilot(sid, text)
+            return f"woke its pilot as {new[:8]}" if new else "its pilot could not be woken; tell it to take off when it is back"
+        if row and row.get("pid") and row.get("name"):
+            intercom([row["name"]], text)
+            return f"told its pilot {row['name']} through the intercom"
+    except (ValueError, SystemExit, subprocess.TimeoutExpired) as e:
+        return f"hold lifted, but its pilot could not be reached ({e}); tell it to take off"
     return "its pilot is not running; tell it to take off when it is back"
 
 

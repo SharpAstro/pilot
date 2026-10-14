@@ -731,6 +731,22 @@ class HoldTests(Case):
         self.plan("s2", CONNECTED.replace("Flight: TIA2", "Flight: TIA2\n\nHold: awaiting clearance"))
         self.assertIn("its pilot is not running", self.clear("TIA2"))
 
+    def test_a_clearance_that_cannot_reach_its_pilot_still_lands_and_says_so(self):
+        self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nHold: awaiting clearance"))
+        self.rows = [{"name": "pilot-web", "sessionId": "s1", "kind": "background", "pid": None}]
+
+        def fail(old, why):
+            raise SystemExit("pilot: claude --bg failed")
+        pilot.wake_pilot = fail
+        out = self.clear()           # exits normally: the hold is lifted whatever the wake did
+        self.assertEqual(out.strip(), "WA1 (Export fixes) cleared for takeoff: hold lifted, but its pilot could not be reached "
+                                      "(pilot: claude --bg failed); tell it to take off")
+        self.assertNotIn("Hold:", pilot.plan_path("s1").read_text(encoding="utf-8"))
+        self.plan("s2", CONNECTED.replace("Flight: TIA2", "Flight: TIA2\n\nHold: awaiting clearance"))
+        self.rows = [{"name": "pilot-tia", "sessionId": "s2", "kind": "interactive", "pid": 7}]
+        pilot.intercom = lambda names, text, sender="Controller": (_ for _ in ()).throw(ValueError("the relay failed (1)"))
+        self.assertIn("could not be reached (the relay failed (1))", self.clear("TIA2"))
+
     def test_clear_refuses_an_unknown_flight_and_a_pilot(self):
         with self.assertRaises(SystemExit) as e:
             self.clear("ZZ9")
