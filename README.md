@@ -138,6 +138,16 @@ The bell collects notices while the dashboard runs: a pilot or worker waiting on
 BLOCKED or FAILED), a budget reached, 30 quiet minutes, an API, login or limit error. **desktop** turns them
 into Windows notifications. A script error shows in a red line at the top of the page.
 
+The bell acks a notice on its own once nothing waits on you there any more, and says why under it. An identical
+notice for the same session within a minute is the same one, counted (×3). A leg's later DONE or BLOCKED
+supersedes its earlier DONE, BLOCKED or turn ended; a pilot's later turn ended its earlier one; a plan's later
+waiting notice an earlier one whose items it still lists. A waiting notice settles once answered (the pilot or
+leg has moved on, or its items left the plan's waiting section) or merged (the pull requests it asks to merge
+have). Then, at most once a minute and only when the unread notices changed, Haiku is asked which of the rest no
+longer need you; a guard keeps whatever it names that does: a failure (FAILED, an error, a budget, a refusal), an
+item still in a plan's waiting section, an unmerged merge question, a question still asked. A preview dashboard
+never acks, writes or asks.
+
 Writes (message, budget, stop, summary, launch, notices read) need the page's own header and a loopback
 Host and Origin, so another site cannot drive them, and Launch only starts in a directory from Claude
 Code's own project list.

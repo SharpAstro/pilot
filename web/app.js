@@ -410,10 +410,22 @@ function renderTop() {
   const badge = $("#badge");
   badge.hidden = !n.unread; badge.textContent = n.unread > 99 ? "99+" : n.unread;
   document.title = (n.unread ? `(${n.unread}) ` : "") + "Pilot";
+  const shown = new Map(n.items.map(i => [i.id, i]));
   put($("#notes"), n.items.length ? n.items.map(i => `<div class="note ${i.read ? "" : "unread"}" data-note="${esc(i.id)}" data-href="${esc(i.href || `#/w/${i.worker}`)}">
-      <span>${NOTE_ICON[i.kind] || "•"}</span><div>${esc(i.text)}<div class="when">${esc(when(i.at))}</div></div></div>`).join("")
+      <span>${NOTE_ICON[i.kind] || "•"}</span><div>${esc(i.text)}${i.times > 1 ? ` <span class="times">×${i.times}</span>` : ""}<div class="when">${esc(when(i.at))}</div>${settledLine(i, shown)}</div></div>`).join("")
     : `<div class="empty">Nothing yet. Notices pile up here while the dashboard runs: a pilot or worker waiting on you, a turn that ended, a budget reached, 30 quiet minutes, an error.</div>`);
   $("#desk").textContent = "Notification" in window && Notification.permission === "granted" ? "desktop on" : "desktop";
+}
+
+// Why a notice was acked without the controller: "superseded by" the later notice (a link to it while the bell
+// still shows it), or the reason, answered or merged, or Haiku's one line.
+function settledLine(i, shown) {
+  if (!i.settled) return "";
+  const by = i.settledBy && shown.get(i.settledBy);
+  const line = by && i.settled === `superseded by ${i.settledBy}`
+    ? `superseded by <a href="#" data-jump="${esc(i.settledBy)}">${esc(by.text.length > 60 ? by.text.slice(0, 60) + "…" : by.text)}</a>`
+    : esc(i.settled);
+  return `<div class="settled">↳ ${line}${i.settledByJudge ? " <span class=\"sub\">(Haiku)</span>" : ""}</div>`;
 }
 
 function desktop() {
@@ -1698,6 +1710,12 @@ document.addEventListener("click", async e => {
     t.disabled = true;
     try { await post("/api/daemon-lock/clear", {pid: Number(t.dataset.pid), procStartFt: t.dataset.ft}); }
     catch (e) { t.textContent = e.message; }
+    return;
+  }
+  if (t.dataset.jump) {          // a superseded notice's link to the notice that superseded it, in the bell
+    e.preventDefault();
+    const to = $(`#notes .note[data-note="${CSS.escape(t.dataset.jump)}"]`);
+    if (to) { to.scrollIntoView({block: "nearest"}); to.classList.add("flash"); setTimeout(() => to.classList.remove("flash"), 1200); }
     return;
   }
   if (t.id === "bell") { $("#panel").hidden = !$("#panel").hidden; return; }
