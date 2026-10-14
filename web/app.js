@@ -155,6 +155,8 @@ document.addEventListener("toggle", e => {
   const d = e.target, k = d.dataset?.k;
   if (!k) return;
   if (d.open === (d.dataset.open === "1")) opened.delete(k); else opened.set(k, d.open);
+  // A grid tile opened spans its row, and folded is a tile again: its route redraws at its new width.
+  if (k.startsWith("plan:") && d.closest(".plans.grid")) render();
 }, true);
 // A wide route chart scrolls on its own to the first leg not landed, until the reader scrolls it; then it keeps the
 // reader's place across the page's re-renders, which otherwise put it back at the start every few seconds.
@@ -608,11 +610,16 @@ function place(list, items, empty, rows) {
 
 // A pilot's state is Claude Code's own: busy, idle, or waiting on you (for a question or a permission prompt).
 // An idle pilot with legs in the air is following them: it wakes when one of them ends its turn.
+// A flight with legs in the air is flying, whatever its pilot does between their reports: the chip says so first,
+// and the pilot after. PIL1 read "idle, following app-3doverlay" with a leg at work, the pilot's state for the flight's.
+const flyingChip = (flying, pilot, title = "") => `<span class="chip working"${title ? ` title="${esc(title)}"` : ""}>● flying: ${esc(flying.join(", "))} · ${pilot}</span>`;
+
 function pilotChip(ps, flying = []) {
-  if (!ps) return `<span class="chip other">pilot not running</span>`;
+  if (!ps) return flying.length ? flyingChip(flying, "pilot not running") : `<span class="chip other">pilot not running</span>`;
   if (ps.status === "waiting") return `<span class="chip blocked" title="${esc(ps.waitingFor || "")}">waiting on ${S.autopilot?.enabled ? "the autopilot" : "you"}${ps.since ? ` since ${esc(stamp(ps.since))} · ${esc(ago(ps.since).replace(" ago", ""))}` : ""}</span>`;
   if (ps.busy) return `<span class="chip working">● working${ps.since ? ` since ${esc(stamp(ps.since))}` : ""}</span>`;
-  return `<span class="chip other">${flying.length ? `idle, following ${esc(flying.join(", "))}` : "idle"}${ps.since ? ` since ${esc(stamp(ps.since))}` : ""}</span>`;
+  if (flying.length) return flyingChip(flying, `pilot idle${ps.since ? ` since ${esc(stamp(ps.since))}` : ""}`);
+  return `<span class="chip other">idle${ps.since ? ` since ${esc(stamp(ps.since))}` : ""}</span>`;
 }
 
 // The first line of a reply, without its Markdown: enough to say what it was about.
@@ -771,7 +778,7 @@ function yourMoveOf(p, s, ps) {
 function parkedChip(p, flying) {
   const why = "Its turn has ended, so its background session exits until needed. The dashboard wakes it, as a copy, when you answer, a leg stops, or CI on its PR finishes.";
   if (unanswered(p).length) return `<span class="chip blocked" title="${esc(why)}">waiting on you · pilot parked until you answer</span>`;
-  if (flying.length) return `<span class="chip other" title="${esc(why)}">pilot parked · wakes when ${esc(flying.join(", "))} stops</span>`;
+  if (flying.length) return flyingChip(flying, "pilot parked until one stops", why);
   return `<span class="chip other" title="${esc(why)}">pilot parked</span>`;
 }
 
@@ -823,12 +830,12 @@ function planCard(p, s) {
     : landed ? `<span class="chip done">✓ landed</span>`
     : yourMove ? `<span class="chip blocked move" title="${esc(ps.said?.text || "")}">${move}</span>` : p.asleep ? parkedChip(p, flying) : pilotChip(ps, flying);
   const where = `answer in the pilot's terminal${ps?.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : ""}`;
-  // Where the flight is, in its summary: a folded card is the flights list, one line and its route each.
-  const strip = p.legs.length ? routeStrip(p, s) : null;
   // With more than one flight each starts folded, so the page reads as a list of flights, unless it waits on you;
   // alone, an active one starts open. A fold you set stays as you left it.
-  const many = (s.plans || []).length > 1;
-  return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" data-order="${esc(p.sessionId)}" ${fold("plan:" + p.sessionId, !!p.waiting || (!many && planActive(p, s)))}>
+  const many = (s.plans || []).length > 1, k = "plan:" + p.sessionId, def = !!p.waiting || (!many && planActive(p, s));
+  // Where the flight is, in its summary: a folded card is the flights list, one line and its route each.
+  const span = gridSpan(p), strip = p.legs.length ? routeStrip(p, s, stripWidth(opened.has(k) ? opened.get(k) : def, span)) : null;
+  return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" data-order="${esc(p.sessionId)}"${span > 1 ? ` style="--span:${span}"` : ""} ${fold(k, def)}>
     <summary class="cardhead"><span>${reorderHtml(p, s)}<b>${flightLight(p, s, ps, flying, move, landed)}${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> ${connectsHtml(p)}${marchChip(p)}${amendChip(p)} <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
       <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} · ` : ""}plan updated ${esc(stamp(p.updated))} (${esc(ago(p.updated))})
       ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span>
@@ -1155,7 +1162,7 @@ function connectsCard(p) {
 // every one landed, it holds over the destination, which stays a dashed ring. A leg reads flown (a solid stop on a solid green line) only
 // once it has landed, its PR merged or nothing to land; done and not landed yet it is a hollow green stop on a dashed
 // green line.
-function routeStrip(p, s) {
+function routeStrip(p, s, width) {
   const depth = p.depths || routeDepths(p.legs);
   const legs = p.legs.map(l => ({...l, name: l.leg, d: depth[l.leg] || 0, ...legState(s, l.leg)}));
   const by = new Map(legs.map(l => [l.name, l]));
@@ -1172,9 +1179,9 @@ function routeStrip(p, s) {
   const ends = legs.filter(l => primary(l) && !waitedOn.has(l.name));
   const join = ends.length > 1;
   const LANE = 44, rows = Math.max(1, ...col.map(c => c.length));
-  // Drawn at about the card's own width, so its labels keep their size and a one-lane route stays a short line on a
-  // wide screen; a resize redraws it.
-  const W = Math.round(Math.min(2400, Math.max(640, ($("#view")?.clientWidth || 1040) - 40))), H = 80 + (rows - 1) * LANE, Y = 44 + (rows - 1) * LANE / 2, X0 = 34, XN = W - 74;   // past XN: where it parks
+  // Drawn at about its card's own width (stripWidth), so its labels keep their size and a one-lane route stays a
+  // short line on a wide screen; a resize redraws it.
+  const W = Math.round(Math.min(2400, Math.max(320, width || 1200))), H = 80 + (rows - 1) * LANE, Y = 44 + (rows - 1) * LANE / 2, X0 = 34, XN = W - 74;   // past XN: where it parks
   const seg = (XN - X0) / (cols + (join ? 1 : 0)), xAt = d => X0 + (d + 1) * seg;
   const pos = new Map(), gate = {x: X0, y: Y}, dest = join ? {x: xAt(cols), y: Y} : null;
   col.forEach((c, d) => c.forEach((l, i) => pos.set(l.name, {x: xAt(d), y: Y + (i - (c.length - 1) / 2) * LANE})));
@@ -1330,7 +1337,13 @@ document.addEventListener("pointermove", e => {
   if (!dragging) return;
   const {item, list} = dragging;
   // It goes before the first other flight whose middle is below the pointer, or last.
-  const next = [...list.querySelectorAll(":scope > [data-order]")].find(c => c !== item && e.clientY < c.getBoundingClientRect().top + c.offsetHeight / 2);
+  // In a grid, in reading order: before a tile in a row below, or in its row left of its middle.
+  const grid = list.classList.contains("grid");
+  const next = [...list.querySelectorAll(":scope > [data-order]")].find(c => {
+    if (c === item) return false;
+    const r = c.getBoundingClientRect();
+    return grid ? e.clientY < r.top || (e.clientY < r.bottom && e.clientX < r.left + r.width / 2) : e.clientY < r.top + r.height / 2;
+  });
   if (next !== item.nextElementSibling) list.insertBefore(item, next || null);
 });
 function drop() {
@@ -1346,6 +1359,45 @@ document.addEventListener("pointercancel", drop);
 // The grip only drags: a click on it neither opens the flight's plan nor folds its card.
 document.addEventListener("click", e => { if (e.target.closest("[data-grip]")) { e.preventDefault(); e.stopPropagation(); } }, true);
 
+// ------------------------------------------------------------------ the flights' layout
+
+// The reader's choice, kept in this browser, as tianwen's rig board has cards or a table: the flights as a grid of
+// tiles across the window (an open one spans its row), the list (a card each, its route under its head), or compact
+// lines (a line each; open one for its route and the rest). The same plan cards in each, laid out by CSS.
+const LAYOUTS = [["grid", "▦ Grid", "tiles across the window, as many to a row as fit; an open one spans its row"],
+                 ["list", "▤ List", "a card per flight, its route under its head"],
+                 ["compact", "☰ Compact", "a line per flight; open one for its route and the rest"]];
+// `?layout=grid` picks one for this page only, for a screenshot of it.
+let layout = [new URLSearchParams(location.search).get("layout"), local("pilot.layout")].find(v => LAYOUTS.some(([k]) => k === v)) || "list";
+const GRID_MIN = 440, GRID_GAP = 12;     // as app.css's .plans.grid has them
+
+function setLayout(k) { layout = k; local("pilot.layout", k); render(); }
+
+const layoutHtml = () => `<span class="seg" role="group" aria-label="layout">${LAYOUTS.map(([k, label, tip]) =>
+  `<button data-layout="${k}"${k === layout ? ` class="on" aria-pressed="true"` : ""} title="${esc(tip)}">${label}</button>`).join("")}</span>`;
+
+// The grid's columns, auto-fill's count as CSS works it out, and one column's width.
+const gridCols = g => Math.max(1, Math.floor((g.clientWidth + GRID_GAP) / (GRID_MIN + GRID_GAP)));
+const tileWidth = (g, cols) => (g.clientWidth - (cols - 1) * GRID_GAP) / cols;
+
+// The grid columns a folded tile spans: one, unless its route wants more for its stops to keep readable labels
+// (about 60px a column of stops, PIL1's eleven span two); never more than the row has.
+function gridSpan(p) {
+  const g = $(".s-plans.grid");
+  if (!g || !p.legs.length) return 1;
+  const depth = p.depths || routeDepths(p.legs), cols = gridCols(g);
+  const stops = 1 + Math.max(0, ...p.legs.filter(l => !l.altOf).map(l => depth[l.leg] || 0));
+  return Math.min(cols, Math.max(1, Math.ceil((stops * 60 + 100) / tileWidth(g, cols))));
+}
+
+// The width a card's route is drawn at: its tiles' while folded in the grid, the grid's own when open, else the page's.
+function stripWidth(open, span = 1) {
+  const g = $(".s-plans.grid");
+  if (!g) return ($("#view")?.clientWidth || 1240) - 40;
+  if (open) return g.clientWidth - 30;
+  return span * tileWidth(g, gridCols(g)) + (span - 1) * GRID_GAP - 30;
+}
+
 // ------------------------------------------------------------------ views
 
 const VIEWS = {};
@@ -1355,6 +1407,7 @@ VIEWS.overview = (root, r) => {
   let focusPlan = r?.plan || null;
   if (focusPlan) opened.set("plan:" + focusPlan, true);
   root.innerHTML = `
+    <div class="flightsbar s-layout"></div>
     <div class="s-plans"></div>
     <div class="card pad bcast" data-attach-to="intercom"><b>Intercom</b>
       <textarea class="s-btext" rows="1" placeholder="A message to live sessions: it reaches each at its next step, mid-turn too. Paste or drop images. Ctrl+Enter sends."></textarea>
@@ -1400,6 +1453,9 @@ VIEWS.overview = (root, r) => {
       $(".s-bsend", root).disabled = !targets.length;
       const sp = summaryParts("*", s);
       put($(".s-sum", root), sp.body); put($(".s-stamp", root), esc(sp.stamp)); $(".s-btn", root).disabled = sp.running;
+      // The layout first: a grid tile's route is drawn at its tile's width.
+      $(".s-plans", root).className = `s-plans plans ${layout}`;
+      put($(".s-layout", root), (s.plans || []).length > 1 ? layoutHtml() : "");
       put($(".s-plans", root), (s.plans || []).length ? s.plans.map(p => planCard(p, s)).join("")
         : `<div class="card pad"><b>No flight plan</b><div class="sub" style="margin-top:4px">The pilot opens one with <code>pilot plan</code> before it starts workers: the objective, the route of legs, and a log you can both read.</div></div>`);
       const card = focusPlan && document.getElementById("plan-" + focusPlan);
@@ -2041,6 +2097,7 @@ document.addEventListener("click", async e => {
   const t = e.target.closest("button, a, [data-href], [data-plan]");
   if (!t) return;
   if (t.dataset.move) { e.preventDefault(); return moveFlight(t.dataset.move, Number(t.dataset.dir)); }   // not the card's fold too
+  if (t.dataset.layout) return setLayout(t.dataset.layout);
   if (t.dataset.plan) { e.preventDefault(); return openPlan(t.dataset.plan); }   // a connection's chip folds no card it sits on
   if (t.classList.contains("s-restart")) return restartServer(t);
   if (t.classList.contains("s-clearlock")) {

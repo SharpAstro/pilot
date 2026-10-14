@@ -182,6 +182,22 @@ ul.checklist li.in_progress span:first-child { color: var(--fill); }
 .graph text { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--ink); }
 .graph text.sm { font-size: 11px; fill: var(--ink-2); }
 .graph .edge { fill: none; stroke: var(--axis); stroke-width: 1.5; }
+/* The flights' layouts (app.js's LAYOUTS), switched over the list. The grid spans the window, not the page's column:
+   as many tiles to a row as fit at 440px or more (GRID_MIN), all of a row as tall as its tallest; a long route's tile
+   spans more (--span, app.js's gridSpan), an open one the row, and later tiles fill a row an open one left short.
+   Compact folds each card to its head's first line. */
+.flightsbar { display: flex; justify-content: flex-end; margin: 0 0 8px; }
+.flightsbar:empty { display: none; }
+.seg { display: inline-flex; border: 1px solid var(--ring); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: none; color: var(--ink-2); font-size: 12px; padding: 4px 10px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--ring); }
+.seg button.on { background: var(--ring); color: var(--ink); font-weight: 600; }
+.plans.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); grid-auto-flow: row dense; gap: 12px;
+  margin-inline: min(0px, calc(50% - 50vw + 24px)); margin-bottom: 12px; }
+.plans.grid > .plan { margin: 0; min-width: 0; grid-column: span var(--span, 1); }
+.plans.grid > .plan[open] { grid-column: 1 / -1; }
+.plans.compact > .plan { margin-bottom: 6px; padding-top: 8px; padding-bottom: 8px; }
+.plans.compact > .plan:not([open]) > summary > .strip, .plans.compact > .plan:not([open]) > summary > span.sub { display: none; }
 /* A flight's route, in its plan card's summary: on its own line under the card's head. */
 .strip { flex-basis: 100%; margin-top: 4px; }
 .strip .snote { font-size: 13px; }
