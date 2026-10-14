@@ -1950,6 +1950,78 @@ class RunawayKitTests(Case):
             self.assertIsNone(re.search(rb"\bSam\b(?!,? \(?\d{4}-\d\d-\d\d)", text), name)
 
 
+class LanTests(Case):
+    """dashboard --lan: every interface, and a device on the LAN shows the key it printed, as a cookie its link set."""
+
+    def handler(self, host, client, cookie=None, lan="k" * 43):
+        import email.message
+        h = object.__new__(pilot.Handler)
+        h.headers = email.message.Message()
+        h.headers["Host"] = host
+        if cookie:
+            h.headers["Cookie"] = cookie
+        h.client_address = (client, 50000)
+        h.server = type("S", (), {"server_address": ("0.0.0.0", 5181)})()
+        h.lan = lan
+        return h
+
+    def test_only_this_machine_without_the_flag(self):
+        self.assertTrue(self.handler("127.0.0.1:5181", "127.0.0.1", lan=None).local())
+        self.assertTrue(self.handler("localhost:5181", "::1", lan=None).local())
+        self.assertFalse(self.handler("192.168.1.20:5181", "192.168.1.9", lan=None).local())
+        self.assertFalse(self.handler("evil.example:5181", "127.0.0.1", lan=None).local(), "DNS rebinding")
+
+    def test_a_lan_device_needs_the_key(self):
+        key = "k" * 43
+        self.assertTrue(self.handler("192.168.1.20:5181", "192.168.1.9", f"pilot_key={key}").local())
+        self.assertTrue(self.handler("desktop:5181", "192.168.1.9", f"other=1; pilot_key={key}").local())
+        self.assertFalse(self.handler("192.168.1.20:5181", "192.168.1.9").local())
+        self.assertFalse(self.handler("192.168.1.20:5181", "192.168.1.9", "pilot_key=" + "j" * 43).local())
+        self.assertFalse(self.handler("192.168.1.20:5181", "192.168.1.9", 'pilot_key="unterminated').local())
+        self.assertFalse(self.handler("127.0.0.1:5181", "192.168.1.9").local(), "a LAN client can write any Host")
+        self.assertTrue(self.handler("127.0.0.1:5181", "127.0.0.1").local(), "this machine needs no key")
+
+    def test_the_key_is_made_once_and_kept(self):
+        k = pilot.lan_key()
+        self.assertGreaterEqual(len(k), 32)
+        self.assertEqual(pilot.lan_key(), k)
+        (pilot.STATE / "lan-key").unlink()
+        self.assertNotEqual(pilot.lan_key(), k, "deleting it makes a new one")
+
+    def test_the_link_sets_the_cookie_and_the_cookie_opens_the_page(self):
+        import http.client
+        import threading
+        key = pilot.lan_key()
+        srv = pilot.http.server.ThreadingHTTPServer(("127.0.0.1", 0), pilot.Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        lan_host = f"192.168.1.20:{srv.server_address[1]}"
+
+        def get(path, **headers):
+            c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1])
+            c.request("GET", path, headers={"Host": lan_host, **headers})
+            r = c.getresponse()
+            out = r.status, dict(r.getheaders()), r.read()
+            c.close()
+            return out
+
+        try:
+            with unittest.mock.patch.object(pilot.Handler, "lan", key):
+                code, _, body = get("/")
+                self.assertEqual(code, 403)
+                self.assertIn(b"pilot dashboard --lan", body, "the page says how in")
+                self.assertEqual(get("/app.js")[0], 403)
+                self.assertEqual(get("/?key=wrong")[0], 403)
+                code, headers, _ = get(f"/?key={key}&layout=grid")
+                self.assertEqual((code, headers["Location"]), (303, "/?layout=grid"), "the key leaves the address bar")
+                cookie = headers["Set-Cookie"].split(";")[0]
+                self.assertIn("HttpOnly", headers["Set-Cookie"])
+                self.assertEqual(get("/app.js", Cookie=cookie)[0], 200)
+            self.assertEqual(get("/app.js", Cookie=cookie)[0], 403, "without --lan the key opens nothing")
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+
 class PullRequestTests(Case):
     def test_a_removed_legs_deleted_branch_is_read_from_the_tip_its_record_kept(self):
         repo = ROOT / "tip-repo"

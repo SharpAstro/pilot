@@ -29,7 +29,7 @@ what they have spent, gates their spend, delivers your messages, summarises them
   python pilot.py stop NAME            stop it; the conversation is kept
   python pilot.py rm NAME              delete it (its worktree too, when Claude Code says that is safe) and
                                        keep its record in the history
-  python pilot.py dashboard [--port 5181]
+  python pilot.py dashboard [--port 5181] [--lan]
   python pilot.py hook-budget          the worker plugin's PreToolUse hook (reads the payload on stdin)
 
 Windows notes, all measured on CLI 2.1.296:
@@ -47,12 +47,17 @@ import argparse
 import base64
 import datetime
 import glob
+import hmac
 import html
+import http.cookies
 import http.server
+import ipaddress
 import json
 import os
 import re
+import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -4964,8 +4969,49 @@ STATIC = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js",
           "/app.css": ("app.css", "text/css; charset=utf-8")}
 
 
+LAN_COOKIE = "pilot_key"
+
+
+def lan_key():
+    """The key a device on the LAN opens the dashboard with (dashboard --lan), made once and kept in the state dir:
+    the page starts workers, types into sessions and merges pull requests, so a LAN that reaches the port is not
+    let in on that alone. Delete <state>/lan-key for a new one, which every device then needs."""
+    f = STATE / "lan-key"
+    try:
+        k = f.read_text(encoding="utf-8").strip()
+        if len(k) >= 32:
+            return k
+    except OSError:
+        pass
+    k = secrets.token_urlsafe(32)
+    f.write_text(k, encoding="utf-8")
+    return k
+
+
+def lan_addresses():
+    """This machine's IPv4 addresses a device on the LAN can reach it by, the default route's first."""
+    out = []
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))          # TEST-NET-1: nothing is sent; it picks the outgoing interface
+            out.append(s.getsockname()[0])
+    except OSError:
+        pass
+    try:
+        out += [ai[4][0] for ai in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)]
+    except OSError:
+        pass
+    return [ip for i, ip in enumerate(out) if ip not in out[:i] and not ip.startswith(("127.", "169.254."))]
+
+
+LAN_REFUSED = ("<!doctype html><meta name=viewport content='width=device-width'><title>pilot</title>"
+               "<p style='font:16px system-ui;margin:2em'>This dashboard takes a key from a device on the LAN. Open the "
+               "link <code>pilot dashboard --lan</code> printed on the machine it runs on.</p>").encode()
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     preview = False
+    lan = None      # dashboard --lan: the key a device on the LAN shows; None, and only this machine is served
     def log_message(self, fmt, *a):
         if os.environ.get("PILOT_DEBUG"):
             with open(STATE / "requests.log", "a", encoding="utf-8") as f:
@@ -4985,9 +5031,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def local(self):
         """Only a page served from this machine's loopback name, so a DNS-rebinding page cannot read
-        transcripts or act on workers."""
+        transcripts or act on workers. With --lan the server listens on every interface, so a loopback name
+        counts only from a loopback address (a LAN client can write any Host), and anything else must carry the
+        key, as the cookie its ?key= link set."""
         port = self.server.server_address[1]
-        return self.headers.get("Host") in (f"127.0.0.1:{port}", f"localhost:{port}")
+        if self.headers.get("Host") in (f"127.0.0.1:{port}", f"localhost:{port}") and self.loopback():
+            return True
+        if not self.lan:
+            return False
+        jar = http.cookies.SimpleCookie()
+        try:
+            jar.load(self.headers.get("Cookie") or "")
+        except http.cookies.CookieError:
+            return False
+        return LAN_COOKIE in jar and hmac.compare_digest(jar[LAN_COOKIE].value.encode(), self.lan.encode())
+
+    def loopback(self):
+        try:
+            return ipaddress.ip_address(self.client_address[0]).is_loopback
+        except ValueError:
+            return False
+
+    def lan_login(self):
+        """A device on the LAN opening the link `dashboard --lan` printed, its ?key= right: the key goes into a
+        cookie and the page loads without it in the address bar. Lax, not Strict: the link is opened from a chat
+        or a note, another site, and Strict would leave the cookie off the redirect that follows it. A write
+        still needs X-Pilot and its own origin."""
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        if not (self.lan and hmac.compare_digest((q.get("key") or [""])[0].encode(), self.lan.encode())):
+            return False
+        rest = urllib.parse.urlencode([(k, v) for k, vs in q.items() if k != "key" for v in vs])
+        self.send(303, b"", "text/plain", headers=[
+            ("Location", urllib.parse.urlsplit(self.path).path + (f"?{rest}" if rest else "")),
+            ("Set-Cookie", f"{LAN_COOKIE}={self.lan}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000")])
+        return True
 
     def sse(self):
         self.send_response(200)
@@ -5000,7 +5077,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def do_GET(self):
+        if "key=" in self.path and self.lan_login():
+            return
         if not self.local():
+            if self.lan and self.path.split("?")[0] == "/":
+                return self.send(403, LAN_REFUSED, "text/html; charset=utf-8")
             return self.send(403, {"error": "forbidden"})
         path = self.path.split("?")[0]
         try:
@@ -5347,7 +5428,7 @@ def supervise(a):
     """Runs the dashboard's server as a child process and starts it again, on the code now on disk, when R is
     pressed in this terminal or the page's restart button asks (the server exits with RESTART_CODE). Ctrl-C
     reaches both, and stops both."""
-    args = [sys.executable, str(Path(__file__).resolve()), "dashboard", "--child", str(os.getpid())] + (["--port", str(a.port)] if a.port else [])
+    args = [sys.executable, str(Path(__file__).resolve()), "dashboard", "--child", str(os.getpid())] + (["--port", str(a.port)] if a.port else []) + (["--lan"] if a.lan else [])
     keys = None
     if os.name == "nt":
         # A console's input, not NUL: Windows calls NUL a character device, so isatty() says yes to it.
@@ -5355,6 +5436,8 @@ def supervise(a):
         if ctypes.windll.kernel32.GetConsoleMode(ctypes.windll.kernel32.GetStdHandle(-10), ctypes.byref(ctypes.c_ulong())):
             keys = msvcrt
     print(f"pilot dashboard: http://127.0.0.1:{a.port or 5181}/  ({'R restarts it on the latest code, ' if keys else ''}Ctrl-C stops it)", flush=True)
+    if a.lan:
+        lan_banner(a.port or 5181)
     p = None
     try:
         while True:
@@ -5375,6 +5458,17 @@ def supervise(a):
             p and p.wait(timeout=5)
         except Exception:
             p.kill()
+
+
+def lan_banner(port):
+    """Where a device on the LAN opens it: each address with the key, which this machine's own page never needs."""
+    STATE.mkdir(parents=True, exist_ok=True)
+    key = lan_key()
+    hosts = lan_addresses() + [socket.gethostname()]
+    print(f"  on the LAN, with its key (once per device, a cookie keeps it):", flush=True)
+    for h in hosts:
+        print(f"    http://{h}:{port}/?key={key}", flush=True)
+    print("  Windows asks once whether python may take connections; allow private networks.", flush=True)
 
 
 class ExclusiveServer(http.server.ThreadingHTTPServer):
@@ -5402,6 +5496,8 @@ def cmd_dashboard(a):
         SUPERVISED = True
         watch_parent(a.child)
     STATE.mkdir(parents=True, exist_ok=True)
+    if a.lan:
+        Handler.lan = lan_key()
     if a.preview:
         HUB.notices.update = lambda snap: []
         HUB.notices.judge = lambda snap, now=None: False      # and never asks Haiku to ack one
@@ -5413,7 +5509,7 @@ def cmd_dashboard(a):
     srv = None
     for port in ports:
         try:
-            srv = ExclusiveServer(("127.0.0.1", port), Handler)
+            srv = ExclusiveServer(("0.0.0.0" if a.lan else "127.0.0.1", port), Handler)
             break
         except OSError:
             continue
@@ -5422,6 +5518,8 @@ def cmd_dashboard(a):
     srv.daemon_threads = True
     if not a.child:
         print(f"pilot dashboard{' (preview)' if a.preview else ''}: http://127.0.0.1:{port}/  (Ctrl-C stops it)", flush=True)
+        if a.lan:
+            lan_banner(port)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
@@ -5530,6 +5628,7 @@ def main():
     s = sub.add_parser("dashboard")
     s.add_argument("--port", type=int, help="default 5181; with --preview, the first free one from 5182")
     s.add_argument("--preview", action="store_true", help="a second dashboard for checking a change: no notices, session streams close")
+    s.add_argument("--lan", action="store_true", help="listen on every interface too: a device on the LAN opens it with the key it prints")
     s.add_argument("--child", type=int, help=argparse.SUPPRESS)     # internal: the server, under its supervisor's pid
     s.set_defaults(fn=cmd_dashboard)
     sub.add_parser("hook-budget").set_defaults(fn=cmd_hook_budget)

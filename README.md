@@ -57,7 +57,7 @@ In pwsh, `pilot` is a function in `$PROFILE`:
 cd C:\Users\<you>\source\repos\web-app
 pilot                    # the pilot here: claude --plugin-dir <this repo>/plugins/pilot
                          #   then: /pilot:pilot <what the flight is for>
-pilot dashboard          # http://127.0.0.1:5181/, in a second terminal
+pilot dashboard          # http://127.0.0.1:5181/, in a second terminal; --lan for a phone or laptop too
 ```
 
 The function sends a first word that is one of pilot.py's subcommands to pilot.py and anything else to
@@ -137,7 +137,15 @@ pilot archive --restore WA1         # puts it back, in its old place in the orde
 
 ## The dashboard
 
-`pilot dashboard` serves `web/` on 127.0.0.1 only. It runs the server as a child of a small supervisor, so
+`pilot dashboard` serves `web/` on 127.0.0.1 only. With `--lan` it listens on every interface, for a phone
+or the laptop on the same network, and prints a link for each of this machine's addresses (and its name)
+with a key: `http://192.168.1.20:5181/?key=...`. Opening it once puts the key in a cookie, for a year, and
+drops it from the address bar. The page starts workers, types into sessions and merges pull requests, so a
+device that reaches the port and has no key gets 403, as does one that writes `Host: 127.0.0.1` (only a
+loopback address counts as this machine). Writes still need the page's own origin and header. The key is
+`<state>/lan-key`; delete it for a new one, which every device then needs. Plain HTTP: anyone who can watch
+the network can read the key, so this is for a network you trust, not a café's. Windows asks once whether
+Python may take connections; allow it on private networks. It runs the server as a child of a small supervisor, so
 it can be restarted on the code now on disk without leaving the terminal: press **R** there, or **Restart
 now** in the page's "running older code" line, which then reloads the page too. Ctrl-C stops both, and the
 server ends with its supervisor however that goes, so it never holds the port alone. `--preview` runs in
