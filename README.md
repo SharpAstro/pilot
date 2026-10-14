@@ -242,7 +242,7 @@ python -m unittest discover tests      # from the repo root; under a second
 The offline suite runs `pilot.py`'s own logic against fixtures and needs no Claude Code, no daemon and
 no account. It covers parsing plans (the route, the waiting section, the notes, header lines), flight
 numbers, the plan log and the black box, weighted spend, checklists rebuilt from a transcript, who refused a
-call (and whether it was the wiring's gate), which subagent an Agent call started, the refuel gates and headroom projections, the budget and ask hooks, and the tracking page. Each test
+call (and whether it was the wiring's gate), which subagent an Agent call started, the refuel gates and headroom projections, the budget and ask hooks, the tracking page, and transcript images by reference (their refs and the route that serves them). Each test
 gets its own empty `PILOT_STATE` and `CLAUDE_CONFIG_DIR` in a temporary folder, and `claude agents` is
 replaced by fixed rows, so the suite never touches this machine's real state. A fixture transcript has to
 use Claude Code's real wording: `replay_tasks` skips any line without "ask" in it, as a fast pre-filter.
