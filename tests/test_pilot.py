@@ -2048,6 +2048,29 @@ class NoticeTests(Case):
         self.assertEqual([i["read"] for i in self.n.items], [True, False])
         self.assertEqual(self.n.view()["unread"], 1)
 
+    def plan_waits(self, at, *items):
+        self.waiting("s1", *items)
+        self.snap["plans"] = [{"sessionId": "s1", "title": "Notices", "pilot": None,
+                               "waiting": pilot.split_waiting(pilot.plan_path("s1").read_text(encoding="utf-8"))[0]}]
+        self.update(at)
+
+    def unread_items(self):
+        return [i.get("items") for i in self.n.items if not i["read"]]
+
+    def test_a_waiting_item_replaced_within_a_minute_is_a_new_unread_notice(self):
+        self.plan_waits(1000)
+        self.plan_waits(1001, "Which database?")
+        self.assertEqual(self.unread_items(), ["- Which database?"])
+        self.plan_waits(1021, "Merge or not?")
+        self.assertEqual(self.unread_items(), ["- Merge or not?"])
+
+    def test_a_waiting_item_added_within_a_minute_stays_unread_once_the_first_is_answered(self):
+        self.plan_waits(1000)
+        self.plan_waits(1001, "A")
+        self.plan_waits(1011, "A", "B")
+        self.plan_waits(1021, "B")                          # A answered, B still waits
+        self.assertTrue(any("- B" in (i or "") for i in self.unread_items()), self.n.items)
+
     def test_only_the_newest_notices_are_kept_in_memory(self):
         for k in range(pilot.KEEP_NOTICES + 5):
             self.note(f"n{k}", "quiet", f"q{k}", "leg:a", read=True)
