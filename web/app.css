@@ -194,6 +194,7 @@ ul.checklist li.in_progress span:first-child { color: var(--fill); }
 .flight .trk.ahead { stroke: var(--axis); stroke-dasharray: 6 5; }
 /* A leg done but not landed (its PR not merged yet): green, but dashed, so it never reads as flown. */
 .flight .trk.done { stroke: var(--good); stroke-dasharray: 6 5; }
+.flight text.stacked { font-size: 10px; font-style: italic; }
 .graph .edge.flown { stroke: var(--good); }
 .graph .edge.done { stroke: var(--good); stroke-dasharray: 6 5; }
 /* An alternate leg: dashed beside its primary, faint until it is taken. */

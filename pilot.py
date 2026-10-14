@@ -754,10 +754,7 @@ def plans_view(rows, workers, seen=None):
         # Each leg's landing, leg_unlanded's: the strip and the chart draw a leg flown only once it has landed, and a
         # done one not landed yet as done. What keeps one from landing is its tip; a landed leg has none.
         try:
-            p["landed"] = {}
-            for s in flight_legs(p["sessionId"], p["legs"], workers, gone):
-                why = leg_unlanded(s)
-                p["landed"][s["leg"]] = {"landed": why is None, "why": why}
+            p["landed"] = leg_landings(p["legs"], flight_legs(p["sessionId"], p["legs"], workers, gone))
         except Exception as e:          # without it every leg reads not landed, which is the safe way round
             p["landed"], p["landedError"] = {}, f"{type(e).__name__}: {e}"
         try:
@@ -3148,6 +3145,29 @@ def leg_unlanded(s):
         return (f"{n} commit{'s' if n != 1 else ''} on no merged pull request"
                 + (f" ({', '.join(other)} merged at another head)" if other else ""))
     return None
+
+
+def leg_landings(legs, states):
+    """Each route leg's landing, for the strip and the chart: whether it has landed, why not (leg_unlanded), and
+    the legs it is stacked on. A leg is stacked on a leg its After names that a worker has flown (done or still
+    in the air) but that has not landed: it builds on that leg's branch, not on landed code, so the strip draws
+    it as stacked rather than as flying ahead of the route. Known from the After column alone: a worker's base
+    branch is not a reliable sign, as a stacked leg may be branched from main and rebased onto its stack. An
+    After naming a primary that was diverted names the alternate taken for it. `legs` and `states` are in the
+    plan's order, as flight_legs returns them."""
+    why = {s["leg"]: leg_unlanded(s) for s in states}
+    flew = {s["leg"] for s in states if s["w"]}
+    taken = {s["altOf"]: s["leg"] for s in states if s["altOf"] and s["taken"]}
+    out = {}
+    for leg, s in zip(legs, states):
+        on = []
+        if s["w"] and why[s["leg"]]:
+            for n in leg["after"]:
+                n = taken.get(n, n)
+                if n in flew and why.get(n) and n not in on:
+                    on.append(n)
+        out[s["leg"]] = {"landed": why[s["leg"]] is None, "why": why[s["leg"]], "stackedOn": on}
+    return out
 
 
 def flight_landed(states):
