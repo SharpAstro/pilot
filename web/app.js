@@ -627,9 +627,11 @@ function planCard(p, s) {
     const link = w ? `#/w/${esc(w.name)}` : h ? `#/s/${esc(h.sessionId)}` : "";
     // An alternate says whose it is, and is no leg of the route until it is taken; once taken, why.
     const alt = l.altOf ? `<div class="sub">alternate for ${esc(l.altOf)}</div>` : "", out = l.altOf && !altTaken(s, l);
+    // A done leg reads landed once it has, as the route chart and the strip have it.
+    const status = st.cls === "done" && landedOf(p, l.leg) ? st.label.replace("✓ done", "✓ landed") : st.label;
     const why = (w || h)?.divertedFrom ? `<div class="sub">diverted from ${esc((w || h).divertedFrom)}: ${esc((w || h).divertReason || "")}</div>` : "";
     return `<tr class="${link ? "click" : ""}${l.altOf ? " altleg" : ""}"${link ? ` data-href="${link}"` : ""}><td><b>${esc(l.leg)}</b>${alt}</td><td>${md(l.goal)}</td><td>${esc(l.after.join(", ") || "-")}</td>
-      <td>${md(l.doneWhen)}</td><td>${out ? `<span class="chip other">alternate, not taken</span>` : `<span class="chip ${st.cls}">${esc(st.label)}</span>`}${why}${w && (w.state === "working" || waitsOnYou(w)) ? doing(w) : ""}${checkLine(w ? w.checklist : h?.final?.checklist)}${gitLine((w || h)?.git, (w || h)?.approach)}</td><td class="num">${sp ? esc(M(sp.weighted)) : ""}</td></tr>`;
+      <td>${md(l.doneWhen)}</td><td>${out ? `<span class="chip other">alternate, not taken</span>` : `<span class="chip ${st.cls}"${st.cls === "done" && !landedOf(p, l.leg) ? ` title="${esc(`not landed: ${unlandedWhy(p, l.leg)}`)}"` : ""}>${esc(status)}</span>`}${why}${w && (w.state === "working" || waitsOnYou(w)) ? doing(w) : ""}${checkLine(w ? w.checklist : h?.final?.checklist)}${gitLine((w || h)?.git, (w || h)?.approach)}</td><td class="num">${sp ? esc(M(sp.weighted)) : ""}</td></tr>`;
   }).join("");
   const log = p.log.slice(-12).reverse().map(l => `<li>${esc(l)}</li>`).join("");
   const ps = p.pilotState, waiting = ps?.status === "waiting";
