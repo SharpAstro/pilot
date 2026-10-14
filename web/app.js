@@ -553,7 +553,13 @@ function renderTop() {
   const badge = $("#badge");
   badge.hidden = !n.unread; badge.textContent = n.unread > 99 ? "99+" : n.unread;
   // The machine in the title and by the brand: the laptop's tab and the desktop's (over --lan) both read "Pilot".
-  document.title = (n.unread ? `(${n.unread}) ` : "") + "Pilot" + (S.host ? ` · ${S.host}` : "");
+  // And what the flights are up to, as Claude Code's own tab shows it: ✋ something waits on you, a turning glyph
+  // while a leg or a flight's pilot works (a session flying nothing, such as this terminal, does not count).
+  const flying = S.workers.some(w => w.pid && w.status === "busy")
+    || S.pilots.some(p => p.status === "busy" && (S.plans || []).some(x => x.sessionId === p.sessionId));
+  tabTitle = {lead: waiting.length ? "✋ " : "", spin: !waiting.length && flying,
+              rest: (n.unread ? `(${n.unread}) ` : "") + "Pilot" + (S.host ? ` · ${S.host}` : "")};
+  drawTitle();
   put($(".brand"), `Pilot${S.host ? ` <small class="host">${esc(S.host)}</small>` : ""}`);
   const shown = new Map(n.items.map(i => [i.id, i]));
   put($("#notes"), n.items.length ? n.items.map(i => `<div class="note ${i.read ? "" : "unread"}" data-note="${esc(i.id)}" data-href="${esc(i.href || `#/w/${i.worker}`)}">
@@ -1486,6 +1492,14 @@ function stripWidth(open, span = 1) {
   if (open) return g.clientWidth - 30;
   return span * tileWidth(g, gridCols(g)) + (span - 1) * GRID_GAP - 30;
 }
+
+// The tab title, redrawn on its own beat so its glyph turns between snapshots.
+let tabTitle = {lead: "", spin: false, rest: "Pilot"}, spinAt = 0;
+const SPIN = "◐◓◑◒";
+function drawTitle() {
+  document.title = (tabTitle.spin ? SPIN[spinAt % SPIN.length] + " " : tabTitle.lead) + tabTitle.rest;
+}
+setInterval(() => { if (tabTitle.spin) { spinAt++; drawTitle(); } }, 700);
 
 // ------------------------------------------------------------------ views
 
