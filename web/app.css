@@ -397,3 +397,30 @@ tr.click { cursor: pointer; } tr.click:hover td { background: color-mix(in srgb,
 .att-pick { font-size: 12px; color: var(--muted); cursor: pointer; padding: 2px 8px; border: 1px dashed var(--ring); border-radius: 6px; }
 .att-pick:hover { color: var(--ink); }
 .att-note:empty { display: none; }
+/* Amendments: the controller's changes to what a flight flies, each with its class and state; the form that files one. */
+.plan details.amends { margin: 8px 0 4px; }
+.plan details.amends.open-one > summary { color: var(--ink); font-weight: 600; }
+.plan .amlist { margin: 6px 0 0; padding-left: 0; list-style: none; }
+.plan .amlist li.amend { margin: 0 0 8px; padding: 6px 10px; border-left: 3px solid var(--axis); }
+.plan .amlist li.amend.open { border-left-color: var(--warn); background: var(--tint-warn); }
+.plan .amlist li.amend.classified { border-left-color: var(--fill); }
+.plan .amlist li.amend.done { border-left-color: var(--good); }
+.plan .amlist li.amend.to-the-controller { border-left-color: var(--warn); }
+.plan .amhead { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.amclass { font-size: 12px; border: 1px solid var(--ring); border-radius: 999px; padding: 0 8px; white-space: nowrap; color: var(--ink-2); }
+.amclass.fold, .amclass.leg { border-color: var(--fill); color: var(--fill); }
+.amclass.flight { border-color: var(--warn); color: var(--ink); }
+.amclass.none { border-style: dashed; color: var(--muted); }
+.ambudget { font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.plan .amtext, .plan .amwhy { margin-top: 2px; }
+.plan .amlist .choices { margin-top: 4px; }
+.plan .amlist .choices button { font-size: 12px; padding: 3px 10px; }
+.plan .planfoot { gap: 8px; }
+.plan .planfoot button.amendbtn { font-size: 12px; padding: 3px 10px; margin-right: auto; }
+.plan .amendform { margin: 10px 0 4px; padding: 10px 12px; border: 1px solid var(--fill); border-radius: 8px; background: var(--tint-fill); }
+.plan .amendform textarea { width: 100%; min-height: 60px; margin: 6px 0; resize: vertical; font: inherit; font-size: 13px; padding: 6px 8px;
+  border-radius: 6px; border: 1px solid var(--ring); background: var(--surface); color: var(--ink); box-sizing: border-box; }
+.plan .amendform .sendrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.plan .amendnote { margin: 8px 0 0; text-align: right; }
+.flight .amended path { fill: var(--surface); stroke: var(--fill); stroke-width: 1.5; }
+.flight .amended text { font-size: 10px; font-weight: 700; fill: var(--fill); }
