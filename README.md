@@ -1,6 +1,6 @@
 # pilot
 
-Claude Code as it is, with more control. There is a pilot, a flight plan, and you are the flight
+Claude Code as it is, with more control. There is a pilot, a flight plan, and you are the
 controller.
 
 - **Pilot**: an ordinary interactive Claude Code session in the repo's main checkout, with the pilot
@@ -19,7 +19,7 @@ controller.
   that was.
 - **Worker**: a Claude Code background session (`claude --bg -w`) in its own git worktree, branched from
   the repo's default branch. It flies one leg, keeps a checklist (its task list), commits on its own
-  branch, and ends with a report whose first line is `DONE`, `BLOCKED` or `FAILED`. A leg has landed only
+  branch, and ends with a report whose first line is `DONE`, `BLOCKED` or `FAILED`. A leg is done only
   when its checklist is complete: nothing is left open or for later. An item the worker cannot finish is a
   `BLOCKED` report, and the pilot sends it back or makes the item a leg of its own. A `DONE` with items
   open shows in amber. A command refused by a permission check, a hook or a Claude Code guard is a
@@ -28,18 +28,19 @@ controller.
 - **Co-pilot**: a Sonnet subagent the pilot plugin ships (`agents/copilot.md`), read-only. The pilot
   settles engineering questions itself and asks the co-pilot for an independent opinion on each one that
   matters; they agree, or after one exchange the question goes to you. Only that, a budget raise, scope,
-  anything outside a brief's permissions, anything irreversible, and what you meant come to the tower.
+  anything outside a brief's permissions, anything irreversible, and what you meant come to you.
 - **Reviewer**: an Opus subagent the pilot plugin ships (`agents/reviewer.md`), read-only and fresh every
-  round. Once a pilot has pushed a landed leg and opened its PR, the reviewer reads every changed line
+  round. Once a pilot has pushed a done leg and opened its PR, the reviewer reads every changed line
   against the leg's brief, *Done when* and checklist, and answers with a round file: `BUGS: <n>`, the
   checklist ticked off with where the diff meets each item, then bugs (each proven by a trace or a failing
   test), questions, noted and preferences, the classes and the "is it the leg's?" test of Sam's
   mission-review, without its coverage ledger and staff. `pilot review` records it. Bugs go back to the
   worker as `R<n> B<i>` checklist items and the pilot pushes the fixes; at most two rounds find bugs before
   what is left comes to you. A PR is *on approach* while a round is due, *go-around* while it is fixed,
-  *holding* for CI, *cleared to land* once accepted and green (only then is the merge put to you), and *at
-  the gate* once merged.
-- **Controller**: you, the tower. The dashboard is your radar. From it you read the plan and every
+  *on final* for CI, *to the controller* when the rounds are spent with bugs left, *team review* while its
+  team reviews it, *cleared to land* once accepted and green (only then is the merge put to you), and
+  *landed* once merged. A flight has landed when every leg's PR has.
+- **Controller**: you. The dashboard is where you watch from. From it you read the plan and every
   conversation, answer what the pilot waits on you for, message any live pilot or worker through the
   intercom, set budgets, stop workers, summarise, and launch pilots.
 
@@ -128,8 +129,8 @@ changed. It asks `claude agents` only when a session file moved, or every 30 s.
 
 | Page | What it shows |
 |---|---|
-| Overview | Each flight plan, folded to one line with a tally of its legs once it has landed (click to open; your choice sticks): what its pilot is doing (working, idle and following its legs, or waiting on you, with the question it asked and where to answer it; once its turn has ended with nothing in the air, **your move**, by name: a landed flight's PR to mark ready for review, or to merge once approved, when its team reviews it (GitHub gives it a review decision), or to merge once its checks pass when no review is required, since the pilot and co-pilot are its review (`"review": {"<repo>": "team" | "self"}` in `~/.pilot/pilot.json` overrides it); else the pilot's last line), what the pilot is waiting on you for (its `## Waiting on the controller` section, in amber), its last message in full when its turn has ended with nothing in the air, the pilot's notes (what it found, why the route is this shape), the route as a chart, left to right, each leg after the legs it waits for (planned legs dashed), and as a table with every leg's live status and its checklist (done of total, and the item it is on) (planned, working and its current tool call, waiting on you, done, failed, removed), and what it leaves in git (commits past its base, pushed or how many are on no remote branch under any name, uncommitted files), totalled in the plan's header as `all pushed` or the legs that are not, and the flight log with every question and answer; the intercom, one line to message live sessions (everyone, all pilots, all workers, a flight, or one); **Flights**: where each flight is, its legs as stops from the gate, a leg's depth in After its column, so legs that fly at once fork into parallel lanes and join at the leg after them (or at the destination); one plane per leg in the air, as far along as its checklist, amber while it waits on you, with "2 flying: a, b" by the flight's name; an alternate leg (the route's `Alt of` column) dashed beside its primary, with a plane only once taken with `start --divert`, and never counted towards landing until then; the plane stands at the gate before the first takeoff and parks past the end once every leg is done (click a flight to open its plan); a Haiku summary of all workers; every worker with state, spend against budget and what it is doing; the sessions open in a repo's main checkout. |
-| A worker or session | Its whole conversation streaming live, drawn as Claude Code's terminal draws a session (ported from Sam's campaigner): ● what it says, in full; one line per tool call, `Name(what it was asked)`, its dot green, red or blinking while it runs, a click away from its whole input, and its result under a ⎿, three lines of it with the rest a click away (a Read says only how many lines); thinking folded to one line; a live line under it with what it is doing now (Claude Code's own one-line detail) and how long the turn has run; refused calls in red with who refused them (auto mode, a hook, a deny rule, pilot's budget, Claude Code) and the command with a copy button, except a call pilot's ask hook or Sam's reply gate refused, which is the wiring talking and is not drawn; each subagent on a page of its own, linked from the Agent call that started it as soon as it runs, and from the Subagents card; its summary; its leg; a message box that goes through the intercom (or, for a worker whose turn has ended, as your own turn); a budget control, and **⛽ refuel to N**, one more tank of the leg's first budget past what it has spent, in one click (also on its row once it is at 75% and in the over-budget banner; you are the tower, so no watchtower). Fuel does not wake a worker whose turn has ended, so it then asks whether to tell it to carry on; attach, remote and stop. **What it leaves**: its repo, branch and tip, commits past its base, the remote branches holding them, its uncommitted files, and its report's `Outside the worktree:` line (scratch folders, other repos, a WSL clone, config), which no git command can find. For a pilot, a **Terminal** card: its screen, read every 2 s while open, and a line to type into it (an answer, a key, `/remote-control`), after a confirm, logged in the plan. |
+| Overview | Each flight plan, folded to one line with a tally of its legs once every leg is done (click to open; your choice sticks): what its pilot is doing (working, idle and following its legs, or waiting on you, with the question it asked and where to answer it; once its turn has ended with nothing in the air, **your move**, by name: a done flight's PR to mark ready for review, or to merge once approved, when its team reviews it (GitHub gives it a review decision), or to merge once its checks pass when no review is required, since the pilot and co-pilot are its review (`"review": {"<repo>": "team" | "self"}` in `~/.pilot/pilot.json` overrides it); else the pilot's last line), what the pilot is waiting on you for (its `## Waiting on the controller` section, in amber), its last message in full when its turn has ended with nothing in the air, the pilot's notes (what it found, why the route is this shape), the route as a chart, left to right, each leg after the legs it waits for (planned legs dashed), and as a table with every leg's live status and its checklist (done of total, and the item it is on) (planned, working and its current tool call, waiting on you, done, failed, removed), and what it leaves in git (commits past its base, pushed or how many are on no remote branch under any name, uncommitted files), totalled in the plan's header as `all pushed` or the legs that are not, and the flight log with every question and answer; the intercom, one line to message live sessions (everyone, all pilots, all workers, a flight, or one); **Flights**: where each flight is, its legs as stops from departure, a leg's depth in After its column, so legs that fly at once fork into parallel lanes and join at the leg after them (or at the destination); one plane per leg in the air, as far along as its checklist, amber while it waits on you, with "2 flying: a, b" by the flight's name; an alternate leg (the route's `Alt of` column) dashed beside its primary, with a plane only once taken with `start --divert`, and never counted towards landing until then; the plane stands at departure before the first takeoff (at the gate while the flight is held for clearance) and parks past the end once every leg is done (click a flight to open its plan); a Haiku summary of all workers; every worker with state, spend against budget and what it is doing; the sessions open in a repo's main checkout. |
+| A worker or session | Its whole conversation streaming live, drawn as Claude Code's terminal draws a session (ported from Sam's campaigner): ● what it says, in full; one line per tool call, `Name(what it was asked)`, its dot green, red or blinking while it runs, a click away from its whole input, and its result under a ⎿, three lines of it with the rest a click away (a Read says only how many lines); thinking folded to one line; a live line under it with what it is doing now (Claude Code's own one-line detail) and how long the turn has run; refused calls in red with who refused them (auto mode, a hook, a deny rule, pilot.py's budget, Claude Code) and the command with a copy button, except a call pilot's ask hook or Sam's reply gate refused, which is the wiring talking and is not drawn; each subagent on a page of its own, linked from the Agent call that started it as soon as it runs, and from the Subagents card; its summary; its leg; a message box that goes through the intercom (or, for a worker whose turn has ended, as your own turn); a budget control, and **⛽ refuel to N**, one more tank of the leg's first budget past what it has spent, in one click (also on its row once it is at 75% and in the over-budget banner; you are the controller, so no watchtower). A refuel does not wake a worker whose turn has ended, so it then asks whether to tell it to carry on; attach, remote and stop. **What it leaves**: its repo, branch and tip, commits past its base, the remote branches holding them, its uncommitted files, and its report's `Outside the worktree:` line (scratch folders, other repos, a WSL clone, config), which no git command can find. For a pilot, a **Terminal** card: its screen, read every 2 s while open, and a line to type into it (an answer, a key, `/remote-control`), after a confirm, logged in the plan. |
 | History | **Flights** the controller archived (a plan card's Archive flight button, confirmed, or `pilot archive`), each with its departure, arrival or last ETA, delay, how its legs ended and a Restore; then removed workers with their result, branch (pushed or not, or deleted), spend, report and commits, and their conversation. |
 | Spend | Weighted tokens per day over 14 days, and the token breakdown per worker. |
 | Launch | Start a pilot in any project from Claude Code's own list, new or resuming one of its sessions; **plan only, wait for clearance** holds its flight at the gate until you clear it. |
@@ -185,7 +186,7 @@ listed, rather than fly the leg somewhere else.
 ## Autopilot and black box
 
 **The autopilot** is for when you are away, asleep. The top bar's switch starts it: an Opus 5.5 background
-session at xhigh effort, named `autopilot`, in auto mode, on standby until something needs the tower.
+session at xhigh effort, named `autopilot`, in auto mode, on standby until something needs the controller.
 While it is on, the dashboard sends it each live plan's `## Waiting on the controller` items once per
 change, through the intercom, and it answers the pilot with `pilot tell --as autopilot`, marked as its
 answers on your behalf. It may decide engineering questions, reviews (approving a design document to build
@@ -213,7 +214,7 @@ first, filtered by who and by flight. Deleting a plan leaves its record.
 
 It is in `~/.pilot/pilot.json` like any repo, with its remote at `origin`
 (github.com/SharpAstro/pilot), so its workers branch from `origin/HEAD`, origin's default branch, as in
-any other repo. The pilot pushes each landed leg and opens its PR there, and the controller merges it there.
+any other repo. The pilot pushes each done leg and opens its PR there, and the controller merges it there.
 The live dashboard and every running pilot use the main checkout, so a worker cannot break the
 tooling that watches it: its change reaches them only once its PR is merged on origin (the
 controller's call) and the main checkout pulls it, the server only after a restart, the page on a reload.
@@ -261,11 +262,11 @@ are under 80% and not projected to run dry before they reset (the status line's 
 twice the leg's first budget. The 7-day projection holds a refuel only once the week is 50% used and the dry
 day is at most 3 days off: early in the week it is a guess from a few days' burn. Past them the **watchtower**, one Haiku call with no tools (about 3 s),
 reads the leg's goal and Done when, the checklist, the spend, the worker's last message and the reason,
-and approves or sends it to the tower. It checks the reason against the checklist: in testing it refused a
+and approves or sends it to the controller. It checks the reason against the checklist: in testing it refused a
 request whose reason claimed a step was finished that the checklist still had in progress. Either way the
 plan's log has the verdict and the reason, and the bell has every refuel. The top bar's ⛽ says which way
 a refuel would go right now, and is a switch: **auto** (the default) lets the watchtower approve within its
-gates, shown as `auto · held` while the account has no headroom; **manual** sends every refuel to the tower,
+gates, shown as `auto · held` while the account has no headroom; **manual** sends every refuel to the controller,
 you or the autopilot while it is on. The switch is in `<state>/refuel.json`, and each change is in the black
 box. `~/.pilot/pilot.json` takes `"refuel": {"maxUsedPct": 80, "maxFactor": 2,
 "maxAgeMinutes": 30, "weekDryPct": 50, "weekDryDays": 3}`.
@@ -338,7 +339,7 @@ Traps found on the way:
   so a brief names the pilot by both, and `pilot whois "<name>"` prints the id behind a live name for the
   worker to check: a session can take any name, not another's id.
 - **A finished checklist disappears from disk.** Once every item is completed, Claude Code deletes the
-  items under `tasks/<session>/` and keeps only `.highwatermark` and `.lock`, so a landed leg looked as if it
+  items under `tasks/<session>/` and keeps only `.highwatermark` and `.lock`, so a done leg looked as if it
   kept no checklist. `pilot.py` rebuilds it from the transcript's successful `TaskCreate` and `TaskUpdate`
   calls (25 ms for a worker's whole transcript, then cached).
 - **The dashboard can read and type into a pilot's console.** `pilot.py console-io <pid>` attaches to the
