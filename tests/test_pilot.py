@@ -2967,5 +2967,132 @@ class AmendmentTests(Case):
             srv.server_close()
 
 
+class AmendBudgetTests(Case):
+    """`amend-budget`: a folded amendment's own estimate added to its leg's budget on the controller's authority,
+    within the amendment's cap (amendFactor, 1.5, times the leg's first budget, 10M here) and only with headroom;
+    and refuel's cap counting from the first budget plus what amendments added. Set up as RefuelTests: plan s1,
+    the leg fix at 10M, fresh usage figures with headroom, the clock at NOW."""
+    limits, refuel = RefuelTests.limits, RefuelTests.refuel
+
+    def setUp(self):
+        super().setUp()
+        self.plan("s1", PLAN)
+        self.worker("fix", plan="s1")
+        self.limits(20, 30)
+        self._now, pilot.time.time = pilot.time.time, lambda: NOW
+        self._tower, pilot.watchtower = pilot.watchtower, lambda *a: self.fail("an amendment's budget never asks the watchtower")
+        for r in ("Also export the page labels", "Rotate thumbnails too", "Add a PDF/A mode"):
+            pilot.add_amendment("s1", r)
+        pilot.classify_amendment("s1", "A1", "fold", "fix", "the labels go through the same exporter code")
+        pilot.classify_amendment("s1", "A2", "fold", "design", "the design note says how thumbnails rotate")
+        pilot.classify_amendment("s1", "A3", "flight", None, "a new export mode is a feature of its own")
+
+    def tearDown(self):
+        pilot.time.time, pilot.watchtower = self._now, self._tower
+        super().tearDown()
+
+    def run_cmd(self, tokens, aid="A1", name="fix", me="s1"):
+        """cmd_amend_budget as the session `me` runs it: (exit code, what it printed)."""
+        with unittest.mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": me}), contextlib.redirect_stdout(io.StringIO()) as out:
+            try:
+                pilot.cmd_amend_budget(types.SimpleNamespace(name=name, tokens=tokens, amendment=aid))
+                code = 0
+            except SystemExit as e:
+                code = e.code if isinstance(e.code, int) else 1
+                print(e.code if not isinstance(e.code, int) else "", end="")
+        return code, out.getvalue()
+
+    def amendment(self, aid="A1"):
+        return next(a for a in pilot.parse_plan(pilot.plan_path("s1").read_text(encoding="utf-8"))["amendments"] if a["id"] == aid)
+
+    def test_within_its_cap_with_headroom_it_is_applied(self):
+        code, out = self.run_cmd(3_000_000)
+        self.assertEqual(code, 0, out)
+        self.assertIn("applied: fix +3,000,000 to 13,000,000 for A1", out)
+        w = pilot.load("fix")
+        self.assertEqual((w["budget"], w["budget0"]), (13_000_000, 10_000_000), "budget0 stays the first budget")
+        self.assertIn("  - Class: fold · Leg: fix · Why: the labels go through the same exporter code\n  - Budget: +3,000,000 to fix\n- **A2**",
+                      pilot.plan_path("s1").read_text(encoding="utf-8"))
+        self.assertEqual((self.amendment()["budget"], self.amendment()["budgetLeg"]), (3_000_000, "fix"))
+        self.assertEqual(self.log_of("s1")[-1][17:], "Amendment A1 budget: fix +3,000,000 to 13,000,000 on the controller's "
+                                                     "authority (cap 15,000,000, 3,000,000 of it used)")
+        self.assertEqual(self.last_box()[1], "pilot")
+
+    def test_calls_add_up_against_one_cap_and_the_one_past_it_goes_to_the_controller(self):
+        self.assertEqual(self.run_cmd(3_000_000)[0], 0)
+        self.assertEqual(self.run_cmd(4_000_000)[0], 0)
+        t = pilot.plan_path("s1").read_text(encoding="utf-8")
+        self.assertIn("  - Budget: +7,000,000 to fix\n", t)
+        self.assertEqual(t.count("- Budget:"), 1, "one Budget line per amendment, added up")
+        self.assertEqual(pilot.load("fix")["budget"], 17_000_000)
+        code, out = self.run_cmd(9_000_000)
+        self.assertEqual(code, 2)
+        self.assertIn("A1's additions would come to 16,000,000, past its cap of 15,000,000 (1.5 times the leg's first budget, 10,000,000)", out)
+        self.assertIn("## Waiting on the controller", out)
+        self.assertEqual(pilot.load("fix")["budget"], 17_000_000)
+        self.assertEqual(self.amendment()["budget"], 7_000_000)
+        self.assertTrue(self.log_of("s1")[-1][17:].startswith("Amendment A1 budget sent to the controller: fix +9,000,000 to 26,000,000. A1's additions"))
+        self.config(refuel={"amendFactor": 2})          # pilot.json overrides the factor
+        self.assertEqual(self.run_cmd(9_000_000)[0], 0)
+        self.assertEqual(self.amendment()["budget"], 16_000_000)
+
+    def test_without_headroom_it_goes_to_the_controller(self):
+        self.limits(85, 30)
+        code, out = self.run_cmd(3_000_000)
+        self.assertEqual(code, 2)
+        self.assertIn("not applied: the account is short: 5-hour 85%", out)
+        self.assertEqual(pilot.load("fix")["budget"], 10_000_000)
+        self.assertEqual(self.amendment()["budget"], "")
+        self.assertIn("Amendment A1 budget sent to the controller: fix +3,000,000 to 13,000,000. the account is short", self.log_of("s1")[-1])
+
+    def test_refuelling_on_manual_does_not_hold_it(self):
+        pilot.set_refuel_mode("manual")
+        self.assertEqual(self.run_cmd(3_000_000)[0], 0)
+        self.assertEqual(pilot.load("fix")["budget"], 13_000_000)
+
+    def test_only_a_fold_into_this_leg_by_its_pilot(self):
+        pilot.add_amendment("s1", "Something not yet classified")
+        for args, said in [(("A2",), "amendment A2 is classified fold into design; amend-budget takes a fold into fix"),
+                           (("A3",), "amendment A3 is classified flight; amend-budget takes a fold into fix. A new leg takes its own budget with `start --budget`"),
+                           (("A4",), "amendment A4 is not classified yet"),
+                           (("A9",), "this flight has no amendment A9; it has A1, A2, A3, A4")]:
+            code, out = self.run_cmd(3_000_000, *args)
+            self.assertEqual(code, 1, out)
+            self.assertIn(said, out)
+        code, out = self.run_cmd(3_000_000, me="s2")
+        self.assertEqual((code, out), (1, "pilot: amend-budget is fix's pilot's, run from its session; the controller sets a budget with `budget`"))
+        code, out = self.run_cmd(0)
+        self.assertIn("an increment, not the new budget", out)
+        self.assertEqual(pilot.load("fix")["budget"], 10_000_000)
+        self.assertEqual([a["budget"] for a in pilot.parse_plan(pilot.plan_path("s1").read_text(encoding="utf-8"))["amendments"]], ["", "", "", ""])
+
+    def test_refuels_cap_counts_the_amendments_additions(self):
+        asked = []
+        pilot.watchtower = lambda w, t, r, a: (asked.append(t) or (True, "progress justifies it"))
+        self.assertEqual(self.run_cmd(3_000_000)[0], 0)
+        # A Budget line on an amendment no longer a fold, or into another leg, adds nothing to fix's cap.
+        t = pilot.plan_path("s1").read_text(encoding="utf-8")
+        pilot.plan_path("s1").write_text(t.replace("Why: a new export mode is a feature of its own\n",
+                                                   "Why: a new export mode is a feature of its own\n  - Budget: +9,000,000 to fix\n"), encoding="utf-8")
+        approved, why = self.refuel(27_000_000)
+        self.assertFalse(approved)
+        self.assertIn("past 2 times the leg's first budget plus its amendments' (10,000,000 + 3,000,000)", why)
+        self.assertEqual(self.refuel(26_000_000), (True, "progress justifies it"))
+        self.assertEqual(asked, [26_000_000])
+
+    def test_the_watchtower_is_told_the_amendments_folded_into_the_leg(self):
+        self.assertEqual(self.run_cmd(3_000_000)[0], 0)
+        pilot.watchtower = self._tower
+        sent = []
+        def claude(*args, stdin=None, **kw):
+            sent.append(stdin)
+            return types.SimpleNamespace(stdout=json.dumps({"result": "VERDICT: APPROVE\nWHY: the labels are left"}), returncode=0)
+        with unittest.mock.patch.object(pilot, "claude", claude):
+            self.assertEqual(self.refuel(16_000_000), (True, "the labels are left"))
+        self.assertIn("- Amendment A1 folded into this leg by the controller: Also export the page labels (its budget: +3,000,000)\n", sent[0])
+        self.assertNotIn("Rotate thumbnails", sent[0], "another leg's fold is not this leg's")
+        self.assertIn("an amendment\nfolded into the leg: its scope counts as on the checklist", sent[0])
+
+
 if __name__ == "__main__":
     unittest.main()
