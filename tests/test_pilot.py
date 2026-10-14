@@ -758,6 +758,14 @@ class HoldTests(Case):
         self.rows = [{"name": "pilot-tia", "sessionId": "s2", "kind": "interactive", "pid": 7}]
         pilot.intercom = lambda names, text, sender="Controller": (_ for _ in ()).throw(ValueError("the relay failed (1)"))
         self.assertIn("could not be reached (the relay failed (1))", self.clear("TIA2"))
+        self.plan("s1", PLAN.replace("Flight: WA1", "Flight: WA1\n\nHold: awaiting clearance"))
+        self.rows = [{"name": "pilot-web", "sessionId": "s1", "kind": "background", "pid": None}]
+
+        def no_claude(old, why):
+            raise FileNotFoundError("[WinError 2] The system cannot find the file specified")
+        pilot.wake_pilot = no_claude                           # claude not on PATH
+        self.assertIn("could not be reached ([WinError 2] The system cannot find the file specified)", self.clear())
+        self.assertNotIn("Hold:", pilot.plan_path("s1").read_text(encoding="utf-8"))
 
     def test_clear_refuses_an_unknown_flight_and_a_pilot(self):
         with self.assertRaises(SystemExit) as e:
