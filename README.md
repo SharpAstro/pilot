@@ -211,12 +211,13 @@ first, filtered by who and by flight. Deleting a plan leaves its record.
 
 ## Flying this repo with itself
 
-It is in `~/.pilot/pilot.json` like any repo. It has no remote, so its workers branch from local `main`:
-with no `origin`, `claude --bg -w` takes the main checkout's branch (measured), and `pilot.py` names that as
-the base. The live dashboard and every running pilot use the main checkout, so a worker cannot break the
-tooling that watches it: its change reaches them only when its branch is merged into `main` (the
-controller's call), the server only after a restart, the page on a reload. Nobody edits `main` by hand
-while a flight runs here.
+It is in `~/.pilot/pilot.json` like any repo, with its remote at `origin`
+(github.com/SharpAstro/pilot), so its workers branch from `origin/HEAD`, origin's default branch, as in
+any other repo. The pilot pushes each landed leg and opens its PR there, and the controller merges it there.
+The live dashboard and every running pilot use the main checkout, so a worker cannot break the
+tooling that watches it: its change reaches them only once its PR is merged on origin (the
+controller's call) and the main checkout pulls it, the server only after a restart, the page on a reload.
+Nobody edits `main` by hand while a flight runs here.
 
 A worker checks a dashboard change with its own copy, beside the live one:
 
