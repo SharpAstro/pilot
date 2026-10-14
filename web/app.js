@@ -808,7 +808,7 @@ function planCard(p, s) {
   // alone, an active one starts open. A fold you set stays as you left it.
   const many = (s.plans || []).length > 1;
   return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" data-order="${esc(p.sessionId)}" ${fold("plan:" + p.sessionId, !!p.waiting || (!many && planActive(p, s)))}>
-    <summary class="cardhead"><span>${reorderHtml(p, s)}<b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> ${connectsHtml(p)}${marchChip(p)}${amendChip(p)}<span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
+    <summary class="cardhead"><span>${reorderHtml(p, s)}<b>${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> ${connectsHtml(p)}${marchChip(p)}${amendChip(p)} <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
       <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} · ` : ""}plan updated ${esc(stamp(p.updated))} (${esc(ago(p.updated))})
       ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span></summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
@@ -839,7 +839,7 @@ const amendForm = new Map();
 
 // A folded card still says when an amendment waits on its pilot.
 const amendChip = p => { const n = (p.amendments || []).filter(a => a.state === "open").length;
-  return n ? ` <span class="chip blocked" title="filed by you, not classified yet: its pilot folds it into a leg, makes it a new leg, or hands it back as a new flight">${n} amendment${n > 1 ? "s" : ""} open</span> ` : ""; };
+  return n ? ` <span class="chip blocked" title="filed by you, not classified yet: its pilot folds it into a leg, makes it a new leg, or hands it back as a new flight">${n} amendment${n > 1 ? "s" : ""} open</span>` : ""; };
 
 const amendClass = a => a.class === "fold" ? `fold into ${a.leg}` : a.class === "leg" ? `new leg ${a.leg}` : a.class === "flight" ? "new flight" : "unclassified";
 const amendState = a => ({
@@ -860,7 +860,7 @@ const amendedLegs = p => {
 };
 
 // The pilot session's directory, for the launch form a new-flight amendment opens: the flight's repo.
-const flightPath = (p, s) => (s.pilots || []).find(x => x.sessionId === p.sessionId)?.cwd || "";
+const flightPath = (p, s) => (s.pilots || []).find(x => x.sessionId === p.sessionId)?.cwd || p.repoPath || "";
 
 function amendmentsHtml(p, s, fold) {
   const as = p.amendments || [];
@@ -1901,15 +1901,22 @@ VIEWS.launch = root => {
         <span class="sub">${esc(ago(x.updated))}${x.live ? " · running now: resuming starts a copy" : ""}</span></label>`).join("");
   }
   // The project list, narrowed by the filter: every word typed must appear in the path, in any case.
-  // The selection stays when it still matches; otherwise the first match is taken and its sessions load.
-  function fill(want) {
+  // The selection stays when it still matches; otherwise the first match is taken and its sessions load. Paths are
+  // compared as norm() has them: a pilot's cwd has backslashes, the projects forward slashes. A launch for a
+  // flight's repo (a new-flight amendment) that matches no project selects none, never another repo.
+  const norm = p => (p || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  let unpicked = false;
+  function fill(want, strict) {
     const words = $(".s-filter", root).value.toLowerCase().split(/\s+/).filter(Boolean);
     const shown = projects.filter(p => words.every(w => p.path.toLowerCase().includes(w)));
-    const keep = shown.some(p => p.path === want) ? want : shown[0]?.path;
-    sel.innerHTML = shown.length ? shown.map(p => `<option value="${esc(p.path)}"${p.path === keep ? " selected" : ""}>${esc(p.path)}${p.trusted ? "" : " (not trusted)"}</option>`).join("")
-      : `<option value="">no project matches</option>`;
-    $(".s-go", root).disabled = !shown.length;
-    if (!shown.length) { put($(".s-projnote", root), ""); list.innerHTML = ""; }
+    const hit = shown.find(p => want && norm(p.path) === norm(want))?.path;
+    const keep = hit || (strict ? "" : shown[0]?.path);
+    unpicked = !keep;
+    sel.innerHTML = !shown.length ? `<option value="">no project matches</option>`
+      : (keep ? "" : `<option value="" selected>choose the project: the flight's repo is not among them</option>`)
+        + shown.map(p => `<option value="${esc(p.path)}"${p.path === keep ? " selected" : ""}>${esc(p.path)}${p.trusted ? "" : " (not trusted)"}</option>`).join("");
+    $(".s-go", root).disabled = !keep;
+    if (!keep) { put($(".s-projnote", root), ""); list.innerHTML = ""; }
     else if (keep !== want || !list.innerHTML) loadSessions();
   }
   // A new-flight amendment opens the form with its request as the first message (msg); the rest is the controller's.
@@ -1917,18 +1924,17 @@ VIEWS.launch = root => {
   if (q.get("msg")) $(".s-msg", root).value = q.get("msg");
   (async () => {
     projects = await (await fetch("/api/projects")).json().catch(() => []);
-    fill(q.get("path"));
+    fill(q.get("path"), q.has("path"));
     $(".s-filter", root).focus();
   })();
-  $(".s-filter", root).addEventListener("input", () => fill(sel.value));
+  $(".s-filter", root).addEventListener("input", () => fill(sel.value, unpicked));
   // Plan only holds a pilot's flight: without the pilot it means nothing.
   $(".s-aspilot", root).addEventListener("change", e => { $(".s-hold", root).disabled = !e.target.checked; if (!e.target.checked) $(".s-hold", root).checked = false; });
-  sel.addEventListener("change", loadSessions);
+  sel.addEventListener("change", () => { unpicked = !sel.value; $(".s-go", root).disabled = unpicked; if (sel.value) loadSessions(); });
   // After a launch, the page waits for the session to come up, then goes to its flight plan once the pilot has
   // opened one, or to its session page when it was not started as the pilot. A new session is the first in that
   // directory started after the launch; a resumed one keeps its id; a background one is known by its job id.
   let pending = null;
-  const norm = p => (p || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
   $(".s-go", root).addEventListener("click", async () => {
     const btn = $(".s-go", root);
     btn.disabled = true; put($(".s-result", root), "launching…");

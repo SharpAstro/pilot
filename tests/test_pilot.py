@@ -437,6 +437,20 @@ class ConnectionTests(Case):
         p = next(p for p in pilot.plans_view([], []) if p["sessionId"] == "s1")
         self.assertEqual((p["connections"][0]["landed"], p["connections"][0]["state"]), (True, "landed"))
 
+    def test_the_dashboard_gets_the_flights_repo_path_for_a_parked_pilot_too(self):
+        root = ROOT / "web-app"
+        root.mkdir(exist_ok=True)
+        self.config(repos={"web-app": str(root)})
+        self.plan("s1", PLAN)
+        path = lambda: next(p for p in pilot.plans_view(self.rows, []) if p["sessionId"] == "s1")["repoPath"]
+        self.assertEqual(path(), "", "no leg and no pilot row: no repo, so the launch form selects none")
+        self.rows = [{"sessionId": "s1", "cwd": str(root), "name": "pilot-web"}]     # its pilot's directory
+        self.assertEqual(path(), str(root).replace("\\", "/"))
+        self.rows = []                                   # parked: no row, but a removed leg flew in the repo
+        pilot.write_json(pilot.ARCHIVE / "build-1.json", {"name": "build", "plan": "s1", "archivedAt": 1, "repo": "web-app"})
+        self.assertEqual(path(), str(root).replace("\\", "/"))
+        self.assertNotIn("\\", path())
+
     def test_the_dashboard_gets_each_legs_landed_flag(self):
         self.plan("s2", CONNECTED.replace("| build | Build the tokens | - | tests pass |",
                                           "| build | Build the tokens | - | tests pass |\n| ship | Ship them | build | shipped |"))
