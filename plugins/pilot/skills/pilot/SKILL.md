@@ -90,7 +90,8 @@ Never write or edit that section yourself. Classify each open amendment with the
 Change the route first (the fold's goal, or the new leg's row), then record it with
 `python <pilot.py> classify <id> fold|leg|flight [--leg <leg>] --why "<why this class>"`, which marks it
 classified and logs it; `--leg` is required for fold and leg and must name a row of the route. Then log your
-decision as rule 9 says. A fold that needs more fuel asks for it as rule 12 says. Classifying one again is allowed
+decision as rule 9 says. A fold that needs more fuel takes it with `amend-budget`, on the controller's authority
+and within the amendment's cap, as rule 12 says; a new leg takes its own budget with `start --budget`. Classifying one again is allowed
 and logged. On flight TIA2 eleven requests reached one leg as plain messages and its refuel was argued afterwards;
 an amendment keeps each request, and what became of it, in the plan.
 
@@ -238,10 +239,20 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
     has set refuelling to manual, every request goes to the controller (exit 2). Otherwise the watchtower
     approves it on its own when the account has headroom (both usage windows under 80% and not running dry
     before they reset; the 7-day one counts as running dry only from 50% used, with the dry day at most 3 days
-    off), N is at most twice the leg's first budget, and your reason and the worker's
+    off), N is at most twice the leg's first budget (counted with what its amendments added, below), and your reason and the worker's
     progress justify it; then message the worker. When it does not (exit 2), it says why: put the raise in
     `## Waiting on the controller` with that and your recommendation. Never use `budget` yourself; it is
     the controller's override.
+    A **fold** amendment's budget does not go through the watchtower: the controller asked for the work, so it
+    carries their authority. Estimate the amendment's own work honestly, that work alone and not what the leg
+    has left besides, and add it with
+    `python <pilot.py> amend-budget <leg> <tokens> --amendment <id>` (tokens is an increment, added to the
+    budget). It is applied when the account has headroom (none needed when your flight marches on) and the
+    amendment's additions, all its calls added up, stay within 1.5 times the leg's first budget; refuelling on
+    manual does not hold it. Past either (exit 2), put it in `## Waiting on the controller` as a refuel. A leg
+    can so reach 2.5 times its first budget from one full-size amendment, and that is intended; a refuel's cap
+    then counts from the first budget plus what its amendments added, so the leg can still be refuelled. A **leg** amendment's new leg takes
+    its own budget with `start --budget`.
     The controller may set refuelling to **march on**, when they switch accounts as one runs short. The first
     flights in their order then fly on whatever the account's usage, and the watchtower judges your refuels on
     progress alone. While the account is short, every other flight is in a **holding pattern**: `start` refuses
