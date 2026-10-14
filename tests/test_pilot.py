@@ -666,8 +666,8 @@ class HoldTests(Case):
             pilot.cmd_clear(types.SimpleNamespace(flight=flight))
         return out.getvalue()
 
-    def open_plan(self, sid="s1", hold=False, top=""):
-        with unittest.mock.patch.object(pilot.subprocess, "run", lambda *a, **kw: types.SimpleNamespace(stdout=top)), \
+    def open_plan(self, sid="s1", hold=False, top="", cwd="C:/elsewhere"):
+        with unittest.mock.patch.object(pilot.subprocess, "run", lambda *a, **kw: types.SimpleNamespace(stdout=top)),                 unittest.mock.patch.object(pilot.os, "getcwd", lambda: cwd), \
                 contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()):
             pilot.cmd_plan(types.SimpleNamespace(session=sid, title="Held", hold=hold))
         return Path(out.getvalue().strip())
@@ -758,8 +758,8 @@ class HoldTests(Case):
         self.assertIn("only the controller clears a flight for takeoff", str(e.exception))
         self.assertIn("Hold:", pilot.plan_path("s1").read_text(encoding="utf-8"))
 
-    def launch(self, where="terminal", resume=None, hold=True, as_pilot=True, sid="bg-sid"):
-        projects = [{"path": "C:/repos/web-app", "trusted": True}]
+    def launch(self, where="terminal", resume=None, hold=True, as_pilot=True, sid="bg-sid", path="C:/repos/web-app"):
+        projects = [{"path": path, "trusted": True}]
         sent = []
         with unittest.mock.patch.object(pilot, "known_projects", lambda: projects), \
                 unittest.mock.patch.object(pilot, "register_repo", lambda path: None), \
@@ -769,7 +769,7 @@ class HoldTests(Case):
                 unittest.mock.patch.object(pilot, "session_of", lambda job: sid), \
                 unittest.mock.patch.object(pilot.shutil, "which", lambda name: "wt.exe"), \
                 unittest.mock.patch.object(pilot.subprocess, "Popen", lambda *a, **kw: sent.append((a, None))):
-            out = pilot.launch("C:/repos/web-app", resume, where, "Export fixes", as_pilot, hold)
+            out = pilot.launch(path, resume, where, "Export fixes", as_pilot, hold)
         return out, sent
 
     def test_the_launch_option_opens_the_new_pilots_plan_held_and_tells_it(self):
@@ -793,6 +793,15 @@ class HoldTests(Case):
         p = self.open_plan("tab-sid", top="C:\\repos\\web-app")
         self.assertEqual(pilot.parse_plan(p.read_text(encoding="utf-8"))["hold"], "awaiting clearance")
         self.assertIsNone(pilot.parse_plan(self.open_plan("next-sid", top="C:/repos/web-app").read_text(encoding="utf-8"))["hold"])
+
+    def test_a_hold_booked_by_directory_matches_a_subfolder_project_or_one_in_no_repo(self):
+        self.launch("terminal", path="C:/repos/web-app/src")      # a project in a subfolder of a repo
+        p = self.open_plan("sub-sid", top="C:/repos/web-app", cwd="C:/repos/web-app/src")
+        self.assertEqual(pilot.parse_plan(p.read_text(encoding="utf-8"))["hold"], "awaiting clearance")
+        self.launch("terminal", path="C:/notes")                  # a folder in no git repo
+        p = self.open_plan("nogit-sid", top="", cwd=r"C:\notes")
+        self.assertEqual(pilot.parse_plan(p.read_text(encoding="utf-8"))["hold"], "awaiting clearance")
+        self.assertEqual(pilot.live_holds(), [])
 
     def test_a_launch_resuming_a_pilot_with_a_plan_holds_it_at_once(self):
         sid = "0" * 8 + "-0000-0000-0000-" + "0" * 12

@@ -2660,7 +2660,7 @@ def cmd_plan(a):
         p.write_text(PLAN_TEMPLATE.format(title=a.title or "untitled", flight=flight_code(repo), sid=sid,
                                           now=time.strftime("%Y-%m-%d %H:%M")), encoding="utf-8")
         # Launched to plan only: the plan opens holding, whether or not the pilot passed --hold itself.
-        if take_hold(sid, top):
+        if take_hold(sid, top, os.getcwd()):
             hold_plan(sid, "Holding at the gate: launched to plan only, awaiting clearance for takeoff from the controller")
     if getattr(a, "hold", False) and hold_plan(sid):
         print("holding at the gate: no leg takes off until the controller clears the flight", file=sys.stderr)
@@ -3065,12 +3065,13 @@ def ask_hold(session=None, path=None):
     write_json(HOLDS, live_holds() + [{"at": time.time(), "session": session, "dir": path}])
 
 
-def take_hold(sid, top):
+def take_hold(sid, *dirs):
     """Whether a hold was asked for at launch for this new plan: its session's, else the oldest one for its
-    directory with no session named. It is used up either way."""
-    book = live_holds()
+    directory with no session named, which is any of `dirs` (the pilot's git toplevel and its working directory:
+    a project launched in a subfolder of a repo, or in no repo, is its working directory). It is used up either way."""
+    book, dirs = live_holds(), [d for d in dirs if d]
     hit = next((h for h in book if h.get("session") == sid), None) or \
-        next((h for h in book if not h.get("session") and top and h.get("dir") and same_path(h["dir"], top)), None)
+        next((h for h in book if not h.get("session") and h.get("dir") and any(same_path(h["dir"], d) for d in dirs)), None)
     if hit:
         book.remove(hit)
         write_json(HOLDS, book)
