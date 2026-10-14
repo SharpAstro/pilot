@@ -16,6 +16,8 @@ what they have spent, gates their spend, delivers your messages, summarises them
   python pilot.py clear FLIGHT         the controller's: clear a holding flight for takeoff, and tell its pilot
   python pilot.py amend FLIGHT TEXT    the controller's: file an amendment (A1, A2, ...) in the plan, and tell its pilot
   python pilot.py classify ID fold|leg|flight [--leg L] --why TEXT   the pilot's: record how it classified one
+  python pilot.py amend-budget LEG N --amendment ID   the pilot's: add a folded amendment's estimate N to its leg's
+                                       budget (an increment), on the controller's authority, within the amendment's cap
   python pilot.py start NAME --brief FILE|- [--repo R] [--model M] [--effort E] [--budget N]
                          [--pilot NAME] [--after NAME]...
   python pilot.py list [--json]
@@ -375,7 +377,8 @@ ACTORS = (("Controller", "controller"), ("Autopilot", "autopilot"), ("Watchtower
           ("Archived by the controller", "controller"), ("Restored by the controller", "controller"),
           ("Cleared for takeoff by the controller", "controller"), ("Holding at the gate", "pilot.py"),
           # An amendment's two lines differ only past its id, so these two are patterns, not prefixes.
-          (re.compile(r"Amendment A\d+ from the controller"), "controller"), (re.compile(r"Amendment A\d+ classified"), "pilot"))
+          (re.compile(r"Amendment A\d+ from the controller"), "controller"), (re.compile(r"Amendment A\d+ classified"), "pilot"),
+          (re.compile(r"Amendment A\d+ budget"), "pilot"))
 
 
 def actor_of(text, default):
@@ -607,12 +610,15 @@ def plan_notes(text):
 
 # The controller redirects a flight with amendments, each a line of the plan's `## Amendments`, which sits right
 # before `## Route`. pilot.py writes the line, stamped; the pilot classifies it, and an indented line under it says
-# how. Any other indented line under it (a fold's budget) is left alone by a classify.
+# how. Any other indented line under it (a fold's budget) is left alone by a classify. A fold's Budget line is
+# amend-budget's, one per amendment: what it has added to the leg's budget so far, added up.
 #   - **A1** · 2026-10-14 21:30 · open · <the controller's request, one line>
 #   - **A2** · 2026-10-14 21:45 · classified · <request>
 #     - Class: fold · Leg: orrery · Why: <the pilot's reason, one line>
+#     - Budget: +3,000,000 to orrery
 AMENDMENT_RE = re.compile(r"^- \*\*(A\d+)\*\* · (\d{4}-\d\d-\d\d \d\d:\d\d) · (open|classified) · (.*)$")
 AMEND_CLASS_RE = re.compile(r"^\s+- Class:\s*(\w*)(?: · Leg:\s*(.*?))?(?: · Why:\s*(.*?))?\s*$")
+AMEND_BUDGET_RE = re.compile(r"^\s+- Budget:\s*\+([\d,]+) to (\S+)\s*$")
 AMEND_CLASSES = ("fold", "leg", "flight")
 
 AMENDED = ("(pilot.py) Amendment {id} to flight {flight} was filed by the controller: {text} -- Classify it as your "
@@ -633,14 +639,19 @@ def amendments_part(text):
 
 
 def plan_amendments(text):
-    """A plan's amendments in order: {id, at, text, status, class, leg, why, budget}. An open one has no class,
-    leg or why; budget is a fold's, from a line of its own, and empty without one."""
+    """A plan's amendments in order: {id, at, text, status, class, leg, why, budget, budgetLeg}. An open one has
+    no class, leg or why; budget is a fold's, the tokens amend-budget added to budgetLeg so far, from a line of its
+    own, and empty without one."""
     part, out = amendments_part(text), []
     for ln in (text[part[0]:part[1]] if part else "").splitlines():
         m = AMENDMENT_RE.match(ln)
         if m:
             out.append({"id": m.group(1), "at": m.group(2), "status": m.group(3), "text": m.group(4).strip(),
-                        "class": "", "leg": "", "why": "", "budget": ""})
+                        "class": "", "leg": "", "why": "", "budget": "", "budgetLeg": ""})
+            continue
+        b = AMEND_BUDGET_RE.match(ln)
+        if b and out:
+            out[-1].update({"budget": int(b.group(1).replace(",", "")), "budgetLeg": b.group(2)})
             continue
         c = AMEND_CLASS_RE.match(ln)
         if c and out:
@@ -720,6 +731,32 @@ def classify_amendment(sid, aid, cls, leg, why):
     plan_path(sid).write_text(t[:start] + "".join(out) + t[end:], encoding="utf-8")
     plan_log(sid, f"Amendment {aid} classified {cls}" + (f" into {leg}" if leg else "") + f": {why}")
     return aid
+
+
+def amendment_additions(amendments, leg):
+    """What the fold amendments on a leg have added to its budget, their Budget lines added up: refuel's cap
+    counts from the leg's first budget plus these."""
+    return sum(a["budget"] for a in amendments if a["class"] == "fold" and a["budgetLeg"] == leg and isinstance(a["budget"], int))
+
+
+def write_amendment_budget(sid, aid, total, leg):
+    """Writes an amendment's Budget line, `+<total> to <leg>`, in place of the one it had, else after the lines
+    under it, so each amendment keeps one, its additions added up."""
+    t = plan_path(sid).read_text(encoding="utf-8")
+    start, end = amendments_part(t)
+    lines, out, i = t[start:end].splitlines(keepends=True), [], 0
+    while i < len(lines):
+        m = AMENDMENT_RE.match(lines[i].rstrip("\n"))
+        out.append(lines[i])
+        i += 1
+        if not m or m.group(1) != aid:
+            continue
+        while i < len(lines) and lines[i][:1].isspace() and lines[i].strip():
+            if not AMEND_BUDGET_RE.match(lines[i].rstrip("\n")):
+                out.append(lines[i])
+            i += 1
+        out.append(f"  - Budget: +{total:,} to {leg}\n")
+    plan_path(sid).write_text(t[:start] + "".join(out) + t[end:], encoding="utf-8")
 
 
 def amendment_states(amendments, states):
@@ -2133,7 +2170,8 @@ def dry_at(five, start, now, used):
 
 
 REFUEL = {"maxUsedPct": 80, "maxFactor": 2, "maxAgeMinutes": 30,     # ~/.pilot/pilot.json "refuel" overrides
-          "weekDryPct": 50, "weekDryDays": 3, "marchOn": 1}
+          "weekDryPct": 50, "weekDryDays": 3, "marchOn": 1,
+          "amendFactor": 1.5}      # an amendment's additions to its leg's budget, at most this times the leg's first
 
 
 def headroom(now=None):
@@ -3043,7 +3081,8 @@ APPROVE when the reason names what is left, the checklist shows real progress fo
 and the amount is in proportion to what is left at the rate it has been spending. The amount asked for is the new
 total budget, so judge "left after the raise" (new budget minus spent) against the work the reason names, not
 the raise over the old budget. Work the controller has just added may not be on the checklist yet: a reason
-that names it, and a plan log line that records the controller asking for it, are enough.
+that names it, and a plan log line that records the controller asking for it, are enough. So is an amendment
+folded into the leg: its scope counts as on the checklist, even where no item names it yet.
 CONTROLLER when the reason is vague, the worker shows little progress for its spend (stuck on one item, going
 round in circles), or the amount looks out of proportion.
 
@@ -3066,6 +3105,10 @@ def watchtower(w, tokens, reason, account):
              f"- Budget now {w.get('budget') or 0:,} weighted tokens, spent {s['spend']['weighted']:,}; asking for a new budget of "
              f"{tokens:,}, which leaves {max(0, tokens - s['spend']['weighted']):,} to spend.",
              *[f"- Plan log: {l}" for l in plan.get("log", [])[-6:] if "ontroller" in l],
+             # The controller's amendments folded into this leg: work it added, on the checklist or not yet.
+             *[f"- Amendment {a['id']} folded into this leg by the controller: {a['text']}"
+               + (f" (its budget: +{a['budget']:,})" if isinstance(a["budget"], int) and a["budgetLeg"] == w["name"] else "")
+               for a in plan.get("amendments", []) if a["class"] == "fold" and a["leg"] == w["name"]],
              f"- Reason given: {reason}",
              f"- Checklist: {len(items) - len(open_items(items))} of {len(items)} done" if items else "- Checklist: none kept",
              *[f"  [{'x' if i['status'] == 'completed' else '>' if i['status'] == 'in_progress' else ' '}] {i['subject']}" for i in items],
@@ -3176,9 +3219,10 @@ def account_room(since, now=None):
 
 def refuel(name, tokens, reason):
     """A pilot's request for a refuel of a worker. The gates come first and need no model: fresh usage
-    figures with headroom in both windows, and at most maxFactor times the leg's first budget. Past them,
-    the watchtower judges the reason against the worker's progress. Returns (approved, why); approved means
-    the budget is raised. Either way the plan's log says what happened and why."""
+    figures with headroom in both windows, and at most maxFactor times the leg's first budget plus what its fold
+    amendments added (amend-budget), so an amended leg can still be refuelled. Past them, the watchtower judges
+    the reason against the worker's progress. Returns (approved, why); approved means the budget is raised.
+    Either way the plan's log says what happened and why."""
     w = need(name)
     reason = " ".join(str(reason or "").split())
     if len(reason) < 20:
@@ -3187,6 +3231,9 @@ def refuel(name, tokens, reason):
         raise ValueError(f"{name}'s budget is already {w.get('budget') or 0:,}; a refuel raises it")
     cfg = refuel_config()
     first = w.get("budget0") or config().get("budget") or w.get("budget") or 0
+    plan = plan_path(w.get("plan"))
+    added = amendment_additions(parse_plan(plan.read_text(encoding="utf-8"))["amendments"], name) if plan and plan.exists() else 0
+    base = first + added
     ok, account = headroom()
     ms = march_state(w.get("plan"), ok)
     short = account
@@ -3196,7 +3243,9 @@ def refuel(name, tokens, reason):
             ([f"holding pattern: the account is short ({'; '.join(short)}) and this flight is not among the first "
               f"{cfg['marchOn']} in the controller's order; it holds until the account has headroom or the controller "
               f"moves it up"] if ms == "hold" else [] if ok else [f"the account is short: {'; '.join(account)}"]) + \
-            ([] if tokens <= first * cfg["maxFactor"] else [f"{tokens:,} is past {cfg['maxFactor']} times the leg's first budget ({first:,})"])
+            ([] if tokens <= base * cfg["maxFactor"] else [
+                f"{tokens:,} is past {cfg['maxFactor']} times the leg's first budget plus its amendments' ({first:,} + {added:,})"
+                if added else f"{tokens:,} is past {cfg['maxFactor']} times the leg's first budget ({first:,})"])
     if gates:
         approved, why = False, "; ".join(gates)
     else:
@@ -3206,6 +3255,52 @@ def refuel(name, tokens, reason):
     plan_log(w.get("plan"), f"Watchtower {'approved' if approved else 'sent to the controller'}: refuel {name} to {tokens:,}. "
                             f"{why.rstrip('.')}. Asked because: {reason}")
     return approved, why
+
+
+def amend_budget(name, tokens, aid):
+    """A pilot adds a folded amendment's own estimate to its leg's budget: an increment, not a new total. The
+    amendment carries the controller's authority, so no watchtower is asked and refuelling on manual holds nothing;
+    the gates are refuel's otherwise: account headroom (none needed on march on, for a marching flight), then the
+    amendment's cap, its additions so far at most amendFactor times the leg's first budget. Repeat calls for one
+    amendment add up against that one cap. Returns (applied, why); applied means the budget is raised, the
+    amendment's Budget line says by how much in all, and either way the plan's log says what happened and why."""
+    w = need(name)
+    sid = w.get("plan")
+    if not sid or not plan_path(sid).exists():
+        raise ValueError(f"{name} flies on no flight plan, so it has no amendments")
+    aid = str(aid or "").strip().upper()
+    plan = parse_plan(plan_path(sid).read_text(encoding="utf-8"))
+    a = next((a for a in plan["amendments"] if a["id"] == aid), None)
+    if not a:
+        raise ValueError(f"this flight has no amendment {aid}" + (f"; it has {', '.join(a['id'] for a in plan['amendments'])}" if plan["amendments"] else ""))
+    if a["class"] != "fold" or a["leg"] != name:
+        raise ValueError(f"amendment {aid} is " + (f"classified {a['class']}" + (f" into {a['leg']}" if a["leg"] else "") if a["class"] else "not classified yet")
+                         + f"; amend-budget takes a fold into {name}. A new leg takes its own budget with `start --budget`")
+    if tokens <= 0:
+        raise ValueError("give the amendment's own estimate, the tokens it adds: an increment, not the new budget")
+    cfg = refuel_config()
+    first = w.get("budget0") or config().get("budget") or w.get("budget") or 0
+    before = a["budget"] if isinstance(a["budget"], int) and a["budgetLeg"] == name else 0
+    total, cap = before + tokens, int(first * cfg["amendFactor"])
+    ok, account = headroom()
+    ms = march_state(sid, ok)
+    short = account
+    if ms == "march":       # the controller switches accounts when one runs short
+        ok = True
+    gates = ([f"holding pattern: the account is short ({'; '.join(short)}) and this flight is not among the first "
+              f"{cfg['marchOn']} in the controller's order; it holds until the account has headroom or the controller "
+              f"moves it up"] if ms == "hold" else [] if ok else [f"the account is short: {'; '.join(account)}"]) + \
+            ([] if total <= cap else [f"{aid}'s additions would come to {total:,}, past its cap of {cap:,} "
+                                      f"({cfg['amendFactor']} times the leg's first budget, {first:,})"])
+    new = (w.get("budget") or 0) + tokens
+    if gates:
+        plan_log(sid, f"Amendment {aid} budget sent to the controller: {name} +{tokens:,} to {new:,}. {'; '.join(gates)}")
+        return False, "; ".join(gates)
+    set_budget(name, new)
+    write_amendment_budget(sid, aid, total, name)
+    why = f"cap {cap:,}, {total:,} of it used"
+    plan_log(sid, f"Amendment {aid} budget: {name} +{tokens:,} to {new:,} on the controller's authority ({why})")
+    return True, why
 
 
 AUTOPILOT_NAME, AUTOPILOT_MODEL, AUTOPILOT_CAP = "autopilot", "claude-opus-5-5", 3
@@ -3415,6 +3510,24 @@ def cmd_refuel(a):
         print(f"approved: {a.name} refuelled to {a.tokens:,}. {why}\nNow message the worker.")
     else:
         print(f"not approved: {why}\nPut the raise in `## Waiting on the controller`, with this and your recommendation.")
+        sys.exit(2)
+
+
+def cmd_amend_budget(a):
+    """The leg's pilot adds a folded amendment's estimate to the leg's budget. Only that pilot: the controller sets
+    a budget with `budget`, and no other session acts on this leg's amendments."""
+    w = need(a.name)
+    if not w.get("plan") or pilot_session() != w["plan"]:
+        sys.exit(f"pilot: amend-budget is {a.name}'s pilot's, run from its session; the controller sets a budget with `budget`")
+    try:
+        applied, why = amend_budget(a.name, a.tokens, a.amendment)
+    except ValueError as e:
+        sys.exit(f"pilot: {e}")
+    w = load(a.name)
+    if applied:
+        print(f"applied: {a.name} +{a.tokens:,} to {w['budget']:,} for {a.amendment.upper()} ({why}).\nNow message the worker.")
+    else:
+        print(f"not applied: {why}\nPut the raise in `## Waiting on the controller`, with the amendment, this and your recommendation.")
         sys.exit(2)
 
 
@@ -5285,6 +5398,11 @@ def main():
     s.add_argument("tokens", type=int, help="the new budget, absolute")
     s.add_argument("--reason", required=True, help="what is left, and why it needs this much")
     s.set_defaults(fn=cmd_refuel)
+    s = sub.add_parser("amend-budget", help="the pilot's: add a folded amendment's estimate to its leg's budget, on the controller's authority")
+    s.add_argument("name", help="the leg the amendment folds into")
+    s.add_argument("tokens", type=int, help="the amendment's own estimate: an increment, added to the budget")
+    s.add_argument("--amendment", required=True, help="the fold amendment, e.g. A1")
+    s.set_defaults(fn=cmd_amend_budget)
     s = sub.add_parser("review", help="record a review round of a leg's pull request, from the reviewer's round file")
     s.add_argument("name")
     s.add_argument("--file", required=True, help="the round file (first line `BUGS: <n>`), or - for stdin")
