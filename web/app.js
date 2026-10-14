@@ -388,8 +388,11 @@ function renderTop() {
       : "Off. Switch it on when you leave: an Opus 5.5 session decides what waits on you, all but irreversible (never pushes, merges, deletes, or sets a new objective), each step checked by auto mode's classifier.")}">
     ✈ autopilot: ${apState}${ap.enabled && ap.decisions?.length ? ` · ${ap.decisions.length}` : ""}</button>`);
   const over = S.workers.filter(w => w.overBudget);
-  const waiting = [...S.pilots.filter(p => p.status === "waiting").map(p => ({name: `pilot ${p.name}`, href: `#/s/${p.sessionId}`})),
-                   ...(S.plans || []).filter(p => p.waiting).map(p => ({name: p.title, href: `#/s/${p.sessionId}`})),
+  // A session on a terminal prompt counts only if it is a pilot (it has a flight plan); a plan, only while an item
+  // in it is unanswered: answers sent from here are with the pilot until it takes them out of the plan.
+  const waiting = [...S.pilots.filter(p => p.status === "waiting" && (S.plans || []).some(x => x.sessionId === p.sessionId))
+                     .map(p => ({name: `pilot ${p.name}`, href: `#/s/${p.sessionId}`})),
+                   ...(S.plans || []).filter(p => unanswered(p).length).map(p => ({name: p.title, href: `#/s/${p.sessionId}`})),
                    ...S.workers.filter(waitsOnYou).map(w => ({name: w.name, href: `#/w/${w.name}`}))];
   // S.stale: pilot.py changed since this server started. A snapshot without refuel's mode is from a server
   // older than that check.
@@ -565,8 +568,9 @@ function routeDepths(legs) {
 // With the autopilot on, what waits on the controller is the autopilot's to decide, a merge excepted (it never merges).
 function yourMoveOf(p, s, ps) {
   const auto = S.autopilot?.enabled;
+  if (p.waiting && !unanswered(p).length) return `answers sent; the pilot's move`;
   if (p.waiting) {
-    const items = waitingItems(p.waiting).items, merges = items.filter(i => /^\**\s*merge/i.test(i)).length, n = items.length - (auto ? merges : 0);
+    const items = unanswered(p), merges = items.filter(i => /^\**\s*merge/i.test(i)).length, n = items.length - (auto ? merges : 0);
     if (auto && !n) return `your move: ${merges === 1 ? "a merge" : `${merges} merges`} below`;
     return `${auto ? "autopilot's move" : "your move"}: answer ${n} item${n === 1 ? "" : "s"} below${auto && merges ? `, and ${merges === 1 ? "a merge" : `${merges} merges`} for you` : ""}`;
   }
@@ -667,11 +671,16 @@ function waitingItems(src) {
   })};
 }
 
+// The plan's waiting items not yet answered from here.
+const unanswered = p => waitingItems(p.waiting).items.filter(it => !(p.answered || {})[it.title]);
+
 function waitingHtml(p, ps) {
   const {intro, items} = waitingItems(p.waiting), sid = p.sessionId;
   const where = ps?.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : "";
   let n = 0;
   const rows = items.map((it, i) => {
+    const sent = (p.answered || {})[it.title];
+    if (sent) return `<li class="answered">${md(it.text, true)}<div class="sub">✓ answered ${esc(clock(sent * 1000))}; with the pilot, which takes it out of its plan at its next step</div></li>`;
     const a = answers.get(`${sid}|${it.title}`);
     if (a) n++;
     const btn = (kind, value, label, rec) => `<button class="choice${a?.kind === kind && a.value === value ? " on" : ""}${rec ? " rec" : ""}"
@@ -683,7 +692,8 @@ function waitingHtml(p, ps) {
       placeholder="${choices ? "or your own answer" : "your answer"}" value="${esc(a?.kind === "text" ? a.value : "")}"></div></li>`;
   }).join("");
   const can = p.live && p.pilot;
-  return `<div class="ask"><div class="cardhead"><b>Waiting on you</b><span class="sub">from the plan · answer here, in the pilot's terminal${where}</span></div>
+  const left = unanswered(p).length;
+  return `<div class="ask${left ? "" : " done"}"><div class="cardhead"><b>${left ? "Waiting on you" : "Answered, with the pilot"}</b><span class="sub">from the plan · answer here, in the pilot's terminal${where}</span></div>
     ${intro ? md(intro, true) : ""}<ol class="items">${rows}</ol>
     <div class="sendrow"><button class="primary" data-sendanswers="${esc(sid)}"${n && can ? "" : " disabled"}>Send ${n || ""} answer${n === 1 ? "" : "s"} to the pilot</button>
       <span class="sub">${esc(sentNote.get(sid) || (can ? "through the intercom; it reaches the pilot at its next step" : "the pilot is not running"))}</span></div></div>`;
@@ -699,7 +709,7 @@ async function sendAnswers(sid) {
     + `\nTake each answered item out of the section, log the answer, and carry on.`;
   sentNote.set(sid, "sending…"); render();
   try {
-    const j = await post("/api/intercom", {to: [p.pilot], text});
+    const j = await post("/api/intercom", {to: [p.pilot], text, answered: {plan: sid, titles: picked.map(([it]) => it.title)}});
     for (const [it] of picked) answers.delete(`${sid}|${it.title}`);
     sentNote.set(sid, `sent ${picked.length}: ${j.result}`);
   } catch (e) { sentNote.set(sid, `not sent: ${e.message}`); }

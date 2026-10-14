@@ -64,6 +64,7 @@ STATE = Path(os.environ.get("PILOT_STATE") or Path(os.environ.get("LOCALAPPDATA"
 WORKERS = STATE / "workers"
 ARCHIVE = STATE / "archive"
 BRIEFS = STATE / "briefs"
+ANSWERED = STATE / "answered.json"          # waiting items the controller has answered, by plan: answered, not waiting on them
 REVIEWS = STATE / "reviews"                # the reviewer's round files, by leg
 METERS = STATE / "meters"
 PLANS = STATE / "plans"
@@ -713,6 +714,9 @@ def plans_view(rows, workers, seen=None):
                     "pilot": (live.get(sid) or {}).get("name"),
                     "pilotState": (seen.get(sid) or session_view(live[sid])) if sid in live else None,
                     "prs": mentioned_prs(re.split(r"^##\s+Log\s*$", text, maxsplit=1, flags=re.M)[0]),   # not the log's history
+                    # Items the controller has answered stay in the plan until its pilot takes them out; until then
+                    # they are with the pilot, not waiting on the controller.
+                    "answered": {k: v for k, v in (read_json(ANSWERED, {}).get(sid) or {}).items() if k and k in text},
                     **parse_plan(text)})
     out = by_priority(out)[:10]
     gone = archived(200)
@@ -3933,6 +3937,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 out = intercom(names, str(body.get("text") or ""))
             except (ValueError, subprocess.TimeoutExpired) as e:
                 return self.send(502, {"error": str(e)})
+            ans = body.get("answered") if isinstance(body.get("answered"), dict) else {}
+            if ans.get("plan") and isinstance(ans.get("titles"), list):
+                rec = read_json(ANSWERED, {})
+                rec.setdefault(str(ans["plan"]), {}).update({str(x): time.time() for x in ans["titles"] if x})
+                write_json(ANSWERED, rec)
             HUB.poke()
             return self.send(200, {"ok": True, "result": out})
         if self.path == "/api/launch":
