@@ -265,9 +265,10 @@ reads the leg's goal and Done when, the checklist, the spend, the worker's last 
 and approves or sends it to the controller. It checks the reason against the checklist: in testing it refused a
 request whose reason claimed a step was finished that the checklist still had in progress. Either way the
 plan's log has the verdict and the reason, and the bell has every refuel. The top bar's ⛽ says which way
-a refuel would go right now, and is a switch: **auto** (the default) lets the watchtower approve within its
-gates, shown as `auto · held` while the account has no headroom; **manual** sends every refuel to the controller,
-you or the autopilot while it is on. The switch is in `<state>/refuel.json`, and each change is in the black
+a refuel would go right now, and is a switch: **auto** (the default, labelled *watchtower may approve*) lets the
+watchtower approve within its gates, shown as *all to me · held* while the account has no headroom; **manual**
+(labelled *all to me*) sends every refuel to the controller, you or the autopilot while it is on. The switch is
+stored as `auto` or `manual` in `<state>/refuel.json`, and each change is in the black
 box. `~/.pilot/pilot.json` takes `"refuel": {"maxUsedPct": 80, "maxFactor": 2,
 "maxAgeMinutes": 30, "weekDryPct": 50, "weekDryDays": 3}`.
 

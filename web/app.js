@@ -192,7 +192,7 @@ function stateOf(w) {
     const head = w.reportHead || w.final?.reportHead, open = openItems(w.checklist || w.final?.checklist).length;
     if (head === "FAILED") return {cls: "failed", label: "✗ failed", stroke: "var(--crit)", tint: "var(--tint-crit)"};
     if (head === "BLOCKED") return {cls: "blocked", label: "blocked: needs you", stroke: "var(--warn)", tint: "var(--tint-warn)"};
-    // DONE with checklist items still open has not landed: the pilot sends it back or makes them a leg.
+    // DONE with checklist items still open is not done: the pilot sends it back or makes them a leg.
     if (head === "DONE" && open) return {cls: "blocked", label: `DONE, ${open} item${open > 1 ? "s" : ""} open`, stroke: "var(--warn)", tint: "var(--tint-warn)"};
     // Stopped after the plan's log last named it: its pilot has not looked, so nothing will happen until it does.
     if (head === "DONE" && w.unread) return {cls: "blocked", label: "✓ done · pilot hasn't looked", stroke: "var(--warn)", tint: "var(--tint-warn)"};
@@ -351,7 +351,7 @@ function summaryParts(key, s) {
   return {body, stamp, running};
 }
 
-// ------------------------------------------------------------------ connection, top bar, notifications
+// ------------------------------------------------------------------ stream, top bar, notices
 
 let S = null;
 function connect() {
@@ -365,7 +365,7 @@ function connect() {
   es.onopen = () => conn(true);
   es.onerror = () => conn(false);
 }
-function conn(ok) { const c = $("#conn"); c.className = "conn" + (ok ? " live" : ""); c.textContent = ok ? "live" : "reconnecting…"; }
+function conn(ok) { const c = $("#conn"); c.className = "conn" + (ok ? " live" : ""); c.textContent = ok ? "live" : "stream lost, retrying…"; }
 
 const NOTE_ICON = {waiting: "🟡", done: "✅", failed: "❌", died: "❌", budget: "⚠️", fuel: "⛽", quiet: "💤", turn: "•"};
 function renderTop() {
@@ -374,18 +374,19 @@ function renderTop() {
   if (!S?.workers) return;     // not loaded yet: an older server sends "{}" before its first snapshot
   // Whether a refuel can be approved by the watchtower right now, or has to come to you.
   // Refuelling's switch, which is not the autopilot's: auto lets the watchtower approve a refuel within its
-  // gates (held while the account has no headroom), manual sends every refuel to the tower.
+  // gates (held while the account has no headroom), manual sends every refuel to the controller. The stored
+  // values stay auto and manual; the button reads what each means to you.
   const rf = S.refuel || {}, manual = rf.mode === "manual", held = !manual && !rf.ok;
   const fuel = S.refuel ? `<button class="fuel ${manual ? "manual" : held ? "held" : "auto"}" data-refuel="${manual ? "auto" : "manual"}" title="${esc(manual
-    ? "Refuelling: manual. Every refuel request comes to the tower: you, or the autopilot while it is on. Click for auto, where the watchtower may approve them."
-    : held ? `Refuelling: auto, but held now: ${(rf.why || []).join("; ")}. Until there is headroom, refuels come to the tower. Click for manual.`
+    ? "Refuelling: manual. Every refuel request comes to you, or to the autopilot while it is on. Click for auto, where the watchtower may approve them."
+    : held ? `Refuelling: auto, but held now: ${(rf.why || []).join("; ")}. Until there is headroom, refuels come to you. Click for manual.`
     : `Refuelling: auto. The watchtower may approve a refuel when the reason and the worker's progress justify it (${(rf.why || []).join("; ")}). Click for manual.`)}">
-    ⛽ refuel: ${manual ? "manual" : held ? "auto · held" : "auto"}</button>` : "";
+    ⛽ refuel: ${manual ? "all to me" : held ? "all to me · held" : "watchtower may approve"}</button>` : "";
   put($("#limits"), limitsHtml(S.limits) + fuel);
   // The autopilot's switch: off, starting, standby or working, and how many decisions it has made since on.
   const ap = S.autopilot || {}, apState = !ap.enabled ? "off" : !ap.live ? (Date.now() / 1000 - (ap.since || 0) < 90 ? "starting" : "asleep, wakes for items") : ap.status === "busy" ? "deciding" : "standby";
   put($("#autopilot"), `<button class="ap ${ap.enabled ? "on" : ""}" data-autopilot="${ap.enabled ? "off" : "on"}" title="${esc(ap.enabled
-      ? `On since ${when(ap.since)}. It decides the tower's items in your place: all but irreversible. ${ap.decisions?.length || 0} decision(s) so far; the Black box has them. Click to switch it off.`
+      ? `On since ${when(ap.since)}. It decides the controller's items in your place: all but irreversible. ${ap.decisions?.length || 0} decision(s) so far; the Black box has them. Click to switch it off.`
       : "Off. Switch it on when you leave: an Opus 5.5 session decides what waits on you, all but irreversible (never pushes, merges, deletes, or sets a new objective), each step checked by auto mode's classifier.")}">
     ✈ autopilot: ${apState}${ap.enabled && ap.decisions?.length ? ` · ${ap.decisions.length}` : ""}</button>`);
   const over = S.workers.filter(w => w.overBudget);
@@ -505,7 +506,8 @@ function prChip(p, withRepo) {
   return `<a class="prchip ${cls}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(p.title || "")}">${withRepo && p.repo ? esc(p.repo) + " " : ""}#${esc(p.number)} ${esc(what)} ↗</a>`;
 }
 
-// Where a leg's PR stands in its review: on approach, go-around, holding, to the tower, cleared to land, at the gate.
+// Where a leg's PR stands in its review: on approach, go-around, on final, to the controller, team review, cleared
+// to land, landed. pilot.py's approach() sends the label; the stage keys (holding, tower, clearance, gate) are kept.
 function approachChip(ap) {
   if (!ap) return "";
   const cls = ap.stage === "cleared" || ap.stage === "gate" ? "ok" : ap.stage === "goaround" || ap.stage === "tower" ? "bad" : "sub";
@@ -535,7 +537,7 @@ function flightGit(p, s) {
     dirty.length && `uncommitted: ${dirty.map(([n, g]) => `${esc(n)} (${g.dirty})`).join(", ")}`].filter(Boolean).join("; ")}</span>`;
 }
 
-// A leg's state: its worker's if one flies it now, else how its removed worker landed, else planned.
+// A leg's state: its worker's if one flies it now, else how its removed worker ended, else planned.
 function legState(s, name) {
   const w = s.workers.find(x => x.name === name);
   if (w) return {w, st: stateOf(w)};
@@ -544,12 +546,12 @@ function legState(s, name) {
   return {st: {cls: "other", label: "planned", stroke: "var(--axis)", tint: "var(--surface)", planned: true}};
 }
 
-// An alternate leg, filed in the plan's Alt of column, is taken once a worker flies it, or a removed one landed:
-// pilot.py's alt_taken. Removing its worker before it lands undoes the diversion.
+// An alternate leg, filed in the plan's Alt of column, is taken once a worker flies it, or a removed one is done:
+// pilot.py's alt_taken. Removing its worker before it is done undoes the diversion.
 function altTaken(s, l) { const {w, h, st} = legState(s, l.leg); return !!w || (!!h && st.cls === "done"); }
 
 // The route as flown, pilot.py's flown(): each primary leg, or in its place the alternates taken for it (any one
-// landed lands it). An alternate not taken never keeps a flight from landing and is not counted as one of its legs.
+// done counts for it). An alternate not taken never keeps a flight from landing and is not counted as one of its legs.
 function flownLegs(p, s) {
   const taken = new Map();
   for (const l of p.legs) if (l.altOf && altTaken(s, l)) taken.set(l.altOf, [...(taken.get(l.altOf) || []), l]);
@@ -576,7 +578,7 @@ function routeDepths(legs) {
 }
 
 // What "your move" is, once the pilot's turn has ended with nothing in the air: the items waiting on the
-// controller; for a landed flight, its open pull requests and what each needs; else the last line of the
+// controller; for a flight whose legs are all done, its open pull requests and what each needs; else the last line of the
 // pilot's last message, which is where a pilot says what it is waiting for.
 // With the autopilot on, what waits on the controller is the autopilot's to decide, a merge excepted (it never merges).
 function yourMoveOf(p, s, ps) {
@@ -591,11 +593,11 @@ function yourMoveOf(p, s, ps) {
   const prs = [...new Map(legs.flatMap(({w, h}) => (w || h)?.git?.prs || []).map(x => [x.url, x])).values()]
     .filter(x => x.state !== "MERGED" && x.state !== "CLOSED");
   const link = x => `<a href="${esc(x.url)}" target="_blank" rel="noopener">#${esc(x.number)}</a>`;
-  const landed = legs.length && legs.every(({st}) => st.cls === "done");
+  const allDone = legs.length && legs.every(({st}) => st.cls === "done");
   // A team-reviewed PR goes to its reviewers and is merged once approved; a self-reviewed one (the pilot and
   // its co-pilot are its review, as on a repo of your own) is merged once its checks pass.
   const green = x => x.ci === "passing" ? " (checks green)" : "";
-  // While the flight's own review of a PR is under way (a round due, a go-around, CI running), the move is the pilot's.
+  // While the flight's own review of a PR is under way (a round due, a go-around, on final for CI), the move is the pilot's.
   const aps = new Map(legs.map(({w, h}) => (w || h)?.approach).filter(Boolean).map(a => [a.pr, a]));
   const step = x => ["approach", "goaround", "holding"].includes(aps.get(x.number)?.stage) ? `${link(x)}: ${esc(aps.get(x.number).why)} (the pilot's)`
     : aps.get(x.number)?.stage === "tower" ? `${link(x)}: its review rounds are spent; decide the bugs left`
@@ -604,13 +606,13 @@ function yourMoveOf(p, s, ps) {
     : x.state === "DRAFT" ? `mark ${link(x)} ready for review${green(x)}`
     : x.review === "APPROVED" ? `merge ${link(x)}` : x.review === "CHANGES_REQUESTED" ? `${link(x)}: changes requested`
     : `${link(x)} waits on its reviewers`;
-  if (landed && prs.length) return "landed · your move: " + prs.map(step).join(", ");
-  // Every leg landed and nothing left open: the flight is done, whatever the pilot's last words were. Only once
+  if (allDone && prs.length) return "done · your move: " + prs.map(step).join(", ");
+  // Every leg done and nothing left open: the flight has landed, whatever the pilot's last words were. Only once
   // every leg's git has been read, though: until then its PRs are unknown, not absent.
-  if (landed && legs.every(({w, h}) => (w || h)?.git)) return "";
+  if (allDone && legs.every(({w, h}) => (w || h)?.git)) return "";
   // No open PR known (none, or not looked up yet): the pilot's own words say what it is waiting for.
   const last = String(ps?.said?.text || "").split("\n").map(l => l.replace(/[*`]/g, "").replace(/^[\s#>-]+/, "").trim()).filter(Boolean).pop();
-  return `${landed ? "landed · " : ""}${auto ? "autopilot's move" : "your move"}${last ? `: ${esc(last.length > 110 ? last.slice(0, 107) + "…" : last)}` : ""}`;
+  return `${allDone ? "done · " : ""}${auto ? "autopilot's move" : "your move"}${last ? `: ${esc(last.length > 110 ? last.slice(0, 107) + "…" : last)}` : ""}`;
 }
 
 function planCard(p, s) {
@@ -629,15 +631,15 @@ function planCard(p, s) {
   const flying = p.legs.map(l => l.leg).filter(n => s.workers.some(w => w.name === n && w.state === "working"));
   const fold = (k, def) => `data-k="${esc(k)}"${def ? ` data-open="1"` : ""}${(opened.has(k) ? opened.get(k) : def) ? " open" : ""}`;
   // The pilot's turn has ended and nothing is in the air: whatever happens next is up to the controller.
-  // A flight whose legs have all landed with nothing left open reads landed, whether or not its pilot still runs.
+  // A flight whose legs are all done with nothing left open reads landed, whether or not its pilot still runs.
   const settled = !flying.length ? yourMoveOf(p, s, ps) : null;
   const move = p.live && ps?.status === "idle" ? settled : settled === "" ? "" : null;
-  const yourMove = !!move, atGate = move === "";
+  const yourMove = !!move, landed = move === "";
   // The flight's state sits by its name: whose move it is, the pilot at work, or landed. A flight holding at the
   // gate says so first: ready once its pilot has a route and has ended its turn, else still being planned.
   const ready = holdReady(p);
   const status = p.hold ? `${holdChip(p, ready)}${ready ? "" : ` ${p.asleep ? `<span class="chip other">pilot asleep</span>` : pilotChip(ps)}`}`
-    : atGate ? `<span class="chip done">✓ landed</span>`
+    : landed ? `<span class="chip done">✓ landed</span>`
     : yourMove ? `<span class="chip blocked move" title="${esc(ps.said?.text || "")}">${move}</span>` : p.asleep ? `<span class="chip other" title="Its background session has ended. The dashboard wakes it, as a copy, when one of its legs stops or a message comes for it.">pilot asleep${flying.length ? `, wakes when ${esc(flying.join(", "))} stops` : ""}</span>` : pilotChip(ps, flying);
   const where = `answer in the pilot's terminal${ps?.remote ? ` or <a href="${esc(ps.remote)}" target="_blank" rel="noopener">remote ↗</a>` : ""}`;
   // With more than one flight each starts folded, so the page reads as a list of flights, unless it waits on you;
@@ -652,12 +654,12 @@ function planCard(p, s) {
     ${connectsCard(p)}
     ${(p.prs || []).length ? `<div class="prline"><span class="sub">pull requests the plan names:</span> ${p.prs.map(x => prChip(x, true)).join(" ")}</div>` : ""}
     ${p.waiting ? waitingHtml(p, ps) : ""}
-    ${yourMove && !atGate && ps.said ? `<details class="lastsaid" ${fold("said:" + p.sessionId, true)}><summary>its turn ended ${esc(ago(Date.parse(ps.said.at) / 1000))} with nothing in the air; its last message</summary>${md(ps.said.text)}</details>` : pilotNow(ps)}
+    ${yourMove && !landed && ps.said ? `<details class="lastsaid" ${fold("said:" + p.sessionId, true)}><summary>its turn ended ${esc(ago(Date.parse(ps.said.at) / 1000))} with nothing in the air; its last message</summary>${md(ps.said.text)}</details>` : pilotNow(ps)}
     ${p.notes ? `<details ${fold("notes:" + p.sessionId, waiting)}><summary>the pilot's notes: what it found and why the route is this shape</summary>${md(p.notes, true)}</details>` : ""}
     ${p.legs.length > 1 ? `<details ${fold("chart:" + p.sessionId, true)}><summary>the route as a chart: each leg after the legs it waits for</summary><div class="graph">${routeChart(p, s)}</div></details>` : ""}
     <div class="tablewrap"><table><thead><tr><th>Leg</th><th>Goal</th><th>After</th><th>Done when</th><th>Status</th><th class="num">Spend</th></tr></thead>
       <tbody>${legs || `<tr><td colspan="6" class="sub">No legs yet. The pilot adds them to the Route table.</td></tr>`}</tbody></table></div>
-    ${log ? `<details ${fold("log:" + p.sessionId, true)}><summary>flight log: decisions, questions and answers, legs taking off and landing</summary><ul class="log">${log}</ul></details>` : ""}
+    ${log ? `<details ${fold("log:" + p.sessionId, true)}><summary>flight log: decisions, questions and answers, legs taking off and finishing</summary><ul class="log">${log}</ul></details>` : ""}
     <div class="planfoot"><button class="arch" data-archive="${esc(p.sessionId)}" data-name="${esc(p.flight ? `Flight ${p.flight}` : "this flight")} · ${esc(p.title)}" title="Off the Overview and the Flights strips, onto History; nothing is deleted, and History restores it">Archive flight…</button></div></details>`;
 }
 
@@ -666,7 +668,7 @@ function planCard(p, s) {
 // The plan's waiting items, as the pilot skill asks for them:
 //   - **<question>** <context>. Options: A | B. Recommend: A.
 // Each gets buttons (its options, or accepting the recommendation) and a box for a reply of your own. Send
-// relays the answers to the pilot through the intercom. Choices are kept, across re-renders, until sent.
+// sends the answers to the pilot through the intercom. Choices are kept, across re-renders, until sent.
 const answers = new Map(), sentNote = new Map();
 
 function waitingItems(src) {
@@ -810,7 +812,7 @@ function routeChart(p, s) {
 const PLANE = "M15,0 L5,-2.2 L-1,-12 L-5,-12 L-2,-2.2 L-9,-2.2 L-12.5,-7 L-15,-7 L-13,0 L-15,7 L-12.5,7 L-9,2.2 L-2,2.2 L-5,12 L-1,12 L5,2.2 Z";
 
 // A flight's times, pilot.py's flight_times(): when its first leg took off, its ETA projected from active time
-// (or, once every leg has landed, its arrival), and its delay against its schedule, the first ETA it had.
+// (or, once every leg is done, its arrival), and its delay against its schedule, the first ETA it had.
 // Early is a negative delay. A time on another day than today says which day.
 const tclock = ts => new Date(ts * 1000).toDateString() === new Date().toDateString() ? hhmm(ts) : dayhhmm(ts);
 function delayHtml(d) {
@@ -864,13 +866,14 @@ function connectsCard(p) {
     ${held.length ? `<span class="sub">— its legs take off once ${held.map(c => esc(c.flight)).join(", ")} ${held.length > 1 ? "have" : "has"} landed</span>` : ""}</div>`;
 }
 
-// Where a flight is: its route from the gate, left to right, a leg's depth in After its column (pilot.py's
+// Where a flight is: its route from departure, left to right, a leg's depth in After its column (pilot.py's
 // route_depths). Legs of one depth fly side by side as lanes: the route forks where several legs wait on one, and
 // joins at a leg that waits on several; legs that end it join at its destination. An alternate is drawn dashed
 // beside its primary, in its column, and counts for nothing until it is taken. Each leg in the air (working,
 // waiting on you, failed or stopped) has its plane, as far along its track as its checklist, amber while it waits
 // on you; an alternate only once taken, and a primary no longer once diverted. Before the first takeoff one plane
-// stands at the gate; between legs it stands on the ground; when every leg of the route as flown is done it has landed.
+// stands at departure (at the gate while held for clearance); between legs it stands on the ground; when every
+// leg of the route as flown is done it parks past the end.
 function flightStrip(p, s) {
   const depth = p.depths || routeDepths(p.legs);
   const legs = p.legs.map(l => ({...l, name: l.leg, d: depth[l.leg] || 0, ...legState(s, l.leg)}));
@@ -906,33 +909,33 @@ function flightStrip(p, s) {
   };
   const progress = l => { const it = l.w?.checklist || []; return it.length ? (it.length - openItems(it).length) / it.length : .5; };
   const colorOf = l => l.st.cls === "failed" ? "var(--crit)" : l.st.cls === "blocked" ? "var(--warn)" : l.st.cls === "working" ? "var(--fill)" : "var(--muted)";
-  // In the air: a leg of the route as flown that has a worker and has not landed.
+  // In the air: a leg of the route as flown that has a worker and is not done.
   const air = route.filter(l => !l.st.planned && l.st.cls !== "done");
   const planes = air.map(l => {
     const t = Math.min(.9, Math.max(.1, progress(l))), pt = curve(at(main(l)), pos.get(l.name)).at(t);
     const up = l.st.cls === "working" || l.st.cls === "blocked";    // its turn ended short of DONE: it stands there
     return {x: pt.x, y: pt.y - (up ? 15 : 0), up, color: colorOf(l), name: l.name, t};
   });
-  const landed = route.length > 0 && route.every(l => l.st.cls === "done");
+  const allDone = route.length > 0 && route.every(l => l.st.cls === "done");
   let status;
   if (!legs.length) { planes.push({x: X0, y: Y, color: "var(--muted)"}); status = "no route yet"; }
-  else if (landed) { planes.push({x: XN + 40, y: Y, color: "var(--good)"}); status = "landed"; }
+  else if (allDone) { planes.push({x: XN + 40, y: Y, color: "var(--good)"}); status = "all legs done"; }
   else if (!air.length) {
-    // On the ground: at the gate before the first takeoff, else where the next legs leave from.
+    // On the ground: at departure before the first takeoff (at the gate if held), else where the next legs leave from.
     // A leg waited on is done once what flies in its place (itself, or its taken alternate) is.
     const done = n => { const k = by.get(n)?.altOf || n, r = route.find(r => r.name === k || r.altOf === k); return !r || r.st.cls === "done"; };
     const next = route.filter(l => l.st.planned && l.after.every(done));
     const first = next[0], fromAt = first ? at(main(first)) : gate;
     planes.push({x: fromAt.x, y: fromAt.y, color: "var(--muted)"});
     const names = next.map(l => esc(l.name)).join(", ");
-    status = route.some(l => !l.st.planned) ? `on the ground${names ? ` · next: ${names}` : ""}` : `at the gate${names ? ` · first: ${names}` : ""}`;
+    status = route.some(l => !l.st.planned) ? `on the ground${names ? ` · next: ${names}` : ""}` : `before departure${names ? ` · first: ${names}` : ""}`;
     if (p.hold) status = `holding at the gate${names ? ` · first: ${names}` : ""} · no departure until cleared`;
   } else {
     const named = (cls, f) => air.filter(l => l.st.cls === cls).map(f);
     const prog = l => { const it = l.w?.checklist || []; return it.length ? ` (${it.length - openItems(it).length} of ${it.length})` : ""; };
     const flying = named("working", l => esc(l.name) + prog(l)), hold = named("blocked", l => `${esc(l.name)}: ${esc(l.st.label)}`);
     const failed = named("failed", l => esc(l.name)), stopped = named("other", l => `${esc(l.name)}, ${esc(l.st.label)}`);
-    status = [flying.length && `${flying.length} flying: ${flying.join(", ")}`, hold.length && `holding · ${hold.join("; ")}`,
+    status = [flying.length && `${flying.length} flying: ${flying.join(", ")}`, hold.length && `waiting · ${hold.join("; ")}`,
               failed.length && `failed: ${failed.join(", ")}`, stopped.length && `stopped: ${stopped.join("; ")}`].filter(Boolean).join(" · ");
   }
   const tracks = [], stops = [];
@@ -966,7 +969,7 @@ function flightStrip(p, s) {
       <text x="${x}" y="${y + 22}" text-anchor="middle">${esc(name)}</text></g>`);
   }
   if (dest) {
-    const stroke = landed ? "var(--good)" : "var(--axis)";
+    const stroke = allDone ? "var(--good)" : "var(--axis)";
     stops.push(`<g class="stop"><title>destination: every lane joins here</title><circle cx="${dest.x}" cy="${dest.y}" r="11" style="fill:none;stroke:${stroke};stroke-width:1.5"/>
       <circle cx="${dest.x}" cy="${dest.y}" r="4" style="fill:${stroke}"/></g>`);
   }
@@ -1480,7 +1483,7 @@ VIEWS.blackbox = root => {
 };
 
 // Archived flights, pilot.py's flight_history(): plans the controller put away, kept whole, each with its times,
-// how its legs ended and a Restore. Not the workers below them, which `pilot rm` archived one leg at a time.
+// how its legs ended and a Restore. Not the workers below them, which `pilot rm` removed one leg at a time.
 function flightHistoryRow(f) {
   const t = f.times || {};
   const end = t.arrived ? `ARR ${esc(when(t.arrived))}` : t.eta ? `last ETA ${esc(when(t.eta))}` : esc(t.noEta || t.error || "no ETA");
@@ -1799,7 +1802,7 @@ document.addEventListener("click", async e => {
     t.disabled = true;
     try {
       await post(`/api/workers/${name}/budget`, {tokens: to});
-      // Fuel does not wake a worker: one whose turn ended at its budget waits until it hears from you.
+      // A refuel does not wake a worker: one whose turn ended at its budget waits until it hears from you.
       const w = S.workers.find(x => x.name === name);
       if (w && !(w.pid && (w.state === "working" || w.state === "blocked"))
           && confirm(`${name} now has ${M(to)}. Its turn has ended, so it waits until it hears from you. Tell it to carry on with its brief?`))
