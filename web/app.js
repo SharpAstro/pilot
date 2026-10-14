@@ -722,7 +722,8 @@ function waitingHtml(p, ps) {
 async function sendAnswers(sid) {
   const p = (S.plans || []).find(x => x.sessionId === sid);
   if (!p?.pilot) return;
-  const picked = waitingItems(p.waiting).items.map(it => [it, answers.get(`${sid}|${it.title}`)]).filter(([, a]) => a);
+  // An item already answered here (merged with its own button, say) is not sent again.
+  const picked = unanswered(p).map(it => [it, answers.get(`${sid}|${it.title}`)]).filter(([, a]) => a);
   if (!picked.length) return;
   sentNote.set(sid, "sending…"); render();
   // What the controller submits here is done here: a Merge answer to a merge item is the merge itself, run by

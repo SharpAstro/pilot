@@ -4391,13 +4391,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             root = config()["repos"].get(name) if name else None
             if not root or not n:
                 return self.send(400, {"error": "no such flight or pull request"})
-            pr = gh_json(root, "pr", "view", str(n), "--json", "state,headRefOid,url,mergeable")
-            if not pr or pr.get("state") != "OPEN":
-                return self.send(409, {"error": f"PR #{n} is {(pr or {}).get('state', 'not found')}"})
-            r = subprocess.run(["gh", "pr", "merge", str(n), "--rebase", "--match-head-commit", pr["headRefOid"]], cwd=str(root),
-                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-            if r.returncode != 0:
-                return self.send(502, {"error": (r.stderr or r.stdout).strip()[:400]})
+            # One merge at a time: the item's button and Send answers can both ask for it at once, and gh answers a
+            # merge of a PR that has just merged with success, so #11 was logged and announced twice.
+            with MERGE_LOCK:
+                pr = gh_json(root, "pr", "view", str(n), "--json", "state,headRefOid,url,mergeable")
+                if pr and pr.get("state") == "MERGED":
+                    return self.send(200, {"ok": True, "merged": n, "head": pr["headRefOid"][:8], "already": True})
+                if not pr or pr.get("state") != "OPEN":
+                    return self.send(409, {"error": f"PR #{n} is {(pr or {}).get('state', 'not found')}"})
+                r = subprocess.run(["gh", "pr", "merge", str(n), "--rebase", "--match-head-commit", pr["headRefOid"]], cwd=str(root),
+                                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+                if r.returncode != 0:
+                    return self.send(502, {"error": (r.stderr or r.stdout).strip()[:400]})
             head = pr["headRefOid"][:8]
             plan_log(sid, f"Controller merged PR #{n} from the dashboard (rebase, guarded on {head}): {pr.get('url')}")
             rec = read_json(ANSWERED, {})
@@ -4443,6 +4448,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.send(404, {"error": "not found"})
 
 
+MERGE_LOCK = threading.Lock()   # the dashboard's merges, one at a time
 RESTART_CODE = 75        # the server's exit code that asks its supervisor to start it again
 SUPERVISED = False       # this server runs under `pilot dashboard`'s supervisor, so it can be restarted
 
