@@ -3483,8 +3483,16 @@ For each item:
    recommendation unless you find a reason against it. You may decide engineering questions, reviews
    (approving a design document to build on), route changes within the flight's objective, and refuels up
    to {cap} times a leg's first budget (`python {pilot} budget <leg> <N>`, which refuses more).
-3. Never decide, and leave for the controller: merging, a push to the default branch or a force-push,
-   removing a worktree or a branch, deleting anything, a new objective for a flight, or anything else that cannot be undone.
+   You act on the controller's behalf, so you also do what they would do with the answer:
+   - Merge a PR the pilot put to the controller as cleared to land (its review accepted, CI green):
+     `python {pilot} merge <flight> <number> [--repo owner/name]`. It refuses one that is not cleared (CI not
+     green, a draft, conflicts, changes asked for); then the item waits for the controller. A merge that
+     publishes a package (a SharpAstro library, to NuGet) is still the controller's merge to make, and yours.
+   - Remove a landed leg's worktree, and delete a leg's local branch once its tip is on a remote branch or
+     merged (`git branch -r --contains <tip>` lists one, or its PR merged it): nothing is lost.
+3. Never decide, and leave for the controller: a push to the default branch or a force-push, deleting a branch
+   or anything else that holds work found nowhere else, a new objective for a flight, or anything else that
+   cannot be undone.
 4. Answer the pilot with `python {pilot} tell "<pilot name>" --as autopilot -m "<message>"`. Start the
    message with "The autopilot's answers, on the controller's behalf (they are away):", then one line per
    item: the question, your decision, and why in a sentence. For an item you leave, say that it waits for
@@ -4337,6 +4345,86 @@ def cmd_march(a):
         sys.exit(str(e))
     print(f"{flight_name(sid)}: " + ("marches on beside the first in the order, whatever the account's usage"
                                      if not a.off else "back in the holding pattern's order"))
+
+
+class MergeRefused(Exception):
+    def __init__(self, code, text):
+        super().__init__(text)
+        self.code = code
+
+
+def merge_pr(sid, n, want="", actor="Controller"):
+    """Merges a flight's PR on the controller's behalf: their click on the dashboard, or the autopilot's answer to a
+    merge item (`pilot merge`), which acts for them while they are away: it merged nothing and left every one of
+    TIA2's merges to the controller, who said of it: "it acts on MY behalf". Guarded on the head
+    it reads, so a push after the review merges nothing; the autopilot's only once CI is green on that head, the PR
+    is no draft and has no conflicts. Logged in the plan, the item taken out, its pilot told. Returns {merged, head}."""
+    try:
+        name, root = merge_target(sid, want)
+    except ValueError as e:
+        raise MergeRefused(400, str(e))
+    if not root or not n:
+        raise MergeRefused(400, "no such flight or pull request")
+    # One merge at a time: the item's button and Send answers can both ask for it at once, and gh answers a
+    # merge of a PR that has just merged with success, so #11 was logged and announced twice.
+    with MERGE_LOCK:
+        pr = gh_json(root, "pr", "view", str(n), "--json", "state,headRefOid,url,mergeable,isDraft,statusCheckRollup,reviewDecision")
+        # The PR the item named, not one of the same number in a checkout pilot.json calls by that name.
+        if pr and want and "/" in want and f"/{want.lower()}/pull/{n}" not in (pr.get("url") or "").lower():
+            raise MergeRefused(409, f"#{n} in {name}'s checkout is {pr.get('url')}, not {want}#{n}")
+        if pr and pr.get("state") == "MERGED":
+            return {"merged": n, "head": pr["headRefOid"][:8], "already": True}
+        if not pr or pr.get("state") != "OPEN":
+            raise MergeRefused(409, f"PR #{n} is {(pr or {}).get('state', 'not found')}")
+        if actor != "Controller":
+            v = pr_view(pr)
+            why = ("it is a draft" if pr.get("isDraft") else "it has conflicts" if v["conflicts"] else
+                   "its review asks for changes" if pr.get("reviewDecision") == "CHANGES_REQUESTED" else
+                   f"CI is {v['ci']} on its head" if v["ci"] != "passing" else None)
+            if why:
+                raise MergeRefused(409, f"PR #{n} of {name} is not cleared to land: {why}")
+        run = lambda how: subprocess.run(["gh", "pr", "merge", str(n), how, "--match-head-commit", pr["headRefOid"]], cwd=str(root),
+                                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        how = "rebase"
+        r = run("--rebase")
+        # A branch with a merge commit in it (brought up to date by merging its base, as PIL3's #15 was to
+        # resolve a conflict) cannot be rebased: squash it, which keeps main's history linear all the same.
+        if r.returncode != 0 and "can't be rebased" in (r.stderr or r.stdout):
+            how, r = "squash", run("--squash")
+        if r.returncode != 0:
+            raise MergeRefused(502, (r.stderr or r.stdout).strip()[:400])
+    head = pr["headRefOid"][:8]
+    by = "from the dashboard" if actor == "Controller" else "on the controller's behalf"
+    plan_log(sid, f"{actor} merged PR #{n} of {name} {by} ({how}, guarded on {head}): {pr.get('url')}")
+    rec = read_json(ANSWERED, {})
+    waiting = split_waiting(plan_path(sid).read_text(encoding="utf-8"))[0] if plan_path(sid).exists() else ""
+    for title in re.findall(r"^\s*[-*]\s+\*\*(.+?)\*\*", waiting, re.M):
+        if f"PR #{n}" in title:
+            rec.setdefault(sid, {})[title] = time.time()
+    write_json(ANSWERED, rec)
+    drop_waiting(sid, lambda title: f"merge pr #{n}" in title.lower())
+    # Its pilot, live or parked: the intercom wakes a parked one with the news.
+    pilot = next((x.get("name") for x in agents() if x.get("sessionId") == sid and (x.get("pid") or asleep(x))), None)
+    if pilot:
+        who = "The controller" if actor == "Controller" else "The autopilot, on the controller's behalf,"
+        threading.Thread(target=lambda: intercom([pilot], f"{who} merged PR #{n} of {name} ({how}, guarded on "
+                                                 f"{head}). Take its merge item out of your plan, log it, and carry on.",
+                                                 sender="Dashboard"), daemon=True).start()
+    return {"merged": n, "head": head}
+
+
+def cmd_merge(a):
+    """`pilot merge FLIGHT PR [--repo owner/name]`: the controller's merge, or the autopilot's in their place. A
+    pilot never merges (SKILL: the merge is the controller's)."""
+    who = sender()
+    if who == "Pilot":
+        sys.exit("pilot: a pilot never merges; put the merge in your plan's Waiting on the controller")
+    try:
+        sid = find_flight(a.flight)
+        out = merge_pr(sid, a.pr, a.repo or "", who)
+    except (ValueError, MergeRefused) as e:
+        sys.exit(f"pilot: {e}")
+    print(f"PR #{a.pr}: " + ("already merged" if out.get("already") else f"merged, guarded on {out['head']}"))
 
 
 def cmd_amend(a):
@@ -5539,51 +5627,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/api/merge":
             # The controller's own click: a merge a pilot is refused (its okay arrives as another session's message,
             # which carries no authority), so the dashboard runs it, guarded on the head the controller was shown.
-            sid, n, want = str(body.get("plan") or ""), int(body.get("pr") or 0), str(body.get("repo") or "").strip()
             try:
-                name, root = merge_target(sid, want)
-            except ValueError as e:
-                return self.send(400, {"error": str(e)})
-            if not root or not n:
-                return self.send(400, {"error": "no such flight or pull request"})
-            # One merge at a time: the item's button and Send answers can both ask for it at once, and gh answers a
-            # merge of a PR that has just merged with success, so #11 was logged and announced twice.
-            with MERGE_LOCK:
-                pr = gh_json(root, "pr", "view", str(n), "--json", "state,headRefOid,url,mergeable")
-                # The PR the item named, not one of the same number in a checkout pilot.json calls by that name.
-                if pr and want and "/" in want and f"/{want.lower()}/pull/{n}" not in (pr.get("url") or "").lower():
-                    return self.send(409, {"error": f"#{n} in {name}'s checkout is {pr.get('url')}, not {want}#{n}"})
-                if pr and pr.get("state") == "MERGED":
-                    return self.send(200, {"ok": True, "merged": n, "head": pr["headRefOid"][:8], "already": True})
-                if not pr or pr.get("state") != "OPEN":
-                    return self.send(409, {"error": f"PR #{n} is {(pr or {}).get('state', 'not found')}"})
-                run = lambda how: subprocess.run(["gh", "pr", "merge", str(n), how, "--match-head-commit", pr["headRefOid"]], cwd=str(root),
-                                                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-                how = "rebase"
-                r = run("--rebase")
-                # A branch with a merge commit in it (brought up to date by merging its base, as PIL3's #15 was to
-                # resolve a conflict) cannot be rebased: squash it, which keeps main's history linear all the same.
-                if r.returncode != 0 and "can't be rebased" in (r.stderr or r.stdout):
-                    how, r = "squash", run("--squash")
-                if r.returncode != 0:
-                    return self.send(502, {"error": (r.stderr or r.stdout).strip()[:400]})
-            head = pr["headRefOid"][:8]
-            plan_log(sid, f"Controller merged PR #{n} of {name} from the dashboard ({how}, guarded on {head}): {pr.get('url')}")
-            rec = read_json(ANSWERED, {})
-            waiting = split_waiting(plan_path(sid).read_text(encoding="utf-8"))[0] if plan_path(sid).exists() else ""
-            for title in re.findall(r"^\s*[-*]\s+\*\*(.+?)\*\*", waiting, re.M):
-                if f"PR #{n}" in title:
-                    rec.setdefault(sid, {})[title] = time.time()
-            write_json(ANSWERED, rec)
-            drop_waiting(sid, lambda title: f"merge pr #{n}" in title.lower())
-            # Its pilot, live or parked: the intercom wakes a parked one with the news.
-            pilot = next((x.get("name") for x in agents() if x.get("sessionId") == sid and (x.get("pid") or asleep(x))), None)
-            if pilot:
-                threading.Thread(target=lambda: intercom([pilot], f"The controller merged PR #{n} of {name} from the dashboard ({how}, guarded on "
-                                                         f"{head}). Take its merge item out of your plan, log it, and carry on.",
-                                                         sender="Dashboard"), daemon=True).start()
+                out = merge_pr(str(body.get("plan") or ""), int(body.get("pr") or 0), str(body.get("repo") or "").strip())
+            except MergeRefused as e:
+                return self.send(e.code, {"error": str(e)})
             HUB.poke()
-            return self.send(200, {"ok": True, "merged": n, "head": head})
+            return self.send(200, {"ok": True, **out})
         if self.path == "/api/repos":
             try:
                 added, reached = add_repos(body.get("paths"), body.get("plan") or None)
@@ -5837,6 +5886,11 @@ def main():
     s = sub.add_parser("clear", help="the controller's: clear a flight holding at the gate for takeoff, and tell its pilot")
     s.add_argument("flight", help="its flight number, e.g. PIL2, or its plan id")
     s.set_defaults(fn=cmd_clear)
+    s = sub.add_parser("merge", help="the controller's, or the autopilot's on their behalf: merge a flight's PR, guarded on its head")
+    s.add_argument("flight", help="its flight number, e.g. TIA2, or its plan id")
+    s.add_argument("pr", type=int)
+    s.add_argument("--repo", help="owner/name, when the PR is in another of the flight's repos than its own")
+    s.set_defaults(fn=cmd_merge)
     s = sub.add_parser("march", help="the controller's: let a flight out of march on's holding pattern by hand")
     s.add_argument("flight", help="its flight number, e.g. CL1, or its plan id")
     s.add_argument("--off", action="store_true", help="put it back: it holds again while the account is short")

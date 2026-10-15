@@ -115,6 +115,7 @@ pilot track --out <scratch>/track.html   # its tracking page, for the pilot to p
 pilot track --url <artifact url>    # where it was published: the plan's Tracking: line
 pilot plan --hold                   # hold this flight at the gate (Hold: awaiting clearance): plan only, start refuses every leg
 pilot clear PIL2                    # the controller's: clear a holding flight for takeoff; its pilot is told, or woken, to take off
+pilot merge TIA2 135 --repo SharpAstro/SdlVulkan.Renderer   # the controller's, or the autopilot's on their behalf: merge, guarded on its head
 pilot march CL1 [--off]             # the controller's: let a flight out of march on's holding pattern by hand (the chip's "let it fly"), beside the first in the order
 pilot amend PIL2 "<request>"        # the controller's: file amendment A<n> in the plan; its pilot is told, or woken, to classify it
 pilot classify A1 fold --leg fix --why "<why>"   # the pilot's: fold | leg | flight, recorded under the amendment and logged
@@ -221,8 +222,11 @@ While it is on, the dashboard sends it each live plan's `## Waiting on the contr
 change, through the intercom, and it answers the pilot with `pilot tell --as autopilot`, marked as its
 answers on your behalf. It may decide engineering questions, reviews (approving a design document to build
 on), route changes within a flight's objective, and refuels up to 3 times a leg's first budget
-(`pilot budget` refuses it more). It never merges, pushes to a default branch, deletes anything or sets a new
-objective: those stay in the plan for you. In auto mode the classifier checks every command it runs, with
+(`pilot budget` refuses it more). It acts on your behalf, so it also merges a PR its pilot put to you as cleared
+to land (`pilot merge <flight> <pr> [--repo owner/name]`, which refuses one whose CI is not green on its head, a
+draft, or one with conflicts or changes asked for), removes a landed leg's worktree, and deletes a local branch
+whose tip is already on a remote branch or merged. It never pushes to a default branch, force-pushes, deletes
+work found nowhere else or sets a new objective: those stay in the plan for you. In auto mode the classifier checks every command it runs, with
 its whole transcript as context; a refused one leaves that item for you. Switching it off stops the
 session. The routing runs in the dashboard, so the dashboard has to run too.
 

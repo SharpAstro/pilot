@@ -1668,6 +1668,35 @@ class SessionArtifactsTests(Case):
                          "its result event says so, and the page reads the list again")
 
 
+class AutopilotMergeTests(Case):
+    """The autopilot merges on the controller's behalf, but only a PR cleared to land, guarded on its head."""
+
+    def pr(self, **kw):
+        return {"state": "OPEN", "headRefOid": "abcdef1234", "url": "https://github.com/o/web-app/pull/7", "mergeable": "MERGEABLE",
+                "isDraft": False, "reviewDecision": None, "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "SUCCESS"}], **kw}
+
+    def test_a_cleared_pr_merges_and_one_that_is_not_waits(self):
+        self.config(repos={"web-app": str(ROOT / "web-app")})
+        self.plan("s1", PLAN.replace("Options: Yes | No. Recommend: Yes.", "Options: Yes | No. Recommend: Yes.\n- **Merge PR #7?** Cleared. Options: Merge | Hold."))
+        merged = []
+        run = lambda cmd, **kw: merged.append(cmd) or types.SimpleNamespace(returncode=0, stdout="", stderr="")
+        with unittest.mock.patch.object(pilot, "plan_repo", lambda sid, rows=None: "web-app"), \
+             unittest.mock.patch.object(pilot, "agents", lambda: []), unittest.mock.patch.object(pilot.subprocess, "run", run):
+            for bad, why in ((dict(statusCheckRollup=[{"status": "IN_PROGRESS"}]), "CI is running"), (dict(isDraft=True), "draft"),
+                             (dict(mergeable="CONFLICTING"), "conflicts"), (dict(reviewDecision="CHANGES_REQUESTED"), "changes")):
+                with unittest.mock.patch.object(pilot, "gh_json", lambda *a, bad=bad: self.pr(**bad)):
+                    with self.assertRaises(pilot.MergeRefused) as e:
+                        pilot.merge_pr("s1", 7, "", "Autopilot")
+                    self.assertIn(why, str(e.exception))
+            self.assertEqual(merged, [])
+            with unittest.mock.patch.object(pilot, "gh_json", lambda *a: self.pr()):
+                self.assertEqual(pilot.merge_pr("s1", 7, "", "Autopilot"), {"merged": 7, "head": "abcdef12"})
+        self.assertEqual(merged[0][:4] + merged[0][5:], ["gh", "pr", "merge", "7", "--match-head-commit", "abcdef1234"])
+        text = pilot.plan_path("s1").read_text(encoding="utf-8")
+        self.assertIn("Autopilot merged PR #7 of web-app on the controller's behalf", text)
+        self.assertNotIn("**Merge PR #7?**", text, "its item is taken out")
+
+
 class MergeTargetTests(Case):
     """The controller's merge runs in the repo its waiting item names the PR in, not the flight's first leg's."""
 
