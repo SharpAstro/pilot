@@ -2058,6 +2058,21 @@ class RemoveTests(Case):
         self.assertIsNotNone(pilot.load("fix"))
 
 
+class WaitingNotesTests(Case):
+    """A note in the Waiting section asks the controller nothing, and does not hold the flight at waiting on you."""
+
+    def test_a_note_is_set_apart_and_a_section_of_notes_waits_on_nothing(self):
+        dec, note = pilot.waiting_decisions(
+            "- **Delete the local branch `w-pins`?** Merged as 2cab4975. Options: Delete it | Keep it. Recommend: Delete it.\n"
+            "- **Note, no action needed from this flight:** every `claude rm` refusal deleted the\n  OpenNGC folder first.")
+        self.assertTrue(dec.startswith("- **Delete the local branch"))
+        self.assertNotIn("OpenNGC", dec)
+        self.assertIn("OpenNGC folder first", note)
+        self.assertEqual(pilot.waiting_decisions("Two things:\n- **Note:** the build is slow.\n- FYI the CI cache was cold."),
+                         ("", "- **Note:** the build is slow.\n- FYI the CI cache was cold."))
+        self.assertEqual(pilot.waiting_decisions("- **Merge PR #4?** Options: Merge | Hold."), ("- **Merge PR #4?** Options: Merge | Hold.", ""))
+
+
 class HouseRulesTests(Case):
     """plugins/CLAUDE.md, pilot's shadow of a machine's ~/.claude/CLAUDE.md: every pilot and worker gets it."""
 

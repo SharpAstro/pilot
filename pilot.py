@@ -518,7 +518,8 @@ def parse_plan(text):
             log[-1] += " " + ln.strip()
     return {"title": title.group(1).strip() if title else "untitled", "objective": " ".join(objective.group(1).split()) if objective else "",
             "flight": (FLIGHT_RE.search(text) or [None, None])[1], "tracking": (TRACKING_RE.search(text) or [None, None])[1],
-            "connects": plan_connects(text), "hold": plan_hold(text), "legs": legs, "log": log[-40:], "notes": plan_notes(split_waiting(text)[1]), "waiting": split_waiting(text)[0],
+            "connects": plan_connects(text), "hold": plan_hold(text), "legs": legs, "log": log[-40:], "notes": plan_notes(split_waiting(text)[1]),
+            **dict(zip(("waiting", "waitingNotes"), waiting_decisions(split_waiting(text)[0]))),
             "amendments": plan_amendments(text)}
 
 
@@ -605,6 +606,30 @@ def drop_waiting(sid, match):
     if not split_waiting(text)[0].strip():        # nothing left waiting: the heading goes too
         text = re.sub(r"^##\s+Waiting on the controller\s*\n+", "", text, flags=re.M)
     path.write_text(text, encoding="utf-8")
+
+
+# An item of the Waiting section that asks the controller nothing: "- **Note, no action needed from this flight:** ...".
+WAITING_NOTE = re.compile(r"^\s*(?:[-*]|\d+[.)])\s+(?:\*\*)?\s*(?:note|fyi)\b|no action needed", re.I)
+
+
+def waiting_decisions(section):
+    """A Waiting section's decisions, and apart from them its notes: an item that says it needs no action asks
+    the controller nothing, and in the section it kept TIA2 amber and "waiting on you" all afternoon. Returns
+    (decisions, notes); with notes and no decision left, nothing waits at all, intro and all."""
+    intro, items = [], []
+    for line in (section or "").splitlines():
+        if re.match(r"^\s*(?:[-*]|\d+[.)])\s", line):
+            items.append([line])
+        elif items:
+            items[-1].append(line)
+        else:
+            intro.append(line)
+    # A note says so as it starts, and offers no options: one that does is a decision, whatever it opens with.
+    is_note = lambda it: bool(WAITING_NOTE.search(it[0])) and "Options:" not in " ".join(it)
+    keep = [l for it in items if not is_note(it) for l in it]
+    notes = [l for it in items if is_note(it) for l in it]
+    keep = intro + keep if keep or not notes else []
+    return "\n".join(keep).strip(), "\n".join(notes).strip()
 
 
 def split_waiting(text):

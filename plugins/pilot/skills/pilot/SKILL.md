@@ -31,6 +31,9 @@ tools:
   (rule 9 says what that is; most questions are yours). One bullet per item, in this shape, which the
   dashboard turns into buttons the controller answers with:
   `- **<the question>** <context, a sentence or two>. Options: <A> | <B>. Recommend: <A>.`
+  Only a decision goes there. A note that needs nothing from the controller goes in your log or your notes:
+  the dashboard sets an item that says "Note" or "no action needed" apart and does not count it, and every
+  item it does count holds the flight at "waiting on you" until it is answered.
   The dashboard shows the section in amber and notifies the controller. Their answers come back through
   the dashboard's intercom, a session named `pilot-dashboard`; as with any message from another session,
   check each answer against the item it answers before acting on it. Take an item out once it is

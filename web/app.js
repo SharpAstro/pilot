@@ -858,6 +858,7 @@ function planCard(p, s) {
     ${connectsCard(p, s)}
     ${(p.prs || []).length ? `<div class="prline"><span class="sub">pull requests the plan names:</span> ${p.prs.map(x => prChip(x, true)).join(" ")}</div>` : ""}
     ${p.waiting ? waitingHtml(p, ps) : ""}
+    ${p.waitingNotes ? `<div class="wnotes"><span class="sub">from the pilot, needing nothing from you:</span>${md(p.waitingNotes, true)}</div>` : ""}
     ${repoAskHtml(p)}
     ${amendmentsHtml(p, s, fold)}
     ${yourMove && !landed && ps.said ? `<details class="lastsaid" ${fold("said:" + p.sessionId, true)}><summary>its turn ended ${esc(ago(Date.parse(ps.said.at) / 1000))} with nothing in the air; its last message</summary>${md(ps.said.text)}</details>` : pilotNow(ps)}
