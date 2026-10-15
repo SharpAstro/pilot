@@ -3084,6 +3084,8 @@ Recipients:
 
 NUDGE_AFTER = 180                   # seconds a live, idle pilot may leave a stopped leg unread before it is told
 WAKES = STATE / "wakes.json"        # what each wake was for, so one stop wakes a pilot once
+WOKEN = STATE / "woken.json"        # each woken pilot session's copy: {old: {new, name, at}}
+WAKE_LOCK = threading.RLock()       # one wake at a time: two of the same session made two copies
 
 
 def held_names(but=None):
@@ -3131,20 +3133,42 @@ def wake_pilot(old, why):
     """Resumes a background pilot that has ended, with `why` as its next turn. `--bg --resume` continues in a copy
     under a new session id, and a flight plan is its pilot session's, so the plan, and the workers flying it,
     move onto the new id: `pilot plan` and `pilot log` find it there. Returns the new id, or None when there is
-    no such pilot asleep."""
-    _agents_cache["at"] = 0
+    no such pilot asleep.
+
+    A session woken already has a copy flying its plan, and `why` goes to that copy instead: TIA2's pilot was woken
+    twice in the same 50 ms (its leg cleared to land, and the controller's merge), the second copy found no plan
+    under its id, and its `pilot log` opened an empty one, a flight TIA3 nobody had asked for."""
+    with WAKE_LOCK:
+        _agents_cache["at"] = 0
+        book = read_json(WOKEN, {})
+        if old in book:
+            seen = book[old]
+            copy = next((r for r in agents() if r.get("sessionId") == seen["new"]), None)
+            if copy and copy.get("pid"):
+                intercom([copy.get("name") or seen["name"]], why, sender="pilot.py")
+                return seen["new"]
+            return wake_pilot(seen["new"], why) if asleep(copy) else None
+        return _wake(old, why)
+
+
+def _wake(old, why):
     row = next((r for r in agents() if r.get("sessionId") == old), None)
     if not asleep(row) or not plan_path(old).exists():
         return None
     text = (f"(pilot.py) Your background session had ended, so you are resumed as a copy of it, to pick this up:\n{why}\n\n"
             f"Your flight plan moved with you to your new session id (`python {(HERE / 'pilot.py').as_posix()} plan` prints it). "
             f"Subscribe again to every worker still flying, then carry on as your rules say; end your turn when nothing is yours to do.")
-    job = backgrounded(claude("--bg", "--resume", old, "-n", unique_name(row.get("name") or "pilot", but=old), "--plugin-dir", str(HERE / "plugins" / "pilot"),
+    name = unique_name(row.get("name") or "pilot", but=old)
+    job = backgrounded(claude("--bg", "--resume", old, "-n", name, "--plugin-dir", str(HERE / "plugins" / "pilot"),
                               stdin=text, cwd=row.get("cwd") or str(HERE), timeout=120))
     new = session_of(job)
     if not new:
         return None
     move_plan(old, new)
+    now = time.time()
+    book = {k: v for k, v in read_json(WOKEN, {}).items() if now - v.get("at", 0) < 7 * 86400}
+    book[old] = {"new": new, "name": name, "at": now}
+    write_json(WOKEN, book)
     plan_log(new, f"Pilot woken by pilot.py as {new[:8]} (its session {old[:8]} had ended): {why.splitlines()[0][:200]}")
     return new
 

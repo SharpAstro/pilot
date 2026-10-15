@@ -1033,6 +1033,24 @@ class WakeTests(Case):
         self.assertEqual(pilot.load("leg-a")["plan"], "new-sid")
         self.assertIn("Pilot woken by pilot.py as new-sid", self.log_of("new-sid")[-1])
 
+    def test_a_second_wake_of_the_same_session_goes_to_its_copy(self):
+        self.plan("old-sid", "# Flight plan: x\n\nPilot session: old-sid\n\n## Log\n\n- 2026-10-14 08:00 Plan opened.\n")
+        self.rows = [{"name": "pilot-x", "sessionId": "old-sid", "kind": "background", "state": "done", "pid": None, "cwd": str(ROOT)}]
+        calls, told = [], []
+        saved = pilot.claude, pilot.backgrounded, pilot.session_of, pilot.intercom
+        pilot.claude = lambda *a, **kw: calls.append(a) or None
+        pilot.backgrounded, pilot.session_of = (lambda r: "job12345"), (lambda job: "new-sid")
+        pilot.intercom = lambda names, text, sender="Controller": told.append((names, text))
+        try:
+            self.assertEqual(pilot.wake_pilot("old-sid", "Leg a cleared to land."), "new-sid")
+            self.rows.append({"name": "pilot-x", "sessionId": "new-sid", "kind": "background", "state": "working", "pid": 7})
+            self.assertEqual(pilot.wake_pilot("old-sid", "The controller merged PR #1."), "new-sid")
+        finally:
+            pilot.claude, pilot.backgrounded, pilot.session_of, pilot.intercom = saved
+        self.assertEqual(len(calls), 1)                           # one copy, not two
+        self.assertEqual(told, [(["pilot-x"], "The controller merged PR #1.")])
+        self.assertTrue(pilot.plan_path("new-sid").exists())
+
     def test_a_live_or_interactive_pilot_is_not_woken(self):
         self.plan("p1", "# Flight plan: x\n\n## Log\n\n")
         for row in ({"sessionId": "p1", "kind": "background", "pid": 42}, {"sessionId": "p1", "kind": "interactive", "pid": None}):
