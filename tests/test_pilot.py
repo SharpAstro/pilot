@@ -1058,6 +1058,32 @@ class WakeTests(Case):
             self.assertIsNone(pilot.wake_pilot("p1", "why"))
 
 
+class MergedElsewhereTests(Case):
+    def test_a_merge_made_on_github_takes_the_item_down_and_tells_the_pilot(self):
+        self.plan("p1", "# Flight plan: x\n\n## Waiting on the controller\n\n- **Merge PR #7?** rings, R1 accepted, CI green\n\n## Log\n\n")
+        snap = {"workers": [{"name": "rings", "plan": "p1", "approach": {"stage": "gate", "pr": 7, "why": "merged"},
+                             "git": {"prs": [{"number": 7, "state": "MERGED", "head": "f4847447aa"}]}}]}
+        rows = {"p1": {"sessionId": "p1", "kind": "background", "pid": None}}
+        woken, saved = [], pilot.wake_pilot
+        pilot.wake_pilot = lambda old, why: woken.append((old, why)) or "p2"
+        hub = pilot.Hub()
+        try:
+            hub.tell_ci(snap, rows, {}, set())
+            for _ in range(100):
+                if not hub.waking:
+                    break
+                time.sleep(0.02)
+        finally:
+            pilot.wake_pilot = saved
+        self.assertNotIn("Merge PR #7", pilot.plan_path("p1").read_text(encoding="utf-8"))
+        self.assertIn("merged PR #7 of leg rings outside the dashboard", self.log_of("p1")[-1])
+        self.assertEqual(len(woken), 1)
+        self.assertIn("merged PR #7", woken[0][1])
+        # Nothing asked any more: the next snapshot leaves the pilot be.
+        hub.tell_ci(snap, rows, {}, set())
+        self.assertEqual(len(woken), 1)
+
+
 class DropWaitingTests(Case):
     def test_a_merged_pr_item_leaves_the_plan_and_the_others_stay(self):
         self.plan("p1", "# Flight plan: x\n\n## Waiting on the controller\n\n"

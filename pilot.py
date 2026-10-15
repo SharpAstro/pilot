@@ -5250,19 +5250,30 @@ class Hub:
             # itself, as on TIA2's #1564): the PR reads "on approach", but its pilot waits on exactly this.
             pr = next((x for x in (w.get("git") or {}).get("prs") or [] if x.get("number") == ap.get("pr")), {})
             finished = ap.get("stage") == "approach" and "since round" in (ap.get("why") or "") and pr.get("ci") in ("passing", "failing")
-            if ap.get("stage") != "cleared" and not failing and not finished:
+            # Merged on GitHub rather than from the dashboard, with the merge still asked in the plan: TIA2's #1595
+            # was, and its pilot slept on with the item up and its next leg unflown until the controller asked.
+            merged = ap.get("stage") == "gate"
+            if ap.get("stage") != "cleared" and not failing and not finished and not merged:
                 continue
             path = plan_path(pid)
             if not path or not path.exists() or pid in shelved or pid in self.waking:
                 continue
-            if not failing and f"PR #{ap['pr']}" in split_waiting(path.read_text(encoding="utf-8"))[0]:
+            waiting = split_waiting(path.read_text(encoding="utf-8"))[0]
+            if merged and f"merge pr #{ap['pr']}" not in waiting.lower():
+                continue                       # nothing asked: the pilot merged it in the dashboard's sight, or knows
+            if not failing and not merged and f"PR #{ap['pr']}" in waiting:
                 continue                       # the merge is already asked
             key = f"ci:{w['name']}:{ap['pr']}:{ap['stage']}:{'conflict' if 'conflicts' in (ap.get('why') or '') else ''}:{(pr.get('head') or '')[:8]}"
             row = rows.get(pid)
             idle = row and row.get("pid") and row.get("status") != "busy"
             if done.get(f"{pid}|ci") == key or not (asleep(row) or idle):
                 continue
-            text = (f"CI is {pr.get('ci')} on PR #{ap['pr']} of leg {w['name']} at {(pr.get('head') or '')[:8]}, a head pushed after "
+            if merged:
+                drop_waiting(pid, lambda title, n=ap["pr"]: f"merge pr #{n}" in title.lower())
+                plan_log(pid, f"Controller merged PR #{ap['pr']} of leg {w['name']} outside the dashboard: merge item removed")
+            text = (f"The controller merged PR #{ap['pr']} of leg {w['name']} outside the dashboard (on GitHub); its merge item "
+                    f"is out of your plan. Log it, retire the leg, and carry on with your route." if merged else
+                    f"CI is {pr.get('ci')} on PR #{ap['pr']} of leg {w['name']} at {(pr.get('head') or '')[:8]}, a head pushed after "
                     f"its last review round. Carry on as your plan and the controller's answer say: the merge item if green, "
                     f"a go-around if failing." if finished else
                     (f"PR #{ap['pr']} of leg {w['name']} conflicts with its base, after its review was accepted: bring it up to date "
