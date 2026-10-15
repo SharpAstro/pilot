@@ -239,6 +239,42 @@ def subagent_files(session_id):
     return sorted(main.parent.glob(f"{session_id}/subagents/agent-*.jsonl")) if main else []
 
 
+_artifacts = {}
+
+
+def session_artifacts(sid):
+    """The pages a session published as artifacts, its subagents' too: each page once, at its latest version, newest
+    first. The Artifact tool's result records them (toolUseResult: url, title, seq), so this reads only the lines
+    that carry an artifact_id, and again only once a file has grown."""
+    files = [p for p in [transcript(sid)] + subagent_files(sid) if p and p.exists()]
+    key = tuple((str(p), p.stat().st_size) for p in files)
+    if sid in _artifacts and _artifacts[sid][0] == key:
+        return _artifacts[sid][1]
+    pages = {}
+    for p in files:
+        try:
+            data = p.read_bytes()
+        except OSError:
+            continue
+        for line in data.split(b"\n"):
+            if b'"artifact_id"' not in line:
+                continue
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            tur = e.get("toolUseResult")
+            if not isinstance(tur, dict) or not tur.get("artifact_id") or not str(tur.get("url") or "").startswith("https://claude.ai/"):
+                continue
+            had = pages.get(tur["url"]) or {}
+            pages[tur["url"]] = {"url": tur["url"], "title": tur.get("title") or had.get("title") or tur["url"],
+                                 "version": tur.get("seq") or had.get("version"), "at": e.get("timestamp") or had.get("at"),
+                                 "publishes": had.get("publishes", 0) + 1, "bySubagent": p.parent.name == "subagents"}
+    out = sorted(pages.values(), key=lambda a: a["at"] or "", reverse=True)
+    _artifacts[sid] = (key, out)
+    return out
+
+
 def same_path(a, b):
     return os.path.normcase(os.path.normpath(a or "")) == os.path.normcase(os.path.normpath(b or ""))
 
@@ -1459,6 +1495,7 @@ def events_of(e, offset=None):
                 images = [f"{offset}.{i}.{j}" for j, x in enumerate(inner) if image_block(x)] if offset is not None else []
                 ev("result", id=b.get("tool_use_id"), error=bool(b.get("is_error")), denied=denied,
                    agentId=tur.get("agentId"), text=text[:12000], **({"gate": True} if denied in GATES else {}),
+                   **({"artifact": tur["url"]} if tur.get("artifact_id") and tur.get("url") else {}),
                    **({"images": images} if images else {}))
             elif image_block(b) and offset is not None:
                 ev("image", ref=f"{offset}.{i}", **{"from": t})
@@ -5177,6 +5214,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             m = re.match(r"^/api/sessions/([0-9a-f-]{36})/agents$", path)
             if m:
                 return self.send(200, subagents(m.group(1)))
+            m = re.match(r"^/api/sessions/([0-9a-f-]{36})/artifacts$", path)
+            if m:
+                return self.send(200, session_artifacts(m.group(1)))
             if path == "/api/blackbox":
                 return self.send(200, blackbox_view())
             m = re.match(r"^/api/console/([0-9a-f-]{36})$", path)

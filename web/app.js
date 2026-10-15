@@ -1629,15 +1629,31 @@ VIEWS.session = (root, r) => {
           <div class="ctlrow"><label>budget, weighted tokens <input class="s-budget" inputmode="numeric" placeholder="e.g. 20M"></label><button class="s-setbudget">set</button></div>
           <div class="ctlrow s-fill"></div>
           <div class="sub s-ctlhint"></div></div>
+        <div class="card pad s-artcard" hidden><div class="cardhead"><b>Artifacts</b><span class="sub s-artn"></span></div><ul class="arts s-arts"></ul></div>
         <div class="card pad s-checkcard" hidden><div class="cardhead"><b>Checklist</b><span class="sub s-checkn"></span></div><ul class="checklist s-check"></ul></div>
         <div class="card pad"><b>Subagents</b><div class="s-agents" style="margin-top:6px"><span class="sub">none</span></div></div></div>
     </div>`;
   const stream = $(".s-stream", root), tools = new Map();
   let sid, es = null, agentsRev = null, worker = null, sayTo = null, turnAt = null, liveText = "", agentLabel = "", titleName = "";
 
+  // The pages it published as artifacts (its subagents' too), each at its latest version: read when the page opens,
+  // and again whenever one of its results says it published.
+  async function loadArtifacts() {
+    const card = $(".s-artcard", root);
+    if (!sid) { card.hidden = true; return; }
+    try {
+      const arts = await (await fetch(`/api/sessions/${sid}/artifacts`)).json();
+      card.hidden = !arts.length;
+      put($(".s-artn", root), arts.length > 1 ? `${arts.length} pages` : "");
+      put($(".s-arts", root), arts.map(a => `<li><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.title)} ↗</a>
+        <span class="sub">${a.version ? `version ${esc(a.version)} · ` : ""}${a.at ? `published ${esc(ago(Date.parse(a.at) / 1000))}` : ""}${a.bySubagent ? " · by a subagent" : ""}</span></li>`).join(""));
+    } catch { card.hidden = true; }
+  }
+
   function open(newSid) {
     if (es) es.close();
     sid = newSid; tools.clear(); agentsRev = null; turnAt = null;
+    loadArtifacts();
     if (!sid) { stream.innerHTML = `<div class="empty">No transcript yet.</div>`; return; }
     es = new EventSource(r.agent ? `/api/sessions/${sid}/agents/${r.agent}/stream` : `/api/sessions/${sid}/stream`);
     es.addEventListener("backlog", e => {
@@ -1653,6 +1669,7 @@ VIEWS.session = (root, r) => {
     const stick = first || stream.scrollHeight - stream.scrollTop - stream.clientHeight < 40;
     const frag = document.createDocumentFragment();
     for (const ev of events) { const el = event(ev); if (el) frag.appendChild(el); }
+    if (!first && events.some(ev => ev.kind === "result" && ev.artifact)) loadArtifacts();   // it just published one
     stream.appendChild(frag);
     if (!stream.children.length) stream.innerHTML = `<div class="empty">Nothing yet.</div>`;
     if (stick) stream.scrollTop = stream.scrollHeight;

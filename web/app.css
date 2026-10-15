@@ -263,6 +263,8 @@ ul.checklist li.in_progress span:first-child { color: var(--fill); }
 .connect.waiting::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); margin-right: 5px; }
 .connect.unknown { border-color: var(--crit); color: var(--crit); cursor: help; }
 .plan .connects { margin: 6px 0 2px; font-size: 13px; }
+.arts { list-style: none; margin: 8px 0 0; padding: 0; }
+.arts li { margin: 4px 0; overflow-wrap: anywhere; }
 .plan .connects > div + div { margin-top: 4px; }
 .connect.onward { border-style: dashed; }
 /* A connection on a route strip, at its departure (from) or its end (onward); and the card it names, lit while the

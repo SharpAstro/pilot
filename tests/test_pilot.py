@@ -1647,6 +1647,27 @@ class OtherSessionsTests(Case):
                       (pilot.STATE / "blackbox.jsonl").read_text(encoding="utf-8"))
 
 
+class SessionArtifactsTests(Case):
+    """A session page lists the pages it published as artifacts, each once at its latest version."""
+
+    def test_each_page_once_at_its_latest_version_its_subagents_too(self):
+        pub = lambda at, url, title, seq: {"type": "user", "timestamp": at, "toolUseResult": {
+            "url": url, "artifact_id": "a-" + url[-3:], "title": title, "seq": seq},
+            "message": {"content": [{"type": "tool_result", "tool_use_id": f"t{seq}", "content": f"Published at {url}"}]}}
+        main = self.transcript("s-art", [
+            pub("2026-10-15T00:30:00Z", "https://claude.ai/artifact/AAA", "Flight TIA2", 12),
+            {"type": "assistant", "timestamp": "2026-10-15T00:31:00Z", "message": {"content": [{"type": "text", "text": "artifact_id is a word here"}]}},
+            pub("2026-10-15T00:45:00Z", "https://claude.ai/artifact/AAA", "Flight TIA2", 13)])
+        sub = main.parent / "s-art" / "subagents"
+        sub.mkdir(parents=True)
+        (sub / "agent-x.jsonl").write_text(json.dumps(pub("2026-10-15T00:40:00Z", "https://claude.ai/artifact/BBB", "Rate probe", 1)) + "\n", encoding="utf-8")
+        arts = pilot.session_artifacts("s-art")
+        self.assertEqual([(a["title"], a["version"], a["publishes"], a["bySubagent"]) for a in arts],
+                         [("Flight TIA2", 13, 2, False), ("Rate probe", 1, 1, True)])
+        self.assertEqual(pilot.read_events(main)[0][0].get("artifact"), "https://claude.ai/artifact/AAA",
+                         "its result event says so, and the page reads the list again")
+
+
 class MergeTargetTests(Case):
     """The controller's merge runs in the repo its waiting item names the PR in, not the flight's first leg's."""
 
