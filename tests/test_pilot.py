@@ -2143,6 +2143,30 @@ class WaitingNotesTests(Case):
         self.assertEqual(pilot.waiting_decisions("- **Merge PR #4?** Options: Merge | Hold."), ("- **Merge PR #4?** Options: Merge | Hold.", ""))
 
 
+class SubmoduleGapTests(Case):
+    """claude rm deletes an uninitialised submodule's folder and then refuses the worktree for it: pilot rm sees
+    that nothing else changed."""
+
+    def test_only_a_deleted_gitlink_counts_as_nothing_lost(self):
+        repo = ROOT / "gap-repo"
+        shutil.rmtree(repo, ignore_errors=True)
+        git = lambda *a: subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", *a],
+                                        check=True, capture_output=True, text=True).stdout
+        repo.mkdir()
+        git("init", "-q", "-b", "main")
+        (repo / "a.txt").write_text("a", encoding="utf-8")
+        git("add", "a.txt")
+        git("update-index", "--add", "--cacheinfo", "160000,108c6bc92f5a614f8d10a886df2efb1fd65ae171,Assets")
+        git("commit", "-q", "-m", "base")
+        (repo / "Assets").mkdir()
+        self.assertFalse(pilot.only_submodule_gaps(repo), "clean: nothing to excuse")
+        (repo / "Assets").rmdir()
+        self.assertTrue(pilot.only_submodule_gaps(repo))
+        (repo / "a.txt").write_text("changed", encoding="utf-8")
+        self.assertFalse(pilot.only_submodule_gaps(repo), "a real change is never excused")
+        self.assertIsNone(pilot.link_inside(repo))
+
+
 class HouseRulesTests(Case):
     """plugins/CLAUDE.md, pilot's shadow of a machine's ~/.claude/CLAUDE.md: every pilot and worker gets it."""
 

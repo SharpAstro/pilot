@@ -4523,6 +4523,38 @@ def cmd_stop(a):
     print((r.stdout + r.stderr).strip())
 
 
+def only_submodule_gaps(wt):
+    """Whether a worktree's only change is a submodule's folder gone: `claude rm` deletes an uninitialised
+    submodule's empty folder (the monorepo's Assets, tianwen's OpenNGC) and then refuses the worktree for that very
+    change, "uncommitted changes", every time (app-3dpanel and app-3drender, three of TIA2's legs). Nothing is lost
+    when every changed path is a gitlink in the index shown deleted."""
+    r = subprocess.run(["git", "-C", str(wt), "status", "--porcelain"], capture_output=True, text=True)
+    lines = [l for l in r.stdout.splitlines() if l.strip()] if r.returncode == 0 else []
+    if not lines or not all(l[:2] in (" D", "D ") for l in lines):
+        return False
+    for l in lines:
+        s = subprocess.run(["git", "-C", str(wt), "ls-files", "-s", "--", l[3:].strip()], capture_output=True, text=True)
+        if not s.stdout.startswith("160000 "):
+            return False
+    return True
+
+
+def link_inside(root):
+    """The first junction or symbolic link under a folder, if any: a forced delete must not reach through one."""
+    stack = [str(root)]
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as it:
+                for e in it:
+                    if e.is_symlink() or (hasattr(e, "is_junction") and e.is_junction()):
+                        return e.path
+                    if e.is_dir(follow_symlinks=False):
+                        stack.append(e.path)
+        except OSError:
+            continue
+    return None
+
+
 def cmd_rm(a):
     """Removes every session the worker ran as, the copies `say` made first and the one that made the
     worktree last, since only that one owns it. The record is kept in the archive, with its report."""
@@ -4549,8 +4581,38 @@ def cmd_rm(a):
         print(out)
         # A session already removed by hand: "No job matching '<id>'", or "no such" from older versions.
         ok = ok and (r.returncode == 0 or bool(re.search(r"no such|no job matching", out, re.I)))
+    # Refused only for a submodule's folder that `claude rm` deleted itself (only_submodule_gaps): git removes the
+    # worktree, forced, unless a link inside it could lead the delete elsewhere; then `claude rm` drops the session.
+    wt = Path(w["worktree"]) if w.get("worktree") else None
+    if not ok and wt and wt.exists() and only_submodule_gaps(wt):
+        link = link_inside(wt)
+        if link:
+            sys.exit(f"pilot: claude rm refused {wt} for a submodule's folder it deleted, and {link} is a link inside it; "
+                     f"remove it by hand. The worker's record is kept")
+        print(f"claude rm refused it for a submodule folder it deleted itself; nothing else changed: git removes {wt}", flush=True)
+        g = subprocess.run(["git", "-C", str(root or wt), "worktree", "remove", "--force", "--force", str(wt)], capture_output=True, text=True)
+        if g.returncode == 0:
+            ok = True
+            for sess in reversed(sessions_of(w)):
+                r = claude("rm", sess["id"], timeout=None)
+                out = (r.stdout + r.stderr).strip()
+                print(out)
+                ok = ok and (r.returncode == 0 or bool(re.search(r"no such|no job matching", out, re.I)))
+        else:
+            print((g.stderr or g.stdout).strip())
     if not ok:
         sys.exit("pilot: claude rm failed; the worker's record is kept")
+    # Its local branch, when `claude rm` left it (it does once its worktree is gone): deleted only when its tip is on
+    # a remote branch, so nothing is lost; else kept and said.
+    if root and w.get("branch"):
+        tip = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "-q", f"refs/heads/{w['branch']}"], capture_output=True, text=True).stdout.strip()
+        if tip:
+            on = subprocess.run(["git", "-C", str(root), "branch", "-r", "--contains", tip], capture_output=True, text=True).stdout.split()
+            if on:
+                subprocess.run(["git", "-C", str(root), "branch", "-D", w["branch"]], capture_output=True, text=True)
+                print(f"deleted its local branch {w['branch']} ({tip[:9]}, on {on[0]})")
+            else:
+                print(f"kept its local branch {w['branch']}: its tip {tip[:9]} is on no remote branch")
     w["archivedAt"] = time.time()
     w["final"] = {"state": s["state"], "detail": s.get("detail"), "spend": s["spend"], "reportHead": s.get("reportHead"), "closed": s.get("closed"),
                   "report": rep[:6000], "commits": commits, "checklist": checklist([x.get("sessionId") for x in sessions_of(w)])}
