@@ -223,8 +223,10 @@ change, through the intercom, and it answers the pilot with `pilot tell --as aut
 answers on your behalf. It may decide engineering questions, reviews (approving a design document to build
 on), route changes within a flight's objective, and refuels up to 3 times a leg's first budget
 (`pilot budget` refuses it more). It acts on your behalf, so it also merges a PR its pilot put to you as cleared
-to land (`pilot merge <flight> <pr> [--repo owner/name]`, which refuses one whose CI is not green on its head, a
-draft, or one with conflicts or changes asked for), removes a landed leg's worktree, and deletes a local branch
+to land (`pilot merge <flight> <pr> [--repo owner/name]`, which for the autopilot wants proof: a leg's review
+rounds of that PR on record, the last at the head it merges with no bugs and no open question, CI green there,
+no draft, conflict or changes asked for, and the leg's report DONE with its whole checklist ticked; it logs that
+evidence with the merge, and anything missing leaves the merge to you), removes a landed leg's worktree, and deletes a local branch
 whose tip is already on a remote branch or merged. It never pushes to a default branch, force-pushes, deletes
 work found nowhere else or sets a new objective: those stay in the plan for you. In auto mode the classifier checks every command it runs, with
 its whole transcript as context; a refused one leaves that item for you. Switching it off stops the

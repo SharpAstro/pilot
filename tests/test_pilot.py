@@ -1669,32 +1669,73 @@ class SessionArtifactsTests(Case):
 
 
 class AutopilotMergeTests(Case):
-    """The autopilot merges on the controller's behalf, but only a PR cleared to land, guarded on its head."""
+    """The autopilot merges on the controller's behalf, only with the proof they asked for: the leg's review rounds
+    of that PR, the last at its head with nothing found or asked, CI green, and the leg DONE with its checklist."""
+
+    URL = "https://github.com/o/web-app/pull/7"
 
     def pr(self, **kw):
-        return {"state": "OPEN", "headRefOid": "abcdef1234", "url": "https://github.com/o/web-app/pull/7", "mergeable": "MERGEABLE",
-                "isDraft": False, "reviewDecision": None, "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "SUCCESS"}], **kw}
+        return {"number": 7, "state": "OPEN", "headRefOid": "abcdef1234", "url": self.URL, "mergeable": "MERGEABLE", "isDraft": False,
+                "reviewDecision": None, "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "SUCCESS"}], **kw}
 
-    def test_a_cleared_pr_merges_and_one_that_is_not_waits(self):
-        self.config(repos={"web-app": str(ROOT / "web-app")})
-        self.plan("s1", PLAN.replace("Options: Yes | No. Recommend: Yes.", "Options: Yes | No. Recommend: Yes.\n- **Merge PR #7?** Cleared. Options: Merge | Hold."))
+    def leg(self, rounds=None, checklist=None, head="DONE"):
+        f = ROOT / "round.md"
+        f.write_text("round", encoding="utf-8")
+        rounds = rounds if rounds is not None else [
+            {"round": 1, "bugs": 2, "questions": 0, "pr": 7, "url": self.URL, "head": "1111111", "file": str(f)},
+            {"round": 2, "bugs": 0, "questions": 0, "pr": 7, "url": self.URL, "head": "abcdef1234", "file": str(f)}]
+        items = checklist if checklist is not None else [{"subject": "a", "status": "completed"}, {"subject": "b", "status": "completed"}]
+        pilot.write_json(pilot.ARCHIVE / "fix-1.json", {"name": "fix", "plan": "s1", "archivedAt": 1, "repo": "web-app", "reviews": rounds,
+                                                        "final": {"reportHead": head, "checklist": items}})
+
+    def merge(self, **pr):
         merged = []
         run = lambda cmd, **kw: merged.append(cmd) or types.SimpleNamespace(returncode=0, stdout="", stderr="")
         with unittest.mock.patch.object(pilot, "plan_repo", lambda sid, rows=None: "web-app"), \
-             unittest.mock.patch.object(pilot, "agents", lambda: []), unittest.mock.patch.object(pilot.subprocess, "run", run):
-            for bad, why in ((dict(statusCheckRollup=[{"status": "IN_PROGRESS"}]), "CI is running"), (dict(isDraft=True), "draft"),
-                             (dict(mergeable="CONFLICTING"), "conflicts"), (dict(reviewDecision="CHANGES_REQUESTED"), "changes")):
-                with unittest.mock.patch.object(pilot, "gh_json", lambda *a, bad=bad: self.pr(**bad)):
-                    with self.assertRaises(pilot.MergeRefused) as e:
-                        pilot.merge_pr("s1", 7, "", "Autopilot")
-                    self.assertIn(why, str(e.exception))
-            self.assertEqual(merged, [])
-            with unittest.mock.patch.object(pilot, "gh_json", lambda *a: self.pr()):
-                self.assertEqual(pilot.merge_pr("s1", 7, "", "Autopilot"), {"merged": 7, "head": "abcdef12"})
+             unittest.mock.patch.object(pilot, "agents", lambda: []), unittest.mock.patch.object(pilot.subprocess, "run", run), \
+             unittest.mock.patch.object(pilot, "gh_json", lambda *a: self.pr(**pr)):
+            try:
+                return pilot.merge_pr("s1", 7, "", "Autopilot"), merged
+            except pilot.MergeRefused as e:
+                return str(e), merged
+
+    def setUp(self):
+        super().setUp()
+        self.config(repos={"web-app": str(ROOT / "web-app")})
+        self.plan("s1", PLAN.replace("Options: Yes | No. Recommend: Yes.", "Options: Yes | No. Recommend: Yes.\n- **Merge PR #7?** Cleared. Options: Merge | Hold."))
+
+    def test_with_the_proof_it_merges_and_logs_it(self):
+        self.leg()
+        out, merged = self.merge()
+        self.assertEqual(out, {"merged": 7, "head": "abcdef12"})
         self.assertEqual(merged[0][:4] + merged[0][5:], ["gh", "pr", "merge", "7", "--match-head-commit", "abcdef1234"])
         text = pilot.plan_path("s1").read_text(encoding="utf-8")
         self.assertIn("Autopilot merged PR #7 of web-app on the controller's behalf", text)
+        self.assertIn("2 review round(s), the last accepted at abcdef12 with no bugs or questions after 2 found and fixed", text)
+        self.assertIn("reported DONE, 2 of 2 checklist items done", text)
         self.assertNotIn("**Merge PR #7?**", text, "its item is taken out")
+
+    def test_without_it_the_merge_waits_for_the_controller(self):
+        f = str(ROOT / "round.md")
+        cases = [
+            (lambda: None, {}, "no leg of this flight records a review round"),
+            (lambda: self.leg(), {"statusCheckRollup": [{"status": "IN_PROGRESS"}]}, "CI is running"),
+            (lambda: self.leg(), {"isDraft": True}, "draft"),
+            (lambda: self.leg(), {"mergeable": "CONFLICTING"}, "conflicts"),
+            (lambda: self.leg(), {"headRefOid": "9999999"}, "review round 3 is due"),
+            (lambda: self.leg([{"round": 1, "bugs": 1, "questions": 0, "pr": 7, "url": self.URL, "head": "abcdef1234", "file": f}]), {}, "found 1 bug"),
+            (lambda: self.leg([{"round": 1, "bugs": 0, "questions": 2, "pr": 7, "url": self.URL, "head": "abcdef1234", "file": f}]), {}, "2 question(s) open"),
+            (lambda: self.leg(checklist=[{"subject": "a", "status": "completed"}, {"subject": "b", "status": "pending"}]), {}, "1 of 2 checklist items open"),
+            (lambda: self.leg(head="BLOCKED"), {}, "its report is BLOCKED"),
+            (lambda: self.leg(checklist=[]), {}, "no checklist recorded"),
+        ]
+        for make, pr, why in cases:
+            (pilot.ARCHIVE / "fix-1.json").unlink(missing_ok=True)
+            make()
+            out, merged = self.merge(**pr)
+            self.assertIn(why, out, why)
+            self.assertIn("waits for the controller", out)
+            self.assertEqual(merged, [], why)
 
 
 class MergeTargetTests(Case):

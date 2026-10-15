@@ -3484,10 +3484,12 @@ For each item:
    (approving a design document to build on), route changes within the flight's objective, and refuels up
    to {cap} times a leg's first budget (`python {pilot} budget <leg> <N>`, which refuses more).
    You act on the controller's behalf, so you also do what they would do with the answer:
-   - Merge a PR the pilot put to the controller as cleared to land (its review accepted, CI green):
-     `python {pilot} merge <flight> <number> [--repo owner/name]`. It refuses one that is not cleared (CI not
-     green, a draft, conflicts, changes asked for); then the item waits for the controller. A merge that
-     publishes a package (a SharpAstro library, to NuGet) is still the controller's merge to make, and yours.
+   - Merge a PR the pilot put to the controller as cleared to land:
+     `python {pilot} merge <flight> <number> [--repo owner/name]`. It merges only with the proof the controller
+     asked for: a leg of the flight recorded review rounds of this PR, the last at the head being merged with no
+     bugs and no open questions (so earlier findings were fixed), CI green there, and the leg reported DONE with
+     every checklist item ticked. It refuses otherwise and says what is missing; then the item waits for the
+     controller. Read its output and put the evidence it logs in your answer.
    - Remove a landed leg's worktree, and delete a leg's local branch once its tip is on a remote branch or
      merged (`git branch -r --contains <tip>` lists one, or its PR merged it): nothing is lost.
 3. Never decide, and leave for the controller: a push to the default branch or a force-push, deleting a branch
@@ -4347,6 +4349,48 @@ def cmd_march(a):
                                      if not a.off else "back in the holding pattern's order"))
 
 
+def merge_evidence(sid, pr, repo=None):
+    """What the autopilot must show before it merges in the controller's place, who asked for "due diligence, proof
+    of having done reviews and addressed feedback, and proof that checklist is done": the leg of this flight whose
+    review rounds record this very PR (by its URL), its last round's file on disk; that round read the head being
+    merged and found no bugs and left no question, so what earlier rounds found was fixed; approach() calls it
+    cleared to land (CI green on that head, no conflicts, its team's approval where it has one); it is no draft; and
+    the leg reported DONE with every checklist item ticked, or its pilot closed it on its own check.
+    Returns (True, the evidence, for the log) or (False, what is missing)."""
+    url, live = (pr.get("url") or "").lower(), {w["name"] for w in registered()}
+    legs = [w for w in registered() + archived(200) if w.get("plan") == sid
+            and any((r.get("url") or "").lower() == url for r in w.get("reviews") or [])]
+    if not legs:
+        return False, "no leg of this flight records a review round of it"
+    w = legs[0]
+    if pr.get("isDraft"):
+        return False, "it is a draft"
+    st = approach(w.get("reviews"), [pr_view(pr, repo)])
+    if not st or st["stage"] != "cleared":
+        return False, f"{w['name']}: {st['why'] if st else 'no review state'}"
+    rounds = [r for r in w["reviews"] if (r.get("url") or "").lower() == url]
+    last = rounds[-1]
+    if last.get("questions"):
+        return False, f"{w['name']}: review round {last['round']} left {last['questions']} question(s) open"
+    if not last.get("file") or not Path(last["file"]).exists():
+        return False, f"{w['name']}: review round {last['round']}'s file is not on disk"
+    if w["name"] in live:
+        s = worker_status(w)
+        items, head, closed = s.get("checklist") or [], s.get("reportHead"), s.get("closed")
+    else:
+        fin = w.get("final") or {}
+        items, head, closed = fin.get("checklist") or [], fin.get("reportHead"), fin.get("closed")
+    left = open_items(items)
+    if not closed and not items:
+        return False, f"{w['name']}: no checklist recorded"
+    if not closed and (head != "DONE" or left):
+        return False, f"{w['name']}: " + (f"{len(left)} of {len(items)} checklist items open" if left else f"its report is {head or 'missing'}, not DONE")
+    found = sum(r.get("bugs") or 0 for r in rounds[:-1])
+    return True, (f"{w['name']}: {len(rounds)} review round(s), the last accepted at {(pr.get('headRefOid') or '')[:8]} with no bugs "
+                  f"or questions{f' after {found} found and fixed' if found else ''}; CI green; "
+                  + (f"closed by its pilot: {closed.get('why')}" if closed else f"reported DONE, {len(items)} of {len(items)} checklist items done"))
+
+
 class MergeRefused(Exception):
     def __init__(self, code, text):
         super().__init__(text)
@@ -4368,7 +4412,7 @@ def merge_pr(sid, n, want="", actor="Controller"):
     # One merge at a time: the item's button and Send answers can both ask for it at once, and gh answers a
     # merge of a PR that has just merged with success, so #11 was logged and announced twice.
     with MERGE_LOCK:
-        pr = gh_json(root, "pr", "view", str(n), "--json", "state,headRefOid,url,mergeable,isDraft,statusCheckRollup,reviewDecision")
+        pr = gh_json(root, "pr", "view", str(n), "--json", "number,state,headRefOid,url,mergeable,isDraft,statusCheckRollup,reviewDecision")
         # The PR the item named, not one of the same number in a checkout pilot.json calls by that name.
         if pr and want and "/" in want and f"/{want.lower()}/pull/{n}" not in (pr.get("url") or "").lower():
             raise MergeRefused(409, f"#{n} in {name}'s checkout is {pr.get('url')}, not {want}#{n}")
@@ -4376,13 +4420,11 @@ def merge_pr(sid, n, want="", actor="Controller"):
             return {"merged": n, "head": pr["headRefOid"][:8], "already": True}
         if not pr or pr.get("state") != "OPEN":
             raise MergeRefused(409, f"PR #{n} is {(pr or {}).get('state', 'not found')}")
+        evidence = None
         if actor != "Controller":
-            v = pr_view(pr)
-            why = ("it is a draft" if pr.get("isDraft") else "it has conflicts" if v["conflicts"] else
-                   "its review asks for changes" if pr.get("reviewDecision") == "CHANGES_REQUESTED" else
-                   f"CI is {v['ci']} on its head" if v["ci"] != "passing" else None)
-            if why:
-                raise MergeRefused(409, f"PR #{n} of {name} is not cleared to land: {why}")
+            ok, evidence = merge_evidence(sid, pr, name)
+            if not ok:
+                raise MergeRefused(409, f"PR #{n} of {name} is not cleared for the autopilot: {evidence}; it waits for the controller")
         run = lambda how: subprocess.run(["gh", "pr", "merge", str(n), how, "--match-head-commit", pr["headRefOid"]], cwd=str(root),
                                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         how = "rebase"
@@ -4395,7 +4437,8 @@ def merge_pr(sid, n, want="", actor="Controller"):
             raise MergeRefused(502, (r.stderr or r.stdout).strip()[:400])
     head = pr["headRefOid"][:8]
     by = "from the dashboard" if actor == "Controller" else "on the controller's behalf"
-    plan_log(sid, f"{actor} merged PR #{n} of {name} {by} ({how}, guarded on {head}): {pr.get('url')}")
+    plan_log(sid, f"{actor} merged PR #{n} of {name} {by} ({how}, guarded on {head}): {pr.get('url')}"
+                  + (f". Evidence: {evidence}" if evidence else ""))
     rec = read_json(ANSWERED, {})
     waiting = split_waiting(plan_path(sid).read_text(encoding="utf-8"))[0] if plan_path(sid).exists() else ""
     for title in re.findall(r"^\s*[-*]\s+\*\*(.+?)\*\*", waiting, re.M):
