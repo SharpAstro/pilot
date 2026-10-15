@@ -134,7 +134,11 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
      swallowed, so do not fight it. Never ask the controller to click through, as a check or a capture.
      PSG1 parked three click-throughs on them, and their answer was: "stop bothering me about clicking
      around. just write some scripts to automate this".
-   - *Constraints*: what not to touch, and whether it may push or open a PR (default: neither).
+   - *Constraints*: what not to touch, and whether it may push or open a PR (default: neither). Every
+     brief carries the controller's window rule: "any window that opens and can't use -NoWindow has to
+     show what is going on in stderr/stdout". Background work starts windowless (`-NoNewWindow`,
+     `CREATE_NO_WINDOW`, or `conhost.exe --headless` in a scheduled task; Windows Terminal ignores
+     `-WindowStyle Hidden` and opens an empty window), and a window that must open shows its output.
    - *Report*: anything beyond the standard report.
 5. **Two legs never edit the same files at the same time.** If they would, chain them with *After*.
 6. **Follow without polling.** After starting a worker, `SendMessage` to its name with
