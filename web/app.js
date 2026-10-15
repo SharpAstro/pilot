@@ -849,8 +849,9 @@ function planCard(p, s) {
   const span = gridSpan(p), strip = p.legs.length ? routeStrip(p, s, stripWidth(opened.has(k) ? opened.get(k) : def, span)) : null;
   return `<details class="card pad plan" id="plan-${esc(p.sessionId)}" data-order="${esc(p.sessionId)}"${span > 1 ? ` style="--span:${span}"` : ""} ${fold(k, def)}>
     <summary class="cardhead"><span>${reorderHtml(p, s)}<b>${flightLight(p, s, ps, flying, move, landed)}${p.flight ? `Flight ${esc(p.flight)}` : "Flight plan"} · ${esc(p.title)}</b> ${connectsHtml(p)}${onwardHtml(p, s)}${marchChip(p)}${amendChip(p)} <span class="sub">${esc(legTally(p, s))}${flightGit(p, s)}${p.times?.departed ? ` · ${timesLine(p.times)}` : ""}</span> ${status}</span>
-      <span class="sub">${p.live ? `pilot ${esc(p.pilot || "")} · ` : ""}plan updated ${esc(stamp(p.updated))} (${esc(ago(p.updated))})
-      ${/^https:\/\/claude\.ai\//.test(p.tracking || "") ? `· <a href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a> ` : ""}· <a href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit</a> · <a href="#/s/${esc(p.sessionId)}">pilot session ›</a></span>
+      <span class="planbar"><span class="sub info">${p.live ? `pilot ${esc(p.pilot || "")} · ` : ""}plan updated ${esc(stamp(p.updated))} (${esc(ago(p.updated))})</span>
+        <span class="acts"><a class="btn sessbtn" href="#/s/${esc(p.sessionId)}" title="the pilot's session: its conversation, and its terminal">pilot session ›</a><a class="btn" href="vscode://file/${esc(p.path.replace(/\\/g, "/"))}" title="${esc(p.path)}">edit plan</a>${/^https:\/\/claude\.ai\//.test(p.tracking || "")
+          ? `<a class="btn" href="${esc(p.tracking)}" target="_blank" rel="noopener" title="the flight's tracking page, as of the pilot's last publish">tracking ↗</a>` : ""}${landed ? "" : amendButtonHtml(p)}</span></span>
       ${strip ? `<div class="strip">${strip.note ? `<div class="sub snote">${strip.note}</div>` : ""}${strip.svg}</div>` : ""}</summary>
     ${p.objective ? `<div class="objective">${md(p.objective)}</div>` : ""}
     ${p.hold ? clearanceCard(p, ready) : timesCard(p.times)}
@@ -866,7 +867,7 @@ function planCard(p, s) {
       <tbody>${legs || `<tr><td colspan="6" class="sub">No legs yet. The pilot adds them to the Route table.</td></tr>`}</tbody></table></div>
     ${log ? `<details ${fold("log:" + p.sessionId, true)}><summary>flight log: decisions, questions and answers, legs taking off and finishing</summary><ul class="log">${log}</ul></details>` : ""}
     ${landed ? "" : amendFormHtml(p)}
-    <div class="planfoot">${landed ? "" : amendButtonHtml(p)}<button class="arch" data-archive="${esc(p.sessionId)}" data-name="${esc(p.flight ? `Flight ${p.flight}` : "this flight")} · ${esc(p.title)}" title="Off the Overview, onto History; nothing is deleted, and History restores it">Archive flight…</button></div></details>`;
+    <div class="planfoot"><button class="arch" data-archive="${esc(p.sessionId)}" data-name="${esc(p.flight ? `Flight ${p.flight}` : "this flight")} · ${esc(p.title)}" title="Off the Overview, onto History; nothing is deleted, and History restores it">Archive flight…</button></div></details>`;
 }
 
 // Repos a flight needs that no waiting item names (its pilot asked in its terminal), and what the last add did.
@@ -2281,6 +2282,7 @@ document.addEventListener("click", async e => {
     e.preventDefault();
     const sid = t.dataset.amendopen, f = amendForm.get(sid);
     amendForm.set(sid, {...f, open: !f?.open, note: f?.open ? f.note : ""});
+    if (!f?.open) opened.set("plan:" + sid, true);     // from a folded card's bar: open it, where the form is
     render();
     if (amendForm.get(sid).open) document.querySelector(`textarea[data-amendtext="${CSS.escape(sid)}"]`)?.focus();
     return;

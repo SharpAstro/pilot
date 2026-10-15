@@ -199,7 +199,15 @@ ul.checklist li.in_progress span:first-child { color: var(--fill); }
 .plans.grid > .plan { margin: 0; min-width: 0; grid-column: span var(--span, 1); }
 .plans.grid > .plan[open] { grid-column: 1 / -1; }
 .plans.compact > .plan { margin-bottom: 6px; padding-top: 8px; padding-bottom: 8px; }
-.plans.compact > .plan:not([open]) > summary > .strip, .plans.compact > .plan:not([open]) > summary > span.sub { display: none; }
+.plans.compact > .plan:not([open]) > summary > .strip { display: none; }
+/* A plan card's bar, under its head, folded or not: who and when on the left, its session, plan, tracking page and
+   Amend on the right. A compact line keeps only the session, beside its head. */
+.plan .planbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; flex: 1 1 100%; }
+.plan .planbar .info { flex: 1 1 auto; }
+.plan .planbar .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.plan .planbar .acts .btn, .plan .planbar .acts button { font-size: 12px; padding: 2px 9px; }
+.plans.compact > .plan:not([open]) .planbar { flex: 0 0 auto; }
+.plans.compact > .plan:not([open]) .planbar .info, .plans.compact > .plan:not([open]) .planbar .acts > :not(.sessbtn) { display: none; }
 /* A flight's route, in its plan card's summary: on its own line under the card's head. */
 .strip { flex-basis: 100%; margin-top: 4px; }
 .strip .snote { font-size: 13px; }
@@ -452,7 +460,6 @@ tr.click { cursor: pointer; } tr.click:hover td { background: color-mix(in srgb,
 .plan .amlist .choices { margin-top: 4px; }
 .plan .amlist .choices button { font-size: 12px; padding: 3px 10px; }
 .plan .planfoot { gap: 8px; }
-.plan .planfoot button.amendbtn { font-size: 12px; padding: 3px 10px; margin-right: auto; }
 .plan .amendform { margin: 10px 0 4px; padding: 10px 12px; border: 1px solid var(--fill); border-radius: 8px; background: var(--tint-fill); }
 .plan .amendform textarea { width: 100%; min-height: 60px; margin: 6px 0; resize: vertical; font: inherit; font-size: 13px; padding: 6px 8px;
   border-radius: 6px; border: 1px solid var(--ring); background: var(--surface); color: var(--ink); box-sizing: border-box; }
