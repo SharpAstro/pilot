@@ -1611,6 +1611,42 @@ class CloseTests(Case):
         self.assertNotIn("closed", pilot.load("fix"))
 
 
+class OtherSessionsTests(Case):
+    """Live sessions pilot does not manage: listed on the Overview, and their terminal opens as a pilot's does."""
+
+    def live_rows(self):
+        root = str(ROOT / "web-app")
+        return [
+            {"id": "p", "sessionId": "s-pilot", "pid": 1, "kind": "interactive", "state": "working", "cwd": root, "name": "pilot-1"},
+            {"id": "t", "sessionId": "s-title", "pid": 2, "kind": "interactive", "state": "idle", "cwd": str(ROOT / "web-app-titleblock"), "name": "titleblock"},
+            {"id": "n", "sessionId": "s-train", "pid": 3, "kind": "background", "state": "working", "cwd": str(ROOT / "training"), "name": "tw: training"},
+            {"id": "d", "sessionId": "s-gone", "pid": 4, "kind": "background", "state": "done", "cwd": str(ROOT / "training"), "name": "finished"},
+            {"id": "job-fix", "sessionId": "sess-fix", "pid": 5, "kind": "background", "state": "working", "cwd": str(ROOT / "web-app" / "wt"), "name": "w-fix"},
+            {"id": "x", "sessionId": "s-dead", "pid": None, "kind": "interactive", "state": "idle", "cwd": str(ROOT / "elsewhere"), "name": "dead"},
+        ]
+
+    def test_only_live_sessions_no_worker_and_no_pilot(self):
+        self.config(repos={"web-app": str(ROOT / "web-app")})
+        self.worker("fix")
+        rows = self.live_rows()
+        self.assertEqual([o["name"] for o in pilot.other_sessions(rows)], ["titleblock", "tw: training"])
+        self.assertEqual([p["name"] for p in pilot.pilots(rows)], ["pilot-1"])
+
+    def test_their_terminal_opens_and_a_workers_does_not(self):
+        self.config(repos={"web-app": str(ROOT / "web-app")})
+        self.worker("fix")
+        ran = []
+        fake = lambda cmd, **kw: ran.append(cmd) or types.SimpleNamespace(stdout=json.dumps({"title": "t", "lines": ["$"]}), stderr="")
+        with unittest.mock.patch.object(pilot, "agents", self.live_rows), unittest.mock.patch.object(pilot.subprocess, "run", fake):
+            self.assertEqual(pilot.pilot_console("s-title")["title"], "t")
+            pilot.pilot_console("s-title", "/remote-control", ["enter"])
+            with self.assertRaises(ValueError):
+                pilot.pilot_console("sess-fix")
+        self.assertEqual(ran[0][2:4], ["console-io", "2"])
+        self.assertIn("typed into titleblock's terminal: '/remote-control' + enter",
+                      (pilot.STATE / "blackbox.jsonl").read_text(encoding="utf-8"))
+
+
 class MergeTargetTests(Case):
     """The controller's merge runs in the repo its waiting item names the PR in, not the flight's first leg's."""
 

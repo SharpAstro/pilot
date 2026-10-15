@@ -1523,8 +1523,9 @@ VIEWS.overview = (root, r) => {
     <h2>Workers</h2><div class="card"><div class="list s-workers"></div>
       <div class="empty s-wempty">No workers. The pilot starts them with <code>pilot start NAME --brief FILE</code>.</div></div>
     <h2>Sessions in the main checkout</h2><div class="card"><div class="list s-pilots"></div>
-      <div class="empty s-pempty">No session open in a repo's main checkout. Start the pilot there with <code>pilot</code>.</div></div>`;
-  const rowsW = new Map(), rowsP = new Map();
+      <div class="empty s-pempty">No session open in a repo's main checkout. Start the pilot there with <code>pilot</code>.</div></div>
+    <div class="s-othersec" hidden><h2>Other sessions</h2><div class="card"><div class="list s-others"></div><div class="empty s-oempty" hidden></div></div></div>`;
+  const rowsW = new Map(), rowsP = new Map(), rowsO = new Map();
   // The intercom's targets: everyone, all pilots, all workers, a flight's pilot and legs, or one session.
   let targets = [], picked = "everyone";
   const bto = $(".s-bto", root), btext = $(".s-btext", root), bnote = $(".s-bnote", root);
@@ -1558,6 +1559,7 @@ VIEWS.overview = (root, r) => {
         const where = (p.cwd || "").split(/[\\/]/).pop();
         targets.push([flightOf.get(p.name) ? `${flightOf.get(p.name)} pilot · ${p.name}` : `${p.name} · no flight, in ${where}`, [p.name]]);
       }
+      for (const p of s.others || []) targets.push([`${p.name} · no flight, in ${(p.cwd || "").split(/[\\/]/).pop()}`, [p.name]]);
       for (const n of workersN) targets.push([n, [n]]);
       if (!targets.some(([l]) => l === picked) && targets.length) picked = targets[0][0];
       put(bto, targets.map(([l, ns]) => `<option${l === picked ? " selected" : ""} value="${esc(l)}">${esc(l)}${ns.length > 1 ? ` (${ns.length})` : ""}</option>`).join("")
@@ -1584,6 +1586,16 @@ VIEWS.overview = (root, r) => {
           : p.now ? `<span class="doing">${nowText(p.now)}</span>` : "");
         put(v.actions, actions(p, false));
       }})), $(".s-pempty", root), rowsP);
+      // Sessions pilot does not manage, outside every listed repo's main checkout: each opens, terminal and all.
+      const others = s.others || [];
+      $(".s-othersec", root).hidden = !others.length;
+      place($(".s-others", root), others.map(p => ({key: p.sessionId, href: `#/s/${p.sessionId}`, fill: v => {
+        put(v.name, `${esc(p.name)}<small>${esc(p.kind)} · in ${esc((p.cwd || "").split(/[\\/]/).pop())} · ${p.lastActivity ? esc(ago(p.lastActivity)) : "never"}</small>`);
+        put(v.chip, pilotChip(p)); put(v.meter, meter(p.spend, 0));
+        put(v.doing, p.status === "waiting" ? `<span class="doing"><b>needs you:</b> ${esc(p.ask?.questions?.[0]?.question || p.waitingFor || "input")}</span>`
+          : p.now ? `<span class="doing">${nowText(p.now)}</span>` : "");
+        put(v.actions, actions(p, false));
+      }})), $(".s-oempty", root), rowsO);
     },
   };
 };
@@ -1598,7 +1610,7 @@ VIEWS.session = (root, r) => {
       <div class="summary s-sum" style="margin-top:6px"></div></div>
     <div class="sess" style="margin-top:12px">
       <div><div class="card"><div class="stream tstream s-stream"><div class="empty">loading…</div></div><div class="live s-live" hidden></div></div>
-        <details class="card pad term s-term" hidden><summary><b>Terminal</b> <span class="sub">its screen, read every 2 s while this is open; what you type goes straight into it</span></summary>
+        <details class="card pad term s-term" data-k="term"${opened.get("term") ? " open" : ""} hidden><summary><b>Terminal</b> <span class="sub">its screen, read every 2 s while this is open; what you type goes straight into it</span></summary>
           <div class="sub s-ttitle"></div><pre class="screen s-screen">reading…</pre>
           <div class="termrow"><input class="s-ttext" placeholder="text to type, e.g. an answer or /remote-control">
             <label class="sub"><input type="checkbox" class="s-tenter" checked> then Enter</label><button class="primary s-tsend">Type</button>
@@ -1769,8 +1781,9 @@ VIEWS.session = (root, r) => {
     if (input) input.hidden = !input.hidden;
   });
 
-  // A pilot's terminal: its screen, read while the card is open, and keystrokes typed into it after a
-  // confirm. Only pilots: a background worker has no console. The server logs what is typed in the plan.
+  // A session's terminal: a pilot's, or one pilot does not manage. Its screen, read while the card is open (which
+  // stays open from page to page once opened), and keystrokes typed into it after a confirm. Never a worker's: its
+  // pilot steers it. The server logs what is typed in the plan, or the black box.
   const term = $(".s-term", root);
   let termSid = null, termTimer = null, termName = "";
   async function readTerm() {
@@ -1866,7 +1879,7 @@ VIEWS.session = (root, r) => {
   return {
     update(s) {
       let w = r.worker ? s.workers.find(x => x.name === r.worker) : s.workers.find(x => x.sessionId === r.sid);
-      const p = !w && r.sid ? s.pilots.find(x => x.sessionId === r.sid) : null;
+      const p = !w && r.sid ? s.pilots.find(x => x.sessionId === r.sid) || (s.others || []).find(x => x.sessionId === r.sid) : null;
       const h = !w && !p ? s.history.find(x => (r.worker && x.name === r.worker) || (r.sid && x.sessionId === r.sid)) : null;
       worker = w ? w.name : null;
       const want = w ? w.sessionId : h ? h.sessionId : r.sid;

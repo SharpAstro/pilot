@@ -2124,6 +2124,28 @@ def pilots(rows=None):
     return out
 
 
+def other_sessions(rows=None, pilot_rows=None):
+    """Live sessions pilot does not manage: no worker, and not in a configured repo's main checkout, so not in
+    pilots(): a terminal opened in a sibling folder (bullclip-backend-titleblock) or a background session in a repo
+    pilot.json does not list. The dashboard lists them, and opens their terminal as it does a pilot's. A background
+    job that has finished is left out, as pilots() leaves it out."""
+    rows = agents() if rows is None else rows
+    skip = {p["sessionId"] for p in (pilots(rows) if pilot_rows is None else pilot_rows)}
+    skip |= {s.get("sessionId") for w in registered() for s in sessions_of(w)} | {w.get("sessionId") for w in registered()}
+    out = []
+    for r in rows:
+        if not r.get("pid") or not r.get("sessionId") or r["sessionId"] in skip:
+            continue
+        if r.get("kind") == "background" and r.get("state") == "done":
+            continue
+        path = transcript(r["sessionId"])
+        out.append({"name": r.get("name"), "id": r.get("id"), "sessionId": r.get("sessionId"), "kind": r.get("kind"),
+                    "cwd": r.get("cwd"), "startedAt": r.get("startedAt"), "other": True,
+                    "spend": spend([r["sessionId"]]), "rev": path.stat().st_size if path else 0,
+                    "lastActivity": path.stat().st_mtime if path else None, **session_view(r)})
+    return out
+
+
 def pending_question(ev):
     """An AskUserQuestion that has no answer yet, if the transcript already holds the call. Claude Code
     writes it there before the answer at least some of the time (seen once without, once with), so this
@@ -2265,7 +2287,7 @@ def snapshot():
     ps = pilots(rows)
     for p in ps:
         p["flying"] = [w["name"] for w in workers if w.get("plan") == p["sessionId"] and w["state"] in ("working", "blocked")]
-    return {"workers": workers, "pilots": ps, "limits": limits(), "history": history,
+    return {"workers": workers, "pilots": ps, "others": other_sessions(rows, ps), "limits": limits(), "history": history,
             "flightHistory": flight_history(workers, archived(200)),
             "plans": plans_view(rows, workers, {p["sessionId"]: p for p in ps})}
 
@@ -4500,11 +4522,13 @@ def cmd_console_io(a):
 
 
 def pilot_console(sid, text="", keys=(), actor="Controller"):
-    """A live pilot's screen, read or typed into from the dashboard. Only pilots, sessions in a configured
-    repo's main checkout: a background worker has no console. What is typed goes in the plan's log."""
-    row = next((r for r in agents() if r.get("sessionId") == sid and r.get("pid")), None)
-    if not row or sid not in {p["sessionId"] for p in pilots()}:
-        raise ValueError("only a live pilot's terminal, a session in a repo's main checkout, can be read or typed into")
+    """A live session's screen, read or typed into from the dashboard: a pilot, or a session pilot does not
+    manage (other_sessions). Never a worker's: its pilot steers it, through its brief and the intercom. What is
+    typed goes in the plan's log, or the black box for a session flying none."""
+    rows = agents()
+    row = next((r for r in rows if r.get("sessionId") == sid and r.get("pid")), None)
+    if not row or sid not in {p["sessionId"] for p in pilots(rows) + other_sessions(rows)}:
+        raise ValueError("only a live session's terminal, a pilot's or one pilot does not manage, can be read or typed into; never a worker's")
     text = " ".join(str(text or "").split())[:2000]
     keys = [k for k in keys if k in CONSOLE_KEYS]
     r = subprocess.run([sys.executable, str(HERE / "pilot.py"), "console-io", str(row["pid"]),
@@ -4518,7 +4542,11 @@ def pilot_console(sid, text="", keys=(), actor="Controller"):
     if out.get("error"):
         raise ValueError(out["error"])
     if text or keys:
-        plan_log(sid, f"{actor} typed into the pilot's terminal: " + " + ".join(([repr(text)] if text else []) + keys))
+        typed = " + ".join(([repr(text)] if text else []) + keys)
+        if plan_path(sid) and plan_path(sid).exists():
+            plan_log(sid, f"{actor} typed into the pilot's terminal: {typed}")
+        else:
+            blackbox(f"{actor} typed into {row.get('name') or sid}'s terminal: {typed}", actor=actor.lower())
     return out
 
 
