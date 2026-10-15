@@ -537,8 +537,15 @@ function renderTop() {
   // in it is unanswered: answers sent from here are with the pilot until it takes them out of the plan.
   const waiting = [...S.pilots.filter(p => p.status === "waiting" && (S.plans || []).some(x => x.sessionId === p.sessionId))
                      .map(p => ({name: `pilot ${p.name}`, href: `#/s/${p.sessionId}`})),
-                   ...(S.plans || []).filter(p => unanswered(p).length).map(p => ({name: p.title, href: `#/s/${p.sessionId}`})),
+                   ...(S.plans || []).filter(p => unanswered(p).length).map(p => ({name: `${p.flight ? `${p.flight} ` : ""}${p.title}`, href: `#/plan/${p.sessionId}`})),
                    ...S.workers.filter(waitsOnYou).map(w => ({name: w.name, href: `#/w/${w.name}`}))];
+  // Every PR a plan's open items ask you to merge, by its own repo, with its link and the Merge button: they sat in
+  // each flight's waiting items, folded away in its card, and the controller had to ask for a list of them.
+  // Answered or not: a "Merge" typed as the answer reaches only the pilot, which may not merge.
+  const merges = (S.plans || []).flatMap(p => waitingItems(p.waiting).items.map(it => {
+    const mg = mergeOf(it, p);
+    return mg && !mg.merged ? {p, ...mg, title: it.title} : null;
+  })).filter(Boolean);
   // S.stale: pilot.py changed since this server started. A snapshot without refuel's mode is from a server
   // older than that check.
   const stale = S.stale || (S.refuel && !("mode" in S.refuel));
@@ -550,7 +557,11 @@ function renderTop() {
     (stale ? `<p class="warnline amber">This dashboard is running older code than <code>pilot.py</code> on disk, so newer buttons may answer "not found". ${S.restartable
       ? `<button class="s-restart">Restart now</button> or press R in its terminal.` : `Restart it: <code>pilot dashboard</code>.`}</p>` : "") +
     (over.length ? `<p class="warnline">⚠ Over budget: ${over.map(w => `<a href="#/w/${esc(w.name)}">${esc(w.name)}</a> ${fillButton(w)}`).join(", ")}. Their tools are refused until the budget is raised.</p>` : "") +
-    (waiting.length ? `<p class="warnline amber">Waiting on you: ${waiting.map(w => `<a href="${esc(w.href)}">${esc(w.name)}</a>`).join(", ")}.</p>` : ""));
+    (waiting.length ? `<p class="warnline amber">Waiting on you: ${waiting.map(w => `<a href="${esc(w.href)}">${esc(w.name)}</a>`).join(", ")}.</p>` : "") +
+    (merges.length ? `<p class="warnline amber prwait">Pull requests waiting for your merge: ${merges.map(m => `<span><b>${esc(m.p.flight || "")}</b>
+      ${m.href ? `<a href="${esc(m.href)}" target="_blank" rel="noopener">${esc(m.repo ? m.repo.split("/")[1] : (m.p.repoUrl || "").split("/").pop())}#${esc(m.n)} ↗</a>` : `#${esc(m.n)}`}
+      ${m.repo !== null && m.href ? `<button class="primary" data-merge="${esc(m.p.sessionId)}" data-pr="${esc(m.n)}"${m.repo ? ` data-repo="${esc(m.repo)}"` : ""}
+        title="${esc(`${m.title}: merge it (rebase), guarded on its head`)}">Merge</button>` : ""}</span>`).join("")}</p>` : ""));
   const n = S.notifications || {unread: 0, items: []};
   const badge = $("#badge");
   badge.hidden = !n.unread; badge.textContent = n.unread > 99 ? "99+" : n.unread;
@@ -699,7 +710,13 @@ function legState(s, name) {
   const w = s.workers.find(x => x.name === name);
   if (w) return {w, st: stateOf(w)};
   const h = s.history.find(x => x.name === name);
-  if (h) return {h, st: {...stateOf(h), label: stateOf(h).label + " · removed"}};
+  // Removed after it reported DONE (or closed by its pilot): it was checked and taken off, so items its task list
+  // left unticked no longer hold it. TIA2's removed legs read "DONE, 23 items open" and drew the flight amber.
+  if (h) {
+    const st = h.final?.closed || (h.final?.reportHead === "DONE")
+      ? {cls: "done", label: "✓ done", stroke: "var(--good)", tint: "var(--tint-good)"} : stateOf(h);
+    return {h, st: {...st, label: st.label + " · removed"}};
+  }
   return {st: {cls: "other", label: "planned", stroke: "var(--axis)", tint: "var(--surface)", planned: true}};
 }
 
@@ -742,12 +759,13 @@ function routeDepths(legs) {
 // What "your move" is, once the pilot's turn has ended with nothing in the air: the items waiting on the
 // controller; for a flight whose legs are all done, its open pull requests and what each needs; else the last line of the
 // pilot's last message, which is where a pilot says what it is waiting for.
-// With the autopilot on, what waits on the controller is the autopilot's to decide, a merge excepted (it never merges).
+// With the autopilot on, what waits on the controller is the autopilot's to decide, a merge excepted: the autopilot merges
+// only with proof (pilot merge), and a merge it could not is the controller's, listed in the top bar either way.
 function yourMoveOf(p, s, ps) {
   const auto = S.autopilot?.enabled;
   if (p.waiting && !unanswered(p).length) return `answers sent; the pilot's move`;
   if (p.waiting) {
-    const items = unanswered(p), merges = items.filter(i => /^\**\s*merge/i.test(i)).length, n = items.length - (auto ? merges : 0);
+    const items = unanswered(p), merges = items.filter(i => /^\**\s*merge\b/i.test(i.title)).length, n = items.length - (auto ? merges : 0);
     if (auto && !n) return `your move: ${merges === 1 ? "a merge" : `${merges} merges`} below`;
     return `${auto ? "autopilot's move" : "your move"}: answer ${n} item${n === 1 ? "" : "s"} below${auto && merges ? `, and ${merges === 1 ? "a merge" : `${merges} merges`} for you` : ""}`;
   }
@@ -992,6 +1010,25 @@ function namedPrs(text) {
 }
 const ghPull = (repo, n) => `https://github.com/${repo}/pull/${n}`;
 
+// A merge question's PR: "Merge PR #37?", or with its repo's name, "Merge Console.Lib PR #37?", which CL1's pilot
+// wrote and the old /merge PR #/ never read, so #37 had no Merge button at all. Its repo: owner/name#N or its URL in
+// the item, else the name in its title (its owner from the PR the plan's data read, else the flight's own repo's),
+// else the flight's own; null when two repos are named. merged: the plan's data reads it merged (or closed).
+function mergeOf(it, p) {
+  const m = /\bmerge\s+(?:([A-Za-z][\w.-]*)\s+)?PR\s+#(\d+)/i.exec(it.title || "");
+  if (!m) return null;
+  const n = m[2];
+  let repo = namedPrs(it.text).get(n);
+  if (repo === undefined && m[1]) {
+    const hit = (p.prs || []).find(x => String(x.number) === n && (x.url || "").toLowerCase().includes(`/${m[1].toLowerCase()}/pull/`));
+    const owner = hit ? hit.url.split("/")[3] : (p.repoUrl || "").split("/")[3];
+    repo = owner ? `${owner}/${hit ? hit.url.split("/")[4] : m[1]}` : null;
+  }
+  const href = repo ? ghPull(repo, n) : repo === undefined && p.repoUrl ? `${p.repoUrl}/pull/${n}` : "";
+  const known = (p.prs || []).find(x => String(x.number) === n && (!repo || (x.url || "").toLowerCase().includes(`/${repo.toLowerCase()}/pull/`)));
+  return {n, repo, href, merged: !!known && /MERGED|CLOSED/.test(known.state || "")};
+}
+
 // Links in a waiting item's HTML: each `owner/name#N` to its own PR, and a bare "PR #N" to the repo the item names
 // it in, else the flight's own; one named in two repos is left unlinked rather than guessed.
 function prLinks(html, url, text) {
@@ -1025,14 +1062,14 @@ function waitingHtml(p, ps) {
     const sent = (p.answered || {})[it.title];
     // Repos it names that are not listed yet: answered "add them" or not, the button stays until they are.
     const repos = reposIn(p, it.text), addBtn = repos.length ? `<div class="choices">${addReposHtml(sid, repos)}</div>` : "";
-    if (sent) return `<li class="answered">${md(it.text, true)}<div class="sub">✓ answered ${esc(clock(sent * 1000))}; with the pilot, which takes it out of its plan at its next step</div>${addBtn}</li>`;
-    const a = answers.get(`${sid}|${it.title}`);
-    // A merge question gets the controller's own merge button: the dashboard runs it, as a pilot may not.
-    // In the repo the item names it in, said on the button; the flight's own when it names none; none when two.
-    const mpr = (/\bmerge PR #(\d+)/i.exec(it.title) || [])[1], mrepo = mpr ? namedPrs(it.text).get(mpr) : undefined;
-    const mhref = mrepo ? ghPull(mrepo, mpr) : mrepo === undefined && p.repoUrl ? `${p.repoUrl}/pull/${mpr}` : "";
-    const mergeBtn = mpr && mhref ? `<button class="primary" data-merge="${esc(sid)}" data-pr="${esc(mpr)}"${mrepo ? ` data-repo="${esc(mrepo)}"` : ""}>Merge ${esc(mrepo ? mrepo.split("/")[1] : "")}#${esc(mpr)} (rebase)</button>
+    // A merge question gets the controller's own merge button: the dashboard runs it, as a pilot may not. In the repo
+    // the item names it in, said on the button. It stays, answered or not, until the PR is merged: a "Merge" typed
+    // as the answer only reached the pilot, which may not merge, and CL1's #37 sat answered and open with no button.
+    const mg = mergeOf(it, p), mpr = mg?.n, mrepo = mg?.repo, mhref = mg?.href;
+    const mergeBtn = mg && !mg.merged && mhref ? `<button class="primary" data-merge="${esc(sid)}" data-pr="${esc(mpr)}"${mrepo ? ` data-repo="${esc(mrepo)}"` : ""}>Merge ${esc(mrepo ? mrepo.split("/")[1] : "")}#${esc(mpr)} (rebase)</button>
       <a href="${esc(mhref)}" target="_blank" rel="noopener">PR #${esc(mpr)} ↗</a>` : "";
+    if (sent) return `<li class="answered">${md(it.text, true)}<div class="sub">✓ answered ${esc(clock(sent * 1000))}; with the pilot, which takes it out of its plan at its next step${mergeBtn ? ". A pilot may not merge: the merge is this button" : ""}</div>${mergeBtn ? `<div class="choices">${mergeBtn}</div>` : ""}${addBtn}</li>`;
+    const a = answers.get(`${sid}|${it.title}`);
     if (a) n++;
     const btn = (kind, value, label, rec) => `<button class="choice${a?.kind === kind && a.value === value ? " on" : ""}${rec ? " rec" : ""}"
       data-answer="${esc(sid)}" data-item="${i}" data-kind="${kind}" data-value="${esc(value)}" title="${esc(rec ? `recommended: ${it.rec}` : value)}">${esc(label)}</button>`;
@@ -1062,9 +1099,9 @@ async function sendAnswers(sid) {
   // the dashboard, since a pilot told "Merge" is refused it (another session's message carries no authority).
   const merged = new Map();
   for (const [it, a] of picked) {
-    const n = (/\bmerge PR #(\d+)/i.exec(it.title) || [])[1], said = a.kind === "accept" ? it.rec : a.value;
+    const mg = mergeOf(it, p), n = mg?.n, said = a.kind === "accept" ? it.rec : a.value;
     if (!n || !/^\s*merge(d)?\b/i.test(said || "")) continue;
-    const repo = namedPrs(it.text).get(n);
+    const repo = mg.repo;
     if (repo === null) continue;                     // named in two repos: the pilot sorts out which
     try { const j = await post("/api/merge", {plan: sid, pr: Number(n), repo}); merged.set(it.title, `merged by the dashboard (rebase, guarded on ${j.head})`); }
     catch (e) { sentNote.set(sid, `not sent: merging PR #${n} failed: ${e.message}`); render(); return; }

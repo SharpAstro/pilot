@@ -3864,7 +3864,10 @@ def leg_state(w):
         return "bad", "failed"
     if head == "BLOCKED":
         return "warn", "blocked"
-    if head == "DONE" and left:
+    # Removed after it reported DONE: its pilot checked it and took it off, so items its task list left unticked (a
+    # copy `say` made restarts the list, and the old one's items stay pending) no longer hold it. TIA2's seven
+    # removed legs read "DONE, 23 items open" and drew the flight amber end to end.
+    if head == "DONE" and left and not (fin and "state" not in w):
         return "warn", f"done, {left} item{'s' if left > 1 else ''} open"
     ap = w.get("approach")
     if head == "DONE" and ap:     # its PR's review, once it has one
@@ -4469,7 +4472,8 @@ def merge_pr(sid, n, want="", actor="Controller"):
         if f"PR #{n}" in title:
             rec.setdefault(sid, {})[title] = time.time()
     write_json(ANSWERED, rec)
-    drop_waiting(sid, lambda title: f"merge pr #{n}" in title.lower())
+    # "Merge PR #37?" or "Merge Console.Lib PR #37?", as pilots title it.
+    drop_waiting(sid, lambda title: bool(re.search(rf"\bmerge\b.*\bpr\s+#{n}\b", title.lower())))
     # Its pilot, live or parked: the intercom wakes a parked one with the news.
     pilot = next((x.get("name") for x in agents() if x.get("sessionId") == sid and (x.get("pid") or asleep(x))), None)
     if pilot:
