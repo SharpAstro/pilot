@@ -189,6 +189,7 @@ Code's own project list.
 | `web/` | the dashboard page: `index.html`, `app.js`, `app.css`, no build step |
 | `tests/` | the offline suite: `python -m unittest discover tests`, standard library only, no Claude Code needed (see Tests) |
 | `plugins/pilot/` | the pilot skill, loaded with `--plugin-dir` into the session you want as pilot, and the hook that shows its questions on the dashboard and logs your answers in the plan |
+| `plugins/CLAUDE.md` | pilot's house rules, a shadow of a machine's `~/.claude/CLAUDE.md`: both plugins' SessionStart hooks (`pilot.py hook-rules`) put it into every pilot and worker session, so they behave the same wherever pilot is installed (writing, `python` and `pwsh`, and no empty windows) |
 | `plugins/worker/` | the hooks every worker gets: the budget checkpoint, and six of Sam's hooks through `hooks/kit.sh` |
 | `~/.pilot/pilot.json` | this machine's settings, kept out of the repo since they name local paths: the repos workers may start in, the default model and effort (unset: the account's), the default budget. Missing, it means no repos and a 10M budget |
 | `%LOCALAPPDATA%/pilot/` | runtime state: `plans/<pilot session>.md`, `flights.json` (the last flight number per repo), `blackbox.jsonl` (every decision), `autopilot.json`, `track/` (tracking pages rendered with no `--out`), `workers/`, `archive/` (removed workers), `archived-flights.json` (archived flights, by plan id; their plans stay in `plans/`), `briefs/` (the exact prompt sent), `meters/`, `notifications.json`, `summaries.json`, error logs |

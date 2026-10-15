@@ -23,6 +23,13 @@
         ]
       }
     ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python -I \"${CLAUDE_PLUGIN_ROOT}/../../pilot.py\" hook-rules" }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "",

@@ -2043,6 +2043,24 @@ class RemoveTests(Case):
         self.assertIsNotNone(pilot.load("fix"))
 
 
+class HouseRulesTests(Case):
+    """plugins/CLAUDE.md, pilot's shadow of a machine's ~/.claude/CLAUDE.md: every pilot and worker gets it."""
+
+    def test_both_plugins_put_the_house_rules_into_every_session(self):
+        for plugin in ("pilot", "worker"):
+            hooks = json.loads((pilot.HERE / "plugins" / plugin / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+            commands = [h["command"] for g in hooks.get("SessionStart", []) for h in g["hooks"]]
+            self.assertTrue(any(c.endswith(" hook-rules") for c in commands), plugin)
+        out = io.BytesIO()
+        stdin = types.SimpleNamespace(buffer=io.BytesIO(b'{"hook_event_name": "SessionStart"}'))
+        with unittest.mock.patch.object(sys, "stdin", stdin), unittest.mock.patch.object(sys, "stdout", types.SimpleNamespace(buffer=out)):
+            pilot.cmd_hook_rules(None)
+        text = out.getvalue().decode("utf-8")
+        self.assertTrue(text.startswith("# pilot's house rules"))
+        self.assertIn("any window that opens and that can't use -NoWindow", text)
+        self.assertNotIn("\u2014", text, "the house rules keep their own rule")
+
+
 class RunawayKitTests(Case):
     def test_every_hook_the_worker_plugin_wires_is_in_the_repo(self):
         hooks = pilot.HERE / "plugins" / "worker" / "hooks"

@@ -28,6 +28,10 @@
           {
             "type": "command",
             "command": "python -I \"${CLAUDE_PLUGIN_ROOT}/../../pilot.py\" hook-start"
+          },
+          {
+            "type": "command",
+            "command": "python -I \"${CLAUDE_PLUGIN_ROOT}/../../pilot.py\" hook-rules"
           }
         ]
       }

@@ -4419,6 +4419,23 @@ def cmd_hook_start(_a):
         hook_error()
 
 
+HOUSE_RULES = HERE / "plugins" / "CLAUDE.md"
+
+
+def cmd_hook_rules(_a):
+    """SessionStart, in both plugins: pilot's house rules (plugins/CLAUDE.md) into the session's context, so a
+    pilot or worker behaves the same on any machine whatever its own ~/.claude/CLAUDE.md says. Claude Code reads
+    no CLAUDE.md from a plugin's folder; a SessionStart hook's output is what it adds. Written as UTF-8 bytes: a
+    hook's stdout is a pipe, which Python on Windows would otherwise encode in the console's code page."""
+    try:
+        sys.stdin.buffer.read()
+        text = HOUSE_RULES.read_text(encoding="utf-8").strip()
+        if text:
+            sys.stdout.buffer.write((text + "\n").encode("utf-8"))
+    except Exception:
+        hook_error()
+
+
 def cmd_hook_ask(_a):
     """PreToolUse and PostToolUse on AskUserQuestion, in the pilot plugin. A pilot with a flight plan is
     refused the question and sent to the plan's `## Waiting on the controller` instead: a terminal prompt
@@ -5756,6 +5773,7 @@ def main():
     sub.add_parser("hook-budget").set_defaults(fn=cmd_hook_budget)
     sub.add_parser("hook-ask").set_defaults(fn=cmd_hook_ask)
     sub.add_parser("hook-start").set_defaults(fn=cmd_hook_start)
+    sub.add_parser("hook-rules").set_defaults(fn=cmd_hook_rules)
     s = sub.add_parser("console-io", help="internal: read a console's screen, or type into it, by process id")
     s.add_argument("pid", type=int)
     s.add_argument("--text")
