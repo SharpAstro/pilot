@@ -139,9 +139,10 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
      around. just write some scripts to automate this".
    - *Constraints*: what not to touch, and whether it may push or open a PR (default: neither). Every
      brief carries the controller's window rule: "any window that opens and can't use -NoWindow has to
-     show what is going on in stderr/stdout". Background work starts windowless (`-NoNewWindow`,
-     `CREATE_NO_WINDOW`, or `conhost.exe --headless` in a scheduled task; Windows Terminal ignores
-     `-WindowStyle Hidden` and opens an empty window), and a window that must open shows its output.
+     show what is going on in stderr/stdout". Background work starts from the worker's own session,
+     windowless (`Start-Process -NoNewWindow`, `CREATE_NO_WINDOW`), never as a scheduled task (Windows
+     Terminal ignores `-WindowStyle Hidden` and opens an empty window; a task runs below normal priority),
+     and a window that must open shows its output. The house rules (plugins/CLAUDE.md) say it in full.
    - *Report*: anything beyond the standard report.
 5. **Two legs never edit the same files at the same time.** If they would, chain them with *After*.
 6. **Follow without polling.** After starting a worker, `SendMessage` to its name with

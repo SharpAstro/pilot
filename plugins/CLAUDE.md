@@ -24,11 +24,24 @@ does not loosen these.
 The controller, 2026-10-15: "any window that opens and that can't use -NoWindow has to show what is
 going on in stderr/stdout".
 
-- **Background work opens no window.** Windows Terminal, the default terminal on Windows 11, ignores
-  `-WindowStyle Hidden`: `pwsh -WindowStyle Hidden` from a scheduled task or `Start-Process` still opens
-  a window, empty. A deconvolution grid's scheduled task opened one each time it started. Use
-  `Start-Process -NoNewWindow`, `subprocess` with `CREATE_NO_WINDOW`, or, in a scheduled task,
-  `conhost.exe --headless pwsh.exe -NoProfile -File ...`.
+- **Background work opens no window, and there is one proper way to start it.** Windows Terminal is the
+  default terminal on Windows 11: a console program started without a console of its own (from a
+  scheduled task, or `Start-Process` without `-NoNewWindow`) gets a Windows Terminal window, and
+  `-WindowStyle Hidden` does not hide it, so it sits there empty. A deconvolution grid's scheduled task
+  opened one each time it started. So:
+  - **From the session itself**, which is how background work runs: its background shell, or a child
+    that shares the session's console. `Start-Process -NoNewWindow` in PowerShell, or
+    `subprocess.Popen(..., creationflags=subprocess.CREATE_NO_WINDOW)` in Python. This is the way.
+  - **Not as a scheduled task.** If one is truly needed, its action goes through
+    `conhost.exe --headless <program> ...` (a console with no window), and its `Settings.Priority` is
+    raised to 4, normal. Task Scheduler runs an action at 7, below normal, and on a busy machine its
+    child got almost no CPU: a task's Python looked hung for an hour while eight normal-priority runs
+    held the CPU at 100%.
+  - **Check it with the real program.** Before relying on a way of starting something, start the very
+    program it will run that way and watch it do work. A check that ran only PowerShell commands passed
+    while the Python the task started got no CPU.
+- **A process is not hung while the CPU is saturated.** Before calling one hung, see whether its CPU
+  time moves and how busy the machine is.
 - **A window that has to open shows what is going on.** A GUI under test, or a tool that needs its own
   console: its stdout and stderr go to that window, not only to a log file behind an empty one, so
   whoever sees it can tell what it is, who started it and whether it is stuck. Give it a title that
