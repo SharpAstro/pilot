@@ -1401,6 +1401,15 @@ class TranscriptTests(Case):
         self.assertEqual([(i["subject"], i["status"]) for i in pilot.checklist(["w2"])],
                          [("step 1", "completed"), ("step 2", "pending"), ("R1 B1 fix", "in_progress")])
 
+    def test_a_requests_copy_of_its_calls_is_not_a_second_item(self):
+        use, res = tool_use("t1", "TaskCreate", {"subject": "step 1"}), tool_result("t1", "Task #1 created")
+        blob = lambda r: {"type": "api-request-blob", "sessionId": "w3", "hash": "h", "message": r["message"]}
+        self.transcript("w3", [use, res,
+                               tool_use("t2", "TaskUpdate", {"taskId": "1", "status": "completed"}),
+                               tool_result("t2", "Updated task #1 status"),
+                               blob(use), blob(res)])   # Claude Code 2.1.300 copies a request's messages again
+        self.assertEqual([(i["subject"], i["status"]) for i in pilot.checklist(["w3"])], [("step 1", "completed")])
+
     def test_who_refused_a_call(self):
         cases = [("denied by the Claude Code auto mode classifier", "auto mode"),
                  ("PreToolUse:Bash hook error: no", "a hook"),

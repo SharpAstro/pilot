@@ -1686,7 +1686,9 @@ def replay_tasks(sid):
     finished checklist would read as none kept. Its TaskCreate and TaskUpdate calls are still in the
     transcript; only those that succeeded count. Cached by the transcript's size: a finished worker's
     transcript no longer moves. A session `say` continued holds the earlier session's calls too, but its own
-    task store starts again at #1, so a #1 made later is a new item, not the old #1 again."""
+    task store starts again at #1, so a #1 made later is a new item, not the old #1 again. Only the session's own
+    records count: Claude Code 2.1.300 also writes "api-request-blob" records, a request's messages copied again with
+    no uuid, and read as calls they made every item twice, its copy left pending (every leg of TIA2, 2026-10-15)."""
     path = transcript(sid)
     if not path:
         return []
@@ -1701,6 +1703,8 @@ def replay_tasks(sid):
             try:
                 e = json.loads(line)
             except ValueError:
+                continue
+            if e.get("type") not in ("assistant", "user"):
                 continue
             c = (e.get("message") or {}).get("content") if isinstance(e.get("message"), dict) else None
             for b in c if isinstance(c, list) else []:
