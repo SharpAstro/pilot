@@ -4302,7 +4302,7 @@ def cmd_archive(a):
     if a.restore:
         print(f"{name} restored: back on the Overview and the Flights strips, in its old place in the order, or last without one")
     else:
-        print(f"{name} archived: off the Overview and the Flights strips, and listed on History. Its plan is kept at "
+        print(f"{name} archived: off the Overview and listed on History. Its plan is kept at "
               f"{plan_path(sid)}; `python pilot.py archive --restore {a.flight}` puts it back.")
 
 
