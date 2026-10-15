@@ -115,6 +115,7 @@ pilot track --out <scratch>/track.html   # its tracking page, for the pilot to p
 pilot track --url <artifact url>    # where it was published: the plan's Tracking: line
 pilot plan --hold                   # hold this flight at the gate (Hold: awaiting clearance): plan only, start refuses every leg
 pilot clear PIL2                    # the controller's: clear a holding flight for takeoff; its pilot is told, or woken, to take off
+pilot march CL1 [--off]             # the controller's: let a flight out of march on's holding pattern by hand (the chip's "let it fly"), beside the first in the order
 pilot amend PIL2 "<request>"        # the controller's: file amendment A<n> in the plan; its pilot is told, or woken, to classify it
 pilot classify A1 fold --leg fix --why "<why>"   # the pilot's: fold | leg | flight, recorded under the amendment and logged
 pilot amend-budget fix 3000000 --amendment A1    # the pilot's: add a fold's estimate (an increment) on your authority, within its cap

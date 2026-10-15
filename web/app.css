@@ -267,6 +267,7 @@ ul.checklist li.in_progress span:first-child { color: var(--fill); }
 .arts li { margin: 4px 0; overflow-wrap: anywhere; }
 .plan .connects > div + div { margin-top: 4px; }
 .connect.onward { border-style: dashed; }
+.marchbtn { font-size: 11px; padding: 1px 8px; }
 /* A connection on a route strip, at its departure (from) or its end (onward); and the card it names, lit while the
    pointer is on it. */
 .strip .conn { cursor: pointer; }

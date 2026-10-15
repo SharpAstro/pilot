@@ -1088,8 +1088,12 @@ const planActive = (p, s) => p.live || p.legs.some(l => s.workers.some(w => w.na
 // On march on, a flight's place: among the first in your order it marches on whatever the account's usage; the
 // rest circle in a holding pattern while the account is short.
 function marchChip(p) {
-  const rf = S.refuel || {};
-  if ((rf.holding || []).includes(p.sessionId)) return ` <span class="chip blocked" title="March on: the account is short and this flight is not among the first in your order, so no leg takes off, no refuel is approved and nothing a usage limit stopped is resumed. It flies on once the account has headroom, or when you drag it up.">holding pattern</span>`;
+  const rf = S.refuel || {}, sid = esc(p.sessionId), name = esc(p.flight ? `Flight ${p.flight}` : "this flight");
+  // Let out by hand: it marches beside the first in the order without taking one of their places.
+  if ((rf.holding || []).includes(p.sessionId)) return ` <span class="chip blocked" title="March on: the account is short and this flight is not among the first in your order, so no leg takes off, no refuel is approved and nothing a usage limit stopped is resumed. It flies on once the account has headroom, when you drag it up, or when you let it fly.">holding pattern</span>
+    <button class="marchbtn" data-march="${sid}" data-on="1" data-name="${name}" title="Let it out of the holding pattern by hand: it marches on beside the first in your order, whatever the account's usage, and none of them gives up its place">let it fly</button>`;
+  if ((rf.picks || []).includes(p.sessionId)) return ` <span class="chip working" title="March on: you let it out of the holding pattern by hand, so the account's usage holds nothing, beside the first in your order.">marching on · by hand</span>
+    <button class="marchbtn" data-march="${sid}" data-on="0" data-name="${name}" title="Put it back: it holds again while the account is short, unless it is among the first in your order">back to holding</button>`;
   if ((rf.marching || []).includes(p.sessionId)) return ` <span class="chip working" title="March on: among the first flights in your order, so the account's usage holds nothing. Switch accounts when one runs short; a session a usage limit stopped is resumed once the figures show room.">marching on</span>`;
   return "";
 }
@@ -2283,6 +2287,16 @@ document.addEventListener("click", async e => {
         try { await post(`/api/flights/${sid}/archive`, {force: true}); } catch (err2) { alert(err2.message); }
       } else if (!legs?.length) alert(err.message);
     } finally { t.disabled = false; }
+    return;
+  }
+  // Letting a flight out of march on's holding pattern by hand, or putting it back: the controller's.
+  if (t.dataset.march) {
+    e.preventDefault();
+    const on = t.dataset.on === "1";
+    if (on && !confirm(`Let ${t.dataset.name} out of the holding pattern? It marches on beside the first in your order, whatever the account's usage: its legs take off and its refuels are judged on progress alone.`)) return;
+    t.disabled = true;
+    try { await post(`/api/flights/${t.dataset.march}/march`, {on}); }
+    catch (err) { alert(err.message); t.disabled = false; }
     return;
   }
   // Clearing a flight held at the gate is the controller's: one confirm, then the hold is lifted and its pilot told.

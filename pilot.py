@@ -14,6 +14,7 @@ what they have spent, gates their spend, delivers your messages, summarises them
   python pilot.py archive FLIGHT [--restore] [--force]   the controller's: a flight off the Overview onto History
   python pilot.py plan --hold          hold this flight at the gate: plan only, no leg takes off until cleared
   python pilot.py clear FLIGHT         the controller's: clear a holding flight for takeoff, and tell its pilot
+  python pilot.py march FLIGHT [--off] the controller's: let a flight out of march on's holding pattern by hand
   python pilot.py amend FLIGHT TEXT    the controller's: file an amendment (A1, A2, ...) in the plan, and tell its pilot
   python pilot.py classify ID fold|leg|flight [--leg L] --why TEXT   the pilot's: record how it classified one
   python pilot.py amend-budget LEG N --amendment ID   the pilot's: add a folded amendment's estimate N to its leg's
@@ -3265,19 +3266,53 @@ def flight_done(p):
     return bool(p.get("legs")) and (bool(p.get("legsDone")) or all((landed.get(l["leg"]) or {}).get("landed") for l in p["legs"]))
 
 
+MARCH_PICKS = STATE / "march-picks.json"     # flights the controller let out of the holding pattern by hand
+
+
+def march_picks():
+    picks = read_json(MARCH_PICKS, []) if MARCH_PICKS.exists() else []
+    return [s for s in picks if isinstance(s, str)] if isinstance(picks, list) else []
+
+
+def set_march_pick(flight, on=True):
+    """The controller lets a flight out of march on's holding pattern by hand, or puts it back: it marches beside
+    the first marchOn flights in the order, without taking one of their places. CL1 circled behind TIA2 with
+    marchOn at 1, and the only way out was dragging it above TIA2, which sent TIA2 into the holding pattern instead.
+    Logged in its plan. Returns its plan id."""
+    sid = find_flight(flight)
+    was = march_picks()
+    picks = [s for s in was if s != sid]
+    write_json(MARCH_PICKS, picks + [sid] if on else picks)
+    # march.json too, which the worker hooks and `start` trust while it is fresh: the change holds at once, not only
+    # once the dashboard next writes it. Put back, it leaves only if it was out by hand (the first in the order stay).
+    m = read_json(MARCH, None) if MARCH.exists() else None
+    if isinstance(m, dict) and isinstance(m.get("flights"), list) and (on or sid in was):
+        mine = {sid} | {x.get("sessionId") for w in registered() if w.get("plan") == sid for x in [w, *sessions_of(w)]}
+        mine.discard(None)
+        flights = m["flights"] + [sid] if on and sid not in m["flights"] else m["flights"] if on else [f for f in m["flights"] if f != sid]
+        sessions = list(dict.fromkeys((m.get("sessions") or []) + sorted(mine))) if on else [x for x in m.get("sessions") or [] if x not in mine]
+        write_json(MARCH, {**m, "flights": flights, "sessions": sessions})
+    plan_log(sid, "Let out of the holding pattern by the controller: it marches on beside the first in the order, "
+                  "whatever the account's usage" if on else "Back in the holding pattern's order, by the controller")
+    return sid
+
+
 def marching(plans=None):
-    """The flights that march on: the first marchOn flights in the controller's order still flying. From the
-    dashboard's plans when given; else from what the dashboard last wrote, while it is fresh; else from the order
-    and the plan files alone, which cannot tell a landed flight."""
-    n = refuel_config()["marchOn"]
+    """The flights that march on: the first marchOn flights in the controller's order still flying, and any the
+    controller let out of the holding pattern by hand (march_picks). From the dashboard's plans when given; else from
+    what the dashboard last wrote, while it is fresh; else from the order and the plan files alone, which cannot
+    tell a landed flight."""
+    n, picks = refuel_config()["marchOn"], march_picks()
     if plans is not None:
-        return [p["sessionId"] for p in plans if not flight_done(p)][:n]
+        flying = [p["sessionId"] for p in plans if not flight_done(p)]
+        return flying[:n] + [s for s in flying[n:] if s in picks]
     m = read_json(MARCH, {}) or {}
     if isinstance(m, dict) and isinstance(m.get("flights"), list) and time.time() - (m.get("at") or 0) < 300:
         return m["flights"]
     shelved = archived_flights()
     files = sorted(PLANS.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True) if PLANS.exists() else []
-    return [p["sessionId"] for p in by_priority([{"sessionId": f.stem} for f in files if f.stem not in shelved])][:n]
+    order = [p["sessionId"] for p in by_priority([{"sessionId": f.stem} for f in files if f.stem not in shelved])]
+    return order[:n] + [s for s in order[n:] if s in picks]
 
 
 def march_state(sid, ok=None):
@@ -4265,6 +4300,20 @@ def cmd_clear(a):
     print(f"{flight_name(sid)} cleared for takeoff: {reached}")
 
 
+def cmd_march(a):
+    """The controller lets a flight out of march on's holding pattern by hand (or, with --off, puts it back). A pilot
+    never lets its own out."""
+    me = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if sender() != "Controller" or (me and any(me in [s.get("sessionId") for s in sessions_of(w)] for w in registered())):
+        sys.exit("pilot: only the controller lets a flight out of the holding pattern")
+    try:
+        sid = set_march_pick(a.flight, not a.off)
+    except ValueError as e:
+        sys.exit(str(e))
+    print(f"{flight_name(sid)}: " + ("marches on beside the first in the order, whatever the account's usage"
+                                     if not a.off else "back in the holding pattern's order"))
+
+
 def cmd_amend(a):
     """The controller amends a flight: a request recorded in its plan, and its pilot told. A pilot never files one."""
     me = os.environ.get("CLAUDE_CODE_SESSION_ID")
@@ -4868,6 +4917,7 @@ class Hub:
         override = refuel_mode() == "override"
         flights = marching(plans) if override else []
         snap["refuel"]["marching"] = flights
+        snap["refuel"]["picks"] = [s for s in march_picks() if s in flights]
         snap["refuel"]["holding"] = [p["sessionId"] for p in plans if override and not ok
                                      and p["sessionId"] not in flights and not flight_done(p)]
         if self.preview:
@@ -4883,8 +4933,9 @@ class Hub:
         for sid in list(held) if isinstance(held, dict) else []:
             if override and not ok and sid not in flights:
                 continue
-            why = ("refuelling is no longer on march on" if not override else "the controller moved it up among those "
-                   "marching on" if sid in flights else "the account has headroom again")
+            why = ("refuelling is no longer on march on" if not override else "the controller let it out by hand"
+                   if sid in march_picks() else "the controller moved it up among those marching on" if sid in flights
+                   else "the account has headroom again")
             jobs.append((f"lift:{sid}", "lift", sid, rows.get(sid),
                          f"(pilot.py) Your flight is out of the holding pattern: {why}. Start the legs it held."))
         if override:
@@ -5402,6 +5453,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.send(409, {"error": str(e)})
             HUB.poke()
             return self.send(200, {"ok": True, "sessionId": sid, "reached": reached})
+        m = re.match(r"^/api/flights/([A-Za-z0-9-]{1,64})/march$", self.path)
+        if m:
+            try:
+                sid = set_march_pick(m.group(1), bool(body.get("on", True)))
+            except ValueError as e:
+                return self.send(409, {"error": str(e)})
+            HUB.poke()
+            return self.send(200, {"ok": True, "sessionId": sid})
         m = re.match(r"^/api/flights/([A-Za-z0-9-]{1,64})/amend$", self.path)
         if m:
             try:
@@ -5753,6 +5812,10 @@ def main():
     s = sub.add_parser("clear", help="the controller's: clear a flight holding at the gate for takeoff, and tell its pilot")
     s.add_argument("flight", help="its flight number, e.g. PIL2, or its plan id")
     s.set_defaults(fn=cmd_clear)
+    s = sub.add_parser("march", help="the controller's: let a flight out of march on's holding pattern by hand")
+    s.add_argument("flight", help="its flight number, e.g. CL1, or its plan id")
+    s.add_argument("--off", action="store_true", help="put it back: it holds again while the account is short")
+    s.set_defaults(fn=cmd_march)
     s = sub.add_parser("amend", help="the controller's: file an amendment to a flight, a change to what it flies, and tell its pilot")
     s.add_argument("flight", help="its flight number, e.g. PIL2, or its plan id")
     s.add_argument("request", nargs="+", help="what the controller wants changed; kept as one line")

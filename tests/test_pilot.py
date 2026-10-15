@@ -1821,6 +1821,21 @@ class MarchOnTests(Case):
         self.assertEqual(lim["at"], datetime.datetime(2026, 10, 14, 1, tzinfo=datetime.timezone.utc).timestamp())
         self.assertIsNone(pilot.worker_status(pilot.load("fix2"), [])["limited"])
 
+    def test_the_controller_lets_a_holding_flight_fly_by_hand_and_the_first_keeps_its_place(self):
+        """CL1 circled behind TIA2 with marchOn at 1, and dragging it up sent TIA2 into the holding pattern."""
+        self.usage(30, 85)
+        self.assertEqual(pilot.march_state("s2"), "hold")
+        self.assertEqual(pilot.set_march_pick("WA2"), "s2")
+        self.assertEqual(pilot.marching(), ["s1", "s2"], "beside the first, which keeps its place")
+        self.assertEqual((pilot.march_state("s1"), pilot.march_state("s2")), ("march", "march"))
+        self.assertIn("Let out of the holding pattern by the controller", pilot.plan_path("s2").read_text(encoding="utf-8"))
+        plans = [{"sessionId": "s1", "live": True, "legs": []}, {"sessionId": "s2", "live": True, "legs": []}]
+        snap = self.march(pilot.Hub(), {"plans": plans, "workers": [], "refuel": {"ok": False}})
+        self.assertEqual((snap["refuel"]["marching"], snap["refuel"]["picks"], snap["refuel"]["holding"]), (["s1", "s2"], ["s2"], []))
+        pilot.set_march_pick("s2", on=False)
+        self.assertEqual(pilot.marching(), ["s1"])
+        self.assertEqual(pilot.march_state("s2"), "hold")
+
     def test_a_flight_with_nothing_left_to_fly_neither_marches_nor_circles(self):
         leg = lambda landed, why: {"landed": landed, "why": why, "stackedOn": []}
         plans = [{"sessionId": "s1", "live": True, "legs": [{"leg": "a"}], "landed": {"a": leg(True, "")}},
