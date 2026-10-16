@@ -5458,15 +5458,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def send(self, code, body, ctype="application/json", cache="no-store", headers=()):
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", cache)
-        for k, v in headers:
-            self.send_header(k, v)
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self.wfile.write(data)
+        # A page that left before its answer was ready (a phone over --lan, gone while a Summarise ran) closed its
+        # socket: nobody is left to answer, and the traceback socketserver prints for it is noise.
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", cache)
+            for k, v in headers:
+                self.send_header(k, v)
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            self.close_connection = True
 
     def local(self):
         """Only a page served from this machine's loopback name, so a DNS-rebinding page cannot read
