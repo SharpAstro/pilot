@@ -1135,9 +1135,32 @@ class MergedElsewhereTests(Case):
         self.assertIn("merged PR #7 of leg rings outside the dashboard", self.log_of("p1")[-1])
         self.assertEqual(len(woken), 1)
         self.assertIn("merged PR #7", woken[0][1])
-        # Nothing asked any more: the next snapshot leaves the pilot be.
+        # Logged now: the next snapshot leaves the pilot be.
         hub.tell_ci(snap, rows, {}, set())
         self.assertEqual(len(woken), 1)
+
+
+class MergedUnaskedTests(Case):
+    def test_a_merge_the_log_does_not_record_is_told_whatever_the_item_says(self):
+        self.plan("p1", "# Flight plan: x\n\n## Waiting on the controller\n\n- **#7 ON HOLD** captures show issues\n\n## Log\n\n"
+                        "- 2026-10-17 07:32 Marked #7's merge item ON HOLD; PR #7 is unmerged\n")
+        snap = {"workers": [{"name": "comets", "plan": "p1", "approach": {"stage": "gate", "pr": 7, "why": "merged"},
+                             "git": {"prs": [{"number": 7, "state": "MERGED", "head": "9b244768aa"}]}}]}
+        rows = {"p1": {"sessionId": "p1", "kind": "background", "pid": 4, "status": "idle", "name": "pilot-x"}}
+        told, saved = [], pilot.intercom
+        pilot.intercom = lambda names, text, sender="Controller": told.append(text)
+        hub = pilot.Hub()
+        try:
+            hub.tell_ci(snap, rows, {}, set())
+            for _ in range(100):
+                if not hub.waking:
+                    break
+                time.sleep(0.02)
+        finally:
+            pilot.intercom = saved
+        self.assertEqual(len(told), 1)
+        self.assertIn("never onto the merged branch", told[0])
+        self.assertIn("merged PR #7 of leg comets outside the dashboard", self.log_of("p1")[-1])
 
 
 class DropWaitingTests(Case):

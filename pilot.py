@@ -5335,17 +5335,20 @@ class Hub:
             # itself, as on TIA2's #1564): the PR reads "on approach", but its pilot waits on exactly this.
             pr = next((x for x in (w.get("git") or {}).get("prs") or [] if x.get("number") == ap.get("pr")), {})
             finished = ap.get("stage") == "approach" and "since round" in (ap.get("why") or "") and pr.get("ci") in ("passing", "failing")
-            # Merged on GitHub rather than from the dashboard, with the merge still asked in the plan: TIA2's #1595
-            # was, and its pilot slept on with the item up and its next leg unflown until the controller asked.
+            # Merged on GitHub rather than from the dashboard, and the plan's log not saying so: TIA2's #1595 was, and its
+            # pilot slept on with the item up and its next leg unflown until the controller asked. Known by the log, not
+            # by the item: TIA3's pilot retitled #1631's item "ON HOLD" after it merged, and sent its worker on adding
+            # commits to the merged branch for two hours.
             merged = ap.get("stage") == "gate"
             if ap.get("stage") != "cleared" and not failing and not finished and not merged:
                 continue
             path = plan_path(pid)
             if not path or not path.exists() or pid in shelved or pid in self.waking:
                 continue
-            waiting = split_waiting(path.read_text(encoding="utf-8"))[0]
-            if merged and f"merge pr #{ap['pr']}" not in waiting.lower():
-                continue                       # nothing asked: the pilot merged it in the dashboard's sight, or knows
+            text_now = path.read_text(encoding="utf-8")
+            waiting = split_waiting(text_now)[0]
+            if merged and re.search(rf"\bmerged PR #{ap['pr']}\b|\bPR #{ap['pr']}\b[^\n]{{0,40}}(?<!un)\bmerged\b", text_now):
+                continue                       # the log has it: merged from the dashboard, or the pilot knows
             if not failing and not merged and f"PR #{ap['pr']}" in waiting:
                 continue                       # the merge is already asked
             key = f"ci:{w['name']}:{ap['pr']}:{ap['stage']}:{'conflict' if 'conflicts' in (ap.get('why') or '') else ''}:{(pr.get('head') or '')[:8]}"
@@ -5356,8 +5359,10 @@ class Hub:
             if merged:
                 drop_waiting(pid, lambda title, n=ap["pr"]: f"merge pr #{n}" in title.lower())
                 plan_log(pid, f"Controller merged PR #{ap['pr']} of leg {w['name']} outside the dashboard: merge item removed")
-            text = (f"The controller merged PR #{ap['pr']} of leg {w['name']} outside the dashboard (on GitHub); its merge item "
-                    f"is out of your plan. Log it, retire the leg, and carry on with your route." if merged else
+            text = (f"The controller merged PR #{ap['pr']} of leg {w['name']} outside the dashboard (on GitHub), at "
+                    f"{(pr.get('head') or '')[:8]}; any merge item for it is out of your plan. Log it, and carry on with your "
+                    f"route: work still to do on that leg goes on a new branch from the base and a new PR, never onto the merged "
+                    f"branch." if merged else
                     f"CI is {pr.get('ci')} on PR #{ap['pr']} of leg {w['name']} at {(pr.get('head') or '')[:8]}, a head pushed after "
                     f"its last review round. Carry on as your plan and the controller's answer say: the merge item if green, "
                     f"a go-around if failing." if finished else
