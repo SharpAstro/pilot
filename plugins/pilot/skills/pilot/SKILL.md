@@ -215,12 +215,21 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
     - **Bugs: go-around.** Send the worker each bug as a checklist item `R<round> B<i>: <title>`, with the
       reviewer's evidence: a failing test first, then the smallest fix, one commit per bug, no push. Check
       the fixes as rule 10 says, push them (a fast-forward, never a force-push), and run the next round.
-      A QUESTION is yours to settle (with the co-pilot, rule 9) or the controller's; NOTED and PREFERENCE items
-      are not fix work, though a NOTED one may become a follow-up issue or a leg on the route.
+      A QUESTION is yours to settle (with the co-pilot, rule 9) or the controller's; one that turns out a defect
+      is fixed in the same go-around. A NOTED or PREFERENCE item about this PR's own change that you take is
+      fixed on this branch too, before the merge is asked for (a commit makes the next round due); one you do
+      not take you decline in the plan's log, with why.
+    - **Review feedback goes on the branch under review, never into a follow-up.** No follow-up issue, leg,
+      PR or flight for anything a round found: the controller, 2026-10-17, "follow up is really just a synonym
+      for fuck up". TIA2's #1621 was put to them with round 2's bug unfixed and merged with it, and its fix
+      became a follow-up issue; CL1 carried its reviews' leftovers as a leg of their own. A NOTED item that is
+      not this PR's at all (the same on the base, nothing here reaches it) goes to the controller in
+      `## Waiting on the controller`; never file it on your own say.
     - **No bugs: accepted.** Watch CI in the background (`gh pr checks <n> --watch`). A failing check is a
       go-around like a bug. A green CI on the reviewed head is "tests pass", whether or not a local run
       finished.
-    - **Cleared to land** is review accepted and CI green, on the same head: only then put
+    - **Cleared to land** is review accepted and CI green, on the same head (or, past the two rounds, the
+      last round's bugs fixed on the branch and checked by you, with CI green on that head): only then put
       `- **Merge PR #<n>?** <what it changes; the rounds and their bugs; CI's state>.` in
       `## Waiting on the controller`. A commit pushed after the accepted round makes the next round due.
       The controller merges it with the dashboard's Merge button on that item, which runs the rebase merge
@@ -235,12 +244,13 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
       they request is a go-around like a bug, and it is cleared to land, and the merge asked for, only once
       they approve. `~/.pilot/pilot.json`'s `"review": {"<repo>": "team" | "self"}` settles a repo GitHub
       cannot tell.
-    - **Rounds that find bugs stop at two.** When the second still finds bugs, `review` exits 2: put them
-      in `## Waiting on the controller` with the round file and your recommendation for each (fix, follow-up
-      issue, or accept as is), rather than a third round.
+    - **Reviewer rounds that find bugs stop at two; the fixes do not.** When the second still finds bugs,
+      `review` exits 2: fix them on this branch as a go-around, with no third round. Check every fix yourself
+      as rule 10 says, push, and once CI is green on that head the PR is cleared to land on your own check.
+      Put the merge to the controller saying which fixes you checked rather than the reviewer. Never ask for
+      a merge with review feedback unfixed.
     The dashboard and `list` show where each PR stands: on approach (a round is due), go-around (fixing),
-    on final (accepted, CI running), to the controller, team review (its team reviews it), cleared to
-    land, landed (merged).
+    on final (accepted, CI running), team review (its team reviews it), cleared to land, landed (merged).
 12. **A refuel goes through the watchtower.** Every worker has a budget in weighted tokens (default 10M; see
     `~/.pilot/pilot.json`). At the budget its tools are refused and it writes a report. When a worker is
     near it with much of its checklist left, or out of it, ask for more:

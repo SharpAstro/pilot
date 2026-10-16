@@ -1935,27 +1935,34 @@ def approach(reviews, prs):
         mine = [r for r in reviews or [] if r.get("pr") == pr["number"]]
         last = mine[-1] if mine else None
         spent = sum(1 for r in mine if r.get("bugs")) >= REVIEW_ROUNDS
+        # Review feedback is fixed on the branch under review, the rounds spent or not: the controller, 2026-10-17,
+        # "follow up is really just a synonym for fuck up". TIA2's #1621 was put to them with round 2's bug left and
+        # merged with it, its fix a follow-up issue. Past the rounds the pilot fixes and checks it with no third round.
+        own = bool(last and last["bugs"] and spent and pr.get("head") and last.get("head") != pr["head"])
+        basis = (f"round {last['round']}'s {last['bugs']} bug(s) fixed on the branch on the pilot's own check, no third round"
+                 if own else f"round {last['round']} accepted it" if last else "")
         if not last:
             stage, why = "approach", "review round 1 is due"
-        elif last["bugs"] and spent:
-            stage, why = "tower", f"round {last['round']} still found {last['bugs']} bug(s), and the rounds are spent"
-        elif pr.get("head") and last.get("head") != pr["head"]:
+        elif last["bugs"] and spent and not own:
+            stage, why = "goaround", (f"round {last['round']} still found {last['bugs']} bug(s) and the rounds are spent: "
+                                      f"fix them on this branch, checked by the pilot, no third round")
+        elif not own and pr.get("head") and last.get("head") != pr["head"]:
             stage, why = "approach", f"review round {last['round'] + 1} is due: commits since round {last['round']}"
-        elif last["bugs"]:
+        elif last["bugs"] and not own:
             stage, why = "goaround", f"round {last['round']} found {last['bugs']} bug(s): fixing"
         elif pr.get("conflicts"):
             # Main moved on while it waited (PIL3's #15 sat cleared to land, unmergeable, until the controller saw it on GitHub).
-            stage, why = "goaround", f"round {last['round']} accepted it, and it conflicts with its base: bring it up to date"
+            stage, why = "goaround", f"{basis}, and it conflicts with its base: bring it up to date"
         elif pr.get("ci") == "failing":
-            stage, why = "goaround", f"round {last['round']} accepted it, and CI fails"
+            stage, why = "goaround", f"{basis}, and CI fails"
         elif pr.get("ci") == "passing" and pr.get("reviewer") == "team" and pr.get("review") != "APPROVED":
-            stage, why = "clearance", (f"round {last['round']} accepted it and CI is green; its team reviews it next"
+            stage, why = "clearance", (f"{basis} and CI is green; its team reviews it next"
                                        + (": mark it ready for review" if pr["state"] == "DRAFT" else "")
                                        + (", and they asked for changes" if pr.get("review") == "CHANGES_REQUESTED" else ""))
         elif pr.get("ci") == "passing":
-            stage, why = "cleared", f"round {last['round']} accepted it and CI is green: the merge is the controller's"
+            stage, why = "cleared", f"{basis} and CI is green: the merge is the controller's"
         else:
-            stage, why = "holding", f"round {last['round']} accepted it; CI is {pr.get('ci') or 'none'}"
+            stage, why = "holding", f"{basis}; CI is {pr.get('ci') or 'none'}"
     return {"stage": stage, "label": APPROACH[stage], "why": why, "pr": pr["number"], "url": pr.get("url")}
 
 
@@ -1996,17 +2003,20 @@ def cmd_review(a):
         c = subprocess.run(["gh", "pr", "comment", str(pr["number"]), "--body-file", str(path)], cwd=str(root),
                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         print(f"posted on PR #{pr['number']}" if c.returncode == 0 else f"pilot: posting failed: {c.stderr.strip()}")
-    st = approach(w["reviews"], [pr])
+    spent = bool(r["bugs"]) and sum(1 for x in w["reviews"] if x.get("pr") == pr["number"] and x.get("bugs")) >= REVIEW_ROUNDS
     head = (pr.get("head") or "")[:8]
     if not r["bugs"]:
         outcome = "accepted"
         todo = (f"Accepted. CI on PR #{pr['number']} is {pr['ci']}. Once it is green (`gh pr checks {pr['number']} --watch`, "
                 f"in the background), put `- **Merge PR #{pr['number']}?**` in `## Waiting on the controller`, with the rounds "
                 f"and CI's state.")
-    elif st["stage"] == "tower":
-        outcome = f"{r['bugs']} bug(s) left after {REVIEW_ROUNDS} rounds that found bugs: to the controller"
-        todo = (f"The rounds are spent. Put the bugs in `## Waiting on the controller` with the round file ({path}) and "
-                f"your recommendation for each: fix, follow-up issue, or accept.")
+    elif spent:
+        outcome = f"{r['bugs']} bug(s) after {REVIEW_ROUNDS} rounds that found bugs: go-around on this branch, no third round"
+        todo = (f"The review rounds are spent, the fixes are not: review feedback goes on the branch under review, never "
+                f"into a follow-up. Send the worker R{n} B1..B{r['bugs']} (a failing test first, then the smallest fix, "
+                f"one commit per bug, no push), check them yourself as a done leg ({path} has the evidence), push, and "
+                f"once CI is green put the merge to the controller, saying round {n}'s fixes are checked by you, not "
+                f"reviewed.")
     else:
         outcome = f"{r['bugs']} bug(s): go-around"
         todo = (f"Send the worker the fix items R{n} B1..B{r['bugs']} (each a checklist item: a failing test first, then "
@@ -2014,8 +2024,8 @@ def cmd_review(a):
     plan_log(w.get("plan"), f"Review round {n} of {a.name} (PR #{pr['number']} at {head}): {outcome}"
              + (f"; {r['questions']} question(s)" if r["questions"] else "") + (f". Bugs: {'; '.join(r['titles'])}" if r["titles"] else "") + ".")
     print(f"{a.name}: round {n} of PR #{pr['number']} at {head}: {outcome}\n{todo}")
-    if st["stage"] == "tower":
-        sys.exit(2)
+    if spent:
+        sys.exit(2)                    # no third round: the pilot's own check of the fixes, then CI, clears it
 
 
 _prs, _prs_busy = {}, set()

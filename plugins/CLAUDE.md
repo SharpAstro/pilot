@@ -13,6 +13,18 @@ does not loosen these.
   parentheses. In prose, comments, commit messages, and above all in GLSL, where a non-ASCII byte in a
   shader source breaks its compilation.
 
+## Review feedback
+
+The controller, 2026-10-17: "If we have review feedback, it needs to go onto the branch that is being
+reviewed, not as follow up. Follow up is really just a synonym for fuck up."
+
+- **Every review finding that is acted on is fixed on the branch under review, before the merge is asked
+  for**: bugs, a question that turns out a defect, and any noted or preference item that is taken. Push the
+  fixes to that PR. Past the review rounds the fixes are still made there, checked by the pilot.
+- **Never a follow-up** for review feedback: no follow-up issue, leg, PR or flight, and never a merge asked
+  for with feedback unfixed. What is not taken is declined in the plan's log, with why. A finding that is
+  not the PR's at all goes to the controller, never filed on a session's own say.
+
 ## Shells on Windows
 
 - **`python`, never `python3`**: on Windows the name `python3` is the Microsoft Store alias and fails

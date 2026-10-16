@@ -35,11 +35,13 @@ controller.
   checklist ticked off with where the diff meets each item, then bugs (each proven by a trace or a failing
   test), questions, noted and preferences, the classes and the "is it the leg's?" test of Sam's
   mission-review, without its coverage ledger and staff. `pilot review` records it. Bugs go back to the
-  worker as `R<n> B<i>` checklist items and the pilot pushes the fixes; at most two rounds find bugs before
-  what is left comes to you. A PR is *on approach* while a round is due, *go-around* while it is fixed,
-  *on final* for CI, *to the controller* when the rounds are spent with bugs left, *team review* while its
-  team reviews it, *cleared to land* once accepted and green (only then is the merge put to you), and
-  *landed* once merged. A flight has landed when every leg's PR has.
+  worker as `R<n> B<i>` checklist items and the pilot pushes the fixes **to the branch under review**; at
+  most two rounds find bugs, and past them the pilot fixes what is left there too and checks it itself, with
+  no third round. Review feedback never becomes a follow-up issue, leg or PR: on your word (2026-10-17),
+  "follow up is really just a synonym for fuck up". A PR is *on approach* while a round is due, *go-around*
+  while it is fixed, *on final* for CI, *team review* while its team reviews it, *cleared to land* once
+  accepted (or its last round's bugs fixed on the pilot's own check) and green (only then is the merge put
+  to you), and *landed* once merged. A flight has landed when every leg's PR has.
 - **Controller**: you. The dashboard is where you watch from. From it you read the plan and every
   conversation, answer what the pilot waits on you for, message any live pilot or worker through the
   intercom, set budgets, stop workers, summarise, and launch pilots.

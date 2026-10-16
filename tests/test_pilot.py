@@ -1252,7 +1252,15 @@ class ReviewTests(Case):
         self.assertEqual(stage([r1, ok], self.pr(head="1111111111", ci="running")), "holding")
         self.assertEqual(stage([r1, ok], self.pr(head="1111111111", ci="failing")), "goaround")
         self.assertEqual(stage([r1, ok], self.pr(head="2222222222")), "approach")  # pushed after acceptance
-        self.assertEqual(stage([r1, {**ok, "bugs": 1}], self.pr(head="1111111111")), "tower")
+        # The rounds spent with a bug left: fixed on this branch, never parked for a follow-up (the controller,
+        # 2026-10-17), and once pushed no third round is due: the pilot's own check and CI clear it.
+        spent = [r1, {**ok, "bugs": 1}]
+        self.assertEqual(stage(spent, self.pr(head="1111111111")), "goaround")
+        self.assertIn("fix them on this branch", pilot.approach(spent, [self.pr(head="1111111111")])["why"])
+        self.assertEqual(stage(spent, self.pr(head="3333333333")), "cleared")
+        self.assertIn("on the pilot's own check, no third round", pilot.approach(spent, [self.pr(head="3333333333")])["why"])
+        self.assertEqual(stage(spent, self.pr(head="3333333333", ci="running")), "holding")
+        self.assertEqual(stage(spent, self.pr(head="3333333333", ci="failing")), "goaround")
         self.assertEqual(stage([r1], self.pr(state="MERGED")), "gate")
         self.assertEqual(stage([r1], self.pr(number=8)), "approach")              # a round of another PR
 
@@ -1286,13 +1294,15 @@ class ReviewTests(Case):
                 run()
             pilot.collateral_now = lambda w: {"head": "11111111", "prs": [self.pr(head="1111111111")]}
             f.write_text(ROUND_2_BUGS.replace("BUGS: 2", "BUGS: 1").replace("### B2 One hand site left\n", ""), encoding="utf-8")
-            with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as ex:
-                run()                               # round 2 still finds one: the rounds are spent
+            with contextlib.redirect_stdout(io.StringIO()) as out, self.assertRaises(SystemExit) as ex:
+                run()                               # round 2 still finds one: the rounds are spent, the fixes are not
             self.assertEqual(ex.exception.code, 2)
+            self.assertIn("never into a follow-up", out.getvalue())
+            self.assertNotIn("follow-up issue", out.getvalue())
             self.assertEqual(len(pilot.load("leg-a")["reviews"]), 2)
-            self.assertIn("to the controller", self.log_of("p1")[-1])
-            text, actor = self.last_box()           # reworded from "to the tower": still pilot.py's line
-            self.assertTrue(text.startswith("Review round 2 of leg-a") and text.endswith("to the controller; 1 question(s). Bugs: Saving drops the last row."), text)
+            self.assertIn("go-around on this branch, no third round", self.log_of("p1")[-1])
+            text, actor = self.last_box()
+            self.assertTrue(text.startswith("Review round 2 of leg-a") and text.endswith("no third round; 1 question(s). Bugs: Saving drops the last row."), text)
             self.assertEqual(actor, "pilot.py")
         finally:
             pilot.collateral_now = old
