@@ -118,6 +118,7 @@ pilot clear PIL2                    # the controller's: clear a holding flight f
 pilot merge TIA2 135 --repo SharpAstro/SdlVulkan.Renderer   # the controller's, or the autopilot's on their behalf: merge, guarded on its head
 pilot march CL1 [--off]             # the controller's: let a flight out of march on's holding pattern by hand (the chip's "let it fly"), beside the first in the order
 pilot amend PIL2 "<request>"        # the controller's: file amendment A<n> in the plan; its pilot is told, or woken, to classify it
+pilot launch <repo> --message-file brief.md   # the controller's: the Launch page's launch, in the background (--terminal, --hold, --resume)
 pilot classify A1 fold --leg fix --why "<why>"   # the pilot's: fold | leg | flight, recorded under the amendment and logged
 pilot amend-budget fix 3000000 --amendment A1    # the pilot's: add a fold's estimate (an increment) on your authority, within its cap
 pilot connect TIA2 [--remove]       # a flight this one waits for, on the plan's Connects: line; start holds until it lands

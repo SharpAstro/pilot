@@ -4380,6 +4380,23 @@ def cmd_march(a):
                                      if not a.off else "back in the holding pattern's order"))
 
 
+def cmd_launch(a):
+    """The controller launches a pilot from a terminal or a session of their own, as the dashboard's Launch page
+    does: one command an allow rule can name, where the page's POST needs its own header. In the background unless
+    --terminal, so no window opens. A pilot, a worker or the autopilot never launches one."""
+    me = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if sender() != "Controller" or (me and any(me in [s.get("sessionId") for s in sessions_of(w)] for w in registered())):
+        sys.exit("pilot: only the controller launches a pilot")
+    message = Path(a.message_file).read_text(encoding="utf-8") if a.message_file else (a.message or "")
+    try:
+        out = launch(str(Path(a.dir).resolve()), a.resume, "terminal" if a.terminal else "background", message, True, a.hold)
+    except ValueError as e:
+        sys.exit(f"pilot: {e}")
+    blackbox(f"Controller launched a pilot in {Path(a.dir).resolve().name} ({out['where']}"
+             + (", plan only" if a.hold else "") + ")", actor="controller")
+    print(json.dumps(out))
+
+
 def merge_evidence(sid, pr, repo=None):
     """What the autopilot must show before it merges in the controller's place, who asked for "due diligence, proof
     of having done reviews and addressed feedback, and proof that checklist is done": the leg of this flight whose
@@ -6048,6 +6065,14 @@ def main():
     s.add_argument("flight", help="its flight number, e.g. CL1, or its plan id")
     s.add_argument("--off", action="store_true", help="put it back: it holds again while the account is short")
     s.set_defaults(fn=cmd_march)
+    s = sub.add_parser("launch", help="the controller's: launch a pilot in a directory Claude Code knows, as the dashboard's Launch page does")
+    s.add_argument("dir", nargs="?", default=".", help="the repo to fly from (default: here)")
+    s.add_argument("--message-file", help="its first message, from a file (the flight's brief); /pilot:pilot is put in front")
+    s.add_argument("--message", help="its first message, inline")
+    s.add_argument("--resume", metavar="SESSION_ID", help="resume one of that directory's sessions instead of starting one")
+    s.add_argument("--terminal", action="store_true", help="in a new Windows Terminal tab, yours to type into, not the background")
+    s.add_argument("--hold", action="store_true", help="plan only: the flight holds at the gate until you clear it")
+    s.set_defaults(fn=cmd_launch)
     s = sub.add_parser("amend", help="the controller's: file an amendment to a flight, a change to what it flies, and tell its pilot")
     s.add_argument("flight", help="its flight number, e.g. PIL2, or its plan id")
     s.add_argument("request", nargs="+", help="what the controller wants changed; kept as one line")

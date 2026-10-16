@@ -982,6 +982,26 @@ class HoldTests(Case):
         with self.assertRaises(ValueError):
             self.launch("background", as_pilot=False)
 
+    def test_the_launch_command_is_the_pages_launch_in_the_background_and_the_controllers_only(self):
+        brief = ROOT / "brief.md"
+        brief.write_text("Fly issue #1615.", encoding="utf-8")
+        calls = []
+        args = dict(dir="C:/repos/web-app", message_file=str(brief), message=None, resume=None, terminal=False, hold=False)
+        with unittest.mock.patch.object(pilot, "launch", lambda *a: calls.append(a) or {"where": a[2]}), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            pilot.cmd_launch(types.SimpleNamespace(**args))
+            pilot.cmd_launch(types.SimpleNamespace(**{**args, "terminal": True, "hold": True}))
+        self.assertEqual([(c[2], c[3], c[4], c[5]) for c in calls],
+                         [("background", "Fly issue #1615.", True, False), ("terminal", "Fly issue #1615.", True, True)])
+        self.assertIn('"where": "background"', out.getvalue())
+        self.plan("s1", PLAN)
+        with unittest.mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s1"}), \
+                unittest.mock.patch.object(pilot, "launch", lambda *a: calls.append(a)):
+            with self.assertRaises(SystemExit) as e:
+                pilot.cmd_launch(types.SimpleNamespace(**args))
+        self.assertEqual(str(e.exception), "pilot: only the controller launches a pilot")
+        self.assertEqual(len(calls), 2, "a pilot's launch never reaches launch()")
+
     def test_the_dashboard_says_a_held_flight_has_no_departure_and_the_endpoint_clears_it(self):
         import threading
         import urllib.error
