@@ -16,6 +16,9 @@
     <a href="#/spend" data-nav="spend">Spend</a>
     <a href="#/launch" data-nav="launch">Launch</a>
   </nav>
+  <!-- One group on the right: a narrow window wraps it within itself, so the bell stays at the far right and its
+       panel, anchored to the bell's right edge, opens on screen (the bell wrapped alone to the left before). -->
+  <div class="topright">
   <div class="limits" id="limits"></div>
   <span id="autopilot"></span>
   <span class="conn" id="conn" title="the stream from the dashboard server">opening stream…</span>
@@ -27,6 +30,7 @@
         <button id="readall">mark all read</button></span></div>
       <div class="panel-list" id="notes"></div>
     </div>
+  </div>
   </div>
 </header>
 <div id="errors"></div>

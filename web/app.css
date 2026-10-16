@@ -40,7 +40,8 @@ button.primary { background: var(--fill); color: #fff; border-color: var(--fill)
 nav { display: flex; gap: 4px; }
 nav a { padding: 4px 10px; border-radius: 6px; color: var(--ink-2); text-decoration: none; }
 nav a.on { background: var(--page); color: var(--ink); font-weight: 600; box-shadow: inset 0 0 0 1px var(--ring); }
-.limits { display: flex; gap: 14px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+.topright { display: flex; gap: 14px; margin-left: auto; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.limits { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .limit { min-width: 170px; }
 /* account usage, coloured as the status line colours it; hot pink is its alarm tier, one past red */
 .u-good { color: var(--good-text); } .u-warn { color: var(--warn); } .u-crit { color: var(--crit); }
