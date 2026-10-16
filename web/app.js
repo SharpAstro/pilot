@@ -345,6 +345,12 @@ function stateOf(w) {
     // Stopped after the plan's log last named it: its pilot has not looked, so nothing will happen until it does.
     if (head === "DONE" && w.unread) return {cls: "blocked", label: "✓ done · pilot hasn't looked", stroke: "var(--warn)", tint: "var(--tint-warn)"};
     if (head === "DONE") return {cls: "done", label: "✓ done", stroke: "var(--good)", tint: "var(--tint-good)"};
+    // A later turn that ended with no report (sent on by its pilot, to merge main into its PR, say): its PR says
+    // where it is, as leg_state has it; TIA3's merged sun leg read "turn ended".
+    const ap = w.approach;
+    if (ap && (ap.stage === "gate" || ap.stage === "cleared")) return {cls: "done", label: `✓ ${ap.label}`, stroke: "var(--good)", tint: "var(--tint-good)"};
+    if (ap && (ap.stage === "goaround" || ap.stage === "tower")) return {cls: "blocked", label: ap.label, stroke: "var(--warn)", tint: "var(--tint-warn)"};
+    if (ap) return {cls: "working", label: `● ${ap.label}`, stroke: "var(--fill)", tint: "var(--tint-fill)"};
     return {cls: "other", label: "turn ended", stroke: "var(--axis)", tint: "var(--surface)"};
   }
   if (w.lastError) return {cls: "failed", label: "✗ error", stroke: "var(--crit)", tint: "var(--tint-crit)"};

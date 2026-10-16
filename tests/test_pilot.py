@@ -1078,6 +1078,15 @@ class WakeTests(Case):
             self.assertIsNone(pilot.wake_pilot("p1", "why"))
 
 
+class TurnEndedWithAPrTests(Case):
+    def test_a_turn_ended_with_no_report_reads_its_pr(self):
+        w = {"state": "done", "reportHead": None, "approach": {"stage": "gate", "label": "landed", "pr": 7}}
+        self.assertEqual(pilot.leg_state(w), ("good", "landed"))
+        w["approach"] = {"stage": "holding", "label": "on final", "pr": 8}
+        self.assertEqual(pilot.leg_state(w), ("working", "on final"))
+        self.assertEqual(pilot.leg_state({"state": "done", "reportHead": None}), ("planned", "turn ended"))
+
+
 class MergedElsewhereTests(Case):
     def test_a_merge_made_on_github_takes_the_item_down_and_tells_the_pilot(self):
         self.plan("p1", "# Flight plan: x\n\n## Waiting on the controller\n\n- **Merge PR #7?** rings, R1 accepted, CI green\n\n## Log\n\n")

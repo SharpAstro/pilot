@@ -3878,6 +3878,10 @@ def leg_state(w):
         return {"gate": "good", "cleared": "good", "goaround": "warn", "tower": "warn"}.get(ap["stage"], "working"), ap["label"]
     if head == "DONE":
         return "good", "done"
+    # A later turn that ended with no report (its pilot sent it on, to merge main into its PR, say) leaves its PR the
+    # word: TIA3's sun leg read "turn ended", its plane stalled before its stop, with its PR merged.
+    if ap and (w.get("state") == "done" or fin):
+        return {"gate": "good", "cleared": "good", "goaround": "warn", "tower": "warn"}.get(ap["stage"], "working"), ap["label"]
     return "planned", "turn ended" if w.get("state") == "done" or fin else (w.get("state") or "unknown")
 
 
