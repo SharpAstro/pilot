@@ -319,6 +319,13 @@ def archived(limit=100):
     return sorted((r for r in rows if r), key=lambda r: r.get("archivedAt") or 0, reverse=True)[:limit]
 
 
+def archived_record(name):
+    """A removed worker's newest archive record, as (its file, the record); (None, None) when it has none."""
+    rows = [(f, read_json(f)) for f in ARCHIVE.glob(f"{name}-*.json")]
+    rows = [(f, r) for f, r in rows if isinstance(r, dict) and r.get("name") == name]
+    return max(rows, key=lambda fr: fr[1].get("archivedAt") or 0, default=(None, None))
+
+
 def need(name):
     w = load(name)
     if not w:
@@ -3757,18 +3764,35 @@ def cmd_close(a):
     the pilot installed nothing, found it installed, repacked and checked at 19:05, and the leg was closed in the
     plan's text, but the worker's BLOCKED stood: its flight's light stayed amber, its strip said "waiting on its
     pilot", and the next morning the summary still asked the controller to install it. Recorded on the worker,
-    logged in its plan. It stands until the worker takes another turn."""
-    w = need(a.name)
+    logged in its plan. It stands until the worker takes another turn.
+
+    A leg already removed is closed on its newest archive record: TIA2's record-control was removed BLOCKED (its
+    last item, the controller's desk run, was done after its report) with #1610 merged, and node-rate removed with
+    its final state blocked, so the flight could never land and TIA4, connecting from it, could never take off."""
+    w, record = load(a.name), None
+    if not w:
+        record, w = archived_record(a.name)
+        if not w:
+            sys.exit(f"pilot: no worker named {a.name}, live or removed")
     if len(a.why.strip()) < 20:
         sys.exit("pilot: --why says what the check was, 20 characters or more")
-    s = worker_status(w)
-    if s["state"] == "working":
-        sys.exit(f"pilot: {a.name} is flying; its own report closes it")
+    if record:
+        fin = w.get("final") or {}
+        head = fin.get("reportHead") or fin.get("state") or "nothing"
+    else:
+        s = worker_status(w)
+        if s["state"] == "working":
+            sys.exit(f"pilot: {a.name} is flying; its own report closes it")
+        head = s.get("reportHead") or s["state"]
     w["closed"] = {"at": time.time(), "why": a.why.strip(), "by": os.environ.get("CLAUDE_CODE_SESSION_ID") or "the controller"}
-    save(w)
-    plan_log(w.get("plan"), f"Leg {a.name} closed by its pilot's check (its worker last reported "
-                            f"{s.get('reportHead') or s['state']}): {a.why.strip()}")
-    print(f"{a.name}: closed; it reads done until its worker takes another turn")
+    if record:
+        w.setdefault("final", {})["closed"] = w["closed"]
+        write_json(record, w)
+    else:
+        save(w)
+    plan_log(w.get("plan"), f"Leg {a.name} closed by its pilot's check (its worker last reported {head}"
+                            + (", and was removed" if record else "") + f"): {a.why.strip()}")
+    print(f"{a.name}: closed; it reads done" + (" (closed on its removed record)" if record else " until its worker takes another turn"))
 
 
 EDGE = [Path(os.environ.get(v, "")) / "Microsoft/Edge/Application/msedge.exe" for v in ("ProgramFiles(x86)", "ProgramFiles")]

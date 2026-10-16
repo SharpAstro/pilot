@@ -1684,6 +1684,30 @@ class CloseTests(Case):
         s = pilot.worker_status(pilot.load("uwp-sdk"), [row])
         self.assertEqual((s["closed"], s["state"]), (None, "blocked"))
 
+    def test_a_removed_leg_is_closed_on_its_newest_archive_record(self):
+        import argparse
+        self.plan("p1", "# Flight plan: x\n\n## Log\n\n")
+        old = {"name": "record-control", "plan": "p1", "archivedAt": 100, "final": {"state": "blocked", "reportHead": "BLOCKED"}}
+        new = {**old, "archivedAt": 200}
+        other = {"name": "record-control-2", "plan": "p1", "archivedAt": 300, "final": {"state": "blocked"}}
+        pilot.ARCHIVE.mkdir(parents=True, exist_ok=True)
+        for r in (old, new, other):
+            pilot.write_json(pilot.ARCHIVE / f"{r['name']}-{r['archivedAt']}.json", r)
+        self.assertEqual(pilot.leg_state(new), ("warn", "blocked"))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            pilot.cmd_close(argparse.Namespace(name="record-control", why="#1610 merged at its reviewed head; desk run done"))
+        self.assertIn("closed on its removed record", out.getvalue())
+        kept = pilot.read_json(pilot.ARCHIVE / "record-control-200.json")
+        self.assertEqual(kept["closed"], kept["final"]["closed"])
+        self.assertEqual(pilot.leg_state(kept), ("good", "closed by its pilot"))
+        self.assertNotIn("closed", pilot.read_json(pilot.ARCHIVE / "record-control-100.json"), "only the newest record")
+        self.assertNotIn("closed", pilot.read_json(pilot.ARCHIVE / "record-control-2-300.json"), "not a leg whose name starts the same")
+        self.assertIn("Leg record-control closed by its pilot's check (its worker last reported BLOCKED, and was removed): #1610",
+                      pilot.plan_path("p1").read_text(encoding="utf-8"))
+        with self.assertRaises(SystemExit) as e:
+            pilot.cmd_close(argparse.Namespace(name="never-was", why="nothing by this name anywhere at all"))
+        self.assertEqual(str(e.exception), "pilot: no worker named never-was, live or removed")
+
     def test_a_flying_leg_is_not_closed(self):
         import argparse
         w = self.worker("fix")
