@@ -4440,12 +4440,24 @@ def merge_evidence(sid, pr, repo=None):
 
 
 class MergeRefused(Exception):
-    def __init__(self, code, text):
+    def __init__(self, code, text, ahead=None):
         super().__init__(text)
-        self.code = code
+        self.code, self.ahead = code, ahead or []
 
 
-def merge_pr(sid, n, want="", actor="Controller"):
+def merge_ahead(root, n):
+    """The open PRs older than #n that change a file #n changes: each meant to land first, so merging #n ahead of it
+    leaves it conflicting. TIA3's #1613 (speeds) and #1617 (sun) both edited the orrery; its pilot had speeds landing
+    first and sun rebased after, and the controller's session merged sun first because both read mergeable."""
+    prs = gh_json(root, "pr", "list", "--state", "open", "--limit", "50", "--json", "number,title,files")
+    prs = prs if isinstance(prs, list) else []
+    mine = next((p for p in prs if p.get("number") == n), None)
+    files = {f.get("path") for f in (mine or {}).get("files") or []}
+    return [{"pr": p["number"], "title": p.get("title"), "files": sorted(files & {f.get("path") for f in p.get("files") or []})}
+            for p in prs if p.get("number", n) < n and files & {f.get("path") for f in p.get("files") or []}]
+
+
+def merge_pr(sid, n, want="", actor="Controller", force=False):
     """Merges a flight's PR on the controller's behalf: their click on the dashboard, or the autopilot's answer to a
     merge item (`pilot merge`), which acts for them while they are away: it merged nothing and left every one of
     TIA2's merges to the controller, who said of it: "it acts on MY behalf". Guarded on the head
@@ -4468,6 +4480,12 @@ def merge_pr(sid, n, want="", actor="Controller"):
             return {"merged": n, "head": pr["headRefOid"][:8], "already": True}
         if not pr or pr.get("state") != "OPEN":
             raise MergeRefused(409, f"PR #{n} is {(pr or {}).get('state', 'not found')}")
+        # An older open PR on the same files lands first, unless the controller, told so, merges anyway (`force`).
+        ahead = [] if force else merge_ahead(root, n)
+        if ahead:
+            raise MergeRefused(409, "; ".join(f"#{a['pr']} ({a['title']}) is older and changes the same files ({', '.join(a['files'][:4])}"
+                                              f"{', …' if len(a['files']) > 4 else ''})" for a in ahead)
+                               + f": merging #{n} first leaves it conflicting. Merge it first, or merge #{n} anyway.", ahead)
         evidence = None
         if actor != "Controller":
             ok, evidence = merge_evidence(sid, pr, name)
@@ -5798,9 +5816,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # The controller's own click: a merge a pilot is refused (its okay arrives as another session's message,
             # which carries no authority), so the dashboard runs it, guarded on the head the controller was shown.
             try:
-                out = merge_pr(str(body.get("plan") or ""), int(body.get("pr") or 0), str(body.get("repo") or "").strip())
+                out = merge_pr(str(body.get("plan") or ""), int(body.get("pr") or 0), str(body.get("repo") or "").strip(),
+                               force=bool(body.get("force")))
             except MergeRefused as e:
-                return self.send(e.code, {"error": str(e)})
+                return self.send(e.code, {"error": str(e), "ahead": e.ahead})
             HUB.poke()
             return self.send(200, {"ok": True, **out})
         if self.path == "/api/repos":

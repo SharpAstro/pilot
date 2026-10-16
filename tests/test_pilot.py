@@ -1777,6 +1777,19 @@ class AutopilotMergeTests(Case):
         self.config(repos={"web-app": str(ROOT / "web-app")})
         self.plan("s1", PLAN.replace("Options: Yes | No. Recommend: Yes.", "Options: Yes | No. Recommend: Yes.\n- **Merge PR #7?** Cleared. Options: Merge | Hold."))
 
+    def test_an_older_open_pr_on_the_same_files_lands_first(self):
+        listing = [{"number": 7, "title": "sun", "files": [{"path": "Orrery.cs"}, {"path": "Atlas.cs"}]},
+                   {"number": 5, "title": "speeds", "files": [{"path": "Orrery.cs"}]},
+                   {"number": 6, "title": "docs", "files": [{"path": "README.md"}]},
+                   {"number": 9, "title": "newer", "files": [{"path": "Atlas.cs"}]}]
+        with unittest.mock.patch.object(pilot, "gh_json", lambda *a: listing if "list" in a else self.pr()):
+            self.assertEqual(pilot.merge_ahead(ROOT, 7), [{"pr": 5, "title": "speeds", "files": ["Orrery.cs"]}])
+            with unittest.mock.patch.object(pilot, "plan_repo", lambda sid, rows=None: "web-app"):
+                with self.assertRaises(pilot.MergeRefused) as e:
+                    pilot.merge_pr("s1", 7)
+        self.assertEqual(e.exception.code, 409)
+        self.assertIn("#5 (speeds) is older and changes the same files (Orrery.cs)", str(e.exception))
+
     def test_with_the_proof_it_merges_and_logs_it(self):
         self.leg()
         out, merged = self.merge()

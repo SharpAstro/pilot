@@ -200,8 +200,18 @@ async function post(url, body) {
   // server meets a route it has never heard of.
   if (r.status === 404 && j.error === "not found")
     throw new Error(`This dashboard started before ${url} existed, so its server does not know it. Restart it (python pilot.py dashboard) and try again.`);
-  if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), {flying: j.flying});   // an archive refused names its legs flying
+  if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), {flying: j.flying, ahead: j.ahead});   // an archive refused names its legs flying
   return j;
+}
+
+// A merge the server refuses because an older open PR on the same files should land first: the controller is
+// told which, and may merge anyway.
+async function mergePost(body) {
+  try { return await post("/api/merge", body); }
+  catch (e) {
+    if (!e.ahead?.length || !confirm(`${e.message}\n\nMerge #${body.pr} anyway?`)) throw e;
+    return post("/api/merge", {...body, force: true});
+  }
 }
 
 // ------------------------------------------------------------------ a small Markdown: enough for reports
@@ -1103,7 +1113,7 @@ async function sendAnswers(sid) {
     if (!n || !/^\s*merge(d)?\b/i.test(said || "")) continue;
     const repo = mg.repo;
     if (repo === null) continue;                     // named in two repos: the pilot sorts out which
-    try { const j = await post("/api/merge", {plan: sid, pr: Number(n), repo}); merged.set(it.title, `merged by the dashboard (rebase, guarded on ${j.head})`); }
+    try { const j = await mergePost({plan: sid, pr: Number(n), repo}); merged.set(it.title, `merged by the dashboard (rebase, guarded on ${j.head})`); }
     catch (e) { sentNote.set(sid, `not sent: merging PR #${n} failed: ${e.message}`); render(); return; }
   }
   const text = `The controller's answers to items in your plan's "Waiting on the controller" section, sent from the dashboard:\n`
@@ -2385,7 +2395,7 @@ document.addEventListener("click", async e => {
     // The controller's own merge: the dashboard runs gh pr merge --rebase, guarded on the PR's head, and tells the pilot.
     if (!confirm(`Rebase-merge PR #${t.dataset.pr}? The dashboard runs it now and tells the pilot.`)) return;
     t.disabled = true; t.textContent = "merging…";
-    try { const j = await post("/api/merge", {plan: t.dataset.merge, pr: Number(t.dataset.pr), repo: t.dataset.repo}); t.textContent = `merged #${j.merged} at ${j.head}`; }
+    try { const j = await mergePost({plan: t.dataset.merge, pr: Number(t.dataset.pr), repo: t.dataset.repo}); t.textContent = `merged #${j.merged} at ${j.head}`; }
     catch (err) { t.disabled = false; t.textContent = `Merge #${t.dataset.pr} (rebase)`; alert(err.message); }
     return;
   }
