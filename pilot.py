@@ -3841,13 +3841,25 @@ def cmd_log(a):
     print(f"logged: {time.strftime('%Y-%m-%d %H:%M')} {text}")
 
 
+def session_dir(sid):
+    """The directory a session was started in, as `claude agents` lists it; None when it is not listed or that
+    directory is gone."""
+    row = next((r for r in agents() if r.get("sessionId") == sid), None)
+    cwd = (row or {}).get("cwd")
+    return cwd if cwd and Path(cwd).is_dir() else None
+
+
 def cmd_plan(a):
     """Prints the path of this pilot session's flight plan, creating it from the template the first time."""
     sid = a.session or pilot_session()
     if not sid:
         sys.exit("pilot: run this from the pilot session (it reads CLAUDE_CODE_SESSION_ID), or pass --session")
     p = plan_path(sid)
-    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
+    # A pilot's shell may stand anywhere: TIA4's first `plan` ran from the pilot repo's folder, and pilot.py coded it
+    # PIL2. So a new plan reads its repo, and with it the flight number, from the directory its session was started
+    # in. Asked of `claude agents` only when the plan opens, which is when the number is given out.
+    here = session_dir(sid) if not p.exists() and not a.session else None
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, cwd=here).stdout.strip()
     # The pilot's repo joins pilot.json when it opens its plan there, however it was started: the `pilot` command,
     # the dashboard, a bare /pilot:pilot. Its workers start only in a configured repo, and the dashboard lists
     # only sessions there. Not with --session, which may be run from anywhere.
@@ -3856,13 +3868,13 @@ def cmd_plan(a):
         print(f"pilot: added {top} to {CONFIG} as {added}", file=sys.stderr)
     if not p.exists():
         PLANS.mkdir(parents=True, exist_ok=True)
-        repo = next((k for k, v in config()["repos"].items() if same_path(v, top)), Path(top or os.getcwd()).name)
+        repo = next((k for k, v in config()["repos"].items() if same_path(v, top)), Path(top or here or os.getcwd()).name)
         p.write_text(PLAN_TEMPLATE.format(title=a.title or "untitled", flight=flight_code(repo), sid=sid,
                                           now=time.strftime("%Y-%m-%d %H:%M")), encoding="utf-8")
         # Launched to plan only: the plan opens holding, whether or not the pilot passed --hold itself.
         # With --session (the controller, by hand) only a hold booked for that session: one booked by directory is
         # the launched pilot's, whatever directory this runs in.
-        if take_hold(sid, *([] if a.session else [top, os.getcwd()])):
+        if take_hold(sid, *([] if a.session else [top, here or os.getcwd()])):
             hold_plan(sid, "Holding at the gate: launched to plan only, awaiting clearance for takeoff from the controller")
     gone = taken_off(sid) if getattr(a, "hold", False) else None
     if gone:

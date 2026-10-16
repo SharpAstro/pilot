@@ -203,6 +203,33 @@ class PlanTests(Case):
         self.assertEqual((p["title"], p["flight"]), ("Export fixes", "WA1"))
         self.assertEqual(len(p["log"]), 1)
 
+    def test_a_new_plan_is_numbered_for_its_sessions_own_repo_wherever_its_shell_stands(self):
+        repos = {n: ROOT / n for n in ("tianwen", "pilot")}
+        for r in repos.values():
+            r.mkdir(exist_ok=True)
+            subprocess.run(["git", "init", "-q", str(r)], check=True)
+        # As git names them, as register_repo writes them: the temp folder's 8.3 short form would not match.
+        top = lambda r: subprocess.run(["git", "-C", str(r), "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
+        self.config(repos={n: top(r) for n, r in repos.items()})
+        rows = [{"sessionId": "s4", "cwd": str(repos["tianwen"])}]
+        cwd = os.getcwd()
+        os.chdir(repos["pilot"])          # TIA4's first `plan` ran from the pilot repo's folder
+        try:
+            with unittest.mock.patch.object(pilot, "agents", lambda: rows), \
+                    unittest.mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s4"}), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                pilot.cmd_plan(types.SimpleNamespace(session=None, title="Planetary UI"))
+            with unittest.mock.patch.object(pilot, "agents", lambda: []), \
+                    unittest.mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s5"}), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                pilot.cmd_plan(types.SimpleNamespace(session=None, title="unlisted"))
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(pilot.parse_plan(pilot.plan_path("s4").read_text(encoding="utf-8"))["flight"], "TIA1")
+        self.assertEqual(pilot.parse_plan(pilot.plan_path("s5").read_text(encoding="utf-8"))["flight"], "PIL1",
+                         "a session claude agents does not list is numbered where its shell stands, as before")
+        self.assertEqual(pilot.read_json(pilot.FLIGHTS, {}), {"TIA": 1, "PIL": 1})
+
     def test_a_pilot_opening_its_plan_registers_its_repo(self):
         repo = ROOT / "graph-app"
         repo.mkdir(exist_ok=True)
