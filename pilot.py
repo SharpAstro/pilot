@@ -5354,7 +5354,10 @@ class Hub:
             key = f"ci:{w['name']}:{ap['pr']}:{ap['stage']}:{'conflict' if 'conflicts' in (ap.get('why') or '') else ''}:{(pr.get('head') or '')[:8]}"
             row = rows.get(pid)
             idle = row and row.get("pid") and row.get("status") != "busy"
-            if done.get(f"{pid}|ci") == key or not (asleep(row) or idle):
+            # One record per PR, not per plan: with one per plan, CL2's #125 and #126 (both CI green on a head pushed after
+            # their last round) each overwrote the other's, and the pilot was told both 675 times in two and a half hours.
+            slot = f"{pid}|ci|{ap['pr']}"
+            if done.get(slot) == key or not (asleep(row) or idle):
                 continue
             if merged:
                 drop_waiting(pid, lambda title, n=ap["pr"]: f"merge pr #{n}" in title.lower())
@@ -5375,7 +5378,7 @@ class Hub:
                     f"Put the merge to the controller in your plan: - **Merge PR #{ap['pr']}?** <what it changes; the rounds; CI's state>.")
             self.waking.add(pid)
 
-            def go(pid=pid, key=key, text=text, row=row, idle=idle):
+            def go(pid=pid, key=key, text=text, row=row, idle=idle, n=ap["pr"]):
                 try:
                     if idle:
                         intercom([row.get("name")], text, sender="Dashboard")
@@ -5383,7 +5386,7 @@ class Hub:
                     else:
                         new = wake_pilot(pid, text) or pid
                     d = read_json(WAKES, {})
-                    d[f"{new}|ci"] = key
+                    d[f"{new}|ci|{n}"] = key
                     write_json(WAKES, d)
                 except Exception:
                     pass

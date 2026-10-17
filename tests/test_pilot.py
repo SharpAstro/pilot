@@ -1163,6 +1163,29 @@ class MergedUnaskedTests(Case):
         self.assertIn("merged PR #7 of leg comets outside the dashboard", self.log_of("p1")[-1])
 
 
+class TwoPrsTellOnceEachTests(Case):
+    def test_two_prs_of_one_plan_are_each_told_once_not_in_turn_forever(self):
+        self.plan("p1", "# Flight plan: x\n\n## Waiting on the controller\n\n## Log\n\n")
+        leg = lambda name, n, head: {"name": name, "plan": "p1",
+                                     "approach": {"stage": "approach", "pr": n, "why": "review round 3 is due: commits since round 2"},
+                                     "git": {"prs": [{"number": n, "state": "OPEN", "ci": "passing", "head": head}]}}
+        snap = {"workers": [leg("dollar-links", 125, "016d6c5eaa"), leg("radical-clearance", 126, "e5bb6e79aa")]}
+        rows = {"p1": {"sessionId": "p1", "name": "pilot-x", "kind": "background", "pid": 42, "status": "idle"}}
+        told, saved = [], pilot.intercom
+        pilot.intercom = lambda names, text, sender="Controller": told.append(text) or "delivered"
+        hub = pilot.Hub()
+        try:
+            for _ in range(5):                 # five snapshot rebuilds
+                hub.tell_ci(snap, rows, pilot.read_json(pilot.WAKES, {}), set())
+                for _ in range(100):
+                    if not hub.waking:
+                        break
+                    time.sleep(0.02)
+        finally:
+            pilot.intercom = saved
+        self.assertEqual(sorted(t.split(" of leg ")[0] for t in told), ["CI is passing on PR #125", "CI is passing on PR #126"])
+
+
 class DropWaitingTests(Case):
     def test_a_merged_pr_item_leaves_the_plan_and_the_others_stay(self):
         self.plan("p1", "# Flight plan: x\n\n## Waiting on the controller\n\n"
