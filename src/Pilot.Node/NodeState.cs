@@ -167,10 +167,12 @@ public sealed class NodeState
     {
         lock (_gate)
         {
+            // A body without args leaves them null: the generated deserialiser skips a missing property's initialiser.
+            var args = command.Args ?? [];
             string? error = null;
             switch (command.Verb, command.Target)
             {
-                case (Verbs.Note, Verbs.NodeTarget) when string.Join(' ', command.Args).Trim() is { Length: > 0 } text:
+                case (Verbs.Note, Verbs.NodeTarget) when string.Join(' ', args).Trim() is { Length: > 0 } text:
                     Publish(new NoteAddedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Note = new NodeNote { At = _time.GetUtcNow(), Who = command.Who, Text = text } });
                     break;
                 case (Verbs.Note, Verbs.NodeTarget):
