@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>pilot-node</AssemblyName>
+    <RootNamespace>Pilot.Node</RootNamespace>
+    <!-- One native binary per machine. PublishAot also turns on the Request Delegate Generator for the Map* calls
+         here and the trim/AOT analyzers, but their IL2xxx/IL3xxx warnings only show on a publish with -r <rid>:
+         publish to check an endpoint change, building is not enough. -->
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Pilot.Contracts\Pilot.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Pilot.Node.Tests" />
+  </ItemGroup>
+
+</Project>
