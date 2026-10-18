@@ -11,7 +11,7 @@ namespace Pilot.Node.Sessions;
 /// </summary>
 public sealed class SessionTracker : BackgroundService
 {
-    /// <summary>How often a changed client count is looked for while waiting out the interval.</summary>
+    /// <summary>How often a changed client count is looked for while waiting out the interval (never longer than the interval itself).</summary>
     private static readonly TimeSpan Slice = TimeSpan.FromSeconds(1);
 
     /// <summary>How long a session found too old to list is left alone before its transcript is looked at again.</summary>
@@ -34,7 +34,6 @@ public sealed class SessionTracker : BackgroundService
     private readonly Dictionary<string, string?> _repos = new Dictionary<string, string?>(StringComparer.Ordinal);
     private V1Registry _registry = V1Registry.Empty;
     private DateTimeOffset _registryAt = DateTimeOffset.MinValue;
-    private bool _seeded;
     private bool _failing;
 
     public SessionTracker(NodeState state, IClaudeAgents agents, SessionTrackerOptions options, Func<bool> hasClients, TimeProvider time, ILogger<SessionTracker> logger)
@@ -45,6 +44,7 @@ public sealed class SessionTracker : BackgroundService
         _hasClients = hasClients;
         _time = time;
         _logger = logger;
+        Seed(time.GetUtcNow());
     }
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
@@ -69,7 +69,7 @@ public sealed class SessionTracker : BackgroundService
                 var polled = _time.GetUtcNow();
                 while (_time.GetUtcNow() < polled + Interval())
                 {
-                    await Task.Delay(Slice, _time, stopping);
+                    await Task.Delay(TimeSpan.FromTicks(Math.Min(Slice.Ticks, Interval().Ticks)), _time, stopping);
                 }
             }
             catch (OperationCanceledException)
@@ -106,7 +106,6 @@ public sealed class SessionTracker : BackgroundService
         var listing = clock.Elapsed;
 
         var now = _time.GetUtcNow();
-        Seed(now);
         if (now - _registryAt >= RegistryTtl)
         {
             _registry = V1Registry.Load(_options.V1StateFolder);
@@ -207,14 +206,13 @@ public sealed class SessionTracker : BackgroundService
         _state.RemoveSession(id);
     }
 
-    /// <summary>The rows a restored journal holds are the tracker's to end or drop too, though it never listed them.</summary>
+    /// <summary>
+    /// The rows a restored journal holds are the tracker's to end or drop too, though it never listed them. Taken when the
+    /// tracker is made, not at its first poll: a row put by anyone else after that is not the tracker's, and the first poll
+    /// may run at any moment after the host starts.
+    /// </summary>
     private void Seed(DateTimeOffset now)
     {
-        if (_seeded)
-        {
-            return;
-        }
-        _seeded = true;
         foreach (var row in _state.Snapshot().Sessions)
         {
             _rows[row.Id] = row;
