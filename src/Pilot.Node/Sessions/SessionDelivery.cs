@@ -13,7 +13,8 @@ namespace Pilot.Node.Sessions;
 public sealed record ResumeRequest(string SessionId, string? Name, string Cwd, string Text);
 
 /// <summary>A session to reach over the intercom: the name SendMessage knows it by, and its kind, which tells its row in a listing from another of the same name.</summary>
-public sealed record RelayRequest(string Name, SessionKind Kind, string Text);
+/// <param name="From">The name the message comes from, as the recipient reads it: <see cref="ClaudeCliDelivery.RelayFrom"/> of the command's sender.</param>
+public sealed record RelayRequest(string Name, SessionKind Kind, string Text, string From);
 
 /// <summary>A delivery that did not happen, with why: the say's error.</summary>
 public sealed class SessionDeliveryException(string message) : Exception(message);
@@ -48,8 +49,11 @@ public interface ISessionDelivery
 /// </summary>
 public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, ClaudeProfile profile, string relayFolder) : ISessionDelivery
 {
-    /// <summary>The name the intercom sends as: v1's, so a session that knows v1's relay knows the node's.</summary>
-    public const string RelayName = "pilot-dashboard";
+    /// <summary>The name a message from the person who runs these sessions comes from, whichever client they typed it in.</summary>
+    public const string ControllerName = "controller";
+
+    /// <summary>The clients a person types in: a command from one of them is the controller's.</summary>
+    private static readonly string[] Clients = ["gui", "tui", "cli", "web"];
 
     /// <summary>How long a stopped session's process may take to go.</summary>
     private static readonly TimeSpan StopWait = TimeSpan.FromSeconds(20);
@@ -168,11 +172,27 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, ClaudeProfil
     }
 
     /// <summary>v1's relay arguments, with ListAgents added for a name that is not enough.</summary>
-    public static IReadOnlyList<string> RelayArguments() =>
+    public static IReadOnlyList<string> RelayArguments(string from) =>
     [
         "-p", "--model", "haiku", "--tools", "SendMessage,ListAgents", "--allowedTools", "SendMessage,ListAgents", "--strict-mcp-config",
-        "--no-session-persistence", "--name", RelayName, "--output-format", "json",
+        "--no-session-persistence", "--name", from, "--output-format", "json",
     ];
+
+    /// <summary>
+    /// The name a relayed message comes from, by who sent the command: a client is the controller, a session (the
+    /// watchtower, a worker) its own name. The recipient reads it as the sender (<c>Message from @controller</c>), so it
+    /// says who spoke, not which program carried it.
+    /// </summary>
+    public static string RelayFrom(string? who)
+    {
+        var name = (who ?? "").Trim();
+        if (name.Length == 0 || Clients.Contains(name, StringComparer.OrdinalIgnoreCase))
+        {
+            return ControllerName;
+        }
+        var safe = new string([.. name.Select(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' ? c : '-')]).Trim('-');
+        return safe.Length == 0 ? ControllerName : safe;
+    }
 
     /// <summary>
     /// The relayed message as its recipient reads it: the text, and a closing line saying where its answer goes. The
@@ -181,7 +201,7 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, ClaudeProfil
     /// its own turn, where the GUI reads it.
     /// </summary>
     public static string RelayText(string text) =>
-        text.Trim() + "\n\n(Sent by the person who runs these sessions, through the pilot node. The sender cannot be messaged back: answer in your own reply, not with SendMessage.)";
+        text.Trim() + "\n\n(Sent through the pilot node. The sender cannot be messaged back: answer in your own reply, not with SendMessage.)";
 
     public async Task<string> RelayAsync(RelayRequest request, CancellationToken cancellationToken)
     {
@@ -189,7 +209,7 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, ClaudeProfil
         var kind = request.Kind == SessionKind.Background ? "bg" : "interactive";
         var prompt = string.Format(System.Globalization.CultureInfo.InvariantCulture, RelayPrompt, mark, kind, request.Name, RelayText(request.Text));
         Directory.CreateDirectory(relayFolder);
-        var run = await ClaudeCli.RunAsync(RelayArguments(), prompt, relayFolder, RelayTimeout, cancellationToken);
+        var run = await ClaudeCli.RunAsync(RelayArguments(request.From), prompt, relayFolder, RelayTimeout, cancellationToken);
 
         string answer;
         bool isError;

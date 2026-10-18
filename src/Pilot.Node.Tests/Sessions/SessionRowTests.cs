@@ -95,11 +95,17 @@ public sealed class SessionRowTests : IDisposable
     [Theory]
     [InlineData("du1-watchtower")]
     [InlineData("watchtower")]
-    [InlineData("autopilot")]
-    [InlineData("pilot-dashboard")]
     public void AWatchtowerIsNamedLikeOne(string name)
     {
         SessionRoles.Resolve(name, AgentRows.SessionA, V1Registry.Empty).ShouldBe(new SessionRoleInfo(SessionRole.Watchtower, null, null, null));
+    }
+
+    [Theory]
+    [InlineData("autopilot")]
+    [InlineData("pilot-dashboard")]
+    public void V1sNamesAreNoWatchtower(string name)
+    {
+        SessionRoles.Resolve(name, AgentRows.SessionA, V1Registry.Empty).Role.ShouldNotBe(SessionRole.Watchtower);
     }
 
     [Theory]

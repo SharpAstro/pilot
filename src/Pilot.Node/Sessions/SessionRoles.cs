@@ -152,9 +152,6 @@ public sealed record SessionRoleInfo(SessionRole Role, string? Flight, string? L
 
 public static partial class SessionRoles
 {
-    /// <summary>v1's session names that do the watchtower's work: the autopilot, and the dashboard's intercom relay.</summary>
-    private static readonly string[] WatchtowerNames = ["autopilot", "pilot-dashboard"];
-
     /// <summary>A worker's session name, <c>&lt;FLIGHT&gt; &lt;leg&gt;</c> (<c>PIL5 node</c>, <c>TIA1611a node</c>): a flight code is capitals and a number.</summary>
     [GeneratedRegex(@"^([A-Z]{2,}[0-9]+[a-z]?) (\S.*)$", RegexOptions.CultureInvariant)]
     private static partial Regex WorkerName();
@@ -166,7 +163,7 @@ public static partial class SessionRoles
     /// </summary>
     public static SessionRoleInfo Resolve(string? name, string sessionId, V1Registry registry)
     {
-        if (name is { Length: > 0 } && (name.EndsWith("-watchtower", StringComparison.Ordinal) || name == "watchtower" || WatchtowerNames.Contains(name)))
+        if (name is { Length: > 0 } && (name.EndsWith("-watchtower", StringComparison.Ordinal) || name == "watchtower"))
         {
             return new SessionRoleInfo(SessionRole.Watchtower, null, null, null);
         }

@@ -78,7 +78,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                     return (SayWays.Resumed, await ResumeAsync(row, text, cancellationToken));
                 default:
                     RefuseAmbiguous(row, rows);
-                    await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text), cancellationToken);
+                    await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who)), cancellationToken);
                     return (SayWays.Relayed, null);
             }
         }
