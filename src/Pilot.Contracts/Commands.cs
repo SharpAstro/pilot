@@ -36,18 +36,58 @@ public sealed record CommandResult
     public string? Error { get; init; }
 
     /// <summary>
+    /// Which way a verb that can go more than one way went, when it did: <c>say session</c> answers
+    /// <see cref="SayWays.Resumed"/> or <see cref="SayWays.Relayed"/>. Null for a verb that goes one way only.
+    /// </summary>
+    public string? Way { get; init; }
+
+    /// <summary>
+    /// The session id the target has now, when the command gave it a new one: a <c>say</c> that resumed a background
+    /// session continues it under a new session id, and the session's row follows it there.
+    /// </summary>
+    public string? SessionId { get; init; }
+
+    /// <summary>
     /// The number of the <see cref="CommandResultEvent"/> that carries this result on the stream, so the client that
     /// posted the command can tell its own result from another client's.
     /// </summary>
     public required long Seq { get; init; }
 }
 
-/// <summary>The verbs and targets the node knows. The node skeleton has one demo verb, which proves the path.</summary>
+/// <summary>The verbs and targets the node knows.</summary>
 public static class Verbs
 {
     /// <summary><c>note node &lt;text&gt;</c>: keeps a note on the node, which every client sees.</summary>
     public const string Note = "note";
 
+    /// <summary>
+    /// <c>say session/&lt;id&gt; &lt;text&gt;</c>: delivers the text to a Claude session on this machine, by its row's
+    /// <see cref="SessionRow.Id"/>. The result's <see cref="CommandResult.Way"/> says how it went.
+    /// </summary>
+    public const string Say = "say";
+
     /// <summary>The node itself, as a target.</summary>
     public const string NodeTarget = "node";
+
+    /// <summary>What a session target starts with: <c>session/&lt;id&gt;</c>.</summary>
+    public const string SessionTargetPrefix = "session/";
+
+    /// <summary>The target naming the session row <paramref name="id"/>.</summary>
+    public static string SessionTarget(string id) => SessionTargetPrefix + id;
+}
+
+/// <summary>The ways a <c>say</c> reaches a session (<see cref="CommandResult.Way"/>).</summary>
+public static class SayWays
+{
+    /// <summary>
+    /// A background session not mid-turn was stopped and continued with the text as a user turn. Claude Code continues
+    /// it under a new session id (<see cref="CommandResult.SessionId"/>) holding the whole conversation.
+    /// </summary>
+    public const string Resumed = "resumed";
+
+    /// <summary>
+    /// The text went over Claude Code's intercom (SendMessage) as a cross-session message: how a session mid-turn, and
+    /// any interactive session, is reached without stopping it.
+    /// </summary>
+    public const string Relayed = "relayed";
 }

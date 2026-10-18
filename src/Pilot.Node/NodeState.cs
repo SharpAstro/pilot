@@ -195,18 +195,40 @@ public sealed class NodeState
                     break;
             }
 
-            var result = new CommandResult
-            {
-                Verb = command.Verb,
-                Target = command.Target,
-                Who = command.Who,
-                Ok = error is null,
-                Error = error,
-                Seq = _seq + 1,
-            };
-            Publish(new CommandResultEvent { Seq = result.Seq, At = _time.GetUtcNow(), Result = result });
-            return result;
+            return CompleteLocked(command, error, way: null, sessionId: null);
         }
+    }
+
+    /// <summary>
+    /// Puts the result of a command done outside <see cref="Execute"/> on the stream: one whose work is too long to do
+    /// under the lock, as a <c>say</c> is (<see cref="Sessions.SessionMessenger"/>).
+    /// </summary>
+    /// <param name="error">Why it was not done, or null when it was.</param>
+    /// <param name="way">Which way it went (<see cref="CommandResult.Way"/>).</param>
+    /// <param name="sessionId">The target's new session id (<see cref="CommandResult.SessionId"/>).</param>
+    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null)
+    {
+        lock (_gate)
+        {
+            return CompleteLocked(command, error, way, sessionId);
+        }
+    }
+
+    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId)
+    {
+        var result = new CommandResult
+        {
+            Verb = command.Verb,
+            Target = command.Target,
+            Who = command.Who,
+            Ok = error is null,
+            Error = error,
+            Way = error is null ? way : null,
+            SessionId = error is null ? sessionId : null,
+            Seq = _seq + 1,
+        };
+        Publish(new CommandResultEvent { Seq = result.Seq, At = _time.GetUtcNow(), Result = result });
+        return result;
     }
 
     /// <summary>The held deltas after <paramref name="since"/>, or null when a snapshot is what the client needs.</summary>
