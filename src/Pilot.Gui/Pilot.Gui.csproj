@@ -27,6 +27,8 @@
   <ItemGroup>
     <Content Include="Fonts\DejaVuSans.ttf" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fonts\DejaVuSans.LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
+    <!-- What the window shows until it reads a node: the contract's own sample, not a copy of it. -->
+    <Content Include="..\Pilot.Contracts\Fixtures\snapshot.sample.json" Link="Fixtures\snapshot.sample.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!--
