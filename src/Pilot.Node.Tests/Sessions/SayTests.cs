@@ -170,7 +170,7 @@ public sealed class SayTests : IDisposable
         result.Way.ShouldBe(SayWays.Relayed);
         result.SessionId.ShouldBeNull();
         _delivery.Calls.ShouldBe(["relay pil5-say-bg"]);
-        _delivery.Relays.Single().ShouldBe(new RelayRequest("pil5-say-bg", SessionKind.Background, "mid-turn"));
+        _delivery.Relays.Single().ShouldBe(new RelayRequest("pil5-say-bg", SessionKind.Background, "mid-turn", "tests"));
     }
 
     [Theory]
@@ -380,6 +380,21 @@ public sealed class SayRouteTests
 
 public sealed class RelayTextTests
 {
+    [Theory]
+    [InlineData("gui", "controller")]
+    [InlineData("CLI", "controller")]
+    [InlineData("", "controller")]
+    [InlineData(null, "controller")]
+    [InlineData("du1-watchtower", "du1-watchtower")]
+    [InlineData("PIL5 gui-say", "PIL5-gui-say")]
+    [InlineData("  @!  ", "controller")]
+    public void AMessageComesFromWhoSentItAndAClientIsTheController(string? who, string from) =>
+        ClaudeCliDelivery.RelayFrom(who).ShouldBe(from);
+
+    [Fact]
+    public void TheRelayRunsUnderTheSendersName() =>
+        ClaudeCliDelivery.RelayArguments("controller").ShouldContain("controller");
+
     [Fact]
     public void ARelayedMessageKeepsItsTextAndSaysTheSenderCannotBeAnswered()
     {
