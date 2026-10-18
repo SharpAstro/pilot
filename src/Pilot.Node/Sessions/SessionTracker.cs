@@ -32,6 +32,17 @@ public sealed class SessionTracker : BackgroundService
     private readonly Dictionary<string, SessionTranscripts> _transcripts = new Dictionary<string, SessionTranscripts>(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTimeOffset> _stale = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
     private readonly Dictionary<string, string?> _repos = new Dictionary<string, string?>(StringComparer.Ordinal);
+
+    // A resumed session continues under a new session id; its row keeps its id and follows it there. By session id:
+    // the row each copy belongs to, and the ids it left behind, whose listed rows are not sessions of their own.
+    private readonly Dictionary<string, string> _rowOf = new Dictionary<string, string>(StringComparer.Ordinal);
+    private readonly HashSet<string> _superseded = new HashSet<string>(StringComparer.Ordinal);
+
+    // The rows being resumed now, with the name and folder their copy will be listed under: left alone until it is.
+    private readonly Dictionary<string, (string? Name, string Cwd)> _resuming = new Dictionary<string, (string? Name, string Cwd)>(StringComparer.Ordinal);
+
+    // One poll, or one change of who is resumed, at a time: the node's own loop and a say both poll.
+    private readonly SemaphoreSlim _gate = new SemaphoreSlim(1, 1);
     private V1Registry _registry = V1Registry.Empty;
     private DateTimeOffset _registryAt = DateTimeOffset.MinValue;
     private bool _failing;
@@ -84,6 +95,91 @@ public sealed class SessionTracker : BackgroundService
     /// <summary>One look at every session: lists them, reads what their transcripts gained and puts the rows that changed.</summary>
     public async Task PollAsync(CancellationToken cancellationToken)
     {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            await PollLockedAsync(cancellationToken);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Holds row <paramref name="row"/> as it is while its session is stopped and resumed: a poll in between would end
+    /// it, and add its copy as a session of its own. Disposing lets it go; <see cref="CompleteResume"/> moves it first.
+    /// </summary>
+    public IDisposable BeginResume(SessionRow row)
+    {
+        _gate.Wait();
+        try
+        {
+            _resuming[row.Id] = (row.Name == row.Id ? null : row.Name, row.Cwd);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+        return new Resuming(this, row.Id);
+    }
+
+    /// <summary>
+    /// Moves row <paramref name="id"/> to the session id its resume continued it under, keeping the row's id and name: one
+    /// changed delta. From then on the copy's listed row is this row, and the one it left behind is no session.
+    /// </summary>
+    public void CompleteResume(string id, string newSessionId)
+    {
+        _gate.Wait();
+        try
+        {
+            var previous = _rows.TryGetValue(id, out var known) ? known : _state.Sessions().FirstOrDefault(r => r.Id == id);
+            if (previous is null)
+            {
+                return;
+            }
+
+            _superseded.Add(previous.SessionId);
+            _transcripts.Remove(previous.SessionId);
+            _rowOf[newSessionId] = id;
+            _endedAt.Remove(id);
+            // A user turn has just been given to it: it is working on it.
+            Put(previous with { SessionId = newSessionId, State = SessionState.Working, WaitingFor = null });
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private void EndResume(string id)
+    {
+        _gate.Wait();
+        try
+        {
+            _resuming.Remove(id);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private sealed class Resuming(SessionTracker tracker, string id) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                tracker.EndResume(id);
+            }
+        }
+    }
+
+    private async Task PollLockedAsync(CancellationToken cancellationToken)
+    {
         var clock = Stopwatch.StartNew();
         string text;
         try
@@ -115,15 +211,19 @@ public sealed class SessionTracker : BackgroundService
         var present = new HashSet<string>(StringComparer.Ordinal);
         foreach (var agent in listed)
         {
-            if (present.Add(agent.ShortId))
+            if (_superseded.Contains(agent.SessionId) || RowIdOf(agent) is not { } id)
             {
-                Track(agent, now);
+                continue;
+            }
+            if (present.Add(id) && !_resuming.ContainsKey(id))
+            {
+                Track(agent, id, now);
             }
         }
 
         foreach (var (id, previous) in _rows.ToList())
         {
-            if (present.Contains(id))
+            if (present.Contains(id) || _resuming.ContainsKey(id))
             {
                 continue;
             }
@@ -143,9 +243,27 @@ public sealed class SessionTracker : BackgroundService
         _logger.LogDebug("Polled {Count} sessions in {Elapsed} ms (listing {Listing} ms)", listed.Count, (long)clock.Elapsed.TotalMilliseconds, (long)listing.TotalMilliseconds);
     }
 
-    private void Track(ClaudeAgentRow agent, DateTimeOffset now)
+    /// <summary>
+    /// The row a listed session is: the row it continues when it is a resumed copy, else its own short id. Null for a
+    /// copy whose resume has not finished yet, which <see cref="CompleteResume"/> is about to give its row.
+    /// </summary>
+    private string? RowIdOf(ClaudeAgentRow agent)
     {
+        if (_rowOf.TryGetValue(agent.SessionId, out var row))
+        {
+            return row;
+        }
         var id = agent.ShortId;
+        if (!_rows.ContainsKey(id) && agent.Kind == "background"
+            && _resuming.Values.Any(r => r.Name == agent.Name && string.Equals(r.Cwd, agent.Cwd, StringComparison.OrdinalIgnoreCase)))
+        {
+            return null;
+        }
+        return id;
+    }
+
+    private void Track(ClaudeAgentRow agent, string id, DateTimeOffset now)
+    {
         var live = agent.Pid is not null;
         var ended = !live && SessionStates.Map(agent.Status, agent.State) is SessionState.Ended or SessionState.Failed;
 
@@ -185,7 +303,7 @@ public sealed class SessionTracker : BackgroundService
             _repos[agent.Cwd] = repo = RepoOf.Find(agent.Cwd);
         }
 
-        Put(SessionRowBuilder.Build(agent, facts, record, repo, SessionRoles.Resolve(agent.Name, agent.SessionId, _registry)));
+        Put(SessionRowBuilder.Build(agent, facts, record, repo, SessionRoles.Resolve(agent.Name, agent.SessionId, _registry)) with { Id = id });
     }
 
     private void Put(SessionRow row)
@@ -199,6 +317,10 @@ public sealed class SessionTracker : BackgroundService
         _rows.Remove(id);
         _endedAt.Remove(id);
         _transcripts.Remove(sessionId);
+        foreach (var copy in _rowOf.Where(c => c.Value == id).Select(c => c.Key).ToList())
+        {
+            _rowOf.Remove(copy);
+        }
         if (!keepStale)
         {
             _stale.Remove(sessionId);
