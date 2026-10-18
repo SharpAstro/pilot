@@ -1,0 +1,58 @@
+name: v2 (.NET)
+
+# pilot v2 only: the solution under src/. v1 (pilot.py, web/, plugins/, tests/) is Python and is neither built nor
+# tested here, so a change to v1 alone does not run this workflow.
+on:
+  push:
+    branches: [ main ]
+    paths: [ 'src/**', '.github/workflows/dotnet.yml' ]
+  pull_request:
+    branches: [ main ]
+    paths: [ 'src/**', '.github/workflows/dotnet.yml' ]
+
+env:
+  # Patch component is github.run_number. The MAJOR.MINOR lives in src/Directory.Build.props (VersionMajorMinor)
+  # and the build job reads it back, so it cannot drift from what the binaries declare.
+  VERSION_REV: ${{ github.run_attempt }}
+  VERSION_HASH: +${{ github.sha }}
+  BUILD_CONF: Release
+  # The build job CAPTURES a dotnet invocation's stdout to resolve the version, so the SDK's first-run banner must
+  # not be able to land in it.
+  DOTNET_NOLOGO: 1
+
+# There is no publish-nuget job: v2 ships no package yet (the node is an executable, and its contracts stay inside
+# this repo until a client outside it needs them). Add the org's artifact-mediated publish job when one does.
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: 10.0.x
+    - name: Resolve version prefix
+      # Read the major.minor back from the one place it is written instead of restating it here. -getProperty only
+      # EVALUATES the file, so this can run before restore. The value is CAPTURED, so nothing else may print to
+      # stdout: DOTNET_NOLOGO keeps the first-run banner out, and the shape check fails the run on anything else.
+      run: |
+        MM="$(dotnet msbuild Directory.Build.props -getProperty:VersionMajorMinor -nologo)"
+        case "$MM" in
+          [0-9]*.[0-9]*) ;;
+          *) echo "::error::VersionMajorMinor did not resolve from src/Directory.Build.props (got '$MM')"; exit 1 ;;
+        esac
+        echo "VERSION_PREFIX=${MM}.${{ github.run_number }}" >> "$GITHUB_ENV"
+    - name: Restore dependencies
+      run: dotnet restore Pilot.slnx
+    - name: Build
+      run: dotnet build Pilot.slnx -c $BUILD_CONF --no-restore -p:Version=${VERSION_PREFIX}${VERSION_REV}${VERSION_HASH} -p:FileVersion=${VERSION_PREFIX}.${VERSION_REV} -p:ContinuousIntegrationBuild=true
+    - name: Test
+      run: dotnet test Pilot.Node.Tests -c $BUILD_CONF --no-build --logger "console;verbosity=detailed"
+    - name: Install the native AOT toolchain
+      run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends clang zlib1g-dev
+    - name: Publish the node with native AOT
+      # The trim and AOT analyzers (IL2xxx, IL3xxx) only speak on a publish with a runtime, not on a build, and
+      # TreatWarningsAsErrors (on under GitHub Actions) makes any of them fail the run.
+      run: dotnet publish Pilot.Node -c $BUILD_CONF -r linux-x64 -p:Version=${VERSION_PREFIX}${VERSION_REV}${VERSION_HASH} -p:FileVersion=${VERSION_PREFIX}.${VERSION_REV} -p:ContinuousIntegrationBuild=true
