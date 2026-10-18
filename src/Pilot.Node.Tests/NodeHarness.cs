@@ -15,9 +15,10 @@ internal sealed class NodeHarness : IAsyncDisposable
 {
     private readonly NodeLock _held;
 
-    private NodeHarness(WebApplication app, NodeLock held, string folder, NodeOptions options, FakeClaudeAgents agents)
+    private NodeHarness(WebApplication app, NodeLock held, string folder, NodeOptions options, FakeClaudeAgents agents, FakeSessionDelivery delivery)
     {
         Agents = agents;
+        Delivery = delivery;
         App = app;
         _held = held;
         Folder = folder;
@@ -41,6 +42,9 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <summary>The <c>claude agents</c> listing the node's session tracker reads: empty until a test sets it.</summary>
     public FakeClaudeAgents Agents { get; }
 
+    /// <summary>The <c>claude</c> calls behind <c>say</c>: recorded, never run.</summary>
+    public FakeSessionDelivery Delivery { get; }
+
     /// <param name="retainedDeltas">How many deltas the node holds for a resuming client.</param>
     /// <param name="holdFirstListing">Keeps the session tracker's first poll waiting until the test releases it.</param>
     public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false)
@@ -59,6 +63,7 @@ internal sealed class NodeHarness : IAsyncDisposable
         }
 
         var agents = holdFirstListing ? new FakeClaudeAgents().HoldFirstListing() : new FakeClaudeAgents();
+        var delivery = new FakeSessionDelivery(agents);
         try
         {
             var app = NodeApp.Build(options, held, builder =>
@@ -67,6 +72,7 @@ internal sealed class NodeHarness : IAsyncDisposable
                 builder.Logging.SetMinimumLevel(LogLevel.Warning);
                 // A test node never runs the claude CLI or reads this machine's sessions: it tracks what the test gives it.
                 builder.Services.AddSingleton<IClaudeAgents>(agents);
+                builder.Services.AddSingleton<ISessionDelivery>(delivery);
                 builder.Services.AddSingleton(new SessionTrackerOptions(
                     new ClaudeProfile(Path.Combine(folder, "claude")),
                     Path.Combine(folder, "v1"),
@@ -75,7 +81,7 @@ internal sealed class NodeHarness : IAsyncDisposable
                     SessionTrackerOptions.DefaultEndedRetention));
             });
             await app.StartAsync(cancellationToken);
-            return new NodeHarness(app, held, folder, options, agents);
+            return new NodeHarness(app, held, folder, options, agents, delivery);
         }
         catch
         {
