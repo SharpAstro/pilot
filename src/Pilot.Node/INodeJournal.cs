@@ -34,30 +34,67 @@ public sealed record NodeHistory(string? Stream, SnapshotEvent? Snapshot, IReadO
 /// over the same instance picks up where the last one stopped, which is the contract the store leg's file journal
 /// keeps across restarts.
 /// </summary>
-public sealed class InMemoryJournal : INodeJournal
+/// <remarks>
+/// Bounded: the last snapshot plus at most <c>maxDeltas</c> deltas after it. The delta that passes the cap is folded,
+/// with those before it, into a fresh snapshot, so a node whose sessions change every few seconds holds its state and
+/// not its history.
+/// </remarks>
+public sealed class InMemoryJournal(int maxDeltas = InMemoryJournal.DefaultMaxDeltas) : INodeJournal
 {
-    private readonly List<NodeEvent> _events = [];
-    private string? _stream;
+    /// <summary>How many deltas it keeps after its snapshot before compacting them into a new one.</summary>
+    public const int DefaultMaxDeltas = 1024;
 
-    public NodeHistory Load()
+    private readonly List<NodeEvent> _deltas = [];
+
+    // The state as of the last event appended: what a compaction writes as the new snapshot.
+    private readonly NodeMirror _mirror = new NodeMirror();
+    private SnapshotEvent? _snapshot;
+
+    /// <summary>How many deltas it holds after its snapshot now; never more than <c>maxDeltas</c>.</summary>
+    public int DeltaCount
     {
-        lock (_events)
+        get
         {
-            return new NodeHistory(_stream, null, [.. _events]);
+            lock (_deltas)
+            {
+                return _deltas.Count;
+            }
         }
     }
 
+    public NodeHistory Load()
+    {
+        lock (_deltas)
+        {
+            return new NodeHistory(_snapshot?.Stream, _snapshot, [.. _deltas]);
+        }
+    }
+
+    /// <remarks>The first event appended is the starting snapshot <see cref="NodeState"/> writes for a new stream.</remarks>
     public void Append(NodeEvent nodeEvent, ReadOnlyMemory<byte> json)
     {
-        lock (_events)
+        lock (_deltas)
         {
+            _mirror.Apply(nodeEvent);
             if (nodeEvent is SnapshotEvent snapshot)
             {
-                _stream = snapshot.Stream;
+                _snapshot = snapshot;
+                _deltas.Clear();
+                return;
             }
-            else
+
+            _deltas.Add(nodeEvent);
+            if (_deltas.Count > maxDeltas)
             {
-                _events.Add(nodeEvent);
+                _snapshot = new SnapshotEvent
+                {
+                    Seq = _mirror.Seq,
+                    At = nodeEvent.At,
+                    Stream = _mirror.Stream!,
+                    Sessions = [.. _mirror.Sessions.Values],
+                    Notes = [.. _mirror.Notes],
+                };
+                _deltas.Clear();
             }
         }
     }
