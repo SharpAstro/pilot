@@ -1,0 +1,178 @@
+using Microsoft.Extensions.Logging.Abstractions;
+using Pilot.Contracts;
+using Pilot.Node.Sessions;
+using Shouldly;
+using Xunit;
+
+namespace Pilot.Node.Tests.Sessions;
+
+/// <summary>The tracker end to end without a process: a fixture listing, fixture transcripts, and the deltas the node makes.</summary>
+public sealed class SessionTrackerTests : IDisposable
+{
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private static readonly DateTimeOffset Start = DateTimeOffset.Parse("2026-10-18T10:00:00Z");
+
+    private readonly TempProfile _profile = new TempProfile();
+    private readonly FakeClaudeAgents _agents = new FakeClaudeAgents();
+    private readonly ManualTime _time = new ManualTime(Start);
+    private readonly NodeState _state;
+    private readonly CollectingSink _sink = new CollectingSink();
+    private readonly SessionTracker _tracker;
+
+    public SessionTrackerTests()
+    {
+        _state = new NodeState(new InMemoryJournal(), _time);
+        _state.Subscribe(since: null, stream: null, _sink).ShouldNotBeNull();
+        _tracker = new SessionTracker(_state, _agents, _profile.Options(), () => false, _time, NullLogger<SessionTracker>.Instance);
+    }
+
+    public void Dispose() => _profile.Dispose();
+
+    private IReadOnlyList<NodeEvent> Deltas => [.. _sink.Events.Where(e => e is not SnapshotEvent)];
+
+    private async Task<IReadOnlyList<NodeEvent>> PollAsync()
+    {
+        var before = Deltas.Count;
+        await _tracker.PollAsync(Ct);
+        return [.. Deltas.Skip(before)];
+    }
+
+    [Fact]
+    public async Task EverySessionTheListingNamesGetsOneRowAndNothingMoreWhileNothingChanges()
+    {
+        _agents.Json = AgentRows.List(
+            AgentRows.Interactive(AgentRows.SessionA, 4242, "tianwen-lib-3a"),
+            AgentRows.Background(AgentRows.SessionB, "PIL5 node", "working", pid: 4343, status: "busy"));
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Lines.Assistant("m1", input: 10, cacheRead: 5_000, output: 100));
+
+        var first = await PollAsync();
+
+        first.ShouldAllBe(e => e is SessionAddedEvent);
+        first.Count.ShouldBe(2);
+        _state.Sessions().Select(s => s.Id).Order().ShouldBe(["a1b2c3d4", "b2c3d4e5"]);
+        var seq = _state.Seq;
+
+        // The same listing, the same transcripts, polled again and again: no delta.
+        (await PollAsync()).ShouldBeEmpty();
+        (await PollAsync()).ShouldBeEmpty();
+        _state.Seq.ShouldBe(seq);
+    }
+
+    [Fact]
+    public async Task ATurnAddedToATranscriptMakesExactlyOneChangedDelta()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "tianwen-lib-3a"));
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Lines.Assistant("m1", input: 10, output: 100));
+        await PollAsync();
+
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Lines.Assistant("m2", input: 20, cacheRead: 30_000, output: 200, at: "2026-10-18T09:30:00.000Z"));
+        var delta = (await PollAsync()).ShouldHaveSingleItem().ShouldBeOfType<SessionChangedEvent>();
+
+        delta.Session.Id.ShouldBe("a1b2c3d4");
+        delta.Session.ContextTokens.ShouldBe(30_020);
+        delta.Session.SpendWeighted.ShouldBe(510 + 20 + 3_000 + 1_000);
+        (await PollAsync()).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AStatusChangeMakesExactlyOneChangedDelta()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "x", status: "idle"));
+        await PollAsync();
+
+        _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "x", status: "waiting"));
+        var delta = (await PollAsync()).ShouldHaveSingleItem().ShouldBeOfType<SessionChangedEvent>();
+
+        delta.Session.State.ShouldBe(SessionState.Waiting);
+    }
+
+    [Fact]
+    public async Task ASessionThatLeavesTheListingStaysAsEndedThenGoesAfterTheRetention()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "x", status: "busy"));
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Lines.Assistant("m1", input: 10, output: 100));
+        await PollAsync();
+
+        _agents.Json = "[]";
+        var ended = (await PollAsync()).ShouldHaveSingleItem().ShouldBeOfType<SessionChangedEvent>();
+        ended.Session.State.ShouldBe(SessionState.Ended);
+        ended.Session.SpendWeighted.ShouldBe(510);
+
+        _time.Advance(TimeSpan.FromHours(23));
+        (await PollAsync()).ShouldBeEmpty();
+        _state.Sessions().ShouldHaveSingleItem();
+
+        _time.Advance(TimeSpan.FromHours(2));
+        var removed = (await PollAsync()).ShouldHaveSingleItem().ShouldBeOfType<SessionRemovedEvent>();
+        removed.Id.ShouldBe("a1b2c3d4");
+        _state.Sessions().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task EndedAndFailedBackgroundRowsListWhileRecentAndNotOnceTheirTranscriptIsOlderThanTheRetention()
+    {
+        _agents.Json = AgentRows.List(
+            AgentRows.Background(AgentRows.SessionA, "recent job", "done"),
+            AgentRows.Background(AgentRows.SessionB, "recent failure", "failed"),
+            AgentRows.Background(AgentRows.SessionC, "old job", "blocked"));
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Lines.Assistant("m1", input: 1));
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionB), Lines.Assistant("m2", input: 1));
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionC), Lines.Assistant("m3", input: 1));
+        File.SetLastWriteTimeUtc(_profile.TranscriptPath(AgentRows.SessionA), (Start - TimeSpan.FromHours(2)).UtcDateTime);
+        File.SetLastWriteTimeUtc(_profile.TranscriptPath(AgentRows.SessionB), (Start - TimeSpan.FromHours(20)).UtcDateTime);
+        File.SetLastWriteTimeUtc(_profile.TranscriptPath(AgentRows.SessionC), (Start - TimeSpan.FromDays(3)).UtcDateTime);
+
+        await PollAsync();
+
+        _state.Sessions().OrderBy(s => s.Name, StringComparer.Ordinal).Select(s => (s.Name, s.State))
+            .ShouldBe([("recent failure", SessionState.Failed), ("recent job", SessionState.Ended)]);
+    }
+
+    [Fact]
+    public async Task AListingThatFailsOrIsNotJsonLeavesEverySessionAsItWas()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "x"));
+        await PollAsync();
+        var seq = _state.Seq;
+
+        _agents.Failure = new IOException("claude is not on PATH");
+        (await PollAsync()).ShouldBeEmpty();
+        _agents.Failure = null;
+        _agents.Json = "claude: please log in";
+        (await PollAsync()).ShouldBeEmpty();
+
+        _state.Seq.ShouldBe(seq);
+        _state.Sessions().ShouldHaveSingleItem().State.ShouldBe(SessionState.Idle);
+    }
+
+    [Fact]
+    public async Task ARowRestoredFromTheJournalThatIsNoLongerListedEnds()
+    {
+        var journal = new InMemoryJournal();
+        var before = new NodeState(journal, _time);
+        before.PutSession(SessionRowBuilder.Build(
+            new ClaudeAgentRow(null, AgentRows.SessionA, 1, "C:\\work", "interactive", "x", "busy", null, Start, null), TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc));
+        var restored = new NodeState(journal, _time);
+        var tracker = new SessionTracker(restored, _agents, _profile.Options(), () => false, _time, NullLogger<SessionTracker>.Instance);
+
+        await tracker.PollAsync(Ct);
+
+        restored.Sessions().ShouldHaveSingleItem().State.ShouldBe(SessionState.Ended);
+    }
+
+    [Fact]
+    public async Task ARowTakesItsRoleFlightLegAndBudgetFromNameAndV1State()
+    {
+        _profile.WriteWorker("node", $$"""{"name":"node","agent":"PIL5 node","budget":10000000,"sessionId":"{{AgentRows.SessionB}}"}""");
+        _agents.Json = AgentRows.List(
+            AgentRows.Background(AgentRows.SessionB, "PIL5 node", "working", pid: 4343, status: "busy"),
+            AgentRows.Interactive(AgentRows.SessionA, 4242, "du1-watchtower"));
+
+        await PollAsync();
+
+        var worker = _state.Sessions().Single(s => s.Id == "b2c3d4e5");
+        (worker.Role, worker.Flight, worker.Leg, worker.Budget).ShouldBe((SessionRole.Worker, "PIL5", "node", 10_000_000L));
+        _state.Sessions().Single(s => s.Id == "a1b2c3d4").Role.ShouldBe(SessionRole.Watchtower);
+    }
+}
