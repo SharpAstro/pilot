@@ -1,6 +1,8 @@
 <Project>
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- The SharpAstro stack floats within a minor, as tianwen pins it: CI publishes each run as a new patch. -->
+    <CentralPackageFloatingVersionsEnabled>true</CentralPackageFloatingVersionsEnabled>
   </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.6.0" />
@@ -8,5 +10,15 @@
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <PackageVersion Include="Shouldly" Version="4.3.0" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
+  </ItemGroup>
+  <!-- Pilot.Gui: the SharpAstro stack. A local build compiles the sibling clones instead (the UseLocal* switches in
+       Pilot.Gui.csproj); these are what CI restores. -->
+  <ItemGroup>
+    <PackageVersion Include="DIR.Lib" Version="11.24.*" />
+    <PackageVersion Include="SdlVulkan.Renderer" Version="7.73.*" />
+    <PackageVersion Include="SharpAstro.AppShell" Version="1.2.*" />
+    <PackageVersion Include="SharpAstro.Png" Version="3.16.*" />
+    <PackageVersion Include="SDL3-CS" Version="3.5.0-preview.20260213-150035" />
+    <PackageVersion Include="SDL3-CS.Native" Version="3.5.0-preview.20260205-174353" />
   </ItemGroup>
 </Project>

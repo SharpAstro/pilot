@@ -5,6 +5,7 @@
     <File Path="README.md" />
   </Folder>
   <Project Path="Pilot.Contracts/Pilot.Contracts.csproj" />
+  <Project Path="Pilot.Gui/Pilot.Gui.csproj" />
   <Project Path="Pilot.Node/Pilot.Node.csproj" />
   <Project Path="Pilot.Node.Tests/Pilot.Node.Tests.csproj" />
 </Solution>
