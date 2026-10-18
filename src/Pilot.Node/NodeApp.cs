@@ -40,6 +40,16 @@ public static class NodeApp
             services.GetRequiredService<TimeProvider>(),
             services.GetRequiredService<ILogger<SessionTracker>>()));
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
+        // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.
+        builder.Services.AddSingleton<ISessionDelivery>(services => new ClaudeCliDelivery(
+            services.GetRequiredService<IClaudeAgents>(),
+            services.GetRequiredService<SessionTrackerOptions>().Profile,
+            Path.Combine(options.DataFolder, "relay")));
+        builder.Services.AddSingleton(services => new SessionMessenger(
+            services.GetRequiredService<NodeState>(),
+            services.GetRequiredService<SessionTracker>(),
+            services.GetRequiredService<ISessionDelivery>(),
+            Console.Error));
         configure?.Invoke(builder);
 
         var app = builder.Build();
@@ -100,7 +110,7 @@ public static class NodeApp
         });
 
         // Read by hand rather than bound, so a body that is not a command gets the envelope like any other refusal.
-        app.MapPost(NodeWire.CommandsRoute, async (HttpContext context, NodeState state) =>
+        app.MapPost(NodeWire.CommandsRoute, async (HttpContext context, NodeState state, SessionMessenger messenger, IHostApplicationLifetime lifetime) =>
         {
             CommandRequest? command;
             try
@@ -117,7 +127,11 @@ public static class NodeApp
                 return Refuse("A command needs a verb, a target and who sends it");
             }
 
-            var result = state.Execute(command);
+            // A say takes seconds and runs off the state's lock. It is not cut short when its client goes: a session
+            // stopped and never resumed would be worse than a result nobody reads, which the stream carries anyway.
+            var result = command.Verb == Verbs.Say
+                ? await messenger.SayAsync(command, lifetime.ApplicationStopping)
+                : state.Execute(command);
             return result.Ok
                 ? Results.Json(ResponseEnvelope<CommandResult>.Ok(result), PilotJsonContext.Default.ResponseEnvelopeCommandResult)
                 : Results.Json(ResponseEnvelope<CommandResult>.Fail(result.Error ?? "refused", 400, result), PilotJsonContext.Default.ResponseEnvelopeCommandResult, statusCode: 400);
