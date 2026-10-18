@@ -130,6 +130,21 @@ public sealed class SessionTrackerTests : IDisposable
     }
 
     [Fact]
+    public async Task ARowPutByAnotherWriterAfterTheTrackerWasMadeIsNotTheTrackersToEnd()
+    {
+        // The tracker exists, its first poll has not run yet, and something else puts a row (a test, later a command).
+        // Whether the poll comes before or after the put is a race on a real node, so the outcome must not depend on it.
+        var other = SessionRowBuilder.Build(
+            new ClaudeAgentRow(null, AgentRows.SessionB, 1, "C:\\work", "interactive", "other", "busy", null, Start, null), TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc);
+        _state.PutSession(other);
+        _agents.Json = "[]";
+
+        (await PollAsync()).ShouldBeEmpty();
+
+        _state.Sessions().ShouldHaveSingleItem().ShouldBe(other);
+    }
+
+    [Fact]
     public async Task AListingThatFailsOrIsNotJsonLeavesEverySessionAsItWas()
     {
         _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "x"));

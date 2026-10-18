@@ -42,7 +42,8 @@ internal sealed class NodeHarness : IAsyncDisposable
     public FakeClaudeAgents Agents { get; }
 
     /// <param name="retainedDeltas">How many deltas the node holds for a resuming client.</param>
-    public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas)
+    /// <param name="holdFirstListing">Keeps the session tracker's first poll waiting until the test releases it.</param>
+    public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false)
     {
         // Short: a socket path must fit in 107 bytes, and the temp folder on Windows is already long.
         var folder = Path.Combine(Path.GetTempPath(), "p2t-" + Guid.NewGuid().ToString("N")[..8]);
@@ -57,7 +58,7 @@ internal sealed class NodeHarness : IAsyncDisposable
             throw new InvalidOperationException($"The test node could not take the lock on {options.SocketPath}", refusal);
         }
 
-        var agents = new FakeClaudeAgents();
+        var agents = holdFirstListing ? new FakeClaudeAgents().HoldFirstListing() : new FakeClaudeAgents();
         try
         {
             var app = NodeApp.Build(options, held, builder =>
@@ -93,9 +94,9 @@ internal sealed class NodeHarness : IAsyncDisposable
         {
             Directory.Delete(Folder, recursive: true);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // A socket file still closing; the temp folder is the OS's to clear.
+            // A socket file still closing or held by a scanner; the temp folder is the OS's to clear.
         }
     }
 }

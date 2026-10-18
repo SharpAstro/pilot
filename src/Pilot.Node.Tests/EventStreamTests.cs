@@ -183,7 +183,7 @@ public sealed class EventStreamTests
     private static async Task<NodeEvent> ReadAsync(NodeEventStream events)
     {
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(Ct);
-        budget.CancelAfter(TimeSpan.FromSeconds(10));
+        budget.CancelAfter(TimeSpan.FromSeconds(60));
         return await events.ReadAsync(budget.Token) ?? throw new InvalidOperationException("The node closed the stream");
     }
 

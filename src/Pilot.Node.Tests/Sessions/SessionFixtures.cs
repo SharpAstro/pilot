@@ -8,12 +8,36 @@ namespace Pilot.Node.Tests.Sessions;
 /// <summary>A <c>claude agents --json --all</c> that prints what a test says, or fails as a test says.</summary>
 internal sealed class FakeClaudeAgents : IClaudeAgents
 {
+    private readonly TaskCompletionSource _firstListing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _listings;
+
     public string Json { get; set; } = "[]";
 
     public Exception? Failure { get; set; }
 
-    public Task<string> ListAsync(CancellationToken cancellationToken) =>
-        Failure is { } failure ? Task.FromException<string>(failure) : Task.FromResult(Json);
+    /// <summary>How many listings were asked for.</summary>
+    public int Listings => Volatile.Read(ref _listings);
+
+    /// <summary>Makes the first listing wait until <see cref="ReleaseFirstListing"/>: a tracker whose first poll runs late.</summary>
+    public FakeClaudeAgents HoldFirstListing()
+    {
+        Held = true;
+        return this;
+    }
+
+    private bool Held { get; set; }
+
+    public void ReleaseFirstListing() => _firstListing.TrySetResult();
+
+    public async Task<string> ListAsync(CancellationToken cancellationToken)
+    {
+        var number = Interlocked.Increment(ref _listings);
+        if (number == 1 && Held)
+        {
+            await _firstListing.Task.WaitAsync(cancellationToken);
+        }
+        return Failure is { } failure ? throw failure : Json;
+    }
 }
 
 /// <summary>A clock a test moves.</summary>
@@ -75,8 +99,9 @@ internal sealed class TempProfile : IDisposable
         {
             Directory.Delete(Folder, recursive: true);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            // A scanner or a socket still closing; the temp folder is the OS's to clear.
         }
     }
 }
