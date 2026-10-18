@@ -34,6 +34,15 @@ public sealed class NodeClient : IDisposable
             : throw new HttpRequestException($"The node did not say what it is: {envelope?.Error}");
     }
 
+    /// <summary><c>GET /api/v1/sessions</c>: every session row as of now, newest start first.</summary>
+    public async Task<SessionRow[]> GetSessionsAsync(CancellationToken cancellationToken)
+    {
+        var envelope = await _http.GetFromJsonAsync(NodeWire.SessionsRoute, PilotJsonContext.Default.ResponseEnvelopeSessionRowArray, cancellationToken).ConfigureAwait(false);
+        return envelope is { Success: true, Response: { } rows }
+            ? rows
+            : throw new HttpRequestException($"The node did not list its sessions: {envelope?.Error}");
+    }
+
     /// <summary>
     /// <c>POST /api/v1/commands</c>: the command's result, whether the node did it or refused it. The same result
     /// arrives on the event stream.
