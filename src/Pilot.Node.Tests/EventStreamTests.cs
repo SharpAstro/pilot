@@ -126,6 +126,29 @@ public sealed class EventStreamTests
     }
 
     [Fact]
+    public async Task ACommandPostedWithoutArgsIsRefusedNotCrashed()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var events = await node.Client.OpenEventsAsync(since: null, stream: null, Ct);
+        var mirror = new NodeMirror();
+        mirror.Apply(await ReadAsync(events));
+
+        // Raw JSON with no args at all, as curl or another client may send it: NodeClient always writes args.
+        using var handler = NodeSocket.CreateHandler(node.SocketPath);
+        using var http = new HttpClient(handler) { BaseAddress = NodeSocket.BaseAddress };
+        using var response = await http.PostAsync(NodeWire.CommandsRoute,
+            new StringContent("""{"verb":"note","target":"node","who":"r"}""", System.Text.Encoding.UTF8, "application/json"), Ct);
+
+        ((int)response.StatusCode).ShouldBe(400);
+        var envelope = System.Text.Json.JsonSerializer.Deserialize(await response.Content.ReadAsStringAsync(Ct), PilotJsonContext.Default.ResponseEnvelopeCommandResult).ShouldNotBeNull();
+        envelope.Success.ShouldBeFalse();
+        envelope.Error.ShouldBe("note node needs the note's text");
+        envelope.Response.ShouldNotBeNull().Ok.ShouldBeFalse();
+        (await ReadUntilAsync(events, mirror, node.State.Seq)).ShouldHaveSingleItem()
+            .ShouldBeOfType<CommandResultEvent>().Result.ShouldBe(envelope.Response);
+    }
+
+    [Fact]
     public async Task TheNodeSaysWhatItIs()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
