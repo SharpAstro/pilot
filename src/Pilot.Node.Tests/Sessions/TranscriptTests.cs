@@ -38,6 +38,16 @@ public sealed class TranscriptTests : IDisposable
         ContextWindows.For(model, requested).ShouldBe(window);
     }
 
+    [Theory]
+    [InlineData(199_999, 200_000)]
+    [InlineData(200_000, 200_000)]
+    [InlineData(200_001, 1_000_000)]
+    [InlineData(562_835, 1_000_000)]
+    public void AContextPastTheStandardWindowMeansTheLargerWindowWhateverTheModelNameSays(long context, long window)
+    {
+        ContextWindows.For("claude-opus-5-5", "claude-opus-5-5", context).ShouldBe(window);
+    }
+
     [Fact]
     public void TheWindowOfARowFollowsTheLastTurnsRequestedModel()
     {
