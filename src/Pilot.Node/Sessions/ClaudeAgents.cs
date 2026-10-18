@@ -101,6 +101,29 @@ public sealed class ClaudeCliAgents : IClaudeAgents
 
     public async Task<string> ListAsync(CancellationToken cancellationToken)
     {
+        var run = await ClaudeCli.RunAsync(["agents", "--json", "--all"], stdin: null, cwd: null, Timeout, cancellationToken);
+        if (run.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"claude agents exited {run.ExitCode}: {run.Error.Trim()}");
+        }
+        return run.Output;
+    }
+}
+
+/// <summary>What one <c>claude</c> call printed.</summary>
+public sealed record ClaudeRun(int ExitCode, string Output, string Error);
+
+/// <summary>Runs the <c>claude</c> CLI, windowless, as v1's <c>claude()</c> does: every call the node makes goes through here.</summary>
+public static class ClaudeCli
+{
+    /// <summary>
+    /// Runs <c>claude</c> with <paramref name="args"/>, <paramref name="stdin"/> on its standard input (closed when
+    /// null), in <paramref name="cwd"/> (the node's own when null). Killed, its children with it, when
+    /// <paramref name="timeout"/> passes or <paramref name="cancellationToken"/> fires; a timeout throws
+    /// <see cref="TimeoutException"/>.
+    /// </summary>
+    public static async Task<ClaudeRun> RunAsync(IReadOnlyList<string> args, string? stdin, string? cwd, TimeSpan timeout, CancellationToken cancellationToken)
+    {
         var exe = FindOnPath() ?? throw new FileNotFoundException("claude is not on PATH");
         var start = new ProcessStartInfo(exe)
         {
@@ -109,14 +132,20 @@ public sealed class ClaudeCliAgents : IClaudeAgents
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            StandardInputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardErrorEncoding = System.Text.Encoding.UTF8,
         };
-        start.ArgumentList.Add("agents");
-        start.ArgumentList.Add("--json");
-        start.ArgumentList.Add("--all");
+        if (cwd is not null)
+        {
+            start.WorkingDirectory = cwd;
+        }
+        foreach (var arg in args)
+        {
+            start.ArgumentList.Add(arg);
+        }
 
-        // The node's own session variables out, so the listing is a fresh top-level call; the profile stays: it is the
+        // The node's own session variables out, so the call is a fresh top-level one; the profile stays: it is the
         // one account everything runs on.
         foreach (var key in start.Environment.Keys.Where(k => k.StartsWith("CLAUDE", StringComparison.OrdinalIgnoreCase) && !string.Equals(k, "CLAUDE_CONFIG_DIR", StringComparison.OrdinalIgnoreCase)).ToList())
         {
@@ -124,24 +153,27 @@ public sealed class ClaudeCliAgents : IClaudeAgents
         }
 
         using var process = Process.Start(start) ?? throw new InvalidOperationException("claude did not start");
-        process.StandardInput.Close();
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        limit.CancelAfter(Timeout);
+        limit.CancelAfter(timeout);
         var output = process.StandardOutput.ReadToEndAsync(limit.Token);
         var error = process.StandardError.ReadToEndAsync(limit.Token);
         try
         {
-            await process.WaitForExitAsync(limit.Token);
-            var text = await output;
-            if (process.ExitCode != 0)
+            if (stdin is not null)
             {
-                throw new InvalidOperationException($"claude agents exited {process.ExitCode}: {(await error).Trim()}");
+                await process.StandardInput.WriteAsync(stdin.AsMemory(), limit.Token);
             }
-            return text;
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(limit.Token);
+            return new ClaudeRun(process.ExitCode, await output, await error);
         }
         catch (OperationCanceledException)
         {
             process.Kill(entireProcessTree: true);
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException($"claude {string.Join(' ', args.Take(2))} took longer than {timeout.TotalSeconds:0} s");
+            }
             throw;
         }
     }
