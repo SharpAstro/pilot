@@ -9,9 +9,12 @@ public static class ContextWindows
 
     /// <summary>
     /// 1,000,000 for a <c>[1m]</c> model, else 200,000. The suffix rides on the model a session asked for
-    /// (<c>requestedModel</c>); the response's own <c>message.model</c> may drop it, so either names it.
+    /// (<c>requestedModel</c>); the response's own <c>message.model</c> may drop it, so either names it. Measured on
+    /// this machine: a 1M session's transcript can carry the suffix nowhere, so a context already past 200,000 says the
+    /// window is the larger one, as no response can read more than its window holds.
     /// </summary>
-    public static long For(string? model, string? requestedModel) => Is1M(model) || Is1M(requestedModel) ? OneMillion : Standard;
+    public static long For(string? model, string? requestedModel, long contextTokens = 0) =>
+        Is1M(model) || Is1M(requestedModel) || contextTokens > Standard ? OneMillion : Standard;
 
     private static bool Is1M(string? model) => model is not null && model.Contains("[1m]", StringComparison.OrdinalIgnoreCase);
 }

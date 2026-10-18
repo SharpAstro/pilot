@@ -55,7 +55,7 @@ public static class SessionRowBuilder
             Model = transcripts.Model,
             Effort = transcripts.Effort,
             ContextTokens = transcripts.ContextTokens,
-            ContextWindow = ContextWindows.For(transcripts.Model, transcripts.RequestedModel),
+            ContextWindow = ContextWindows.For(transcripts.Model, transcripts.RequestedModel, transcripts.ContextTokens),
             LastResponseAt = transcripts.LastResponseAt,
             State = state,
             WaitingFor = state == SessionState.Waiting ? agent.WaitingFor ?? record?.WaitingFor ?? transcripts.PendingQuestion : null,
