@@ -50,6 +50,9 @@ jobs:
       run: dotnet build Pilot.slnx -c $BUILD_CONF --no-restore -p:Version=${VERSION_PREFIX}${VERSION_REV}${VERSION_HASH} -p:FileVersion=${VERSION_PREFIX}.${VERSION_REV} -p:ContinuousIntegrationBuild=true
     - name: Test
       run: dotnet test Pilot.Node.Tests -c $BUILD_CONF --no-build --logger "console;verbosity=detailed"
+    - name: Test the GUI
+      # The sessions view rendered on the CPU from the sample snapshot: no display and no GPU needed.
+      run: dotnet test Pilot.Gui.Tests -c $BUILD_CONF --no-build --logger "console;verbosity=detailed"
     - name: Install the native AOT toolchain
       run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends clang zlib1g-dev
     - name: Publish the node with native AOT

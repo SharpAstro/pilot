@@ -10,6 +10,8 @@ the [Pilot v2 design](https://claude.ai/code/artifact/0ebd8a10-0b5c-475b-a909-2e
 | `Pilot.Contracts` | The wire, shared by the node and every client: `SessionRow`, the snapshot and delta events, commands, `NodeSocket`, `NodeClient`, `NodeMirror`, and the source-generated `PilotJsonContext`. `Fixtures/snapshot.sample.json` is a sample snapshot to draw from without a node. |
 | `Pilot.Node` | The node, `pilot-node`: Kestrel on the socket only, native AOT. |
 | `Pilot.Node.Tests` | xunit.v3 tests against a real node on a temp socket. |
+| `Pilot.Gui` | The GUI, `pilot-gui`: every session as a row, on DIR.Lib and SdlVulkan.Renderer, native AOT. It reads a snapshot file for now; the live node comes later. |
+| `Pilot.Gui.Tests` | xunit.v3 tests rendering the sessions view on the CPU from the sample snapshot. |
 
 ## Build, test, run
 
@@ -17,8 +19,19 @@ From the repo root:
 
 ```bash
 dotnet build src/Pilot.slnx -c Release
-dotnet test src/Pilot.Node.Tests -c Release
+dotnet test src -c Release
 dotnet publish src/Pilot.Node -c Release -r win-arm64     # or linux-x64, osx-arm64: one native binary
+dotnet publish src/Pilot.Gui -c Release -r win-arm64
+```
+
+`Pilot.Gui` compiles the sibling `DIR.Lib`, `SdlVulkan.Renderer` and `AppShell` clones when they sit beside this
+repo (in a Claude Code worktree too) and restores the packages otherwise, as CI does. `-p:UseLocalDirLib=false
+-p:UseLocalAppShell=false -p:UseLocalSdlVulkanRenderer=false` builds against the packages; a publish with `-r` always
+does. Run the GUI:
+
+```bash
+pilot-gui [--snapshot <file.json>] [--exit-after 5s]       # the window, on the bundled sample unless --snapshot names one
+pilot-gui [--snapshot <file.json>] --capture out.png [--size 1280x800]   # one CPU frame, plus out.png.rows.txt; no window
 ```
 
 Run the node (it stays in the foreground; Ctrl+C stops it):
