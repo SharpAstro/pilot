@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using Pilot.Contracts;
+using Pilot.Node.Sessions;
 
 namespace Pilot.Node;
 
@@ -29,6 +30,16 @@ public static class NodeApp
         builder.Services.AddSingleton(services => new NodeState(
             services.GetRequiredService<INodeJournal>(), services.GetRequiredService<TimeProvider>(), options.RetainedDeltas));
         builder.Services.AddSingleton<EventHub>();
+        builder.Services.AddSingleton<IClaudeAgents, ClaudeCliAgents>();
+        builder.Services.AddSingleton(SessionTrackerOptions.FromEnvironment());
+        builder.Services.AddSingleton(services => new SessionTracker(
+            services.GetRequiredService<NodeState>(),
+            services.GetRequiredService<IClaudeAgents>(),
+            services.GetRequiredService<SessionTrackerOptions>(),
+            () => services.GetRequiredService<EventHub>().ClientCount > 0,
+            services.GetRequiredService<TimeProvider>(),
+            services.GetRequiredService<ILogger<SessionTracker>>()));
+        builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         configure?.Invoke(builder);
 
         var app = builder.Build();
@@ -56,6 +67,10 @@ public static class NodeApp
                 Stream = state.Stream,
             }),
             PilotJsonContext.Default.ResponseEnvelopeNodeInfo));
+
+        app.MapGet(NodeWire.SessionsRoute, (NodeState state) => Results.Json(
+            ResponseEnvelope<SessionRow[]>.Ok(state.Sessions()),
+            PilotJsonContext.Default.ResponseEnvelopeSessionRowArray));
 
         app.MapGet(NodeWire.EventsRoute, async (HttpContext context, EventHub hub, IHostApplicationLifetime lifetime) =>
         {
