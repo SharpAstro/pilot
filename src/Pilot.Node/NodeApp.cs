@@ -20,6 +20,8 @@ public static class NodeApp
         // No args: the command line is the node's own (NodeOptions), not configuration for the host to read.
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], ContentRootPath = AppContext.BaseDirectory });
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.ListenOnNodeSocket(held));
+        // The host's own start and stop lines stay; a line per request does not, as every client polls and streams.
+        builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
         builder.Services.ConfigureHttpJsonOptions(json => json.SerializerOptions.TypeInfoResolverChain.Insert(0, PilotJsonContext.Default));
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(TimeProvider.System);
