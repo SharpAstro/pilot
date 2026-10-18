@@ -20,6 +20,9 @@ public static class NodeWire
     /// <summary>The event stream, a WebSocket: <c>?since=&lt;seq&gt;&amp;stream=&lt;id&gt;</c> to resume.</summary>
     public const string EventsRoute = "/api/v1/events";
 
+    /// <summary>Every session row as of now, a <see cref="SessionRow"/> array in the response envelope (the snapshot's sessions, on their own).</summary>
+    public const string SessionsRoute = "/api/v1/sessions";
+
     /// <summary>Every command, as a <see cref="CommandRequest"/>.</summary>
     public const string CommandsRoute = "/api/v1/commands";
 }

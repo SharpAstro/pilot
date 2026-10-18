@@ -24,4 +24,5 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(NodeInfo))]
 [JsonSerializable(typeof(ResponseEnvelope<NodeInfo>))]
 [JsonSerializable(typeof(ResponseEnvelope<CommandResult>))]
+[JsonSerializable(typeof(ResponseEnvelope<SessionRow[]>))]
 public sealed partial class PilotJsonContext : JsonSerializerContext;
