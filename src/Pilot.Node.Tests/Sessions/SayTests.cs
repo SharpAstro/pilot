@@ -377,3 +377,15 @@ public sealed class SayRouteTests
         node.Delivery.Calls.ShouldBe(["relay pil5-say-int"]);
     }
 }
+
+public sealed class RelayTextTests
+{
+    [Fact]
+    public void ARelayedMessageKeepsItsTextAndSaysTheSenderCannotBeAnswered()
+    {
+        var text = ClaudeCliDelivery.RelayText("  line one\nline two  ");
+
+        text.ShouldStartWith("line one\nline two\n\n");
+        text.ShouldContain("not with SendMessage");
+    }
+}

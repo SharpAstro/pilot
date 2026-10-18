@@ -174,11 +174,20 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, ClaudeProfil
         "--no-session-persistence", "--name", RelayName, "--output-format", "json",
     ];
 
+    /// <summary>
+    /// The relayed message as its recipient reads it: the text, and a closing line saying where its answer goes. The
+    /// sender a recipient sees is the relay, a <c>claude -p</c> session gone once it has sent: PIL5's interactive check
+    /// asked for a reply, and the recipient SendMessage'd it back to the relay, which failed, instead of answering in
+    /// its own turn, where the GUI reads it.
+    /// </summary>
+    public static string RelayText(string text) =>
+        text.Trim() + "\n\n(Sent by the person who runs these sessions, through the pilot node. The sender cannot be messaged back: answer in your own reply, not with SendMessage.)";
+
     public async Task<string> RelayAsync(RelayRequest request, CancellationToken cancellationToken)
     {
         var mark = $"======== {Convert.ToHexStringLower(Guid.NewGuid().ToByteArray()[..4])} ========";
         var kind = request.Kind == SessionKind.Background ? "bg" : "interactive";
-        var prompt = string.Format(System.Globalization.CultureInfo.InvariantCulture, RelayPrompt, mark, kind, request.Name, request.Text.Trim());
+        var prompt = string.Format(System.Globalization.CultureInfo.InvariantCulture, RelayPrompt, mark, kind, request.Name, RelayText(request.Text));
         Directory.CreateDirectory(relayFolder);
         var run = await ClaudeCli.RunAsync(RelayArguments(), prompt, relayFolder, RelayTimeout, cancellationToken);
 
