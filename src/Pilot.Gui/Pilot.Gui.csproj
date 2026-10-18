@@ -1,0 +1,99 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>pilot-gui</AssemblyName>
+    <RootNamespace>Pilot.Gui</RootNamespace>
+    <!-- One native binary, as the node is. The trim/AOT analyzers' IL2xxx/IL3xxx warnings only show on a publish with
+         -r <rid>: publish to check, building is not enough. -->
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- LibraryImport (AttachConsole) emits unsafe marshalling code. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="DIR.Lib.Layout" Alias="Layout" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Pilot.Contracts\Pilot.Contracts.csproj" />
+  </ItemGroup>
+
+  <!-- The UI face travels with the binary, so a capture draws the same glyphs on every machine. -->
+  <ItemGroup>
+    <Content Include="Fonts\DejaVuSans.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fonts\DejaVuSans.LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!--
+    The SharpAstro stack, compiled from the sibling clones when they are present and restored as packages otherwise
+    (CI), one switch per sibling as .github/docs/dotnet-ci-pattern.md describes. Pass -p:UseLocal<X>=false to build
+    what CI restores.
+
+    SharpAstroRoot is the org root. From src/Pilot.Gui it is ..\..\.. in a clone; a Claude Code worktree sits three
+    folders deeper (pilot\.claude\worktrees\<name>), so there it is three more up. Without the second probe every
+    switch would silently fall back to the package in a worktree, which still builds and so would go unnoticed.
+
+    A publish with a runtime identifier (dotnet publish -r win-arm64) takes the packages, as CI does. It has to: -r
+    reaches every project restore walks, and the SdlVulkan.Renderer clone also targets net10.0-android, for which a
+    win-arm64 runtime pack does not exist (NU1101, Microsoft.NETCore.App.Runtime.Mono.win-arm64). The binary a
+    publish makes is then the one that ships, built against the pins.
+  -->
+  <PropertyGroup>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\DIR.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\DIR.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
+    <UseLocalDirLib Condition="'$(UseLocalDirLib)' == '' AND '$(RuntimeIdentifier)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)DIR.Lib\src\DIR.Lib\DIR.Lib.csproj')">true</UseLocalDirLib>
+    <UseLocalSdlVulkanRenderer Condition="'$(UseLocalSdlVulkanRenderer)' == '' AND '$(RuntimeIdentifier)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)SdlVulkan.Renderer\src\SdlVulkan.Renderer\SdlVulkan.Renderer.csproj')">true</UseLocalSdlVulkanRenderer>
+    <UseLocalAppShell Condition="'$(UseLocalAppShell)' == '' AND '$(RuntimeIdentifier)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)AppShell\src\SharpAstro.AppShell\SharpAstro.AppShell.csproj')">true</UseLocalAppShell>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(UseLocalDirLib)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)DIR.Lib\src\DIR.Lib\DIR.Lib.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalDirLib)' != 'true'">
+    <PackageReference Include="DIR.Lib" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseLocalSdlVulkanRenderer)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)SdlVulkan.Renderer\src\SdlVulkan.Renderer\SdlVulkan.Renderer.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalSdlVulkanRenderer)' != 'true'">
+    <PackageReference Include="SdlVulkan.Renderer" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseLocalAppShell)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)AppShell\src\SharpAstro.AppShell\SharpAstro.AppShell.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalAppShell)' != 'true'">
+    <PackageReference Include="SharpAstro.AppShell" />
+  </ItemGroup>
+
+  <!--
+    The capture's encoder: DIR.Lib leaves the codec to its consumer. A local DIR.Lib brings a local Fonts.Lib, which
+    references the Codecs clone's SharpAstro.Png itself, so this follows UseLocalDirLib rather than probing on its
+    own: a package here beside that project would put two builds of one assembly in the graph.
+  -->
+  <PropertyGroup>
+    <UseLocalSharpAstroPng Condition="'$(UseLocalSharpAstroPng)' == '' AND '$(UseLocalDirLib)' == 'true' AND Exists('$(SharpAstroRoot)Codecs\src\SharpAstro.Png\SharpAstro.Png.csproj')">true</UseLocalSharpAstroPng>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalSharpAstroPng)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)Codecs\src\SharpAstro.Png\SharpAstro.Png.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalSharpAstroPng)' != 'true'">
+    <PackageReference Include="SharpAstro.Png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SDL3-CS" NoWarn="NU5104" />
+    <PackageReference Include="SDL3-CS.Native" NoWarn="NU5104" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Pilot.Gui.Tests" />
+  </ItemGroup>
+
+</Project>
