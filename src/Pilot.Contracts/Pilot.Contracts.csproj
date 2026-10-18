@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- Shared by the AOT-published node and by every client (GUI, TUI, CLI), so the trim/AOT
+         analyzers run here too. PilotJsonContext lives in this assembly so the node and its clients
+         serialise the SAME contract with the SAME generated metadata. -->
+    <IsAotCompatible>true</IsAotCompatible>
+    <RootNamespace>Pilot.Contracts</RootNamespace>
+  </PropertyGroup>
+
+</Project>
