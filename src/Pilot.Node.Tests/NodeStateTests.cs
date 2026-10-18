@@ -23,27 +23,59 @@ public sealed class NodeStateTests
     }
 
     [Fact]
+    public void TheInMemoryJournalStaysBoundedAndARestartOverItStillRestoresTheState()
+    {
+        var journal = new InMemoryJournal(maxDeltas: 8);
+        var before = new NodeState(journal, TimeProvider.System);
+        for (var i = 0; i < 50; i++)
+        {
+            before.Execute(new CommandRequest { Verb = Verbs.Note, Target = Verbs.NodeTarget, Args = [$"note {i}"], Who = "tests" });
+            before.PutSession(Row($"s{i % 5:D7}", i % 3 == 0 ? SessionState.Working : SessionState.Idle) with { SpendWeighted = i });
+            if (i % 7 == 6)
+            {
+                before.RemoveSession($"s{i % 5:D7}");
+            }
+            journal.DeltaCount.ShouldBeLessThanOrEqualTo(8);
+        }
+
+        var history = journal.Load();
+        history.Snapshot.ShouldNotBeNull();
+        history.Deltas.Count.ShouldBeLessThanOrEqualTo(8);
+        history.Snapshot.Seq.ShouldBe(before.Seq - history.Deltas.Count);
+
+        var after = new NodeState(journal, TimeProvider.System);
+        var was = before.Snapshot();
+        var now = after.Snapshot();
+        now.Stream.ShouldBe(was.Stream);
+        now.Seq.ShouldBe(was.Seq);
+        now.Sessions.ShouldBe(was.Sessions, ignoreOrder: true);
+        now.Notes.ShouldBe(was.Notes);
+    }
+
+    [Fact]
     public void AnUnchangedRowMakesNoDelta()
     {
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
-        var row = new SessionRow
-        {
-            Id = "a1b2c3d4",
-            SessionId = "a1b2c3d4-0000-4000-8000-000000000000",
-            Name = "unchanged",
-            Kind = SessionKind.Interactive,
-            Cwd = "/work",
-            Role = SessionRole.AdHoc,
-            ContextTokens = 10,
-            ContextWindow = 200_000,
-            State = SessionState.Idle,
-            SpendWeighted = 10,
-            StartedAt = DateTimeOffset.UnixEpoch,
-        };
+        var row = Row("a1b2c3d4", SessionState.Idle);
 
         state.PutSession(row);
         state.PutSession(row with { });
 
         state.Seq.ShouldBe(1);
     }
+
+    private static SessionRow Row(string id, SessionState state) => new SessionRow
+    {
+        Id = id,
+        SessionId = id + "-0000-4000-8000-000000000000",
+        Name = "session " + id,
+        Kind = SessionKind.Interactive,
+        Cwd = "/work",
+        Role = SessionRole.AdHoc,
+        ContextTokens = 10,
+        ContextWindow = 200_000,
+        State = state,
+        SpendWeighted = 10,
+        StartedAt = DateTimeOffset.UnixEpoch,
+    };
 }
