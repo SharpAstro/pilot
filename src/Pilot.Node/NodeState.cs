@@ -127,6 +127,15 @@ public sealed class NodeState
         return new Subscription(this, sink);
     }
 
+    /// <summary>The session rows as of now, newest start first.</summary>
+    public SessionRow[] Sessions()
+    {
+        lock (_gate)
+        {
+            return [.. _sessions.Values.OrderByDescending(s => s.StartedAt).ThenBy(s => s.Id, StringComparer.Ordinal)];
+        }
+    }
+
     /// <summary>Adds a session row, or replaces the one with its <see cref="SessionRow.Id"/>: what the sessions leg calls.</summary>
     public void PutSession(SessionRow row)
     {
