@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="README.md" />
+  </Folder>
+  <Project Path="Pilot.Contracts/Pilot.Contracts.csproj" />
+  <Project Path="Pilot.Node/Pilot.Node.csproj" />
+  <Project Path="Pilot.Node.Tests/Pilot.Node.Tests.csproj" />
+</Solution>
