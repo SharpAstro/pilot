@@ -123,8 +123,22 @@ public static class Verbs
     /// <summary><c>add-artifact flight/&lt;code&gt;/&lt;leg&gt; &lt;path or URL&gt; [title…]</c>: something to look at, on the leg.</summary>
     public const string AddArtifact = "add-artifact";
 
+    /// <summary>
+    /// <c>answer card/&lt;id&gt; &lt;choice number or label&gt;</c>: runs the choice's command as the one who answers, and
+    /// closes the card when it was done.
+    /// </summary>
+    public const string Answer = "answer";
+
+    /// <summary><c>dismiss card/&lt;id&gt; [why…]</c>: closes the card with nothing done.</summary>
+    public const string Dismiss = "dismiss";
+
     /// <summary>The node itself, as a target.</summary>
     public const string NodeTarget = "node";
+
+    /// <summary>What a card target starts with: <c>card/&lt;id&gt;</c>.</summary>
+    public const string CardTargetPrefix = "card/";
+
+    public static string CardTarget(string id) => CardTargetPrefix + id;
 
     /// <summary>What a repo target starts with: <c>repo/&lt;path to its checkout&gt;</c>.</summary>
     public const string RepoTargetPrefix = "repo/";

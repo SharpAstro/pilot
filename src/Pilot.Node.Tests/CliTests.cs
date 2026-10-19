@@ -126,9 +126,16 @@ public sealed class CliTests : IAsyncLifetime
         created.Body.ShouldContain("**gpu**: Draw the planets on the GPU");
         _node.State.Flights().Single().PullRequest.ShouldBe(71);
 
-        await Ok(_root, "flight", "merge", "TIA1611", "cafe0000", "--rebase");
-        _node.GitHub.Merged.ShouldBe([(71, "cafe0000cafe0000", "rebase")]);
+        // The PR rang: a card with the merge on the head it was opened at; answering it merges and lands the flight.
+        var (_, cards, _) = await Pilot(_root, "cards");
+        cards.ShouldContain("c1  RING  TIA1611's PR #71 is ready to merge");
+        cards.ShouldContain("1. Merge: pilot answer c1 1");
+        await Ok(_root, "answer", "c1", "1");
+        _node.GitHub.Merged.ShouldBe([(71, "cafe0000cafe0000", "squash")]);
         _node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
+        var after = _node.State.Cards();
+        after.Single(c => c.Id == "c1").Outcome.ShouldBe("Merge");
+        after.Single(c => c.Kind == "landed").Bin.ShouldBe(CardBin.ForYou);
 
         var (_, status, _) = await Pilot(_root, "status");
         status.ShouldContain("TIA1611  Planets on the GPU  (tianwen #1611, landed)");

@@ -23,6 +23,8 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(FlightChangedEvent), "flightChanged")]
 [JsonDerivedType(typeof(LegAddedEvent), "legAdded")]
 [JsonDerivedType(typeof(LegChangedEvent), "legChanged")]
+[JsonDerivedType(typeof(CardAddedEvent), "cardAdded")]
+[JsonDerivedType(typeof(CardChangedEvent), "cardChanged")]
 public abstract record NodeEvent
 {
     /// <summary>
@@ -74,6 +76,15 @@ public sealed record SnapshotEvent : NodeEvent
     }
 
     private readonly LegRow[]? _legs;
+
+    /// <summary>Every card, closed ones included. Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public CardRow[] Cards
+    {
+        get => _cards ?? [];
+        init => _cards = value;
+    }
+
+    private readonly CardRow[]? _cards;
 }
 
 /// <summary>A session the node had not seen.</summary>
@@ -140,4 +151,16 @@ public sealed record LegAddedEvent : NodeEvent
 public sealed record LegChangedEvent : NodeEvent
 {
     public required LegRow Leg { get; init; }
+}
+
+/// <summary>A card was raised.</summary>
+public sealed record CardAddedEvent : NodeEvent
+{
+    public required CardRow Card { get; init; }
+}
+
+/// <summary>A card changed: answered, dismissed, closed by the node. The whole row, as it is now.</summary>
+public sealed record CardChangedEvent : NodeEvent
+{
+    public required CardRow Card { get; init; }
 }

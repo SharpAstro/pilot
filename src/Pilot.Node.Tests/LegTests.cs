@@ -229,6 +229,9 @@ public sealed class LegCommanderTests : IDisposable
         await Run(Verbs.StartLeg, "flight/TIA1/parser", "cli");
 
         (await Run(Verbs.FinishLeg, "flight/TIA1/parser", "du1-tia1-parser", "failed", "no ephemeris here")).Ok.ShouldBeTrue();
+        var failed = _state.Cards(openOnly: true).ShouldHaveSingleItem();
+        (failed.Bin, failed.Kind, failed.Subject, failed.Detail).ShouldBe((CardBin.Ring, "leg-failed", "flight/TIA1/parser", "no ephemeris here"));
+        failed.Choices.Single().Verb.ShouldBe(Verbs.GoAround);
 
         _workers.Stopped.ShouldBeEmpty();
         for (var i = 0; i < 100 && _workers.Stopped.Count == 0; i++)
@@ -252,6 +255,8 @@ public sealed class LegCommanderTests : IDisposable
 
         _workers.Stopped.ShouldBe(["job00001"]);
         var fresh = _workers.Started[^1];
+        // A go-around clears the leg's failure card, if one rang.
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == "leg-failed");
         fresh.Name.ShouldBe("du1-tia1-parser");
         fresh.Brief.ShouldContain("## Go-around 1");
         fresh.Brief.ShouldContain("it went in circles");

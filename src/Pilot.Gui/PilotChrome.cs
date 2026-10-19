@@ -45,6 +45,7 @@ internal sealed class PilotChrome<TSurface>
     {
         Sessions = sessions;
         Flights = new FlightsView<TSurface>(renderer);
+        Cards = new CardsView<TSurface>(renderer);
         Rail = new TabBar<TSurface>(renderer)
         {
             Side = TabStripSide.Left,
@@ -60,11 +61,17 @@ internal sealed class PilotChrome<TSurface>
 
     public FlightsView<TSurface> Flights { get; }
 
+    /// <summary>The cards panel down the right, on every page.</summary>
+    public CardsView<TSurface> Cards { get; }
+
     /// <summary>The page shown beside the rail.</summary>
     public PilotPage Page { get; private set; } = PilotPage.Sessions;
 
     /// <summary>The widgets this chrome paints, back to front: what the router asks about input.</summary>
-    public IReadOnlyList<IPixelWidget> Widgets => Page == PilotPage.Flights ? [Rail, Flights] : [Rail, Sessions];
+    public IReadOnlyList<IPixelWidget> Widgets => Page == PilotPage.Flights ? [Rail, Flights, Cards] : [Rail, Sessions, Cards];
+
+    /// <summary>Whether the last frame drew the cards panel.</summary>
+    public bool ShowsCards { get; private set; }
 
     /// <summary>The page shown, by the chord or a click on the rail; a locked page is never shown.</summary>
     public void Show(PilotPage page)
@@ -82,6 +89,7 @@ internal sealed class PilotChrome<TSurface>
         {
             Sessions.DpiScale = value;
             Flights.DpiScale = value;
+            Cards.DpiScale = value;
             Rail.DpiScale = value;
         }
     }
@@ -93,6 +101,7 @@ internal sealed class PilotChrome<TSurface>
         {
             Sessions.FontPath = value;
             Flights.FontPath = value;
+            Cards.FontPath = value;
             Rail.FontPath = value;
             // The rail's glyphs are emoji, which the UI face lacks: the platform's colour emoji face draws them
             // (Segoe UI Emoji, Noto Color Emoji), or none, and the rail falls back to the UI face.
@@ -106,8 +115,11 @@ internal sealed class PilotChrome<TSurface>
 
     public void Render(SessionsScreen screen, RectF32 bounds) => Render(screen, null, bounds);
 
+    public void Render(SessionsScreen screen, FlightsScreen? flights, RectF32 bounds) => Render(screen, flights, null, bounds);
+
     /// <param name="flights">The Flights page's screen; null shows it empty, as a snapshot file without flights is.</param>
-    public void Render(SessionsScreen screen, FlightsScreen? flights, RectF32 bounds)
+    /// <param name="cards">The cards panel's screen; null draws it empty.</param>
+    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, RectF32 bounds)
     {
         var rail = RailWidth * DpiScale;
         _items.Clear();
@@ -137,7 +149,15 @@ internal sealed class PilotChrome<TSurface>
         };
         Rail.IconSize = 15f * 1.3f * DpiScale;
         Rail.Render(new RectF32(bounds.X, bounds.Y, rail, bounds.Height), _items, Page);
-        var area = new RectF32(bounds.X + rail, bounds.Y, bounds.Width - rail, bounds.Height);
+        // The cards panel takes room only when it has something: the sessions table needs the width more than an
+        // empty "nothing waits on you".
+        var panel = cards is { HasAny: true } ? CardsView<TSurface>.Width * DpiScale : 0f;
+        var area = new RectF32(bounds.X + rail, bounds.Y, bounds.Width - rail - panel, bounds.Height);
+        ShowsCards = panel > 0f;
+        if (panel > 0f)
+        {
+            Cards.Render(cards!, new RectF32(bounds.X + bounds.Width - panel, bounds.Y, panel, bounds.Height));
+        }
         if (Page == PilotPage.Flights)
         {
             Flights.Render(flights ?? new FlightsScreen([], screen.Source, screen.AsOf), area);

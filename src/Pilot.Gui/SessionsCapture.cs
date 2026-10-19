@@ -34,21 +34,21 @@ internal static class SessionsCapture
     /// <param name="canSay">Whether to draw the say bar, as the window does on a live node.</param>
     /// <param name="flights">The Flights page's screen, drawn when <paramref name="page"/> is Flights.</param>
     public static SessionsView<RgbaImage> Render(RgbaImageRenderer renderer, SessionsScreen screen, float dpiScale = 1f, bool canSay = false,
-        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions)
+        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null)
     {
         var view = new SessionsView<RgbaImage>(renderer) { CanSay = canSay };
         var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = FontPath, DpiScale = dpiScale };
         chrome.Show(page);
-        chrome.Render(screen, flights, new RectF32(0, 0, renderer.Width, renderer.Height));
+        chrome.Render(screen, flights, cards, new RectF32(0, 0, renderer.Width, renderer.Height));
         return view;
     }
 
     /// <summary>Renders one frame to <paramref name="pngPath"/> and its rows to <c>&lt;pngPath&gt;.rows.txt</c>; returns the dump's path.</summary>
     public static string Write(SessionsScreen screen, string pngPath, int width, int height, bool canSay = false,
-        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions)
+        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null)
     {
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
-        Render(renderer, screen, canSay: canSay, flights: flights, page: page);
+        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards);
         if (Path.GetDirectoryName(Path.GetFullPath(pngPath)) is { } folder)
         {
             Directory.CreateDirectory(folder);

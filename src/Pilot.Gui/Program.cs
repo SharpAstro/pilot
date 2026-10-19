@@ -39,6 +39,7 @@ if (options.SayTo is { } sayTo)
 SessionsScreen screen;
 SnapshotEvent? snapshot = null;
 FlightsScreen? capturedFlights = null;
+CardsScreen? capturedCards = null;
 if (options.Snapshot is { } snapshotFile)
 {
     var snapshotPath = Path.GetFullPath(snapshotFile);
@@ -64,13 +65,13 @@ else if (options.Capture is not null)
         var rows = await oneShot.GetSessionsAsync(CancellationToken.None);
         var now = DateTimeOffset.UtcNow;
         screen = new SessionsScreen(SessionLine.Build(rows, now), $"live from the node on {socketPath}", now);
-        if (options.Page == PilotPage.Flights)
+        // The flights and the cards are on the stream's snapshot, which a capture reads once.
+        await using (var events = await oneShot.OpenEventsAsync(since: null, stream: null, CancellationToken.None))
         {
-            // The flights are on the stream's snapshot, which a capture reads once.
-            await using var events = await oneShot.OpenEventsAsync(since: null, stream: null, CancellationToken.None);
             if (await events.ReadAsync(CancellationToken.None) is SnapshotEvent live)
             {
                 capturedFlights = new FlightsScreen(FlightLine.Build(live.Flights, live.Sessions, now, live.Legs), screen.Source, now);
+                capturedCards = CardsScreen.From(live.Cards);
             }
         }
     }
@@ -88,7 +89,8 @@ else
 if (options.Capture is { } capturePath)
 {
     capturedFlights ??= snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
-    var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page);
+    capturedCards ??= snapshot is null ? null : CardsScreen.From(snapshot.Cards);
+    var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;
@@ -157,6 +159,15 @@ if (feed is not null && client is not null)
         Console.WriteLine($"pilot-gui: say to {line.Name}: {result}");
         loop.RequestRedraw();
     };
+    // A card's button is a command on the node, as a click anywhere else is; the stream closes the card.
+    async Task CardCommandAsync(string verb, CardRow card, string[] args)
+    {
+        var result = await client.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.CardTarget(card.Id), Args = args, Who = GuiSay.Who }, cts.Token);
+        Console.WriteLine($"pilot-gui: {verb} {card.Id} ({card.Title}): {(result.Success ? "done" : result.Response?.Error ?? result.Error)}");
+        loop.RequestRedraw();
+    }
+    chrome.Cards.OnAnswer = (card, number) => _ = CardCommandAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
+    chrome.Cards.OnDismiss = card => _ = CardCommandAsync(Verbs.Dismiss, card, []);
     feed.Start();
 
     // The window opens at once and the feed connects when the node answers; a node is started meanwhile if none runs.
@@ -177,6 +188,7 @@ if (feed is not null && client is not null)
 var announced = (string?)null;
 var drawnVersion = -1L;
 var drawnAt = DateTimeOffset.MinValue;
+CardsScreen? cards = snapshot is null ? null : CardsScreen.From(snapshot.Cards);
 FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
 loop.OnResize = (w, h) =>
 {
@@ -192,10 +204,11 @@ loop.OnRender = () =>
         drawnAt = DateTimeOffset.UtcNow;
         screen = feed.Screen(drawnAt);
         flights = feed.Flights(drawnAt);
+        cards = feed.Cards();
     }
 
     view.Ui.FrameId++;
-    chrome.Render(screen, flights, new RectF32(0, 0, width, height));
+    chrome.Render(screen, flights, cards, new RectF32(0, 0, width, height));
     router.AfterPaint();
 
     // Say which session is selected whenever it changes, so stdout follows what the window shows.
