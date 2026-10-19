@@ -267,6 +267,26 @@ public sealed class SayBarTests
     }
 
     [Fact]
+    public void TheFirstSessionStaysSelectedAsTheLiveRowsChange()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, CanSay = true };
+        var bounds = new RectF32(0, 0, 1280, 800);
+        var a = Live.Row("aaaa1111", "pilot-43", SessionState.Working);
+        var b = Live.Row("bbbb2222", "ytplayer-d1", SessionState.Working);
+
+        // The window's first frames: no node yet, then its snapshot, then one session goes idle, frame after frame.
+        view.Render(Screen(), bounds);
+        view.Render(Screen(a, b), bounds);
+        view.SelectedId.ShouldBe("aaaa1111");
+        for (var i = 0; i < 5; i++)
+        {
+            view.Render(Screen(a, b with { State = SessionState.Idle }), bounds);
+            view.SelectedId.ShouldBe("aaaa1111");
+        }
+    }
+
+    [Fact]
     public async Task EnterSaysTheTextToTheSelectedSessionAndClearsTheBar()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
@@ -286,6 +306,20 @@ public sealed class SayBarTests
 
         said.ShouldBe([("bbbb2222", "hello there")]);
         view.SayInput.Text.ShouldBe("");
+    }
+
+    [Fact]
+    public void CtrlSTakesTheKeyboardToTheSayBar()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, CanSay = true };
+        var router = new InputRouter(view.Ui, new BackgroundTaskTracker(), () => { }) { Widgets = () => [view], Unhandled = view.HandleInput };
+        view.Render(Screen(Live.Row("aaaa1111", "one")), new RectF32(0, 0, 1280, 800));
+        view.Ui.Focus.Current.ShouldBeNull();
+
+        router.Handle(new InputEvent.KeyDown(InputKey.S, InputModifier.Ctrl)).ShouldBeTrue();
+
+        view.Ui.Focus.Current.ShouldBe(view.SayInput);
     }
 
     [Fact]
