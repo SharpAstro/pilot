@@ -31,18 +31,19 @@ internal static class SessionsCapture
         new(SessionLine.Build(snapshot.Sessions, snapshot.At), source, snapshot.At);
 
     /// <summary>Paints <paramref name="screen"/> once on the CPU and returns the view, its regions current.</summary>
-    public static SessionsView<RgbaImage> Render(RgbaImageRenderer renderer, SessionsScreen screen, float dpiScale = 1f)
+    /// <param name="canSay">Whether to draw the say bar, as the window does on a live node.</param>
+    public static SessionsView<RgbaImage> Render(RgbaImageRenderer renderer, SessionsScreen screen, float dpiScale = 1f, bool canSay = false)
     {
-        var view = new SessionsView<RgbaImage>(renderer) { FontPath = FontPath, DpiScale = dpiScale };
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = FontPath, DpiScale = dpiScale, CanSay = canSay };
         view.Render(screen, new RectF32(0, 0, renderer.Width, renderer.Height));
         return view;
     }
 
     /// <summary>Renders one frame to <paramref name="pngPath"/> and its rows to <c>&lt;pngPath&gt;.rows.txt</c>; returns the dump's path.</summary>
-    public static string Write(SessionsScreen screen, string pngPath, int width, int height)
+    public static string Write(SessionsScreen screen, string pngPath, int width, int height, bool canSay = false)
     {
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
-        Render(renderer, screen);
+        Render(renderer, screen, canSay: canSay);
         if (Path.GetDirectoryName(Path.GetFullPath(pngPath)) is { } folder)
         {
             Directory.CreateDirectory(folder);

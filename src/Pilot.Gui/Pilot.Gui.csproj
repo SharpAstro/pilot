@@ -53,6 +53,16 @@
     <UseLocalAppShell Condition="'$(UseLocalAppShell)' == '' AND '$(RuntimeIdentifier)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)AppShell\src\SharpAstro.AppShell\SharpAstro.AppShell.csproj')">true</UseLocalAppShell>
   </PropertyGroup>
 
+  <!--
+    The sibling libraries' debug inspector exists only in their Debug builds, so only a Debug build against sibling
+    source can attach it: a package is built Release, and against one the inspector's types are absent (the org
+    CLAUDE.md's CS0234 trap). Set here in the project body, where $(Configuration) is settled, never in
+    Directory.Build.props, where a plain `dotnet build` still sees it empty.
+  -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug' AND '$(UseLocalDirLib)' == 'true' AND '$(UseLocalSdlVulkanRenderer)' == 'true'">
+    <DefineConstants>$(DefineConstants);PILOT_DEBUG_INSPECTOR</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup Condition="'$(UseLocalDirLib)' == 'true'">
     <ProjectReference Include="$(SharpAstroRoot)DIR.Lib\src\DIR.Lib\DIR.Lib.csproj" />
   </ItemGroup>
