@@ -48,6 +48,29 @@ public sealed class SessionTracker : BackgroundService
     /// <summary>The hooks sessions post: a row follows its session's latest one while the session runs.</summary>
     public HookBook Hooks { get; init; } = new();
 
+    /// <summary>
+    /// A session working in a flight's worktree belongs to that flight, however it was started: an ad hoc session opened
+    /// there is the flight's worker. A name that already says its flight keeps it.
+    /// </summary>
+    private SessionRoleInfo JoinFlight(SessionRoleInfo role, string? cwd)
+    {
+        if (role.Flight is not null || string.IsNullOrEmpty(cwd))
+        {
+            return role;
+        }
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(cwd)) + Path.DirectorySeparatorChar;
+        foreach (var flight in _state.Flights())
+        {
+            var worktree = Path.TrimEndingDirectorySeparator(Path.GetFullPath(flight.Worktree)) + Path.DirectorySeparatorChar;
+            if (flight.State != FlightState.Landed && folder.StartsWith(worktree, comparison))
+            {
+                return role with { Role = role.Role == SessionRole.AdHoc ? SessionRole.Worker : role.Role, Flight = flight.Code };
+            }
+        }
+        return role;
+    }
+
     /// <summary>Polls at the next second rather than at the end of the interval: a hook said something changed.</summary>
     public void Kick() => _kicked = true;
 
@@ -309,7 +332,7 @@ public sealed class SessionTracker : BackgroundService
             _repos[agent.Cwd] = repo = RepoOf.Find(agent.Cwd);
         }
 
-        Put(SessionRowBuilder.Build(agent, facts, record, repo, SessionRoles.Resolve(agent.Name), Hooks.Of(agent.SessionId)) with { Id = id });
+        Put(SessionRowBuilder.Build(agent, facts, record, repo, JoinFlight(SessionRoles.Resolve(agent.Name), agent.Cwd), Hooks.Of(agent.SessionId)) with { Id = id });
     }
 
     private void Put(SessionRow row)

@@ -38,6 +38,7 @@ if (options.SayTo is { } sayTo)
 
 SessionsScreen screen;
 SnapshotEvent? snapshot = null;
+FlightsScreen? capturedFlights = null;
 if (options.Snapshot is { } snapshotFile)
 {
     var snapshotPath = Path.GetFullPath(snapshotFile);
@@ -63,6 +64,15 @@ else if (options.Capture is not null)
         var rows = await oneShot.GetSessionsAsync(CancellationToken.None);
         var now = DateTimeOffset.UtcNow;
         screen = new SessionsScreen(SessionLine.Build(rows, now), $"live from the node on {socketPath}", now);
+        if (options.Page == PilotPage.Flights)
+        {
+            // The flights are on the stream's snapshot, which a capture reads once.
+            await using var events = await oneShot.OpenEventsAsync(since: null, stream: null, CancellationToken.None);
+            if (await events.ReadAsync(CancellationToken.None) is SnapshotEvent live)
+            {
+                capturedFlights = new FlightsScreen(FlightLine.Build(live.Flights, live.Sessions, now), screen.Source, now);
+            }
+        }
     }
     catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException or IOException)
     {
@@ -77,7 +87,8 @@ else
 
 if (options.Capture is { } capturePath)
 {
-    var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null);
+    capturedFlights ??= snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At), screen.Source, snapshot.At);
+    var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;
@@ -166,6 +177,7 @@ if (feed is not null && client is not null)
 var announced = (string?)null;
 var drawnVersion = -1L;
 var drawnAt = DateTimeOffset.MinValue;
+FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At), screen.Source, snapshot.At);
 loop.OnResize = (w, h) =>
 {
     width = (int)w;
@@ -179,10 +191,11 @@ loop.OnRender = () =>
         drawnVersion = feed.Version;
         drawnAt = DateTimeOffset.UtcNow;
         screen = feed.Screen(drawnAt);
+        flights = feed.Flights(drawnAt);
     }
 
     view.Ui.FrameId++;
-    chrome.Render(screen, new RectF32(0, 0, width, height));
+    chrome.Render(screen, flights, new RectF32(0, 0, width, height));
     router.AfterPaint();
 
     // Say which session is selected whenever it changes, so stdout follows what the window shows.
@@ -219,8 +232,10 @@ using var inspector = DebugInspector.Attach(loop, new DebugInspectorOptions
     GetRegions = () =>
     {
         var regions = new List<ClickableRegion>();
-        chrome.Rail.CollectPaintedRegions(regions);
-        view.CollectPaintedRegions(regions);
+        foreach (var widget in chrome.Widgets)
+        {
+            widget.CollectPaintedRegions(regions);
+        }
         return regions;
     },
 });

@@ -93,6 +93,7 @@ public sealed class InMemoryJournal(int maxDeltas = InMemoryJournal.DefaultMaxDe
                     Stream = _mirror.Stream!,
                     Sessions = [.. _mirror.Sessions.Values],
                     Notes = [.. _mirror.Notes],
+            Flights = [.. _mirror.Flights.Values],
                 };
                 _deltas.Clear();
             }

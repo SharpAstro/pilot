@@ -19,6 +19,8 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(SessionRemovedEvent), "sessionRemoved")]
 [JsonDerivedType(typeof(NoteAddedEvent), "noteAdded")]
 [JsonDerivedType(typeof(CommandResultEvent), "commandResult")]
+[JsonDerivedType(typeof(FlightAddedEvent), "flightAdded")]
+[JsonDerivedType(typeof(FlightChangedEvent), "flightChanged")]
 public abstract record NodeEvent
 {
     /// <summary>
@@ -48,6 +50,19 @@ public sealed record SnapshotEvent : NodeEvent
 
     /// <summary>The notes posted to the node (the demo verb <c>note node</c>), oldest first.</summary>
     public required NodeNote[] Notes { get; init; }
+
+    /// <summary>
+    /// Every flight the node has, landed ones included. Not required: a snapshot written before flights (a store from
+    /// before, the contract's sample) has none, and the generated reader leaves a missing property's initialiser out,
+    /// so the getter stands in for it.
+    /// </summary>
+    public FlightRow[] Flights
+    {
+        get => _flights ?? [];
+        init => _flights = value;
+    }
+
+    private readonly FlightRow[]? _flights;
 }
 
 /// <summary>A session the node had not seen.</summary>
@@ -90,4 +105,16 @@ public sealed record NodeNote
     public required string Who { get; init; }
 
     public required string Text { get; init; }
+}
+
+/// <summary>A flight was created.</summary>
+public sealed record FlightAddedEvent : NodeEvent
+{
+    public required FlightRow Flight { get; init; }
+}
+
+/// <summary>A flight changed: held, cleared, connected, landed. The whole row, as it is now.</summary>
+public sealed record FlightChangedEvent : NodeEvent
+{
+    public required FlightRow Flight { get; init; }
 }

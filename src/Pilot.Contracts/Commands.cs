@@ -66,8 +66,33 @@ public static class Verbs
     /// </summary>
     public const string Say = "say";
 
+    /// <summary>
+    /// <c>create-flight repo/&lt;path&gt; &lt;issue&gt; [title…]</c>: a flight on that issue of the repo checked out at the
+    /// path, coded by the node, with its plane (worktree and branch) made from the repo's default branch.
+    /// </summary>
+    public const string CreateFlight = "create-flight";
+
+    /// <summary><c>connect flight/&lt;code&gt; &lt;other&gt;</c>: the flight holds until the other has landed.</summary>
+    public const string Connect = "connect";
+
+    /// <summary>
+    /// <c>land flight/&lt;code&gt;</c>: its work is in. Its worktree is removed when it is clean (never when it holds
+    /// changes); its branch and code are kept, and flights connected to it are cleared.
+    /// </summary>
+    public const string Land = "land";
+
     /// <summary>The node itself, as a target.</summary>
     public const string NodeTarget = "node";
+
+    /// <summary>What a repo target starts with: <c>repo/&lt;path to its checkout&gt;</c>.</summary>
+    public const string RepoTargetPrefix = "repo/";
+
+    /// <summary>What a flight target starts with: <c>flight/&lt;code&gt;</c>.</summary>
+    public const string FlightTargetPrefix = "flight/";
+
+    public static string RepoTarget(string path) => RepoTargetPrefix + path;
+
+    public static string FlightTarget(string code) => FlightTargetPrefix + code;
 
     /// <summary>What a session target starts with: <c>session/&lt;id&gt;</c>.</summary>
     public const string SessionTargetPrefix = "session/";

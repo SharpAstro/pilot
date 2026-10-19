@@ -59,6 +59,18 @@ public static partial class SessionRoles
     [GeneratedRegex(@"^([A-Z]{2,}[0-9]+[a-z]?) (\S.*)$", RegexOptions.CultureInvariant)]
     private static partial Regex WorkerName();
 
+    /// <summary>A worker's session name as v2 gives it, <c>&lt;machine&gt;-&lt;flight&gt;-&lt;leg&gt;</c> in lower case (<c>du1-tia1611a-parser</c>).</summary>
+    [GeneratedRegex(@"^[a-z]{2}[0-9]+-([a-z]{2,}[0-9]+[a-z]?)-(\S.*)$", RegexOptions.CultureInvariant)]
+    private static partial Regex MachineWorkerName();
+
+    /// <summary>A flight code as a name writes it in lower case, back in its own: TIA1611a of tia1611a.</summary>
+    internal static string FlightCode(string lower)
+    {
+        var prefix = Pilot.Node.Flights.FlightCodes.PrefixOf(lower);
+        var rest = lower[prefix.Length..];
+        return prefix.ToUpperInvariant() + rest;
+    }
+
     /// <summary>
     /// The role of a session, by its name. The watchtower is a session named <c>*-watchtower</c>; a worker is one named
     /// <c>&lt;FLIGHT&gt; &lt;leg&gt;</c>. A reviewer or co-pilot is a subagent, so is no row. Everything else is ad hoc.
@@ -71,6 +83,10 @@ public static partial class SessionRoles
             return new SessionRoleInfo(SessionRole.Watchtower, null, null, null);
         }
 
+        if (name is { Length: > 0 } && MachineWorkerName().Match(name) is { Success: true } named)
+        {
+            return new SessionRoleInfo(SessionRole.Worker, FlightCode(named.Groups[1].Value), named.Groups[2].Value, null);
+        }
         var match = name is { Length: > 0 } ? WorkerName().Match(name) : Match.Empty;
         return match.Success
             ? new SessionRoleInfo(SessionRole.Worker, match.Groups[1].Value, match.Groups[2].Value, null)

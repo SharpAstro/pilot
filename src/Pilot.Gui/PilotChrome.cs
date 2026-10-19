@@ -17,8 +17,8 @@ internal enum PilotPage
 /// capture paint the same.
 /// </summary>
 /// <remarks>
-/// Only Sessions is a page yet. Flights, Background tasks and Settings are on the rail from the start, locked with the
-/// leg that brings each (their tooltip says which), so the layout #51 describes is settled before they arrive.
+/// Sessions and Flights are pages. Background tasks and Settings are on the rail from the start, locked with the leg
+/// that brings each (their tooltip says which), so the layout #51 describes is settled before they arrive.
 /// </remarks>
 internal sealed class PilotChrome<TSurface>
 {
@@ -33,7 +33,7 @@ internal sealed class PilotChrome<TSurface>
     internal static readonly IReadOnlyList<(PilotPage Page, string Icon, string Label, KeyChord Shortcut, string? Locked)> Pages =
     [
         (PilotPage.Sessions, "\U0001F4AC", "Sessions", new KeyChord(InputKey.D1, InputModifier.Ctrl), null),
-        (PilotPage.Flights, "✈", "Flights", new KeyChord(InputKey.D2, InputModifier.Ctrl), "comes with the flights leg"),
+        (PilotPage.Flights, "✈", "Flights", new KeyChord(InputKey.D2, InputModifier.Ctrl), null),
         (PilotPage.Jobs, "⚒", "Background tasks", new KeyChord(InputKey.D3, InputModifier.Ctrl), "comes with jobs, phase 2"),
         (PilotPage.Settings, "⚙","Settings", new KeyChord(InputKey.D4, InputModifier.Ctrl), "comes later"),
     ];
@@ -44,6 +44,7 @@ internal sealed class PilotChrome<TSurface>
     public PilotChrome(Renderer<TSurface> renderer, SessionsView<TSurface> sessions)
     {
         Sessions = sessions;
+        Flights = new FlightsView<TSurface>(renderer);
         Rail = new TabBar<TSurface>(renderer)
         {
             Side = TabStripSide.Left,
@@ -57,11 +58,22 @@ internal sealed class PilotChrome<TSurface>
 
     public SessionsView<TSurface> Sessions { get; }
 
+    public FlightsView<TSurface> Flights { get; }
+
     /// <summary>The page shown beside the rail.</summary>
     public PilotPage Page { get; private set; } = PilotPage.Sessions;
 
     /// <summary>The widgets this chrome paints, back to front: what the router asks about input.</summary>
-    public IReadOnlyList<IPixelWidget> Widgets => [Rail, Sessions];
+    public IReadOnlyList<IPixelWidget> Widgets => Page == PilotPage.Flights ? [Rail, Flights] : [Rail, Sessions];
+
+    /// <summary>The page shown, by the chord or a click on the rail; a locked page is never shown.</summary>
+    public void Show(PilotPage page)
+    {
+        if (Pages.Any(p => p.Page == page && p.Locked is null))
+        {
+            Page = page;
+        }
+    }
 
     public float DpiScale
     {
@@ -69,6 +81,7 @@ internal sealed class PilotChrome<TSurface>
         set
         {
             Sessions.DpiScale = value;
+            Flights.DpiScale = value;
             Rail.DpiScale = value;
         }
     }
@@ -79,6 +92,7 @@ internal sealed class PilotChrome<TSurface>
         set
         {
             Sessions.FontPath = value;
+            Flights.FontPath = value;
             Rail.FontPath = value;
             // The rail's glyphs are emoji, which the UI face lacks: the platform's colour emoji face draws them
             // (Segoe UI Emoji, Noto Color Emoji), or none, and the rail falls back to the UI face.
@@ -90,7 +104,10 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>The pointer, so the rail resolves its own hover.</summary>
     public (float X, float Y)? Pointer { get; set; }
 
-    public void Render(SessionsScreen screen, RectF32 bounds)
+    public void Render(SessionsScreen screen, RectF32 bounds) => Render(screen, null, bounds);
+
+    /// <param name="flights">The Flights page's screen; null shows it empty, as a snapshot file without flights is.</param>
+    public void Render(SessionsScreen screen, FlightsScreen? flights, RectF32 bounds)
     {
         var rail = RailWidth * DpiScale;
         _items.Clear();
@@ -103,7 +120,7 @@ internal sealed class PilotChrome<TSurface>
                 // The rail has room for a glyph only, so the name, the chord and a locked page's reason are the tooltip's.
                 Tooltip = locked is null ? $"{label} (Ctrl+{(int)page + 1})" : $"{label} — {locked}",
                 Shortcut = shortcut,
-                OnSelect = _select ??= p => Page = p,
+                OnSelect = _select ??= Show,
             });
         }
 
@@ -120,6 +137,14 @@ internal sealed class PilotChrome<TSurface>
         };
         Rail.IconSize = 15f * 1.3f * DpiScale;
         Rail.Render(new RectF32(bounds.X, bounds.Y, rail, bounds.Height), _items, Page);
-        Sessions.Render(screen, new RectF32(bounds.X + rail, bounds.Y, bounds.Width - rail, bounds.Height));
+        var area = new RectF32(bounds.X + rail, bounds.Y, bounds.Width - rail, bounds.Height);
+        if (Page == PilotPage.Flights)
+        {
+            Flights.Render(flights ?? new FlightsScreen([], screen.Source, screen.AsOf), area);
+        }
+        else
+        {
+            Sessions.Render(screen, area);
+        }
     }
 }
