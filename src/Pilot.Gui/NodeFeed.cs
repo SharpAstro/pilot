@@ -58,6 +58,9 @@ internal sealed class NodeFeed : IAsyncDisposable
         }
     }
 
+    /// <summary>Why there is no node, when the GUI could not start one: the header says it while it retries.</summary>
+    public string? Problem { get; set; }
+
     public void Start() => _run ??= Task.Run(() => RunAsync(_stop.Token));
 
     /// <summary>The rows as of <paramref name="now"/>, and where they come from, for the header.</summary>
@@ -109,7 +112,9 @@ internal sealed class NodeFeed : IAsyncDisposable
             }
             catch (Exception ex) when (ex is HttpRequestException or System.Net.WebSockets.WebSocketException or System.Net.Sockets.SocketException or IOException or System.Text.Json.JsonException)
             {
-                SetStatus($"no node on {_socketPath}: start pilot-node; retrying every {_retry.TotalSeconds:0}s", connected: false);
+                SetStatus(Problem is { } problem
+                    ? $"no node on {_socketPath}: {problem}; retrying every {_retry.TotalSeconds:0}s"
+                    : $"waiting for the node on {_socketPath}; retrying every {_retry.TotalSeconds:0}s", connected: false);
             }
 
             try

@@ -34,8 +34,9 @@ internal static class SessionsCapture
     /// <param name="canSay">Whether to draw the say bar, as the window does on a live node.</param>
     public static SessionsView<RgbaImage> Render(RgbaImageRenderer renderer, SessionsScreen screen, float dpiScale = 1f, bool canSay = false)
     {
-        var view = new SessionsView<RgbaImage>(renderer) { FontPath = FontPath, DpiScale = dpiScale, CanSay = canSay };
-        view.Render(screen, new RectF32(0, 0, renderer.Width, renderer.Height));
+        var view = new SessionsView<RgbaImage>(renderer) { CanSay = canSay };
+        var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = FontPath, DpiScale = dpiScale };
+        chrome.Render(screen, new RectF32(0, 0, renderer.Width, renderer.Height));
         return view;
     }
 

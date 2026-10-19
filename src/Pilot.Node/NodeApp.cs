@@ -60,6 +60,9 @@ public static class NodeApp
         return app;
     }
 
+    /// <summary>How long <c>GET /api/v1/sessions</c> waits for the tracker's first poll.</summary>
+    private static readonly TimeSpan FirstPollBudget = TimeSpan.FromSeconds(10);
+
     private static void MapRoutes(WebApplication app)
     {
         var startedAt = DateTimeOffset.UtcNow;
@@ -79,9 +82,19 @@ public static class NodeApp
             }),
             PilotJsonContext.Default.ResponseEnvelopeNodeInfo));
 
-        app.MapGet(NodeWire.SessionsRoute, (NodeState state) => Results.Json(
-            ResponseEnvelope<SessionRow[]>.Ok(state.Sessions()),
-            PilotJsonContext.Default.ResponseEnvelopeSessionRowArray));
+        // Answers once the tracker's first poll is done, so a client asking right after starting the node gets every
+        // session, not the first few a poll had put; a poll that never ends leaves it the rows there are after 10 s.
+        app.MapGet(NodeWire.SessionsRoute, async (NodeState state, SessionTracker tracker, CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                await tracker.FirstPoll.WaitAsync(FirstPollBudget, cancellationToken);
+            }
+            catch (TimeoutException)
+            {
+            }
+            return Results.Json(ResponseEnvelope<SessionRow[]>.Ok(state.Sessions()), PilotJsonContext.Default.ResponseEnvelopeSessionRowArray);
+        });
 
         app.MapGet(NodeWire.EventsRoute, async (HttpContext context, EventHub hub, IHostApplicationLifetime lifetime) =>
         {

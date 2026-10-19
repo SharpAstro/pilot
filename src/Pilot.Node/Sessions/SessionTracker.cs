@@ -20,6 +20,7 @@ public sealed class SessionTracker : BackgroundService
     private readonly NodeState _state;
     private readonly IClaudeAgents _agents;
     private readonly SessionTrackerOptions _options;
+    private readonly TaskCompletionSource _firstPoll = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Func<bool> _hasClients;
     private readonly TimeProvider _time;
     private readonly ILogger<SessionTracker> _logger;
@@ -88,6 +89,12 @@ public sealed class SessionTracker : BackgroundService
     private TimeSpan Interval() => _hasClients() ? _options.ActiveInterval : _options.IdleInterval;
 
     /// <summary>One look at every session: lists them, reads what their transcripts gained and puts the rows that changed.</summary>
+    /// <summary>
+    /// Completes once a first poll has run to its end, failed listing or not. Before it, the rows are partial: a poll
+    /// puts them one by one, and a GUI started with its node captured one session of twelve.
+    /// </summary>
+    public Task FirstPoll => _firstPoll.Task;
+
     public async Task PollAsync(CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);
@@ -98,6 +105,7 @@ public sealed class SessionTracker : BackgroundService
         finally
         {
             _gate.Release();
+            _firstPoll.TrySetResult();
         }
     }
 
