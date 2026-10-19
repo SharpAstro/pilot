@@ -15,10 +15,14 @@ public sealed record TranscriptFacts(
     long ContextTokens,
     DateTimeOffset? LastResponseAt,
     long SpendWeighted,
-    string? PendingQuestion)
+    string? PendingQuestion,
+    ApiStop? Stop = null)
 {
     public static readonly TranscriptFacts None = new(null, null, null, 0, null, 0, null);
 }
+
+/// <summary>A turn the API ended with an error and no reply: its <c>apiError</c>, and when its limit resets, if it said.</summary>
+public sealed record ApiStop(string Error, DateTimeOffset? ResetsAt);
 
 /// <summary>
 /// One transcript file, read incrementally by byte offset: a partial trailing line is left for the next read, and a
@@ -30,6 +34,7 @@ internal sealed class TranscriptTail(string path)
     private static readonly byte[] AskTool = "AskUserQuestion"u8.ToArray();
     private static readonly byte[] Usage = "\"usage\""u8.ToArray();
     private static readonly byte[] ToolResult = "tool_result"u8.ToArray();
+    private static readonly byte[] ApiErrorKey = "\"apiError\""u8.ToArray();
 
     private readonly Dictionary<string, MessageUsage> _messages = new Dictionary<string, MessageUsage>(StringComparer.Ordinal);
     private long _offset;
@@ -47,6 +52,9 @@ internal sealed class TranscriptTail(string path)
 
     /// <summary>The question of an AskUserQuestion call the transcript holds but has no result for, else null.</summary>
     public string? PendingQuestion => _pendingQuestion;
+
+    /// <summary>The API error that ended the last turn, until a real reply comes after it.</summary>
+    public ApiStop? Stop { get; private set; }
 
     /// <summary>Reads what was appended since the last call. Returns whether anything new was read.</summary>
     public bool Refresh()
@@ -121,6 +129,7 @@ internal sealed class TranscriptTail(string path)
         _offset = 0;
         _messages.Clear();
         LastTurn = null;
+        Stop = null;
         _pendingToolId = _pendingQuestion = _lastMessageId = null;
     }
 
@@ -136,6 +145,10 @@ internal sealed class TranscriptTail(string path)
         }
 
         var span = line.Span;
+        if (span.IndexOf(ApiErrorKey) >= 0)
+        {
+            NoteApiError(line);
+        }
         if (span.IndexOf(Usage) < 0)
         {
             // The answer to a pending question is a user line carrying the call's id.
@@ -175,6 +188,8 @@ internal sealed class TranscriptTail(string path)
             var sidechain = root.TryGetProperty("isSidechain", out var side) && side.ValueKind == JsonValueKind.True;
             if (model != "<synthetic>" && !sidechain)
             {
+                // A real reply: whatever stopped an earlier turn is behind it.
+                Stop = null;
                 LastTurn = new AssistantTurn(
                     model,
                     ClaudeAgentsJson.Text(root, "requestedModel"),
@@ -191,6 +206,37 @@ internal sealed class TranscriptTail(string path)
         catch (JsonException)
         {
             // Not a line of ours to read.
+        }
+    }
+
+    /// <summary>
+    /// An assistant line the API wrote instead of a reply (<c>model</c> <c>&lt;synthetic&gt;</c>, with <c>apiError</c>):
+    /// "You've hit your session limit", with <c>apiErrorParams.rate_limit_info.resetsAt</c> in epoch seconds.
+    /// </summary>
+    private void NoteApiError(ReadOnlyMemory<byte> line)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || ClaudeAgentsJson.Text(root, "type") != "assistant"
+                || (root.TryGetProperty("isSidechain", out var side) && side.ValueKind == JsonValueKind.True)
+                || ClaudeAgentsJson.Text(root, "apiError") is not { Length: > 0 } error)
+            {
+                return;
+            }
+
+            DateTimeOffset? resets = null;
+            if (root.TryGetProperty("apiErrorParams", out var parameters) && parameters.ValueKind == JsonValueKind.Object
+                && parameters.TryGetProperty("rate_limit_info", out var info) && info.ValueKind == JsonValueKind.Object
+                && info.TryGetProperty("resetsAt", out var at) && at.ValueKind == JsonValueKind.Number && at.TryGetInt64(out var seconds))
+            {
+                resets = DateTimeOffset.FromUnixTimeSeconds(seconds);
+            }
+            Stop = new ApiStop(error, resets);
+        }
+        catch (JsonException)
+        {
         }
     }
 
@@ -302,6 +348,6 @@ internal sealed class SessionTranscripts(ClaudeProfile profile, string sessionId
         }
 
         var turn = _main.LastTurn;
-        return new TranscriptFacts(turn?.Model, turn?.RequestedModel, turn?.Effort, turn?.ContextTokens ?? 0, turn?.At, _spend, _main.PendingQuestion);
+        return new TranscriptFacts(turn?.Model, turn?.RequestedModel, turn?.Effort, turn?.ContextTokens ?? 0, turn?.At, _spend, _main.PendingQuestion, _main.Stop);
     }
 }

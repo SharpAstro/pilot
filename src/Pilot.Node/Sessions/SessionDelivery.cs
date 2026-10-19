@@ -99,7 +99,12 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, ClaudeProfil
         var run = await ClaudeCli.RunAsync(["stop", job], stdin: null, cwd: null, StopTimeout, cancellationToken);
         if (run.ExitCode != 0)
         {
-            throw new SessionDeliveryException($"claude stop {job} failed ({run.ExitCode}): {Clip(run.Output + run.Error)}");
+            // A background session whose process outlived its job record: claude stop cannot reach it, though it runs
+            // (PIL5's sessions worker, idle 13 hours, had none). Its process is the session, so it is ended by its pid.
+            if (!TryEndOrphan(await FindAsync(r => r.SessionId == sessionId, cancellationToken)))
+            {
+                throw new SessionDeliveryException($"claude stop {job} failed ({run.ExitCode}): {Clip(run.Output + run.Error)}");
+            }
         }
 
         var until = DateTimeOffset.UtcNow + StopWait;
@@ -234,6 +239,25 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, ClaudeProfil
     /// <summary>Whether the relay's answer says it delivered: "delivered", and no "failed".</summary>
     public static bool IsDelivered(string answer) =>
         answer.Contains("delivered", StringComparison.OrdinalIgnoreCase) && !answer.Contains("failed", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Ends a listed background session's process by its pid; false when there is none to end.</summary>
+    private static bool TryEndOrphan(ClaudeAgentRow? row)
+    {
+        if (row is not { Pid: { } pid } || !string.Equals(row.Kind, "background", StringComparison.Ordinal))
+        {
+            return false;
+        }
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+            process.Kill();
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
+    }
 
     private async Task<ClaudeAgentRow?> FindAsync(Func<ClaudeAgentRow, bool> match, CancellationToken cancellationToken)
     {

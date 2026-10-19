@@ -38,9 +38,19 @@ public static class SessionRowBuilder
     /// <param name="record">Its session record, while its process lives.</param>
     /// <param name="repo">The repo its folder belongs to.</param>
     /// <param name="role">Its role, flight, leg and budget.</param>
-    public static SessionRow Build(ClaudeAgentRow agent, TranscriptFacts transcripts, SessionRecord? record, string? repo, SessionRoleInfo role)
+    /// <param name="hook">The session's latest hook, which has the last word on a running session's state: it fired on
+    /// the transition itself, where the listing is read every few seconds.</param>
+    public static SessionRow Build(ClaudeAgentRow agent, TranscriptFacts transcripts, SessionRecord? record, string? repo, SessionRoleInfo role, HookState? hook = null)
     {
         var state = SessionStates.Map(agent.Status ?? record?.Status, agent.State);
+        string? hookWaiting = null;
+        if (hook?.State is { } hooked && (agent.Pid is not null || hooked == SessionState.Ended))
+        {
+            state = hooked;
+            hookWaiting = hook.WaitingFor;
+        }
+        // The transcript's record of an API stop, or the hook's; a later reply or turn clears both.
+        var apiError = transcripts.Stop?.Error ?? (hook?.State is SessionState.Working ? null : hook?.ApiError);
         return new SessionRow
         {
             Id = agent.ShortId,
@@ -58,8 +68,10 @@ public static class SessionRowBuilder
             ContextWindow = ContextWindows.For(transcripts.Model, transcripts.RequestedModel, transcripts.ContextTokens),
             LastResponseAt = transcripts.LastResponseAt,
             State = state,
-            WaitingFor = state == SessionState.Waiting ? agent.WaitingFor ?? record?.WaitingFor ?? transcripts.PendingQuestion : null,
+            WaitingFor = state == SessionState.Waiting ? hookWaiting ?? agent.WaitingFor ?? record?.WaitingFor ?? transcripts.PendingQuestion : null,
             SpendWeighted = transcripts.SpendWeighted,
+            ApiError = apiError,
+            ApiErrorResetsAt = transcripts.Stop?.ResetsAt,
             Budget = role.Budget,
             RemoteControlUrl = record?.BridgeSessionId is { Length: > 0 } bridge ? $"https://claude.ai/code/{bridge}" : null,
             StartedAt = agent.StartedAt ?? DateTimeOffset.UnixEpoch,

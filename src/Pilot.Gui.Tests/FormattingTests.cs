@@ -97,4 +97,33 @@ public sealed class FormattingTests
         error.ShouldNotBeNull().ShouldContain("unknown argument");
         GuiOptions.Parse(["--exit-after", "0s"], out _).ShouldBeNull();
     }
+    [Fact]
+    public void ASessionTheApiStoppedReadsAsStoppedWithWhyAndWhenItCanGoOn()
+    {
+        var now = new DateTimeOffset(2026, 10, 18, 12, 0, 0, TimeSpan.Zero);
+        var row = new SessionRow
+        {
+            Id = "7258e57f",
+            SessionId = "7258e57f-ff27-436e-9ecf-7912b11fbf24",
+            Name = "PIL5 say",
+            Kind = SessionKind.Background,
+            Cwd = "/work",
+            Role = SessionRole.Worker,
+            ContextTokens = 0,
+            ContextWindow = 200_000,
+            State = SessionState.Idle,
+            SpendWeighted = 0,
+            StartedAt = now,
+            ApiError = "usage_limit_reached",
+            ApiErrorResetsAt = now.AddHours(2).AddMinutes(10),
+        };
+
+        var line = SessionLine.From(row, now);
+        line.State.ShouldBe("stopped");
+        line.WaitingFor.ShouldBe("usage limit · resets in 2h 10m");
+        SessionLine.From(row, now.AddHours(3)).WaitingFor.ShouldBe("usage limit · reset 50m ago, can go on");
+        SessionLine.From(row with { ApiError = "overloaded", ApiErrorResetsAt = null }, now).WaitingFor.ShouldBe("overloaded");
+        // Working again: whatever stopped it is behind it.
+        SessionLine.From(row with { State = SessionState.Working }, now).State.ShouldBe("working");
+    }
 }

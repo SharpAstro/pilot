@@ -25,6 +25,9 @@ public static class NodeWire
 
     /// <summary>Every command, as a <see cref="CommandRequest"/>.</summary>
     public const string CommandsRoute = "/api/v1/commands";
+
+    /// <summary><c>POST</c>: one Claude Code hook's stdin, as <c>pilot-node hook</c> forwards it.</summary>
+    public const string HooksRoute = "/api/v1/hooks";
 }
 
 /// <summary>How a node process ends, for whoever started it: a keeper must not restart a node that found another running.</summary>

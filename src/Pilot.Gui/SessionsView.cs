@@ -324,7 +324,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         _ => Low,
     };
 
-    private static RGBAColor32 StateColor(SessionLine line) => line.Row.State switch
+    private static RGBAColor32 StateColor(SessionLine line) => SessionLine.IsStopped(line.Row) ? Failed : line.Row.State switch
     {
         Pilot.Contracts.SessionState.Working => Working,
         Pilot.Contracts.SessionState.Waiting => Waiting,

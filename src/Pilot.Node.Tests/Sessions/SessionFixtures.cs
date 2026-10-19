@@ -51,7 +51,7 @@ internal sealed class ManualTime(DateTimeOffset start) : TimeProvider
 }
 
 /// <summary>
-/// A Claude profile folder and a v1 state folder of a test's own, with made-up sessions in them: nothing here is a real
+/// A Claude profile folder of a test's own, with made-up sessions in them: nothing here is a real
 /// transcript, and nothing reads this machine's.
 /// </summary>
 internal sealed class TempProfile : IDisposable
