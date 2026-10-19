@@ -105,7 +105,7 @@ for which), legs (how many done, which flying), branch and sessions.
 
 ## The CLI
 
-`pilot` (Pilot.Cli, native AOT) spells the node's commands for the controller, the watchtower, workers and scripts:
+`pilot` (Pilot.Cli, native AOT) spells the node's commands for the controller, the watchtower, workers and scripts. All three binaries parse their command lines with System.CommandLine, as tianwen's CLI does, so `--help` on any command lists its arguments and options:
 
 ```bash
 pilot status                                   # flights, their legs and artifacts, and the live sessions
@@ -113,7 +113,7 @@ pilot sessions
 pilot flight create <issue> [title…] [--repo <path>]
 pilot flight connect <code> <other>
 pilot flight pr <code> [title…]                # pushes the plane, opens its PR (body: the legs, Closes #<issue>)
-pilot flight merge <code> <head> [--squash|--rebase|--merge]
+pilot flight merge <code> <head> [--method squash|rebase|merge]   # or --squash, --rebase, --merge
 pilot flight land <code>
 pilot leg plan <code> <name> --goal … --done-when … [--check …] [--budget …] [--model …] [--effort …] [--item …]…
 pilot leg start <code> <leg>

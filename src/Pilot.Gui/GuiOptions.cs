@@ -1,17 +1,14 @@
+using System.CommandLine;
 using System.Globalization;
 
 namespace Pilot.Gui;
 
 /// <summary>
-/// The command line: <c>pilot-gui [--node-socket &lt;path&gt; | --snapshot &lt;file.json&gt;] [--capture &lt;out.png&gt; [--size 1280x800]]
+/// The command line, on System.CommandLine: <c>pilot-gui [--node-socket &lt;path&gt; | --snapshot &lt;file.json&gt;] [--capture &lt;out.png&gt; [--size 1280x800]]
 /// [--exit-after 5s]</c>, or <c>pilot-gui [--node-socket &lt;path&gt;] --say &lt;session&gt; &lt;text…&gt;</c>.
 /// </summary>
 internal sealed record GuiOptions
 {
-    public const string Usage =
-        "usage: pilot-gui [--node-socket <path> | --snapshot <file.json>] [--capture <out.png> [--size <W>x<H>] [--page sessions|flights]] [--exit-after <n>s|<n>ms|<n>m]\n" +
-        "       pilot-gui [--node-socket <path>] --say <session> <text...>";
-
     /// <summary>A snapshot file to show instead of the live node; null shows the node.</summary>
     public string? Snapshot { get; init; }
 
@@ -37,86 +34,82 @@ internal sealed record GuiOptions
     /// <summary>Close the window by itself after this long, so a check needs no hands.</summary>
     public TimeSpan? ExitAfter { get; init; }
 
-    /// <summary>Parses <paramref name="args"/>; on a mistake returns null and says what in <paramref name="error"/>.</summary>
+    /// <summary>
+    /// Parses <paramref name="args"/> on System.CommandLine, as tianwen's CLI does; on a mistake returns null and says
+    /// what in <paramref name="error"/>, and for <c>--help</c> returns null with the help in <paramref name="error"/>.
+    /// </summary>
     public static GuiOptions? Parse(IReadOnlyList<string> args, out string? error)
     {
-        var options = new GuiOptions();
-        error = null;
-        for (var i = 0; i < args.Count; i++)
+        var snapshot = new Option<string?>("--snapshot") { Description = "A snapshot file to show instead of the live node" };
+        var socket = new Option<string?>("--node-socket") { Description = "The node's socket; else PILOT_NODE_SOCKET, else this user's default" };
+        var capture = new Option<string?>("--capture") { Description = "Render one frame on the CPU to this PNG (and a .rows.txt beside it), then exit" };
+        var size = new Option<string?>("--size") { Description = "The capture's size, <W>x<H>; 1280x800 by default" };
+        var page = new Option<string?>("--page") { Description = "The page a capture shows: sessions or flights" };
+        page.AcceptOnlyFromAmong("sessions", "flights");
+        var exitAfter = new Option<string?>("--exit-after") { Description = "Close the window by itself after this long: 5s, 500ms, 2m" };
+        var say = new Option<string[]>("--say")
         {
-            var arg = args[i];
-            if (arg is "-h" or "--help")
-            {
-                error = Usage;
-                return null;
-            }
+            Description = "Say <text…> to <session> through the node, print what became of it and exit",
+            AllowMultipleArgumentsPerToken = true,
+            Arity = new ArgumentArity(2, 100_000),
+        };
 
-            if (arg == "--say")
-            {
-                if (i + 2 >= args.Count)
-                {
-                    error = $"--say needs a session and the text. {Usage}";
-                    return null;
-                }
+        var root = new RootCommand("pilot v2's GUI: every Claude session on the machine, live from the node")
+        {
+            Options = { snapshot, socket, capture, size, page, exitAfter, say },
+        };
+        var parsed = root.Parse([.. args]);
 
-                // Everything after the session is the text, so it needs no quoting.
-                options = options with { SayTo = args[i + 1], SayText = string.Join(' ', args.Skip(i + 2)) };
-                break;
-            }
-
-            if (i + 1 >= args.Count || arg is not ("--snapshot" or "--capture" or "--size" or "--exit-after" or "--node-socket" or "--page"))
-            {
-                error = i + 1 >= args.Count && arg.StartsWith("--", StringComparison.Ordinal)
-                    ? $"{arg} needs a value. {Usage}"
-                    : $"unknown argument '{arg}'. {Usage}";
-                return null;
-            }
-
-            var value = args[++i];
-            switch (arg)
-            {
-                case "--snapshot":
-                    options = options with { Snapshot = value };
-                    break;
-                case "--node-socket":
-                    options = options with { NodeSocket = value };
-                    break;
-                case "--page":
-                    if (value is not ("sessions" or "flights"))
-                    {
-                        error = $"--page takes sessions or flights, not '{value}'.";
-                        return null;
-                    }
-                    options = options with { Page = value == "flights" ? PilotPage.Flights : PilotPage.Sessions };
-                    break;
-                case "--capture":
-                    options = options with { Capture = value };
-                    break;
-                case "--size":
-                    if (!TryParseSize(value, out var width, out var height))
-                    {
-                        error = $"--size takes <W>x<H>, as in 1280x800, not '{value}'.";
-                        return null;
-                    }
-                    options = options with { Width = width, Height = height };
-                    break;
-                default:
-                    if (!TryParseDuration(value, out var after))
-                    {
-                        error = $"--exit-after takes a duration such as 5s, 500ms or 2m, not '{value}'.";
-                        return null;
-                    }
-                    options = options with { ExitAfter = after };
-                    break;
-            }
+        if (parsed.Action is System.CommandLine.Help.HelpAction)
+        {
+            var help = new StringWriter();
+            parsed.Invoke(new InvocationConfiguration { Output = help });
+            error = help.ToString();
+            return null;
         }
-
-        if (options.Snapshot is not null && (options.NodeSocket is not null || options.SayTo is not null))
+        if (parsed.Errors.Count > 0)
         {
-            error = $"--snapshot shows a file, so it takes no node: drop --node-socket and --say. {Usage}";
+            error = string.Join(Environment.NewLine, parsed.Errors.Select(e => e.Message)) + Environment.NewLine + "pilot-gui --help lists the options";
             return null;
         }
 
+        var options = new GuiOptions
+        {
+            Snapshot = parsed.GetValue(snapshot),
+            NodeSocket = parsed.GetValue(socket),
+            Capture = parsed.GetValue(capture),
+            Page = parsed.GetValue(page) == "flights" ? PilotPage.Flights : PilotPage.Sessions,
+        };
+        if (parsed.GetValue(size) is { } sizeText)
+        {
+            if (!TryParseSize(sizeText, out var width, out var height))
+            {
+                error = $"--size takes <W>x<H>, as in 1280x800, not '{sizeText}'.";
+                return null;
+            }
+            options = options with { Width = width, Height = height };
+        }
+        if (parsed.GetValue(exitAfter) is { } afterText)
+        {
+            if (!TryParseDuration(afterText, out var after))
+            {
+                error = $"--exit-after takes a duration such as 5s, 500ms or 2m, not '{afterText}'.";
+                return null;
+            }
+            options = options with { ExitAfter = after };
+        }
+        if (parsed.GetValue(say) is { Length: >= 2 } words)
+        {
+            // Everything after the session is the text, so it needs no quoting.
+            options = options with { SayTo = words[0], SayText = string.Join(' ', words.Skip(1)) };
+        }
+        if (options.Snapshot is not null && (options.NodeSocket is not null || options.SayTo is not null))
+        {
+            error = "--snapshot shows a file, so it takes no node: drop --node-socket and --say.";
+            return null;
+        }
+
+        error = null;
         return options;
     }
 

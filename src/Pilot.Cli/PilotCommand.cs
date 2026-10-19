@@ -1,176 +1,231 @@
+using System.CommandLine;
 using System.Globalization;
 using Pilot.Contracts;
 
 namespace Pilot.Cli;
 
 /// <summary>
-/// The <c>pilot</c> command. Each subcommand is one node command (a verb on a target) or a read of the node's snapshot;
-/// the node decides and refuses, this only spells it. Inside a plane a leg command needs no leg named: the flight is the
-/// one whose worktree holds the folder, and the leg its one flying, which is how a worker ticks its own checklist.
+/// The <c>pilot</c> command, on System.CommandLine as tianwen's CLI is. Each subcommand is one node command (a verb on
+/// a target) or a read of the node's snapshot; the node decides and refuses, this only spells it. Inside a plane a leg
+/// command needs no leg named: the flight is the one whose worktree holds the folder, and the leg its one flying,
+/// which is how a worker ticks its own checklist.
 /// </summary>
+/// <remarks>Exit codes: 0 done, 1 refused by the node (it says why), 2 usage, 3 no node.</remarks>
 public static class PilotCommand
 {
-    public const string Usage = """
-        usage: pilot [--node-socket <path>] <command>
-
-          status                                   flights, their legs, and live sessions
-          sessions                                 every session on the machine
-          flight create <issue> [title…] [--repo <path>]
-          flight connect <code> <other>            <code> holds until <other> lands
-          flight pr <code> [title…]                push the plane and open its PR
-          flight merge <code> <head> [--squash|--rebase|--merge]
-          flight land <code>
-          leg plan <code> <name> --goal <text> --done-when <text> [--check <command>] [--budget <tokens>]
-                   [--model <m>] [--effort <e>] [--item <step>]…
-          leg start <code> <leg>
-          leg finish done|failed [report…] [--leg <code>/<leg>]
-          leg go-around <why…> [--leg <code>/<leg>]
-          check <step number or text> [--undo] [--leg <code>/<leg>]
-          artifact <path or URL> [title…] [--leg <code>/<leg>]
-          cards [--all]                            open cards (rings first), or every card
-          answer <card> <choice number or label>   run the card's choice; the card closes when it is done
-          dismiss <card> [why…]
-          say <session> <text…>
-          note <text…>
-
-        Inside a flight's plane, --leg defaults to its flying leg.
-        """;
-
     public static async Task<int> RunAsync(string[] args, string cwd, TextWriter output, TextWriter error, CancellationToken cancellationToken)
     {
-        var rest = args.ToList();
-        var socket = Take(rest, "--node-socket");
-        if (rest.Count == 0 || rest[0] is "-h" or "--help" or "help")
+        var root = Build(cwd, output, error);
+        var parsed = root.Parse(args);
+        if (args.Length == 0)
         {
-            await output.WriteLineAsync(Usage);
-            return rest.Count == 0 ? 2 : 0;
-        }
-
-        using var client = new NodeClient(NodeSocket.Resolve(socket));
-        try
-        {
-            return await DispatchAsync(rest, client, cwd, output, cancellationToken);
-        }
-        catch (UsageException ex)
-        {
-            await error.WriteLineAsync($"pilot: {ex.Message}");
+            // A bare pilot prints its help, as pilot --help does, but as a usage mistake.
+            await root.Parse("--help").InvokeAsync(new InvocationConfiguration { Output = output }, cancellationToken);
             return 2;
         }
-        catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException or IOException or System.Net.WebSockets.WebSocketException)
+        if (parsed.Errors.Count > 0)
         {
-            await error.WriteLineAsync($"pilot: no node answers on {client.SocketPath} ({ex.Message}); start it with pilot-gui or pilot-node");
-            return 3;
+            foreach (var problem in parsed.Errors)
+            {
+                await error.WriteLineAsync($"pilot: {problem.Message}");
+            }
+            await error.WriteLineAsync("pilot --help lists the commands");
+            return 2;
         }
+        return await parsed.InvokeAsync(new InvocationConfiguration { Output = output, Error = error }, cancellationToken);
     }
 
-    private static async Task<int> DispatchAsync(List<string> args, NodeClient client, string cwd, TextWriter output, CancellationToken cancellationToken)
+    /// <summary>The command tree; actions write to <paramref name="output"/> and <paramref name="error"/>, and resolve folders against <paramref name="cwd"/>.</summary>
+    internal static RootCommand Build(string cwd, TextWriter output, TextWriter error)
     {
-        var command = args[0];
-        args.RemoveAt(0);
-        switch (command)
+        var socket = new Option<string?>("--node-socket")
         {
-            case "status":
-                await output.WriteAsync(Status(await SnapshotAsync(client, cancellationToken)));
-                return 0;
-            case "sessions":
-                await output.WriteAsync(Sessions(await client.GetSessionsAsync(cancellationToken)));
-                return 0;
-            case "cards":
-                await output.WriteAsync(Cards(await SnapshotAsync(client, cancellationToken), all: Flag(args, "--all")));
-                return 0;
-            case "answer" when args.Count >= 2:
-                return await SendAsync(client, Verbs.Answer, Verbs.CardTarget(args[0]), [string.Join(' ', args.Skip(1))], "cli", output, cancellationToken);
-            case "dismiss" when args.Count >= 1:
-                return await SendAsync(client, Verbs.Dismiss, Verbs.CardTarget(args[0]), [.. args.Skip(1)], "cli", output, cancellationToken);
-            case "say" when args.Count >= 2:
-                return await SendAsync(client, Verbs.Say, Verbs.SessionTarget(args[0]), [string.Join(' ', args.Skip(1))], "cli", output, cancellationToken);
-            case "note" when args.Count >= 1:
-                return await SendAsync(client, Verbs.Note, Verbs.NodeTarget, [string.Join(' ', args)], "cli", output, cancellationToken);
-            case "flight" when args.Count >= 1:
-                return await FlightAsync(args, client, cwd, output, cancellationToken);
-            case "leg" when args.Count >= 1:
-                return await LegAsync(args, client, cwd, output, cancellationToken);
-            case "check" or "artifact":
-                return await OnLegAsync(command, args, client, cwd, output, cancellationToken);
-            default:
-                throw new UsageException($"unknown or incomplete command '{command}'. pilot --help lists them");
-        }
-    }
+            Description = "The node's socket; else PILOT_NODE_SOCKET, else this user's default",
+            Recursive = true,
+        };
 
-    private static async Task<int> FlightAsync(List<string> args, NodeClient client, string cwd, TextWriter output, CancellationToken cancellationToken)
-    {
-        var sub = args[0];
-        args.RemoveAt(0);
-        switch (sub)
+        // Every action talks to the node the same way: a refusal is exit 1, a usage problem found late 2, no node 3.
+        Command Action(Command command, Func<ParseResult, NodeClient, CancellationToken, Task<int>> run)
         {
-            case "create" when args.Count >= 1:
-                var repo = Take(args, "--repo") ?? cwd;
-                return await SendAsync(client, Verbs.CreateFlight, Verbs.RepoTarget(Path.GetFullPath(repo, cwd)), [.. args], "cli", output, cancellationToken);
-            case "connect" when args.Count == 2:
-                return await SendAsync(client, Verbs.Connect, Verbs.FlightTarget(args[0]), [args[1]], "cli", output, cancellationToken);
-            case "pr" when args.Count >= 1:
-                return await SendAsync(client, Verbs.OpenPr, Verbs.FlightTarget(args[0]), [.. args.Skip(1)], "cli", output, cancellationToken);
-            case "merge" when args.Count >= 2:
-                var method = Flag(args, "--rebase") ? "rebase" : Flag(args, "--merge") ? "merge" : Flag(args, "--squash") ? "squash" : null;
-                string[] mergeArgs = method is null ? [args[1]] : [args[1], method];
-                return await SendAsync(client, Verbs.Merge, Verbs.FlightTarget(args[0]), mergeArgs, "cli", output, cancellationToken);
-            case "land" when args.Count == 1:
-                return await SendAsync(client, Verbs.Land, Verbs.FlightTarget(args[0]), [], "cli", output, cancellationToken);
-            default:
-                throw new UsageException($"unknown or incomplete 'flight {sub}'. pilot --help lists them");
-        }
-    }
-
-    private static async Task<int> LegAsync(List<string> args, NodeClient client, string cwd, TextWriter output, CancellationToken cancellationToken)
-    {
-        var sub = args[0];
-        args.RemoveAt(0);
-        switch (sub)
-        {
-            case "plan" when args.Count >= 2:
-                var plan = new List<string> { $"name={args[1]}" };
-                foreach (var (option, key) in (ReadOnlySpan<(string, string)>)[("--goal", "goal"), ("--done-when", "done-when"), ("--check", "check"),
-                             ("--budget", "budget"), ("--model", "model"), ("--effort", "effort")])
+            command.SetAction(async (parseResult, ct) =>
+            {
+                using var client = new NodeClient(NodeSocket.Resolve(parseResult.GetValue(socket)));
+                try
                 {
-                    if (Take(args, option) is { } value)
+                    return await run(parseResult, client, ct);
+                }
+                catch (UsageException ex)
+                {
+                    await error.WriteLineAsync($"pilot: {ex.Message}");
+                    return 2;
+                }
+                catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException or IOException or System.Net.WebSockets.WebSocketException)
+                {
+                    await error.WriteLineAsync($"pilot: no node answers on {client.SocketPath} ({ex.Message}); start it with pilot-gui or pilot-node");
+                    return 3;
+                }
+            });
+            return command;
+        }
+
+        Argument<string> Arg(string name, string description) => new(name) { Description = description };
+
+        Argument<string[]> Words(string name, string description, bool required = true) =>
+            new(name) { Description = description, Arity = required ? ArgumentArity.OneOrMore : ArgumentArity.ZeroOrMore };
+
+        string Join(ParseResult parseResult, Argument<string[]> words) => string.Join(' ', parseResult.GetValue(words) ?? []);
+
+        // A leg command names its leg with --leg, or is run from the plane and finds it.
+        var leg = new Option<string?>("--leg") { Description = "The leg, <code>/<leg>; inside a plane, its flying leg" };
+
+        async Task<int> OnLeg(ParseResult parseResult, NodeClient client, string verb, Func<string, string[]> args, CancellationToken ct)
+        {
+            var named = parseResult.GetValue(leg);
+            var (target, who) = named is not null ? (Verbs.FlightTargetPrefix + named, "cli") : LegHere(await SnapshotAsync(client, ct), cwd);
+            return await SendAsync(client, verb, target, args(target), who, output, ct);
+        }
+
+        // status, sessions
+        var status = Action(new Command("status", "Flights, their legs and artifacts, open cards, and live sessions"), async (_, client, ct) =>
+        {
+            await output.WriteAsync(Status(await SnapshotAsync(client, ct)));
+            return 0;
+        });
+        var sessions = Action(new Command("sessions", "Every Claude session on the machine"), async (_, client, ct) =>
+        {
+            await output.WriteAsync(Sessions(await client.GetSessionsAsync(ct)));
+            return 0;
+        });
+
+        // flight
+        var issue = Arg("issue", "The issue the flight flies");
+        var title = Words("title", "What it is for, in a line", required: false);
+        var repo = new Option<string?>("--repo") { Description = "The repo's checkout (any of its worktrees); else this folder" };
+        var create = Action(new Command("create", "A flight on an issue of this repo, and its plane") { Arguments = { issue, title }, Options = { repo } },
+            (p, client, ct) => SendAsync(client, Verbs.CreateFlight, Verbs.RepoTarget(Path.GetFullPath(p.GetValue(repo) ?? cwd, cwd)),
+                [p.GetValue(issue)!, .. p.GetValue(title) ?? []], "cli", output, ct));
+
+        var code = Arg("code", "The flight's code, as TIA1611");
+        var other = Arg("other", "The flight it waits for");
+        var connect = Action(new Command("connect", "The flight holds until the other has landed") { Arguments = { code, other } },
+            (p, client, ct) => SendAsync(client, Verbs.Connect, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], "cli", output, ct));
+
+        var prTitle = Words("title", "The PR's title after the code; else the flight's", required: false);
+        var pr = Action(new Command("pr", "Push the plane and open its PR") { Arguments = { code, prTitle } },
+            (p, client, ct) => SendAsync(client, Verbs.OpenPr, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(prTitle) ?? [], "cli", output, ct));
+
+        var head = Arg("head", "The head commit you reviewed; the merge is refused if the PR moved past it");
+        var method = new Option<string?>("--method") { Description = "squash (the default), rebase or merge" };
+        method.AcceptOnlyFromAmong("squash", "rebase", "merge");
+        var squash = new Option<bool>("--squash") { Description = "Same as --method squash" };
+        var rebase = new Option<bool>("--rebase") { Description = "Same as --method rebase" };
+        var mergeCommit = new Option<bool>("--merge") { Description = "Same as --method merge" };
+        var merge = Action(new Command("merge", "Merge the flight's PR, guarded on the head you reviewed, then land it")
+            {
+                Arguments = { code, head },
+                Options = { method, squash, rebase, mergeCommit },
+            },
+            (p, client, ct) =>
+            {
+                var how = p.GetValue(method) ?? (p.GetValue(rebase) ? "rebase" : p.GetValue(mergeCommit) ? "merge" : p.GetValue(squash) ? "squash" : null);
+                string[] args = how is null ? [p.GetValue(head)!] : [p.GetValue(head)!, how];
+                return SendAsync(client, Verbs.Merge, Verbs.FlightTarget(p.GetValue(code)!), args, "cli", output, ct);
+            });
+
+        var land = Action(new Command("land", "The flight's work is in: its plane goes, its branch and code stay") { Arguments = { code } },
+            (p, client, ct) => SendAsync(client, Verbs.Land, Verbs.FlightTarget(p.GetValue(code)!), [], "cli", output, ct));
+
+        var flight = new Command("flight", "Flights: create, connect, open a PR, merge, land") { Subcommands = { create, connect, pr, merge, land } };
+
+        // leg
+        var name = Arg("name", "The leg's name: lower-case letters, digits and dashes");
+        var goal = new Option<string>("--goal") { Description = "What the leg is for", Required = true };
+        var doneWhen = new Option<string>("--done-when") { Description = "When it is done, in words", Required = true };
+        var check = new Option<string?>("--check") { Description = "A command the node reruns in the plane before it takes the leg as done" };
+        var budget = new Option<string?>("--budget") { Description = "Its budget in weighted tokens" };
+        var model = new Option<string?>("--model") { Description = "The model its workers run" };
+        var effort = new Option<string?>("--effort") { Description = "The effort its workers run at" };
+        var item = new Option<string[]>("--item") { Description = "A checklist step; give it once per step", AllowMultipleArgumentsPerToken = false };
+        var plan = Action(new Command("plan", "Plan a leg at the end of the flight's order")
+            {
+                Arguments = { code, name },
+                Options = { goal, doneWhen, check, budget, model, effort, item },
+            },
+            (p, client, ct) =>
+            {
+                var args = new List<string> { $"name={p.GetValue(name)}", $"goal={p.GetValue(goal)}", $"done-when={p.GetValue(doneWhen)}" };
+                foreach (var (option, key) in (ReadOnlySpan<(Option<string?>, string)>)[(check, "check"), (budget, "budget"), (model, "model"), (effort, "effort")])
+                {
+                    if (p.GetValue(option) is { } value)
                     {
-                        plan.Add($"{key}={value}");
+                        args.Add($"{key}={value}");
                     }
                 }
-                while (Take(args, "--item") is { } item)
-                {
-                    plan.Add($"item={item}");
-                }
-                return await SendAsync(client, Verbs.PlanLeg, Verbs.FlightTarget(args[0]), [.. plan], "cli", output, cancellationToken);
-            case "start" when args.Count == 2:
-                return await SendAsync(client, Verbs.StartLeg, Verbs.LegTarget(args[0], args[1]), [], "cli", output, cancellationToken);
-            case "finish" or "go-around":
-                return await OnLegAsync(sub, args, client, cwd, output, cancellationToken);
-            default:
-                throw new UsageException($"unknown or incomplete 'leg {sub}'. pilot --help lists them");
-        }
-    }
+                args.AddRange((p.GetValue(item) ?? []).Select(i => $"item={i}"));
+                return SendAsync(client, Verbs.PlanLeg, Verbs.FlightTarget(p.GetValue(code)!), [.. args], "cli", output, ct);
+            });
 
-    /// <summary>A command on a leg: the one <c>--leg</c> names, else the flying leg of the plane the folder is in.</summary>
-    private static async Task<int> OnLegAsync(string command, List<string> args, NodeClient client, string cwd, TextWriter output, CancellationToken cancellationToken)
-    {
-        var named = Take(args, "--leg");
-        var undo = Flag(args, "--undo");
-        var snapshot = await SnapshotAsync(client, cancellationToken);
-        var (target, who) = named is not null ? (Verbs.FlightTargetPrefix + named, "cli") : LegHere(snapshot, cwd);
-        switch (command)
+        var legName = Arg("leg", "The leg's name");
+        var start = Action(new Command("start", "Start a fresh worker on the leg, in the flight's plane") { Arguments = { code, legName } },
+            (p, client, ct) => SendAsync(client, Verbs.StartLeg, Verbs.LegTarget(p.GetValue(code)!, p.GetValue(legName)!), [], "cli", output, ct));
+
+        var outcome = Arg("outcome", "done or failed");
+        outcome.AcceptOnlyFromAmong("done", "failed");
+        var report = Words("report", "A line on what was done, or why not", required: false);
+        var finish = Action(new Command("finish", "Finish the leg: done reruns its check; failed rings for a go-around") { Arguments = { outcome, report }, Options = { leg } },
+            (p, client, ct) => OnLeg(p, client, Verbs.FinishLeg, _ => [p.GetValue(outcome)!, .. p.GetValue(report) ?? []], ct));
+
+        var why = Words("why", "Why: the fresh worker is told it");
+        var goAround = Action(new Command("go-around", "Stop the leg's worker and start a fresh one, told why") { Arguments = { why }, Options = { leg } },
+            (p, client, ct) => OnLeg(p, client, Verbs.GoAround, _ => [Join(p, why)], ct));
+
+        var legCommand = new Command("leg", "Legs: plan, start, finish, go around") { Subcommands = { plan, start, finish, goAround } };
+
+        // check, artifact
+        var step = Words("step", "The step's number, or the start of its text");
+        var undo = new Option<bool>("--undo") { Description = "Untick it instead" };
+        var checkCommand = Action(new Command("check", "Tick a step of the leg's checklist") { Arguments = { step }, Options = { undo, leg } },
+            (p, client, ct) => OnLeg(p, client, Verbs.Check, _ => p.GetValue(undo) ? [Join(p, step), "undo"] : [Join(p, step)], ct));
+
+        var location = Arg("location", "A path or a URL");
+        var artifactTitle = Words("title", "What it shows", required: false);
+        var artifact = Action(new Command("artifact", "Record something to look at on the leg") { Arguments = { location, artifactTitle }, Options = { leg } },
+            (p, client, ct) =>
+            {
+                var where = p.GetValue(location)!;
+                var full = Path.IsPathRooted(where) || where.Contains("://", StringComparison.Ordinal) ? where : Path.GetFullPath(where, cwd);
+                return OnLeg(p, client, Verbs.AddArtifact, _ => [full, .. p.GetValue(artifactTitle) ?? []], ct);
+            });
+
+        // cards
+        var all = new Option<bool>("--all") { Description = "Closed cards and Handled lines too" };
+        var cards = Action(new Command("cards", "Open cards, rings first") { Options = { all } }, async (p, client, ct) =>
         {
-            case "check" when args.Count >= 1:
-                return await SendAsync(client, Verbs.Check, target, undo ? [string.Join(' ', args), "undo"] : [string.Join(' ', args)], who, output, cancellationToken);
-            case "artifact" when args.Count >= 1:
-                return await SendAsync(client, Verbs.AddArtifact, target, [Path.IsPathRooted(args[0]) || args[0].Contains("://", StringComparison.Ordinal) ? args[0] : Path.GetFullPath(args[0], cwd), .. args.Skip(1)], who, output, cancellationToken);
-            case "finish" when args.Count >= 1 && args[0] is "done" or "failed":
-                return await SendAsync(client, Verbs.FinishLeg, target, [.. args], who, output, cancellationToken);
-            case "go-around" when args.Count >= 1:
-                return await SendAsync(client, Verbs.GoAround, target, [.. args], who, output, cancellationToken);
-            default:
-                throw new UsageException($"incomplete '{command}'. pilot --help lists it");
-        }
+            await output.WriteAsync(Cards(await SnapshotAsync(client, ct), all: p.GetValue(all)));
+            return 0;
+        });
+        var card = Arg("card", "The card's id, as c3");
+        var choice = Words("choice", "The choice's number or label");
+        var answer = Action(new Command("answer", "Run the card's choice; the card closes when it is done") { Arguments = { card, choice } },
+            (p, client, ct) => SendAsync(client, Verbs.Answer, Verbs.CardTarget(p.GetValue(card)!), [Join(p, choice)], "cli", output, ct));
+        var dismissWhy = Words("why", "Why it needs nothing", required: false);
+        var dismiss = Action(new Command("dismiss", "Close the card with nothing done") { Arguments = { card, dismissWhy } },
+            (p, client, ct) => SendAsync(client, Verbs.Dismiss, Verbs.CardTarget(p.GetValue(card)!), p.GetValue(dismissWhy) ?? [], "cli", output, ct));
+
+        // say, note
+        var session = Arg("session", "The session's row id");
+        var text = Words("text", "What to say");
+        var say = Action(new Command("say", "Say something to a session through the node") { Arguments = { session, text } },
+            (p, client, ct) => SendAsync(client, Verbs.Say, Verbs.SessionTarget(p.GetValue(session)!), [Join(p, text)], "cli", output, ct));
+        var noteText = Words("text", "The note");
+        var note = Action(new Command("note", "Keep a note on the node, for every client") { Arguments = { noteText } },
+            (p, client, ct) => SendAsync(client, Verbs.Note, Verbs.NodeTarget, [Join(p, noteText)], "cli", output, ct));
+
+        return new RootCommand("pilot v2's command line, against this machine's node. Inside a flight's plane, --leg defaults to its flying leg.")
+        {
+            Options = { socket },
+            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note },
+        };
     }
 
     /// <summary>
@@ -313,24 +368,6 @@ public static class PilotCommand
         }
         return text.Length == 0 ? "No sessions.\n" : text.ToString();
     }
-
-    private static string? Take(List<string> args, string option)
-    {
-        var at = args.IndexOf(option);
-        if (at < 0)
-        {
-            return null;
-        }
-        if (at + 1 >= args.Count)
-        {
-            throw new UsageException($"{option} needs a value");
-        }
-        var value = args[at + 1];
-        args.RemoveRange(at, 2);
-        return value;
-    }
-
-    private static bool Flag(List<string> args, string flag) => args.Remove(flag);
 
     private sealed class UsageException(string message) : Exception(message);
 }

@@ -243,7 +243,7 @@ public sealed class GuiOptionsTests
         GuiOptions.Parse(["--snapshot", "s.json", "--node-socket", "x.sock"], out var error).ShouldBeNull();
         error.ShouldNotBeNull().ShouldStartWith("--snapshot shows a file");
         GuiOptions.Parse(["--say", "only-a-session"], out error).ShouldBeNull();
-        error.ShouldNotBeNull().ShouldStartWith("--say needs a session and the text");
+        error.ShouldNotBeNull().ShouldContain("'--say'");
     }
 }
 
