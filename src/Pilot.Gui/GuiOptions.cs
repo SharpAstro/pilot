@@ -3,15 +3,26 @@ using System.Globalization;
 namespace Pilot.Gui;
 
 /// <summary>
-/// The command line: <c>pilot-gui [--snapshot &lt;file.json&gt;] [--capture &lt;out.png&gt; [--size 1280x800]] [--exit-after 5s]</c>.
+/// The command line: <c>pilot-gui [--node-socket &lt;path&gt; | --snapshot &lt;file.json&gt;] [--capture &lt;out.png&gt; [--size 1280x800]]
+/// [--exit-after 5s]</c>, or <c>pilot-gui [--node-socket &lt;path&gt;] --say &lt;session&gt; &lt;text…&gt;</c>.
 /// </summary>
 internal sealed record GuiOptions
 {
     public const string Usage =
-        "usage: pilot-gui [--snapshot <file.json>] [--capture <out.png> [--size <W>x<H>]] [--exit-after <n>s|<n>ms|<n>m]";
+        "usage: pilot-gui [--node-socket <path> | --snapshot <file.json>] [--capture <out.png> [--size <W>x<H>]] [--exit-after <n>s|<n>ms|<n>m]\n" +
+        "       pilot-gui [--node-socket <path>] --say <session> <text...>";
 
-    /// <summary>The snapshot to show instead of a node; null shows the bundled sample.</summary>
+    /// <summary>A snapshot file to show instead of the live node; null shows the node.</summary>
     public string? Snapshot { get; init; }
+
+    /// <summary>The node's socket; null takes <c>PILOT_NODE_SOCKET</c>, then the per-user default.</summary>
+    public string? NodeSocket { get; init; }
+
+    /// <summary>The session <see cref="SayText"/> goes to: a row id, a session id or its start, or a name.</summary>
+    public string? SayTo { get; init; }
+
+    /// <summary>With <see cref="SayTo"/>: say this to it through the node, print the result and exit, with no window.</summary>
+    public string? SayText { get; init; }
 
     /// <summary>Render one frame on the CPU to this PNG (and a sibling <c>.rows.txt</c>), then exit without a window.</summary>
     public string? Capture { get; init; }
@@ -37,7 +48,20 @@ internal sealed record GuiOptions
                 return null;
             }
 
-            if (i + 1 >= args.Count || arg is not ("--snapshot" or "--capture" or "--size" or "--exit-after"))
+            if (arg == "--say")
+            {
+                if (i + 2 >= args.Count)
+                {
+                    error = $"--say needs a session and the text. {Usage}";
+                    return null;
+                }
+
+                // Everything after the session is the text, so it needs no quoting.
+                options = options with { SayTo = args[i + 1], SayText = string.Join(' ', args.Skip(i + 2)) };
+                break;
+            }
+
+            if (i + 1 >= args.Count || arg is not ("--snapshot" or "--capture" or "--size" or "--exit-after" or "--node-socket"))
             {
                 error = i + 1 >= args.Count && arg.StartsWith("--", StringComparison.Ordinal)
                     ? $"{arg} needs a value. {Usage}"
@@ -50,6 +74,9 @@ internal sealed record GuiOptions
             {
                 case "--snapshot":
                     options = options with { Snapshot = value };
+                    break;
+                case "--node-socket":
+                    options = options with { NodeSocket = value };
                     break;
                 case "--capture":
                     options = options with { Capture = value };
@@ -71,6 +98,12 @@ internal sealed record GuiOptions
                     options = options with { ExitAfter = after };
                     break;
             }
+        }
+
+        if (options.Snapshot is not null && (options.NodeSocket is not null || options.SayTo is not null))
+        {
+            error = $"--snapshot shows a file, so it takes no node: drop --node-socket and --say. {Usage}";
+            return null;
         }
 
         return options;

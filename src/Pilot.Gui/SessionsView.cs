@@ -31,7 +31,10 @@ internal sealed record SessionsScreen(IReadOnlyList<SessionLine> Lines, string S
 /// <remarks>
 /// The screen is a header over a main area, and the rows live in the main area. The left rail, the flight cards and
 /// the watchtower panel come later and take their places around it (#51); the rows do not move when they do.
-/// Up and Down move the selection (<see cref="PixelWidgetBase{TSurface}.ListCursor"/>); a click selects a row.
+/// Up and Down move the selection (<see cref="PixelWidgetBase{TSurface}.ListCursor"/>); a click selects a row. The
+/// selection follows the session, not the place: a live list reorders as sessions change state, and the row you
+/// picked stays picked. With <see cref="CanSay"/>, a bar at the foot takes text for the selected session, and Enter
+/// hands it to <see cref="OnSay"/>.
 /// </remarks>
 internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
 {
@@ -39,6 +42,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     // Design units; PaintLayout scales them by DpiScale.
     private const float HeaderHeight = 64f;
+    private const float SayBarHeight = 52f;
     private const float ColumnHeaderHeight = 28f;
     private const float RowHeight = 54f;
     private const float FirstLine = 22f;
@@ -72,34 +76,134 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private static readonly RGBAColor32 Low = new(0x5a, 0x8f, 0xd8, 0xff);
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
+    private IReadOnlyList<SessionLine> _lines = [];
 
     /// <summary>The selected row's index into <see cref="SessionsScreen.Lines"/>, or -1 with none.</summary>
     public int Selected => ListCursor.ListId == ListId ? ListCursor.Index : -1;
 
+    /// <summary>The selected session's row id, which the selection follows when the rows reorder.</summary>
+    public string? SelectedId { get; private set; }
+
+    /// <summary>Whether the screen has a node to say things through: the say bar shows only then.</summary>
+    public bool CanSay { get; set; }
+
+    /// <summary>The say bar's field.</summary>
+    public TextInputState SayInput { get; } = new();
+
+    /// <summary>What became of the last thing said, under the field: <c>resumed pil5-say-bg</c>, or the node's refusal.</summary>
+    public string? SayStatus { get; set; }
+
+    /// <summary>The selected session's name, which the say bar names as its target.</summary>
+    private string? SayTarget => Selected >= 0 && Selected < _lines.Count ? _lines[Selected].Name : null;
+
+    /// <summary>Called with the selected session's line and the text when Enter is pressed in the say bar.</summary>
+    public Func<SessionLine, string, Task>? OnSay { get; set; }
+
     public void Render(SessionsScreen screen, RectF32 bounds)
     {
         BeginFrame();
-        if (!ListCursor.IsOpen && screen.Lines.Count > 0)
+        _lines = screen.Lines;
+        if (screen.Lines.Count == 0)
         {
-            ListCursor.Open(ListId, 0, screen.Lines.Count);
+            ListCursor.Close();
         }
+        else
+        {
+            var index = SelectedId is { } id ? IndexOf(screen.Lines, id) : -1;
+            if (index < 0)
+            {
+                index = Math.Clamp(Selected, 0, screen.Lines.Count - 1);
+            }
+            if (!ListCursor.IsOpen || ListCursor.RowCount != screen.Lines.Count)
+            {
+                ListCursor.Open(ListId, index, screen.Lines.Count);
+            }
+            else if (ListCursor.Index != index)
+            {
+                ListCursor.MoveTo(index);
+            }
+        }
+        SelectedId = Selected >= 0 && Selected < screen.Lines.Count ? screen.Lines[Selected].Row.Id : null;
+
+        SayInput.OnCommit = Commit;
+        SayInput.Placeholder = SelectedId is null
+            ? "No session selected"
+            : $"Say to {screen.Lines[Selected].Name} · Enter sends";
 
         RenderLayout(Build(screen), bounds);
     }
 
-    public override bool HandleInput(InputEvent evt) => evt switch
+    /// <summary>Moves the selection to the row <paramref name="index"/>, and the session it follows with it.</summary>
+    public void Select(int index)
     {
-        InputEvent.KeyDown key => HandleListKey(key.Key, key.Modifiers),
-        _ => false,
-    };
+        if (index >= 0 && index < _lines.Count)
+        {
+            ListCursor.MoveTo(index);
+            SelectedId = _lines[index].Row.Id;
+        }
+    }
 
-    /// <summary>The whole screen as one tree: header, then the main area.</summary>
+    private static int IndexOf(IReadOnlyList<SessionLine> lines, string id)
+    {
+        for (var i = 0; i < lines.Count; i++)
+        {
+            if (lines[i].Row.Id == id)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private async Task Commit(string text)
+    {
+        var line = Selected >= 0 && Selected < _lines.Count ? _lines[Selected] : null;
+        if (line is null || string.IsNullOrWhiteSpace(text) || OnSay is not { } say)
+        {
+            return;
+        }
+
+        SayInput.Text = "";
+        SayInput.CursorPos = 0;
+        await say(line, text.Trim());
+    }
+
+    public override bool HandleInput(InputEvent evt)
+    {
+        if (evt is not InputEvent.KeyDown key || !HandleListKey(key.Key, key.Modifiers))
+        {
+            return false;
+        }
+
+        if (Selected >= 0 && Selected < _lines.Count)
+        {
+            SelectedId = _lines[Selected].Row.Id;
+        }
+        return true;
+    }
+
+    /// <summary>The whole screen as one tree: header, then the main area, then the say bar when there is a node.</summary>
     internal Layout.Node Build(SessionsScreen screen) =>
-        Layout.Builder.VStack(
-                Header(screen),
-                Main(screen).HStar())
+        (CanSay
+            ? Layout.Builder.VStack(Header(screen), Main(screen).HStar(), SayBar())
+            : Layout.Builder.VStack(Header(screen), Main(screen).HStar()))
             .Bg(Ground)
             .Stretch();
+
+    // The target sits beside the field, not only in its placeholder: the field holds the keyboard from the first frame,
+    // and a focused field hides its placeholder.
+    private Layout.Node SayBar() =>
+        Layout.Builder.VStack(
+                Layout.Builder.HStack(
+                        Layout.Builder.Text(SayTarget is { } target ? $"Say to {target}" : "No session selected", 14f, Body).WAuto(),
+                        Layout.Builder.TextInput(SayInput, 15f, focusOnOpen: true).WStar())
+                    .WithGap(12f)
+                    .RowH(28f),
+                Layout.Builder.Text(SayStatus ?? "Enter sends", 11f, Dim).RowH(16f))
+            .Pad(Gutter, 4f)
+            .Bg(HeaderBg)
+            .RowH(SayBarHeight);
 
     private static Layout.Node Header(SessionsScreen screen) =>
         Layout.Builder.VStack(
@@ -172,7 +276,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .RowH(RowHeight)
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
-            .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index));
+            .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index));
 
         return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }
