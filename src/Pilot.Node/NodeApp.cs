@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using Pilot.Contracts;
+using Pilot.Node.Flights;
 using Pilot.Node.Sessions;
 
 namespace Pilot.Node;
@@ -35,6 +36,9 @@ public static class NodeApp
         var relayFolder = Path.Combine(options.DataFolder, "relay");
         builder.Services.AddSingleton(SessionTrackerOptions.FromEnvironment() with { HiddenFolders = [relayFolder] });
         builder.Services.AddSingleton<HookBook>();
+        builder.Services.AddSingleton<IGit, GitCli>();
+        builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>()));
+        builder.Services.AddSingleton<FlightCommander>();
         builder.Services.AddSingleton(services => new SessionTracker(
             services.GetRequiredService<NodeState>(),
             services.GetRequiredService<IClaudeAgents>(),
@@ -99,6 +103,7 @@ public static class NodeApp
                 WireVersion = NodeWire.Version,
                 Version = version,
                 MachineName = Environment.MachineName,
+                MachinePrefix = options.Machine,
                 ProcessId = Environment.ProcessId,
                 StartedAt = startedAt,
                 DataFolder = options.DataFolder,
@@ -149,7 +154,7 @@ public static class NodeApp
         });
 
         // Read by hand rather than bound, so a body that is not a command gets the envelope like any other refusal.
-        app.MapPost(NodeWire.CommandsRoute, async (HttpContext context, NodeState state, SessionMessenger messenger, IHostApplicationLifetime lifetime) =>
+        app.MapPost(NodeWire.CommandsRoute, async (HttpContext context, NodeState state, SessionMessenger messenger, FlightCommander flights, IHostApplicationLifetime lifetime) =>
         {
             CommandRequest? command;
             try
@@ -168,8 +173,9 @@ public static class NodeApp
 
             // A say takes seconds and runs off the state's lock. It is not cut short when its client goes: a session
             // stopped and never resumed would be worse than a result nobody reads, which the stream carries anyway.
-            var result = command.Verb == Verbs.Say
-                ? await messenger.SayAsync(command, lifetime.ApplicationStopping)
+            // A flight verb runs git, off the lock too, and is not cut short either: a half-made worktree helps nobody.
+            var result = command.Verb == Verbs.Say ? await messenger.SayAsync(command, lifetime.ApplicationStopping)
+                : FlightCommander.Handles(command.Verb) ? await flights.RunAsync(command, lifetime.ApplicationStopping)
                 : state.Execute(command);
             return result.Ok
                 ? Results.Json(ResponseEnvelope<CommandResult>.Ok(result), PilotJsonContext.Default.ResponseEnvelopeCommandResult)

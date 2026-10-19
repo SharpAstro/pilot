@@ -66,6 +66,24 @@ curl --unix-socket <path> http://localhost/api/v1/node
   `blackbox.jsonl` (one line per command: when, who, verb, target, and what became of it; never compacted). A restart,
   a crash included, carries on with the same stream, the same numbers and every record.
 
+## Flights
+
+A flight is one issue's work on one repo, coded by the node from the repo's prefix and the issue (`TIA1611`, then
+`TIA1611a` to `e` for further flights on it; a code is never given twice on the machine, landed ones included). Its
+**plane** is one worktree and one branch, `<repo>/.claude/worktrees/<code>` on `flight/<code>`, made from the repo's
+default branch: every leg flies on it in order and it lands as one PR. A session working in a plane's worktree belongs
+to its flight, however it was started; a v2 worker's name says it too (`du1-tia1611-parser`, with the machine's
+prefix, `--machine` or `PILOT_MACHINE`, else from its name).
+
+| Command | What it does |
+| --- | --- |
+| `create-flight repo/<path> <issue> [title…]` | Codes the flight and makes its plane; `<path>` may be any checkout of the repo, a worktree included. |
+| `connect flight/<code> <other>` | The flight holds until the other has landed (a cycle is refused). |
+| `land flight/<code>` | Its work is in: the worktree goes when clean (never with changes not committed), the branch and code stay, and flights waiting for it are cleared. |
+
+The GUI's rail opens the **Flights** page (Ctrl+2): each flight's code, title, repo and issue, state (held: waiting
+for which), branch and sessions.
+
 ## Hooks
 
 Claude Code's hooks tell the node the moment a session changes, where the agents listing is read every few seconds:
@@ -91,7 +109,7 @@ A session the API stopped (its transcript's `apiError`, `usage_limit_reached` wi
 | --- | --- |
 | `GET /api/v1/node` | Which node this is: wire version, build version, machine, pid, started at, data folder, socket, stream. |
 | `GET /api/v1/events` | The event stream, a WebSocket: a snapshot carrying the current number, then deltas each numbered one past the last. `?since=<n>&stream=<id>` resumes with the deltas after `n`, or a snapshot when the node no longer holds them or has another stream. |
-| `POST /api/v1/commands` | Every command, `{verb, target, args, who}`. The result is the response and a `commandResult` event on the stream. Verbs: `note node <text>`, and `say session/<id> <text>`. |
+| `POST /api/v1/commands` | Every command, `{verb, target, args, who}`. The result is the response and a `commandResult` event on the stream. Verbs: `note node <text>`, `say session/<id> <text>`, and the flight verbs above. |
 | `POST /api/v1/hooks` | One Claude Code hook's stdin, as `pilot-node hook` forwards it; always 204. |
 
 HTTP responses come in a `ResponseEnvelope` (`response`, `error`, `statusCode`, `success`); stream events are sent

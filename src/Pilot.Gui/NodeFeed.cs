@@ -63,6 +63,15 @@ internal sealed class NodeFeed : IAsyncDisposable
 
     public void Start() => _run ??= Task.Run(() => RunAsync(_stop.Token));
 
+    /// <summary>The flights as of <paramref name="now"/>, with how many sessions each has.</summary>
+    public FlightsScreen Flights(DateTimeOffset now)
+    {
+        lock (_lock)
+        {
+            return new FlightsScreen(FlightLine.Build(_mirror.Flights.Values, _mirror.Sessions.Values, now), _status, now);
+        }
+    }
+
     /// <summary>The rows as of <paramref name="now"/>, and where they come from, for the header.</summary>
     public SessionsScreen Screen(DateTimeOffset now)
     {

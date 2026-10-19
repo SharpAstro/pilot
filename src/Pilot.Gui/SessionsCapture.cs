@@ -32,19 +32,23 @@ internal static class SessionsCapture
 
     /// <summary>Paints <paramref name="screen"/> once on the CPU and returns the view, its regions current.</summary>
     /// <param name="canSay">Whether to draw the say bar, as the window does on a live node.</param>
-    public static SessionsView<RgbaImage> Render(RgbaImageRenderer renderer, SessionsScreen screen, float dpiScale = 1f, bool canSay = false)
+    /// <param name="flights">The Flights page's screen, drawn when <paramref name="page"/> is Flights.</param>
+    public static SessionsView<RgbaImage> Render(RgbaImageRenderer renderer, SessionsScreen screen, float dpiScale = 1f, bool canSay = false,
+        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions)
     {
         var view = new SessionsView<RgbaImage>(renderer) { CanSay = canSay };
         var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = FontPath, DpiScale = dpiScale };
-        chrome.Render(screen, new RectF32(0, 0, renderer.Width, renderer.Height));
+        chrome.Show(page);
+        chrome.Render(screen, flights, new RectF32(0, 0, renderer.Width, renderer.Height));
         return view;
     }
 
     /// <summary>Renders one frame to <paramref name="pngPath"/> and its rows to <c>&lt;pngPath&gt;.rows.txt</c>; returns the dump's path.</summary>
-    public static string Write(SessionsScreen screen, string pngPath, int width, int height, bool canSay = false)
+    public static string Write(SessionsScreen screen, string pngPath, int width, int height, bool canSay = false,
+        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions)
     {
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
-        Render(renderer, screen, canSay: canSay);
+        Render(renderer, screen, canSay: canSay, flights: flights, page: page);
         if (Path.GetDirectoryName(Path.GetFullPath(pngPath)) is { } folder)
         {
             Directory.CreateDirectory(folder);
@@ -52,7 +56,9 @@ internal static class SessionsCapture
 
         File.WriteAllBytes(pngPath, PngWriter.Encode(renderer.Surface.Pixels, width, height));
         var rowsPath = pngPath + ".rows.txt";
-        File.WriteAllText(rowsPath, RowsText(screen), new UTF8Encoding(false));
+        File.WriteAllText(rowsPath, page == PilotPage.Flights && flights is not null
+            ? string.Concat(flights.Lines.Select(l => l.ToDumpLine() + "\n"))
+            : RowsText(screen), new UTF8Encoding(false));
         return rowsPath;
     }
 

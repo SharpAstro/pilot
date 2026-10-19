@@ -9,7 +9,7 @@ namespace Pilot.Gui;
 internal sealed record GuiOptions
 {
     public const string Usage =
-        "usage: pilot-gui [--node-socket <path> | --snapshot <file.json>] [--capture <out.png> [--size <W>x<H>]] [--exit-after <n>s|<n>ms|<n>m]\n" +
+        "usage: pilot-gui [--node-socket <path> | --snapshot <file.json>] [--capture <out.png> [--size <W>x<H>] [--page sessions|flights]] [--exit-after <n>s|<n>ms|<n>m]\n" +
         "       pilot-gui [--node-socket <path>] --say <session> <text...>";
 
     /// <summary>A snapshot file to show instead of the live node; null shows the node.</summary>
@@ -26,6 +26,9 @@ internal sealed record GuiOptions
 
     /// <summary>Render one frame on the CPU to this PNG (and a sibling <c>.rows.txt</c>), then exit without a window.</summary>
     public string? Capture { get; init; }
+
+    /// <summary>The page a capture shows: sessions, or flights.</summary>
+    public PilotPage Page { get; init; } = PilotPage.Sessions;
 
     public int Width { get; init; } = 1280;
 
@@ -61,7 +64,7 @@ internal sealed record GuiOptions
                 break;
             }
 
-            if (i + 1 >= args.Count || arg is not ("--snapshot" or "--capture" or "--size" or "--exit-after" or "--node-socket"))
+            if (i + 1 >= args.Count || arg is not ("--snapshot" or "--capture" or "--size" or "--exit-after" or "--node-socket" or "--page"))
             {
                 error = i + 1 >= args.Count && arg.StartsWith("--", StringComparison.Ordinal)
                     ? $"{arg} needs a value. {Usage}"
@@ -77,6 +80,14 @@ internal sealed record GuiOptions
                     break;
                 case "--node-socket":
                     options = options with { NodeSocket = value };
+                    break;
+                case "--page":
+                    if (value is not ("sessions" or "flights"))
+                    {
+                        error = $"--page takes sessions or flights, not '{value}'.";
+                        return null;
+                    }
+                    options = options with { Page = value == "flights" ? PilotPage.Flights : PilotPage.Sessions };
                     break;
                 case "--capture":
                     options = options with { Capture = value };

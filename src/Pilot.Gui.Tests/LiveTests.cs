@@ -393,15 +393,75 @@ public sealed class RailTests
         chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 1280, 800));
 
         PilotChrome<RgbaImage>.Pages.Select(p => p.Label).ShouldBe(["Sessions", "Flights", "Background tasks", "Settings"]);
-        PilotChrome<RgbaImage>.Pages.Where(p => p.Locked is null).Select(p => p.Page).ShouldBe([PilotPage.Sessions]);
+        PilotChrome<RgbaImage>.Pages.Where(p => p.Locked is null).Select(p => p.Page).ShouldBe([PilotPage.Sessions, PilotPage.Flights]);
         chrome.Page.ShouldBe(PilotPage.Sessions);
 
         var regions = new List<ClickableRegion>();
         chrome.Rail.CollectPaintedRegions(regions);
-        // One cell per page down the rail's 52 px: Sessions live, the locked three as disabled cells.
+        // One cell per page down the rail's 52 px: Sessions and Flights live, the locked two as disabled cells.
         var cells = regions.Where(r => r.Result is HitResult.ListItemHit).ToList();
         cells.Count.ShouldBe(4);
-        cells.Count(r => r.Result is HitResult.ListItemHit { ListId: TabBarRegions.Tabs }).ShouldBe(1);
+        cells.Count(r => r.Result is HitResult.ListItemHit { ListId: TabBarRegions.Tabs }).ShouldBe(2);
         cells.ShouldAllBe(r => r.X + r.Width <= 53f);
+    }
+}
+
+public sealed class FlightsPageTests
+{
+    private static FlightRow Flight(string code, FlightState state, string[]? connections = null, DateTimeOffset? landed = null) => new()
+    {
+        Code = code,
+        Repo = "tianwen",
+        RepoPath = "/r/tianwen",
+        Issue = int.Parse(code[3..].TrimEnd('a', 'b'), System.Globalization.CultureInfo.InvariantCulture),
+        Title = code == "TIA1611" ? "Planets on the GPU" : null,
+        Branch = "flight/" + code.ToLowerInvariant(),
+        Worktree = "/r/tianwen/.claude/worktrees/" + code.ToLowerInvariant(),
+        Base = "origin/main",
+        State = state,
+        Connections = connections ?? [],
+        CreatedAt = Live.At,
+        LandedAt = landed,
+    };
+
+    [Fact]
+    public void FlightsReadAsTheirCodeTitleStateAndSessions()
+    {
+        var sessions = new[]
+        {
+            Live.Row("aaaa1111", "du1-tia1611-gpu", SessionState.Working) with { Flight = "TIA1611" },
+            Live.Row("bbbb2222", "du1-tia1611-review", SessionState.Ended) with { Flight = "TIA1611" },
+        };
+        var lines = FlightLine.Build(
+            [Flight("TIA1611", FlightState.Flying), Flight("TIA1640", FlightState.Held, ["TIA1611"]), Flight("TIA1500", FlightState.Landed, landed: Live.At.AddHours(-3))],
+            sessions, Live.At);
+
+        lines.Select(l => l.ToDumpLine()).ShouldBe(
+        [
+            "TIA1611 | Planets on the GPU | tianwen #1611 | flying | flight/tia1611 | 2 sessions · 1 live",
+            "TIA1640 | issue #1640 | tianwen #1640 | held (waiting for TIA1611) | flight/tia1640 | no session",
+            "TIA1500 | issue #1500 | tianwen #1500 | landed (3h ago) | flight/tia1500 | no session",
+        ]);
+        new FlightsScreen(lines, "test", Live.At).Summary.ShouldBe("3 flights · 1 flying · 1 held");
+    }
+
+    [Fact]
+    public void TheRailOpensTheFlightsPageAndItPaintsARowPerFlight()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        var flights = new FlightsScreen(FlightLine.Build([Flight("TIA1611", FlightState.Flying), Flight("TIA1640", FlightState.Held, ["TIA1611"])], [], Live.At), "test", Live.At);
+
+        chrome.Show(PilotPage.Flights);
+        chrome.Render(new SessionsScreen([], "test", Live.At), flights, new RectF32(0, 0, 1280, 800));
+
+        chrome.Page.ShouldBe(PilotPage.Flights);
+        chrome.Widgets.ShouldContain(chrome.Flights);
+        var regions = new List<ClickableRegion>();
+        chrome.Flights.CollectPaintedRegions(regions);
+        regions.Count(r => r.Result is HitResult.ListItemHit { ListId: FlightsView<RgbaImage>.ListId }).ShouldBe(2);
+        // A locked page is never shown.
+        chrome.Show(PilotPage.Settings);
+        chrome.Page.ShouldBe(PilotPage.Flights);
     }
 }

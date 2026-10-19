@@ -43,6 +43,7 @@ public sealed class NodeState
     private readonly int _retainedDeltas;
     private readonly Dictionary<string, SessionRow> _sessions = new Dictionary<string, SessionRow>(StringComparer.Ordinal);
     private readonly List<NodeNote> _notes = [];
+    private readonly Dictionary<string, FlightRow> _flights = new Dictionary<string, FlightRow>(StringComparer.Ordinal);
 
     // The latest deltas, oldest first, serialised once: what a resuming client is sent.
     private readonly Queue<(long Seq, byte[] Json)> _held = new Queue<(long Seq, byte[] Json)>();
@@ -155,6 +156,39 @@ public sealed class NodeState
             }
         }
     }
+
+    /// <summary>The flights, in the order they were created.</summary>
+    public FlightRow[] Flights()
+    {
+        lock (_gate)
+        {
+            return [.. _flights.Values.OrderBy(f => f.CreatedAt).ThenBy(f => f.Code, StringComparer.Ordinal)];
+        }
+    }
+
+    /// <summary>Adds a flight, or replaces the one with its code; an unchanged row makes no delta.</summary>
+    public void PutFlight(FlightRow flight)
+    {
+        lock (_gate)
+        {
+            if (_flights.TryGetValue(flight.Code, out var known))
+            {
+                if (Same(known, flight))
+                {
+                    return;
+                }
+                Publish(new FlightChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = flight });
+            }
+            else
+            {
+                Publish(new FlightAddedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = flight });
+            }
+        }
+    }
+
+    // Record equality compares the connections array by reference.
+    private static bool Same(FlightRow a, FlightRow b) =>
+        a with { Connections = [] } == b with { Connections = [] } && a.Connections.SequenceEqual(b.Connections, StringComparer.Ordinal);
 
     /// <summary>Removes a session row; nothing happens when there is none.</summary>
     public void RemoveSession(string id)
@@ -307,6 +341,12 @@ public sealed class NodeState
             case NoteAddedEvent note:
                 _notes.Add(note.Note);
                 break;
+            case FlightAddedEvent added:
+                _flights[added.Flight.Code] = added.Flight;
+                break;
+            case FlightChangedEvent changed:
+                _flights[changed.Flight.Code] = changed.Flight;
+                break;
         }
     }
 
@@ -317,6 +357,10 @@ public sealed class NodeState
             _sessions[row.Id] = row;
         }
         _notes.AddRange(snapshot.Notes);
+        foreach (var flight in snapshot.Flights ?? [])
+        {
+            _flights[flight.Code] = flight;
+        }
         _seq = snapshot.Seq;
     }
 
@@ -327,6 +371,7 @@ public sealed class NodeState
         Stream = Stream,
         Sessions = [.. _sessions.Values],
         Notes = [.. _notes],
+        Flights = [.. _flights.Values],
     };
 
     private static byte[] Serialize(NodeEvent nodeEvent) => JsonSerializer.SerializeToUtf8Bytes(nodeEvent, PilotJsonContext.Default.NodeEvent);
