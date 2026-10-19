@@ -174,7 +174,13 @@ public sealed class NodeFeedTests
         await Until(() => node.OpenCount >= 3);
 
         feed.Connected.ShouldBeFalse();
-        feed.Screen(Live.At).Source.ShouldStartWith("no node on node.sock: start pilot-node");
+        feed.Screen(Live.At).Source.ShouldStartWith("waiting for the node on node.sock");
+
+        // When the GUI could not start one, the header says why.
+        feed.Problem = "pilot-node.exe is not beside pilot-gui";
+        var opens = node.OpenCount;
+        await Until(() => node.OpenCount > opens + 1);
+        feed.Screen(Live.At).Source.ShouldStartWith("no node on node.sock: pilot-node.exe is not beside pilot-gui");
     }
 }
 
@@ -333,5 +339,69 @@ public sealed class SayBarTests
         view.CanSay = true;
         view.Render(Screen(Live.Row("aaaa1111", "one")), new RectF32(0, 0, 1280, 800));
         view.GetRegisteredTextInputs().ShouldBe([view.SayInput]);
+    }
+}
+
+public sealed class NodeLauncherTests
+{
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    [Fact]
+    public async Task ANamedSocketWithNoNodeGetsNoneStarted()
+    {
+        var socket = Path.Combine(Path.GetTempPath(), "p2l-" + Guid.NewGuid().ToString("N")[..8] + ".sock");
+
+        var (outcome, message) = await NodeLauncher.FindOrStartAsync(socket, named: true, Ct);
+
+        outcome.ShouldBe(NodeLaunch.NamedSocketSilent);
+        message.ShouldContain("which was named, so none is started there");
+    }
+
+    [Fact]
+    public void TheNodeIsFoundBesideTheGuiOrInTheSourceTreesBuildOutput()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "p2l-" + Guid.NewGuid().ToString("N")[..8]);
+        var exe = OperatingSystem.IsWindows() ? "pilot-node.exe" : "pilot-node";
+        var gui = Directory.CreateDirectory(Path.Combine(root, "src", "Pilot.Gui", "bin", "Release", "net10.0")).FullName;
+        var node = Directory.CreateDirectory(Path.Combine(root, "src", "Pilot.Node", "bin", "Release", "net10.0")).FullName;
+        try
+        {
+            NodeLauncher.FindNodeBinary(gui).ShouldBeNull();
+
+            File.WriteAllText(Path.Combine(node, exe), "");
+            NodeLauncher.FindNodeBinary(gui + Path.DirectorySeparatorChar).ShouldBe(Path.Combine(node, exe));
+
+            // A publish puts them side by side, and that one wins.
+            File.WriteAllText(Path.Combine(gui, exe), "");
+            NodeLauncher.FindNodeBinary(gui).ShouldBe(Path.Combine(gui, exe));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+}
+
+public sealed class RailTests
+{
+    [Fact]
+    public void TheRailHasEveryPageAndOnlySessionsIsOpen()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var view = new SessionsView<RgbaImage>(renderer);
+        var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = SessionsCapture.FontPath };
+        chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 1280, 800));
+
+        PilotChrome<RgbaImage>.Pages.Select(p => p.Label).ShouldBe(["Sessions", "Flights", "Background tasks", "Settings"]);
+        PilotChrome<RgbaImage>.Pages.Where(p => p.Locked is null).Select(p => p.Page).ShouldBe([PilotPage.Sessions]);
+        chrome.Page.ShouldBe(PilotPage.Sessions);
+
+        var regions = new List<ClickableRegion>();
+        chrome.Rail.CollectPaintedRegions(regions);
+        // One cell per page down the rail's 52 px: Sessions live, the locked three as disabled cells.
+        var cells = regions.Where(r => r.Result is HitResult.ListItemHit).ToList();
+        cells.Count.ShouldBe(4);
+        cells.Count(r => r.Result is HitResult.ListItemHit { ListId: TabBarRegions.Tabs }).ShouldBe(1);
+        cells.ShouldAllBe(r => r.X + r.Width <= 53f);
     }
 }

@@ -17,9 +17,21 @@ if (GuiOptions.Parse(args, out var error) is not { } options)
 }
 
 var socketPath = NodeSocket.Resolve(options.NodeSocket);
+// A socket the user named is only connected to; the default one gets a node started on it when none runs.
+var namedSocket = options.NodeSocket is not null || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(NodeSocket.EnvironmentVariable));
+
+async Task EnsureNodeAsync()
+{
+    var (outcome, message) = await NodeLauncher.FindOrStartAsync(socketPath, namedSocket, CancellationToken.None);
+    if (outcome != NodeLaunch.Found)
+    {
+        Console.Error.WriteLine($"pilot-gui: {message}");
+    }
+}
 
 if (options.SayTo is { } sayTo)
 {
+    await EnsureNodeAsync();
     using var oneShot = new NodeClient(socketPath);
     return await GuiSay.RunAsync(oneShot, sayTo, options.SayText ?? "", Console.Out, CancellationToken.None);
 }
@@ -44,6 +56,7 @@ if (options.Snapshot is { } snapshotFile)
 else if (options.Capture is not null)
 {
     // A capture of the live node is the rows as of now.
+    await EnsureNodeAsync();
     using var oneShot = new NodeClient(socketPath);
     try
     {
@@ -89,14 +102,15 @@ using var window = SdlVulkanWindow.Create(Title, 1280, 800);
 window.GetSizeInPixels(out var width, out var height);
 using var context = VulkanContext.Create(window.Instance, window.Surface, (uint)width, (uint)height);
 using var renderer = new VkRenderer(context, (uint)width, (uint)height);
-var view = new SessionsView<VulkanContext>(renderer) { FontPath = SessionsCapture.FontPath, DpiScale = window.DisplayScale };
+var view = new SessionsView<VulkanContext>(renderer);
+var chrome = new PilotChrome<VulkanContext>(renderer, view) { FontPath = SessionsCapture.FontPath, DpiScale = window.DisplayScale };
 
 using var cts = new CancellationTokenSource();
 var tracker = new BackgroundTaskTracker();
 var loop = new SdlEventLoop(window, renderer) { BackgroundColor = new RGBAColor32(0x12, 0x12, 0x18, 0xff) };
 var router = new InputRouter(view.Ui, tracker, loop.RequestRedraw)
 {
-    Widgets = () => [view],
+    Widgets = () => chrome.Widgets,
     Unhandled = view.HandleInput,
 };
 
@@ -133,6 +147,20 @@ if (feed is not null && client is not null)
         loop.RequestRedraw();
     };
     feed.Start();
+
+    // The window opens at once and the feed connects when the node answers; a node is started meanwhile if none runs.
+    _ = Task.Run(async () =>
+    {
+        var (outcome, message) = await NodeLauncher.FindOrStartAsync(socketPath, namedSocket, CancellationToken.None);
+        if (outcome != NodeLaunch.Found)
+        {
+            Console.Error.WriteLine($"pilot-gui: {message}");
+        }
+        if (outcome is NodeLaunch.NamedSocketSilent or NodeLaunch.NoNodeBinary or NodeLaunch.DidNotStart)
+        {
+            feed.Problem = message;
+        }
+    });
 }
 
 var announced = (string?)null;
@@ -142,7 +170,7 @@ loop.OnResize = (w, h) =>
 {
     width = (int)w;
     height = (int)h;
-    view.DpiScale = window.DisplayScale;
+    chrome.DpiScale = window.DisplayScale;
 };
 loop.OnRender = () =>
 {
@@ -154,7 +182,7 @@ loop.OnRender = () =>
     }
 
     view.Ui.FrameId++;
-    view.Render(screen, new RectF32(0, 0, width, height));
+    chrome.Render(screen, new RectF32(0, 0, width, height));
     router.AfterPaint();
 
     // Say which session is selected whenever it changes, so stdout follows what the window shows.
@@ -191,6 +219,7 @@ using var inspector = DebugInspector.Attach(loop, new DebugInspectorOptions
     GetRegions = () =>
     {
         var regions = new List<ClickableRegion>();
+        chrome.Rail.CollectPaintedRegions(regions);
         view.CollectPaintedRegions(regions);
         return regions;
     },
@@ -199,7 +228,14 @@ using var inspector = DebugInspector.Attach(loop, new DebugInspectorOptions
 
 loop.OnKeyDown = key => router.Handle(key);
 loop.OnTextInput = text => router.Handle(new InputEvent.TextInput(text));
-loop.OnPointerInput = router.Handle;
+loop.OnPointerInput = evt =>
+{
+    if (evt is InputEvent.MouseMove move)
+    {
+        chrome.Pointer = (move.X, move.Y);
+    }
+    return router.Handle(evt);
+};
 
 Console.WriteLine($"pilot-gui: window \"{Title}\" open (pid {Environment.ProcessId}), {width}x{height} px at scale {window.DisplayScale:0.##}");
 Console.WriteLine(snapshot is null

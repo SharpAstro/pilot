@@ -36,6 +36,11 @@ pilot-gui [--node-socket <path>] --say <session> <text...>   # say it through th
 pilot-gui --snapshot <file.json> [--capture out.png]         # a snapshot file instead of the node (the contract's sample: Pilot.Contracts/Fixtures)
 ```
 
+- **Node:** with no node on the default socket, the GUI starts one (`pilot-node` beside it, or the source tree's
+  build of the same configuration), detached so it outlives the window; a socket named with `--node-socket` or
+  `PILOT_NODE_SOCKET` is only connected to.
+- **Rail:** the left rail, as tianwen's: Sessions (Ctrl+1), and Flights, Background tasks and Settings locked until
+  the legs that bring them.
 - **Live:** the window follows the node's event stream, resumes with `since` after a drop, and says so in its header
   while no node answers, trying again every 2 s. The selection follows its session as the rows reorder.
 - **Say:** type in the bar at the foot (Ctrl+S takes the keyboard there from anywhere) and Enter says it to the selected session (the node's `say`: an idle background
