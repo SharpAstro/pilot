@@ -66,6 +66,25 @@ curl --unix-socket <path> http://localhost/api/v1/node
   `blackbox.jsonl` (one line per command: when, who, verb, target, and what became of it; never compacted). A restart,
   a crash included, carries on with the same stream, the same numbers and every record.
 
+## Hooks
+
+Claude Code's hooks tell the node the moment a session changes, where the agents listing is read every few seconds:
+working on a prompt or a tool call, waiting on a permission prompt (with its words), idle after a turn, stopped by an
+API error or a usage limit. They run in every session, interactive, `--bg` and `-p` alike.
+
+```bash
+pilot-node hooks install [--settings <file>] [--node-socket <path>]   # default: ~/.claude/settings.json
+pilot-node hooks remove  [--settings <file>]
+```
+
+`install` adds one handler per event (SessionStart, UserPromptSubmit, PreToolUse, PermissionRequest, Notification,
+Stop, StopFailure, SessionEnd), exec-form `pilot-node hook` and `async`, beside whatever hooks the file has, and a
+second install changes nothing; `remove` takes out only pilot's. `pilot-node hook` forwards the hook's stdin to the
+node and always exits 0 and prints nothing, so a missing or slow node costs a session nothing.
+
+A session the API stopped (its transcript's `apiError`, `usage_limit_reached` with when the limit resets) shows as
+**stopped** with why and when it can go on, hooks or not.
+
 ## The wire (`NodeWire.Version` 1)
 
 | Route | What it does |
@@ -73,6 +92,7 @@ curl --unix-socket <path> http://localhost/api/v1/node
 | `GET /api/v1/node` | Which node this is: wire version, build version, machine, pid, started at, data folder, socket, stream. |
 | `GET /api/v1/events` | The event stream, a WebSocket: a snapshot carrying the current number, then deltas each numbered one past the last. `?since=<n>&stream=<id>` resumes with the deltas after `n`, or a snapshot when the node no longer holds them or has another stream. |
 | `POST /api/v1/commands` | Every command, `{verb, target, args, who}`. The result is the response and a `commandResult` event on the stream. Verbs: `note node <text>`, and `say session/<id> <text>`. |
+| `POST /api/v1/hooks` | One Claude Code hook's stdin, as `pilot-node hook` forwards it; always 204. |
 
 HTTP responses come in a `ResponseEnvelope` (`response`, `error`, `statusCode`, `success`); stream events are sent
 bare, each with its `kind` and `seq`. A client that falls behind is closed and resumes with `since`.

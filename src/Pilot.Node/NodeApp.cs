@@ -34,13 +34,17 @@ public static class NodeApp
         builder.Services.AddSingleton<IClaudeAgents, ClaudeCliAgents>();
         var relayFolder = Path.Combine(options.DataFolder, "relay");
         builder.Services.AddSingleton(SessionTrackerOptions.FromEnvironment() with { HiddenFolders = [relayFolder] });
+        builder.Services.AddSingleton<HookBook>();
         builder.Services.AddSingleton(services => new SessionTracker(
             services.GetRequiredService<NodeState>(),
             services.GetRequiredService<IClaudeAgents>(),
             services.GetRequiredService<SessionTrackerOptions>(),
             () => services.GetRequiredService<EventHub>().ClientCount > 0,
             services.GetRequiredService<TimeProvider>(),
-            services.GetRequiredService<ILogger<SessionTracker>>()));
+            services.GetRequiredService<ILogger<SessionTracker>>())
+        {
+            Hooks = services.GetRequiredService<HookBook>(),
+        });
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.
         builder.Services.AddSingleton<ISessionDelivery>(services => new ClaudeCliDelivery(
@@ -66,6 +70,26 @@ public static class NodeApp
 
     private static void MapRoutes(WebApplication app)
     {
+        // A hook's stdin, forwarded by `pilot-node hook`: the session it names takes the hook's state, and the tracker
+        // looks again now. Always 204, so a hook never learns anything worth failing over.
+        app.MapPost(NodeWire.HooksRoute, async (HttpContext context, HookBook hooks, SessionTracker tracker, TimeProvider time, ILogger<HookBook> logger) =>
+        {
+            try
+            {
+                using var hook = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
+                if (hooks.Apply(hook.RootElement, time.GetUtcNow()) is { } session)
+                {
+                    // Debug only: PreToolUse fires on every tool call. Logging__LogLevel__Pilot.Node=Debug shows them.
+                    logger.LogDebug("hook {Event} for {Session}", ClaudeAgentsJson.Text(hook.RootElement, "hook_event_name"), session[..Math.Min(8, session.Length)]);
+                    tracker.Kick();
+                }
+            }
+            catch (JsonException)
+            {
+            }
+            return Results.NoContent();
+        });
+
         var startedAt = DateTimeOffset.UtcNow;
         var version = typeof(NodeApp).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 

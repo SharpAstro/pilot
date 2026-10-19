@@ -20,6 +20,8 @@
       "state": "working",
       "waitingFor": null,
       "spendWeighted": 1825402,
+      "apiError": null,
+      "apiErrorResetsAt": null,
       "budget": null,
       "remoteControlUrl": "https://claude.ai/code/session_01ExampleWatchtower0000000",
       "startedAt": "2026-10-18T06:00:02+00:00"
@@ -42,6 +44,8 @@
       "state": "idle",
       "waitingFor": null,
       "spendWeighted": 6402115,
+      "apiError": null,
+      "apiErrorResetsAt": null,
       "budget": 10000000,
       "remoteControlUrl": null,
       "startedAt": "2026-10-17T21:30:15+00:00"
@@ -64,6 +68,8 @@
       "state": "working",
       "waitingFor": null,
       "spendWeighted": 2311870,
+      "apiError": null,
+      "apiErrorResetsAt": null,
       "budget": 4000000,
       "remoteControlUrl": "https://claude.ai/code/session_01ExampleWorkerParser00000",
       "startedAt": "2026-10-18T08:05:33+00:00"
@@ -86,6 +92,8 @@
       "state": "ended",
       "waitingFor": null,
       "spendWeighted": 1290334,
+      "apiError": null,
+      "apiErrorResetsAt": null,
       "budget": 2000000,
       "remoteControlUrl": null,
       "startedAt": "2026-10-18T07:31:02+00:00"
@@ -108,6 +116,8 @@
       "state": "waiting",
       "waitingFor": "permission to run: dotnet test",
       "spendWeighted": 402287,
+      "apiError": null,
+      "apiErrorResetsAt": null,
       "budget": null,
       "remoteControlUrl": null,
       "startedAt": "2026-10-18T09:20:48+00:00"
@@ -130,6 +140,8 @@
       "state": "failed",
       "waitingFor": null,
       "spendWeighted": 0,
+      "apiError": null,
+      "apiErrorResetsAt": null,
       "budget": 1000000,
       "remoteControlUrl": null,
       "startedAt": "2026-10-18T09:02:10+00:00"

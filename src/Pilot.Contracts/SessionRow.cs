@@ -78,6 +78,16 @@ public sealed record SessionRow
     /// </summary>
     public required long SpendWeighted { get; init; }
 
+    /// <summary>
+    /// What stopped its last turn, when the API did and no reply came after: the transcript's <c>apiError</c>
+    /// (<c>usage_limit_reached</c>, …). Null while its last turn ended in a reply. A session the usage limit stopped sits
+    /// idle with its work half done, and nothing else says so: PIL5's say worker sat nine hours that way.
+    /// </summary>
+    public string? ApiError { get; init; }
+
+    /// <summary>When the limit behind <see cref="ApiError"/> resets (its <c>rate_limit_info.resetsAt</c>); null when it gave none.</summary>
+    public DateTimeOffset? ApiErrorResetsAt { get; init; }
+
     /// <summary>Its budget in weighted tokens, from its leg; null when it has none (the watchtower, an ad hoc session).</summary>
     public long? Budget { get; init; }
 

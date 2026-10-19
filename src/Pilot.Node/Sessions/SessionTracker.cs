@@ -43,6 +43,14 @@ public sealed class SessionTracker : BackgroundService
     private readonly SemaphoreSlim _gate = new SemaphoreSlim(1, 1);
     private bool _failing;
 
+    private volatile bool _kicked;
+
+    /// <summary>The hooks sessions post: a row follows its session's latest one while the session runs.</summary>
+    public HookBook Hooks { get; init; } = new();
+
+    /// <summary>Polls at the next second rather than at the end of the interval: a hook said something changed.</summary>
+    public void Kick() => _kicked = true;
+
     public SessionTracker(NodeState state, IClaudeAgents agents, SessionTrackerOptions options, Func<bool> hasClients, TimeProvider time, ILogger<SessionTracker> logger)
     {
         _state = state;
@@ -60,6 +68,7 @@ public sealed class SessionTracker : BackgroundService
         {
             try
             {
+                _kicked = false;
                 await PollAsync(stopping);
             }
             catch (OperationCanceledException) when (stopping.IsCancellationRequested)
@@ -74,7 +83,7 @@ public sealed class SessionTracker : BackgroundService
             try
             {
                 var polled = _time.GetUtcNow();
-                while (_time.GetUtcNow() < polled + Interval())
+                while (_time.GetUtcNow() < polled + Interval() && !_kicked)
                 {
                     await Task.Delay(TimeSpan.FromTicks(Math.Min(Slice.Ticks, Interval().Ticks)), _time, stopping);
                 }
@@ -300,7 +309,7 @@ public sealed class SessionTracker : BackgroundService
             _repos[agent.Cwd] = repo = RepoOf.Find(agent.Cwd);
         }
 
-        Put(SessionRowBuilder.Build(agent, facts, record, repo, SessionRoles.Resolve(agent.Name)) with { Id = id });
+        Put(SessionRowBuilder.Build(agent, facts, record, repo, SessionRoles.Resolve(agent.Name), Hooks.Of(agent.SessionId)) with { Id = id });
     }
 
     private void Put(SessionRow row)

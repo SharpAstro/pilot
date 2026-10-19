@@ -83,8 +83,8 @@ internal sealed partial record SessionLine
             Context = $"{Tokens(row.ContextTokens)} / {Tokens(row.ContextWindow)} · {Percent(contextFraction)}",
             ContextFraction = Math.Clamp(contextFraction, 0f, 1f),
             LastResponse = row.LastResponseAt is { } at ? Ago(now - at) : "none yet",
-            State = StateText(row.State),
-            WaitingFor = row.State == SessionState.Waiting ? row.WaitingFor : null,
+            State = IsStopped(row) ? "stopped" : StateText(row.State),
+            WaitingFor = IsStopped(row) ? StopText(row, now) : row.State == SessionState.Waiting ? row.WaitingFor : null,
             Spend = row.Budget is { } budget
                 ? $"{Tokens(row.SpendWeighted)} / {Tokens(budget)} · {Percent(spendFraction ?? 0f)}"
                 : Tokens(row.SpendWeighted),
@@ -126,6 +126,30 @@ internal sealed partial record SessionLine
         SessionRole.Watchtower => "watchtower",
         _ => "ad hoc",
     };
+
+    /// <summary>
+    /// Whether the API stopped its last turn and it has not run since: shown as stopped, with why and when it can go on,
+    /// rather than as idle, which is how such a session otherwise looks while its work sits half done.
+    /// </summary>
+    internal static bool IsStopped(SessionRow row) => row.ApiError is not null && row.State != SessionState.Working;
+
+    /// <summary>Why it stopped and when its limit resets: <c>usage limit · resets in 2h 10m</c>.</summary>
+    internal static string StopText(SessionRow row, DateTimeOffset now)
+    {
+        var why = row.ApiError switch
+        {
+            "usage_limit_reached" => "usage limit",
+            { } other => other.Replace('_', ' '),
+            null => "an API error",
+        };
+        return row.ApiErrorResetsAt is not { } resets ? why
+            : resets <= now ? $"{why} · reset {Ago(now - resets)}, can go on"
+            : $"{why} · resets in {In(resets - now)}";
+    }
+
+    private static string In(TimeSpan span) =>
+        span.TotalMinutes < 60 ? $"{Math.Max(1, (int)Math.Ceiling(span.TotalMinutes))}m"
+        : span.Minutes == 0 ? $"{(int)span.TotalHours}h" : $"{(int)span.TotalHours}h {span.Minutes}m";
 
     internal static string StateText(SessionState state) => state switch
     {
