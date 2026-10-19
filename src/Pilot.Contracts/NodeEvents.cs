@@ -21,6 +21,8 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(CommandResultEvent), "commandResult")]
 [JsonDerivedType(typeof(FlightAddedEvent), "flightAdded")]
 [JsonDerivedType(typeof(FlightChangedEvent), "flightChanged")]
+[JsonDerivedType(typeof(LegAddedEvent), "legAdded")]
+[JsonDerivedType(typeof(LegChangedEvent), "legChanged")]
 public abstract record NodeEvent
 {
     /// <summary>
@@ -63,6 +65,15 @@ public sealed record SnapshotEvent : NodeEvent
     }
 
     private readonly FlightRow[]? _flights;
+
+    /// <summary>Every leg of every flight. Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public LegRow[] Legs
+    {
+        get => _legs ?? [];
+        init => _legs = value;
+    }
+
+    private readonly LegRow[]? _legs;
 }
 
 /// <summary>A session the node had not seen.</summary>
@@ -117,4 +128,16 @@ public sealed record FlightAddedEvent : NodeEvent
 public sealed record FlightChangedEvent : NodeEvent
 {
     public required FlightRow Flight { get; init; }
+}
+
+/// <summary>A leg was planned.</summary>
+public sealed record LegAddedEvent : NodeEvent
+{
+    public required LegRow Leg { get; init; }
+}
+
+/// <summary>A leg changed: started, ticked, finished, gone around. The whole row, as it is now.</summary>
+public sealed record LegChangedEvent : NodeEvent
+{
+    public required LegRow Leg { get; init; }
 }

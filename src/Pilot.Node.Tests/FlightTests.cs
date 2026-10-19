@@ -201,8 +201,21 @@ public sealed class FlightCommanderTests : IDisposable
 
         Flight("TIA7").State.ShouldBe(FlightState.Landed);
         Flight("TIA7").LandedAt.ShouldNotBeNull();
+        // Claude Code's -w locks a worktree it enters; a clean, locked one still lands (TIA8 below).
         Directory.Exists(flight.Worktree).ShouldBeFalse();
         Git(Repo, "branch", "--list", "flight/tia7").ShouldContain("flight/tia7");
+    }
+
+    [Fact]
+    public async Task ALockedCleanWorktreeIsUnlockedAndLands()
+    {
+        await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "8");
+        var flight = Flight("TIA8");
+        Git(Repo, "worktree", "lock", flight.Worktree);
+
+        (await Run(Verbs.Land, Verbs.FlightTarget("TIA8"))).Ok.ShouldBeTrue();
+
+        Directory.Exists(flight.Worktree).ShouldBeFalse();
     }
 
     [Fact]

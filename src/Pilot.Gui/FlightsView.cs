@@ -26,22 +26,39 @@ internal sealed record FlightLine
     /// <summary>The plane's branch.</summary>
     public required string Branch { get; init; }
 
+    /// <summary>Its legs: <c>3 legs · 1 done · render flying</c>, or <c>no legs yet</c>.</summary>
+    public string Legs { get; init; } = "no legs yet";
+
     /// <summary>Its sessions: <c>2 sessions · 1 live</c>, or <c>no session</c>.</summary>
     public required string Sessions { get; init; }
 
     /// <summary>The line as a dump writes it.</summary>
     public string ToDumpLine() =>
-        string.Join(" | ", Code, Title, Where, StateDetail is null ? State : $"{State} ({StateDetail})", Branch, Sessions);
+        string.Join(" | ", Code, Title, Where, StateDetail is null ? State : $"{State} ({StateDetail})", Legs, Branch, Sessions);
 
     /// <summary>The flights in drawing order: flying, then held, then landed, newest first within each.</summary>
-    public static IReadOnlyList<FlightLine> Build(IEnumerable<FlightRow> flights, IEnumerable<SessionRow> sessions, DateTimeOffset now)
+    public static IReadOnlyList<FlightLine> Build(IEnumerable<FlightRow> flights, IEnumerable<SessionRow> sessions, DateTimeOffset now, IEnumerable<LegRow>? legs = null)
     {
         var byFlight = sessions.Where(s => s.Flight is not null).ToLookup(s => s.Flight!, StringComparer.Ordinal);
+        var legsOf = (legs ?? []).ToLookup(l => l.Flight, StringComparer.Ordinal);
         return flights
             .OrderBy(f => f.State switch { FlightState.Flying => 0, FlightState.Held => 1, _ => 2 })
             .ThenByDescending(f => f.CreatedAt)
-            .Select(f => From(f, byFlight[f.Code].ToList(), now))
+            .Select(f => From(f, byFlight[f.Code].ToList(), now) with { Legs = LegsText([.. legsOf[f.Code].OrderBy(l => l.Order)]) })
             .ToList();
+    }
+
+    /// <summary>A flight's legs in a line: how many, how many done, and the one flying or failed.</summary>
+    internal static string LegsText(IReadOnlyList<LegRow> legs)
+    {
+        if (legs.Count == 0)
+        {
+            return "no legs yet";
+        }
+        var text = $"{legs.Count} {(legs.Count == 1 ? "leg" : "legs")} · {legs.Count(l => l.State == LegState.Done)} done";
+        return legs.FirstOrDefault(l => l.State == LegState.Failed) is { } failed ? $"{text} · {failed.Name} failed"
+            : legs.FirstOrDefault(l => l.State == LegState.Flying) is { } flying ? $"{text} · {flying.Name} flying{(flying.GoArounds > 0 ? $" (go-around {flying.GoArounds})" : "")}"
+            : text;
     }
 
     public static FlightLine From(FlightRow flight, IReadOnlyList<SessionRow> sessions, DateTimeOffset now)
@@ -98,7 +115,8 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
     private const float CodeWidth = 120f;
     private const float WhereWidth = 170f;
     private const float StateWidth = 190f;
-    private const float BranchWidth = 170f;
+    private const float BranchWidth = 150f;
+    private const float LegsWidth = 210f;
     private const float SessionsWidth = 170f;
 
     private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
@@ -171,6 +189,7 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
                         Label("What").WStar(),
                         Label("Repo").WFixed(WhereWidth),
                         Label("State").WFixed(StateWidth),
+                        Label("Legs").WFixed(LegsWidth),
                         Label("Branch").WFixed(BranchWidth),
                         Label("Sessions").WFixed(SessionsWidth))
                     .WithGap(ColumnGap)
@@ -197,6 +216,7 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
                         Layout.Builder.Text(line.State, 14f, color).RowH(22f),
                         Layout.Builder.Text(line.StateDetail ?? "", 11f, Dim).RowH(18f))
                     .WFixed(StateWidth),
+                Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body).WFixed(LegsWidth),
                 Layout.Builder.Text(line.Branch, 12f, Dim).WFixed(BranchWidth),
                 Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body).WFixed(SessionsWidth))
             .WithGap(ColumnGap)

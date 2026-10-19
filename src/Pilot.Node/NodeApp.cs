@@ -39,6 +39,10 @@ public static class NodeApp
         builder.Services.AddSingleton<IGit, GitCli>();
         builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>()));
         builder.Services.AddSingleton<FlightCommander>();
+        builder.Services.AddSingleton<IWorkerLauncher, ClaudeWorkerLauncher>();
+        builder.Services.AddSingleton<ICheckRunner, ShellCheckRunner>();
+        builder.Services.AddSingleton<IGitHub, GhCli>();
+        builder.Services.AddSingleton<LegCommander>();
         builder.Services.AddSingleton(services => new SessionTracker(
             services.GetRequiredService<NodeState>(),
             services.GetRequiredService<IClaudeAgents>(),
@@ -154,7 +158,7 @@ public static class NodeApp
         });
 
         // Read by hand rather than bound, so a body that is not a command gets the envelope like any other refusal.
-        app.MapPost(NodeWire.CommandsRoute, async (HttpContext context, NodeState state, SessionMessenger messenger, FlightCommander flights, IHostApplicationLifetime lifetime) =>
+        app.MapPost(NodeWire.CommandsRoute, async (HttpContext context, NodeState state, SessionMessenger messenger, FlightCommander flights, LegCommander legs, IHostApplicationLifetime lifetime) =>
         {
             CommandRequest? command;
             try
@@ -176,6 +180,7 @@ public static class NodeApp
             // A flight verb runs git, off the lock too, and is not cut short either: a half-made worktree helps nobody.
             var result = command.Verb == Verbs.Say ? await messenger.SayAsync(command, lifetime.ApplicationStopping)
                 : FlightCommander.Handles(command.Verb) ? await flights.RunAsync(command, lifetime.ApplicationStopping)
+                : LegCommander.Handles(command.Verb) ? await legs.RunAsync(command, lifetime.ApplicationStopping)
                 : state.Execute(command);
             return result.Ok
                 ? Results.Json(ResponseEnvelope<CommandResult>.Ok(result), PilotJsonContext.Default.ResponseEnvelopeCommandResult)

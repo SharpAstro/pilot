@@ -70,7 +70,7 @@ else if (options.Capture is not null)
             await using var events = await oneShot.OpenEventsAsync(since: null, stream: null, CancellationToken.None);
             if (await events.ReadAsync(CancellationToken.None) is SnapshotEvent live)
             {
-                capturedFlights = new FlightsScreen(FlightLine.Build(live.Flights, live.Sessions, now), screen.Source, now);
+                capturedFlights = new FlightsScreen(FlightLine.Build(live.Flights, live.Sessions, now, live.Legs), screen.Source, now);
             }
         }
     }
@@ -87,7 +87,7 @@ else
 
 if (options.Capture is { } capturePath)
 {
-    capturedFlights ??= snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At), screen.Source, snapshot.At);
+    capturedFlights ??= snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
@@ -177,7 +177,7 @@ if (feed is not null && client is not null)
 var announced = (string?)null;
 var drawnVersion = -1L;
 var drawnAt = DateTimeOffset.MinValue;
-FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At), screen.Source, snapshot.At);
+FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
 loop.OnResize = (w, h) =>
 {
     width = (int)w;

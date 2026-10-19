@@ -54,6 +54,12 @@ public sealed class SessionTracker : BackgroundService
     /// </summary>
     private SessionRoleInfo JoinFlight(SessionRoleInfo role, string? cwd)
     {
+        // A leg's worker is measured against its leg's budget.
+        if (role is { Flight: { } code, Leg: { } name, Budget: null }
+            && _state.Legs(code).FirstOrDefault(l => l.Name == name) is { Budget: { } budget })
+        {
+            role = role with { Budget = budget };
+        }
         if (role.Flight is not null || string.IsNullOrEmpty(cwd))
         {
             return role;

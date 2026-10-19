@@ -151,6 +151,7 @@ public sealed class FileJournal : INodeJournal, IDisposable
             Sessions = [.. _mirror.Sessions.Values],
             Notes = [.. _mirror.Notes],
             Flights = [.. _mirror.Flights.Values],
+            Legs = [.. _mirror.Legs.Values],
         };
         WriteSnapshot(JsonSerializer.SerializeToUtf8Bytes<NodeEvent>(snapshot, PilotJsonContext.Default.NodeEvent));
         RewriteJournal([]);

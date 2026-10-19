@@ -68,7 +68,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     {
         lock (_lock)
         {
-            return new FlightsScreen(FlightLine.Build(_mirror.Flights.Values, _mirror.Sessions.Values, now), _status, now);
+            return new FlightsScreen(FlightLine.Build(_mirror.Flights.Values, _mirror.Sessions.Values, now, _mirror.Legs.Values), _status, now);
         }
     }
 

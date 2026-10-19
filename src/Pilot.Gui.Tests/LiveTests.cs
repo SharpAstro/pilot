@@ -438,11 +438,23 @@ public sealed class FlightsPageTests
 
         lines.Select(l => l.ToDumpLine()).ShouldBe(
         [
-            "TIA1611 | Planets on the GPU | tianwen #1611 | flying | flight/tia1611 | 2 sessions · 1 live",
-            "TIA1640 | issue #1640 | tianwen #1640 | held (waiting for TIA1611) | flight/tia1640 | no session",
-            "TIA1500 | issue #1500 | tianwen #1500 | landed (3h ago) | flight/tia1500 | no session",
+            "TIA1611 | Planets on the GPU | tianwen #1611 | flying | no legs yet | flight/tia1611 | 2 sessions · 1 live",
+            "TIA1640 | issue #1640 | tianwen #1640 | held (waiting for TIA1611) | no legs yet | flight/tia1640 | no session",
+            "TIA1500 | issue #1500 | tianwen #1500 | landed (3h ago) | no legs yet | flight/tia1500 | no session",
         ]);
         new FlightsScreen(lines, "test", Live.At).Summary.ShouldBe("3 flights · 1 flying · 1 held");
+    }
+
+    [Fact]
+    public void AFlightsLegsReadAsHowManyHowManyDoneAndTheOneFlying()
+    {
+        LegRow Leg(string name, int order, LegState state, int goArounds = 0) =>
+            new() { Flight = "TIA1611", Name = name, Order = order, Goal = "g", DoneWhen = "d", State = state, GoArounds = goArounds };
+
+        FlightLine.LegsText([]).ShouldBe("no legs yet");
+        FlightLine.LegsText([Leg("parser", 1, LegState.Done), Leg("render", 2, LegState.Flying, goArounds: 1), Leg("docs", 3, LegState.Planned)])
+            .ShouldBe("3 legs · 1 done · render flying (go-around 1)");
+        FlightLine.LegsText([Leg("parser", 1, LegState.Failed)]).ShouldBe("1 leg · 0 done · parser failed");
     }
 
     [Fact]

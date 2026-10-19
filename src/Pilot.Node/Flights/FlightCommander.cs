@@ -104,9 +104,27 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         state.PutFlight(Settle(flight with { Connections = [.. flight.Connections, other.Code] }));
     }
 
-    private async Task LandAsync(CommandRequest command, CancellationToken cancellationToken)
+    /// <summary>
+    /// Lands <paramref name="code"/> as <c>land</c> does, for a merge that has just put its work in: one at a time with
+    /// the flight verbs. Throws <see cref="FlightException"/> with why it could not.
+    /// </summary>
+    public async Task LandAfterMergeAsync(string code, CancellationToken cancellationToken)
     {
-        var flight = Find(command.Target);
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            await LandFlightAsync(Find(Verbs.FlightTarget(code)), cancellationToken);
+        }
+        finally
+        {
+            _one.Release();
+        }
+    }
+
+    private Task LandAsync(CommandRequest command, CancellationToken cancellationToken) => LandFlightAsync(Find(command.Target), cancellationToken);
+
+    private async Task LandFlightAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
         if (flight.State == FlightState.Landed)
         {
             return;

@@ -93,7 +93,14 @@ public sealed class Planes(IGit git)
         // Fresh from the remote when there is one; offline, the plane is made from what the checkout has.
         await git.RunAsync(["fetch", "--quiet", "origin"], repoPath, cancellationToken);
         var head = await git.RunAsync(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repoPath, cancellationToken);
-        var baseRef = head.Ok && head.Output.Trim().Length > 0 ? head.Output.Trim() : "HEAD";
+        var baseRef = head.Ok && head.Output.Trim().Length > 0 ? head.Output.Trim() : null;
+        if (baseRef is null)
+        {
+            // No remote: the main checkout's branch, by name. Not HEAD, which inside the plane is the plane's own tip,
+            // so a go-around's "commits past the base" would always read as none.
+            var current = await git.RunAsync(["symbolic-ref", "--short", "HEAD"], repoPath, cancellationToken);
+            baseRef = current.Ok && current.Output.Trim().Length > 0 ? current.Output.Trim() : "HEAD";
+        }
 
         var name = code.ToLowerInvariant();
         var branch = $"flight/{name}";
@@ -126,10 +133,18 @@ public sealed class Planes(IGit git)
         {
             throw new FlightException($"{worktree} holds changes not committed; commit or drop them, then land it");
         }
-        var remove = await git.RunAsync(["worktree", "remove", worktree], repoPath, cancellationToken);
-        if (!remove.Ok)
+        // A worker's claude -w locks the worktree it enters; a clean one is let go before it is removed.
+        await git.RunAsync(["worktree", "unlock", worktree], repoPath, cancellationToken);
+        GitRun remove;
+        var tries = 0;
+        while (!(remove = await git.RunAsync(["worktree", "remove", worktree], repoPath, cancellationToken)).Ok)
         {
-            throw new FlightException($"git could not remove {worktree}: {remove.Why}");
+            // A worker stopped a moment ago can still hold a file open on Windows: give it a few seconds.
+            if (++tries >= 5 || !remove.Why.Contains("Permission denied", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new FlightException($"git could not remove {worktree}: {remove.Why}");
+            }
+            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
         }
     }
 }
