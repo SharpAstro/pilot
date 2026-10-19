@@ -177,9 +177,8 @@ public sealed class SessionTrackerTests : IDisposable
     }
 
     [Fact]
-    public async Task ARowTakesItsRoleFlightLegAndBudgetFromNameAndV1State()
+    public async Task ARowTakesItsRoleFlightAndLegFromItsName()
     {
-        _profile.WriteWorker("node", $$"""{"name":"node","agent":"PIL5 node","budget":10000000,"sessionId":"{{AgentRows.SessionB}}"}""");
         _agents.Json = AgentRows.List(
             AgentRows.Background(AgentRows.SessionB, "PIL5 node", "working", pid: 4343, status: "busy"),
             AgentRows.Interactive(AgentRows.SessionA, 4242, "du1-watchtower"));
@@ -187,7 +186,7 @@ public sealed class SessionTrackerTests : IDisposable
         await PollAsync();
 
         var worker = _state.Sessions().Single(s => s.Id == "b2c3d4e5");
-        (worker.Role, worker.Flight, worker.Leg, worker.Budget).ShouldBe((SessionRole.Worker, "PIL5", "node", 10_000_000L));
+        (worker.Role, worker.Flight, worker.Leg, worker.Budget).ShouldBe((SessionRole.Worker, "PIL5", "node", (long?)null));
         _state.Sessions().Single(s => s.Id == "a1b2c3d4").Role.ShouldBe(SessionRole.Watchtower);
     }
 }

@@ -75,7 +75,6 @@ internal sealed class NodeHarness : IAsyncDisposable
                 builder.Services.AddSingleton<ISessionDelivery>(delivery);
                 builder.Services.AddSingleton(new SessionTrackerOptions(
                     new ClaudeProfile(Path.Combine(folder, "claude")),
-                    Path.Combine(folder, "v1"),
                     TimeSpan.FromMilliseconds(100),
                     TimeSpan.FromMilliseconds(100),
                     SessionTrackerOptions.DefaultEndedRetention));

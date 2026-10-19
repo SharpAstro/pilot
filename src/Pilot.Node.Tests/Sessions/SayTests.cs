@@ -354,7 +354,7 @@ public sealed class SayRouteTests
         var result = refused.Response.ShouldNotBeNull();
         result.Ok.ShouldBeFalse();
         result.Way.ShouldBeNull();
-        NodeEvent next;
+        NodeEvent? next;
         do
         {
             next = await events.ReadAsync(Ct);
