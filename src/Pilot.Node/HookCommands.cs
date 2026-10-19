@@ -236,10 +236,20 @@ public static class HookCommands
     private static bool IsOurs(JsonNode? handler) =>
         handler is JsonObject h
         && h["command"]?.GetValueKind() == JsonValueKind.String
-        && Path.GetFileNameWithoutExtension(h["command"]!.GetValue<string>()).Equals("pilot-node", StringComparison.OrdinalIgnoreCase)
+        && BinaryName(h["command"]!.GetValue<string>()).Equals("pilot-node", StringComparison.OrdinalIgnoreCase)
         && h["args"] is JsonArray { Count: > 0 } args
         && args[0]?.GetValueKind() == JsonValueKind.String
         && args[0]!.GetValue<string>() == HookArgument;
+
+    /// <summary>
+    /// The binary's name without folder or <c>.exe</c>, splitting on both separators: a settings file may hold a Windows
+    /// path read on Linux (CI) or the other way round, where <see cref="Path"/> splits on its own platform's only.
+    /// </summary>
+    private static string BinaryName(string command)
+    {
+        var name = command[(command.LastIndexOfAny(['/', '\\']) + 1)..];
+        return name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? name[..^4] : name;
+    }
 
     private static JsonObject Parse(string settings) =>
         settings.Trim().Length == 0
