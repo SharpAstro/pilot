@@ -44,6 +44,7 @@ public sealed class NodeState
     private readonly Dictionary<string, SessionRow> _sessions = new Dictionary<string, SessionRow>(StringComparer.Ordinal);
     private readonly List<NodeNote> _notes = [];
     private readonly Dictionary<string, FlightRow> _flights = new Dictionary<string, FlightRow>(StringComparer.Ordinal);
+    private readonly Dictionary<(string Flight, string Name), LegRow> _legs = [];
 
     // The latest deltas, oldest first, serialised once: what a resuming client is sent.
     private readonly Queue<(long Seq, byte[] Json)> _held = new Queue<(long Seq, byte[] Json)>();
@@ -182,6 +183,36 @@ public sealed class NodeState
             else
             {
                 Publish(new FlightAddedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = flight });
+            }
+        }
+    }
+
+    /// <summary>The legs of <paramref name="flight"/>, in their order; every leg when it is null.</summary>
+    public LegRow[] Legs(string? flight = null)
+    {
+        lock (_gate)
+        {
+            return [.. _legs.Values.Where(l => flight is null || string.Equals(l.Flight, flight, StringComparison.Ordinal))
+                .OrderBy(l => l.Flight, StringComparer.Ordinal).ThenBy(l => l.Order)];
+        }
+    }
+
+    /// <summary>Adds a leg, or replaces the one of its flight and name; an unchanged row makes no delta.</summary>
+    public void PutLeg(LegRow leg)
+    {
+        lock (_gate)
+        {
+            if (_legs.TryGetValue((leg.Flight, leg.Name), out var known))
+            {
+                if (known with { Checklist = [] } == leg with { Checklist = [] } && known.Checklist.SequenceEqual(leg.Checklist))
+                {
+                    return;
+                }
+                Publish(new LegChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Leg = leg });
+            }
+            else
+            {
+                Publish(new LegAddedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Leg = leg });
             }
         }
     }
@@ -347,6 +378,12 @@ public sealed class NodeState
             case FlightChangedEvent changed:
                 _flights[changed.Flight.Code] = changed.Flight;
                 break;
+            case LegAddedEvent added:
+                _legs[(added.Leg.Flight, added.Leg.Name)] = added.Leg;
+                break;
+            case LegChangedEvent changed:
+                _legs[(changed.Leg.Flight, changed.Leg.Name)] = changed.Leg;
+                break;
         }
     }
 
@@ -361,6 +398,10 @@ public sealed class NodeState
         {
             _flights[flight.Code] = flight;
         }
+        foreach (var leg in snapshot.Legs ?? [])
+        {
+            _legs[(leg.Flight, leg.Name)] = leg;
+        }
         _seq = snapshot.Seq;
     }
 
@@ -372,6 +413,7 @@ public sealed class NodeState
         Sessions = [.. _sessions.Values],
         Notes = [.. _notes],
         Flights = [.. _flights.Values],
+        Legs = [.. _legs.Values],
     };
 
     private static byte[] Serialize(NodeEvent nodeEvent) => JsonSerializer.SerializeToUtf8Bytes(nodeEvent, PilotJsonContext.Default.NodeEvent);

@@ -81,6 +81,39 @@ public static class Verbs
     /// </summary>
     public const string Land = "land";
 
+    /// <summary>
+    /// <c>plan-leg flight/&lt;code&gt; name=… goal=… done-when=… [check=…] [budget=…] [model=…] [effort=…] [item=…]…</c>:
+    /// a leg at the end of the flight's order, or a planned leg of that name replaced.
+    /// </summary>
+    public const string PlanLeg = "plan-leg";
+
+    /// <summary>
+    /// <c>start-leg flight/&lt;code&gt;/&lt;leg&gt;</c>: a fresh background worker on the leg, in the flight's plane, briefed
+    /// from it. The legs before it must be done.
+    /// </summary>
+    public const string StartLeg = "start-leg";
+
+    /// <summary><c>check flight/&lt;code&gt;/&lt;leg&gt; &lt;item number or its text&gt; [undo]</c>: ticks a step of its checklist.</summary>
+    public const string Check = "check";
+
+    /// <summary>
+    /// <c>finish-leg flight/&lt;code&gt;/&lt;leg&gt; done|failed [report…]</c>. Done only with every step ticked and its check,
+    /// rerun by the node in the plane, passing.
+    /// </summary>
+    public const string FinishLeg = "finish-leg";
+
+    /// <summary>
+    /// <c>go-around flight/&lt;code&gt;/&lt;leg&gt; &lt;why…&gt;</c>: its worker stopped and a fresh one started, briefed from the
+    /// leg, the plane's diff so far and why; never the last worker's conversation.
+    /// </summary>
+    public const string GoAround = "go-around";
+
+    /// <summary>
+    /// <c>merge flight/&lt;code&gt; &lt;head&gt; [squash|rebase|merge]</c>: the flight's PR merged on GitHub, guarded on the head
+    /// the controller reviewed, then the flight landed.
+    /// </summary>
+    public const string Merge = "merge";
+
     /// <summary>The node itself, as a target.</summary>
     public const string NodeTarget = "node";
 
@@ -93,6 +126,9 @@ public static class Verbs
     public static string RepoTarget(string path) => RepoTargetPrefix + path;
 
     public static string FlightTarget(string code) => FlightTargetPrefix + code;
+
+    /// <summary>The target naming leg <paramref name="leg"/> of flight <paramref name="code"/>.</summary>
+    public static string LegTarget(string code, string leg) => $"{FlightTargetPrefix}{code}/{leg}";
 
     /// <summary>What a session target starts with: <c>session/&lt;id&gt;</c>.</summary>
     public const string SessionTargetPrefix = "session/";

@@ -81,8 +81,26 @@ prefix, `--machine` or `PILOT_MACHINE`, else from its name).
 | `connect flight/<code> <other>` | The flight holds until the other has landed (a cycle is refused). |
 | `land flight/<code>` | Its work is in: the worktree goes when clean (never with changes not committed), the branch and code stay, and flights waiting for it are cleared. |
 
+### Legs
+
+A flight's legs fly in their order on its plane, one at a time, each by a fresh background worker named
+`<machine>-<flight>-<leg>` and briefed from the leg: its goal, checklist and Done-when, the legs before it, and the
+house rules (work in the plane, commit, never push). A leg is done only with every step ticked and its `check`, rerun
+by the node in the plane, passing. A go-around stops the worker and starts a fresh one told why and what the plane
+holds (its commits and diff), never the last worker's conversation. A worker's row is measured against its leg's
+budget.
+
+| Command | What it does |
+| --- | --- |
+| `plan-leg flight/<code> name=… goal=… done-when=… [check=…] [budget=…] [model=…] [effort=…] [item=…]…` | A leg at the end of the order, or a planned one replaced. |
+| `start-leg flight/<code>/<leg>` | Its worker: `claude --bg -w <plane> -n <name> --permission-mode auto` from the repo's main checkout (a plane git made is not a trusted folder of its own; `-w` enters it under the repo's trust). |
+| `check flight/<code>/<leg> <n or text> [undo]` | Ticks a step. |
+| `finish-leg flight/<code>/<leg> done\|failed [report…]` | Done reruns the check; a failing one leaves the leg flying with the output in its report. |
+| `go-around flight/<code>/<leg> <why…>` | A fresh worker for a flying or failed leg. |
+| `merge flight/<code> <head> [squash\|rebase\|merge]` | With every leg done: `gh pr merge --match-head-commit`, refused when the PR moved past the head you reviewed; then the flight lands. |
+
 The GUI's rail opens the **Flights** page (Ctrl+2): each flight's code, title, repo and issue, state (held: waiting
-for which), branch and sessions.
+for which), legs (how many done, which flying), branch and sessions.
 
 ## Hooks
 

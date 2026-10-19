@@ -10,6 +10,7 @@ public sealed class NodeMirror
     private readonly Dictionary<string, SessionRow> _sessions = new Dictionary<string, SessionRow>(StringComparer.Ordinal);
     private readonly List<NodeNote> _notes = [];
     private readonly Dictionary<string, FlightRow> _flights = new Dictionary<string, FlightRow>(StringComparer.Ordinal);
+    private readonly Dictionary<(string, string), LegRow> _legs = [];
 
     /// <summary>The number of the last event applied; what to reconnect with as <c>since</c>.</summary>
     public long Seq { get; private set; } = -1;
@@ -23,6 +24,9 @@ public sealed class NodeMirror
 
     /// <summary>The flights, by code.</summary>
     public IReadOnlyDictionary<string, FlightRow> Flights => _flights;
+
+    /// <summary>The legs, by flight and name.</summary>
+    public IReadOnlyDictionary<(string Flight, string Name), LegRow> Legs => _legs;
 
     /// <summary>
     /// Applies one event. A snapshot replaces everything; a delta must be numbered one past the last, or the mirror
@@ -43,6 +47,11 @@ public sealed class NodeMirror
             foreach (var flight in snapshot.Flights ?? [])
             {
                 _flights[flight.Code] = flight;
+            }
+            _legs.Clear();
+            foreach (var leg in snapshot.Legs ?? [])
+            {
+                _legs[(leg.Flight, leg.Name)] = leg;
             }
             Stream = snapshot.Stream;
             Seq = snapshot.Seq;
@@ -77,6 +86,12 @@ public sealed class NodeMirror
                 break;
             case FlightChangedEvent changed:
                 _flights[changed.Flight.Code] = changed.Flight;
+                break;
+            case LegAddedEvent added:
+                _legs[(added.Leg.Flight, added.Leg.Name)] = added.Leg;
+                break;
+            case LegChangedEvent changed:
+                _legs[(changed.Leg.Flight, changed.Leg.Name)] = changed.Leg;
                 break;
             case CommandResultEvent:
                 // A result changes no state; the deltas the command made carry that.
