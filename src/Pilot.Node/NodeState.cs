@@ -258,13 +258,17 @@ public sealed class NodeState
         return deltas.Count < capacity ? deltas : null;
     }
 
-    /// <summary>Numbers, applies, journals, holds and queues one delta. Under the lock.</summary>
+    /// <summary>Numbers, journals, applies, holds and queues one delta. Under the lock.</summary>
+    /// <remarks>
+    /// Journalled first: a journal that cannot write (a full disk) throws before the state or any client sees the
+    /// delta, so neither holds a change the store never recorded, and the number is not spent.
+    /// </remarks>
     private void Publish(NodeEvent delta)
     {
         var json = Serialize(delta);
+        _journal.Append(delta, json);
         ApplyToState(delta);
         _seq = delta.Seq;
-        _journal.Append(delta, json);
         Hold(delta.Seq, json);
 
         for (var i = _sinks.Count - 1; i >= 0; i--)

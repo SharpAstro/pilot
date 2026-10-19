@@ -21,6 +21,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(SessionRow))]
 [JsonSerializable(typeof(CommandRequest))]
 [JsonSerializable(typeof(CommandResult))]
+[JsonSerializable(typeof(BlackBoxLine))]
 [JsonSerializable(typeof(NodeInfo))]
 [JsonSerializable(typeof(ResponseEnvelope<NodeInfo>))]
 [JsonSerializable(typeof(ResponseEnvelope<CommandResult>))]

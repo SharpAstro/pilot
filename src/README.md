@@ -60,8 +60,11 @@ curl --unix-socket <path> http://localhost/api/v1/node
   `~/.local/share/pilot2/node.sock` without one. `--node-socket` or the `PILOT_NODE_SOCKET` variable names another.
 - **One node per socket:** `node.lock` beside the socket admits one node; a second exits with code 3 and says which
   node holds it.
-- **Data:** `%LOCALAPPDATA%\pilot2` or `~/.local/share/pilot2` unless `--data` names another. The node skeleton keeps
-  its state in memory; the store leg writes it here.
+- **Data:** `%LOCALAPPDATA%\pilot2` or `~/.local/share/pilot2` unless `--data` names another. The store is its
+  `store` folder, the node its only writer: `snapshot.json` (the state as of a number, replaced atomically),
+  `journal.jsonl` (each change after it, appended and flushed; folded into a new snapshot every 4096), and
+  `blackbox.jsonl` (one line per command: when, who, verb, target, and what became of it; never compacted). A restart,
+  a crash included, carries on with the same stream, the same numbers and every record.
 
 ## The wire (`NodeWire.Version` 1)
 

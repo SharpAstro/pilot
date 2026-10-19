@@ -91,3 +91,32 @@ public static class SayWays
     /// </summary>
     public const string Relayed = "relayed";
 }
+
+/// <summary>
+/// One line of the node's black box (<c>blackbox.jsonl</c> in its data folder): a command and what became of it, kept
+/// whole and never compacted, so who did what survives every restart.
+/// </summary>
+public sealed record BlackBoxLine
+{
+    /// <summary>When the node finished the command.</summary>
+    public required DateTimeOffset At { get; init; }
+
+    /// <summary>The sequence number of its result on the stream.</summary>
+    public required long Seq { get; init; }
+
+    /// <summary>Who sent it (<see cref="CommandRequest.Who"/>).</summary>
+    public required string Who { get; init; }
+
+    public required string Verb { get; init; }
+
+    public required string Target { get; init; }
+
+    /// <summary>Whether the node did it.</summary>
+    public required bool Ok { get; init; }
+
+    /// <summary>How, for a verb with more than one way (<see cref="SayWays"/>).</summary>
+    public string? Way { get; init; }
+
+    /// <summary>Why not, when it was refused.</summary>
+    public string? Error { get; init; }
+}

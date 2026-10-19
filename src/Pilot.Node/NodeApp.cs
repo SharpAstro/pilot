@@ -26,7 +26,8 @@ public static class NodeApp
         builder.Services.ConfigureHttpJsonOptions(json => json.SerializerOptions.TypeInfoResolverChain.Insert(0, PilotJsonContext.Default));
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(TimeProvider.System);
-        builder.Services.AddSingleton<INodeJournal, InMemoryJournal>();
+        // The store: the node's events as files in its data folder, read back on the next start (FileJournal).
+        builder.Services.AddSingleton<INodeJournal>(_ => new FileJournal(Path.Combine(options.DataFolder, "store")));
         builder.Services.AddSingleton(services => new NodeState(
             services.GetRequiredService<INodeJournal>(), services.GetRequiredService<TimeProvider>(), options.RetainedDeltas));
         builder.Services.AddSingleton<EventHub>();
