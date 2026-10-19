@@ -38,7 +38,7 @@ pilot-gui --snapshot <file.json> [--capture out.png]         # a snapshot file i
 
 - **Live:** the window follows the node's event stream, resumes with `since` after a drop, and says so in its header
   while no node answers, trying again every 2 s. The selection follows its session as the rows reorder.
-- **Say:** type in the bar at the foot and Enter says it to the selected session (the node's `say`: an idle background
+- **Say:** type in the bar at the foot (Ctrl+S takes the keyboard there from anywhere) and Enter says it to the selected session (the node's `say`: an idle background
   session is resumed with it, a busy or interactive one gets it as a message). `--say` finds a session by row id,
   session id or its start, or name.
 - **Inspector:** a Debug build against the sibling clones attaches SdlVulkan.Renderer's debug inspector, so an agent

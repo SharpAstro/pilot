@@ -43,6 +43,9 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     // Design units; PaintLayout scales them by DpiScale.
     private const float HeaderHeight = 64f;
     private const float SayBarHeight = 52f;
+
+    /// <summary>Takes the keyboard to the say bar from anywhere, a row or the list: Ctrl beats a focused field, so it always reaches it.</summary>
+    public static readonly KeyChord SayShortcut = new(InputKey.S, InputModifier.Ctrl);
     private const float ColumnHeaderHeight = 28f;
     private const float RowHeight = 54f;
     private const float FirstLine = 22f;
@@ -197,10 +200,12 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         Layout.Builder.VStack(
                 Layout.Builder.HStack(
                         Layout.Builder.Text(SayTarget is { } target ? $"Say to {target}" : "No session selected", 14f, Body).WAuto(),
-                        Layout.Builder.TextInput(SayInput, 15f, focusOnOpen: true).WStar())
+                        Layout.Builder.TextInput(SayInput, 15f, focusOnOpen: true)
+                            .WithShortcut(SayShortcut)
+                            .WStar())
                     .WithGap(12f)
                     .RowH(28f),
-                Layout.Builder.Text(SayStatus ?? "Enter sends", 11f, Dim).RowH(16f))
+                Layout.Builder.Text(SayStatus ?? "Ctrl+S to type here · Enter sends", 11f, Dim).RowH(16f))
             .Pad(Gutter, 4f)
             .Bg(HeaderBg)
             .RowH(SayBarHeight);
