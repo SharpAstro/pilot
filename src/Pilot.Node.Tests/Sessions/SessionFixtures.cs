@@ -61,8 +61,6 @@ internal sealed class TempProfile : IDisposable
         Folder = Path.Combine(Path.GetTempPath(), "p2s-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(Path.Combine(Folder, "claude", "projects", "proj-a"));
         Directory.CreateDirectory(Path.Combine(Folder, "claude", "sessions"));
-        Directory.CreateDirectory(Path.Combine(Folder, "v1", "workers"));
-        Directory.CreateDirectory(Path.Combine(Folder, "v1", "plans"));
         Profile = new ClaudeProfile(Path.Combine(Folder, "claude"));
     }
 
@@ -70,10 +68,8 @@ internal sealed class TempProfile : IDisposable
 
     public ClaudeProfile Profile { get; }
 
-    public string V1 => Path.Combine(Folder, "v1");
-
     public SessionTrackerOptions Options(TimeSpan? retention = null) =>
-        new SessionTrackerOptions(Profile, V1, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(15), retention ?? SessionTrackerOptions.DefaultEndedRetention);
+        new SessionTrackerOptions(Profile, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(15), retention ?? SessionTrackerOptions.DefaultEndedRetention);
 
     public string TranscriptPath(string sessionId) => Path.Combine(Folder, "claude", "projects", "proj-a", sessionId + ".jsonl");
 
@@ -89,9 +85,6 @@ internal sealed class TempProfile : IDisposable
 
     public void WriteSessionRecord(int pid, string json) => File.WriteAllText(Path.Combine(Folder, "claude", "sessions", pid + ".json"), json);
 
-    public void WriteWorker(string leg, string json) => File.WriteAllText(Path.Combine(V1, "workers", leg + ".json"), json);
-
-    public void WritePlan(string sessionId, string text) => File.WriteAllText(Path.Combine(V1, "plans", sessionId + ".md"), text);
 
     public void Dispose()
     {

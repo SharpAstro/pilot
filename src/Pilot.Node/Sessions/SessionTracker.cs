@@ -17,9 +17,6 @@ public sealed class SessionTracker : BackgroundService
     /// <summary>How long a session found too old to list is left alone before its transcript is looked at again.</summary>
     private static readonly TimeSpan StaleRecheck = TimeSpan.FromMinutes(10);
 
-    /// <summary>How long v1's state folder is trusted before it is read again.</summary>
-    private static readonly TimeSpan RegistryTtl = TimeSpan.FromSeconds(10);
-
     private readonly NodeState _state;
     private readonly IClaudeAgents _agents;
     private readonly SessionTrackerOptions _options;
@@ -43,8 +40,6 @@ public sealed class SessionTracker : BackgroundService
 
     // One poll, or one change of who is resumed, at a time: the node's own loop and a say both poll.
     private readonly SemaphoreSlim _gate = new SemaphoreSlim(1, 1);
-    private V1Registry _registry = V1Registry.Empty;
-    private DateTimeOffset _registryAt = DateTimeOffset.MinValue;
     private bool _failing;
 
     public SessionTracker(NodeState state, IClaudeAgents agents, SessionTrackerOptions options, Func<bool> hasClients, TimeProvider time, ILogger<SessionTracker> logger)
@@ -202,12 +197,6 @@ public sealed class SessionTracker : BackgroundService
         var listing = clock.Elapsed;
 
         var now = _time.GetUtcNow();
-        if (now - _registryAt >= RegistryTtl)
-        {
-            _registry = V1Registry.Load(_options.V1StateFolder);
-            _registryAt = now;
-        }
-
         var present = new HashSet<string>(StringComparer.Ordinal);
         foreach (var agent in listed)
         {
@@ -303,7 +292,7 @@ public sealed class SessionTracker : BackgroundService
             _repos[agent.Cwd] = repo = RepoOf.Find(agent.Cwd);
         }
 
-        Put(SessionRowBuilder.Build(agent, facts, record, repo, SessionRoles.Resolve(agent.Name, agent.SessionId, _registry)) with { Id = id });
+        Put(SessionRowBuilder.Build(agent, facts, record, repo, SessionRoles.Resolve(agent.Name)) with { Id = id });
     }
 
     private void Put(SessionRow row)

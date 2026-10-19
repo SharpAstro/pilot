@@ -97,7 +97,7 @@ public sealed class SessionRowTests : IDisposable
     [InlineData("watchtower")]
     public void AWatchtowerIsNamedLikeOne(string name)
     {
-        SessionRoles.Resolve(name, AgentRows.SessionA, V1Registry.Empty).ShouldBe(new SessionRoleInfo(SessionRole.Watchtower, null, null, null));
+        SessionRoles.Resolve(name).ShouldBe(new SessionRoleInfo(SessionRole.Watchtower, null, null, null));
     }
 
     [Theory]
@@ -105,7 +105,7 @@ public sealed class SessionRowTests : IDisposable
     [InlineData("pilot-dashboard")]
     public void V1sNamesAreNoWatchtower(string name)
     {
-        SessionRoles.Resolve(name, AgentRows.SessionA, V1Registry.Empty).Role.ShouldNotBe(SessionRole.Watchtower);
+        SessionRoles.Resolve(name).Role.ShouldNotBe(SessionRole.Watchtower);
     }
 
     [Theory]
@@ -114,7 +114,7 @@ public sealed class SessionRowTests : IDisposable
     [InlineData("DPS1 scaffold", "DPS1", "scaffold")]
     public void AWorkersFlightAndLegComeFromItsName(string name, string flight, string leg)
     {
-        SessionRoles.Resolve(name, AgentRows.SessionA, V1Registry.Empty).ShouldBe(new SessionRoleInfo(SessionRole.Worker, flight, leg, null));
+        SessionRoles.Resolve(name).ShouldBe(new SessionRoleInfo(SessionRole.Worker, flight, leg, null));
     }
 
     [Theory]
@@ -126,49 +126,7 @@ public sealed class SessionRowTests : IDisposable
     [InlineData("")]
     public void AnythingElseIsAdHoc(string? name)
     {
-        SessionRoles.Resolve(name, AgentRows.SessionA, V1Registry.Empty).ShouldBe(SessionRoleInfo.AdHoc);
-    }
-
-    [Fact]
-    public void ARegisteredWorkerCarriesItsBudgetAndEverySessionItRanAs()
-    {
-        _profile.WriteWorker("node", $$"""
-            {"name":"node","agent":"PIL5 node","budget":10000000,"id":"b2c3d4e5","sessionId":"{{AgentRows.SessionB}}",
-             "sessions":[{"id":"b2c3d4e5","sessionId":"{{AgentRows.SessionB}}"},{"id":"c3d4e5f6","sessionId":"{{AgentRows.SessionC}}"}]}
-            """);
-        var registry = V1Registry.Load(_profile.V1);
-
-        SessionRoles.Resolve("PIL5 node", AgentRows.SessionB, registry).ShouldBe(new SessionRoleInfo(SessionRole.Worker, "PIL5", "node", 10_000_000));
-        // A later session of the same leg, started by `say`, under another name.
-        SessionRoles.Resolve("something else", AgentRows.SessionC, registry).ShouldBe(new SessionRoleInfo(SessionRole.Worker, null, "node", 10_000_000));
-    }
-
-    [Fact]
-    public void AWorkerWhosePlanHadNoFlightNumberFliesAsItsLeg()
-    {
-        _profile.WriteWorker("scaffold", $$"""{"name":"scaffold","agent":"w-scaffold","budget":5000000,"sessionId":"{{AgentRows.SessionB}}"}""");
-        var registry = V1Registry.Load(_profile.V1);
-
-        SessionRoles.Resolve("w-scaffold", AgentRows.SessionB, registry).ShouldBe(new SessionRoleInfo(SessionRole.Worker, null, "scaffold", 5_000_000));
-    }
-
-    [Fact]
-    public void APilotIsTheSessionAPlanNames()
-    {
-        _profile.WritePlan("5acad24d-63ac-450d-9ae5-7850b56176cf", "# Flight plan: made up\n\nFlight: TIA2\n\nObjective: nothing.\n\nPilot session: 5acad24d-63ac-450d-9ae5-7850b56176cf\n");
-        var registry = V1Registry.Load(_profile.V1);
-
-        SessionRoles.Resolve("pilot-tianwen-2", "5acad24d-63ac-450d-9ae5-7850b56176cf", registry).Role.ShouldBe(SessionRole.Pilot);
-        SessionRoles.Resolve("pilot-tianwen-2", AgentRows.SessionA, registry).Role.ShouldBe(SessionRole.AdHoc);
-    }
-
-    [Fact]
-    public void AStateFolderThatIsNotThereIsAnEmptyRegistry()
-    {
-        var registry = V1Registry.Load(Path.Combine(_profile.Folder, "nowhere"));
-
-        registry.IsPilot(AgentRows.SessionA).ShouldBeFalse();
-        registry.WorkerOfSession(AgentRows.SessionA).ShouldBeNull();
+        SessionRoles.Resolve(name).ShouldBe(SessionRoleInfo.AdHoc);
     }
 
     [Fact]
