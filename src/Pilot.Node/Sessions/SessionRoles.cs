@@ -14,6 +14,26 @@ public sealed record SessionTrackerOptions(
     TimeSpan IdleInterval,
     TimeSpan EndedRetention)
 {
+    /// <summary>
+    /// Folders whose sessions are the node's own plumbing and no row: the relay's, whose throwaway <c>claude -p</c>
+    /// session carries one message and is gone. Listed while it ran, it showed for a day as an ad hoc session named
+    /// after the sender.
+    /// </summary>
+    public IReadOnlyList<string> HiddenFolders { get; init; } = [];
+
+    /// <summary>Whether a session working in <paramref name="cwd"/> is the node's own and gets no row.</summary>
+    public bool IsHidden(string? cwd)
+    {
+        if (string.IsNullOrEmpty(cwd) || HiddenFolders.Count == 0)
+        {
+            return false;
+        }
+
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(cwd));
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return HiddenFolders.Any(f => string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(f)), full, comparison));
+    }
+
     public static readonly TimeSpan DefaultActiveInterval = TimeSpan.FromSeconds(2);
 
     public static readonly TimeSpan DefaultIdleInterval = TimeSpan.FromSeconds(15);

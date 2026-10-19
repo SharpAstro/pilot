@@ -200,7 +200,7 @@ public sealed class SessionTracker : BackgroundService
         var present = new HashSet<string>(StringComparer.Ordinal);
         foreach (var agent in listed)
         {
-            if (_superseded.Contains(agent.SessionId) || RowIdOf(agent) is not { } id)
+            if (_superseded.Contains(agent.SessionId) || _options.IsHidden(agent.Cwd) || RowIdOf(agent) is not { } id)
             {
                 continue;
             }

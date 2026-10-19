@@ -31,7 +31,8 @@ public static class NodeApp
             services.GetRequiredService<INodeJournal>(), services.GetRequiredService<TimeProvider>(), options.RetainedDeltas));
         builder.Services.AddSingleton<EventHub>();
         builder.Services.AddSingleton<IClaudeAgents, ClaudeCliAgents>();
-        builder.Services.AddSingleton(SessionTrackerOptions.FromEnvironment());
+        var relayFolder = Path.Combine(options.DataFolder, "relay");
+        builder.Services.AddSingleton(SessionTrackerOptions.FromEnvironment() with { HiddenFolders = [relayFolder] });
         builder.Services.AddSingleton(services => new SessionTracker(
             services.GetRequiredService<NodeState>(),
             services.GetRequiredService<IClaudeAgents>(),
@@ -44,7 +45,7 @@ public static class NodeApp
         builder.Services.AddSingleton<ISessionDelivery>(services => new ClaudeCliDelivery(
             services.GetRequiredService<IClaudeAgents>(),
             services.GetRequiredService<SessionTrackerOptions>().Profile,
-            Path.Combine(options.DataFolder, "relay")));
+            relayFolder));
         builder.Services.AddSingleton(services => new SessionMessenger(
             services.GetRequiredService<NodeState>(),
             services.GetRequiredService<SessionTracker>(),

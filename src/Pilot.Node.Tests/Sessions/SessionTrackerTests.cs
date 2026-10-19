@@ -177,6 +177,21 @@ public sealed class SessionTrackerTests : IDisposable
     }
 
     [Fact]
+    public async Task TheRelaysThrowawaySessionIsNoRow()
+    {
+        var relay = Path.Combine(_profile.Folder, "relay");
+        var hidden = _profile.Options() with { HiddenFolders = [relay] };
+        var tracker = new SessionTracker(_state, _agents, hidden, () => false, TimeProvider.System, Microsoft.Extensions.Logging.Abstractions.NullLogger<SessionTracker>.Instance);
+        _agents.Json = AgentRows.List(
+            AgentRows.Interactive(AgentRows.SessionA, 4242, "pil5-say-int"),
+            AgentRows.Background(AgentRows.SessionB, "controller", "working", pid: 4343, status: "busy", cwd: (relay + Path.DirectorySeparatorChar).Replace("\\", "\\\\", StringComparison.Ordinal)));
+
+        await tracker.PollAsync(TestContext.Current.CancellationToken);
+
+        _state.Sessions().ShouldHaveSingleItem().Name.ShouldBe("pil5-say-int");
+    }
+
+    [Fact]
     public async Task ARowTakesItsRoleFlightAndLegFromItsName()
     {
         _agents.Json = AgentRows.List(
