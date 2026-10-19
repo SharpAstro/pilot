@@ -55,9 +55,26 @@ public sealed record LegRow
     /// <summary>What the last <c>finish-leg</c> or check said: the worker's report, or why the check failed.</summary>
     public string? Report { get; init; }
 
+    /// <summary>What its workers produced to be looked at: screenshots, captures, published pages, at their latest.</summary>
+    public Artifact[] Artifacts { get; init; } = [];
+
     public DateTimeOffset? StartedAt { get; init; }
 
     public DateTimeOffset? FinishedAt { get; init; }
+}
+
+/// <summary>
+/// Something a worker made to be looked at: a file (a screenshot, a capture) or a page. A second one of the same title
+/// replaces the first, so a leg shows each at its latest.
+/// </summary>
+public sealed record Artifact
+{
+    public required string Title { get; init; }
+
+    /// <summary>A path on the machine, or a URL.</summary>
+    public required string Location { get; init; }
+
+    public required DateTimeOffset At { get; init; }
 }
 
 /// <summary>One step of a leg's checklist.</summary>

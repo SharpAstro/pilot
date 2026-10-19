@@ -153,6 +153,9 @@ public interface IGitHub
 
     /// <summary>Merges PR <paramref name="number"/> by <paramref name="method"/>, refused by GitHub unless its head is still <paramref name="head"/>.</summary>
     Task MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken);
+
+    /// <summary>Opens a PR from <paramref name="branch"/> (pushed already) into <paramref name="baseBranch"/>; returns it.</summary>
+    Task<PullRequest> CreateAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken);
 }
 
 /// <summary><see cref="IGitHub"/> by the gh CLI, as v1's dashboard merged (<c>gh pr merge --match-head-commit</c>).</summary>
@@ -183,6 +186,18 @@ public sealed class GhCli : IGitHub
         {
             throw new FlightException($"gh could not merge #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
+    }
+
+    public async Task<PullRequest> CreateAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(
+            ["pr", "create", "--head", branch, "--base", baseBranch, "--title", title, "--body", body], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not open {branch}'s PR: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        return await PullRequestAsync(repoPath, branch, cancellationToken)
+            ?? throw new FlightException($"gh opened {branch}'s PR but could not read it back: {output.Trim()}");
     }
 
     private static async Task<(int Exit, string Output, string Error)> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)

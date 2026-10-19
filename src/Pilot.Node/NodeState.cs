@@ -204,7 +204,8 @@ public sealed class NodeState
         {
             if (_legs.TryGetValue((leg.Flight, leg.Name), out var known))
             {
-                if (known with { Checklist = [] } == leg with { Checklist = [] } && known.Checklist.SequenceEqual(leg.Checklist))
+                if (known with { Checklist = [], Artifacts = [] } == leg with { Checklist = [], Artifacts = [] }
+                    && known.Checklist.SequenceEqual(leg.Checklist) && known.Artifacts.SequenceEqual(leg.Artifacts))
                 {
                     return;
                 }

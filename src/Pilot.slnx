@@ -4,6 +4,7 @@
     <File Path="Directory.Packages.props" />
     <File Path="README.md" />
   </Folder>
+  <Project Path="Pilot.Cli/Pilot.Cli.csproj" />
   <Project Path="Pilot.Contracts/Pilot.Contracts.csproj" />
   <Project Path="Pilot.Gui/Pilot.Gui.csproj" />
   <Project Path="Pilot.Gui.Tests/Pilot.Gui.Tests.csproj" />

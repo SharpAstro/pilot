@@ -11,15 +11,27 @@ namespace Pilot.Node.Flights;
 /// gets a fresh worker briefed from the work, never from an earlier worker's conversation.
 /// </summary>
 public sealed partial class LegCommander(
-    NodeState state, IWorkerLauncher workers, ICheckRunner checks, IGitHub github, IGit git, FlightCommander flights, NodeOptions options, TimeProvider time)
+    NodeState state, IWorkerLauncher workers, ICheckRunner checks, IGitHub github, IGit git, Planes planes, FlightCommander flights, NodeOptions options, TimeProvider time)
 {
     private readonly SemaphoreSlim _one = new(1, 1);
+
+    /// <summary>How long a worker that finished its own leg has to end its turn and report before it is stopped.</summary>
+    public TimeSpan SelfFinishGrace { get; init; } = TimeSpan.FromSeconds(90);
+
+    /// <summary>The CLI workers are told to run, found once.</summary>
+    public string Cli { get; init; } = Briefs.PilotCli();
+
+    /// <summary>The node's socket when it is not the default one, so a worker's CLI reaches this node; null otherwise.</summary>
+    private string? Socket => string.Equals(Path.GetFullPath(options.SocketPath), Path.GetFullPath(NodeSocket.DefaultPath), StringComparison.OrdinalIgnoreCase)
+        ? null
+        : options.SocketPath;
 
     [GeneratedRegex("^[a-z0-9][a-z0-9-]{0,39}$", RegexOptions.CultureInvariant)]
     private static partial Regex LegName();
 
     public static bool Handles(string verb) =>
-        verb is Verbs.PlanLeg or Verbs.StartLeg or Verbs.Check or Verbs.FinishLeg or Verbs.GoAround or Verbs.Merge;
+        verb is Verbs.PlanLeg or Verbs.StartLeg or Verbs.Check or Verbs.FinishLeg or Verbs.GoAround or Verbs.Merge
+            or Verbs.OpenPr or Verbs.AddArtifact;
 
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
@@ -46,6 +58,12 @@ public sealed partial class LegCommander(
                     break;
                 case Verbs.Merge:
                     await MergeAsync(command, cancellationToken);
+                    break;
+                case Verbs.OpenPr:
+                    await OpenPrAsync(command, cancellationToken);
+                    break;
+                case Verbs.AddArtifact:
+                    AddArtifact(command);
                     break;
             }
         }
@@ -163,7 +181,8 @@ public sealed partial class LegCommander(
         }
 
         var worker = WorkerName(flight, leg);
-        var job = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), Briefs.For(flight, leg, legs), leg.Model, leg.Effort), cancellationToken);
+        await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
+        var job = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), Briefs.For(flight, leg, legs, cli: Cli, socket: Socket), leg.Model, leg.Effort), cancellationToken);
         state.PutLeg(leg with { State = LegState.Flying, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), Report = null });
     }
 
@@ -236,10 +255,23 @@ public sealed partial class LegCommander(
                 throw new FlightException("finish-leg takes done or failed, then a report");
         }
 
-        // A finished leg's worker is done with: the next leg, or a go-around, gets a fresh one.
+        // A finished leg's worker is done with: the next leg, or a go-around, gets a fresh one. One that finished its own
+        // leg (pilot leg finish, from its plane) is given a while to end its turn and say its report, then stopped all
+        // the same: an idle background session lingers for good otherwise, holding its plane's folder open (PIL9997's).
         if (leg.WorkerJob is { } job)
         {
-            await StopQuietly(job, cancellationToken);
+            if (string.Equals(command.Who, leg.Worker, StringComparison.Ordinal))
+            {
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(SelfFinishGrace, time, CancellationToken.None);
+                    await StopQuietly(job, CancellationToken.None);
+                }, CancellationToken.None);
+            }
+            else
+            {
+                await StopQuietly(job, cancellationToken);
+            }
         }
     }
 
@@ -264,11 +296,12 @@ public sealed partial class LegCommander(
         {
             await StopQuietly(job, cancellationToken);
         }
+        await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
         var commits = await git.RunAsync(["log", "--oneline", $"{flight.Base}..HEAD"], flight.Worktree, cancellationToken);
         var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, cancellationToken);
         var next = leg with { GoArounds = leg.GoArounds + 1 };
         var worker = WorkerName(flight, leg);
-        var brief = Briefs.For(flight, next, state.Legs(flight.Code), why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""));
+        var brief = Briefs.For(flight, next, state.Legs(flight.Code), why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket);
         var started = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, leg.Model, leg.Effort), cancellationToken);
         state.PutLeg(next with { State = LegState.Flying, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), FinishedAt = null, Report = $"go-around: {why}" });
     }
@@ -307,6 +340,72 @@ public sealed partial class LegCommander(
             throw new FlightException($"#{pr.Number}'s head is {pr.Head[..Math.Min(8, pr.Head.Length)]}, not the {head} you reviewed: look again before it lands");
         }
         await github.MergeAsync(flight.RepoPath, pr.Number, pr.Head, method, cancellationToken);
+    }
+
+    private async Task OpenPrAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var flight = FlightOf(command.Target);
+        if (flight.State == FlightState.Landed)
+        {
+            throw new FlightException($"{flight.Code} has landed");
+        }
+        var legs = state.Legs(flight.Code);
+        if (legs.Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is { Count: > 0 } open)
+        {
+            throw new FlightException($"{flight.Code} has legs not done: {string.Join(", ", open)}");
+        }
+
+        var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+        if (pr is null || !string.Equals(pr.State, "OPEN", StringComparison.OrdinalIgnoreCase))
+        {
+            var push = await git.RunAsync(["push", "-u", "origin", flight.Branch], flight.Worktree, cancellationToken);
+            if (!push.Ok)
+            {
+                throw new FlightException($"git could not push {flight.Branch}: {push.Why}");
+            }
+            var title = string.Join(' ', command.Args ?? []).Trim();
+            pr = await github.CreateAsync(flight.RepoPath, flight.Branch, BaseBranch(flight), $"{flight.Code}: {(title.Length > 0 ? title : flight.Title ?? $"issue #{flight.Issue}")}", PrBody(flight, legs), cancellationToken);
+        }
+        state.PutFlight(flight with { PullRequest = pr.Number, PullRequestUrl = pr.Url });
+    }
+
+    /// <summary>The branch a PR goes into: its base without the remote (<c>origin/main</c> is <c>main</c>).</summary>
+    private static string BaseBranch(FlightRow flight) =>
+        flight.Base.StartsWith("origin/", StringComparison.Ordinal) ? flight.Base["origin/".Length..] : flight.Base;
+
+    private static string PrBody(FlightRow flight, IReadOnlyList<LegRow> legs)
+    {
+        var body = new System.Text.StringBuilder();
+        body.AppendLine($"Flight {flight.Code}{(flight.Title is { Length: > 0 } t ? $": {t}" : "")}.");
+        if (legs.Count > 0)
+        {
+            body.AppendLine();
+            foreach (var leg in legs)
+            {
+                body.AppendLine($"- **{leg.Name}**: {leg.Goal}{(leg.Report is { Length: > 0 } r ? $" — {r.Split('\n')[0]}" : "")}");
+            }
+        }
+        body.AppendLine();
+        body.AppendLine($"Closes #{flight.Issue}.");
+        return body.ToString();
+    }
+
+    private void AddArtifact(CommandRequest command)
+    {
+        var (flight, leg) = LegOf(command.Target);
+        var args = command.Args ?? [];
+        if (args.Length == 0 || args[0].Trim().Length == 0)
+        {
+            throw new FlightException("add-artifact needs the path or URL of what to look at");
+        }
+        var location = args[0].Trim();
+        var title = string.Join(' ', args.Skip(1)).Trim();
+        if (title.Length == 0)
+        {
+            title = Uri.TryCreate(location, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? location : Path.GetFileName(location);
+        }
+        var artifact = new Artifact { Title = title, Location = location, At = time.GetUtcNow() };
+        state.PutLeg(leg with { Artifacts = [.. leg.Artifacts.Where(a => a.Title != title), artifact] });
     }
 
     private async Task StopQuietly(string job, CancellationToken cancellationToken)

@@ -13,8 +13,36 @@ public static class Briefs
     /// <summary>What the plane holds so far, for a go-around's brief: its commits past the base and the files they touch.</summary>
     public sealed record PlaneState(string Commits, string DiffStat);
 
-    public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null)
+    /// <summary>
+    /// The <c>pilot</c> CLI a worker runs, by its full path: beside the node (a publish puts them together), else the source
+    /// tree's build of the same configuration, else <c>pilot</c> on <c>PATH</c>.
+    /// </summary>
+    public static string PilotCli(string? nodeDirectory = null)
     {
+        var name = OperatingSystem.IsWindows() ? "pilot.exe" : "pilot";
+        var directory = nodeDirectory ?? AppContext.BaseDirectory;
+        if (File.Exists(Path.Combine(directory, name)))
+        {
+            return Path.Combine(directory, name);
+        }
+        var tfm = new DirectoryInfo(directory);
+        if (tfm.Parent is { } configuration && configuration.Parent is { Name: "bin" } bin && bin.Parent?.Parent is { } src
+            && Path.Combine(src.FullName, "Pilot.Cli", "bin", configuration.Name, tfm.Name, name) is var built && File.Exists(built))
+        {
+            return built;
+        }
+        return "pilot";
+    }
+
+    /// <param name="socket">The node's socket when it is not the default one: the CLI is told it, or it would ask another node.</param>
+    public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null)
+    {
+        var pilot = cli ?? "pilot";
+        var run = pilot.Contains(' ', StringComparison.Ordinal) ? $"\"{pilot}\"" : pilot;
+        if (socket is not null)
+        {
+            run += $" --node-socket \"{socket}\"";
+        }
         var text = new StringBuilder();
         var title = flight.Title is { Length: > 0 } t ? $": {t}" : "";
         text.AppendLine($"You are the worker for leg `{leg.Name}` of flight {flight.Code} ({flight.Repo} #{flight.Issue}{title}).");
@@ -75,6 +103,17 @@ public static class Briefs
             }
         }
 
+        text.AppendLine();
+        text.AppendLine("## Keeping the node told");
+        text.AppendLine("The node tracks this leg; tell it as you go, from this folder (it knows your leg by the folder):");
+        if (leg.Checklist.Length > 0)
+        {
+            text.AppendLine($"- Tick each step as you finish it: `{run} check <step number>`.");
+        }
+        text.AppendLine($"- Something to look at (a screenshot, a capture, a page): `{run} artifact <path or URL> <title>`.");
+        text.AppendLine($"- When every step is done and the Done-when holds: `{run} leg finish done \"<one-line report>\"`. The node reruns the");
+        text.AppendLine("  check itself and refuses while a step is open or the check fails; fix what it says and finish again.");
+        text.AppendLine($"- When you cannot go on: `{run} leg finish failed \"<why>\"`.");
         text.AppendLine();
         text.AppendLine("## When you stop");
         text.AppendLine("End your turn with a short report: what you did, how you checked it (the Done-when, rerun), and anything");
