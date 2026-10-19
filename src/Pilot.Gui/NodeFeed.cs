@@ -63,6 +63,15 @@ internal sealed class NodeFeed : IAsyncDisposable
 
     public void Start() => _run ??= Task.Run(() => RunAsync(_stop.Token));
 
+    /// <summary>The cards panel: the open cards and the latest handled lines.</summary>
+    public CardsScreen Cards()
+    {
+        lock (_lock)
+        {
+            return CardsScreen.From(_mirror.Cards.Values);
+        }
+    }
+
     /// <summary>The flights as of <paramref name="now"/>, with how many sessions each has.</summary>
     public FlightsScreen Flights(DateTimeOffset now)
     {

@@ -477,3 +477,62 @@ public sealed class FlightsPageTests
         chrome.Page.ShouldBe(PilotPage.Flights);
     }
 }
+
+public sealed class CardsPanelTests
+{
+    private static CardRow Card(string id, CardBin bin, string title, int minutesAgo, params string[] choices) => new()
+    {
+        Id = id,
+        Bin = bin,
+        Kind = "k",
+        Subject = "flight/TIA1",
+        Title = title,
+        Choices = [.. choices.Select(c => new CardChoice { Label = c, Verb = Verbs.Note, Target = Verbs.NodeTarget })],
+        At = Live.At.AddMinutes(-minutesAgo),
+        State = bin == CardBin.Handled ? CardState.Closed : CardState.Open,
+    };
+
+    [Fact]
+    public void RingsComeFirstAndTheSummaryCountsWhatWaits()
+    {
+        var screen = CardsScreen.From(
+        [
+            Card("c1", CardBin.ForYou, "TIA2 landed", 1),
+            Card("c2", CardBin.Ring, "TIA1's PR #63 is ready to merge", 5, "Merge"),
+            Card("c3", CardBin.Handled, "Resumed du1-tia1-gpu after the window reset", 2),
+            Card("c4", CardBin.Ring, "TIA1/parser failed", 3, "Go around"),
+        ]);
+
+        screen.Open.Select(c => c.Id).ShouldBe(["c4", "c2", "c1"]);
+        screen.Handled.ShouldHaveSingleItem().Id.ShouldBe("c3");
+        screen.Summary.ShouldBe("2 ringing · 1 for you");
+        CardsScreen.Empty.Summary.ShouldBe("Nothing waits on you");
+    }
+
+    [Fact]
+    public void ACardsButtonsAreItsChoicesAndDismissAndAClickAnswers()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var view = new CardsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        var answered = new List<(string, int)>();
+        var dismissed = new List<string>();
+        view.OnAnswer = (card, n) => answered.Add((card.Id, n));
+        view.OnDismiss = card => dismissed.Add(card.Id);
+        view.Render(CardsScreen.From([Card("c2", CardBin.Ring, "TIA1's PR #63 is ready to merge", 5, "Merge")]), new RectF32(0, 0, 340, 800));
+
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        var buttons = regions.Where(r => r.Result is HitResult.ButtonHit).ToList();
+        buttons.Select(r => ((HitResult.ButtonHit)r.Result).Action).ShouldBe(["card:c2:1", "card:c2:dismiss"]);
+
+        // Clicked as the window clicks: a press and a release through the router.
+        var router = new InputRouter(view.Ui, new BackgroundTaskTracker(), () => { }) { Widgets = () => [view] };
+        foreach (var button in buttons)
+        {
+            router.Handle(new InputEvent.MouseDown(button.X + 2, button.Y + 2));
+            router.Handle(new InputEvent.MouseUp(button.X + 2, button.Y + 2));
+        }
+        answered.ShouldBe([("c2", 1)]);
+        dismissed.ShouldBe(["c2"]);
+    }
+}

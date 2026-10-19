@@ -45,6 +45,7 @@ public sealed class NodeState
     private readonly List<NodeNote> _notes = [];
     private readonly Dictionary<string, FlightRow> _flights = new Dictionary<string, FlightRow>(StringComparer.Ordinal);
     private readonly Dictionary<(string Flight, string Name), LegRow> _legs = [];
+    private readonly Dictionary<string, CardRow> _cards = new Dictionary<string, CardRow>(StringComparer.Ordinal);
 
     // The latest deltas, oldest first, serialised once: what a resuming client is sent.
     private readonly Queue<(long Seq, byte[] Json)> _held = new Queue<(long Seq, byte[] Json)>();
@@ -218,6 +219,94 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>The cards, newest first; open ones only when <paramref name="openOnly"/>.</summary>
+    public CardRow[] Cards(bool openOnly = false)
+    {
+        lock (_gate)
+        {
+            return [.. _cards.Values.Where(c => !openOnly || c.State == CardState.Open).OrderByDescending(c => c.At).ThenByDescending(c => c.Id, StringComparer.Ordinal)];
+        }
+    }
+
+    /// <summary>
+    /// Raises a card, numbered by the node; returns it. A card of the same kind about the same subject still open is
+    /// that card, not a second one: one event, one card. A Handled card is born closed, a line and nothing to answer.
+    /// </summary>
+    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null)
+    {
+        lock (_gate)
+        {
+            if (bin != CardBin.Handled && _cards.Values.FirstOrDefault(c => c.State == CardState.Open && c.Kind == kind && c.Subject == subject) is { } open)
+            {
+                return open;
+            }
+            var now = _time.GetUtcNow();
+            var number = _cards.Count == 0 ? 1 : _cards.Keys.Max(k => int.TryParse(k.AsSpan(1), out var n) ? n : 0) + 1;
+            var card = new CardRow
+            {
+                Id = $"c{number}",
+                Bin = bin,
+                Kind = kind,
+                Subject = subject,
+                Title = title,
+                Detail = detail,
+                Choices = [.. choices ?? []],
+                At = now,
+                State = bin == CardBin.Handled ? CardState.Closed : CardState.Open,
+                Outcome = bin == CardBin.Handled ? "handled" : null,
+                ClosedBy = bin == CardBin.Handled ? "node" : null,
+                ClosedAt = bin == CardBin.Handled ? now : null,
+            };
+            Publish(new CardAddedEvent { Seq = _seq + 1, At = now, Card = card });
+            return card;
+        }
+    }
+
+    /// <summary>Closes an open card with what became of it; false when it is not open (closed already, or no such card).</summary>
+    public bool CloseCard(string id, string outcome, string closedBy)
+    {
+        lock (_gate)
+        {
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open)
+            {
+                return false;
+            }
+            var now = _time.GetUtcNow();
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { State = CardState.Closed, Outcome = outcome, ClosedBy = closedBy, ClosedAt = now } });
+            return true;
+        }
+    }
+
+    /// <summary>Opens a closed card again, as it was before: an answer whose choice was refused.</summary>
+    public void ReopenCard(string id)
+    {
+        lock (_gate)
+        {
+            if (_cards.TryGetValue(id, out var card) && card.State == CardState.Closed)
+            {
+                Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { State = CardState.Open, Outcome = null, ClosedBy = null, ClosedAt = null } });
+            }
+        }
+    }
+
+    /// <summary>
+    /// Closes every open card about <paramref name="subject"/> or anything under it (a flight's cards include its legs'),
+    /// of the given kinds or all: its thing is done, so its card leaves.
+    /// </summary>
+    public void CloseCardsAbout(string subject, string outcome, params string[] kinds)
+    {
+        lock (_gate)
+        {
+            foreach (var card in _cards.Values.Where(c => c.State == CardState.Open
+                && (c.Subject == subject || c.Subject.StartsWith(subject + "/", StringComparison.Ordinal))
+                && (kinds.Length == 0 || kinds.Contains(c.Kind))).ToList())
+            {
+                var now = _time.GetUtcNow();
+                Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { State = CardState.Closed, Outcome = outcome, ClosedBy = "node", ClosedAt = now } });
+            }
+        }
+    }
+
     // Record equality compares the connections array by reference.
     private static bool Same(FlightRow a, FlightRow b) =>
         a with { Connections = [] } == b with { Connections = [] } && a.Connections.SequenceEqual(b.Connections, StringComparer.Ordinal);
@@ -385,6 +474,12 @@ public sealed class NodeState
             case LegChangedEvent changed:
                 _legs[(changed.Leg.Flight, changed.Leg.Name)] = changed.Leg;
                 break;
+            case CardAddedEvent added:
+                _cards[added.Card.Id] = added.Card;
+                break;
+            case CardChangedEvent changed:
+                _cards[changed.Card.Id] = changed.Card;
+                break;
         }
     }
 
@@ -403,6 +498,10 @@ public sealed class NodeState
         {
             _legs[(leg.Flight, leg.Name)] = leg;
         }
+        foreach (var card in snapshot.Cards ?? [])
+        {
+            _cards[card.Id] = card;
+        }
         _seq = snapshot.Seq;
     }
 
@@ -415,6 +514,7 @@ public sealed class NodeState
         Notes = [.. _notes],
         Flights = [.. _flights.Values],
         Legs = [.. _legs.Values],
+        Cards = [.. _cards.Values],
     };
 
     private static byte[] Serialize(NodeEvent nodeEvent) => JsonSerializer.SerializeToUtf8Bytes(nodeEvent, PilotJsonContext.Default.NodeEvent);

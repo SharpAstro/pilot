@@ -247,9 +247,13 @@ public sealed partial class LegCommander(
                     }
                 }
                 state.PutLeg(leg with { State = LegState.Done, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : leg.Report });
+                state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} done");
                 break;
             case "failed":
                 state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "failed" });
+                state.RaiseCard(CardBin.Ring, "leg-failed", Verbs.LegTarget(flight.Code, leg.Name),
+                    $"{flight.Code}/{leg.Name} failed", report.Length > 0 ? report : null,
+                    [new CardChoice { Label = "Go around", Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker gave up: {(report.Length > 0 ? report : "no reason given")}"] }]);
                 break;
             default:
                 throw new FlightException("finish-leg takes done or failed, then a report");
@@ -304,6 +308,7 @@ public sealed partial class LegCommander(
         var brief = Briefs.For(flight, next, state.Legs(flight.Code), why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket);
         var started = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, leg.Model, leg.Effort), cancellationToken);
         state.PutLeg(next with { State = LegState.Flying, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), FinishedAt = null, Report = $"go-around: {why}" });
+        state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"went around: {why}", "leg-failed");
     }
 
     private async Task MergeAsync(CommandRequest command, CancellationToken cancellationToken)
@@ -367,6 +372,12 @@ public sealed partial class LegCommander(
             pr = await github.CreateAsync(flight.RepoPath, flight.Branch, BaseBranch(flight), $"{flight.Code}: {(title.Length > 0 ? title : flight.Title ?? $"issue #{flight.Issue}")}", PrBody(flight, legs), cancellationToken);
         }
         state.PutFlight(flight with { PullRequest = pr.Number, PullRequestUrl = pr.Url });
+
+        // Every leg done and the PR open: the merge is the controller's, a gate before an irreversible step.
+        state.RaiseCard(CardBin.Ring, "pr-ready", Verbs.FlightTarget(flight.Code),
+            $"{flight.Code}'s PR #{pr.Number} is ready to merge",
+            $"{flight.Title ?? $"issue #{flight.Issue}"}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {pr.Head[..Math.Min(8, pr.Head.Length)]}. {pr.Url}",
+            [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }]);
     }
 
     /// <summary>The branch a PR goes into: its base without the remote (<c>origin/main</c> is <c>main</c>).</summary>

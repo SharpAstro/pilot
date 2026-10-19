@@ -11,6 +11,7 @@ public sealed class NodeMirror
     private readonly List<NodeNote> _notes = [];
     private readonly Dictionary<string, FlightRow> _flights = new Dictionary<string, FlightRow>(StringComparer.Ordinal);
     private readonly Dictionary<(string, string), LegRow> _legs = [];
+    private readonly Dictionary<string, CardRow> _cards = new Dictionary<string, CardRow>(StringComparer.Ordinal);
 
     /// <summary>The number of the last event applied; what to reconnect with as <c>since</c>.</summary>
     public long Seq { get; private set; } = -1;
@@ -27,6 +28,9 @@ public sealed class NodeMirror
 
     /// <summary>The legs, by flight and name.</summary>
     public IReadOnlyDictionary<(string Flight, string Name), LegRow> Legs => _legs;
+
+    /// <summary>The cards, by id.</summary>
+    public IReadOnlyDictionary<string, CardRow> Cards => _cards;
 
     /// <summary>
     /// Applies one event. A snapshot replaces everything; a delta must be numbered one past the last, or the mirror
@@ -52,6 +56,11 @@ public sealed class NodeMirror
             foreach (var leg in snapshot.Legs ?? [])
             {
                 _legs[(leg.Flight, leg.Name)] = leg;
+            }
+            _cards.Clear();
+            foreach (var card in snapshot.Cards ?? [])
+            {
+                _cards[card.Id] = card;
             }
             Stream = snapshot.Stream;
             Seq = snapshot.Seq;
@@ -92,6 +101,12 @@ public sealed class NodeMirror
                 break;
             case LegChangedEvent changed:
                 _legs[(changed.Leg.Flight, changed.Leg.Name)] = changed.Leg;
+                break;
+            case CardAddedEvent added:
+                _cards[added.Card.Id] = added.Card;
+                break;
+            case CardChangedEvent changed:
+                _cards[changed.Card.Id] = changed.Card;
                 break;
             case CommandResultEvent:
                 // A result changes no state; the deltas the command made carry that.

@@ -132,6 +132,11 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         await planes.RemoveAsync(flight.RepoPath, flight.Worktree, cancellationToken);
         state.PutFlight(flight with { State = FlightState.Landed, LandedAt = time.GetUtcNow() });
 
+        // Its cards leave with it, and a quiet one says it is in.
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code} landed");
+        state.RaiseCard(CardBin.ForYou, "landed", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed",
+            $"{flight.Title ?? $"issue #{flight.Issue}"}{(flight.PullRequestUrl is { } url ? $": {url}" : "")}");
+
         // Flights that waited for it may leave now.
         foreach (var waiting in state.Flights().Where(f => f.State == FlightState.Held && f.Connections.Contains(flight.Code, StringComparer.Ordinal)))
         {

@@ -27,6 +27,9 @@ public static class PilotCommand
           leg go-around <why…> [--leg <code>/<leg>]
           check <step number or text> [--undo] [--leg <code>/<leg>]
           artifact <path or URL> [title…] [--leg <code>/<leg>]
+          cards [--all]                            open cards (rings first), or every card
+          answer <card> <choice number or label>   run the card's choice; the card closes when it is done
+          dismiss <card> [why…]
           say <session> <text…>
           note <text…>
 
@@ -72,6 +75,13 @@ public static class PilotCommand
             case "sessions":
                 await output.WriteAsync(Sessions(await client.GetSessionsAsync(cancellationToken)));
                 return 0;
+            case "cards":
+                await output.WriteAsync(Cards(await SnapshotAsync(client, cancellationToken), all: Flag(args, "--all")));
+                return 0;
+            case "answer" when args.Count >= 2:
+                return await SendAsync(client, Verbs.Answer, Verbs.CardTarget(args[0]), [string.Join(' ', args.Skip(1))], "cli", output, cancellationToken);
+            case "dismiss" when args.Count >= 1:
+                return await SendAsync(client, Verbs.Dismiss, Verbs.CardTarget(args[0]), [.. args.Skip(1)], "cli", output, cancellationToken);
             case "say" when args.Count >= 2:
                 return await SendAsync(client, Verbs.Say, Verbs.SessionTarget(args[0]), [string.Join(' ', args.Skip(1))], "cli", output, cancellationToken);
             case "note" when args.Count >= 1:
@@ -242,8 +252,51 @@ public static class PilotCommand
             {
                 text.AppendLine("No flights.");
             }
+            var open = snapshot.Cards.Where(c => c.State == CardState.Open).ToList();
+            if (open.Count > 0)
+            {
+                text.AppendLine($"{open.Count} open {(open.Count == 1 ? "card" : "cards")} ({open.Count(c => c.Bin == CardBin.Ring)} ringing): pilot cards");
+            }
             var live = snapshot.Sessions.Where(s => s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle).ToList();
             text.AppendLine($"{live.Count} live {(live.Count == 1 ? "session" : "sessions")}{(live.Count > 0 ? ": " + string.Join(", ", live.Select(s => $"{s.Name} ({s.State.ToString().ToLowerInvariant()})")) : "")}");
+        }
+        return text.ToString();
+    }
+
+    /// <summary>The cards, rings first then for-you, newest first within each; with <paramref name="all"/> the closed ones and Handled too.</summary>
+    internal static string Cards(SnapshotEvent snapshot, bool all = false)
+    {
+        var cards = snapshot.Cards
+            .Where(c => all || c.State == CardState.Open)
+            .OrderBy(c => c.State)
+            .ThenBy(c => c.Bin)
+            .ThenByDescending(c => c.At)
+            .ToList();
+        if (cards.Count == 0)
+        {
+            return all ? "No cards.\n" : "No open cards.\n";
+        }
+        var text = new System.Text.StringBuilder();
+        foreach (var card in cards)
+        {
+            var bin = card.Bin switch { CardBin.Ring => "RING", CardBin.ForYou => "for you", _ => "handled" };
+            var closed = card.State == CardState.Closed ? $"  [closed: {card.Outcome}{(card.ClosedBy is { } by ? $", by {by}" : "")}]" : "";
+            text.AppendLine($"{card.Id}  {bin}  {card.Title}{closed}");
+            if (card.Detail is { Length: > 0 } detail)
+            {
+                foreach (var line in detail.Split('\n'))
+                {
+                    text.AppendLine($"      {line}");
+                }
+            }
+            if (card.State == CardState.Open)
+            {
+                for (var i = 0; i < card.Choices.Length; i++)
+                {
+                    text.AppendLine($"      {i + 1}. {card.Choices[i].Label}: pilot answer {card.Id} {i + 1}");
+                }
+                text.AppendLine($"      or: pilot dismiss {card.Id}");
+            }
         }
         return text.ToString();
     }

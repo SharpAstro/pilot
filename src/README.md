@@ -134,6 +134,20 @@ A worker that finishes its own leg is stopped after 90 s, once it has said its r
 its `-w` session entered when that job ends by itself, keeping the branch; the node checks a plane out again from its
 branch before any worker goes in, and lands one that is already gone.
 
+## Cards
+
+An event that needs the controller is one card, with its choices on it (after Sam's campaigner): **Rings** (a gate
+before an irreversible step, a stop: waits until someone acts), **For you** (a card, no push) and **Handled** (what the
+node or the watchtower did itself: one line, born closed). A session going quiet is never a card; it changes how its
+row looks. A card leaves when its thing is done: answered, dismissed, or closed by the node when its flight lands or
+its leg finishes. Raised so far: a PR opened with every leg done rings with **Merge** on that head; a failed leg rings
+with **Go around**; a landed flight is a For-you card.
+
+Each choice is a command; `answer card/<id> <n or label>` runs it as the one answering, through the same route as any
+command, and closes the card (opening it again if the command is refused). `dismiss card/<id> [why]` closes it with
+nothing done. The GUI shows open cards down the right, with their buttons, when there are any; `pilot cards`,
+`pilot answer` and `pilot dismiss` do the same from a terminal.
+
 ## Hooks
 
 Claude Code's hooks tell the node the moment a session changes, where the agents listing is read every few seconds:
@@ -160,6 +174,7 @@ A session the API stopped (its transcript's `apiError`, `usage_limit_reached` wi
 | `GET /api/v1/node` | Which node this is: wire version, build version, machine, pid, started at, data folder, socket, stream. |
 | `GET /api/v1/events` | The event stream, a WebSocket: a snapshot carrying the current number, then deltas each numbered one past the last. `?since=<n>&stream=<id>` resumes with the deltas after `n`, or a snapshot when the node no longer holds them or has another stream. |
 | `POST /api/v1/commands` | Every command, `{verb, target, args, who}`. The result is the response and a `commandResult` event on the stream. Verbs: `note node <text>`, `say session/<id> <text>`, and the flight verbs above. |
+| (cards) | `answer card/<id> <choice>`, `dismiss card/<id> [why]`: verbs on `POST /api/v1/commands`. |
 | `POST /api/v1/hooks` | One Claude Code hook's stdin, as `pilot-node hook` forwards it; always 204. |
 
 HTTP responses come in a `ResponseEnvelope` (`response`, `error`, `statusCode`, `success`); stream events are sent

@@ -55,11 +55,11 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     // Column widths. The session column takes what the fixed ones leave, which is ~300 at 1280 wide.
     private const float StripeWidth = 4f;
-    private const float ModelWidth = 150f;
-    private const float ContextWidth = 180f;
-    private const float LastWidth = 140f;
-    private const float StateWidth = 170f;
-    private const float SpendWidth = 180f;
+    private const float ModelWidth = 140f;
+    private const float ContextWidth = 160f;
+    private const float LastWidth = 120f;
+    private const float StateWidth = 160f;
+    private const float SpendWidth = 160f;
 
     private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
     private static readonly RGBAColor32 HeaderBg = new(0x1b, 0x1c, 0x24, 0xff);
