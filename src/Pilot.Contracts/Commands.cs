@@ -114,6 +114,15 @@ public static class Verbs
     /// </summary>
     public const string Merge = "merge";
 
+    /// <summary>
+    /// <c>open-pr flight/&lt;code&gt; [title…]</c>: the plane's branch pushed and its PR opened against its base, titled with
+    /// the code, its body the legs and <c>Closes #&lt;issue&gt;</c>. A PR already open for the branch is taken as it is.
+    /// </summary>
+    public const string OpenPr = "open-pr";
+
+    /// <summary><c>add-artifact flight/&lt;code&gt;/&lt;leg&gt; &lt;path or URL&gt; [title…]</c>: something to look at, on the leg.</summary>
+    public const string AddArtifact = "add-artifact";
+
     /// <summary>The node itself, as a target.</summary>
     public const string NodeTarget = "node";
 

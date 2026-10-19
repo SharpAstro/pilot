@@ -28,6 +28,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Pilot.Contracts\Pilot.Contracts.csproj" />
     <ProjectReference Include="..\Pilot.Node\Pilot.Node.csproj" />
+    <ProjectReference Include="..\Pilot.Cli\Pilot.Cli.csproj" />
   </ItemGroup>
 
   <!-- The contract's sample snapshot, copied next to the test assembly so the round-trip test finds it through

@@ -113,15 +113,89 @@ public sealed class Planes(IGit git)
         return new Plane(repoPath, branch, worktree, baseRef);
     }
 
+    /// <summary>Whether git has <paramref name="worktree"/> as a worktree of the repo, not merely a folder there.</summary>
+    public async Task<bool> IsRegisteredAsync(string repoPath, string worktree, CancellationToken cancellationToken)
+    {
+        var list = await git.RunAsync(["worktree", "list", "--porcelain"], repoPath, cancellationToken);
+        if (!list.Ok)
+        {
+            return false;
+        }
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var wanted = Path.TrimEndingDirectorySeparator(Path.GetFullPath(worktree));
+        // One block per worktree, blank-line separated. A torn-down one is still listed, marked prunable: that is gone.
+        foreach (var block in list.Output.Replace("\r", "", StringComparison.Ordinal).Split("\n\n"))
+        {
+            var lines = block.Split('\n');
+            if (lines.FirstOrDefault(l => l.StartsWith("worktree ", StringComparison.Ordinal)) is { } head
+                && string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(head["worktree ".Length..].Trim())), wanted, comparison))
+            {
+                return !lines.Any(l => l.StartsWith("prunable", StringComparison.Ordinal));
+            }
+        }
+        return false;
+    }
+
     /// <summary>
-    /// Removes a landed plane's worktree, keeping its branch. Refuses one with changes not committed: its work would go
-    /// with it. A worktree already gone is fine.
+    /// Makes sure the plane's worktree is there, on its branch, before a worker is sent into it. Claude Code tears down a
+    /// worktree it entered with <c>-w</c> when that session's job ends by itself (its <c>rm</c>: "and its worktree when
+    /// that is safe"), keeping the branch; and <c>-w</c> into a name with no worktree makes a new one on a new branch. The
+    /// branch is the plane: a missing worktree is checked out from it again, and a leftover folder of a torn-down one
+    /// goes first.
     /// </summary>
-    public async Task RemoveAsync(string repoPath, string worktree, CancellationToken cancellationToken)
+    public async Task EnsureAsync(string repoPath, string worktree, string branch, CancellationToken cancellationToken)
+    {
+        if (await IsRegisteredAsync(repoPath, worktree, cancellationToken))
+        {
+            return;
+        }
+        await git.RunAsync(["worktree", "prune"], repoPath, cancellationToken);
+        DeleteLeftover(worktree);
+        var add = await git.RunAsync(["worktree", "add", worktree, branch], repoPath, cancellationToken);
+        if (!add.Ok)
+        {
+            throw new FlightException($"git could not check out the plane {branch} at {worktree} again: {add.Why}");
+        }
+    }
+
+    /// <summary>Removes the folder of a worktree git no longer has: what a torn-down worktree leaves when a file was held.</summary>
+    private static void DeleteLeftover(string worktree)
     {
         if (!Directory.Exists(worktree))
         {
+            return;
+        }
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(worktree, "*", SearchOption.AllDirectories))
+            {
+                File.SetAttributes(file, FileAttributes.Normal);
+            }
+            Directory.Delete(worktree, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new FlightException($"{worktree} is left over from a worktree git no longer has, and could not be removed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Removes a landed plane's worktree, keeping its branch. Refuses one with changes not committed: its work would go
+    /// with it. A worktree already gone, or torn down by Claude Code, is fine.
+    /// </summary>
+    public async Task RemoveAsync(string repoPath, string worktree, CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(worktree) || !await IsRegisteredAsync(repoPath, worktree, cancellationToken))
+        {
             await git.RunAsync(["worktree", "prune"], repoPath, cancellationToken);
+            try
+            {
+                DeleteLeftover(worktree);
+            }
+            catch (FlightException)
+            {
+                // A folder git no longer has, still held: the flight lands all the same; it holds nothing of git's.
+            }
             return;
         }
         var status = await git.RunAsync(["status", "--porcelain"], worktree, cancellationToken);
@@ -139,6 +213,19 @@ public sealed class Planes(IGit git)
         var tries = 0;
         while (!(remove = await git.RunAsync(["worktree", "remove", worktree], repoPath, cancellationToken)).Ok)
         {
+            // Torn down under us between the look and the remove: as gone as it gets.
+            if (remove.Why.Contains("is not a working tree", StringComparison.OrdinalIgnoreCase))
+            {
+                await git.RunAsync(["worktree", "prune"], repoPath, cancellationToken);
+                try
+                {
+                    DeleteLeftover(worktree);
+                }
+                catch (FlightException)
+                {
+                }
+                return;
+            }
             // A worker stopped a moment ago can still hold a file open on Windows: give it a few seconds.
             if (++tries >= 5 || !remove.Why.Contains("Permission denied", StringComparison.OrdinalIgnoreCase))
             {

@@ -43,6 +43,12 @@ public sealed record FlightRow
 
     public required DateTimeOffset CreatedAt { get; init; }
 
+    /// <summary>Its PR's number, once <c>open-pr</c> opened it; null before.</summary>
+    public int? PullRequest { get; init; }
+
+    /// <summary>Its PR's page.</summary>
+    public string? PullRequestUrl { get; init; }
+
     /// <summary>When it landed; null until then.</summary>
     public DateTimeOffset? LandedAt { get; init; }
 }

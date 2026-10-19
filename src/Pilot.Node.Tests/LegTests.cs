@@ -56,6 +56,15 @@ internal sealed class FakeGitHub : IGitHub
         Merged.Add((number, head, method));
         return Task.CompletedTask;
     }
+
+    public List<(string Branch, string Base, string Title, string Body)> Created { get; } = [];
+
+    public Task<PullRequest> CreateAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken)
+    {
+        Created.Add((branch, baseBranch, title, body));
+        Pr = new PullRequest(70 + Created.Count, "OPEN", "cafe0000cafe0000", $"https://github.com/x/tianwen/pull/{70 + Created.Count}");
+        return Task.FromResult(Pr);
+    }
 }
 
 /// <summary>Legs: planned in order, flown one at a time by fresh workers, done only on a passing rerun, and a flight merged guarded on its head.</summary>
@@ -81,7 +90,7 @@ public sealed class LegCommanderTests : IDisposable
         var git = new GitCli();
         _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
-        _legs = new LegCommander(_state, _workers, _checks, _github, git, _flights, options, TimeProvider.System);
+        _legs = new LegCommander(_state, _workers, _checks, _github, git, new Planes(git), _flights, options, TimeProvider.System);
     }
 
     private string Repo => Path.Combine(_root, "tianwen");
@@ -210,6 +219,26 @@ public sealed class LegCommanderTests : IDisposable
     }
 
     [Fact]
+    public async Task AWorkerThatFinishedItsOwnLegIsStoppedAfterAGrace()
+    {
+        await FlightWithTwoLegs();
+        var legs = new LegCommander(_state, _workers, _checks, _github, new GitCli(), new Planes(new GitCli()), _flights,
+            new NodeOptions("/s", "/d", MachinePrefix: "DU1"), TimeProvider.System) { SelfFinishGrace = TimeSpan.FromMilliseconds(50) };
+        Task<CommandResult> Run(string verb, string target, string who, params string[] args) =>
+            legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct);
+        await Run(Verbs.StartLeg, "flight/TIA1/parser", "cli");
+
+        (await Run(Verbs.FinishLeg, "flight/TIA1/parser", "du1-tia1-parser", "failed", "no ephemeris here")).Ok.ShouldBeTrue();
+
+        _workers.Stopped.ShouldBeEmpty();
+        for (var i = 0; i < 100 && _workers.Stopped.Count == 0; i++)
+        {
+            await Task.Delay(20, Ct);
+        }
+        _workers.Stopped.ShouldBe(["job00001"]);
+    }
+
+    [Fact]
     public async Task AGoAroundStopsTheWorkerAndStartsAFreshOneToldWhyAndWhatThePlaneHolds()
     {
         var flight = await FlightWithTwoLegs();
@@ -257,6 +286,60 @@ public sealed class LegCommanderTests : IDisposable
         _github.Merged.ShouldBe([(63, "def5678aaaabbbbccccdddd", "rebase")]);
         _state.Flights().Single().State.ShouldBe(FlightState.Landed);
         Directory.Exists(flight.Worktree).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task APlaneClaudeCodeToreDownIsCheckedOutAgainOnItsBranchBeforeTheNextWorker()
+    {
+        var flight = await FlightWithTwoLegs();
+        File.WriteAllText(Path.Combine(flight.Worktree, "parser.cs"), "class Parser {}\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "The parser");
+        // As Claude Code leaves a -w worktree whose job ended by itself: unregistered, its folder still there.
+        Git(Repo, "worktree", "remove", "--force", flight.Worktree);
+        Directory.CreateDirectory(flight.Worktree);
+        File.WriteAllText(Path.Combine(flight.Worktree, "leftover.tmp"), "held\n");
+
+        (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
+
+        Git(flight.Worktree, "rev-parse", "--abbrev-ref", "HEAD").ShouldBe(flight.Branch);
+        File.Exists(Path.Combine(flight.Worktree, "parser.cs")).ShouldBeTrue();
+        File.Exists(Path.Combine(flight.Worktree, "leftover.tmp")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task APlaneWhoseGitFileWentIsPrunableAndStillLands()
+    {
+        var flight = await FlightWithTwoLegs();
+        // Listed by git, marked prunable: the folder's .git file is gone, as a half torn-down worktree leaves it.
+        File.Delete(Path.Combine(flight.Worktree, ".git"));
+        Git(Repo, "worktree", "list", "--porcelain").ShouldContain("prunable");
+
+        (await new Planes(new GitCli()).IsRegisteredAsync(Repo, flight.Worktree, Ct)).ShouldBeFalse();
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task APlaneAlreadyTornDownStillLands()
+    {
+        var flight = await FlightWithTwoLegs();
+        Git(Repo, "worktree", "remove", "--force", flight.Worktree);
+
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+
+        _state.Flights().Single().State.ShouldBe(FlightState.Landed);
+        Git(Repo, "branch", "--list", flight.Branch).ShouldContain(flight.Branch);
+    }
+
+    [Fact]
+    public void ANodeOnItsOwnSocketTellsItsWorkersCliWhichOne()
+    {
+        var flight = new FlightRow { Code = "TIA1", Repo = "tianwen", RepoPath = "/r", Issue = 1, Branch = "flight/tia1", Worktree = "/r/w", Base = "main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch };
+        var leg = new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Planned, Checklist = [new CheckItem { Text = "a" }] };
+
+        Briefs.For(flight, leg, [leg], cli: @"C:\Program Files\pilot\pilot.exe", socket: @"D:\sockets\pilot.sock")
+            .ShouldContain(@"`""C:\Program Files\pilot\pilot.exe"" --node-socket ""D:\sockets\pilot.sock"" check <step number>`");
+        Briefs.For(flight, leg, [leg], cli: "pilot").ShouldContain("`pilot check <step number>`");
     }
 
     [Fact]

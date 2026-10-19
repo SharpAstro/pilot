@@ -10,6 +10,7 @@ the [Pilot v2 design](https://claude.ai/code/artifact/0ebd8a10-0b5c-475b-a909-2e
 | `Pilot.Contracts` | The wire, shared by the node and every client: `SessionRow`, the snapshot and delta events, commands, `NodeSocket`, `NodeClient`, `NodeMirror`, and the source-generated `PilotJsonContext`. `Fixtures/snapshot.sample.json` is a sample snapshot to draw from without a node. |
 | `Pilot.Node` | The node, `pilot-node`: Kestrel on the socket only, native AOT. |
 | `Pilot.Node.Tests` | xunit.v3 tests against a real node on a temp socket. |
+| `Pilot.Cli` | The CLI, `pilot`: the node's commands, for the controller, workers and scripts; native AOT. |
 | `Pilot.Gui` | The GUI, `pilot-gui`: every session on the machine as a row, live from the node, and a bar to say something to the selected one; on DIR.Lib and SdlVulkan.Renderer, native AOT. |
 | `Pilot.Gui.Tests` | xunit.v3 tests rendering the sessions view on the CPU from the sample snapshot, the live feed on a fake stream, and the say bar. |
 
@@ -101,6 +102,37 @@ budget.
 
 The GUI's rail opens the **Flights** page (Ctrl+2): each flight's code, title, repo and issue, state (held: waiting
 for which), legs (how many done, which flying), branch and sessions.
+
+## The CLI
+
+`pilot` (Pilot.Cli, native AOT) spells the node's commands for the controller, the watchtower, workers and scripts:
+
+```bash
+pilot status                                   # flights, their legs and artifacts, and the live sessions
+pilot sessions
+pilot flight create <issue> [title…] [--repo <path>]
+pilot flight connect <code> <other>
+pilot flight pr <code> [title…]                # pushes the plane, opens its PR (body: the legs, Closes #<issue>)
+pilot flight merge <code> <head> [--squash|--rebase|--merge]
+pilot flight land <code>
+pilot leg plan <code> <name> --goal … --done-when … [--check …] [--budget …] [--model …] [--effort …] [--item …]…
+pilot leg start <code> <leg>
+pilot leg finish done|failed [report…]         # done: the node reruns the check
+pilot leg go-around <why…>
+pilot check <step number or text> [--undo]
+pilot artifact <path or URL> [title…]
+pilot say <session> <text…>
+pilot note <text…>
+```
+
+Inside a plane a leg command names no leg: the flight is the one whose worktree holds the folder, the leg its one
+flying, and the command is sent as that leg's worker, so the black box says which worker ticked what. A worker's brief
+gives it these commands by the CLI's full path (beside the node, else the source tree's build), with `--node-socket`
+when its node is not on the default socket. Exit codes: 0 done, 1 refused by the node (it says why), 2 usage, 3 no node.
+
+A worker that finishes its own leg is stopped after 90 s, once it has said its report. Claude Code tears down a worktree
+its `-w` session entered when that job ends by itself, keeping the branch; the node checks a plane out again from its
+branch before any worker goes in, and lands one that is already gone.
 
 ## Hooks
 
