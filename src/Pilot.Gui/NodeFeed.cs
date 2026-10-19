@@ -103,6 +103,7 @@ internal sealed class NodeFeed : IAsyncDisposable
                 {
                     _mirror = new NodeMirror();
                 }
+                Console.Error.WriteLine($"pilot-gui: resyncing with the node: {ex.Message}");
                 SetStatus($"resyncing with the node on {_socketPath}: {ex.Message}", connected: false);
                 continue;
             }

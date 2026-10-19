@@ -116,7 +116,10 @@ view.Ui.Focus.FocusChanged += (_, next) =>
 
 // Live: the node's stream feeds the rows, and the say bar talks through the same node.
 using var client = snapshot is null ? new NodeClient(socketPath) : null;
-await using var feed = client is null ? null : NodeFeed.For(client);
+// Not `await using`: Main is async (--say and --capture await), and an await here would resume the rest of Main,
+// the SDL window's teardown included, on a thread-pool thread, where closing the window hung. The feed is drained
+// with the loop pumping instead (ShutdownDrain), so the teardown stays on this thread.
+var feed = client is null ? null : NodeFeed.For(client);
 if (feed is not null && client is not null)
 {
     view.CanSay = true;
@@ -212,5 +215,9 @@ if (options.ExitAfter is { } after)
 }
 
 loop.Run(cts.Token);
+if (feed is not null)
+{
+    ShutdownDrain.PumpUntilComplete(loop, feed.DisposeAsync().AsTask(), Console.Error);
+}
 Console.WriteLine(cts.IsCancellationRequested ? "pilot-gui: --exit-after reached; window closed." : "pilot-gui: window closed.");
 return 0;
