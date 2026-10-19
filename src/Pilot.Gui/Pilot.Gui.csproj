@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Pilot.Contracts\Pilot.Contracts.csproj" />
+    <PackageReference Include="System.CommandLine" />
   </ItemGroup>
 
   <!-- The UI face travels with the binary, so a capture draws the same glyphs on every machine. -->

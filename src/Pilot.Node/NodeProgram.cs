@@ -6,14 +6,8 @@ namespace Pilot.Node;
 public static class NodeProgram
 {
     /// <returns>A <see cref="NodeExitCodes"/> value.</returns>
-    public static async Task<int> RunAsync(string[] args, TextWriter error, CancellationToken cancellationToken)
+    public static async Task<int> RunAsync(NodeOptions options, TextWriter error, CancellationToken cancellationToken)
     {
-        if (!NodeOptions.TryParse(args, out var options, out var invalid))
-        {
-            await error.WriteLineAsync(invalid);
-            return NodeExitCodes.InvalidArguments;
-        }
-
         if (!NodeLock.TryAcquire(options.SocketPath, out var held, out var refusal))
         {
             await error.WriteLineAsync(await NodeLock.DescribeHolderAsync(options.SocketPath, refusal, cancellationToken));

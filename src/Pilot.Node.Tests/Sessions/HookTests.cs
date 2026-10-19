@@ -185,9 +185,9 @@ public sealed class HookInstallerTests
         var output = new StringWriter();
         try
         {
-            HookCommands.Hooks(["install", "--settings", file], Node, output, TextWriter.Null).ShouldBe(0);
-            HookCommands.Hooks(["install", "--settings", file], Node, output, TextWriter.Null).ShouldBe(0);
-            HookCommands.Hooks(["remove", "--settings", file], Node, output, TextWriter.Null).ShouldBe(0);
+            HookCommands.Hooks(install: true, file, socket: null, Node, output, TextWriter.Null).ShouldBe(0);
+            HookCommands.Hooks(install: true, file, socket: null, Node, output, TextWriter.Null).ShouldBe(0);
+            HookCommands.Hooks(install: false, file, socket: null, Node, output, TextWriter.Null).ShouldBe(0);
 
             output.ToString().ShouldContain("installed for SessionStart");
             output.ToString().ShouldContain("already in");
@@ -220,7 +220,7 @@ public sealed class HookRouteTests
         // As `pilot-node hook` sends it: the hook's stdin, untouched.
         var stdin = new MemoryStream(Encoding.UTF8.GetBytes(
             $$"""{"session_id":"{{AgentRows.SessionB}}","hook_event_name":"Notification","notification_type":"permission_prompt","message":"Claude needs your permission to use Bash","cwd":"/work"}"""));
-        (await HookCommands.HookAsync(["--node-socket", node.SocketPath], stdin)).ShouldBe(0);
+        (await HookCommands.HookAsync(node.SocketPath, stdin)).ShouldBe(0);
 
         NodeEvent? next;
         do
@@ -238,7 +238,7 @@ public sealed class HookRouteTests
     {
         var socket = Path.Combine(Path.GetTempPath(), "p2h-" + Guid.NewGuid().ToString("N")[..8] + ".sock");
 
-        (await HookCommands.HookAsync(["--node-socket", socket], new MemoryStream("{}"u8.ToArray()))).ShouldBe(0);
-        (await HookCommands.HookAsync([], new MemoryStream("not json"u8.ToArray()))).ShouldBe(0);
+        (await HookCommands.HookAsync(socket, new MemoryStream("{}"u8.ToArray()))).ShouldBe(0);
+        (await HookCommands.HookAsync(null, new MemoryStream("not json"u8.ToArray()))).ShouldBe(0);
     }
 }

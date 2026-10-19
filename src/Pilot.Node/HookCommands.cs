@@ -30,19 +30,10 @@ public static class HookCommands
     /// runs inside every session on the machine, so it is fail-open by rule: no node, a slow node or a bad payload costs
     /// the session nothing, and it prints nothing, since a SessionStart hook's output would land in the model's context.
     /// </summary>
-    public static async Task<int> HookAsync(string[] args, Stream stdin)
+    public static async Task<int> HookAsync(string? socket, Stream stdin)
     {
         try
         {
-            string? socket = null;
-            for (var i = 0; i < args.Length - 1; i++)
-            {
-                if (args[i] == "--node-socket")
-                {
-                    socket = args[i + 1];
-                }
-            }
-
             using var budget = new CancellationTokenSource(HookBudget);
             using var body = new MemoryStream();
             await stdin.CopyToAsync(body, budget.Token);
@@ -63,40 +54,18 @@ public static class HookCommands
     /// <c>pilot-node hooks install|remove [--settings &lt;file&gt;] [--node-socket &lt;path&gt;]</c>. The settings file defaults to
     /// the user's (<c>~/.claude/settings.json</c>, or under <c>CLAUDE_CONFIG_DIR</c>).
     /// </summary>
-    public static int Hooks(string[] args, string nodePath, TextWriter output, TextWriter error)
+    public static int Hooks(bool install, string? settings, string? socket, string nodePath, TextWriter output, TextWriter error)
     {
-        if (args.Length == 0 || args[0] is not ("install" or "remove"))
-        {
-            error.WriteLine("usage: pilot-node hooks install|remove [--settings <file>] [--node-socket <path>]");
-            return NodeExitCodes.InvalidArguments;
-        }
-
-        string? settings = null;
-        string? socket = null;
-        for (var i = 1; i < args.Length; i++)
-        {
-            switch (args[i])
-            {
-                case "--settings" when i + 1 < args.Length:
-                    settings = args[++i];
-                    break;
-                case "--node-socket" when i + 1 < args.Length:
-                    socket = Path.GetFullPath(args[++i]);
-                    break;
-                default:
-                    error.WriteLine($"Unknown or incomplete argument {args[i]}");
-                    return NodeExitCodes.InvalidArguments;
-            }
-        }
-
+        socket = socket is null ? null : Path.GetFullPath(socket);
+        var verb = install ? "install" : "remove";
         settings = Path.GetFullPath(settings ?? DefaultSettings());
         try
         {
             var text = File.Exists(settings) ? File.ReadAllText(settings) : "";
-            var updated = args[0] == "install" ? Install(text, nodePath, socket) : Remove(text);
+            var updated = install ? Install(text, nodePath, socket) : Remove(text);
             if (updated == text)
             {
-                output.WriteLine($"{settings}: {(args[0] == "install" ? "pilot's hooks were already in" : "no pilot hooks to remove")}");
+                output.WriteLine($"{settings}: {(install ? "pilot's hooks were already in" : "no pilot hooks to remove")}");
                 return 0;
             }
 
@@ -104,7 +73,7 @@ public static class HookCommands
             var temp = settings + ".pilot.tmp";
             File.WriteAllText(temp, updated, new UTF8Encoding(false));
             File.Move(temp, settings, overwrite: true);
-            output.WriteLine($"{settings}: pilot's hooks {(args[0] == "install" ? $"installed for {string.Join(", ", Events)}" : "removed")}");
+            output.WriteLine($"{settings}: pilot's hooks {(install ? $"installed for {string.Join(", ", Events)}" : "removed")}");
             return 0;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)

@@ -92,9 +92,9 @@ public sealed class FormattingTests
         GuiOptions.Parse(["--size", "big"], out error).ShouldBeNull();
         error.ShouldNotBeNull().ShouldContain("--size");
         GuiOptions.Parse(["--capture"], out error).ShouldBeNull();
-        error.ShouldNotBeNull().ShouldContain("needs a value");
+        error.ShouldNotBeNull().ShouldContain("Required argument missing for option: '--capture'");
         GuiOptions.Parse(["--frobnicate", "x"], out error).ShouldBeNull();
-        error.ShouldNotBeNull().ShouldContain("unknown argument");
+        error.ShouldNotBeNull().ShouldContain("Unrecognized command or argument '--frobnicate'");
         GuiOptions.Parse(["--exit-after", "0s"], out _).ShouldBeNull();
     }
     [Fact]
