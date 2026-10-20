@@ -233,7 +233,8 @@ public sealed class NodeState
     /// Raises a card, numbered by the node; returns it. A card of the same kind about the same subject still open is
     /// that card, not a second one: one event, one card. A Handled card is born closed, a line and nothing to answer.
     /// </summary>
-    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null)
+    /// <param name="link">The page the card is about (a flight's PR), opened from the card.</param>
+    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null)
     {
         lock (_gate)
         {
@@ -252,6 +253,7 @@ public sealed class NodeState
                 Title = title,
                 Detail = detail,
                 Choices = [.. choices ?? []],
+                Link = link,
                 At = now,
                 State = bin == CardBin.Handled ? CardState.Closed : CardState.Open,
                 Outcome = bin == CardBin.Handled ? "handled" : null,

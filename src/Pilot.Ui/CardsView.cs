@@ -62,6 +62,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
     private static readonly RGBAColor32 Ring = new(0xf0, 0xb4, 0x3c, 0xff);
     private static readonly RGBAColor32 ForYou = new(0x6f, 0x9b, 0xd8, 0xff);
+    private static readonly RGBAColor32 Link = new(0x8a, 0xb4, 0xf8, 0xff);
+    private static readonly RGBAColor32 CardHover = new(0x2a, 0x2d, 0x3a, 0xff);
     private static readonly RGBAColor32 Button = new(0x2c, 0x35, 0x4a, 0xff);
     private static readonly RGBAColor32 ButtonHover = new(0x3a, 0x46, 0x62, 0xff);
 
@@ -173,7 +175,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         var lines = new List<Layout.Node>
         {
             Layout.Builder.Text(card.Bin == CardBin.Ring ? "RING" : "for you", 10f, accent).RowH(16f),
-            Layout.Builder.Text(card.Title, 14f, Bright).RowH(22f),
+            // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
+            card.Link is { } titleLink
+                ? Layout.Builder.Text(card.Title, 14f, Link)
+                    .BgHover(CardHover)
+                    .Clickable(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => OnOpen?.Invoke(titleLink))
+                    .RowH(22f)
+                : Layout.Builder.Text(card.Title, 14f, Bright).RowH(22f),
         };
         if (card.Detail is { Length: > 0 } detail)
         {
@@ -188,6 +196,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         {
             var number = i + 1;
             buttons.Add(Pill(card.Choices[i].Label, $"card:{card.Id}:{number}", () => OnAnswer?.Invoke(card, number)));
+        }
+        // The page it is about, one click away: a PR is what a merge card and a landed card are both about.
+        if (card.Link is { } link)
+        {
+            buttons.Add(Pill(link.Contains("/pull/", StringComparison.Ordinal) ? "Open PR" : "Open", $"card:{card.Id}:open", () => OnOpen?.Invoke(link)));
         }
         buttons.Add(Pill("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
         lines.Add(Layout.Builder.Spacer().RowH(6f));

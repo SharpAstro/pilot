@@ -30,6 +30,9 @@ public sealed record CardRow
     /// <summary>What can be done about it, each a command the node runs when the card is answered with it.</summary>
     public CardChoice[] Choices { get; init; } = [];
 
+    /// <summary>The page the card is about, one click away on every client: a flight's PR; null when there is none.</summary>
+    public string? Link { get; init; }
+
     public required DateTimeOffset At { get; init; }
 
     public required CardState State { get; init; }
