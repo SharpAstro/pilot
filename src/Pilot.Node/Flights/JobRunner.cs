@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using System.Threading.Channels;
 using Node.Lib;
 using Pilot.Contracts;
 
@@ -53,14 +54,46 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     public TimeSpan PumpEvery { get; init; } = TimeSpan.FromSeconds(15);
 
     private readonly ConcurrentDictionary<string, Process> _running = new(StringComparer.Ordinal);
+    // Every job this node handed over, so a recovery knows which ones a previous node left behind.
+    private readonly ConcurrentDictionary<string, byte> _mine = new(StringComparer.Ordinal);
+    // What the dispatcher acts on, one at a time: a job handed over, a cancel of a waiting one, and "look again" (a job
+    // ended, the timer for memory). No lock anywhere: everything that decides who runs happens on the dispatcher alone.
+    private readonly Channel<Signal> _signals = Channel.CreateUnbounded<Signal>(new UnboundedChannelOptions { SingleReader = true });
+    // The waiting jobs, in order. The dispatcher's alone: nothing else reads or writes it.
     private readonly List<JobRow> _queue = [];
-    private readonly Lock _gate = new();
     private CancellationToken _stopping;
+
+    private abstract record Signal;
+
+    private sealed record HandedOver(JobRow Job) : Signal;
+
+    private sealed record Withdrawn(string Id, string Who) : Signal;
+
+    private sealed record LookAgain : Signal
+    {
+        public static readonly LookAgain Instance = new();
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         _stopping = stopping;
         await RecoverAsync(stopping);
+        _ = TickAsync(stopping);
+        try
+        {
+            await foreach (var signal in _signals.Reader.ReadAllAsync(stopping))
+            {
+                Dispatch(signal);
+            }
+        }
+        catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+        {
+        }
+    }
+
+    /// <summary>Asks the dispatcher to look again every <see cref="PumpEvery"/>, for memory that has come free.</summary>
+    private async Task TickAsync(CancellationToken stopping)
+    {
         using var timer = new PeriodicTimer(PumpEvery, time);
         try
         {
@@ -74,15 +107,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
     }
 
-    /// <summary>Marks the jobs a previous node left running as failed, and tells their owners.</summary>
+    /// <summary>Marks the jobs a previous node left running or waiting as failed, and tells their owners.</summary>
     public async Task RecoverAsync(CancellationToken cancellationToken)
     {
-        List<JobRow> orphans;
-        lock (_gate)
-        {
-            orphans = [.. state.Jobs().Where(j => (j.State == JobState.Running && !_running.ContainsKey(j.Id)) || (j.State == JobState.Queued && !_queue.Any(q => q.Id == j.Id)))];
-        }
-        foreach (var job in orphans)
+        foreach (var job in state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && !_mine.ContainsKey(j.Id)))
         {
             var ended = job with
             {
@@ -150,58 +178,67 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             OwnerName = owner?.Name,
             Flight = owner?.Flight,
             Leg = owner?.Leg,
-            State = JobState.Running,
+            State = JobState.Queued,
             LogPath = Path.Combine(folder, $"{jobId}.log"),
             Timeout = timeout,
             StartedAt = time.GetUtcNow(),
         };
+        job = job with { QueuedAt = job.StartedAt };
 
-        lock (_gate)
-        {
-            // In the order they came: a job starts at once only when none is waiting before it and the machine has room.
-            if (_queue.Count == 0 && WhyWaitLocked() is null)
-            {
-                if (StartLocked(job) is { } failed)
-                {
-                    return state.Complete(command, $"the job did not start: {failed}");
-                }
-            }
-            else
-            {
-                _queue.Add(job with { State = JobState.Queued, QueuedAt = job.StartedAt });
-                RefreshQueueLocked();
-            }
-        }
+        // Handed to the dispatcher, which starts it at once when nothing waits before it and the machine has room.
+        _mine[jobId] = 0;
+        state.PutJob(job);
+        _signals.Writer.TryWrite(new HandedOver(job));
         return state.Complete(command, null, made: jobId);
     }
 
-    /// <summary>Starts every waiting job the machine has room for, in order; the rest are told where they stand.</summary>
-    public void Pump()
+    /// <summary>Asks the dispatcher to look again: a slot or memory may have come free.</summary>
+    public void Pump() => _signals.Writer.TryWrite(LookAgain.Instance);
+
+    /// <summary>One signal, on the dispatcher: then every waiting job the machine has room for starts, in order.</summary>
+    private void Dispatch(Signal signal)
     {
-        var unstarted = new List<JobRow>();
-        lock (_gate)
+        switch (signal)
         {
-            while (_queue.Count > 0 && WhyWaitLocked() is null)
-            {
-                var next = _queue[0];
-                _queue.RemoveAt(0);
-                if (StartLocked(next with { State = JobState.Running, Step = null, StartedAt = time.GetUtcNow() }) is { } failed)
-                {
-                    var ended = next with { State = JobState.Failed, Error = $"it did not start: {failed}", EndedAt = time.GetUtcNow() };
-                    state.PutJob(ended);
-                    unstarted.Add(ended);
-                }
-            }
-            RefreshQueueLocked();
+            case HandedOver handed:
+                _queue.Add(handed.Job);
+                break;
+            case Withdrawn withdrawn when _queue.FindIndex(j => j.Id == withdrawn.Id) is var at and >= 0:
+                var cancelled = _queue[at] with { State = JobState.Cancelled, Error = $"cancelled by {withdrawn.Who} before its turn", Step = null, EndedAt = time.GetUtcNow() };
+                _queue.RemoveAt(at);
+                state.PutJob(cancelled);
+                _ = TellAsync(cancelled, _stopping);
+                break;
+            case Withdrawn withdrawn when _running.TryGetValue(withdrawn.Id, out var process):
+                // It started before the cancel reached the dispatcher: stop it as any running job.
+                _cancelled[withdrawn.Id] = withdrawn.Who;
+                Kill(process);
+                break;
         }
-        foreach (var job in unstarted)
+
+        while (_queue.Count > 0 && WhyWait() is null)
         {
-            _ = TellAsync(job, _stopping);
+            var next = _queue[0];
+            _queue.RemoveAt(0);
+            if (Start(next with { State = JobState.Running, Step = null, StartedAt = time.GetUtcNow() }) is { } failed)
+            {
+                var ended = next with { State = JobState.Failed, Error = $"it did not start: {failed}", EndedAt = time.GetUtcNow() };
+                state.PutJob(ended);
+                _ = TellAsync(ended, _stopping);
+            }
+        }
+
+        // Each waiting job says where it stands.
+        var why = _queue.Count > 0 ? WhyWait() : null;
+        for (var i = 0; i < _queue.Count; i++)
+        {
+            _queue[i] = _queue[i] with { Step = i == 0 ? $"next in line: {why}" : $"queued, {i} ahead of it" };
+            state.PutJob(_queue[i]);
         }
     }
 
     /// <summary>Why a job may not start now, or null when it may.</summary>
-    private string? WhyWaitLocked()
+    private string? WhyWait()
     {
         if (_running.Count >= MaxRunning)
         {
@@ -212,28 +249,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             : null;
     }
 
-    /// <summary>Puts each waiting job on the stream with where it stands.</summary>
-    private void RefreshQueueLocked()
-    {
-        var why = _queue.Count > 0 ? WhyWaitLocked() : null;
-        for (var i = 0; i < _queue.Count; i++)
-        {
-            var step = i == 0 ? $"next in line: {why ?? "starting"}" : $"queued, {i} ahead of it";
-            if (_queue[i].Step != step)
-            {
-                _queue[i] = _queue[i] with { Step = step };
-            }
-            state.PutJob(_queue[i]);
-        }
-    }
-
     /// <summary>Starts a job; null when it started, else why not.</summary>
-    private string? StartLocked(JobRow job)
+    private string? Start(JobRow job)
     {
         Process process;
         try
         {
-            process = Start(job);
+            process = StartProcess(job);
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
         {
@@ -247,38 +269,28 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     private static string Gigabytes(long bytes) => $"{bytes / (double)(1L << 30):0.0} GB";
 
-    /// <summary><c>cancel-job job/&lt;id&gt;</c>: stops it; the watch records it cancelled and tells its owner.</summary>
+    /// <summary><c>cancel-job job/&lt;id&gt;</c>: stops it, or takes it out of the queue; its owner is told, as of any job's end.</summary>
     public CommandResult Cancel(CommandRequest command)
     {
         var id = command.Target.StartsWith(Verbs.JobTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.JobTargetPrefix.Length..] : command.Target;
-        JobRow? waiting = null;
-        lock (_gate)
+        if (_running.TryGetValue(id, out var process))
         {
-            if (_queue.FindIndex(j => j.Id == id) is var at and >= 0)
-            {
-                waiting = _queue[at] with { State = JobState.Cancelled, Error = $"cancelled by {command.Who} before its turn", Step = null, EndedAt = time.GetUtcNow() };
-                _queue.RemoveAt(at);
-                state.PutJob(waiting);
-                RefreshQueueLocked();
-            }
-        }
-        if (waiting is not null)
-        {
-            _ = TellAsync(waiting, _stopping);
+            _cancelled[id] = command.Who;
+            Kill(process);
             return state.Complete(command, null);
         }
-        if (!_running.TryGetValue(id, out var process))
+        if (state.Jobs().FirstOrDefault(j => j.Id == id) is { State: JobState.Queued })
         {
-            return state.Complete(command, state.Jobs().Any(j => j.Id == id) ? $"job {id} is not running" : $"There is no job {id}");
+            // The dispatcher owns the queue: it takes the job out, or stops it if it has started since.
+            _signals.Writer.TryWrite(new Withdrawn(id, command.Who));
+            return state.Complete(command, null);
         }
-        _cancelled[id] = command.Who;
-        Kill(process);
-        return state.Complete(command, null);
+        return state.Complete(command, state.Jobs().Any(j => j.Id == id) ? $"job {id} is not running" : $"There is no job {id}");
     }
 
     private readonly ConcurrentDictionary<string, string> _cancelled = new(StringComparer.Ordinal);
 
-    private static Process Start(JobRow job)
+    private static Process StartProcess(JobRow job)
     {
         var start = OperatingSystem.IsWindows()
             ? new ProcessStartInfo("cmd.exe") { ArgumentList = { "/d", "/s", "/c", job.Command } }
@@ -293,23 +305,19 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     private async Task WatchAsync(JobRow job, Process process)
     {
-        // Its last lines, for its owner's wake: Node.Lib's ring, read once it has ended. The gate keeps the log's lines in
-        // the order stdout and stderr gave them.
+        // Its output, from stdout's and stderr's threads, goes through a channel to ONE writer: the log, its last lines
+        // (Node.Lib's ring, read once it has ended) and the step, in the order the lines came, and no lock.
         var tail = new CircularBuffer<string>(TailLines);
-        var gate = new Lock();
-        var lastStep = time.GetUtcNow();
+        var lines = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
         var timedOut = false;
         using (var log = new StreamWriter(job.LogPath, append: false) { AutoFlush = true })
         {
-            void Keep(string? line)
+            var writer = Task.Run(async () =>
             {
-                if (line is null)
+                var lastStep = time.GetUtcNow();
+                await foreach (var line in lines.Reader.ReadAllAsync(CancellationToken.None))
                 {
-                    return;
-                }
-                lock (gate)
-                {
-                    log.WriteLine(line);
+                    await log.WriteLineAsync(line);
                     tail.Add(line);
                     // The step, put on the stream now and then: a long run shows it is alive, without a delta per line.
                     var now = time.GetUtcNow();
@@ -319,9 +327,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                         state.PutJob(job with { Step = Clip(line) });
                     }
                 }
-            }
-            process.OutputDataReceived += (_, e) => Keep(e.Data);
-            process.ErrorDataReceived += (_, e) => Keep(e.Data);
+            }, CancellationToken.None);
+            process.OutputDataReceived += (_, e) => { if (e.Data is { } line) { lines.Writer.TryWrite(line); } };
+            process.ErrorDataReceived += (_, e) => { if (e.Data is { } line) { lines.Writer.TryWrite(line); } };
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
@@ -337,8 +345,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 Kill(process);
                 await process.WaitForExitAsync(CancellationToken.None);
             }
-            // The last lines are read once the process has gone and its pipes are drained.
+            // The last lines are read once the process has gone and its pipes are drained; then the writer finishes them.
             process.WaitForExit();
+            lines.Writer.TryComplete();
+            await writer;
         }
 
         _running.TryRemove(job.Id, out _);

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Pilot.Commands;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
@@ -14,7 +15,7 @@ public sealed class JobTests : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2j-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
-    private readonly List<CommandRequest> _said = [];
+    private readonly ConcurrentQueue<CommandRequest> _said = new();
     private readonly JobRunner _jobs;
     private string? _refuse;
 
@@ -29,23 +30,23 @@ public sealed class JobTests : IDisposable
             FreeMemory = () => _free,
             Say = (command, _) =>
             {
-                lock (_said)
-                {
-                    _said.Add(command);
-                }
+                _said.Enqueue(command);
                 return Task.FromResult(_state.Complete(command, _refuse));
             },
         };
+        // The dispatcher is the runner's hosted loop: started here as the node starts it.
         _state.PutSession(new SessionRow
         {
             Id = "a1b2c3d4", SessionId = "a1b2c3d4-0000-4000-8000-000000000000", Name = "se1-tia1-parser", Kind = SessionKind.Background, Cwd = _root,
             Role = SessionRole.Worker, Flight = "TIA1", Leg = "parser", ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Idle,
             SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
         });
+        _jobs.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
     public void Dispose()
     {
+        _jobs.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
         try
         {
             Directory.Delete(_root, recursive: true);
@@ -61,6 +62,20 @@ public sealed class JobTests : IDisposable
 
     private CommandResult Run(string command, string target = "session/a1b2c3d4", long timeoutSeconds = 0, string? cwd = null) =>
         _jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = target, Args = [cwd ?? _root, timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture), command], Who = "se1-tia1-parser" });
+
+    /// <summary>The job once <paramref name="condition"/> holds: the dispatcher acts on its own loop, a moment after the call.</summary>
+    private async Task<JobRow> Until(string id, Func<JobRow, bool> condition)
+    {
+        for (var i = 0; i < 300; i++)
+        {
+            if (_state.Jobs().Single(j => j.Id == id) is var job && condition(job))
+            {
+                return job;
+            }
+            await Task.Delay(20, Ct);
+        }
+        throw new TimeoutException($"job {id} never came to the state awaited");
+    }
 
     private async Task<JobRow> Ended(string id)
     {
@@ -82,8 +97,8 @@ public sealed class JobTests : IDisposable
 
         started.Ok.ShouldBeTrue();
         var id = started.Made.ShouldNotBeNull();
-        var running = _state.Jobs().Single();
-        (running.Id, running.State, running.Owner, running.OwnerName, running.Flight, running.Leg).ShouldBe((id, JobState.Running, "a1b2c3d4", "se1-tia1-parser", "TIA1", "parser"));
+        var running = await Until(id, j => j.State != JobState.Queued);
+        (running.Id, running.Owner, running.OwnerName, running.Flight, running.Leg).ShouldBe((id, "a1b2c3d4", "se1-tia1-parser", "TIA1", "parser"));
 
         var job = await Ended(id);
         (job.State, job.ExitCode, job.Step, job.Told).ShouldBe((JobState.Succeeded, 0, "all 12 tests passed", true));
@@ -117,6 +132,7 @@ public sealed class JobTests : IDisposable
     public async Task ACancelledJobStopsAndItsOwnerIsTold()
     {
         var id = Run(Sleep(30)).Made!;
+        await Until(id, j => j.State == JobState.Running);
 
         _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" }).Ok.ShouldBeTrue();
         var job = await Ended(id);
@@ -132,7 +148,7 @@ public sealed class JobTests : IDisposable
         var first = Run(Sleep(2)).Made!;
         var second = Run(Echo("second ran")).Made!;
 
-        var waiting = _state.Jobs().Single(j => j.Id == second);
+        var waiting = await Until(second, j => j.Step is not null);
         (waiting.State, waiting.Step).ShouldBe((JobState.Queued, "next in line: another job is running"));
         waiting.QueuedAt.ShouldNotBeNull();
 
@@ -150,21 +166,21 @@ public sealed class JobTests : IDisposable
 
         var id = Run(Echo("ran")).Made!;
 
-        _state.Jobs().Single().Step.ShouldBe("next in line: waiting for 2.0 GB of free memory (1.0 GB now)");
+        (await Until(id, j => j.Step is not null)).Step.ShouldBe("next in line: waiting for 2.0 GB of free memory (1.0 GB now)");
         _free = 4L << 30;
         _jobs.Pump();
         (await Ended(id)).State.ShouldBe(JobState.Succeeded);
     }
 
     [Fact]
-    public void AJobBehindAnotherSaysHowManyAreAhead()
+    public async Task AJobBehindAnotherSaysHowManyAreAhead()
     {
         _free = 0;
 
         Run(Echo("a"));
         var behind = Run(Echo("b")).Made!;
 
-        _state.Jobs().Single(j => j.Id == behind).Step.ShouldBe("queued, 1 ahead of it");
+        (await Until(behind, j => j.Step is not null)).Step.ShouldBe("queued, 1 ahead of it");
     }
 
     [Fact]

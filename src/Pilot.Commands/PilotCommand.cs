@@ -274,8 +274,14 @@ public static class PilotCommand
                     await output.WriteLineAsync($"refused: run: {sent.Response?.Error ?? sent.Error}");
                     return 1;
                 }
-                // A job may have to wait its turn (the machine is shared between flights): say so, and where it stands.
+                // A job may have to wait its turn (the machine is shared between flights): say so, and where it stands. The
+                // node's dispatcher answers a moment after the run, so look for up to two seconds until it has.
                 var made = (await SnapshotAsync(client, ct)).Jobs.FirstOrDefault(j => j.Id == job);
+                for (var tries = 0; tries < 20 && made is { State: JobState.Queued, Step: null }; tries++)
+                {
+                    await Task.Delay(100, ct);
+                    made = (await SnapshotAsync(client, ct)).Jobs.FirstOrDefault(j => j.Id == job);
+                }
                 var how = made is { State: JobState.Queued } ? $"queued ({made.Step})" : "started";
                 await output.WriteLineAsync(owner is null
                     ? $"job {job} {how}; pilot job {job} shows how it stands"
