@@ -58,9 +58,9 @@
   <PropertyGroup>
     <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\DIR.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
     <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\DIR.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
-    <UseLocalDirLib Condition="'$(UseLocalDirLib)' == '' AND '$(RuntimeIdentifier)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)DIR.Lib\src\DIR.Lib\DIR.Lib.csproj')">true</UseLocalDirLib>
-    <UseLocalSdlVulkanRenderer Condition="'$(UseLocalSdlVulkanRenderer)' == '' AND '$(RuntimeIdentifier)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)SdlVulkan.Renderer\src\SdlVulkan.Renderer\SdlVulkan.Renderer.csproj')">true</UseLocalSdlVulkanRenderer>
-    <UseLocalAppShell Condition="'$(UseLocalAppShell)' == '' AND '$(RuntimeIdentifier)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)AppShell\src\SharpAstro.AppShell\SharpAstro.AppShell.csproj')">true</UseLocalAppShell>
+    <UseLocalDirLib Condition="'$(UseLocalDirLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)DIR.Lib\src\DIR.Lib\DIR.Lib.csproj')">true</UseLocalDirLib>
+    <UseLocalSdlVulkanRenderer Condition="'$(UseLocalSdlVulkanRenderer)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)SdlVulkan.Renderer\src\SdlVulkan.Renderer\SdlVulkan.Renderer.csproj')">true</UseLocalSdlVulkanRenderer>
+    <UseLocalAppShell Condition="'$(UseLocalAppShell)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)AppShell\src\SharpAstro.AppShell\SharpAstro.AppShell.csproj')">true</UseLocalAppShell>
   </PropertyGroup>
 
   <!--

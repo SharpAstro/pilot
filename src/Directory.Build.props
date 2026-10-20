@@ -24,4 +24,22 @@
     <CreateHardLinksForPublishFilesIfPossible>true</CreateHardLinksForPublishFilesIfPossible>
   </PropertyGroup>
 
+  <!--
+    One switch for every sibling library, as tianwen's: -p:UseLocalSiblings=false builds (or publishes) on the published
+    packages, -p:UseLocalSiblings=true on the sibling clones. Unset, each UseLocal* below still self-enables when its
+    clone exists (the projects' own Exists() conditions), and a single one given on the command line wins over this.
+    Set here, before the project files, so their `== ''` conditions see it. Command-line properties reach every project
+    in the build alike, so the choice is the same everywhere: no RuntimeIdentifier in it, which a publish's referenced
+    libraries do not see, and which made a `publish -r` mix a package with its sibling's source (CS1704).
+  -->
+  <PropertyGroup Condition="'$(UseLocalSiblings)' != ''">
+    <UseLocalDirLib Condition="'$(UseLocalDirLib)' == ''">$(UseLocalSiblings)</UseLocalDirLib>
+    <UseLocalSdlVulkanRenderer Condition="'$(UseLocalSdlVulkanRenderer)' == ''">$(UseLocalSiblings)</UseLocalSdlVulkanRenderer>
+    <UseLocalAppShell Condition="'$(UseLocalAppShell)' == ''">$(UseLocalSiblings)</UseLocalAppShell>
+    <UseLocalSharpAstroPng Condition="'$(UseLocalSharpAstroPng)' == ''">$(UseLocalSiblings)</UseLocalSharpAstroPng>
+    <UseLocalConsoleLib Condition="'$(UseLocalConsoleLib)' == ''">$(UseLocalSiblings)</UseLocalConsoleLib>
+    <UseLocalLanLib Condition="'$(UseLocalLanLib)' == ''">$(UseLocalSiblings)</UseLocalLanLib>
+    <UseLocalNodeLib Condition="'$(UseLocalNodeLib)' == ''">$(UseLocalSiblings)</UseLocalNodeLib>
+  </PropertyGroup>
+
 </Project>

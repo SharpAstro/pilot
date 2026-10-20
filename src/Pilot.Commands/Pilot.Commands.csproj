@@ -17,7 +17,7 @@
   <PropertyGroup>
     <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\LAN.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
     <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\LAN.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
-    <UseLocalLanLib Condition="'$(UseLocalLanLib)' == '' AND '$(RuntimeIdentifier)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)LAN.Lib\src\LAN.Lib\LAN.Lib.csproj')">true</UseLocalLanLib>
+    <UseLocalLanLib Condition="'$(UseLocalLanLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)LAN.Lib\src\LAN.Lib\LAN.Lib.csproj')">true</UseLocalLanLib>
   </PropertyGroup>
   <ItemGroup Condition="'$(UseLocalLanLib)' == 'true'">
     <ProjectReference Include="$(SharpAstroRoot)LAN.Lib\src\LAN.Lib\LAN.Lib.csproj" />
