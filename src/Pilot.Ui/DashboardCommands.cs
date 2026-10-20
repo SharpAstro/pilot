@@ -30,6 +30,17 @@ internal static class DashboardCommands
         return said.Length > 0 ? said : exit == 0 ? "ok" : $"exit {exit}";
     }
 
+    /// <summary>The node a typed <c>connect host:port</c> asks for control, or null for any other line.</summary>
+    public static string? ConnectTarget(string line)
+    {
+        var args = CommandLineParser.SplitCommandLine(line).ToList();
+        if (args.Count > 0 && args[0] is "pilot" or "pilot.exe")
+        {
+            args.RemoveAt(0);
+        }
+        return args.Count >= 2 && args[0] == "connect" && NodeClient.IsEndpoint(args[1], out var endpoint) ? endpoint : null;
+    }
+
     /// <summary>Runs one action's verb on the node; returns what became of it.</summary>
     public static async Task<string> ActAsync(NodeClient client, FlightAction action, string who, CancellationToken cancellationToken)
     {

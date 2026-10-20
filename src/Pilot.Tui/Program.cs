@@ -46,9 +46,32 @@ flights.CanCommand = true;
 flights.OnCommand = async line =>
 {
     flights.Say($"> {line}");
+    // A connect waits on the other machine's person; the LAN line says so while it does.
+    var asking = DashboardCommands.ConnectTarget(line);
+    if (asking is not null)
+    {
+        flights.Lan?.Asking(asking, DateTimeOffset.UtcNow);
+    }
     flights.Say(await DashboardCommands.RunAsync(line, nodeArgs, Who, stop.Token));
+    if (asking is not null)
+    {
+        flights.Lan?.Answered(asking);
+    }
     Redraw();
 };
+// The LAN as the dashboard sees it, discovering from the start.
+_ = Task.Run(async () =>
+{
+    try
+    {
+        flights.Lan = await LanWatch.StartAsync(stop.Token);
+        Redraw();
+    }
+    catch (Exception ex) when (ex is System.Net.Sockets.SocketException or InvalidOperationException)
+    {
+        flights.Say($"the LAN cannot be watched: {ex.Message}");
+    }
+});
 flights.OnAction = action => _ = Task.Run(async () =>
 {
     flights.Say(await DashboardCommands.ActAsync(client, action, Who, stop.Token));

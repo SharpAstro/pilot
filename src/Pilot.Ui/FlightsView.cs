@@ -413,19 +413,43 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
             .RowH(CommandBarHeight + OutputLineHeight * output.Count);
     }
 
-    private static Layout.Node Header(FlightsScreen screen) =>
-        Layout.Builder.VStack(
-                Layout.Builder.HStack(
-                        Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
-                        Layout.Builder.Text("flights", 20f, Dim).WAuto(),
-                        Layout.Builder.Spacer().WStar(),
-                        Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto())
-                    .WithGap(12f)
-                    .RowH(32f),
-                Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC", 12f, Dim).RowH(20f))
+    /// <summary>The dashboard's eye on the LAN; its line and the nodes it heard show under the header when set.</summary>
+    public LanWatch? Lan { get; set; }
+
+    private const float LanRowHeight = 24f;
+
+    private Layout.Node Header(FlightsScreen screen)
+    {
+        var rows = new List<Layout.Node>
+        {
+            Layout.Builder.HStack(
+                    Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
+                    Layout.Builder.Text("flights", 20f, Dim).WAuto(),
+                    Layout.Builder.Spacer().WStar(),
+                    Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto())
+                .WithGap(12f)
+                .RowH(32f),
+            Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC", 12f, Dim).RowH(20f),
+        };
+        if (Lan is { } lan)
+        {
+            // Discovering, the nodes heard, and every ask still waiting: nothing the dashboard waits for is invisible.
+            var line = new List<Layout.Node> { Layout.Builder.Text(lan.Line(screen.AsOf), 12f, Held).WAuto() };
+            if (CanCommand)
+            {
+                foreach (var node in lan.Nodes.Take(4))
+                {
+                    line.Add(Pill($"{node.Name} · {node.Endpoint}", $"lan:{node.Endpoint}", () => Prefill($"connect {node.Endpoint}")));
+                }
+            }
+            line.Add(Layout.Builder.Spacer().WStar());
+            rows.Add(Layout.Builder.HStack([.. line]).WithGap(8f).RowH(LanRowHeight));
+        }
+        return Layout.Builder.VStack([.. rows])
             .Pad(Gutter, 6f)
             .Bg(HeaderBg)
-            .RowH(HeaderHeight);
+            .RowH(HeaderHeight + (Lan is null ? 0f : LanRowHeight));
+    }
 
     private Layout.Node Main(FlightsScreen screen)
     {
