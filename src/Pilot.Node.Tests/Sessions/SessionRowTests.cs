@@ -100,6 +100,10 @@ public sealed class SessionRowTests : IDisposable
         SessionRoles.Resolve(name).ShouldBe(new SessionRoleInfo(SessionRole.Watchtower, null, null, null));
     }
 
+    [Fact]
+    public void AnInteractiveSessionNamedLikeAWatchtowerIsNone() =>
+        SessionRoles.Resolve("surface-watchtower", background: false).ShouldBe(SessionRoleInfo.AdHoc);
+
     [Theory]
     [InlineData("autopilot")]
     [InlineData("pilot-dashboard")]

@@ -72,13 +72,18 @@ public static partial class SessionRoles
     }
 
     /// <summary>
-    /// The role of a session, by its name. The watchtower is a session named <c>*-watchtower</c>; a worker is one named
-    /// <c>&lt;FLIGHT&gt; &lt;leg&gt;</c>. A reviewer or co-pilot is a subagent, so is no row. Everything else is ad hoc.
-    /// The flights leg gives a worker its budget, and finds it by session as well as by name.
+    /// The role of a session, by its name. The watchtower is a background session named <c>*-watchtower</c>; a worker is
+    /// one named <c>&lt;FLIGHT&gt; &lt;leg&gt;</c>. A reviewer or co-pilot is a subagent, so is no row. Everything else is
+    /// ad hoc. The flights leg gives a worker its budget, and finds it by session as well as by name.
     /// </summary>
-    public static SessionRoleInfo Resolve(string? name)
+    /// <param name="background">
+    /// Whether it runs in the background. The node starts its watchtower so; an interactive <c>claude</c> opened in the
+    /// watchtower's folder, as trusting the folder takes, is named <c>&lt;host&gt;-watchtower</c> by Remote Control and is
+    /// someone's terminal, not a second watchtower.
+    /// </param>
+    public static SessionRoleInfo Resolve(string? name, bool background = true)
     {
-        if (name is { Length: > 0 } && (name.EndsWith("-watchtower", StringComparison.Ordinal) || name == "watchtower"))
+        if (background && name is { Length: > 0 } && (name.EndsWith("-watchtower", StringComparison.Ordinal) || name == "watchtower"))
         {
             return new SessionRoleInfo(SessionRole.Watchtower, null, null, null);
         }

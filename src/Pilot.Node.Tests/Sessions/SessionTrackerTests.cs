@@ -196,7 +196,7 @@ public sealed class SessionTrackerTests : IDisposable
     {
         _agents.Json = AgentRows.List(
             AgentRows.Background(AgentRows.SessionB, "PIL5 node", "working", pid: 4343, status: "busy"),
-            AgentRows.Interactive(AgentRows.SessionA, 4242, "du1-watchtower"));
+            AgentRows.Background(AgentRows.SessionA, "du1-watchtower", "running", pid: 4242, status: "idle"));
 
         await PollAsync();
 
