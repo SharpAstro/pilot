@@ -42,6 +42,9 @@ public sealed class JobTests : IDisposable
             SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
         });
         _jobs.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
+        // StartAsync returns before ExecuteAsync's recovery has run. Until it has, a Queued or Running row a test puts can be
+        // failed as orphaned under it: wait, so every row a test puts is the test's alone.
+        _jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
     }
 
     public void Dispose()

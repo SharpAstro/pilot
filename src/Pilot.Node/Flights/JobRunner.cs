@@ -65,6 +65,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     // can land between the two): the job is cancelled before its turn when it arrives. The dispatcher's alone.
     private readonly Dictionary<string, string> _withdrawnEarly = new(StringComparer.Ordinal);
     private CancellationToken _stopping;
+    // Completes once the startup recovery has run. ExecuteAsync runs in the background, so without it a caller sharing the
+    // state cannot tell whether a Queued row it puts will be seen by that recovery and failed as orphaned.
+    private readonly TaskCompletionSource _recovered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes once the startup recovery has run: from then on, only rows already present were judged orphaned.</summary>
+    internal Task Recovered => _recovered.Task;
 
     internal abstract record Signal;
 
@@ -80,7 +86,14 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         _stopping = stopping;
-        await RecoverAsync(stopping);
+        try
+        {
+            await RecoverAsync(stopping);
+        }
+        finally
+        {
+            _recovered.TrySetResult();
+        }
         _ = TickAsync(stopping);
         try
         {
