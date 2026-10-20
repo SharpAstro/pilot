@@ -12,12 +12,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Pilot.Contracts\Pilot.Contracts.csproj" />
-    <PackageReference Include="System.CommandLine" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <InternalsVisibleTo Include="Pilot.Node.Tests" />
+    <!-- The command tree is Pilot.Commands', shared with the GUI's command bar; this is its console host. -->
+    <ProjectReference Include="..\Pilot.Commands\Pilot.Commands.csproj" />
   </ItemGroup>
 
 </Project>

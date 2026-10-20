@@ -168,6 +168,45 @@ if (feed is not null && client is not null)
     }
     chrome.Cards.OnAnswer = (card, number) => _ = CardCommandAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
     chrome.Cards.OnDismiss = card => _ = CardCommandAsync(Verbs.Dismiss, card, []);
+
+    // The watchtower, from its panel: told things through the node, its Remote Control link one click away.
+    chrome.Cards.CanTell = true;
+    chrome.Cards.OnTell = async text =>
+    {
+        chrome.Cards.TellStatus = "telling the watchtower…";
+        loop.RequestRedraw();
+        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = [text], Who = GuiSay.Who }, cts.Token);
+        chrome.Cards.TellStatus = envelope.Success && envelope.Response is { Ok: true } ? "told" : $"refused: {envelope.Response?.Error ?? envelope.Error}";
+        Console.WriteLine($"pilot-gui: tell watchtower: {chrome.Cards.TellStatus}");
+        loop.RequestRedraw();
+    };
+    chrome.Cards.OnOpen = url => GuiCommands.Open(url);
+
+    // The Flights page flies a flight from here alone: its buttons are verbs, its command bar the CLI's own commands.
+    chrome.Flights.CanCommand = true;
+    chrome.Flights.OnCommand = async line =>
+    {
+        chrome.Flights.Say($"> {line}");
+        loop.RequestRedraw();
+        var said = await GuiCommands.RunAsync(line, socketPath, cts.Token);
+        chrome.Flights.Say(said);
+        Console.WriteLine($"pilot-gui: command `{line}`: {said.ReplaceLineEndings(" / ")}");
+        loop.RequestRedraw();
+    };
+    chrome.Flights.OnAction = action => _ = Task.Run(async () =>
+    {
+        var said = await GuiCommands.ActAsync(client, action, cts.Token);
+        chrome.Flights.Say(said);
+        Console.WriteLine($"pilot-gui: {said}");
+        loop.RequestRedraw();
+    });
+    chrome.Flights.OnOpen = location =>
+    {
+        if (!GuiCommands.Open(location))
+        {
+            chrome.Flights.Say($"could not open {location}");
+        }
+    };
     feed.Start();
 
     // The window opens at once and the feed connects when the node answers; a node is started meanwhile if none runs.

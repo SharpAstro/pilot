@@ -68,7 +68,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     {
         lock (_lock)
         {
-            return CardsScreen.From(_mirror.Cards.Values);
+            return CardsScreen.From(_mirror.Cards.Values, _mirror.Sessions.Values);
         }
     }
 

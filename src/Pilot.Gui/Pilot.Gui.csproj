@@ -21,6 +21,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Pilot.Contracts\Pilot.Contracts.csproj" />
+    <!-- The command bar runs the CLI's own command tree in-process. -->
+    <ProjectReference Include="..\Pilot.Commands\Pilot.Commands.csproj" />
     <PackageReference Include="System.CommandLine" />
   </ItemGroup>
 
