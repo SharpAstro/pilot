@@ -219,6 +219,9 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
     /// <summary>Opens an artifact: a file on the machine, or a URL.</summary>
     public Action<string>? OnOpen { get; set; }
 
+    /// <summary>The node's jobs, for the selected flight's details; set by the host each frame.</summary>
+    public IReadOnlyList<JobRow> Jobs { get; set; } = [];
+
     /// <summary>The selected flight's index, or -1.</summary>
     public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
@@ -319,6 +322,13 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
         {
             legs.Add(Layout.Builder.Text($"review {review.State.ToString().ToLowerInvariant()}{(review.Report is { Length: > 0 } r ? $": {r.Split('\n')[0]}" : "")}", 12f,
                 review.State == ReviewState.Passed ? Flying : review.State == ReviewState.Changes ? Held : Dim).RowH(20f));
+        }
+
+        // Its jobs: the long runs its workers handed to the node, running first.
+        foreach (var job in Jobs.Where(j => j.Flight == flight.Code).OrderBy(j => j.State != JobState.Running).ThenByDescending(j => j.StartedAt).Take(2))
+        {
+            var color = job.State switch { JobState.Running => Flying, JobState.Succeeded => Landed, _ => Failed };
+            legs.Add(Layout.Builder.Text($"job {job.Id} {job.State.ToString().ToLowerInvariant()}: {job.Command}", 12f, color).RowH(20f));
         }
 
         var artifacts = new List<Layout.Node> { Label("artifacts").RowH(20f) };

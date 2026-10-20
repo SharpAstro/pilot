@@ -26,6 +26,8 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(CardAddedEvent), "cardAdded")]
 [JsonDerivedType(typeof(CardChangedEvent), "cardChanged")]
 [JsonDerivedType(typeof(UsageChangedEvent), "usageChanged")]
+[JsonDerivedType(typeof(JobAddedEvent), "jobAdded")]
+[JsonDerivedType(typeof(JobChangedEvent), "jobChanged")]
 public abstract record NodeEvent
 {
     /// <summary>
@@ -89,6 +91,15 @@ public sealed record SnapshotEvent : NodeEvent
 
     /// <summary>The account's usage as last read; null before the node has read any.</summary>
     public UsageRow? Usage { get; init; }
+
+    /// <summary>Every job, ended ones included. Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public JobRow[] Jobs
+    {
+        get => _jobs ?? [];
+        init => _jobs = value;
+    }
+
+    private readonly JobRow[]? _jobs;
 }
 
 /// <summary>A session the node had not seen.</summary>
