@@ -198,6 +198,71 @@ public sealed class JobTests : IDisposable
     }
 
     [Fact]
+    public async Task ACancelThatReachesTheDispatcherBeforeItsJobStillCancelsIt()
+    {
+        // As when a cancel lands between Run putting the row and handing the job over: Withdrawn before HandedOver. A
+        // runner that is not started has no dispatcher loop, so the test drives the signals in that order itself.
+        var idle = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n2.sock"), Path.Combine(_root, "data2")), TimeProvider.System)
+        {
+            FreeMemory = () => null,
+            Say = (command, _) =>
+            {
+                _said.Enqueue(command);
+                return Task.FromResult(_state.Complete(command, null));
+            },
+        };
+        var job = new JobRow
+        {
+            Id = "j90", Command = Echo("never"), Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = JobState.Queued,
+            LogPath = Path.Combine(_root, "j90.log"), Timeout = JobRunner.DefaultTimeout, StartedAt = DateTimeOffset.UtcNow,
+        };
+        _state.PutJob(job);
+
+        idle.Dispatch(new JobRunner.Withdrawn("j90", "controller"));
+        idle.Dispatch(new JobRunner.HandedOver(job));
+
+        var ended = await Ended("j90");
+        (ended.State, ended.Error).ShouldBe((JobState.Cancelled, "cancelled by controller before its turn"));
+        File.Exists(job.LogPath).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ACancelThatSeesARunningJobFindsItsProcess()
+    {
+        // The moment the Running row is published, a cancel must find the process: the runner adds it first.
+        string? answer = null;
+        using var watch = _state.Subscribe(null, null, new OnJobRunning(id =>
+            answer ??= _jobs.IsRunning(id) ? "found" : "not running"));
+
+        var id = Run(Sleep(30)).Made!;
+        await Until(id, j => j.State == JobState.Running);
+        _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
+        await Ended(id);
+
+        answer.ShouldBe("found");
+    }
+
+    /// <summary>Calls back, as the state publishes it, when a job's Running row is put.</summary>
+    private sealed class OnJobRunning(Action<string> running) : INodeEventSink
+    {
+        public int Capacity => 10_000;
+
+        public bool TryWrite(byte[] message)
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(message);
+            if (doc.RootElement.TryGetProperty("job", out var job) && job.GetProperty("state").GetString() == "running")
+            {
+                running(job.GetProperty("id").GetString()!);
+            }
+            return true;
+        }
+
+        public void Overflowed()
+        {
+        }
+    }
+
+    [Fact]
     public async Task AQueuedJobARestartOrphanedIsFailedAndItsOwnerTold()
     {
         _state.PutJob(new JobRow

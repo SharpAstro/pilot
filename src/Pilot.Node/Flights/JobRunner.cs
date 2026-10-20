@@ -61,15 +61,18 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     private readonly Channel<Signal> _signals = Channel.CreateUnbounded<Signal>(new UnboundedChannelOptions { SingleReader = true });
     // The waiting jobs, in order. The dispatcher's alone: nothing else reads or writes it.
     private readonly List<JobRow> _queue = [];
+    // Cancels that reached the dispatcher before their job did (Run puts the row, then hands the job over, and a cancel
+    // can land between the two): the job is cancelled before its turn when it arrives. The dispatcher's alone.
+    private readonly Dictionary<string, string> _withdrawnEarly = new(StringComparer.Ordinal);
     private CancellationToken _stopping;
 
-    private abstract record Signal;
+    internal abstract record Signal;
 
-    private sealed record HandedOver(JobRow Job) : Signal;
+    internal sealed record HandedOver(JobRow Job) : Signal;
 
-    private sealed record Withdrawn(string Id, string Who) : Signal;
+    internal sealed record Withdrawn(string Id, string Who) : Signal;
 
-    private sealed record LookAgain : Signal
+    internal sealed record LookAgain : Signal
     {
         public static readonly LookAgain Instance = new();
     }
@@ -192,27 +195,39 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         return state.Complete(command, null, made: jobId);
     }
 
+    /// <summary>Whether the job's process is held as running: what a cancel looks for.</summary>
+    internal bool IsRunning(string id) => _running.ContainsKey(id);
+
     /// <summary>Asks the dispatcher to look again: a slot or memory may have come free.</summary>
     public void Pump() => _signals.Writer.TryWrite(LookAgain.Instance);
 
-    /// <summary>One signal, on the dispatcher: then every waiting job the machine has room for starts, in order.</summary>
-    private void Dispatch(Signal signal)
+    /// <summary>
+    /// One signal, on the dispatcher: then every waiting job the machine has room for starts, in order. Internal so a test
+    /// can drive the signals in an order the channel only rarely gives.
+    /// </summary>
+    internal void Dispatch(Signal signal)
     {
         switch (signal)
         {
+            case HandedOver handed when _withdrawnEarly.Remove(handed.Job.Id, out var by):
+                CancelBeforeItsTurn(handed.Job, by);
+                break;
             case HandedOver handed:
                 _queue.Add(handed.Job);
                 break;
             case Withdrawn withdrawn when _queue.FindIndex(j => j.Id == withdrawn.Id) is var at and >= 0:
-                var cancelled = _queue[at] with { State = JobState.Cancelled, Error = $"cancelled by {withdrawn.Who} before its turn", Step = null, EndedAt = time.GetUtcNow() };
+                var waiting = _queue[at];
                 _queue.RemoveAt(at);
-                state.PutJob(cancelled);
-                _ = TellAsync(cancelled, _stopping);
+                CancelBeforeItsTurn(waiting, withdrawn.Who);
                 break;
             case Withdrawn withdrawn when _running.TryGetValue(withdrawn.Id, out var process):
                 // It started before the cancel reached the dispatcher: stop it as any running job.
                 _cancelled[withdrawn.Id] = withdrawn.Who;
                 Kill(process);
+                break;
+            case Withdrawn withdrawn when state.Jobs().FirstOrDefault(j => j.Id == withdrawn.Id) is { State: JobState.Queued }:
+                // Its hand-over is still behind this in the channel: cancel it when it comes.
+                _withdrawnEarly[withdrawn.Id] = withdrawn.Who;
                 break;
         }
 
@@ -235,6 +250,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             _queue[i] = _queue[i] with { Step = i == 0 ? $"next in line: {why}" : $"queued, {i} ahead of it" };
             state.PutJob(_queue[i]);
         }
+    }
+
+    private void CancelBeforeItsTurn(JobRow job, string who)
+    {
+        var cancelled = job with { State = JobState.Cancelled, Error = $"cancelled by {who} before its turn", Step = null, EndedAt = time.GetUtcNow() };
+        state.PutJob(cancelled);
+        _ = TellAsync(cancelled, _stopping);
     }
 
     /// <summary>Why a job may not start now, or null when it may.</summary>
@@ -261,8 +283,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             return ex.Message;
         }
-        state.PutJob(job);
+        // In _running before the Running row is put: a cancel that sees the row must find the process.
         _running[job.Id] = process;
+        state.PutJob(job);
         _ = Task.Run(() => WatchAsync(job, process), CancellationToken.None);
         return null;
     }
