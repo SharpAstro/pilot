@@ -1,11 +1,11 @@
 using System.Net.WebSockets;
-using System.Threading.Channels;
+using Node.Lib;
 
 namespace Pilot.Node;
 
 /// <summary>
 /// Serves the event stream to each WebSocket client: subscribes it to <see cref="NodeState"/> and sends its queue.
-/// Adapted from tianwen's <c>EventHub</c>.
+/// Adapted from tianwen's <c>EventHub</c>; the queue and its sender are Node.Lib's <see cref="WebSocketEventQueue"/>.
 /// </summary>
 /// <remarks>
 /// <para><b>A change never waits for a socket.</b> Every client has a bounded queue drained by ONE sender, its own;
@@ -32,7 +32,7 @@ public sealed class EventHub(NodeState state, ILogger<EventHub> logger)
     /// <summary>Serves one accepted socket until it closes, the client falls behind, or the node stops.</summary>
     public async Task ServeAsync(WebSocket socket, long? since, string? stream, CancellationToken stopping)
     {
-        var client = new EventClient(socket, DefaultQueueCapacity);
+        var client = new EventClient(new WebSocketEventQueue(socket, DefaultQueueCapacity, SendTimeout, singleWriter: true));
         Interlocked.Increment(ref _clients);
         try
         {
@@ -86,68 +86,24 @@ public sealed class EventHub(NodeState state, ILogger<EventHub> logger)
     /// <summary>The one sender a client has: its queue, in order, each send bounded by the send timeout.</summary>
     private async Task SendQueuedAsync(EventClient client)
     {
-        try
+        if (await client.Queue.SendAllAsync() is { } why)
         {
-            await foreach (var message in client.Queue.Reader.ReadAllAsync(client.Stopping))
-            {
-                using var send = CancellationTokenSource.CreateLinkedTokenSource(client.Stopping);
-                send.CancelAfter(SendTimeout);
-                await client.Socket.SendAsync(message, WebSocketMessageType.Text, endOfMessage: true, send.Token);
-            }
-        }
-        catch (OperationCanceledException) when (client.Stopping.IsCancellationRequested)
-        {
-            // Stopped: ServeAsync closes the socket.
-        }
-        catch (OperationCanceledException)
-        {
-            Evict(client, $"a send took longer than {SendTimeout.TotalSeconds:0.#} s");
-        }
-        catch (Exception ex) when (ex is WebSocketException or InvalidOperationException or ObjectDisposedException)
-        {
-            Evict(client, ex.Message);
+            logger.LogInformation("Event stream client dropped because {Why}; it resumes with since", why);
+            client.Queue.Abort();
         }
     }
 
-    private void Evict(EventClient client, string why)
+    /// <summary>A client as <see cref="NodeState"/> sees it: a sink over its queue, dropped when it overflows.</summary>
+    private sealed class EventClient(WebSocketEventQueue queue) : INodeEventSink
     {
-        logger.LogInformation("Event stream client dropped because {Why}; it resumes with since", why);
-        client.Stop();
-        client.Socket.Abort();
-    }
+        public WebSocketEventQueue Queue { get; } = queue;
 
-    private sealed class EventClient(WebSocket socket, int capacity) : INodeEventSink
-    {
-        // Never disposed: it has no timer, so there is nothing for Dispose to release, and a send that reads the token
-        // after a dispose would throw rather than end.
-        private readonly CancellationTokenSource _stopping = new CancellationTokenSource();
+        public int Capacity => Queue.Capacity;
 
-        public WebSocket Socket { get; } = socket;
+        public bool TryWrite(byte[] message) => Queue.TryEnqueue(message);
 
-        public Channel<byte[]> Queue { get; } = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(capacity)
-        {
-            SingleReader = true,
-            SingleWriter = true,
-            // TryWrite, never WriteAsync: a full queue answers false at once and the client is dropped.
-            FullMode = BoundedChannelFullMode.Wait,
-        });
+        public void Overflowed() => Queue.Abort();
 
-        public CancellationToken Stopping => _stopping.Token;
-
-        public int Capacity { get; } = capacity;
-
-        public bool TryWrite(byte[] message) => Queue.Writer.TryWrite(message);
-
-        public void Overflowed()
-        {
-            Stop();
-            Socket.Abort();
-        }
-
-        public void Stop()
-        {
-            Queue.Writer.TryComplete();
-            _stopping.Cancel();
-        }
+        public void Stop() => Queue.Stop();
     }
 }

@@ -25,7 +25,7 @@
     <PackageVersion Include="DIR.Lib" Version="11.26.*" />
     <PackageVersion Include="Console.Lib" Version="5.10.*" />
     <PackageVersion Include="LAN.Lib" Version="2.3.*" />
-    <!-- The per-user node's socket location, lock and Kestrel hosting (SharpAstro/Node.Lib), shared with tianwen. -->
+    <!-- The per-user node's socket location, lock, Kestrel hosting, event queue and ring buffer (SharpAstro/Node.Lib), shared with tianwen. -->
     <PackageVersion Include="Node.Lib" Version="1.1.*" />
     <PackageVersion Include="Node.Lib.Hosting" Version="1.1.*" />
     <PackageVersion Include="SdlVulkan.Renderer" Version="7.73.*" />

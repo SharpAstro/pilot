@@ -1,4 +1,5 @@
 using System.CommandLine;
+using Node.Lib;
 using Pilot.Contracts;
 
 namespace Pilot.Node;
@@ -9,6 +10,9 @@ namespace Pilot.Node;
 /// </summary>
 public static class NodeCommandLine
 {
+    /// <summary>Set to <c>1</c> to make a node local-only, as <c>--local-only</c> does (Node.Lib's <see cref="LocalOnlyMode"/>).</summary>
+    public const string LocalOnlyVariable = "PILOT_LOCAL_ONLY";
+
     /// <param name="nodePath">The binary the hooks run; this process's own unless a test names one (a test host is no pilot-node).</param>
     public static Task<int> RunAsync(string[] args, Stream stdin, TextWriter output, TextWriter error, CancellationToken cancellationToken, string? nodePath = null)
     {
@@ -48,6 +52,10 @@ public static class NodeCommandLine
             DefaultValueFactory = _ => 2,
         };
         var lanPort = new Option<int>("--lan-port") { Description = $"The TCP port for the LAN; {NodeWire.DefaultLanPort} by default", DefaultValueFactory = _ => NodeWire.DefaultLanPort };
+        var localOnly = new Option<bool>(LocalOnlyMode.Argument)
+        {
+            Description = $"Bind nothing but the socket, whatever --lan says (also {LocalOnlyVariable}=1): for a node an agent starts, which the firewall would otherwise ask about",
+        };
         var watchtowerFolder = new Option<string?>("--watchtower-folder") { Description = "Where the watchtower runs, a folder Claude Code trusts; else PILOT_WATCHTOWER_FOLDER, else under --data" };
         machine.Validators.Add(result =>
         {
@@ -79,7 +87,7 @@ public static class NodeCommandLine
 
         var root = new RootCommand("pilot v2's node: one per machine, the one writer of its flights, legs, cards and sessions")
         {
-            Options = { socket, data, machine, noWatchtower, watchtowerFolder, lan, lanPort, maxJobs, jobMemory },
+            Options = { socket, data, machine, noWatchtower, watchtowerFolder, lan, lanPort, localOnly, maxJobs, jobMemory },
             Subcommands = { hook, hooks },
         };
         root.SetAction(async (parseResult, ct) =>
@@ -90,9 +98,16 @@ public static class NodeCommandLine
                 await error.WriteLineAsync(invalid);
                 return NodeExitCodes.InvalidArguments;
             }
+            // Local-only wins over --lan: it is how a launcher keeps a node it starts off the network.
+            var mode = LocalOnlyMode.Of(LocalOnlyVariable, parseResult.GetValue(localOnly));
+            var wantsLan = parseResult.GetValue(lan);
+            if (wantsLan && !mode.MayBindTheNetwork)
+            {
+                await error.WriteLineAsync($"local-only ({LocalOnlyMode.Argument} or {LocalOnlyVariable}): --lan is ignored, the node listens on its socket only");
+            }
             var options = new NodeOptions(socketPath, Path.GetFullPath(parseResult.GetValue(data) ?? NodeSocket.DefaultDataFolder), MachinePrefix: parseResult.GetValue(machine),
                 Watchtower: !parseResult.GetValue(noWatchtower), WatchtowerFolderGiven: parseResult.GetValue(watchtowerFolder),
-                Lan: parseResult.GetValue(lan), LanPort: parseResult.GetValue(lanPort),
+                Lan: wantsLan && mode.MayBindTheNetwork, LanPort: parseResult.GetValue(lanPort),
                 MaxJobs: parseResult.GetValue(maxJobs), JobMemoryGigabytes: parseResult.GetValue(jobMemory));
             return await NodeProgram.RunAsync(options, error, ct);
         });

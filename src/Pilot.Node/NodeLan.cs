@@ -56,9 +56,7 @@ public sealed class NodeLan(NodeState state, NodeOptions options, TimeProvider t
     public async Task<LanGrant?> VerifyAsync(HttpContext context)
     {
         await EnsureLoadedAsync(context.RequestAborted);
-        var header = context.Request.Headers.Authorization.ToString();
-        var token = header.StartsWith("Bearer ", StringComparison.Ordinal) ? header["Bearer ".Length..].Trim() : null;
-        return _grants.TryVerify(token, out var grant) ? grant : null;
+        return _grants.TryVerify(NodeAccessGate.BearerToken(context), out var grant) ? grant : null;
     }
 
     /// <summary>An ask for control, as <paramref name="label"/>: its ticket, or null while another ask waits.</summary>
