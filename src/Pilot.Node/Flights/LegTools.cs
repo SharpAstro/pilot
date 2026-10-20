@@ -65,7 +65,17 @@ public sealed partial class ClaudeWorkerLauncher : IWorkerLauncher
 
     public async Task<string> StartAsync(WorkerStart start, CancellationToken cancellationToken)
     {
-        var run = await ClaudeCli.RunAsync(Arguments(start), start.Brief, start.RepoPath, Timeout, cancellationToken);
+        ClaudeRun run;
+        try
+        {
+            run = await ClaudeCli.RunAsync(Arguments(start), start.Brief, start.RepoPath, Timeout, cancellationToken);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or System.ComponentModel.Win32Exception or TimeoutException)
+        {
+            // A refusal that says why, not a crash of the request: seen on a node in WSL whose PATH lacked claude, where
+            // the start came back as a bare 500 and the dashboard's button said nothing at all.
+            throw new FlightException($"claude could not be run to start {start.Name}: {ex.Message}");
+        }
         if (run.ExitCode != 0 || Job().Match(run.Output + run.Error) is not { Success: true } job)
         {
             throw new FlightException($"claude --bg did not start {start.Name} ({run.ExitCode}): {Clip(run.Output + run.Error)}");
