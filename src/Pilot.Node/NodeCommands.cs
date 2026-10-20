@@ -14,6 +14,30 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
     /// <summary>Runs <paramref name="command"/>; its result is on the stream too. Long work (a say, git, a merge) runs off the state's lock.</summary>
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
+        // The watchtower handles what it may; a merge or a landing is the controller's, by any route, a card's included.
+        if (command.Verb is Verbs.Merge or Verbs.Land && string.Equals(command.Who, Get<Watchtower>().Name, StringComparison.Ordinal))
+        {
+            return state.Complete(command, $"{command.Verb} is the controller's, not the watchtower's: leave its card open for them");
+        }
+        if (command.Verb == Verbs.Tell)
+        {
+            var (target, why) = Get<Watchtower>().TellTarget();
+            if (target is null)
+            {
+                return state.Complete(command, why);
+            }
+            var said = await Get<SessionMessenger>().SayAsync(command with { Verb = Verbs.Say, Target = target }, cancellationToken);
+            return state.Complete(command, said.Error, said.Way, said.SessionId);
+        }
+        if (command.Verb == Verbs.RestartWatchtower)
+        {
+            var why = string.Join(' ', command.Args ?? []).Trim();
+            return state.Complete(command, await Get<Watchtower>().RestartAsync(why.Length > 0 ? $"restarted by {command.Who}: {why}" : $"restarted by {command.Who}", cancellationToken));
+        }
+        if (command.Verb == Verbs.Raise)
+        {
+            return Raise(command);
+        }
         if (command.Verb == Verbs.Say)
         {
             return await Get<SessionMessenger>().SayAsync(command, cancellationToken);
@@ -78,6 +102,22 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             state.ReopenCard(card.Id);
             return state.Complete(command, $"{choice.Label} was refused: {result.Error}");
         }
+        return state.Complete(command, null);
+    }
+
+    /// <summary><c>raise &lt;subject&gt; ring|for-you|handled &lt;title&gt; [detail…]</c>: a card from whoever raises it.</summary>
+    private CommandResult Raise(CommandRequest command)
+    {
+        var args = command.Args ?? [];
+        CardBin? bin = args.Length > 0 ? args[0] switch { "ring" => CardBin.Ring, "for-you" => CardBin.ForYou, "handled" => CardBin.Handled, _ => null } : null;
+        if (bin is null || args.Length < 2 || args[1].Trim().Length == 0)
+        {
+            return state.Complete(command, "raise takes ring, for-you or handled, then a title, then a detail if there is one");
+        }
+        var detail = string.Join(' ', args.Skip(2)).Trim();
+        var title = args[1].Trim();
+        var from = string.Equals(command.Who, "cli", StringComparison.Ordinal) ? "" : $" (from {command.Who})";
+        state.RaiseCard(bin.Value, Watchtower.RaisedKind, command.Target, title, (detail.Length > 0 ? detail : null) is { } d ? d + from : from.Length > 0 ? from.Trim() : null);
         return state.Complete(command, null);
     }
 

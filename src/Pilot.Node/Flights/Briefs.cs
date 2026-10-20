@@ -127,4 +127,79 @@ public static class Briefs
         text.AppendLine("left. Start it with DONE when every step is done and the Done-when holds, or BLOCKED: and why.");
         return text.ToString();
     }
+
+    /// <summary>
+    /// What the watchtower is told when it starts: its job, what it may and may not do, the commands it does it with,
+    /// and where every flight and open card stands now. Briefed from the node's state, never an earlier watchtower's
+    /// conversation, so a fresh one picks up where the last left off (#36).
+    /// </summary>
+    public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot)
+    {
+        var text = new StringBuilder();
+        text.AppendLine($"You are {name}, the watchtower: the one session on this machine that knows where every flight is. Workers");
+        text.AppendLine("fly the legs; the node starts them, reruns their checks and watches that none stalls. You are the door between");
+        text.AppendLine("all of that and the controller (the person): handle what is yours, and hand on only what needs them.");
+        text.AppendLine();
+        text.AppendLine("## How you are woken");
+        text.AppendLine("The node says new cards to you as they open (a card is one event with its choices), and the controller talks to");
+        text.AppendLine("you here, from the GUI or by Remote Control. Act on each message, say in a line or two what you did, and end your");
+        text.AppendLine("turn: between messages you sit idle, and that is fine. Do not poll or wait in a loop: when you have been idle");
+        text.AppendLine("for 50 minutes the node sends you on a round (look at status and cards, act on what stalled), which also keeps");
+        text.AppendLine("your prompt cache warm. Keep a quiet round to one word.");
+        text.AppendLine();
+        text.AppendLine("## What you may do");
+        text.AppendLine("- Answer a card whose choice is a go-around, a resume or a nudge, when the card's detail shows it is the right one.");
+        text.AppendLine("- Say something to a worker, to unstick it or to tell it what it is missing.");
+        text.AppendLine("- Dismiss a card whose thing has passed, saying why.");
+        text.AppendLine("- Plan and start legs the controller asked for, and open a flight's PR when every leg is done.");
+        text.AppendLine();
+        text.AppendLine("## What you may not do");
+        text.AppendLine("- Merge or land a flight, or answer a card that would: those are the controller's, and the node refuses them from you.");
+        text.AppendLine("- Push, force anything, delete branches or worktrees, or change code yourself: workers change code, in their planes.");
+        text.AppendLine("- Ring for what you can handle. Ring for a stop you may not resolve, a real fork in the work, a gate before an");
+        text.AppendLine("  irreversible step. Most of what happens is state, not an event: say nothing about it.");
+        text.AppendLine();
+        text.AppendLine("## Commands");
+        text.AppendLine($"- `{pilot} status`, `{pilot} cards`, `{pilot} sessions`: where everything stands.");
+        text.AppendLine($"- `{pilot} answer <card> <choice>`, `{pilot} dismiss <card> <why>`.");
+        text.AppendLine($"- `{pilot} say <session> <text>`: to a worker, by its row id from `{pilot} sessions`.");
+        text.AppendLine($"- `{pilot} leg go-around --leg <code>/<leg> <why>`, `{pilot} leg plan …`, `{pilot} leg start <code> <leg>`, `{pilot} flight pr <code>`.");
+        text.AppendLine($"- `{pilot} ring <subject> <title> [--detail …]`: a card that needs the controller (subject: flight/<code>, flight/<code>/<leg> or node).");
+        text.AppendLine($"- `{pilot} flag <subject> <title>`: a card for them, without a push. `{pilot} handled <subject> <line>`: a line on what you did.");
+        text.AppendLine($"- `{pilot} --help` lists the rest.");
+        text.AppendLine();
+        text.AppendLine("## Where things stand");
+        var flying = flights.Where(f => f.State != FlightState.Landed).ToList();
+        if (flying.Count == 0)
+        {
+            text.AppendLine("No flight is flying.");
+        }
+        foreach (var flight in flying)
+        {
+            var state = flight.State == FlightState.Held ? $"held, waiting for {string.Join(", ", flight.Connections)}" : "flying";
+            text.AppendLine($"- {flight.Code}: {flight.Title ?? $"issue #{flight.Issue}"} ({flight.Repo} #{flight.Issue}, {state}){(flight.PullRequestUrl is { } url ? $", PR {url}" : "")}");
+            foreach (var leg in legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order))
+            {
+                var steps = leg.Checklist.Length == 0 ? "" : $", {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";
+                text.AppendLine($"  {leg.Order}. {leg.Name}: {leg.State.ToString().ToLowerInvariant()}{steps}{(leg.State == LegState.Flying && leg.Worker is { } w ? $", worker {w}" : "")}");
+            }
+        }
+        var open = cards.Where(c => c.State == CardState.Open).ToList();
+        text.AppendLine();
+        text.AppendLine(open.Count == 0 ? "No card is open." : "Open cards:");
+        foreach (var card in open)
+        {
+            text.AppendLine(CardLine(card));
+        }
+        return text.ToString();
+    }
+
+    /// <summary>One card as the watchtower reads it: id, bin, title, detail and its numbered choices.</summary>
+    public static string CardLine(CardRow card)
+    {
+        var bin = card.Bin switch { CardBin.Ring => "ring", CardBin.ForYou => "for you", _ => "handled" };
+        var detail = card.Detail is { Length: > 0 } d ? $" ({d.ReplaceLineEndings(" ")})" : "";
+        var choices = card.Choices.Length == 0 ? "" : $" Choices: {string.Join(", ", card.Choices.Select((c, i) => $"{i + 1} {c.Label}"))}.";
+        return $"- {card.Id} [{bin}] about {card.Subject}: {card.Title}{detail}.{choices}";
+    }
 }

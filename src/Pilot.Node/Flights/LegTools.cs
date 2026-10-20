@@ -7,10 +7,10 @@ using Pilot.Node.Sessions;
 namespace Pilot.Node.Flights;
 
 /// <summary>
-/// A worker to start: its session name, the repo's main checkout it starts from, the plane (worktree folder name) it
-/// works in, its brief, and how it runs.
+/// A session to start in the background: its name, the folder it starts from (a repo's main checkout), the plane
+/// (worktree folder name) it enters, if any, its brief, and how it runs; with Remote Control on, for the watchtower.
 /// </summary>
-public sealed record WorkerStart(string Name, string RepoPath, string Plane, string Brief, string? Model, string? Effort);
+public sealed record WorkerStart(string Name, string RepoPath, string? Plane, string Brief, string? Model, string? Effort, bool RemoteControl = false);
 
 /// <summary>Starting and stopping a leg's background worker, so a test decides what Claude Code does.</summary>
 public interface IWorkerLauncher
@@ -41,7 +41,17 @@ public sealed partial class ClaudeWorkerLauncher : IWorkerLauncher
 
     public static IReadOnlyList<string> Arguments(WorkerStart start)
     {
-        var args = new List<string> { "--bg", "-w", start.Plane, "-n", start.Name, "--permission-mode", "auto" };
+        var args = new List<string> { "--bg" };
+        if (start.Plane is { } plane)
+        {
+            args.AddRange(["-w", plane]);
+        }
+        if (start.RemoteControl)
+        {
+            // Documented for interactive sessions; a background one takes it too (its record gains a bridgeSessionId).
+            args.Add("--remote-control");
+        }
+        args.AddRange(["-n", start.Name, "--permission-mode", "auto"]);
         if (start.Model is { Length: > 0 } model)
         {
             args.AddRange(["--model", model]);

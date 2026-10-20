@@ -132,8 +132,23 @@ public static class Verbs
     /// <summary><c>dismiss card/&lt;id&gt; [why…]</c>: closes the card with nothing done.</summary>
     public const string Dismiss = "dismiss";
 
+    /// <summary><c>tell watchtower &lt;text&gt;</c>: says the text to the node's watchtower, whichever session it is now.</summary>
+    public const string Tell = "tell";
+
+    /// <summary><c>restart-watchtower watchtower [why…]</c>: stops the watchtower and starts a fresh one, briefed from the node's state.</summary>
+    public const string RestartWatchtower = "restart-watchtower";
+
+    /// <summary>
+    /// <c>raise &lt;subject&gt; ring|for-you|handled &lt;title&gt; [detail…]</c>: a card about the subject (the node, a flight,
+    /// a leg, a session), from whoever raises it: how the watchtower flags what needs the controller, and logs what it did.
+    /// </summary>
+    public const string Raise = "raise";
+
     /// <summary>The node itself, as a target.</summary>
     public const string NodeTarget = "node";
+
+    /// <summary>The node's watchtower, as a target: whichever session it is now.</summary>
+    public const string WatchtowerTarget = "watchtower";
 
     /// <summary>What a card target starts with: <c>card/&lt;id&gt;</c>.</summary>
     public const string CardTargetPrefix = "card/";

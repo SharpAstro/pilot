@@ -221,10 +221,30 @@ public static class PilotCommand
         var note = Action(new Command("note", "Keep a note on the node, for every client") { Arguments = { noteText } },
             (p, client, ct) => SendAsync(client, Verbs.Note, Verbs.NodeTarget, [Join(p, noteText)], "cli", output, ct));
 
+        // the watchtower: tell it, restart it; and the cards it (or anyone) raises
+        var tellText = Words("text", "What to tell it");
+        var tell = Action(new Command("tell", "Say something to the watchtower, whichever session it is now") { Arguments = { tellText } },
+            (p, client, ct) => SendAsync(client, Verbs.Tell, Verbs.WatchtowerTarget, [Join(p, tellText)], "cli", output, ct));
+        var restartWhy = Words("why", "Why, for its Handled line", required: false);
+        var restart = Action(new Command("restart", "Stop the watchtower and start a fresh one, briefed from the node's state") { Arguments = { restartWhy } },
+            (p, client, ct) => SendAsync(client, Verbs.RestartWatchtower, Verbs.WatchtowerTarget, p.GetValue(restartWhy) ?? [], "cli", output, ct));
+        var watchtower = new Command("watchtower", "The node's watchtower session") { Subcommands = { restart } };
+
+        var subject = Arg("subject", "What it is about: flight/<code>, flight/<code>/<leg>, session/<id> or node");
+        var cardTitle = Arg("title", "The card in a line");
+        var detail = new Option<string?>("--detail") { Description = "What else is needed to decide" };
+        Command Raise(string verbName, string bin, string description) =>
+            Action(new Command(verbName, description) { Arguments = { subject, cardTitle }, Options = { detail } },
+                (p, client, ct) => SendAsync(client, Verbs.Raise, p.GetValue(subject)!,
+                    p.GetValue(detail) is { } d ? [bin, p.GetValue(cardTitle)!, d] : [bin, p.GetValue(cardTitle)!], "cli", output, ct));
+        var ring = Raise("ring", "ring", "Raise a card that needs the controller and pushes to them");
+        var flag = Raise("flag", "for-you", "Raise a card for the controller, without a push");
+        var handled = Raise("handled", "handled", "Log a line on what was handled, born closed");
+
         return new RootCommand("pilot v2's command line, against this machine's node. Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket },
-            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note },
+            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note, tell, watchtower, ring, flag, handled },
         };
     }
 
@@ -244,8 +264,22 @@ public static class PilotCommand
         return (Verbs.LegTarget(flight.Code, leg.Name), leg.Worker ?? "cli");
     }
 
+    /// <summary>
+    /// Who a command is from when nothing nearer says: the Claude session running this CLI, by its name on the node
+    /// (Claude Code gives a session's tools <c>CLAUDE_CODE_SESSION_ID</c>), so the watchtower's commands are the
+    /// watchtower's; else the CLI, for a person at a terminal.
+    /// </summary>
+    internal static string Caller(SnapshotEvent snapshot, string? sessionId) =>
+        sessionId is { Length: > 0 } id && snapshot.Sessions.FirstOrDefault(s => string.Equals(s.SessionId, id, StringComparison.OrdinalIgnoreCase)) is { } row
+            ? row.Name
+            : "cli";
+
     private static async Task<int> SendAsync(NodeClient client, string verb, string target, string[] args, string who, TextWriter output, CancellationToken cancellationToken)
     {
+        if (who == "cli" && Environment.GetEnvironmentVariable("CLAUDE_CODE_SESSION_ID") is { Length: > 0 } sessionId)
+        {
+            who = Caller(await SnapshotAsync(client, cancellationToken), sessionId);
+        }
         var envelope = await client.SendAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, cancellationToken);
         if (envelope.Success && envelope.Response is { Ok: true } result)
         {

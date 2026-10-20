@@ -39,6 +39,8 @@ public static class NodeCommandLine
         };
         var data = new Option<string?>("--data") { Description = "Where the node keeps its state; else this user's pilot2 folder" };
         var machine = new Option<string?>("--machine") { Description = "The machine's prefix in session names, two letters and a number (DU1); else PILOT_MACHINE, else from its name" };
+        var noWatchtower = new Option<bool>("--no-watchtower") { Description = "Keep no watchtower session" };
+        var watchtowerFolder = new Option<string?>("--watchtower-folder") { Description = "Where the watchtower runs, a folder Claude Code trusts; else PILOT_WATCHTOWER_FOLDER, else under --data" };
         machine.Validators.Add(result =>
         {
             if (result.GetValueOrDefault<string?>() is { } value && MachinePrefixes.Normalise(value) is null)
@@ -69,7 +71,7 @@ public static class NodeCommandLine
 
         var root = new RootCommand("pilot v2's node: one per machine, the one writer of its flights, legs, cards and sessions")
         {
-            Options = { socket, data, machine },
+            Options = { socket, data, machine, noWatchtower, watchtowerFolder },
             Subcommands = { hook, hooks },
         };
         root.SetAction(async (parseResult, ct) =>
@@ -80,7 +82,8 @@ public static class NodeCommandLine
                 await error.WriteLineAsync(invalid);
                 return NodeExitCodes.InvalidArguments;
             }
-            var options = new NodeOptions(socketPath, Path.GetFullPath(parseResult.GetValue(data) ?? NodeSocket.DefaultDataFolder), MachinePrefix: parseResult.GetValue(machine));
+            var options = new NodeOptions(socketPath, Path.GetFullPath(parseResult.GetValue(data) ?? NodeSocket.DefaultDataFolder), MachinePrefix: parseResult.GetValue(machine),
+                Watchtower: !parseResult.GetValue(noWatchtower), WatchtowerFolderGiven: parseResult.GetValue(watchtowerFolder));
             return await NodeProgram.RunAsync(options, error, ct);
         });
         return root;

@@ -150,6 +150,36 @@ A worker that finishes its own leg is stopped after 90 s, once it has said its r
 its `-w` session entered when that job ends by itself, keeping the branch; the node checks a plane out again from its
 branch before any worker goes in, and lands one that is already gone.
 
+## The watchtower
+
+The node keeps one watchtower session, `<machine>-watchtower`: a background session with Remote Control on, so you
+reach it from claude.ai or a phone, in its own folder (`%LOCALAPPDATA%\pilot2\watchtower`, or `--watchtower-folder`,
+`PILOT_WATCHTOWER_FOLDER`). It is briefed from the node's state (flights, legs, open cards, what it may and may not do),
+never from an earlier watchtower's conversation, and the node says every Ring and For-you card to it as it opens.
+
+| When | The node |
+| --- | --- |
+| none runs, or it ended or failed | starts a fresh one (a Handled line says why) |
+| idle 50 min | sends it on a round: look at status and cards, act on what stalled, else answer "quiet". The round is a turn inside the prompt cache's hour, so the cache stays warm; a watchtower woken cold re-reads its whole context at full price |
+| idle past 70% of its context window | replaces it with a fresh one |
+| stopped by the usage limit | a For-you card until the reset, then resumes it |
+| it cannot be started | rings with why: Claude Code starts no background session in a folder never trusted, so run `claude` in that folder once and accept the prompt |
+
+It may answer go-around, resume and nudge cards, say things to workers, dismiss what has passed, and plan and start
+legs; the node refuses a merge or a landing from it, a card's included. The CLI knows a command came from a Claude
+session by `CLAUDE_CODE_SESSION_ID` and sends it under that session's name. A session the node resumes keeps Remote
+Control on if it had it.
+
+```bash
+pilot tell <text…>                             # to the watchtower, whichever session it is now
+pilot watchtower restart [why…]                # a fresh one, briefed from the node's state
+pilot ring <subject> <title> [--detail …]      # a card that needs the controller
+pilot flag <subject> <title> [--detail …]      # a card for them, no push
+pilot handled <subject> <line>                 # a Handled line
+```
+
+`pilot-node --no-watchtower` keeps none.
+
 ## Cards
 
 An event that needs the controller is one card, with its choices on it (after Sam's campaigner): **Rings** (a gate
