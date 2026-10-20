@@ -47,7 +47,11 @@ public sealed record JobRow
     /// <summary>How long it may run before the node stops it.</summary>
     public required TimeSpan Timeout { get; init; }
 
+    /// <summary>When it started; for a job still <see cref="JobState.Queued"/>, when it was handed over.</summary>
     public required DateTimeOffset StartedAt { get; init; }
+
+    /// <summary>When it was handed over, if it had to wait its turn; null for a job that started at once.</summary>
+    public DateTimeOffset? QueuedAt { get; init; }
 
     /// <summary>Null while it runs.</summary>
     public DateTimeOffset? EndedAt { get; init; }
@@ -71,6 +75,10 @@ public enum JobState
 
     [JsonStringEnumMemberName("cancelled")]
     Cancelled,
+
+    /// <summary>Waiting its turn: the machine's job slots are taken, or it is short of memory. Its step says which.</summary>
+    [JsonStringEnumMemberName("queued")]
+    Queued,
 }
 
 /// <summary>A job was handed to the node.</summary>

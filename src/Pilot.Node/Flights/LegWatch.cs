@@ -167,8 +167,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     private async Task IdleAsync(LegRow leg, SessionRow worker, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var since = worker.LastResponseAt ?? worker.StartedAt;
-        // A worker idle while a job of its own runs is waiting, as it was told to: the job wakes it, so it is not stalled.
-        if (now - since < IdleGrace || state.Jobs().Any(j => j.Owner == worker.Id && j.State == JobState.Running))
+        // A worker idle while a job of its own runs or waits its turn is waiting, as it was told to: the job wakes it, so it
+        // is not stalled.
+        if (now - since < IdleGrace || state.Jobs().Any(j => j.Owner == worker.Id && j.State is JobState.Running or JobState.Queued))
         {
             return;
         }

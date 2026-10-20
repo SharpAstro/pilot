@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Pilot.Commands;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
@@ -14,34 +15,38 @@ public sealed class JobTests : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2j-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
-    private readonly List<CommandRequest> _said = [];
+    private readonly ConcurrentQueue<CommandRequest> _said = new();
     private readonly JobRunner _jobs;
     private string? _refuse;
+
+    // The machine's free memory as the runner reads it; null (unknown) holds nothing back.
+    private long? _free;
 
     public JobTests()
     {
         Directory.CreateDirectory(_root);
         _jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), TimeProvider.System)
         {
+            FreeMemory = () => _free,
             Say = (command, _) =>
             {
-                lock (_said)
-                {
-                    _said.Add(command);
-                }
+                _said.Enqueue(command);
                 return Task.FromResult(_state.Complete(command, _refuse));
             },
         };
+        // The dispatcher is the runner's hosted loop: started here as the node starts it.
         _state.PutSession(new SessionRow
         {
             Id = "a1b2c3d4", SessionId = "a1b2c3d4-0000-4000-8000-000000000000", Name = "se1-tia1-parser", Kind = SessionKind.Background, Cwd = _root,
             Role = SessionRole.Worker, Flight = "TIA1", Leg = "parser", ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Idle,
             SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
         });
+        _jobs.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
     public void Dispose()
     {
+        _jobs.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
         try
         {
             Directory.Delete(_root, recursive: true);
@@ -57,6 +62,20 @@ public sealed class JobTests : IDisposable
 
     private CommandResult Run(string command, string target = "session/a1b2c3d4", long timeoutSeconds = 0, string? cwd = null) =>
         _jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = target, Args = [cwd ?? _root, timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture), command], Who = "se1-tia1-parser" });
+
+    /// <summary>The job once <paramref name="condition"/> holds: the dispatcher acts on its own loop, a moment after the call.</summary>
+    private async Task<JobRow> Until(string id, Func<JobRow, bool> condition)
+    {
+        for (var i = 0; i < 300; i++)
+        {
+            if (_state.Jobs().Single(j => j.Id == id) is var job && condition(job))
+            {
+                return job;
+            }
+            await Task.Delay(20, Ct);
+        }
+        throw new TimeoutException($"job {id} never came to the state awaited");
+    }
 
     private async Task<JobRow> Ended(string id)
     {
@@ -78,8 +97,8 @@ public sealed class JobTests : IDisposable
 
         started.Ok.ShouldBeTrue();
         var id = started.Made.ShouldNotBeNull();
-        var running = _state.Jobs().Single();
-        (running.Id, running.State, running.Owner, running.OwnerName, running.Flight, running.Leg).ShouldBe((id, JobState.Running, "a1b2c3d4", "se1-tia1-parser", "TIA1", "parser"));
+        var running = await Until(id, j => j.State != JobState.Queued);
+        (running.Id, running.Owner, running.OwnerName, running.Flight, running.Leg).ShouldBe((id, "a1b2c3d4", "se1-tia1-parser", "TIA1", "parser"));
 
         var job = await Ended(id);
         (job.State, job.ExitCode, job.Step, job.Told).ShouldBe((JobState.Succeeded, 0, "all 12 tests passed", true));
@@ -113,6 +132,7 @@ public sealed class JobTests : IDisposable
     public async Task ACancelledJobStopsAndItsOwnerIsTold()
     {
         var id = Run(Sleep(30)).Made!;
+        await Until(id, j => j.State == JobState.Running);
 
         _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" }).Ok.ShouldBeTrue();
         var job = await Ended(id);
@@ -120,6 +140,141 @@ public sealed class JobTests : IDisposable
         (job.State, job.Error).ShouldBe((JobState.Cancelled, "cancelled by controller"));
         _said.Single().Args[0].ShouldContain("cancelled by controller");
         _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" }).Error.ShouldBe($"job {id} is not running");
+    }
+
+    [Fact]
+    public async Task ASecondJobWaitsItsTurnAndStartsWhenTheFirstEnds()
+    {
+        var first = Run(Sleep(2)).Made!;
+        var second = Run(Echo("second ran")).Made!;
+
+        var waiting = await Until(second, j => j.Step is not null);
+        (waiting.State, waiting.Step).ShouldBe((JobState.Queued, "next in line: another job is running"));
+        waiting.QueuedAt.ShouldNotBeNull();
+
+        (await Ended(first)).State.ShouldBe(JobState.Succeeded);
+        var ran = await Ended(second);
+        (ran.State, ran.Step).ShouldBe((JobState.Succeeded, "second ran"));
+        ran.StartedAt.ShouldBeGreaterThanOrEqualTo(ran.QueuedAt!.Value);
+        _said.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task AJobWaitsForFreeMemoryAndStartsOnceThereIsEnough()
+    {
+        _free = 1L << 30;
+
+        var id = Run(Echo("ran")).Made!;
+
+        (await Until(id, j => j.Step is not null)).Step.ShouldBe("next in line: waiting for 2.0 GB of free memory (1.0 GB now)");
+        _free = 4L << 30;
+        _jobs.Pump();
+        (await Ended(id)).State.ShouldBe(JobState.Succeeded);
+    }
+
+    [Fact]
+    public async Task AJobBehindAnotherSaysHowManyAreAhead()
+    {
+        _free = 0;
+
+        Run(Echo("a"));
+        var behind = Run(Echo("b")).Made!;
+
+        (await Until(behind, j => j.Step is not null)).Step.ShouldBe("queued, 1 ahead of it");
+    }
+
+    [Fact]
+    public async Task AQueuedJobCancelledNeverRunsAndItsOwnerIsTold()
+    {
+        _free = 0;
+        var id = Run(Echo("never")).Made!;
+
+        _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" }).Ok.ShouldBeTrue();
+        var job = await Ended(id);
+
+        (job.State, job.Error).ShouldBe((JobState.Cancelled, "cancelled by controller before its turn"));
+        File.Exists(job.LogPath).ShouldBeFalse();
+        _said.Single().Args[0].ShouldContain("cancelled by controller before its turn");
+    }
+
+    [Fact]
+    public async Task ACancelThatReachesTheDispatcherBeforeItsJobStillCancelsIt()
+    {
+        // As when a cancel lands between Run putting the row and handing the job over: Withdrawn before HandedOver. A
+        // runner that is not started has no dispatcher loop, so the test drives the signals in that order itself.
+        var idle = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n2.sock"), Path.Combine(_root, "data2")), TimeProvider.System)
+        {
+            FreeMemory = () => null,
+            Say = (command, _) =>
+            {
+                _said.Enqueue(command);
+                return Task.FromResult(_state.Complete(command, null));
+            },
+        };
+        var job = new JobRow
+        {
+            Id = "j90", Command = Echo("never"), Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = JobState.Queued,
+            LogPath = Path.Combine(_root, "j90.log"), Timeout = JobRunner.DefaultTimeout, StartedAt = DateTimeOffset.UtcNow,
+        };
+        _state.PutJob(job);
+
+        idle.Dispatch(new JobRunner.Withdrawn("j90", "controller"));
+        idle.Dispatch(new JobRunner.HandedOver(job));
+
+        var ended = await Ended("j90");
+        (ended.State, ended.Error).ShouldBe((JobState.Cancelled, "cancelled by controller before its turn"));
+        File.Exists(job.LogPath).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ACancelThatSeesARunningJobFindsItsProcess()
+    {
+        // The moment the Running row is published, a cancel must find the process: the runner adds it first.
+        string? answer = null;
+        using var watch = _state.Subscribe(null, null, new OnJobRunning(id =>
+            answer ??= _jobs.IsRunning(id) ? "found" : "not running"));
+
+        var id = Run(Sleep(30)).Made!;
+        await Until(id, j => j.State == JobState.Running);
+        _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
+        await Ended(id);
+
+        answer.ShouldBe("found");
+    }
+
+    /// <summary>Calls back, as the state publishes it, when a job's Running row is put.</summary>
+    private sealed class OnJobRunning(Action<string> running) : INodeEventSink
+    {
+        public int Capacity => 10_000;
+
+        public bool TryWrite(byte[] message)
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(message);
+            if (doc.RootElement.TryGetProperty("job", out var job) && job.GetProperty("state").GetString() == "running")
+            {
+                running(job.GetProperty("id").GetString()!);
+            }
+            return true;
+        }
+
+        public void Overflowed()
+        {
+        }
+    }
+
+    [Fact]
+    public async Task AQueuedJobARestartOrphanedIsFailedAndItsOwnerTold()
+    {
+        _state.PutJob(new JobRow
+        {
+            Id = "j1", Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = JobState.Queued,
+            LogPath = Path.Combine(_root, "j1.log"), Timeout = JobRunner.DefaultTimeout, StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+        });
+
+        await _jobs.RecoverAsync(Ct);
+
+        (_state.Jobs().Single().State, _state.Jobs().Single().Error).ShouldBe((JobState.Failed, "the node stopped before its turn came"));
+        _said.Single().Args[0].ShouldContain("Your job j1");
     }
 
     [Fact]

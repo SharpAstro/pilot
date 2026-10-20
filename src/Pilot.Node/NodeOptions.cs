@@ -14,7 +14,7 @@ namespace Pilot.Node;
 /// <param name="LanAnnounce">Whether it announces itself on the LAN (LAN.Lib's UDP beacon) when it listens there; a test node does not.</param>
 public sealed record NodeOptions(
     string SocketPath, string DataFolder, int RetainedDeltas = NodeState.DefaultRetainedDeltas, string? MachinePrefix = null, bool Watchtower = true, string? WatchtowerFolderGiven = null,
-    bool Lan = false, int LanPort = NodeWire.DefaultLanPort, bool LanAnnounce = true)
+    bool Lan = false, int LanPort = NodeWire.DefaultLanPort, bool LanAnnounce = true, int MaxJobs = 1, double JobMemoryGigabytes = 2)
 {
     /// <summary>
     /// The folder the watchtower runs in. Claude Code starts no background session in a folder never trusted, so the
