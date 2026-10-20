@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using Node.Lib;
 using Pilot.Contracts;
 
 namespace Pilot.Node.Flights;
@@ -292,7 +293,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     private async Task WatchAsync(JobRow job, Process process)
     {
-        var tail = new Queue<string>();
+        // Its last lines, for its owner's wake: Node.Lib's ring, read once it has ended. The gate keeps the log's lines in
+        // the order stdout and stderr gave them.
+        var tail = new CircularBuffer<string>(TailLines);
+        var gate = new Lock();
         var lastStep = time.GetUtcNow();
         var timedOut = false;
         using (var log = new StreamWriter(job.LogPath, append: false) { AutoFlush = true })
@@ -303,14 +307,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 {
                     return;
                 }
-                lock (tail)
+                lock (gate)
                 {
                     log.WriteLine(line);
-                    tail.Enqueue(line);
-                    while (tail.Count > TailLines)
-                    {
-                        tail.Dequeue();
-                    }
+                    tail.Add(line);
                     // The step, put on the stream now and then: a long run shows it is alive, without a delta per line.
                     var now = time.GetUtcNow();
                     if (now - lastStep >= StepEvery && line.Trim().Length > 0)
@@ -344,11 +344,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         _running.TryRemove(job.Id, out _);
         // Its slot is free: the next in line may start.
         Pump();
-        string[] last;
-        lock (tail)
-        {
-            last = [.. tail];
-        }
+        string[] last = [.. tail.Snapshot];
         var latest = state.Jobs().FirstOrDefault(j => j.Id == job.Id) ?? job;
         JobRow ended;
         if (_cancelled.TryRemove(job.Id, out var by))
