@@ -123,6 +123,11 @@ if (gate is null)
 
 const string Title = "pilot v2 · sessions";
 using var window = SdlVulkanWindow.Create(Title, 1280, 800);
+// The window's icon (the exe's is the ApplicationIcon): a missing or unreadable file leaves the platform's default.
+if (WindowIcon.Load(Path.Combine(AppContext.BaseDirectory, "Resources", "pilot-256.png")) is { } icon)
+{
+    window.SetIcon(icon);
+}
 window.GetSizeInPixels(out var width, out var height);
 using var context = VulkanContext.Create(window.Instance, window.Surface, (uint)width, (uint)height);
 using var renderer = new VkRenderer(context, (uint)width, (uint)height);

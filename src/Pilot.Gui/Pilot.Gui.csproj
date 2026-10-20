@@ -13,6 +13,9 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The exe's and the taskbar's icon; the window's own comes from Resources/pilot-256.png (Program.cs).
+         Drawn by Resources/make-icon.py: a paper plane on the dashboard's navy, its trail the colour of "flying". -->
+    <ApplicationIcon>Resources\pilot.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -32,6 +35,7 @@
   <!-- The UI face travels with the binary, so a capture draws the same glyphs on every machine. -->
   <ItemGroup>
     <Content Include="Fonts\DejaVuSans.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Resources\pilot-256.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fonts\DejaVuSans.LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
     <!-- What the window shows until it reads a node: the contract's own sample, not a copy of it. -->
     <Content Include="..\Pilot.Contracts\Fixtures\snapshot.sample.json" Link="Fixtures\snapshot.sample.json" CopyToOutputDirectory="PreserveNewest" />
