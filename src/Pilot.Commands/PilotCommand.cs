@@ -109,7 +109,7 @@ public static class PilotCommand
         var title = Words("title", "What it is for, in a line", required: false);
         var repo = new Option<string?>("--repo") { Description = "The repo's checkout (any of its worktrees); else this folder" };
         var create = Action(new Command("create", "A flight on an issue of this repo, and its plane") { Arguments = { issue, title }, Options = { repo } },
-            (p, client, ct) => SendAsync(client, Verbs.CreateFlight, Verbs.RepoTarget(Path.GetFullPath(p.GetValue(repo) ?? cwd, cwd)),
+            (p, client, ct) => SendAsync(client, Verbs.CreateFlight, Verbs.RepoTarget(RepoPath(client, p.GetValue(repo), cwd)),
                 [p.GetValue(issue)!, .. p.GetValue(title) ?? []], who, output, ct));
 
         var code = Arg("code", "The flight's code, as TIA1611");
@@ -375,6 +375,15 @@ public static class PilotCommand
             ?? throw new UsageException($"{flight.Code} has no leg flying; name it with --leg {flight.Code}/<leg>");
         return (Verbs.LegTarget(flight.Code, leg.Name), leg.Worker ?? "cli");
     }
+
+    /// <summary>
+    /// The repo a flight is created on, as the node will read it. On this machine's node, the folder resolved here (this
+    /// folder when none is named). On a node on the LAN it is that machine's path, sent as given and never resolved
+    /// against this one (a Windows client turned a Linux node's /home/… into C:\home\…), and it must be named.
+    /// </summary>
+    internal static string RepoPath(NodeClient client, string? named, string cwd) => client.IsRemote
+        ? named ?? throw new UsageException("a flight on a node on the LAN needs --repo <its checkout, as that machine names it>")
+        : Path.GetFullPath(named ?? cwd, cwd);
 
     /// <summary>
     /// The flight whose plane holds <paramref name="cwd"/>, and who is asking: its reviewer while a review is on, as a
