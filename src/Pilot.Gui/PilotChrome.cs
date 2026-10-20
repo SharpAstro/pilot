@@ -46,6 +46,7 @@ internal sealed class PilotChrome<TSurface>
         Sessions = sessions;
         Flights = new FlightsView<TSurface>(renderer);
         Cards = new CardsView<TSurface>(renderer);
+        sessions.ShareWith(Flights, Cards);
         Rail = new TabBar<TSurface>(renderer)
         {
             Side = TabStripSide.Left,

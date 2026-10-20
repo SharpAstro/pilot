@@ -38,6 +38,9 @@ internal static class SessionsCapture
     {
         var view = new SessionsView<RgbaImage>(renderer) { CanSay = canSay };
         var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = FontPath, DpiScale = dpiScale };
+        // Live, the window commands the node from the Flights page and tells the watchtower from its panel: so does a capture.
+        chrome.Flights.CanCommand = canSay;
+        chrome.Cards.CanTell = canSay;
         chrome.Show(page);
         chrome.Render(screen, flights, cards, new RectF32(0, 0, renderer.Width, renderer.Height));
         return view;

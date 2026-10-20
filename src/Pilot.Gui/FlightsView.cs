@@ -29,6 +29,9 @@ internal sealed record FlightLine
     /// <summary>Its legs: <c>3 legs · 1 done · render flying</c>, or <c>no legs yet</c>.</summary>
     public string Legs { get; init; } = "no legs yet";
 
+    /// <summary>Its legs themselves, in their order, for the selected flight's details.</summary>
+    public IReadOnlyList<LegRow> LegRows { get; init; } = [];
+
     /// <summary>Its sessions: <c>2 sessions · 1 live</c>, or <c>no session</c>.</summary>
     public required string Sessions { get; init; }
 
@@ -44,7 +47,7 @@ internal sealed record FlightLine
         return flights
             .OrderBy(f => f.State switch { FlightState.Flying => 0, FlightState.Held => 1, _ => 2 })
             .ThenByDescending(f => f.CreatedAt)
-            .Select(f => From(f, byFlight[f.Code].ToList(), now) with { Legs = LegsText([.. legsOf[f.Code].OrderBy(l => l.Order)]) })
+            .Select(f => From(f, byFlight[f.Code].ToList(), now) with { Legs = LegsText([.. legsOf[f.Code].OrderBy(l => l.Order)]), LegRows = [.. legsOf[f.Code].OrderBy(l => l.Order)] })
             .ToList();
     }
 
@@ -99,8 +102,52 @@ internal sealed record FlightsScreen(IReadOnlyList<FlightLine> Lines, string Sou
 }
 
 /// <summary>
-/// The Flights page: every flight as a row, its code and title, repo and issue, state, branch and sessions. Generic over
-/// the surface, as the sessions view is.
+/// What can be done with a flight from its details, as the node's verbs: run at once when it needs nothing more, or put
+/// in the command bar to be finished in words (a go-around's why, a leg's goal).
+/// </summary>
+internal sealed record FlightAction(string Label, string Verb, string Target, string[] Args, string? Prefill = null)
+{
+    /// <summary>The actions open to <paramref name="line"/>'s flight now, in the order a controller reaches for them.</summary>
+    public static IReadOnlyList<FlightAction> For(FlightLine line)
+    {
+        var flight = line.Row;
+        var code = flight.Code;
+        var target = Verbs.FlightTarget(code);
+        var actions = new List<FlightAction>();
+        if (flight.State == FlightState.Landed)
+        {
+            return actions;
+        }
+        var legs = line.LegRows;
+        var flying = legs.FirstOrDefault(l => l.State == LegState.Flying);
+        var failed = legs.FirstOrDefault(l => l.State == LegState.Failed);
+        var next = legs.FirstOrDefault(l => l.State == LegState.Planned);
+        if (flight.State == FlightState.Flying && flying is null && failed is null && next is not null && legs.Where(l => l.Order < next.Order).All(l => l.State == LegState.Done))
+        {
+            actions.Add(new FlightAction($"Start {next.Name}", Verbs.StartLeg, Verbs.LegTarget(code, next.Name), []));
+        }
+        if ((flying ?? failed) is { } stuck)
+        {
+            actions.Add(new FlightAction($"Go around {stuck.Name}", Verbs.GoAround, Verbs.LegTarget(code, stuck.Name), [], $"leg go-around --leg {code}/{stuck.Name} "));
+        }
+        var allDone = legs.Count > 0 && legs.All(l => l.State == LegState.Done);
+        if (allDone && (flight.PullRequest is null || flight.Review is null))
+        {
+            actions.Add(new FlightAction("Open PR", Verbs.OpenPr, target, []));
+        }
+        if (allDone && flight.Review is { State: ReviewState.Changes or ReviewState.Reviewing })
+        {
+            actions.Add(new FlightAction("Review again", Verbs.StartReview, target, []));
+        }
+        actions.Add(new FlightAction("Plan a leg", Verbs.PlanLeg, target, [], $"leg plan {code} <name> --goal \"...\" --done-when \"...\" --item \"...\""));
+        return actions;
+    }
+}
+
+/// <summary>
+/// The Flights page: every flight as a row, its code and title, repo and issue, state, branch and sessions; the selected
+/// flight's legs, review, artifacts and actions beneath; and, live, a command bar that takes the CLI's own commands, so a
+/// flight is flown from this window alone. Generic over the surface, as the sessions view is.
 /// </summary>
 internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
 {
@@ -113,8 +160,8 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
     private const float ColumnGap = 14f;
     private const float StripeWidth = 4f;
     private const float CodeWidth = 120f;
-    private const float WhereWidth = 170f;
-    private const float StateWidth = 190f;
+    private const float WhereWidth = 140f;
+    private const float StateWidth = 160f;
     private const float BranchWidth = 150f;
     private const float LegsWidth = 210f;
     private const float SessionsWidth = 170f;
@@ -132,8 +179,48 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
     private static readonly RGBAColor32 Held = new(0xf0, 0xb4, 0x3c, 0xff);
     private static readonly RGBAColor32 Landed = new(0x6f, 0x9b, 0xd8, 0xff);
 
+    private const float DetailHeight = 168f;
+    private const float DetailColumn = 380f;
+
+    /// <summary>Below this width (design units) the table drops its Branch and Sessions columns, as the right panel takes 300.</summary>
+    private const float WideWidth = 1150f;
+
+    private bool _wide = true;
+    private const float CommandBarHeight = 52f;
+    private const float OutputLineHeight = 16f;
+    private const int OutputLines = 4;
+
+    private static readonly RGBAColor32 PanelBg = new(0x18, 0x19, 0x21, 0xff);
+    private static readonly RGBAColor32 Button = new(0x2a, 0x3a, 0x58, 0xff);
+    private static readonly RGBAColor32 ButtonHover = new(0x35, 0x4a, 0x70, 0xff);
+    private static readonly RGBAColor32 Failed = new(0xe0, 0x5a, 0x5a, 0xff);
+
+    /// <summary>Ctrl+K puts the keyboard in the command bar.</summary>
+    public static readonly KeyChord CommandShortcut = new(InputKey.K, InputModifier.Ctrl);
+
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
     private int _count;
+
+    /// <summary>Whether there is a node to command: a snapshot file has none, and shows no actions or command bar.</summary>
+    public bool CanCommand { get; set; }
+
+    /// <summary>The command bar's text: the CLI's commands without <c>pilot</c> (<c>leg start TIA1 parser</c>).</summary>
+    public TextInputState CommandInput { get; } = new();
+
+    /// <summary>What the last commands said, newest last.</summary>
+    public List<string> CommandOutput { get; } = [];
+
+    /// <summary>Runs a command typed in the bar.</summary>
+    public Func<string, Task>? OnCommand { get; set; }
+
+    /// <summary>Runs an action's verb on the node.</summary>
+    public Action<FlightAction>? OnAction { get; set; }
+
+    /// <summary>Opens an artifact: a file on the machine, or a URL.</summary>
+    public Action<string>? OnOpen { get; set; }
+
+    /// <summary>The selected flight's index, or -1.</summary>
+    public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
     public void Render(FlightsScreen screen, RectF32 bounds)
     {
@@ -147,13 +234,163 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
             ListCursor.Open(ListId, Math.Clamp(ListCursor.Index, 0, screen.Lines.Count - 1), screen.Lines.Count);
         }
         _count = screen.Lines.Count;
+        _wide = bounds.Width / Math.Max(DpiScale, 0.1f) >= WideWidth;
+        CommandInput.OnCommit = CommitAsync;
+        CommandInput.Placeholder = "a pilot command: flight create 1611 --repo <checkout> · leg start TIA1611 gpu · cards";
         RenderLayout(Build(screen), bounds);
+    }
+
+    private async Task CommitAsync(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || OnCommand is not { } run)
+        {
+            return;
+        }
+        CommandInput.Text = "";
+        CommandInput.CursorPos = 0;
+        await run(text.Trim());
+    }
+
+    /// <summary>Puts <paramref name="text"/> in the command bar for the controller to finish, as an action that needs words does.</summary>
+    public void Prefill(string text)
+    {
+        CommandInput.Text = text;
+        CommandInput.CursorPos = text.Length;
+    }
+
+    /// <summary>Keeps the lines a command printed, for the bar to show its last few.</summary>
+    public void Say(string text)
+    {
+        foreach (var line in text.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            CommandOutput.Add(line);
+        }
+        if (CommandOutput.Count > 200)
+        {
+            CommandOutput.RemoveRange(0, CommandOutput.Count - 200);
+        }
     }
 
     public override bool HandleInput(InputEvent evt) => evt is InputEvent.KeyDown key && HandleListKey(key.Key, key.Modifiers);
 
-    internal Layout.Node Build(FlightsScreen screen) =>
-        Layout.Builder.VStack(Header(screen), Main(screen).HStar()).Bg(Ground).Stretch();
+    internal Layout.Node Build(FlightsScreen screen)
+    {
+        var selected = Selected >= 0 && Selected < screen.Lines.Count ? screen.Lines[Selected] : null;
+        var parts = new List<Layout.Node> { Header(screen), Main(screen).HStar() };
+        if (selected is not null)
+        {
+            parts.Add(Details(selected));
+        }
+        if (CanCommand)
+        {
+            parts.Add(CommandBar());
+        }
+        return Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch();
+    }
+
+    /// <summary>The selected flight: its legs, its review, its artifacts, and what can be done with it.</summary>
+    private Layout.Node Details(FlightLine line)
+    {
+        var flight = line.Row;
+        var legs = new List<Layout.Node> { Label($"{line.Code} · legs").RowH(20f) };
+        foreach (var leg in line.LegRows.Take(5))
+        {
+            var steps = leg.Checklist.Length == 0 ? "" : $" · {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";
+            var color = leg.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
+            legs.Add(Layout.Builder.HStack(
+                    Layout.Builder.Text($"{leg.Order}. {leg.Name}", 13f, Body).WFixed(150f),
+                    Layout.Builder.Text($"{leg.State.ToString().ToLowerInvariant()}{steps}{(leg.GoArounds > 0 ? $" · go-around {leg.GoArounds}" : "")}", 12f, color).WStar())
+                .RowH(20f));
+        }
+        if (line.LegRows.Count == 0)
+        {
+            legs.Add(Layout.Builder.Text("no legs yet: Plan a leg", 12f, Dim).RowH(20f));
+        }
+        if (flight.Review is { } review)
+        {
+            legs.Add(Layout.Builder.Text($"review {review.State.ToString().ToLowerInvariant()}{(review.Report is { Length: > 0 } r ? $": {r.Split('\n')[0]}" : "")}", 12f,
+                review.State == ReviewState.Passed ? Flying : review.State == ReviewState.Changes ? Held : Dim).RowH(20f));
+        }
+
+        var artifacts = new List<Layout.Node> { Label("artifacts").RowH(20f) };
+        var all = line.LegRows.SelectMany(l => l.Artifacts.Select(a => (Leg: l.Name, Artifact: a))).OrderByDescending(x => x.Artifact.At).Take(5).ToList();
+        if (flight.PullRequestUrl is { } url)
+        {
+            artifacts.Add(Link($"PR #{flight.PullRequest}", url, $"pr:{line.Code}"));
+        }
+        foreach (var (leg, artifact) in all)
+        {
+            artifacts.Add(Link($"{artifact.Title} ({leg})", artifact.Location, $"artifact:{line.Code}:{artifact.Title}"));
+        }
+        if (all.Count == 0 && flight.PullRequestUrl is null)
+        {
+            artifacts.Add(Layout.Builder.Text("nothing to look at yet", 12f, Dim).RowH(20f));
+        }
+
+        var buttons = new List<Layout.Node>();
+        if (CanCommand)
+        {
+            foreach (var action in FlightAction.For(line))
+            {
+                buttons.Add(Pill(action.Label, $"flight:{line.Code}:{action.Verb}", () =>
+                {
+                    if (action.Prefill is { } prefill)
+                    {
+                        Prefill(prefill);
+                    }
+                    else
+                    {
+                        OnAction?.Invoke(action);
+                    }
+                }));
+            }
+        }
+
+        return Layout.Builder.VStack(
+                Layout.Builder.HStack(
+                        Layout.Builder.VStack([.. legs]).WFixed(DetailColumn),
+                        Layout.Builder.VStack([.. artifacts]).WFixed(DetailColumn),
+                        Layout.Builder.Spacer().WStar())
+                    .WithGap(24f)
+                    .HStar(),
+                Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f).RowH(28f))
+            .Pad(Gutter, 8f)
+            .Bg(PanelBg)
+            .RowH(DetailHeight);
+    }
+
+    private Layout.Node Link(string text, string location, string action) =>
+        Layout.Builder.Text(text, 12f, Landed)
+            .BgHover(RowHoverBg)
+            .Clickable(new HitResult.ButtonHit(action), _ => OnOpen?.Invoke(location))
+            .RowH(20f);
+
+    private static Layout.Node Pill(string label, string action, Action onClick) =>
+        Layout.Builder.Text(label, 12f, Bright, TextAlign.Center)
+            .Pad(10f, 4f)
+            .WAuto()
+            .Bg(Button)
+            .BgHover(ButtonHover)
+            .Clickable(new HitResult.ButtonHit(action), _ => onClick());
+
+    private Layout.Node CommandBar()
+    {
+        var output = CommandOutput.TakeLast(OutputLines).Select(l => Layout.Builder.Text(l, 11f, Dim).RowH(OutputLineHeight)).ToList();
+        var lines = new List<Layout.Node>
+        {
+            Layout.Builder.HStack(
+                    Layout.Builder.Text("pilot", 14f, Body).WAuto(),
+                    Layout.Builder.TextInput(CommandInput, 15f).WithShortcut(CommandShortcut).WStar())
+                .WithGap(12f)
+                .RowH(28f),
+        };
+        lines.AddRange(output);
+        lines.Add(Layout.Builder.Text("Ctrl+K to type here · Enter runs · --help lists the commands", 11f, Faint).RowH(OutputLineHeight));
+        return Layout.Builder.VStack([.. lines])
+            .Pad(Gutter, 4f)
+            .Bg(HeaderBg)
+            .RowH(CommandBarHeight + OutputLineHeight * output.Count);
+    }
 
     private static Layout.Node Header(FlightsScreen screen) =>
         Layout.Builder.VStack(
@@ -173,7 +410,7 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
     {
         if (screen.Lines.Count == 0)
         {
-            return Layout.Builder.Text("No flights yet: create-flight repo/<path> <issue> makes one", 16f, Dim, TextAlign.Center).Stretch();
+            return Layout.Builder.Text("No flights yet: flight create <issue> --repo <checkout> in the bar below makes one", 16f, Dim, TextAlign.Center).Stretch();
         }
 
         var rows = new Layout.Node[screen.Lines.Count];
@@ -182,16 +419,22 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
             rows[i] = Row(screen.Lines[i], i);
         }
 
+        var columns = new List<Layout.Node>
+        {
+            Layout.Builder.Spacer().WFixed(StripeWidth),
+            Label("Flight").WFixed(CodeWidth),
+            Label("What").WStar(),
+            Label("Repo").WFixed(WhereWidth),
+            Label("State").WFixed(StateWidth),
+            Label("Legs").WFixed(LegsWidth),
+        };
+        if (_wide)
+        {
+            columns.Add(Label("Branch").WFixed(BranchWidth));
+            columns.Add(Label("Sessions").WFixed(SessionsWidth));
+        }
         return Layout.Builder.VStack(
-                Layout.Builder.HStack(
-                        Layout.Builder.Spacer().WFixed(StripeWidth),
-                        Label("Flight").WFixed(CodeWidth),
-                        Label("What").WStar(),
-                        Label("Repo").WFixed(WhereWidth),
-                        Label("State").WFixed(StateWidth),
-                        Label("Legs").WFixed(LegsWidth),
-                        Label("Branch").WFixed(BranchWidth),
-                        Label("Sessions").WFixed(SessionsWidth))
+                Layout.Builder.HStack([.. columns])
                     .WithGap(ColumnGap)
                     .PadX(8f)
                     .RowH(ColumnHeaderHeight),
@@ -207,18 +450,24 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
         var landed = line.Row.State == FlightState.Landed;
         var color = line.Row.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
         var text = landed ? Dim : Bright;
-        var row = Layout.Builder.HStack(
-                Layout.Builder.Spacer().Bg(color).WFixed(StripeWidth).HStar(),
-                Layout.Builder.Text(line.Code, 15f, text).WFixed(CodeWidth),
-                Layout.Builder.Text(line.Title, 14f, landed ? Dim : Body).WStar(),
-                Layout.Builder.Text(line.Where, 13f, Dim).WFixed(WhereWidth),
-                Layout.Builder.VStack(
-                        Layout.Builder.Text(line.State, 14f, color).RowH(22f),
-                        Layout.Builder.Text(line.StateDetail ?? "", 11f, Dim).RowH(18f))
-                    .WFixed(StateWidth),
-                Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body).WFixed(LegsWidth),
-                Layout.Builder.Text(line.Branch, 12f, Dim).WFixed(BranchWidth),
-                Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body).WFixed(SessionsWidth))
+        var cells = new List<Layout.Node>
+        {
+            Layout.Builder.Spacer().Bg(color).WFixed(StripeWidth).HStar(),
+            Layout.Builder.Text(line.Code, 15f, text).WFixed(CodeWidth),
+            Layout.Builder.Text(line.Title, 14f, landed ? Dim : Body).WStar(),
+            Layout.Builder.Text(line.Where, 13f, Dim).WFixed(WhereWidth),
+            Layout.Builder.VStack(
+                    Layout.Builder.Text(line.State, 14f, color).RowH(22f),
+                    Layout.Builder.Text(line.StateDetail ?? "", 11f, Dim).RowH(18f))
+                .WFixed(StateWidth),
+            Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body).WFixed(LegsWidth),
+        };
+        if (_wide)
+        {
+            cells.Add(Layout.Builder.Text(line.Branch, 12f, Dim).WFixed(BranchWidth));
+            cells.Add(Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body).WFixed(SessionsWidth));
+        }
+        var row = Layout.Builder.HStack([.. cells])
             .WithGap(ColumnGap)
             .Pad(8f, 6f)
             .RowH(RowHeight)

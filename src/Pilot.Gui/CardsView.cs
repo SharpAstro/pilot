@@ -3,22 +3,32 @@ using Pilot.Contracts;
 
 namespace Pilot.Gui;
 
-/// <summary>What the cards panel shows: the open cards, rings first, and the latest handled lines.</summary>
-internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<CardRow> Handled)
+/// <summary>
+/// What the right panel shows: the watchtower (its state and Remote Control link, when the node keeps one), the open
+/// cards, rings first, and the latest handled lines.
+/// </summary>
+internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<CardRow> Handled, SessionRow? Watchtower = null)
 {
     public static readonly CardsScreen Empty = new([], []);
 
-    /// <summary>The open cards rings first, newest first within each; the five latest handled lines.</summary>
-    public static CardsScreen From(IEnumerable<CardRow> cards)
+    /// <summary>The open cards rings first, newest first within each; the five latest handled lines; the watchtower's row, if any.</summary>
+    public static CardsScreen From(IEnumerable<CardRow> cards, IEnumerable<SessionRow>? sessions = null)
     {
         var all = cards.ToList();
+        // The node's own (a background session; an interactive one named so is someone's terminal), live first.
+        var watchtower = (sessions ?? [])
+            .Where(s => s.Role == SessionRole.Watchtower && s.Kind == SessionKind.Background)
+            .OrderByDescending(s => s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle)
+            .ThenByDescending(s => s.StartedAt)
+            .FirstOrDefault();
         return new CardsScreen(
             [.. all.Where(c => c.State == CardState.Open).OrderBy(c => c.Bin).ThenByDescending(c => c.At)],
-            [.. all.Where(c => c.Bin == CardBin.Handled).OrderByDescending(c => c.At).Take(5)]);
+            [.. all.Where(c => c.Bin == CardBin.Handled).OrderByDescending(c => c.At).Take(5)],
+            watchtower);
     }
 
-    /// <summary>Whether the panel has anything to show: an open card or a handled line. Empty, it takes no room.</summary>
-    public bool HasAny => Open.Count > 0 || Handled.Count > 0;
+    /// <summary>Whether the panel has anything to show: the watchtower, an open card or a handled line. Empty, it takes no room.</summary>
+    public bool HasAny => Watchtower is not null || Open.Count > 0 || Handled.Count > 0;
 
     /// <summary>The panel's head: <c>2 ringing · 1 for you</c>, or <c>Nothing waits on you</c>.</summary>
     public string Summary
@@ -63,21 +73,77 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>Called with the card when its Dismiss is clicked.</summary>
     public Action<CardRow>? OnDismiss { get; set; }
 
+    /// <summary>Whether the watchtower can be told things from here: live, with a node.</summary>
+    public bool CanTell { get; set; }
+
+    /// <summary>The box that tells the watchtower something.</summary>
+    public TextInputState TellInput { get; } = new();
+
+    /// <summary>Called with what was typed in the tell box.</summary>
+    public Func<string, Task>? OnTell { get; set; }
+
+    /// <summary>What the last tell came to.</summary>
+    public string? TellStatus { get; set; }
+
+    /// <summary>Opens the watchtower's Remote Control link.</summary>
+    public Action<string>? OnOpen { get; set; }
+
+    private static readonly RGBAColor32 Live = new(0x4c, 0xc3, 0x8a, 0xff);
+
     public void Render(CardsScreen screen, RectF32 bounds)
     {
         BeginFrame();
+        TellInput.OnCommit = TellAsync;
+        TellInput.Placeholder = "tell the watchtower · Enter sends";
         RenderLayout(Build(screen), bounds);
+    }
+
+    private async Task TellAsync(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || OnTell is not { } tell)
+        {
+            return;
+        }
+        TellInput.Text = "";
+        TellInput.CursorPos = 0;
+        await tell(text.Trim());
+    }
+
+    /// <summary>The watchtower's block: who it is, how it is, its Remote Control link, and the box to tell it things.</summary>
+    private List<Layout.Node> Watchtower(SessionRow row)
+    {
+        var live = row.State is SessionState.Working or SessionState.Waiting or SessionState.Idle;
+        var blocks = new List<Layout.Node>
+        {
+            Layout.Builder.HStack(
+                    Layout.Builder.Text("Watchtower", 18f, Bright).WAuto(),
+                    Layout.Builder.Spacer().WStar(),
+                    Layout.Builder.Text(row.State.ToString().ToLowerInvariant(), 12f, live ? Live : Ring, TextAlign.Far).WAuto())
+                .RowH(30f),
+            Layout.Builder.Text($"{row.Name}{(row.ContextWindow > 0 ? $" · context {100.0 * row.ContextTokens / row.ContextWindow:0}%" : "")}", 11f, Dim).RowH(18f),
+        };
+        if (row.RemoteControlUrl is { } url)
+        {
+            blocks.Add(Layout.Builder.Text("Remote Control: open in the browser", 12f, ForYou)
+                .Clickable(new HitResult.ButtonHit("watchtower:rc"), _ => OnOpen?.Invoke(url))
+                .RowH(20f));
+        }
+        if (CanTell)
+        {
+            blocks.Add(Layout.Builder.TextInput(TellInput, 13f).RowH(26f));
+            blocks.Add(Layout.Builder.Text(TellStatus ?? "", 10f, Dim).RowH(16f));
+        }
+        blocks.Add(Layout.Builder.Spacer().RowH(10f));
+        return blocks;
     }
 
     public override bool HandleInput(InputEvent evt) => false;
 
     internal Layout.Node Build(CardsScreen screen)
     {
-        var blocks = new List<Layout.Node>
-        {
-            Layout.Builder.Text("For you", 18f, Bright).RowH(30f),
-            Layout.Builder.Text(screen.Summary, 12f, Dim).RowH(20f),
-        };
+        var blocks = screen.Watchtower is { } tower ? Watchtower(tower) : [];
+        blocks.Add(Layout.Builder.Text("For you", 18f, Bright).RowH(30f));
+        blocks.Add(Layout.Builder.Text(screen.Summary, 12f, Dim).RowH(20f));
         foreach (var card in screen.Open)
         {
             blocks.Add(Layout.Builder.Spacer().RowH(8f));

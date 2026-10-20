@@ -164,6 +164,19 @@ A worker that finishes its own leg is stopped after 90 s, once it has said its r
 its `-w` session entered when that job ends by itself, keeping the branch; the node checks a plane out again from its
 branch before any worker goes in, and lands one that is already gone.
 
+## The GUI
+
+`pilot-gui` flies a flight on its own. The rail has **Sessions** (every Claude session on the machine: model, effort,
+context against its window, last response, state, spend, usage in the header; a bar to say something to the selected
+one) and **Flights**. On Flights the selected flight shows its legs (steps, go-arounds), its review, its PR and
+artifacts (a click opens them), and what can be done with it now: **Start <leg>**, **Open PR**, **Review again** run
+at once; **Go around** and **Plan a leg** half-write the command bar for the words they need. The command bar (Ctrl+K)
+takes the CLI's own commands, run in-process through the same command tree (`Pilot.Commands`) the `pilot` binary and,
+later, an MCP server (#70) host: `flight create 1611 --repo C:\src\tianwen`, `leg plan …`, `cards`.
+
+The right panel is the watchtower's: its state and context, its Remote Control link, a box to tell it things, then the
+cards with their buttons (Merge is a card's) and what was handled. The job queue joins it with phase 2.
+
 ## The watchtower
 
 The node keeps one watchtower session, `<machine>-watchtower`: a background session with Remote Control on, so you

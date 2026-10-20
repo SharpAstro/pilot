@@ -103,6 +103,13 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// <summary>Called with the selected session's line and the text when Enter is pressed in the say bar.</summary>
     public Func<SessionLine, string, Task>? OnSay { get; set; }
 
+    /// <summary>
+    /// Hands this view's window context to the other pages and panels, so the one input router (built on this view's
+    /// <see cref="PixelWidgetBase{TSurface}.Ui"/>) moves the keyboard between all their fields: the Flights page's
+    /// command bar takes text only because of it.
+    /// </summary>
+    public void ShareWith(params PixelWidgetBase<TSurface>[] others) => ShareUiContext(others);
+
     public void Render(SessionsScreen screen, RectF32 bounds)
     {
         BeginFrame();

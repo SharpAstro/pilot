@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using Pilot.Cli;
+using Pilot.Commands;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Shouldly;

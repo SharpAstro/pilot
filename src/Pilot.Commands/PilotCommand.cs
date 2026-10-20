@@ -2,7 +2,7 @@ using System.CommandLine;
 using System.Globalization;
 using Pilot.Contracts;
 
-namespace Pilot.Cli;
+namespace Pilot.Commands;
 
 /// <summary>
 /// The <c>pilot</c> command, on System.CommandLine as tianwen's CLI is. Each subcommand is one node command (a verb on
@@ -13,9 +13,11 @@ namespace Pilot.Cli;
 /// <remarks>Exit codes: 0 done, 1 refused by the node (it says why), 2 usage, 3 no node.</remarks>
 public static class PilotCommand
 {
-    public static async Task<int> RunAsync(string[] args, string cwd, TextWriter output, TextWriter error, CancellationToken cancellationToken)
+    /// <param name="who">Who the commands are from: <c>cli</c> for a terminal (a Claude session running it is named by its
+    /// <c>CLAUDE_CODE_SESSION_ID</c>), or the host's own name, as the GUI's command bar sends <c>gui</c>.</param>
+    public static async Task<int> RunAsync(string[] args, string cwd, TextWriter output, TextWriter error, CancellationToken cancellationToken, string who = "cli")
     {
-        var root = Build(cwd, output, error);
+        var root = Build(cwd, output, error, who);
         var parsed = root.Parse(args);
         if (args.Length == 0)
         {
@@ -36,7 +38,7 @@ public static class PilotCommand
     }
 
     /// <summary>The command tree; actions write to <paramref name="output"/> and <paramref name="error"/>, and resolve folders against <paramref name="cwd"/>.</summary>
-    internal static RootCommand Build(string cwd, TextWriter output, TextWriter error)
+    internal static RootCommand Build(string cwd, TextWriter output, TextWriter error, string who = "cli")
     {
         var socket = new Option<string?>("--node-socket")
         {
@@ -81,8 +83,8 @@ public static class PilotCommand
         async Task<int> OnLeg(ParseResult parseResult, NodeClient client, string verb, Func<string, string[]> args, CancellationToken ct)
         {
             var named = parseResult.GetValue(leg);
-            var (target, who) = named is not null ? (Verbs.FlightTargetPrefix + named, "cli") : LegHere(await SnapshotAsync(client, ct), cwd);
-            return await SendAsync(client, verb, target, args(target), who, output, ct);
+            var (target, sender) = named is not null ? (Verbs.FlightTargetPrefix + named, who) : LegHere(await SnapshotAsync(client, ct), cwd);
+            return await SendAsync(client, verb, target, args(target), sender, output, ct);
         }
 
         // status, sessions
@@ -103,16 +105,16 @@ public static class PilotCommand
         var repo = new Option<string?>("--repo") { Description = "The repo's checkout (any of its worktrees); else this folder" };
         var create = Action(new Command("create", "A flight on an issue of this repo, and its plane") { Arguments = { issue, title }, Options = { repo } },
             (p, client, ct) => SendAsync(client, Verbs.CreateFlight, Verbs.RepoTarget(Path.GetFullPath(p.GetValue(repo) ?? cwd, cwd)),
-                [p.GetValue(issue)!, .. p.GetValue(title) ?? []], "cli", output, ct));
+                [p.GetValue(issue)!, .. p.GetValue(title) ?? []], who, output, ct));
 
         var code = Arg("code", "The flight's code, as TIA1611");
         var other = Arg("other", "The flight it waits for");
         var connect = Action(new Command("connect", "The flight holds until the other has landed") { Arguments = { code, other } },
-            (p, client, ct) => SendAsync(client, Verbs.Connect, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], "cli", output, ct));
+            (p, client, ct) => SendAsync(client, Verbs.Connect, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, output, ct));
 
         var prTitle = Words("title", "The PR's title after the code; else the flight's", required: false);
         var pr = Action(new Command("pr", "Push the plane and open its PR") { Arguments = { code, prTitle } },
-            (p, client, ct) => SendAsync(client, Verbs.OpenPr, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(prTitle) ?? [], "cli", output, ct));
+            (p, client, ct) => SendAsync(client, Verbs.OpenPr, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(prTitle) ?? [], who, output, ct));
 
         var head = Arg("head", "The head commit you reviewed; the merge is refused if the PR moved past it");
         var method = new Option<string?>("--method") { Description = "squash (the default), rebase or merge" };
@@ -129,14 +131,14 @@ public static class PilotCommand
             {
                 var how = p.GetValue(method) ?? (p.GetValue(rebase) ? "rebase" : p.GetValue(mergeCommit) ? "merge" : p.GetValue(squash) ? "squash" : null);
                 string[] args = how is null ? [p.GetValue(head)!] : [p.GetValue(head)!, how];
-                return SendAsync(client, Verbs.Merge, Verbs.FlightTarget(p.GetValue(code)!), args, "cli", output, ct);
+                return SendAsync(client, Verbs.Merge, Verbs.FlightTarget(p.GetValue(code)!), args, who, output, ct);
             });
 
         var land = Action(new Command("land", "The flight's work is in: its plane goes, its branch and code stay") { Arguments = { code } },
-            (p, client, ct) => SendAsync(client, Verbs.Land, Verbs.FlightTarget(p.GetValue(code)!), [], "cli", output, ct));
+            (p, client, ct) => SendAsync(client, Verbs.Land, Verbs.FlightTarget(p.GetValue(code)!), [], who, output, ct));
 
         var reviewStart = Action(new Command("review", "Start a fresh reviewer on the flight's branch (flight pr starts one by itself)") { Arguments = { code } },
-            (p, client, ct) => SendAsync(client, Verbs.StartReview, Verbs.FlightTarget(p.GetValue(code)!), [], "cli", output, ct));
+            (p, client, ct) => SendAsync(client, Verbs.StartReview, Verbs.FlightTarget(p.GetValue(code)!), [], who, output, ct));
 
         var flight = new Command("flight", "Flights: create, connect, open a PR, review, merge, land") { Subcommands = { create, connect, pr, reviewStart, merge, land } };
 
@@ -165,12 +167,12 @@ public static class PilotCommand
                     }
                 }
                 args.AddRange((p.GetValue(item) ?? []).Select(i => $"item={i}"));
-                return SendAsync(client, Verbs.PlanLeg, Verbs.FlightTarget(p.GetValue(code)!), [.. args], "cli", output, ct);
+                return SendAsync(client, Verbs.PlanLeg, Verbs.FlightTarget(p.GetValue(code)!), [.. args], who, output, ct);
             });
 
         var legName = Arg("leg", "The leg's name");
         var start = Action(new Command("start", "Start a fresh worker on the leg, in the flight's plane") { Arguments = { code, legName } },
-            (p, client, ct) => SendAsync(client, Verbs.StartLeg, Verbs.LegTarget(p.GetValue(code)!, p.GetValue(legName)!), [], "cli", output, ct));
+            (p, client, ct) => SendAsync(client, Verbs.StartLeg, Verbs.LegTarget(p.GetValue(code)!, p.GetValue(legName)!), [], who, output, ct));
 
         var outcome = Arg("outcome", "done or failed");
         outcome.AcceptOnlyFromAmong("done", "failed");
@@ -216,10 +218,10 @@ public static class PilotCommand
             },
             async (p, client, ct) =>
             {
-                var (target, who) = p.GetValue(reviewFlight) is { } named
-                    ? (Verbs.FlightTarget(named), "cli")
+                var (target, sender) = p.GetValue(reviewFlight) is { } named
+                    ? (Verbs.FlightTarget(named), who)
                     : FlightHere(await SnapshotAsync(client, ct), cwd);
-                return await SendAsync(client, Verbs.Review, target, [p.GetValue(verdict)!, Join(p, verdictReport)], who, output, ct);
+                return await SendAsync(client, Verbs.Review, target, [p.GetValue(verdict)!, Join(p, verdictReport)], sender, output, ct);
             });
 
         // cards
@@ -232,30 +234,30 @@ public static class PilotCommand
         var card = Arg("card", "The card's id, as c3");
         var choice = Words("choice", "The choice's number or label");
         var answer = Action(new Command("answer", "Run the card's choice; the card closes when it is done") { Arguments = { card, choice } },
-            (p, client, ct) => SendAsync(client, Verbs.Answer, Verbs.CardTarget(p.GetValue(card)!), [Join(p, choice)], "cli", output, ct));
+            (p, client, ct) => SendAsync(client, Verbs.Answer, Verbs.CardTarget(p.GetValue(card)!), [Join(p, choice)], who, output, ct));
         var dismissWhy = Words("why", "Why it needs nothing", required: false);
         var dismiss = Action(new Command("dismiss", "Close the card with nothing done") { Arguments = { card, dismissWhy } },
-            (p, client, ct) => SendAsync(client, Verbs.Dismiss, Verbs.CardTarget(p.GetValue(card)!), p.GetValue(dismissWhy) ?? [], "cli", output, ct));
+            (p, client, ct) => SendAsync(client, Verbs.Dismiss, Verbs.CardTarget(p.GetValue(card)!), p.GetValue(dismissWhy) ?? [], who, output, ct));
 
         // say, note
         var session = Arg("session", "The session's row id");
         var text = Words("text", "What to say");
         var say = Action(new Command("say", "Say something to a session through the node") { Arguments = { session, text } },
-            (p, client, ct) => SendAsync(client, Verbs.Say, Verbs.SessionTarget(p.GetValue(session)!), [Join(p, text)], "cli", output, ct));
+            (p, client, ct) => SendAsync(client, Verbs.Say, Verbs.SessionTarget(p.GetValue(session)!), [Join(p, text)], who, output, ct));
         var noteText = Words("text", "The note");
         var note = Action(new Command("note", "Keep a note on the node, for every client") { Arguments = { noteText } },
-            (p, client, ct) => SendAsync(client, Verbs.Note, Verbs.NodeTarget, [Join(p, noteText)], "cli", output, ct));
+            (p, client, ct) => SendAsync(client, Verbs.Note, Verbs.NodeTarget, [Join(p, noteText)], who, output, ct));
 
         // the watchtower: tell it, restart it; and the cards it (or anyone) raises
         var tellText = Words("text", "What to tell it");
         var tell = Action(new Command("tell", "Say something to the watchtower, whichever session it is now") { Arguments = { tellText } },
-            (p, client, ct) => SendAsync(client, Verbs.Tell, Verbs.WatchtowerTarget, [Join(p, tellText)], "cli", output, ct));
+            (p, client, ct) => SendAsync(client, Verbs.Tell, Verbs.WatchtowerTarget, [Join(p, tellText)], who, output, ct));
         var restartWhy = Words("why", "Why, for its Handled line", required: false);
         var restart = Action(new Command("restart", "Stop the watchtower and start a fresh one, briefed from the node's state") { Arguments = { restartWhy } },
-            (p, client, ct) => SendAsync(client, Verbs.RestartWatchtower, Verbs.WatchtowerTarget, p.GetValue(restartWhy) ?? [], "cli", output, ct));
+            (p, client, ct) => SendAsync(client, Verbs.RestartWatchtower, Verbs.WatchtowerTarget, p.GetValue(restartWhy) ?? [], who, output, ct));
         var watchtower = new Command("watchtower", "The node's watchtower session") { Subcommands = { restart } };
         var digest = Action(new Command("digest", "The digest now: what landed, what was handled, what is parked"),
-            (_, client, ct) => SendAsync(client, Verbs.Digest, Verbs.NodeTarget, [], "cli", output, ct));
+            (_, client, ct) => SendAsync(client, Verbs.Digest, Verbs.NodeTarget, [], who, output, ct));
 
         var subject = Arg("subject", "What it is about: flight/<code>, flight/<code>/<leg>, session/<id> or node");
         var cardTitle = Arg("title", "The card in a line");
@@ -263,7 +265,7 @@ public static class PilotCommand
         Command Raise(string verbName, string bin, string description) =>
             Action(new Command(verbName, description) { Arguments = { subject, cardTitle }, Options = { detail } },
                 (p, client, ct) => SendAsync(client, Verbs.Raise, p.GetValue(subject)!,
-                    p.GetValue(detail) is { } d ? [bin, p.GetValue(cardTitle)!, d] : [bin, p.GetValue(cardTitle)!], "cli", output, ct));
+                    p.GetValue(detail) is { } d ? [bin, p.GetValue(cardTitle)!, d] : [bin, p.GetValue(cardTitle)!], who, output, ct));
         var ring = Raise("ring", "ring", "Raise a card that needs the controller and pushes to them");
         var flag = Raise("flag", "for-you", "Raise a card for the controller, without a push");
         var handled = Raise("handled", "handled", "Log a line on what was handled, born closed");
