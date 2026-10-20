@@ -33,10 +33,18 @@ internal static class DashboardCommands
     /// <summary>Runs one action's verb on the node; returns what became of it.</summary>
     public static async Task<string> ActAsync(NodeClient client, FlightAction action, string who, CancellationToken cancellationToken)
     {
-        var envelope = await client.SendAsync(new CommandRequest { Verb = action.Verb, Target = action.Target, Args = action.Args, Who = who }, cancellationToken);
-        return envelope.Success && envelope.Response is { Ok: true }
-            ? $"ok: {action.Label}"
-            : $"refused: {action.Label}: {envelope.Response?.Error ?? envelope.Error}";
+        try
+        {
+            var envelope = await client.SendAsync(new CommandRequest { Verb = action.Verb, Target = action.Target, Args = action.Args, Who = who }, cancellationToken);
+            return envelope.Success && envelope.Response is { Ok: true }
+                ? $"ok: {action.Label}"
+                : $"refused: {action.Label}: {envelope.Response?.Error ?? envelope.Error}";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or System.Text.Json.JsonException)
+        {
+            // A button that fails says so in the bar: a node that answered with no envelope (a crash) or not at all.
+            return $"failed: {action.Label}: {ex.Message}";
+        }
     }
 
     /// <summary>Opens a file or a URL the way the platform does (the browser, the image viewer); false when it could not.</summary>

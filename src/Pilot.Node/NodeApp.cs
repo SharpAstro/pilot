@@ -106,6 +106,8 @@ public static class NodeApp
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<JobRunner>());
+        builder.Services.AddSingleton<PrChecks>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<PrChecks>());
         builder.Services.AddSingleton<Digest>();
         builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());
         builder.Services.AddSingleton(services => new SessionTracker(

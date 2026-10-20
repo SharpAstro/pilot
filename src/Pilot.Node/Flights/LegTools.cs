@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Pilot.Contracts;
 using Pilot.Node.Sessions;
 
 namespace Pilot.Node.Flights;
@@ -65,7 +66,17 @@ public sealed partial class ClaudeWorkerLauncher : IWorkerLauncher
 
     public async Task<string> StartAsync(WorkerStart start, CancellationToken cancellationToken)
     {
-        var run = await ClaudeCli.RunAsync(Arguments(start), start.Brief, start.RepoPath, Timeout, cancellationToken);
+        ClaudeRun run;
+        try
+        {
+            run = await ClaudeCli.RunAsync(Arguments(start), start.Brief, start.RepoPath, Timeout, cancellationToken);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or System.ComponentModel.Win32Exception or TimeoutException)
+        {
+            // A refusal that says why, not a crash of the request: seen on a node in WSL whose PATH lacked claude, where
+            // the start came back as a bare 500 and the dashboard's button said nothing at all.
+            throw new FlightException($"claude could not be run to start {start.Name}: {ex.Message}");
+        }
         if (run.ExitCode != 0 || Job().Match(run.Output + run.Error) is not { Success: true } job)
         {
             throw new FlightException($"claude --bg did not start {start.Name} ({run.ExitCode}): {Clip(run.Output + run.Error)}");
@@ -166,6 +177,13 @@ public interface IGitHub
 
     /// <summary>Opens a PR from <paramref name="branch"/> (pushed already) into <paramref name="baseBranch"/>; returns it.</summary>
     Task<PullRequest> CreateAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Where PR <paramref name="number"/>'s checks stand: <see cref="ChoiceStatus.Failing"/> when any failed,
+    /// <see cref="ChoiceStatus.Pending"/> while any runs, <see cref="ChoiceStatus.Passing"/> when all passed (skipped ones
+    /// aside), null with no checks or when GitHub would not say.
+    /// </summary>
+    Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken);
 }
 
 /// <summary><see cref="IGitHub"/> by the gh CLI, as v1's dashboard merged (<c>gh pr merge --match-head-commit</c>).</summary>
@@ -186,6 +204,26 @@ public sealed class GhCli : IGitHub
         var root = doc.RootElement;
         return new PullRequest(root.GetProperty("number").GetInt32(), root.GetProperty("state").GetString() ?? "",
             root.GetProperty("headRefOid").GetString() ?? "", root.GetProperty("url").GetString() ?? "");
+    }
+
+    public async Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        // gh exits non-zero while checks run or after one failed, and prints the JSON all the same: read it either way.
+        var (_, output, _) = await RunAsync(["pr", "checks", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "bucket"], repoPath, cancellationToken);
+        try
+        {
+            using var doc = JsonDocument.Parse(output);
+            var buckets = doc.RootElement.EnumerateArray().Select(c => c.TryGetProperty("bucket", out var b) ? b.GetString() : null).OfType<string>().ToList();
+            return buckets.Count == 0 ? null
+                : buckets.Contains("fail") || buckets.Contains("cancel") ? ChoiceStatus.Failing
+                : buckets.Contains("pending") ? ChoiceStatus.Pending
+                : buckets.Any(b => b == "pass") ? ChoiceStatus.Passing
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     public async Task MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)

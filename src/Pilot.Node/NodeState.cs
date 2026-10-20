@@ -281,6 +281,20 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>Gives an open card new choices (a merge's checks turned green, say); false when it is not open or nothing changed.</summary>
+    public bool UpdateChoices(string id, IReadOnlyList<CardChoice> choices)
+    {
+        lock (_gate)
+        {
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open || card.Choices.SequenceEqual(choices))
+            {
+                return false;
+            }
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { Choices = [.. choices] } });
+            return true;
+        }
+    }
+
     /// <summary>Opens a closed card again, as it was before: an answer whose choice was refused.</summary>
     public void ReopenCard(string id)
     {
