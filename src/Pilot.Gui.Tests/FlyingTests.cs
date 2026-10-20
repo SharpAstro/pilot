@@ -132,11 +132,20 @@ public sealed class FlyingTests
 
         var regions = new List<ClickableRegion>();
         chrome.Cards.CollectPaintedRegions(regions);
-        var open = regions.Single(r => r.Result is HitResult.ButtonHit { Action: "card:c5:open" });
-        open.OnClick!.Invoke(InputModifier.None);
-        // Its title is the same link, as a hyperlink.
+        // The title is the link, and the only one: no button that could read as "raise a PR".
+        regions.Any(r => r.Result is HitResult.ButtonHit { Action: "card:c5:open" }).ShouldBeFalse();
         regions.Single(r => r.Result is HitResult.ButtonHit { Action: "card:c5:title" }).OnClick!.Invoke(InputModifier.None);
-        opened.ShouldBe(["https://github.com/SharpAstro/DIR.Lib/pull/138", "https://github.com/SharpAstro/DIR.Lib/pull/138"]);
+        opened.ShouldBe(["https://github.com/SharpAstro/DIR.Lib/pull/138"]);
+    }
+
+    [Theory]
+    [InlineData(null, "Merge")]
+    [InlineData(ChoiceStatus.Passing, "Merge")]
+    [InlineData(ChoiceStatus.Pending, "Merge · checks running")]
+    [InlineData(ChoiceStatus.Failing, "Merge · checks failed")]
+    public void AMergeSaysWhereItsChecksStand(string? status, string label)
+    {
+        CardsView<RgbaImage>.StatusLabel(new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/X", Status = status }).ShouldBe(label);
     }
 
     /// <summary>Records compare their array by reference.</summary>

@@ -176,8 +176,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         {
             Layout.Builder.Text(card.Bin == CardBin.Ring ? "RING" : "for you", 10f, accent).RowH(16f),
             // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
+            // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own.
             card.Link is { } titleLink
-                ? Layout.Builder.Text(card.Title, 14f, Link)
+                ? Layout.Builder.Text($"{card.Title} \u2197", 14f, Link)
                     .BgHover(CardHover)
                     .Clickable(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => OnOpen?.Invoke(titleLink))
                     .RowH(22f)
@@ -195,12 +196,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         for (var i = 0; i < card.Choices.Length; i++)
         {
             var number = i + 1;
-            buttons.Add(Pill(card.Choices[i].Label, $"card:{card.Id}:{number}", () => OnAnswer?.Invoke(card, number)));
-        }
-        // The page it is about, one click away: a PR is what a merge card and a landed card are both about.
-        if (card.Link is { } link)
-        {
-            buttons.Add(Pill(link.Contains("/pull/", StringComparison.Ordinal) ? "Open PR" : "Open", $"card:{card.Id}:open", () => OnOpen?.Invoke(link)));
+            var choice = card.Choices[i];
+            buttons.Add(Pill(StatusLabel(choice), $"card:{card.Id}:{number}", () => OnAnswer?.Invoke(card, number), StatusTint(choice.Status)));
         }
         buttons.Add(Pill("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
         lines.Add(Layout.Builder.Spacer().RowH(6f));
@@ -213,11 +210,28 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             .RowH(30f + 22f + 18f * Math.Min(3, card.Detail?.Split('\n').Length ?? 0) + 6f + 26f + 16f);
     }
 
-    private static Layout.Node Pill(string label, string action, Action onClick) =>
+    private static Layout.Node Pill(string label, string action, Action onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null) =>
         Layout.Builder.Text(label, 12f, Bright, TextAlign.Center)
             .Pad(10f, 4f)
             .WAuto()
-            .Bg(Button)
-            .BgHover(ButtonHover)
+            .Bg(tint?.Bg ?? Button)
+            .BgHover(tint?.Hover ?? ButtonHover)
             .Clickable(new HitResult.ButtonHit(action), _ => onClick());
+
+    /// <summary>A choice's label with what its checks say: <c>Merge</c>, <c>Merge · checks running</c>, <c>Merge · checks failed</c>.</summary>
+    internal static string StatusLabel(CardChoice choice) => choice.Status switch
+    {
+        ChoiceStatus.Pending => $"{choice.Label} · checks running",
+        ChoiceStatus.Failing => $"{choice.Label} · checks failed",
+        _ => choice.Label,
+    };
+
+    /// <summary>The button's colours for a choice's status: green when its checks pass, amber while they run, red when one failed.</summary>
+    private static (RGBAColor32 Bg, RGBAColor32 Hover)? StatusTint(string? status) => status switch
+    {
+        ChoiceStatus.Passing => (new RGBAColor32(0x1f, 0x6b, 0x45, 0xff), new RGBAColor32(0x27, 0x85, 0x56, 0xff)),
+        ChoiceStatus.Pending => (new RGBAColor32(0x6b, 0x52, 0x1c, 0xff), new RGBAColor32(0x85, 0x66, 0x23, 0xff)),
+        ChoiceStatus.Failing => (new RGBAColor32(0x7a, 0x28, 0x28, 0xff), new RGBAColor32(0x96, 0x32, 0x32, 0xff)),
+        _ => null,
+    };
 }

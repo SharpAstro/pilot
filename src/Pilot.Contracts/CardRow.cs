@@ -56,6 +56,20 @@ public sealed record CardChoice
     public required string Target { get; init; }
 
     public string[] Args { get; init; } = [];
+
+    /// <summary>
+    /// How ready the choice is, where the node can tell: a merge's PR checks, <c>passing</c>, <c>pending</c> or <c>failing</c>,
+    /// which a client shows on the button (green, amber, red); null where there is nothing to tell.
+    /// </summary>
+    public string? Status { get; init; }
+}
+
+/// <summary>The <see cref="CardChoice.Status"/> values a merge's checks give.</summary>
+public static class ChoiceStatus
+{
+    public const string Passing = "passing";
+    public const string Pending = "pending";
+    public const string Failing = "failing";
 }
 
 /// <summary>Which of the bins a card is in, and so how it reaches the controller.</summary>

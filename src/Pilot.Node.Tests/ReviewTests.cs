@@ -133,6 +133,16 @@ public sealed class ReviewTests : IDisposable
         (card.Kind, card.Title).ShouldBe((LegCommander.PrReady, "TIA1's PR #71 is ready to merge"));
         card.Detail.ShouldNotBeNull().ShouldContain("Reviewed: the step is in; it is done.");
         card.Link.ShouldBe("https://github.com/x/tianwen/pull/71");
+
+        // The Merge choice says where the PR's checks stand, as they change, and nothing else about the card does.
+        var checks = new PrChecks(_state, _github, TimeProvider.System);
+        _github.Checks = ChoiceStatus.Pending;
+        await checks.LookAsync(Ct);
+        Open().Single().Choices.Single().Status.ShouldBe(ChoiceStatus.Pending);
+        _github.Checks = ChoiceStatus.Passing;
+        await checks.LookAsync(Ct);
+        var green = Open().Single();
+        (green.Id, green.Choices.Single().Status, green.Choices.Single().Args.Single()).ShouldBe((card.Id, ChoiceStatus.Passing, card.Choices.Single().Args.Single()));
     }
 
     [Fact]
