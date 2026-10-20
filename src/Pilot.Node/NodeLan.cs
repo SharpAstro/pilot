@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.Text;
-using System.Text.Json;
 using LAN.Lib;
 using Pilot.Contracts;
 
@@ -25,7 +23,7 @@ public sealed class NodeLan(NodeState state, NodeOptions options, TimeProvider t
     public static readonly TimeSpan PresenceLapse = TimeSpan.FromSeconds(30);
 
     private readonly LanInvites<string> _asks = new(time, PresenceLapse);
-    private readonly LanGrants _grants = new(new FileGrantStore(Path.Combine(options.DataFolder, "grants.json")), time);
+    private readonly LanGrants _grants = new(new LanGrantFile(Path.Combine(options.DataFolder, "grants.json")), time);
     private readonly ConcurrentDictionary<string, string> _issued = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _loaded = new(1, 1);
     private bool _isLoaded;
@@ -130,50 +128,5 @@ public sealed class NodeLan(NodeState state, NodeOptions options, TimeProvider t
     {
         _grants.Dispose();
         _loaded.Dispose();
-    }
-
-    /// <summary>The grants as JSON in the data folder, written whole and moved over; hashes only, so a copy grants nothing.</summary>
-    private sealed class FileGrantStore(string path) : ILanGrantStore
-    {
-        public async ValueTask<IReadOnlyList<LanGrant>> LoadAsync(CancellationToken cancellationToken)
-        {
-            if (!File.Exists(path))
-            {
-                return [];
-            }
-            using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path, cancellationToken));
-            var grants = new List<LanGrant>();
-            foreach (var g in doc.RootElement.EnumerateArray())
-            {
-                grants.Add(new LanGrant(
-                    g.GetProperty("id").GetString()!,
-                    g.GetProperty("label").GetString()!,
-                    g.GetProperty("grantedAt").GetDateTimeOffset(),
-                    g.GetProperty("tokenHash").GetString()!));
-            }
-            return grants;
-        }
-
-        public async ValueTask SaveAsync(IReadOnlyList<LanGrant> grants, CancellationToken cancellationToken)
-        {
-            using var buffer = new MemoryStream();
-            using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = true }))
-            {
-                writer.WriteStartArray();
-                foreach (var g in grants)
-                {
-                    writer.WriteStartObject();
-                    writer.WriteString("id", g.Id);
-                    writer.WriteString("label", g.Label);
-                    writer.WriteString("grantedAt", g.GrantedAt);
-                    writer.WriteString("tokenHash", g.TokenHash);
-                    writer.WriteEndObject();
-                }
-                writer.WriteEndArray();
-            }
-            var temp = path + ".tmp";
-            await File.WriteAllTextAsync(temp, Encoding.UTF8.GetString(buffer.ToArray()), cancellationToken);
-            File.Move(temp, path, overwrite: true);
-        }
     }
 }
