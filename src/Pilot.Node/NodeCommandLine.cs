@@ -40,6 +40,8 @@ public static class NodeCommandLine
         var data = new Option<string?>("--data") { Description = "Where the node keeps its state; else this user's pilot2 folder" };
         var machine = new Option<string?>("--machine") { Description = "The machine's prefix in session names, two letters and a number (DU1); else PILOT_MACHINE, else from its name" };
         var noWatchtower = new Option<bool>("--no-watchtower") { Description = "Keep no watchtower session" };
+        var lan = new Option<bool>("--lan") { Description = "Listen on the LAN too, and announce it: anyone there may watch, a command needs a grant this machine's person allows" };
+        var lanPort = new Option<int>("--lan-port") { Description = $"The TCP port for the LAN; {NodeWire.DefaultLanPort} by default", DefaultValueFactory = _ => NodeWire.DefaultLanPort };
         var watchtowerFolder = new Option<string?>("--watchtower-folder") { Description = "Where the watchtower runs, a folder Claude Code trusts; else PILOT_WATCHTOWER_FOLDER, else under --data" };
         machine.Validators.Add(result =>
         {
@@ -71,7 +73,7 @@ public static class NodeCommandLine
 
         var root = new RootCommand("pilot v2's node: one per machine, the one writer of its flights, legs, cards and sessions")
         {
-            Options = { socket, data, machine, noWatchtower, watchtowerFolder },
+            Options = { socket, data, machine, noWatchtower, watchtowerFolder, lan, lanPort },
             Subcommands = { hook, hooks },
         };
         root.SetAction(async (parseResult, ct) =>
@@ -83,7 +85,8 @@ public static class NodeCommandLine
                 return NodeExitCodes.InvalidArguments;
             }
             var options = new NodeOptions(socketPath, Path.GetFullPath(parseResult.GetValue(data) ?? NodeSocket.DefaultDataFolder), MachinePrefix: parseResult.GetValue(machine),
-                Watchtower: !parseResult.GetValue(noWatchtower), WatchtowerFolderGiven: parseResult.GetValue(watchtowerFolder));
+                Watchtower: !parseResult.GetValue(noWatchtower), WatchtowerFolderGiven: parseResult.GetValue(watchtowerFolder),
+                Lan: parseResult.GetValue(lan), LanPort: parseResult.GetValue(lanPort));
             return await NodeProgram.RunAsync(options, error, ct);
         });
         return root;

@@ -9,8 +9,12 @@ namespace Pilot.Node;
 /// <param name="MachinePrefix">The machine's prefix in session names (<c>--machine</c>, else <c>PILOT_MACHINE</c>, else from its name).</param>
 /// <param name="Watchtower">Whether it keeps a watchtower session (<c>--no-watchtower</c> turns it off; a test node keeps none).</param>
 /// <param name="WatchtowerFolderGiven">Where the watchtower runs (<c>--watchtower-folder</c>, else <c>PILOT_WATCHTOWER_FOLDER</c>, else under the data folder).</param>
+/// <param name="Lan">Whether it listens on the LAN too (<c>--lan</c>): seeing for anyone who reaches the port, commands for a grant.</param>
+/// <param name="LanPort">The TCP port it listens on for the LAN (<c>--lan-port</c>).</param>
+/// <param name="LanAnnounce">Whether it announces itself on the LAN (LAN.Lib's UDP beacon) when it listens there; a test node does not.</param>
 public sealed record NodeOptions(
-    string SocketPath, string DataFolder, int RetainedDeltas = NodeState.DefaultRetainedDeltas, string? MachinePrefix = null, bool Watchtower = true, string? WatchtowerFolderGiven = null)
+    string SocketPath, string DataFolder, int RetainedDeltas = NodeState.DefaultRetainedDeltas, string? MachinePrefix = null, bool Watchtower = true, string? WatchtowerFolderGiven = null,
+    bool Lan = false, int LanPort = NodeWire.DefaultLanPort, bool LanAnnounce = true)
 {
     /// <summary>
     /// The folder the watchtower runs in. Claude Code starts no background session in a folder never trusted, so the

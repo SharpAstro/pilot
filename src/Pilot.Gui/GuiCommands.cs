@@ -13,7 +13,8 @@ namespace Pilot.Gui;
 internal static class GuiCommands
 {
     /// <summary>Runs <paramref name="line"/> (<c>leg start TIA1 parser</c>, with or without a leading <c>pilot</c>); returns what it printed.</summary>
-    public static async Task<string> RunAsync(string line, string socketPath, CancellationToken cancellationToken)
+    /// <param name="node">Which node: <c>--node-socket &lt;path&gt;</c> for this machine's, <c>--node host:port</c> for one on the LAN.</param>
+    public static async Task<string> RunAsync(string line, string[] node, CancellationToken cancellationToken)
     {
         var args = CommandLineParser.SplitCommandLine(line).ToList();
         if (args.Count > 0 && args[0] is "pilot" or "pilot.exe")
@@ -22,7 +23,7 @@ internal static class GuiCommands
         }
         var output = new StringWriter();
         var error = new StringWriter();
-        var exit = await PilotCommand.RunAsync(["--node-socket", socketPath, .. args], Environment.CurrentDirectory, output, error, cancellationToken, GuiSay.Who);
+        var exit = await PilotCommand.RunAsync([.. node, .. args], Environment.CurrentDirectory, output, error, cancellationToken, GuiSay.Who);
         var said = (output.ToString() + error.ToString()).TrimEnd();
         return said.Length > 0 ? said : exit == 0 ? "ok" : $"exit {exit}";
     }

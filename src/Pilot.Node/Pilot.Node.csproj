@@ -18,6 +18,22 @@
     <PackageReference Include="System.CommandLine" />
   </ItemGroup>
 
+  <!--
+    LAN.Lib (discovery, invites, grants) from the sibling clone when it is there, as the GUI takes DIR.Lib: see the
+    GUI's project for SharpAstroRoot's two probes and why a publish with a runtime identifier takes the package.
+  -->
+  <PropertyGroup>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\LAN.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\LAN.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
+    <UseLocalLanLib Condition="'$(UseLocalLanLib)' == '' AND '$(RuntimeIdentifier)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)LAN.Lib\src\LAN.Lib\LAN.Lib.csproj')">true</UseLocalLanLib>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalLanLib)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)LAN.Lib\src\LAN.Lib\LAN.Lib.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalLanLib)' != 'true'">
+    <PackageReference Include="LAN.Lib" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="Pilot.Node.Tests" />
   </ItemGroup>

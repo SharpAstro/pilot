@@ -132,6 +132,12 @@ public static class Verbs
     /// <summary><c>dismiss card/&lt;id&gt; [why…]</c>: closes the card with nothing done.</summary>
     public const string Dismiss = "dismiss";
 
+    /// <summary><c>answer-grant node &lt;ask id&gt; allow|deny</c>: answers a LAN client's ask for control. This machine only.</summary>
+    public const string AnswerGrant = "answer-grant";
+
+    /// <summary><c>revoke-grant node &lt;grant id&gt;</c>: takes a LAN client's control away. This machine only.</summary>
+    public const string RevokeGrant = "revoke-grant";
+
     /// <summary><c>start-review flight/&lt;code&gt;</c>: a fresh reviewer on the flight's branch (open-pr starts one by itself).</summary>
     public const string StartReview = "start-review";
 
