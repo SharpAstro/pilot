@@ -97,9 +97,12 @@ public static class NodeApp
         builder.Services.AddSingleton(services =>
         {
             var commands = services.GetRequiredService<NodeCommands>();
-            return new JobRunner(services.GetRequiredService<NodeState>(), services.GetRequiredService<NodeOptions>(), services.GetRequiredService<TimeProvider>())
+            var nodeOptions = services.GetRequiredService<NodeOptions>();
+            return new JobRunner(services.GetRequiredService<NodeState>(), nodeOptions, services.GetRequiredService<TimeProvider>())
             {
                 Say = commands.RunAsync,
+                MaxRunning = Math.Max(1, nodeOptions.MaxJobs),
+                MinFreeMemory = (long)(Math.Max(0, nodeOptions.JobMemoryGigabytes) * (1L << 30)),
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<JobRunner>());

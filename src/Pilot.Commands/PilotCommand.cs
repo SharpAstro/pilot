@@ -274,14 +274,18 @@ public static class PilotCommand
                     await output.WriteLineAsync($"refused: run: {sent.Response?.Error ?? sent.Error}");
                     return 1;
                 }
+                // A job may have to wait its turn (the machine is shared between flights): say so, and where it stands.
+                var made = (await SnapshotAsync(client, ct)).Jobs.FirstOrDefault(j => j.Id == job);
+                var how = made is { State: JobState.Queued } ? $"queued ({made.Step})" : "started";
                 await output.WriteLineAsync(owner is null
-                    ? $"job {job} started; pilot job {job} shows how it stands"
-                    : $"job {job} started. End your turn now: the node tells you how it ended, with its last lines. Do not wait for it or poll it.");
+                    ? $"job {job} {how}; pilot job {job} shows how it stands"
+                    : $"job {job} {how}. End your turn now: the node tells you how it ended, with its last lines. Do not wait for it or poll it.");
                 return 0;
             });
         var jobsCommand = Action(new Command("jobs", "The node's jobs, running first"), async (_, client, ct) =>
         {
-            var jobs = (await SnapshotAsync(client, ct)).Jobs.OrderBy(j => j.State != JobState.Running).ThenByDescending(j => j.StartedAt).Take(20).ToList();
+            var jobs = (await SnapshotAsync(client, ct)).Jobs.OrderBy(j => j.State switch { JobState.Running => 0, JobState.Queued => 1, _ => 2 })
+            .ThenByDescending(j => j.StartedAt).Take(20).ToList();
             await output.WriteAsync(jobs.Count == 0 ? "No jobs.\n" : string.Concat(jobs.Select(j => JobLine(j) + "\n")));
             return 0;
         });

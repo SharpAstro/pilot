@@ -12,9 +12,14 @@ namespace Pilot.Node.Flights;
 /// node stopping end it early. Its owner is told how it ended, a real turn for an idle worker, and a wake that fails rings.
 /// </summary>
 /// <remarks>
-/// A job whose node went away while it ran (a restart) cannot be found again: on start the node marks every job still
-/// running as failed for that reason, and tells its owner, rather than leave a worker waiting for a result that will never
-/// come.
+/// <para><b>The machine is shared.</b> Several flights hand jobs to one node, and a full test suite can take gigabytes, so
+/// jobs do not all start at once: at most <see cref="MaxRunning"/> run together, and one starts only while the machine
+/// has <see cref="MinFreeMemory"/> free. The rest wait in the order they came, from every flight alike, each saying where
+/// it stands in its step; their owners end their turns as for any job and are woken when it ends, so a wait costs them
+/// nothing.</para>
+/// <para>A job whose node went away while it ran or waited (a restart) cannot be found again: on start the node marks
+/// every such job as failed for that reason, and tells its owner, rather than leave a worker waiting for a result that
+/// will never come.</para>
 /// </remarks>
 public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider time) : BackgroundService
 {
@@ -34,21 +39,56 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>How often a running job's step (its last line) is put on the stream, so a long run shows it is alive without a delta per line.</summary>
     public TimeSpan StepEvery { get; init; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>How many jobs run at once; the rest wait their turn.</summary>
+    public int MaxRunning { get; init; } = 1;
+
+    /// <summary>The free memory a job needs before it starts: a suite started on a machine already short of it takes the machine down with it.</summary>
+    public long MinFreeMemory { get; init; } = 2L << 30;
+
+    /// <summary>The machine's free memory in bytes, or null when it cannot be read (then memory holds nothing back).</summary>
+    public Func<long?> FreeMemory { get; init; } = MachineMemory.Available;
+
+    /// <summary>How often the queue looks again, for memory that has come free.</summary>
+    public TimeSpan PumpEvery { get; init; } = TimeSpan.FromSeconds(15);
+
     private readonly ConcurrentDictionary<string, Process> _running = new(StringComparer.Ordinal);
+    private readonly List<JobRow> _queue = [];
+    private readonly Lock _gate = new();
     private CancellationToken _stopping;
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         _stopping = stopping;
         await RecoverAsync(stopping);
+        using var timer = new PeriodicTimer(PumpEvery, time);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stopping))
+            {
+                Pump();
+            }
+        }
+        catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+        {
+        }
     }
 
     /// <summary>Marks the jobs a previous node left running as failed, and tells their owners.</summary>
     public async Task RecoverAsync(CancellationToken cancellationToken)
     {
-        foreach (var job in state.Jobs().Where(j => j.State == JobState.Running && !_running.ContainsKey(j.Id)))
+        List<JobRow> orphans;
+        lock (_gate)
         {
-            var ended = job with { State = JobState.Failed, Error = "the node stopped while it ran, so its end was never seen", EndedAt = time.GetUtcNow() };
+            orphans = [.. state.Jobs().Where(j => (j.State == JobState.Running && !_running.ContainsKey(j.Id)) || (j.State == JobState.Queued && !_queue.Any(q => q.Id == j.Id)))];
+        }
+        foreach (var job in orphans)
+        {
+            var ended = job with
+            {
+                State = JobState.Failed,
+                Error = job.State == JobState.Queued ? "the node stopped before its turn came" : "the node stopped while it ran, so its end was never seen",
+                EndedAt = time.GetUtcNow(),
+            };
             state.PutJob(ended);
             await TellAsync(ended, cancellationToken);
         }
@@ -115,6 +155,80 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             StartedAt = time.GetUtcNow(),
         };
 
+        lock (_gate)
+        {
+            // In the order they came: a job starts at once only when none is waiting before it and the machine has room.
+            if (_queue.Count == 0 && WhyWaitLocked() is null)
+            {
+                if (StartLocked(job) is { } failed)
+                {
+                    return state.Complete(command, $"the job did not start: {failed}");
+                }
+            }
+            else
+            {
+                _queue.Add(job with { State = JobState.Queued, QueuedAt = job.StartedAt });
+                RefreshQueueLocked();
+            }
+        }
+        return state.Complete(command, null, made: jobId);
+    }
+
+    /// <summary>Starts every waiting job the machine has room for, in order; the rest are told where they stand.</summary>
+    public void Pump()
+    {
+        var unstarted = new List<JobRow>();
+        lock (_gate)
+        {
+            while (_queue.Count > 0 && WhyWaitLocked() is null)
+            {
+                var next = _queue[0];
+                _queue.RemoveAt(0);
+                if (StartLocked(next with { State = JobState.Running, Step = null, StartedAt = time.GetUtcNow() }) is { } failed)
+                {
+                    var ended = next with { State = JobState.Failed, Error = $"it did not start: {failed}", EndedAt = time.GetUtcNow() };
+                    state.PutJob(ended);
+                    unstarted.Add(ended);
+                }
+            }
+            RefreshQueueLocked();
+        }
+        foreach (var job in unstarted)
+        {
+            _ = TellAsync(job, _stopping);
+        }
+    }
+
+    /// <summary>Why a job may not start now, or null when it may.</summary>
+    private string? WhyWaitLocked()
+    {
+        if (_running.Count >= MaxRunning)
+        {
+            return MaxRunning == 1 ? "another job is running" : $"{_running.Count} jobs are running, {MaxRunning} at a time";
+        }
+        return FreeMemory() is { } free && free < MinFreeMemory
+            ? $"waiting for {Gigabytes(MinFreeMemory)} of free memory ({Gigabytes(free)} now)"
+            : null;
+    }
+
+    /// <summary>Puts each waiting job on the stream with where it stands.</summary>
+    private void RefreshQueueLocked()
+    {
+        var why = _queue.Count > 0 ? WhyWaitLocked() : null;
+        for (var i = 0; i < _queue.Count; i++)
+        {
+            var step = i == 0 ? $"next in line: {why ?? "starting"}" : $"queued, {i} ahead of it";
+            if (_queue[i].Step != step)
+            {
+                _queue[i] = _queue[i] with { Step = step };
+            }
+            state.PutJob(_queue[i]);
+        }
+    }
+
+    /// <summary>Starts a job; null when it started, else why not.</summary>
+    private string? StartLocked(JobRow job)
+    {
         Process process;
         try
         {
@@ -122,18 +236,36 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
         {
-            return state.Complete(command, $"the job did not start: {ex.Message}");
+            return ex.Message;
         }
         state.PutJob(job);
-        _running[jobId] = process;
+        _running[job.Id] = process;
         _ = Task.Run(() => WatchAsync(job, process), CancellationToken.None);
-        return state.Complete(command, null, made: jobId);
+        return null;
     }
+
+    private static string Gigabytes(long bytes) => $"{bytes / (double)(1L << 30):0.0} GB";
 
     /// <summary><c>cancel-job job/&lt;id&gt;</c>: stops it; the watch records it cancelled and tells its owner.</summary>
     public CommandResult Cancel(CommandRequest command)
     {
         var id = command.Target.StartsWith(Verbs.JobTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.JobTargetPrefix.Length..] : command.Target;
+        JobRow? waiting = null;
+        lock (_gate)
+        {
+            if (_queue.FindIndex(j => j.Id == id) is var at and >= 0)
+            {
+                waiting = _queue[at] with { State = JobState.Cancelled, Error = $"cancelled by {command.Who} before its turn", Step = null, EndedAt = time.GetUtcNow() };
+                _queue.RemoveAt(at);
+                state.PutJob(waiting);
+                RefreshQueueLocked();
+            }
+        }
+        if (waiting is not null)
+        {
+            _ = TellAsync(waiting, _stopping);
+            return state.Complete(command, null);
+        }
         if (!_running.TryGetValue(id, out var process))
         {
             return state.Complete(command, state.Jobs().Any(j => j.Id == id) ? $"job {id} is not running" : $"There is no job {id}");
@@ -210,6 +342,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
 
         _running.TryRemove(job.Id, out _);
+        // Its slot is free: the next in line may start.
+        Pump();
         string[] last;
         lock (tail)
         {
