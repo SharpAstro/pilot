@@ -70,10 +70,10 @@ jobs:
       # Linux only: the Windows runner's Visual Studio carries the C++ linker native AOT needs.
       if: runner.os == 'Linux'
       run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends clang zlib1g-dev
-    - name: Publish the node, the CLI and the GUI with native AOT
-      # All three ship as native AOT. The trim and AOT analyzers (IL2xxx, IL3xxx) only speak on a publish with a
+    - name: Publish the node, the CLI, the GUI and the TUI with native AOT
+      # All four ship as native AOT. The trim and AOT analyzers (IL2xxx, IL3xxx) only speak on a publish with a
       # runtime, not on a build, and TreatWarningsAsErrors (on under GitHub Actions) makes any of them fail the run.
       run: |
-        for project in Pilot.Node Pilot.Cli Pilot.Gui; do
+        for project in Pilot.Node Pilot.Cli Pilot.Gui Pilot.Tui; do
           dotnet publish $project -c $BUILD_CONF -r ${{ matrix.rid }} -o "$RUNNER_TEMP/publish" -p:Version=${VERSION_PREFIX}${VERSION_REV}${VERSION_HASH} -p:FileVersion=${VERSION_PREFIX}.${VERSION_REV} -p:ContinuousIntegrationBuild=true
         done

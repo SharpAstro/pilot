@@ -1,6 +1,6 @@
 using DIR.Lib;
 
-namespace Pilot.Gui;
+namespace Pilot.Ui;
 
 /// <summary>
 /// What the sessions view shows: the rows, already in words and in order, and where they came from.
@@ -113,6 +113,12 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     public void Render(SessionsScreen screen, RectF32 bounds)
     {
         BeginFrame();
+        RenderLayout(Tree(screen), bounds);
+    }
+
+    /// <summary>The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
+    internal Layout.Node Tree(SessionsScreen screen)
+    {
         _lines = screen.Lines;
         if (screen.Lines.Count == 0)
         {
@@ -141,7 +147,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             ? "No session selected"
             : $"Say to {screen.Lines[Selected].Name} · Enter sends";
 
-        RenderLayout(Build(screen), bounds);
+        return Build(screen);
     }
 
     /// <summary>Moves the selection to the row <paramref name="index"/>, and the session it follows with it.</summary>
@@ -291,7 +297,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index));
 
-        return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
+        // The selection stated as a background too: a terminal paints no focus of its own, and on pixels it is the focus colour.
+        return index == Selected ? row.Bg(RowFocusBg) : (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }
 
     /// <summary>

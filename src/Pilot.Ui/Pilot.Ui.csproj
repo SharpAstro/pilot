@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- The dashboard's pages and panels, generic over the surface: the GUI paints them on Vulkan, its capture on the
+         CPU, and pilot-tui in terminal cells (Console.Lib's CellLayout), all from the same DIR.Lib trees. DIR.Lib only,
+         no SDL, so the terminal host carries no window. -->
+    <IsAotCompatible>true</IsAotCompatible>
+    <RootNamespace>Pilot.Ui</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="DIR.Lib.Layout" Alias="Layout" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Pilot.Contracts\Pilot.Contracts.csproj" />
+    <!-- The command bar runs the CLI's own command tree in-process, in either host. -->
+    <ProjectReference Include="..\Pilot.Commands\Pilot.Commands.csproj" />
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+
+  <!-- DIR.Lib from the sibling clone when it is there, as the GUI takes it: see the GUI's project for SharpAstroRoot. -->
+  <PropertyGroup>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\DIR.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\DIR.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
+    <UseLocalDirLib Condition="'$(UseLocalDirLib)' == '' AND '$(RuntimeIdentifier)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)DIR.Lib\src\DIR.Lib\DIR.Lib.csproj')">true</UseLocalDirLib>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalDirLib)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)DIR.Lib\src\DIR.Lib\DIR.Lib.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalDirLib)' != 'true'">
+    <PackageReference Include="DIR.Lib" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="pilot-gui" />
+    <InternalsVisibleTo Include="pilot-tui" />
+    <InternalsVisibleTo Include="Pilot.Gui.Tests" />
+  </ItemGroup>
+
+</Project>

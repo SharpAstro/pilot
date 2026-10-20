@@ -25,6 +25,24 @@
        the capture draws. -->
   <ItemGroup>
     <ProjectReference Include="..\Pilot.Gui\Pilot.Gui.csproj" />
+    <ProjectReference Include="..\Pilot.Ui\Pilot.Ui.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Pilot.Ui" />
+  </ItemGroup>
+
+  <!-- Console.Lib, to arrange the shared trees in cells as pilot-tui does: from the sibling clone when it is there. -->
+  <PropertyGroup>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\Console.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\Console.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
+    <UseLocalConsoleLib Condition="'$(UseLocalConsoleLib)' == '' AND '$(RuntimeIdentifier)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)Console.Lib\src\Console.Lib\Console.Lib.csproj')">true</UseLocalConsoleLib>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalConsoleLib)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)Console.Lib\src\Console.Lib\Console.Lib.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalConsoleLib)' != 'true'">
+    <PackageReference Include="Console.Lib" />
   </ItemGroup>
 
 </Project>

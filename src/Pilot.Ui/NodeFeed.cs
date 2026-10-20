@@ -1,6 +1,6 @@
 using Pilot.Contracts;
 
-namespace Pilot.Gui;
+namespace Pilot.Ui;
 
 /// <summary>One connection's events, in order; null once the node closed it.</summary>
 internal interface INodeEvents : IAsyncDisposable

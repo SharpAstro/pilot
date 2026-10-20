@@ -1,0 +1,66 @@
+using Console.Lib;
+using DIR.Lib;
+using Layout = DIR.Lib.Layout;
+using Pilot.Contracts;
+using Shouldly;
+using Xunit;
+
+namespace Pilot.Gui.Tests;
+
+/// <summary>
+/// pilot-tui's screen: the GUI's own trees arranged in terminal cells (Console.Lib's CellLayout, pixel-authored), so the
+/// same rows, buttons and command bar land in cells, and a click on a cell runs what a click on the pixels would.
+/// </summary>
+public sealed class TerminalTests
+{
+    private static FlightsScreen Screen()
+    {
+        var flight = new FlightRow
+        {
+            Code = "TIA1611", Repo = "tianwen", RepoPath = "/r", Issue = 1611, Title = "Planets on the GPU", Branch = "flight/tia1611",
+            Worktree = "/r/w", Base = "origin/main", State = FlightState.Flying, CreatedAt = Live.At,
+        };
+        LegRow[] legs =
+        [
+            new() { Flight = "TIA1611", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done },
+            new() { Flight = "TIA1611", Name = "render", Order = 2, Goal = "g", DoneWhen = "d", State = LegState.Planned },
+        ];
+        return new FlightsScreen(FlightLine.Build([flight], [], Live.At, legs), "live", Live.At);
+    }
+
+    [Fact]
+    public void TheFlightsPageLandsInCellsWithItsButtonsAndCommandBar()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        var flights = chrome.Flights;
+        flights.CanCommand = true;
+        var acted = new List<FlightAction>();
+        flights.OnAction = acted.Add;
+
+        var arranged = Layout.Engine.Arrange(flights.Tree(Screen(), 160 * 8f), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
+        var described = CellLayout.Describe(arranged);
+
+        described.ShouldContain("TIA1611");
+        described.ShouldContain("Planets on the GPU");
+        described.ShouldContain("Start render");
+        CellLayout.TextInputs(arranged).ShouldContain(flights.CommandInput);
+
+        // A click on the button's cell runs it, as a click on its pixels does in the window.
+        var button = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "Start render" } } || a.Node.Hit is HitResult.ButtonHit { Action: "flight:TIA1611:start-leg" });
+        CellLayout.HitTest(arranged, button.Bounds.X + 1, button.Bounds.Y);
+        acted.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.StartLeg);
+    }
+
+    [Fact]
+    public void ANarrowTerminalDropsTheBranchAndSessionsColumns()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)).Flights;
+
+        CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen(), 100 * 8f), new Rect<int>(0, 0, 100, 40), CellMeasureContext.PixelAuthored))
+            .ShouldNotContain("flight/tia1611");
+        CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen(), 160 * 8f), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored))
+            .ShouldContain("flight/tia1611");
+    }
+}

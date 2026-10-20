@@ -3,18 +3,20 @@ using System.Diagnostics;
 using Pilot.Commands;
 using Pilot.Contracts;
 
-namespace Pilot.Gui;
+namespace Pilot.Ui;
 
 /// <summary>
-/// The Flights page's command bar and buttons: a line typed there is split as a shell would and run through the CLI's
-/// own command tree (Pilot.Commands), in-process, against this window's node and as <see cref="GuiSay.Who"/>; a button
-/// is one verb on the node. What either says goes back to the bar.
+/// The Flights page's command bar and buttons, for either host (the GUI's window, pilot-tui's terminal): a line typed
+/// there is split as a shell would and run through the CLI's own command tree (Pilot.Commands), in-process, against the
+/// host's node and as the host (<c>gui</c>, <c>tui</c>); a button is one verb on the node. What either says goes back to
+/// the bar.
 /// </summary>
-internal static class GuiCommands
+internal static class DashboardCommands
 {
     /// <summary>Runs <paramref name="line"/> (<c>leg start TIA1 parser</c>, with or without a leading <c>pilot</c>); returns what it printed.</summary>
     /// <param name="node">Which node: <c>--node-socket &lt;path&gt;</c> for this machine's, <c>--node host:port</c> for one on the LAN.</param>
-    public static async Task<string> RunAsync(string line, string[] node, CancellationToken cancellationToken)
+    /// <param name="who">The host, as the commands say who sent them.</param>
+    public static async Task<string> RunAsync(string line, string[] node, string who, CancellationToken cancellationToken)
     {
         var args = CommandLineParser.SplitCommandLine(line).ToList();
         if (args.Count > 0 && args[0] is "pilot" or "pilot.exe")
@@ -23,15 +25,15 @@ internal static class GuiCommands
         }
         var output = new StringWriter();
         var error = new StringWriter();
-        var exit = await PilotCommand.RunAsync([.. node, .. args], Environment.CurrentDirectory, output, error, cancellationToken, GuiSay.Who);
+        var exit = await PilotCommand.RunAsync([.. node, .. args], Environment.CurrentDirectory, output, error, cancellationToken, who);
         var said = (output.ToString() + error.ToString()).TrimEnd();
         return said.Length > 0 ? said : exit == 0 ? "ok" : $"exit {exit}";
     }
 
     /// <summary>Runs one action's verb on the node; returns what became of it.</summary>
-    public static async Task<string> ActAsync(NodeClient client, FlightAction action, CancellationToken cancellationToken)
+    public static async Task<string> ActAsync(NodeClient client, FlightAction action, string who, CancellationToken cancellationToken)
     {
-        var envelope = await client.SendAsync(new CommandRequest { Verb = action.Verb, Target = action.Target, Args = action.Args, Who = GuiSay.Who }, cancellationToken);
+        var envelope = await client.SendAsync(new CommandRequest { Verb = action.Verb, Target = action.Target, Args = action.Args, Who = who }, cancellationToken);
         return envelope.Success && envelope.Response is { Ok: true }
             ? $"ok: {action.Label}"
             : $"refused: {action.Label}: {envelope.Response?.Error ?? envelope.Error}";

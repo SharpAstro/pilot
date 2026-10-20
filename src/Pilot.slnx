@@ -11,4 +11,6 @@
   <Project Path="Pilot.Gui.Tests/Pilot.Gui.Tests.csproj" />
   <Project Path="Pilot.Node/Pilot.Node.csproj" />
   <Project Path="Pilot.Node.Tests/Pilot.Node.Tests.csproj" />
+  <Project Path="Pilot.Tui/Pilot.Tui.csproj" />
+  <Project Path="Pilot.Ui/Pilot.Ui.csproj" />
 </Solution>

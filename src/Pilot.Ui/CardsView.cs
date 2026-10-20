@@ -1,7 +1,7 @@
 using DIR.Lib;
 using Pilot.Contracts;
 
-namespace Pilot.Gui;
+namespace Pilot.Ui;
 
 /// <summary>
 /// What the right panel shows: the watchtower (its state and Remote Control link, when the node keeps one), the open
@@ -93,9 +93,15 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     public void Render(CardsScreen screen, RectF32 bounds)
     {
         BeginFrame();
+        RenderLayout(Tree(screen), bounds);
+    }
+
+    /// <summary>The panel as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
+    internal Layout.Node Tree(CardsScreen screen)
+    {
         TellInput.OnCommit = TellAsync;
         TellInput.Placeholder = "tell the watchtower · Enter sends";
-        RenderLayout(Build(screen), bounds);
+        return Build(screen);
     }
 
     private async Task TellAsync(string text)
