@@ -338,7 +338,7 @@ public sealed class SessionTracker : BackgroundService
             _repos[agent.Cwd] = repo = RepoOf.Find(agent.Cwd);
         }
 
-        Put(SessionRowBuilder.Build(agent, facts, record, repo, JoinFlight(SessionRoles.Resolve(agent.Name), agent.Cwd), Hooks.Of(agent.SessionId)) with { Id = id });
+        Put(SessionRowBuilder.Build(agent, facts, record, repo, JoinFlight(SessionRoles.Resolve(agent.Name, background: agent.Kind == "background"), agent.Cwd), Hooks.Of(agent.SessionId)) with { Id = id });
     }
 
     private void Put(SessionRow row)
