@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Pilot.Contracts;
 using Pilot.Node.Sessions;
 
 namespace Pilot.Node.Flights;
@@ -176,6 +177,13 @@ public interface IGitHub
 
     /// <summary>Opens a PR from <paramref name="branch"/> (pushed already) into <paramref name="baseBranch"/>; returns it.</summary>
     Task<PullRequest> CreateAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Where PR <paramref name="number"/>'s checks stand: <see cref="ChoiceStatus.Failing"/> when any failed,
+    /// <see cref="ChoiceStatus.Pending"/> while any runs, <see cref="ChoiceStatus.Passing"/> when all passed (skipped ones
+    /// aside), null with no checks or when GitHub would not say.
+    /// </summary>
+    Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken);
 }
 
 /// <summary><see cref="IGitHub"/> by the gh CLI, as v1's dashboard merged (<c>gh pr merge --match-head-commit</c>).</summary>
@@ -196,6 +204,26 @@ public sealed class GhCli : IGitHub
         var root = doc.RootElement;
         return new PullRequest(root.GetProperty("number").GetInt32(), root.GetProperty("state").GetString() ?? "",
             root.GetProperty("headRefOid").GetString() ?? "", root.GetProperty("url").GetString() ?? "");
+    }
+
+    public async Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        // gh exits non-zero while checks run or after one failed, and prints the JSON all the same: read it either way.
+        var (_, output, _) = await RunAsync(["pr", "checks", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "bucket"], repoPath, cancellationToken);
+        try
+        {
+            using var doc = JsonDocument.Parse(output);
+            var buckets = doc.RootElement.EnumerateArray().Select(c => c.TryGetProperty("bucket", out var b) ? b.GetString() : null).OfType<string>().ToList();
+            return buckets.Count == 0 ? null
+                : buckets.Contains("fail") || buckets.Contains("cancel") ? ChoiceStatus.Failing
+                : buckets.Contains("pending") ? ChoiceStatus.Pending
+                : buckets.Any(b => b == "pass") ? ChoiceStatus.Passing
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     public async Task MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
