@@ -51,6 +51,46 @@ public sealed record FlightRow
 
     /// <summary>When it landed; null until then.</summary>
     public DateTimeOffset? LandedAt { get; init; }
+
+    /// <summary>Its review: a fresh session reading the branch before the merge is offered; null before its PR opens.</summary>
+    public ReviewRow? Review { get; init; }
+}
+
+/// <summary>
+/// A flight's review: a fresh reviewer, <c>&lt;machine&gt;-&lt;flight&gt;-review</c>, reads the branch against every leg's
+/// Done-when in the plane and says pass or changes. Only a pass offers the merge.
+/// </summary>
+public sealed record ReviewRow
+{
+    public required ReviewState State { get; init; }
+
+    /// <summary>The reviewer's session name.</summary>
+    public required string Reviewer { get; init; }
+
+    /// <summary>Its background job, the first eight of its session id.</summary>
+    public string? ReviewerJob { get; init; }
+
+    /// <summary>What it found: its report on a pass, the changes it asks for otherwise.</summary>
+    public string? Report { get; init; }
+
+    public required DateTimeOffset StartedAt { get; init; }
+
+    public DateTimeOffset? FinishedAt { get; init; }
+}
+
+/// <summary>Where a review is.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ReviewState>))]
+public enum ReviewState
+{
+    [JsonStringEnumMemberName("reviewing")]
+    Reviewing,
+
+    [JsonStringEnumMemberName("passed")]
+    Passed,
+
+    /// <summary>It asks for changes: a go-around, or the controller's "ready anyway".</summary>
+    [JsonStringEnumMemberName("changes")]
+    Changes,
 }
 
 /// <summary>Where a flight is.</summary>

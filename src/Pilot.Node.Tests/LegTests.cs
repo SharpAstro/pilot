@@ -288,6 +288,9 @@ public sealed class LegCommanderTests : IDisposable
             (await Leg(Verbs.FinishLeg, $"flight/TIA1/{name}", "done")).Ok.ShouldBeTrue();
         }
 
+        (await Leg(Verbs.Merge, "flight/TIA1", "abc1234")).Error.ShouldBe("TIA1 has not been reviewed; open its PR with the node (flight pr), which starts the review");
+        // As the reviewer's pass leaves it (its own test drives the review): this one is about the merge's guards.
+        _state.PutFlight(_state.Flights().Single() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow } });
         (await Leg(Verbs.Merge, "flight/TIA1", "abc1234")).Error.ShouldBe("flight/tia1 has no PR");
         _github.Pr = new PullRequest(63, "OPEN", "def5678aaaabbbbccccdddd", "https://github.com/x/tianwen/pull/63");
         (await Leg(Verbs.Merge, "flight/TIA1", "abc1234")).Error.ShouldNotBeNull().ShouldContain("not the abc1234 you reviewed");

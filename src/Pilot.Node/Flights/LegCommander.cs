@@ -31,7 +31,7 @@ public sealed partial class LegCommander(
 
     public static bool Handles(string verb) =>
         verb is Verbs.PlanLeg or Verbs.StartLeg or Verbs.Check or Verbs.FinishLeg or Verbs.GoAround or Verbs.Merge
-            or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget;
+            or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review;
 
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
@@ -67,6 +67,12 @@ public sealed partial class LegCommander(
                     break;
                 case Verbs.ExtendBudget:
                     ExtendBudget(command);
+                    break;
+                case Verbs.StartReview:
+                    await StartReviewAsync(FlightOf(command.Target), cancellationToken);
+                    break;
+                case Verbs.Review:
+                    await ReviewAsync(command, cancellationToken);
                     break;
             }
         }
@@ -134,6 +140,10 @@ public sealed partial class LegCommander(
         if (name is null || !LegName().IsMatch(name))
         {
             throw new FlightException("a leg needs a name of lower-case letters, digits and dashes (name=parser)");
+        }
+        if (name == ReviewLeg)
+        {
+            throw new FlightException("review names the flight's reviewer, not a leg; call the leg something else");
         }
         if (string.IsNullOrWhiteSpace(goal) || string.IsNullOrWhiteSpace(doneWhen))
         {
@@ -251,6 +261,12 @@ public sealed partial class LegCommander(
                 }
                 state.PutLeg(leg with { State = LegState.Done, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : leg.Report });
                 state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} done");
+                // A go-around the review asked for, done: the fixed branch goes up and is reviewed afresh, by itself.
+                if (flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null && state.Legs(flight.Code).All(l => l.State == LegState.Done))
+                {
+                    await PushAsync(flight, cancellationToken);
+                    await StartReviewAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken);
+                }
                 break;
             case "failed":
                 state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "failed" });
@@ -290,9 +306,10 @@ public sealed partial class LegCommander(
         {
             throw new FlightException("a go-around needs why: the next worker is told it");
         }
-        if (leg.State is not (LegState.Flying or LegState.Failed))
+        // A done leg goes around too when the review asked for changes: that is how they are made.
+        if (leg.State is not (LegState.Flying or LegState.Failed) && !(leg.State == LegState.Done && flight.Review is { State: ReviewState.Changes }))
         {
-            throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}; a go-around is for a leg flying or failed");
+            throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}; a go-around is for a leg flying or failed, or done when the review asked for changes");
         }
         if (flight.State != FlightState.Flying)
         {
@@ -313,6 +330,7 @@ public sealed partial class LegCommander(
         state.PutLeg(next with { State = LegState.Flying, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), FinishedAt = null, Report = $"go-around: {why}" });
         // Every card about the leg was about its last worker: failed, stopped, idle, waiting.
         state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"went around: {why}");
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around for it", ReviewChanges);
     }
 
     private async Task MergeAsync(CommandRequest command, CancellationToken cancellationToken)
@@ -338,6 +356,12 @@ public sealed partial class LegCommander(
             throw new FlightException($"{flight.Code} has legs not done: {string.Join(", ", open)}");
         }
 
+        if (flight.Review is not { State: ReviewState.Passed })
+        {
+            throw new FlightException(flight.Review is null
+                ? $"{flight.Code} has not been reviewed; open its PR with the node (flight pr), which starts the review"
+                : $"{flight.Code}'s review is {flight.Review.State.ToString().ToLowerInvariant()}, not passed");
+        }
         var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken)
             ?? throw new FlightException($"{flight.Branch} has no PR");
         if (!string.Equals(pr.State, "OPEN", StringComparison.OrdinalIgnoreCase))
@@ -364,24 +388,152 @@ public sealed partial class LegCommander(
             throw new FlightException($"{flight.Code} has legs not done: {string.Join(", ", open)}");
         }
 
+        // Pushed every time, not only for a new PR: a go-around's commits must reach the PR before it is reviewed again.
+        await PushAsync(flight, cancellationToken);
         var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
         if (pr is null || !string.Equals(pr.State, "OPEN", StringComparison.OrdinalIgnoreCase))
         {
-            var push = await git.RunAsync(["push", "-u", "origin", flight.Branch], flight.Worktree, cancellationToken);
-            if (!push.Ok)
-            {
-                throw new FlightException($"git could not push {flight.Branch}: {push.Why}");
-            }
             var title = string.Join(' ', command.Args ?? []).Trim();
             pr = await github.CreateAsync(flight.RepoPath, flight.Branch, BaseBranch(flight), $"{flight.Code}: {(title.Length > 0 ? title : flight.Title ?? $"issue #{flight.Issue}")}", PrBody(flight, legs), cancellationToken);
         }
         state.PutFlight(flight with { PullRequest = pr.Number, PullRequestUrl = pr.Url });
 
-        // Every leg done and the PR open: the merge is the controller's, a gate before an irreversible step.
-        state.RaiseCard(CardBin.Ring, "pr-ready", Verbs.FlightTarget(flight.Code),
+        // The PR open, a fresh reviewer reads it before the merge is offered. One that cannot start costs the flight
+        // its review, not its merge: the card says so and the controller decides.
+        try
+        {
+            await StartReviewAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken);
+        }
+        catch (FlightException ex)
+        {
+            var row = FlightOf(Verbs.FlightTarget(flight.Code));
+            var why = $"the reviewer did not start: {ex.Message}";
+            state.PutFlight(row with { Review = new ReviewRow { State = ReviewState.Changes, Reviewer = ReviewerName(row), Report = why, StartedAt = time.GetUtcNow(), FinishedAt = time.GetUtcNow() } });
+            RaiseReviewChanges(FlightOf(Verbs.FlightTarget(flight.Code)), why);
+        }
+    }
+
+    /// <summary>The leg name reserved for the flight's reviewer: <c>&lt;machine&gt;-&lt;flight&gt;-review</c>.</summary>
+    public const string ReviewLeg = "review";
+
+    public const string ReviewChanges = "review-changes";
+
+    public const string PrReady = "pr-ready";
+
+    private string ReviewerName(FlightRow flight) => $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{ReviewLeg}";
+
+    private async Task PushAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        var push = await git.RunAsync(["push", "-u", "origin", flight.Branch], flight.Worktree, cancellationToken);
+        if (!push.Ok)
+        {
+            throw new FlightException($"git could not push {flight.Branch}: {push.Why}");
+        }
+    }
+
+    /// <summary>A fresh reviewer on the flight's branch, the last one stopped; any earlier verdict's cards close.</summary>
+    private async Task StartReviewAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        if (flight.State == FlightState.Landed)
+        {
+            throw new FlightException($"{flight.Code} has landed");
+        }
+        var legs = state.Legs(flight.Code);
+        if (legs.Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is { Count: > 0 } open)
+        {
+            throw new FlightException($"{flight.Code} has legs not done: {string.Join(", ", open)}");
+        }
+        if (flight.Review?.ReviewerJob is { } last)
+        {
+            await StopQuietly(last, cancellationToken);
+        }
+
+        await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
+        var commits = await git.RunAsync(["log", "--oneline", $"{flight.Base}..HEAD"], flight.Worktree, cancellationToken);
+        var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, cancellationToken);
+        var reviewer = ReviewerName(flight);
+        var brief = Briefs.Review(flight, legs, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Briefs.Run(Cli, Socket));
+        var job = await workers.StartAsync(new WorkerStart(reviewer, flight.RepoPath, PlaneOf(flight), brief, null, null), cancellationToken);
+        state.PutFlight(flight with { Review = new ReviewRow { State = ReviewState.Reviewing, Reviewer = reviewer, ReviewerJob = job, StartedAt = time.GetUtcNow() } });
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "a fresh review started", ReviewChanges, PrReady, LegWatch.ReviewStalled);
+    }
+
+    private async Task ReviewAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var flight = FlightOf(command.Target);
+        var args = command.Args ?? [];
+        var verdict = args.Length > 0 ? args[0] : "";
+        var report = string.Join(' ', args.Skip(1)).Trim();
+        if (verdict is not ("pass" or "changes"))
+        {
+            throw new FlightException("review takes pass or changes, then a report");
+        }
+        if (flight.Review is not { } review)
+        {
+            throw new FlightException($"{flight.Code} has no review; flight pr starts one");
+        }
+        var fromReviewer = string.Equals(command.Who, review.Reviewer, StringComparison.Ordinal);
+        if (fromReviewer && review.State != ReviewState.Reviewing)
+        {
+            throw new FlightException($"{flight.Code}'s review is {review.State.ToString().ToLowerInvariant()} already");
+        }
+        // Anyone else passes only a review that asked for changes: the controller's "ready anyway".
+        if (!fromReviewer && !(verdict == "pass" && review.State == ReviewState.Changes))
+        {
+            throw new FlightException($"only {review.Reviewer} gives {flight.Code}'s verdict; the controller may only pass one that asked for changes");
+        }
+        if (report.Length == 0)
+        {
+            throw new FlightException("a verdict needs its report: what was checked, or the changes asked for");
+        }
+
+        var now = time.GetUtcNow();
+        var kept = fromReviewer ? report : $"{report} (passed by {command.Who} over: {review.Report})";
+        state.PutFlight(flight with { Review = review with { State = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes, Report = kept, FinishedAt = now } });
+        flight = FlightOf(command.Target);
+        if (verdict == "pass")
+        {
+            state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "passed", ReviewChanges, LegWatch.ReviewStalled);
+            await RaisePrReadyAsync(flight, kept, cancellationToken);
+        }
+        else
+        {
+            RaiseReviewChanges(flight, report);
+        }
+
+        // A reviewer that gave its verdict is done with, after a grace to end its turn, as a worker that finished its own leg.
+        if (fromReviewer && review.ReviewerJob is { } job)
+        {
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(SelfFinishGrace, time, CancellationToken.None);
+                await StopQuietly(job, CancellationToken.None);
+            }, CancellationToken.None);
+        }
+    }
+
+    /// <summary>Every leg done, reviewed, the PR open: the merge is the controller's, a gate before an irreversible step.</summary>
+    private async Task RaisePrReadyAsync(FlightRow flight, string review, CancellationToken cancellationToken)
+    {
+        var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken)
+            ?? throw new FlightException($"{flight.Branch} has no PR");
+        var legs = state.Legs(flight.Code);
+        state.RaiseCard(CardBin.Ring, PrReady, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}'s PR #{pr.Number} is ready to merge",
-            $"{flight.Title ?? $"issue #{flight.Issue}"}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {pr.Head[..Math.Min(8, pr.Head.Length)]}. {pr.Url}",
+            $"{flight.Title ?? $"issue #{flight.Issue}"}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {pr.Head[..Math.Min(8, pr.Head.Length)]}. Reviewed: {review}. {pr.Url}",
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }]);
+    }
+
+    private void RaiseReviewChanges(FlightRow flight, string changes)
+    {
+        var last = state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault();
+        var choices = new List<CardChoice>();
+        if (last is not null)
+        {
+            choices.Add(new CardChoice { Label = $"Go around {last.Name}", Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [$"the review asked for changes: {changes}"] });
+        }
+        choices.Add(new CardChoice { Label = "Ready anyway", Verb = Verbs.Review, Target = Verbs.FlightTarget(flight.Code), Args = ["pass", "ready anyway"] });
+        state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review asks for changes", changes, choices);
     }
 
     /// <summary>The branch a PR goes into: its base without the remote (<c>origin/main</c> is <c>main</c>).</summary>

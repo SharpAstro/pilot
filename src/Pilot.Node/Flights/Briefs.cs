@@ -129,6 +129,52 @@ public static class Briefs
     }
 
     /// <summary>
+    /// What a flight's reviewer is told: the flight, every leg's goal and Done-when, what the branch holds, and how to give
+    /// its verdict. It reads and runs; it changes nothing, so its verdict is about the work as the workers left it.
+    /// </summary>
+    public static string Review(FlightRow flight, IReadOnlyList<LegRow> legs, PlaneState plane, string run)
+    {
+        var text = new StringBuilder();
+        var title = flight.Title is { Length: > 0 } t ? $": {t}" : "";
+        text.AppendLine($"You review flight {flight.Code} ({flight.Repo} #{flight.Issue}{title}) before it is offered for merging.");
+        text.AppendLine();
+        text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`, against `{flight.Base}`.");
+        text.AppendLine("Read the whole diff (`git diff " + flight.Base + "...HEAD`), and rerun what proves each leg's Done-when. Do not edit,");
+        text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a go-around makes any change.");
+        // The controller's rule for now (20 Oct): a review is one session's reading, very light on subagents, if any. Its
+        // depth is to follow usage headroom and priority later (#74).
+        text.AppendLine("Do the review yourself, in this session: no subagents, or one at most for a single narrow question. Fanning");
+        text.AppendLine("out reviewers costs many times the tokens and is not what this review is for.");
+        text.AppendLine();
+        text.AppendLine("Legs, each done:");
+        foreach (var leg in legs.OrderBy(l => l.Order))
+        {
+            text.AppendLine($"- {leg.Name}: {leg.Goal} Done when: {leg.DoneWhen}{(leg.Check is { Length: > 0 } c ? $" (check: `{c}`)" : "")}");
+        }
+        if (plane.Commits.Trim().Length > 0)
+        {
+            text.AppendLine();
+            text.AppendLine("Commits:");
+            text.AppendLine(plane.Commits.Trim());
+        }
+        if (plane.DiffStat.Trim().Length > 0)
+        {
+            text.AppendLine();
+            text.AppendLine("Files:");
+            text.AppendLine(plane.DiffStat.Trim());
+        }
+        text.AppendLine();
+        text.AppendLine("Look for: a Done-when that does not hold, bugs and regressions, tests that do not test what they say, and");
+        text.AppendLine("anything the issue asked for that is missing. Style alone is no reason for changes.");
+        text.AppendLine();
+        text.AppendLine("## Your verdict");
+        text.AppendLine($"- Ready: `{run} review pass \"<what you checked, in a line or two>\"`.");
+        text.AppendLine($"- Not ready: `{run} review changes \"<each change asked for, concretely>\"`. A fresh worker is told it as is.");
+        text.AppendLine("Then end your turn with the same verdict.");
+        return text.ToString();
+    }
+
+    /// <summary>
     /// What the watchtower is told when it starts: its job, what it may and may not do, the commands it does it with,
     /// and where every flight and open card stands now. Briefed from the node's state, never an earlier watchtower's
     /// conversation, so a fresh one picks up where the last left off (#36).

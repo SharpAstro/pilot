@@ -186,6 +186,30 @@ public sealed class LegWatchTests
     }
 
     [Fact]
+    public async Task AReviewerThatStopsWithoutItsVerdictRingsForAFreshReview()
+    {
+        _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });
+        _state.PutFlight(new FlightRow
+        {
+            Code = "TIA1", Repo = "tianwen", RepoPath = "/r", Issue = 1, Branch = "flight/tia1", Worktree = "/r/w", Base = "origin/main",
+            State = FlightState.Flying, CreatedAt = Start,
+            Review = new ReviewRow { State = ReviewState.Reviewing, Reviewer = "du1-tia1-review", ReviewerJob = "a1b2c3d4", StartedAt = Start },
+        });
+        Worker(SessionState.Working);
+        _time.Advance(TimeSpan.FromMinutes(10));
+        await _watch.LookAsync(Ct);
+        Open().ShouldBeEmpty();
+
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow());
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+
+        var card = Open().ShouldHaveSingleItem();
+        (card.Kind, card.Subject, card.Detail).ShouldBe((LegWatch.ReviewStalled, "flight/TIA1", "it stopped 4 min ago without its verdict"));
+        card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.StartReview);
+    }
+
+    [Fact]
     public async Task LegsNotFlyingAreNotWatched()
     {
         var leg = _state.Legs().Single();

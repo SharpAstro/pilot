@@ -135,7 +135,10 @@ public static class PilotCommand
         var land = Action(new Command("land", "The flight's work is in: its plane goes, its branch and code stay") { Arguments = { code } },
             (p, client, ct) => SendAsync(client, Verbs.Land, Verbs.FlightTarget(p.GetValue(code)!), [], "cli", output, ct));
 
-        var flight = new Command("flight", "Flights: create, connect, open a PR, merge, land") { Subcommands = { create, connect, pr, merge, land } };
+        var reviewStart = Action(new Command("review", "Start a fresh reviewer on the flight's branch (flight pr starts one by itself)") { Arguments = { code } },
+            (p, client, ct) => SendAsync(client, Verbs.StartReview, Verbs.FlightTarget(p.GetValue(code)!), [], "cli", output, ct));
+
+        var flight = new Command("flight", "Flights: create, connect, open a PR, review, merge, land") { Subcommands = { create, connect, pr, reviewStart, merge, land } };
 
         // leg
         var name = Arg("name", "The leg's name: lower-case letters, digits and dashes");
@@ -201,6 +204,24 @@ public static class PilotCommand
                 return OnLeg(p, client, Verbs.AddArtifact, _ => [full, .. p.GetValue(artifactTitle) ?? []], ct);
             });
 
+        // review: the reviewer's verdict, from its plane; or the controller's "ready anyway" with --flight
+        var verdict = Arg("verdict", "pass or changes");
+        verdict.AcceptOnlyFromAmong("pass", "changes");
+        var verdictReport = Words("report", "What was checked, or each change asked for");
+        var reviewFlight = new Option<string?>("--flight") { Description = "The flight's code; inside its plane, that flight" };
+        var review = Action(new Command("review", "Give a flight's review verdict: pass offers the merge, changes rings for a go-around")
+            {
+                Arguments = { verdict, verdictReport },
+                Options = { reviewFlight },
+            },
+            async (p, client, ct) =>
+            {
+                var (target, who) = p.GetValue(reviewFlight) is { } named
+                    ? (Verbs.FlightTarget(named), "cli")
+                    : FlightHere(await SnapshotAsync(client, ct), cwd);
+                return await SendAsync(client, Verbs.Review, target, [p.GetValue(verdict)!, Join(p, verdictReport)], who, output, ct);
+            });
+
         // cards
         var all = new Option<bool>("--all") { Description = "Closed cards and Handled lines too" };
         var cards = Action(new Command("cards", "Open cards, rings first") { Options = { all } }, async (p, client, ct) =>
@@ -250,7 +271,7 @@ public static class PilotCommand
         return new RootCommand("pilot v2's command line, against this machine's node. Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket },
-            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note, tell, watchtower, digest, ring, flag, handled },
+            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note, review, tell, watchtower, digest, ring, flag, handled },
         };
     }
 
@@ -268,6 +289,20 @@ public static class PilotCommand
         var leg = snapshot.Legs.FirstOrDefault(l => l.Flight == flight.Code && l.State == LegState.Flying)
             ?? throw new UsageException($"{flight.Code} has no leg flying; name it with --leg {flight.Code}/<leg>");
         return (Verbs.LegTarget(flight.Code, leg.Name), leg.Worker ?? "cli");
+    }
+
+    /// <summary>
+    /// The flight whose plane holds <paramref name="cwd"/>, and who is asking: its reviewer while a review is on, as a
+    /// worker is its leg's in <see cref="LegHere"/>.
+    /// </summary>
+    internal static (string Target, string Who) FlightHere(SnapshotEvent snapshot, string cwd)
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(cwd)) + Path.DirectorySeparatorChar;
+        var flight = snapshot.Flights.FirstOrDefault(f => f.State != FlightState.Landed
+            && folder.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(f.Worktree)) + Path.DirectorySeparatorChar, comparison))
+            ?? throw new UsageException("this folder is in no flight's plane; name the flight with --flight <code>");
+        return (Verbs.FlightTarget(flight.Code), flight.Review is { State: ReviewState.Reviewing } review ? review.Reviewer : "cli");
     }
 
     /// <summary>
