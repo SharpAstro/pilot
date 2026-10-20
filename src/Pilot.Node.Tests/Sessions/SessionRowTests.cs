@@ -18,16 +18,18 @@ public sealed class SessionRowTests : IDisposable
     [InlineData("waiting", null, SessionState.Waiting)]
     [InlineData("busy", null, SessionState.Working)]
     [InlineData(null, "working", SessionState.Working)]
-    [InlineData(null, "blocked", SessionState.Waiting)]
+    [InlineData(null, "blocked", SessionState.Waiting, true)]
+    // Claude Code leaves a background session it stopped marked blocked, with no process left: ended.
+    [InlineData(null, "blocked", SessionState.Ended)]
     [InlineData(null, "done", SessionState.Ended)]
     [InlineData(null, "failed", SessionState.Failed)]
     // A background job Claude Code calls done once a turn ends, its process still there and idle.
     [InlineData("idle", "done", SessionState.Idle)]
     [InlineData("busy", "failed", SessionState.Failed)]
     [InlineData(null, null, SessionState.Ended)]
-    public void AStateComesFromTheStatusWhileItRunsElseFromTheState(string? status, string? state, SessionState expected)
+    public void AStateComesFromTheStatusWhileItRunsElseFromTheState(string? status, string? state, SessionState expected, bool alive = false)
     {
-        SessionStates.Map(status, state).ShouldBe(expected);
+        SessionStates.Map(status, state, alive).ShouldBe(expected);
     }
 
     [Fact]
