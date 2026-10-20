@@ -51,7 +51,9 @@ public sealed partial class ClaudeWorkerLauncher : IWorkerLauncher
             // Documented for interactive sessions; a background one takes it too (its record gains a bridgeSessionId).
             args.Add("--remote-control");
         }
-        args.AddRange(["-n", start.Name, "--permission-mode", "auto"]);
+        // --strict-mcp-config: a repo's own .mcp.json (tianwen's debug inspectors) needs its servers approved, which a
+        // background session has no one to ask, so it sat "blocked" before its first turn. Workers need none of them.
+        args.AddRange(["-n", start.Name, "--permission-mode", "auto", "--strict-mcp-config"]);
         if (start.Model is { Length: > 0 } model)
         {
             args.AddRange(["--model", model]);

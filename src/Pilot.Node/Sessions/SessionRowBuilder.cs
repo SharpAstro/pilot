@@ -26,8 +26,18 @@ public static class SessionStates
                 return SessionState.Idle;
         }
 
-        return state == "working" ? SessionState.Working : SessionState.Ended;
+        // Blocked: waiting on something it cannot ask for in the background (an approval). It is waiting, not ended, so it
+        // reads as waiting on a person and the leg watch rings for it rather than taking it for a stopped session.
+        return state switch
+        {
+            "working" => SessionState.Working,
+            "blocked" => SessionState.Waiting,
+            _ => SessionState.Ended,
+        };
     }
+
+    /// <summary>What a blocked background session waits on, when nothing more precise says.</summary>
+    public const string BlockedWaitingFor = "an approval Claude Code cannot ask for in the background (a project's MCP servers, a trust prompt); open the session to answer it";
 }
 
 /// <summary>A session's row from its parts. Pure: the same parts always make the same row.</summary>
@@ -68,7 +78,9 @@ public static class SessionRowBuilder
             ContextWindow = ContextWindows.For(transcripts.Model, transcripts.RequestedModel, transcripts.ContextTokens),
             LastResponseAt = transcripts.LastResponseAt,
             State = state,
-            WaitingFor = state == SessionState.Waiting ? hookWaiting ?? agent.WaitingFor ?? record?.WaitingFor ?? transcripts.PendingQuestion : null,
+            WaitingFor = state == SessionState.Waiting
+                ? hookWaiting ?? agent.WaitingFor ?? record?.WaitingFor ?? transcripts.PendingQuestion ?? (agent.State == "blocked" ? SessionStates.BlockedWaitingFor : null)
+                : null,
             SpendWeighted = transcripts.SpendWeighted,
             ApiError = apiError,
             ApiErrorResetsAt = transcripts.Stop?.ResetsAt,
