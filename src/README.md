@@ -253,6 +253,12 @@ grants stay this machine's, and so does answering or revoking a grant. Tokens ar
 `LanGrants`); over plain HTTP one can be read off the wire, so this closes "anyone who can reach the port", not a
 hostile network.
 
+**WSL2:** LAN discovery does not cross WSL2's default NAT networking. A node running inside WSL2 is not seen by
+`pilot nodes` from Windows or the LAN, because the beacon does not leave the WSL2 virtual network. Reach such a node by
+its address instead: the WSL2 address (`ip addr` inside WSL2, usually `172.x.x.x`), as `pilot connect <wsl-ip>:47731`
+and `pilot --node <wsl-ip>:47731`. WSL mirrored networking (`networkingMode=mirrored` in `.wslconfig`) may carry the
+beacon too; the address route works either way.
+
 ```bash
 pilot nodes                                    # the nodes announcing themselves on the LAN, by host:port
 pilot connect 192.168.1.20:47731 [--as se2-gui]  # rings an Allow/Deny card on that node; the token is kept here
