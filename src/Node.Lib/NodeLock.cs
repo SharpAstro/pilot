@@ -1,13 +1,12 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text;
-using Pilot.Contracts;
 
-namespace Pilot.Node;
+namespace Node.Lib;
 
 /// <summary>
 /// The lock that admits ONE node to a socket, held for the node's whole life: <c>node.lock</c> beside
-/// <c>node.sock</c>. Adapted from tianwen's <c>NodeLock</c>.
+/// <c>node.sock</c>. Lifted from tianwen's <c>NodeLock</c> and pilot's copy of it.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -40,7 +39,7 @@ public sealed class NodeLock : IDisposable
     /// </summary>
     public static bool TryAcquire(string socketPath, [NotNullWhen(true)] out NodeLock? held, [NotNullWhen(false)] out IOException? refusal)
     {
-        var lockPath = NodeSocket.LockPathFor(socketPath);
+        var lockPath = NodeSocketLocation.LockPathFor(socketPath);
         if (Path.GetDirectoryName(lockPath) is { Length: > 0 } directory)
         {
             Directory.CreateDirectory(directory);
@@ -89,19 +88,18 @@ public sealed class NodeLock : IDisposable
     }
 
     /// <summary>
-    /// What a node refused the lock says about the one holding it. Asks it over the socket, briefly, since a held lock
-    /// cannot be read on every OS; a holder that does not answer (still starting, or not a node at all) is described by
-    /// what the lock refusal said.
+    /// What a node refused the lock says about the one holding it: <paramref name="askHolder"/> asks it over the socket,
+    /// within two seconds, since a held lock cannot be read on every OS; a holder that does not answer (still starting,
+    /// or not a node at all) is described by what the lock refusal said.
     /// </summary>
-    public static async Task<string> DescribeHolderAsync(string socketPath, IOException refusal, CancellationToken cancellationToken)
+    /// <param name="askHolder">Asks the node on the socket who it is, in the application's own words; it may throw.</param>
+    public static async Task<string> DescribeHolderAsync(string socketPath, IOException refusal, Func<string, CancellationToken, Task<string>> askHolder, CancellationToken cancellationToken)
     {
         try
         {
-            using var client = new NodeClient(socketPath);
             using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             budget.CancelAfter(TimeSpan.FromSeconds(2));
-            var node = await client.GetNodeAsync(budget.Token).ConfigureAwait(false);
-            return $"A pilot node is already running on {socketPath} (pid {node.ProcessId}, started {node.StartedAt:u}, data {node.DataFolder})";
+            return await askHolder(socketPath, budget.Token).ConfigureAwait(false);
         }
         catch (Exception ex) when (!cancellationToken.IsCancellationRequested && ex is HttpRequestException or IOException or System.Text.Json.JsonException or OperationCanceledException)
         {

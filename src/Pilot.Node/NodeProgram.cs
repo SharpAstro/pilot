@@ -10,7 +10,7 @@ public static class NodeProgram
     {
         if (!NodeLock.TryAcquire(options.SocketPath, out var held, out var refusal))
         {
-            await error.WriteLineAsync(await NodeLock.DescribeHolderAsync(options.SocketPath, refusal, cancellationToken));
+            await error.WriteLineAsync(await NodeHolder.DescribeAsync(options.SocketPath, refusal, cancellationToken));
             return NodeExitCodes.AlreadyRunning;
         }
 

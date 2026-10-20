@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- The hosting pieces every per-user node in the org shares, client-safe (no ASP.NET): where its socket is, the
+         lock that admits one node to it, and a client's connection to it. Built here first, in pilot, shaped to move
+         into its own repo and package (Node.Lib) and take tianwen's copies of the same with it (phase 6). -->
+    <IsAotCompatible>true</IsAotCompatible>
+    <RootNamespace>Node.Lib</RootNamespace>
+  </PropertyGroup>
+
+</Project>

@@ -9,4 +9,9 @@
     <RootNamespace>Pilot.Contracts</RootNamespace>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Where the socket is and how a client reaches it: the org's shared node pieces. -->
+    <ProjectReference Include="..\Node.Lib\Node.Lib.csproj" />
+  </ItemGroup>
+
 </Project>

@@ -26,6 +26,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Using Include="Node.Lib" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Pilot.Contracts\Pilot.Contracts.csproj" />
     <ProjectReference Include="..\Pilot.Node\Pilot.Node.csproj" />
     <ProjectReference Include="..\Pilot.Cli\Pilot.Cli.csproj" />
