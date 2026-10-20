@@ -22,7 +22,7 @@ public sealed partial class LegCommander(
     public string Cli { get; init; } = Briefs.PilotCli();
 
     /// <summary>The node's socket when it is not the default one, so a worker's CLI reaches this node; null otherwise.</summary>
-    private string? Socket => string.Equals(Path.GetFullPath(options.SocketPath), Path.GetFullPath(NodeSocket.DefaultPath), StringComparison.OrdinalIgnoreCase)
+    public string? Socket => string.Equals(Path.GetFullPath(options.SocketPath), Path.GetFullPath(NodeSocket.DefaultPath), StringComparison.OrdinalIgnoreCase)
         ? null
         : options.SocketPath;
 
@@ -308,7 +308,8 @@ public sealed partial class LegCommander(
         var brief = Briefs.For(flight, next, state.Legs(flight.Code), why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket);
         var started = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, leg.Model, leg.Effort), cancellationToken);
         state.PutLeg(next with { State = LegState.Flying, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), FinishedAt = null, Report = $"go-around: {why}" });
-        state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"went around: {why}", "leg-failed");
+        // Every card about the leg was about its last worker: failed, stopped, idle, waiting.
+        state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"went around: {why}");
     }
 
     private async Task MergeAsync(CommandRequest command, CancellationToken cancellationToken)

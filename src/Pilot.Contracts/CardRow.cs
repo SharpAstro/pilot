@@ -5,8 +5,8 @@ namespace Pilot.Contracts;
 /// <summary>
 /// One card: an event that needs a person, or that the watchtower handled, with its choices in one place (after Sam's
 /// campaigner: one event, one card). A card leaves when its thing is done: answered, dismissed, or closed by the node
-/// when its flight lands or its leg finishes, so nothing sits unread forever. State is never a card: a session that
-/// went quiet changes how its row looks, nothing more.
+/// when its flight lands or its leg finishes, so nothing sits unread forever. State alone is not a card: a session that
+/// went quiet changes how its row looks, nothing more, unless it is a flying leg's worker, whose flight it stalls.
 /// </summary>
 public sealed record CardRow
 {

@@ -1,0 +1,222 @@
+using Pilot.Contracts;
+
+namespace Pilot.Node.Flights;
+
+/// <summary>
+/// The node's watch on every flying leg's worker, the reason v2 exists: a flight never derails silently. A worker the
+/// usage limit stopped is resumed once the limit resets; one that went idle with its leg unfinished is nudged, and rung
+/// for when nudging did not help; one that waits on a person, failed, or never showed up is rung for at once. Every
+/// such card closes by itself when the worker is working again, and a go-around or a finished leg closes them too.
+/// </summary>
+/// <remarks>
+/// What it has resumed and nudged is kept in memory only: a node restarted mid-flight may nudge a worker once more than
+/// it would have, which costs a turn, never a silent stall.
+/// </remarks>
+public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationToken, Task<CommandResult>> run, TimeProvider time) : BackgroundService
+{
+    /// <summary>The kinds of card the watch raises, all about a leg; the watch closes them when its worker works again.</summary>
+    public static readonly string[] Kinds = [Stopped, Idle, Waiting, Failed, Missing];
+
+    public const string Stopped = "worker-stopped";
+    public const string Idle = "worker-idle";
+    public const string Waiting = "worker-waiting";
+    public const string Failed = "worker-failed";
+    public const string Missing = "worker-missing";
+
+    /// <summary>Who the watch's commands are from, in the command log and on the cards it closes.</summary>
+    public const string Who = "node";
+
+    /// <summary>How often it looks.</summary>
+    public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>How long after its limit resets a stopped worker is resumed: the reset time is the API's, not this clock's.</summary>
+    public TimeSpan ResetMargin { get; init; } = TimeSpan.FromMinutes(2);
+
+    /// <summary>How long a worker sits idle on an unfinished leg before it is nudged: a turn that just ended may be followed by its report.</summary>
+    public TimeSpan IdleGrace { get; init; } = TimeSpan.FromMinutes(3);
+
+    /// <summary>How long a started worker has to show up in the session listing.</summary>
+    public TimeSpan ShowUpGrace { get; init; } = TimeSpan.FromMinutes(3);
+
+    /// <summary>How many times one worker is nudged before the watch rings instead.</summary>
+    public int MaxNudges { get; init; } = 2;
+
+    /// <summary>How a worker runs the CLI, socket and all, for the nudge: <see cref="Briefs.Run"/>, as its brief says it.</summary>
+    public string Pilot { get; init; } = "pilot";
+
+    // By worker job: the reset each was resumed after, and how often it was nudged.
+    private readonly Dictionary<string, DateTimeOffset> _resumedAfter = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _nudges = new Dictionary<string, int>(StringComparer.Ordinal);
+
+    protected override async Task ExecuteAsync(CancellationToken stopping)
+    {
+        while (!stopping.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(Interval, time, stopping);
+                await LookAsync(stopping);
+            }
+            catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                // The watch must outlive anything one look throws: a dead watch is the silent derail itself.
+                await Console.Error.WriteLineAsync($"leg watch: one look failed, looking again: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>One look at every flying leg's worker, acting on what it finds.</summary>
+    public async Task LookAsync(CancellationToken cancellationToken)
+    {
+        var now = time.GetUtcNow();
+        var sessions = state.Sessions();
+        foreach (var leg in state.Legs().Where(l => l.State == LegState.Flying && l.WorkerJob is not null))
+        {
+            var subject = Verbs.LegTarget(leg.Flight, leg.Name);
+            var worker = sessions.FirstOrDefault(s => s.Id == leg.WorkerJob);
+            if (worker is null)
+            {
+                if (leg.StartedAt is { } started && now - started > ShowUpGrace)
+                {
+                    Ring(leg, Missing, $"{Name(leg)}'s worker {leg.Worker} never showed up",
+                        $"started {Ago(now, started)} ago as job {leg.WorkerJob}, and no session of that id is running on this machine");
+                }
+                continue;
+            }
+            state.CloseCardsAbout(subject, "it showed up", Missing);
+
+            switch (worker.State)
+            {
+                case SessionState.Working:
+                    state.CloseCardsAbout(subject, "working again", Kinds);
+                    break;
+                case SessionState.Waiting:
+                    Ring(leg, Waiting, $"{Name(leg)}'s worker waits on you",
+                        worker.WaitingFor is { Length: > 0 } what ? what : "a question or a permission", worker);
+                    break;
+                case SessionState.Failed:
+                    Ring(leg, Failed, $"{Name(leg)}'s worker failed", worker.ApiError is { } why ? $"the API said {why}" : null);
+                    break;
+                case SessionState.Idle or SessionState.Ended when worker.ApiError is { } error:
+                    await StoppedAsync(leg, worker, error, now, cancellationToken);
+                    break;
+                case SessionState.Idle or SessionState.Ended:
+                    await IdleAsync(leg, worker, now, cancellationToken);
+                    break;
+            }
+        }
+    }
+
+    private async Task StoppedAsync(LegRow leg, SessionRow worker, string error, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var job = leg.WorkerJob!;
+        if (worker.ApiErrorResetsAt is not { } resets)
+        {
+            Ring(leg, Stopped, $"{Name(leg)}'s worker was stopped by the API", $"{error}, with no time it clears", worker);
+            return;
+        }
+        if (now < resets + ResetMargin)
+        {
+            // Nothing to do yet but say so: the card is the controller's to resume sooner (extra usage) or go around.
+            state.RaiseCard(CardBin.ForYou, Stopped, Subject(leg), $"{Name(leg)}'s worker hit the usage limit; it resumes at {resets.ToLocalTime():HH:mm}",
+                $"{error}; the node resumes it {ResetMargin.TotalMinutes:0} minutes after the limit resets", Choices(leg, worker, resumeLabel: "Resume now"));
+            return;
+        }
+        if (_resumedAfter.TryGetValue(job, out var done) && done >= resets)
+        {
+            // Resumed for this reset already and stopped again on the same one: the resume did not take.
+            Ring(leg, Stopped, $"{Name(leg)}'s worker is still stopped after its limit reset", $"{error}; resumed once at {done.ToLocalTime():HH:mm} to no effect", worker);
+            return;
+        }
+
+        _resumedAfter[job] = resets;
+        var result = await SayAsync(worker, "The usage limit that stopped you has reset. Carry on with your leg from where you left off.", cancellationToken);
+        if (result.Ok)
+        {
+            state.CloseCardsAbout(Subject(leg), "resumed after the limit reset", Stopped);
+            state.RaiseCard(CardBin.Handled, "worker-resumed", Subject(leg), $"{Name(leg)}'s worker resumed after its usage limit reset");
+        }
+        else
+        {
+            Ring(leg, Stopped, $"{Name(leg)}'s worker could not be resumed after its limit reset", result.Error, worker);
+        }
+    }
+
+    private async Task IdleAsync(LegRow leg, SessionRow worker, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var since = worker.LastResponseAt ?? worker.StartedAt;
+        if (now - since < IdleGrace)
+        {
+            return;
+        }
+        var job = leg.WorkerJob!;
+        var nudges = _nudges.GetValueOrDefault(job);
+        if (nudges >= MaxNudges)
+        {
+            Ring(leg, Idle, $"{Name(leg)}'s worker stopped with the leg unfinished",
+                $"idle for {Ago(now, since)}, nudged {nudges} {(nudges == 1 ? "time" : "times")} to no avail{(leg.Report is { Length: > 0 } r ? $"; last report: {r.Split('\n')[0]}" : "")}", worker);
+            return;
+        }
+
+        _nudges[job] = nudges + 1;
+        var result = await SayAsync(worker, Nudge(leg), cancellationToken);
+        if (result.Ok)
+        {
+            state.RaiseCard(CardBin.Handled, "worker-nudged", Subject(leg), $"{Name(leg)}'s worker went idle with the leg unfinished; nudged ({nudges + 1} of {MaxNudges})");
+        }
+        else
+        {
+            Ring(leg, Idle, $"{Name(leg)}'s worker stopped with the leg unfinished, and could not be nudged", result.Error, worker);
+        }
+    }
+
+    /// <summary>What an idle worker is told: its leg is not finished, and the two ways to finish it.</summary>
+    internal string Nudge(LegRow leg)
+    {
+        var open = leg.Checklist.Count(i => !i.Done);
+        var steps = leg.Checklist.Length == 0 ? "" : open == 0 ? " Every step is ticked." : $" {open} of {leg.Checklist.Length} steps are not ticked yet.";
+        return $"Your leg `{leg.Name}` of {leg.Flight} is not finished yet.{steps} If there is more to do, carry on. When every step is done and "
+            + $"the Done-when holds, run `{Pilot} leg finish done \"<one-line report>\"`; if you cannot go on, run `{Pilot} leg finish failed \"<why>\"`.";
+    }
+
+    private Task<CommandResult> SayAsync(SessionRow worker, string text, CancellationToken cancellationToken) =>
+        run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(worker.Id), Args = [text], Who = Who }, cancellationToken);
+
+    private void Ring(LegRow leg, string kind, string title, string? detail, SessionRow? worker = null) =>
+        state.RaiseCard(CardBin.Ring, kind, Subject(leg), title, detail, Choices(leg, worker, resumeLabel: kind == Idle ? "Nudge" : "Resume"));
+
+    /// <summary>
+    /// A resume (or nudge) when there is a worker to say it to, and a go-around, which starts a fresh one; a waiting
+    /// worker is answered in its own session, so it gets the go-around only.
+    /// </summary>
+    private CardChoice[] Choices(LegRow leg, SessionRow? worker, string resumeLabel)
+    {
+        var goAround = new CardChoice
+        {
+            Label = "Go around",
+            Verb = Verbs.GoAround,
+            Target = Subject(leg),
+            Args = [$"the last worker stalled ({worker?.ApiError ?? worker?.State.ToString().ToLowerInvariant() ?? "never showed up"})"],
+        };
+        if (worker is null || worker.State == SessionState.Waiting)
+        {
+            return [goAround];
+        }
+        var text = resumeLabel == "Nudge" ? Nudge(leg) : "Carry on with your leg from where you left off.";
+        return [new CardChoice { Label = resumeLabel, Verb = Verbs.Say, Target = Verbs.SessionTarget(worker.Id), Args = [text] }, goAround];
+    }
+
+    private static string Subject(LegRow leg) => Verbs.LegTarget(leg.Flight, leg.Name);
+
+    private static string Name(LegRow leg) => $"{leg.Flight}/{leg.Name}";
+
+    private static string Ago(DateTimeOffset now, DateTimeOffset then)
+    {
+        var span = now - then;
+        return span.TotalHours >= 1 ? $"{span.TotalHours:0.#} h" : $"{Math.Max(1, (int)span.TotalMinutes)} min";
+    }
+}

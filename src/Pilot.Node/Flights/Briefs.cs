@@ -10,6 +10,18 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public static class Briefs
 {
+    /// <summary>How a worker runs the CLI: its path, quoted when it holds a space, and the node's socket when it is not the default.</summary>
+    public static string Run(string? cli, string? socket)
+    {
+        var pilot = cli ?? "pilot";
+        var run = pilot.Contains(' ', StringComparison.Ordinal) ? $"\"{pilot}\"" : pilot;
+        if (socket is not null)
+        {
+            run += $" --node-socket \"{socket}\"";
+        }
+        return run;
+    }
+
     /// <summary>What the plane holds so far, for a go-around's brief: its commits past the base and the files they touch.</summary>
     public sealed record PlaneState(string Commits, string DiffStat);
 
@@ -37,12 +49,7 @@ public static class Briefs
     /// <param name="socket">The node's socket when it is not the default one: the CLI is told it, or it would ask another node.</param>
     public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null)
     {
-        var pilot = cli ?? "pilot";
-        var run = pilot.Contains(' ', StringComparison.Ordinal) ? $"\"{pilot}\"" : pilot;
-        if (socket is not null)
-        {
-            run += $" --node-socket \"{socket}\"";
-        }
+        var run = Run(cli, socket);
         var text = new StringBuilder();
         var title = flight.Title is { Length: > 0 } t ? $": {t}" : "";
         text.AppendLine($"You are the worker for leg `{leg.Name}` of flight {flight.Code} ({flight.Repo} #{flight.Issue}{title}).");
