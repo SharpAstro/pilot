@@ -47,6 +47,7 @@ public sealed class NodeState
     private readonly Dictionary<(string Flight, string Name), LegRow> _legs = [];
     private readonly Dictionary<string, CardRow> _cards = new Dictionary<string, CardRow>(StringComparer.Ordinal);
     private UsageRow? _usage;
+    private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
 
     // The latest deltas, oldest first, serialised once: what a resuming client is sent.
     private readonly Queue<(long Seq, byte[] Json)> _held = new Queue<(long Seq, byte[] Json)>();
@@ -280,6 +281,20 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>Gives an open card new choices (a merge's checks turned green, say); false when it is not open or nothing changed.</summary>
+    public bool UpdateChoices(string id, IReadOnlyList<CardChoice> choices)
+    {
+        lock (_gate)
+        {
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open || card.Choices.SequenceEqual(choices))
+            {
+                return false;
+            }
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { Choices = [.. choices] } });
+            return true;
+        }
+    }
+
     /// <summary>Opens a closed card again, as it was before: an answer whose choice was refused.</summary>
     public void ReopenCard(string id)
     {
@@ -313,6 +328,43 @@ public sealed class NodeState
     // Record equality compares the connections array by reference.
     private static bool Same(FlightRow a, FlightRow b) =>
         a with { Connections = [] } == b with { Connections = [] } && a.Connections.SequenceEqual(b.Connections, StringComparer.Ordinal);
+
+    /// <summary>The jobs, newest first.</summary>
+    public JobRow[] Jobs()
+    {
+        lock (_gate)
+        {
+            return [.. _jobs.Values.OrderByDescending(j => j.StartedAt)];
+        }
+    }
+
+    /// <summary>The next job id, <c>j&lt;n&gt;</c>, never one used before.</summary>
+    public string NextJobId()
+    {
+        lock (_gate)
+        {
+            return $"j{(_jobs.Count == 0 ? 1 : _jobs.Keys.Max(k => int.TryParse(k.AsSpan(1), out var n) ? n : 0) + 1)}";
+        }
+    }
+
+    /// <summary>Puts a job: added when new, changed when it differs, nothing when it is the same.</summary>
+    public void PutJob(JobRow job)
+    {
+        lock (_gate)
+        {
+            if (_jobs.TryGetValue(job.Id, out var held))
+            {
+                if (held != job)
+                {
+                    Publish(new JobChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Job = job });
+                }
+            }
+            else
+            {
+                Publish(new JobAddedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Job = job });
+            }
+        }
+    }
 
     /// <summary>The account's usage as last read; null before any.</summary>
     public UsageRow? Usage()
@@ -391,15 +443,15 @@ public sealed class NodeState
     /// <param name="error">Why it was not done, or null when it was.</param>
     /// <param name="way">Which way it went (<see cref="CommandResult.Way"/>).</param>
     /// <param name="sessionId">The target's new session id (<see cref="CommandResult.SessionId"/>).</param>
-    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null)
+    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null)
     {
         lock (_gate)
         {
-            return CompleteLocked(command, error, way, sessionId);
+            return CompleteLocked(command, error, way, sessionId, made);
         }
     }
 
-    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId)
+    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null)
     {
         var result = new CommandResult
         {
@@ -410,6 +462,7 @@ public sealed class NodeState
             Error = error,
             Way = error is null ? way : null,
             SessionId = error is null ? sessionId : null,
+            Made = error is null ? made : null,
             Seq = _seq + 1,
         };
         Publish(new CommandResultEvent { Seq = result.Seq, At = _time.GetUtcNow(), Result = result });
@@ -513,6 +566,12 @@ public sealed class NodeState
             case UsageChangedEvent usage:
                 _usage = usage.Usage;
                 break;
+            case JobAddedEvent added:
+                _jobs[added.Job.Id] = added.Job;
+                break;
+            case JobChangedEvent changed:
+                _jobs[changed.Job.Id] = changed.Job;
+                break;
         }
     }
 
@@ -536,6 +595,10 @@ public sealed class NodeState
             _cards[card.Id] = card;
         }
         _usage = snapshot.Usage;
+        foreach (var job in snapshot.Jobs ?? [])
+        {
+            _jobs[job.Id] = job;
+        }
         _seq = snapshot.Seq;
     }
 
@@ -550,6 +613,7 @@ public sealed class NodeState
         Legs = [.. _legs.Values],
         Cards = [.. _cards.Values],
         Usage = _usage,
+        Jobs = [.. _jobs.Values],
     };
 
     private static byte[] Serialize(NodeEvent nodeEvent) => JsonSerializer.SerializeToUtf8Bytes(nodeEvent, PilotJsonContext.Default.NodeEvent);

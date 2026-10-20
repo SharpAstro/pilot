@@ -45,6 +45,12 @@ public static class NodeCommandLine
         var machine = new Option<string?>("--machine") { Description = "The machine's prefix in session names, two letters and a number (DU1); else PILOT_MACHINE, else from its name" };
         var noWatchtower = new Option<bool>("--no-watchtower") { Description = "Keep no watchtower session" };
         var lan = new Option<bool>("--lan") { Description = "Listen on the LAN too, and announce it: anyone there may watch, a command needs a grant this machine's person allows" };
+        var maxJobs = new Option<int>("--max-jobs") { Description = "How many jobs (pilot run) run at once, from every flight; the rest wait their turn. 1 by default", DefaultValueFactory = _ => 1 };
+        var jobMemory = new Option<double>("--job-memory")
+        {
+            Description = "The free memory, in GB, a job waits for before it starts; 2 by default, 0 to not wait",
+            DefaultValueFactory = _ => 2,
+        };
         var lanPort = new Option<int>("--lan-port") { Description = $"The TCP port for the LAN; {NodeWire.DefaultLanPort} by default", DefaultValueFactory = _ => NodeWire.DefaultLanPort };
         var localOnly = new Option<bool>(LocalOnlyMode.Argument)
         {
@@ -81,7 +87,7 @@ public static class NodeCommandLine
 
         var root = new RootCommand("pilot v2's node: one per machine, the one writer of its flights, legs, cards and sessions")
         {
-            Options = { socket, data, machine, noWatchtower, watchtowerFolder, lan, lanPort, localOnly },
+            Options = { socket, data, machine, noWatchtower, watchtowerFolder, lan, lanPort, localOnly, maxJobs, jobMemory },
             Subcommands = { hook, hooks },
         };
         root.SetAction(async (parseResult, ct) =>
@@ -101,7 +107,8 @@ public static class NodeCommandLine
             }
             var options = new NodeOptions(socketPath, Path.GetFullPath(parseResult.GetValue(data) ?? NodeSocket.DefaultDataFolder), MachinePrefix: parseResult.GetValue(machine),
                 Watchtower: !parseResult.GetValue(noWatchtower), WatchtowerFolderGiven: parseResult.GetValue(watchtowerFolder),
-                Lan: wantsLan && mode.MayBindTheNetwork, LanPort: parseResult.GetValue(lanPort));
+                Lan: wantsLan && mode.MayBindTheNetwork, LanPort: parseResult.GetValue(lanPort),
+                MaxJobs: parseResult.GetValue(maxJobs), JobMemoryGigabytes: parseResult.GetValue(jobMemory));
             return await NodeProgram.RunAsync(options, error, ct);
         });
         return root;

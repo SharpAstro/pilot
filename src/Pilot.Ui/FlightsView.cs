@@ -219,6 +219,9 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
     /// <summary>Opens an artifact: a file on the machine, or a URL.</summary>
     public Action<string>? OnOpen { get; set; }
 
+    /// <summary>The node's jobs, for the selected flight's details; set by the host each frame.</summary>
+    public IReadOnlyList<JobRow> Jobs { get; set; } = [];
+
     /// <summary>The selected flight's index, or -1.</summary>
     public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
@@ -321,6 +324,15 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
                 review.State == ReviewState.Passed ? Flying : review.State == ReviewState.Changes ? Held : Dim).RowH(20f));
         }
 
+        // Its jobs: the long runs its workers handed to the node, running first.
+        foreach (var job in Jobs.Where(j => j.Flight == flight.Code).OrderBy(j => j.State switch { JobState.Running => 0, JobState.Queued => 1, _ => 2 })
+            .ThenByDescending(j => j.StartedAt).Take(2))
+        {
+            var color = job.State switch { JobState.Running => Flying, JobState.Queued => Held, JobState.Succeeded => Landed, _ => Failed };
+            var waiting = job.State == JobState.Queued && job.Step is { } step ? $" ({step})" : "";
+            legs.Add(Layout.Builder.Text($"job {job.Id} {job.State.ToString().ToLowerInvariant()}{waiting}: {job.Command}", 12f, color).RowH(20f));
+        }
+
         var artifacts = new List<Layout.Node> { Label("artifacts").RowH(20f) };
         var all = line.LegRows.SelectMany(l => l.Artifacts.Select(a => (Leg: l.Name, Artifact: a))).OrderByDescending(x => x.Artifact.At).Take(5).ToList();
         if (flight.PullRequestUrl is { } url)
@@ -401,19 +413,43 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
             .RowH(CommandBarHeight + OutputLineHeight * output.Count);
     }
 
-    private static Layout.Node Header(FlightsScreen screen) =>
-        Layout.Builder.VStack(
-                Layout.Builder.HStack(
-                        Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
-                        Layout.Builder.Text("flights", 20f, Dim).WAuto(),
-                        Layout.Builder.Spacer().WStar(),
-                        Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto())
-                    .WithGap(12f)
-                    .RowH(32f),
-                Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC", 12f, Dim).RowH(20f))
+    /// <summary>The dashboard's eye on the LAN; its line and the nodes it heard show under the header when set.</summary>
+    public LanWatch? Lan { get; set; }
+
+    private const float LanRowHeight = 24f;
+
+    private Layout.Node Header(FlightsScreen screen)
+    {
+        var rows = new List<Layout.Node>
+        {
+            Layout.Builder.HStack(
+                    Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
+                    Layout.Builder.Text("flights", 20f, Dim).WAuto(),
+                    Layout.Builder.Spacer().WStar(),
+                    Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto())
+                .WithGap(12f)
+                .RowH(32f),
+            Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC", 12f, Dim).RowH(20f),
+        };
+        if (Lan is { } lan)
+        {
+            // Discovering, the nodes heard, and every ask still waiting: nothing the dashboard waits for is invisible.
+            var line = new List<Layout.Node> { Layout.Builder.Text(lan.Line(screen.AsOf), 12f, Held).WAuto() };
+            if (CanCommand)
+            {
+                foreach (var node in lan.Nodes.Take(4))
+                {
+                    line.Add(Pill($"{node.Name} · {node.Endpoint}", $"lan:{node.Endpoint}", () => Prefill($"connect {node.Endpoint}")));
+                }
+            }
+            line.Add(Layout.Builder.Spacer().WStar());
+            rows.Add(Layout.Builder.HStack([.. line]).WithGap(8f).RowH(LanRowHeight));
+        }
+        return Layout.Builder.VStack([.. rows])
             .Pad(Gutter, 6f)
             .Bg(HeaderBg)
-            .RowH(HeaderHeight);
+            .RowH(HeaderHeight + (Lan is null ? 0f : LanRowHeight));
+    }
 
     private Layout.Node Main(FlightsScreen screen)
     {

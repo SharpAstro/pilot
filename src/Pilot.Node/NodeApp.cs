@@ -94,6 +94,20 @@ public static class NodeApp
             Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "rate-limits.json"),
             services.GetRequiredService<TimeProvider>()));
         builder.Services.AddHostedService(services => services.GetRequiredService<UsageReader>());
+        builder.Services.AddSingleton(services =>
+        {
+            var commands = services.GetRequiredService<NodeCommands>();
+            var nodeOptions = services.GetRequiredService<NodeOptions>();
+            return new JobRunner(services.GetRequiredService<NodeState>(), nodeOptions, services.GetRequiredService<TimeProvider>())
+            {
+                Say = commands.RunAsync,
+                MaxRunning = Math.Max(1, nodeOptions.MaxJobs),
+                MinFreeMemory = (long)(Math.Max(0, nodeOptions.JobMemoryGigabytes) * (1L << 30)),
+            };
+        });
+        builder.Services.AddHostedService(services => services.GetRequiredService<JobRunner>());
+        builder.Services.AddSingleton<PrChecks>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<PrChecks>());
         builder.Services.AddSingleton<Digest>();
         builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());
         builder.Services.AddSingleton(services => new SessionTracker(

@@ -7,7 +7,8 @@ public static class SessionStates
 {
     /// <param name="status">busy, idle or waiting: the agents row's, else the session record's.</param>
     /// <param name="state">A background session's: working, blocked, done, failed.</param>
-    public static SessionState Map(string? status, string? state)
+    /// <param name="alive">Whether its process still runs (the agents row has a pid).</param>
+    public static SessionState Map(string? status, string? state, bool alive = false)
     {
         if (state == "failed")
         {
@@ -26,8 +27,19 @@ public static class SessionStates
                 return SessionState.Idle;
         }
 
-        return state == "working" ? SessionState.Working : SessionState.Ended;
+        // Blocked: waiting on something it cannot ask for in the background (an approval). While its process runs it is
+        // waiting, not ended, so it reads as waiting on a person and the leg watch rings for it rather than taking it for a
+        // stopped session. Claude Code leaves a session it stopped marked blocked too, with no process: that one ended.
+        return state switch
+        {
+            "working" => SessionState.Working,
+            "blocked" when alive => SessionState.Waiting,
+            _ => SessionState.Ended,
+        };
     }
+
+    /// <summary>What a blocked background session waits on, when nothing more precise says.</summary>
+    public const string BlockedWaitingFor = "an approval Claude Code cannot ask for in the background (a project's MCP servers, a trust prompt); open the session to answer it";
 }
 
 /// <summary>A session's row from its parts. Pure: the same parts always make the same row.</summary>
@@ -42,7 +54,7 @@ public static class SessionRowBuilder
     /// the transition itself, where the listing is read every few seconds.</param>
     public static SessionRow Build(ClaudeAgentRow agent, TranscriptFacts transcripts, SessionRecord? record, string? repo, SessionRoleInfo role, HookState? hook = null)
     {
-        var state = SessionStates.Map(agent.Status ?? record?.Status, agent.State);
+        var state = SessionStates.Map(agent.Status ?? record?.Status, agent.State, agent.Pid is not null);
         string? hookWaiting = null;
         if (hook?.State is { } hooked && (agent.Pid is not null || hooked == SessionState.Ended))
         {
@@ -68,7 +80,9 @@ public static class SessionRowBuilder
             ContextWindow = ContextWindows.For(transcripts.Model, transcripts.RequestedModel, transcripts.ContextTokens),
             LastResponseAt = transcripts.LastResponseAt,
             State = state,
-            WaitingFor = state == SessionState.Waiting ? hookWaiting ?? agent.WaitingFor ?? record?.WaitingFor ?? transcripts.PendingQuestion : null,
+            WaitingFor = state == SessionState.Waiting
+                ? hookWaiting ?? agent.WaitingFor ?? record?.WaitingFor ?? transcripts.PendingQuestion ?? (agent.State == "blocked" ? SessionStates.BlockedWaitingFor : null)
+                : null,
             SpendWeighted = transcripts.SpendWeighted,
             ApiError = apiError,
             ApiErrorResetsAt = transcripts.Stop?.ResetsAt,

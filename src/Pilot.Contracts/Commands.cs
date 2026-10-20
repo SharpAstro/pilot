@@ -47,6 +47,9 @@ public sealed record CommandResult
     /// </summary>
     public string? SessionId { get; init; }
 
+    /// <summary>What the command made, when it made something with an id of its own: a <c>run</c>'s job (<c>j3</c>).</summary>
+    public string? Made { get; init; }
+
     /// <summary>
     /// The number of the <see cref="CommandResultEvent"/> that carries this result on the stream, so the client that
     /// posted the command can tell its own result from another client's.
@@ -131,6 +134,21 @@ public static class Verbs
 
     /// <summary><c>dismiss card/&lt;id&gt; [why…]</c>: closes the card with nothing done.</summary>
     public const string Dismiss = "dismiss";
+
+    /// <summary>
+    /// <c>run session/&lt;id&gt;|node &lt;cwd&gt; &lt;timeout seconds, 0 for the default&gt; &lt;command…&gt;</c>: hands a long run
+    /// to the node as a job; the session named is woken with its result when it ends. The result's
+    /// <see cref="CommandResult.Made"/> is the job's id.
+    /// </summary>
+    public const string Run = "run";
+
+    /// <summary><c>cancel-job job/&lt;id&gt;</c>: stops a running job; its owner is told, as of any job's end.</summary>
+    public const string CancelJob = "cancel-job";
+
+    /// <summary>What a job target starts with: <c>job/&lt;id&gt;</c>.</summary>
+    public const string JobTargetPrefix = "job/";
+
+    public static string JobTarget(string id) => JobTargetPrefix + id;
 
     /// <summary><c>answer-grant node &lt;ask id&gt; allow|deny</c>: answers a LAN client's ask for control. This machine only.</summary>
     public const string AnswerGrant = "answer-grant";

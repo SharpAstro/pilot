@@ -121,6 +121,10 @@ public static class Briefs
         text.AppendLine($"- When every step is done and the Done-when holds: `{run} leg finish done \"<one-line report>\"`. The node reruns the");
         text.AppendLine("  check itself and refuses while a step is open or the check fails; fix what it says and finish again.");
         text.AppendLine($"- When you cannot go on: `{run} leg finish failed \"<why>\"`.");
+        text.AppendLine($"- A full build or test run, or anything else long: `{run} run -- <command>`, then end your turn. The node");
+        text.AppendLine("  runs it as a job and wakes you with how it ended and its last lines; do not wait for it or poll it. The machine");
+        text.AppendLine("  is shared with other flights, so it may wait its turn first; that costs you nothing. Short commands (one test,"
+            + " a quick build of one project) you run yourself, as usual."); 
         text.AppendLine();
         text.AppendLine("## When you stop");
         text.AppendLine("End your turn with a short report: what you did, how you checked it (the Done-when, rerun), and anything");
