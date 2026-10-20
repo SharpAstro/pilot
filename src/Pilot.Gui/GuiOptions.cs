@@ -15,6 +15,9 @@ internal sealed record GuiOptions
     /// <summary>The node's socket; null takes <c>PILOT_NODE_SOCKET</c>, then the per-user default.</summary>
     public string? NodeSocket { get; init; }
 
+    /// <summary>A node on the LAN, <c>host:port</c>; null takes <c>PILOT_NODE</c>, then this machine's on <see cref="NodeSocket"/>.</summary>
+    public string? Node { get; init; }
+
     /// <summary>The session <see cref="SayText"/> goes to: a row id, a session id or its start, or a name.</summary>
     public string? SayTo { get; init; }
 
@@ -42,6 +45,7 @@ internal sealed record GuiOptions
     {
         var snapshot = new Option<string?>("--snapshot") { Description = "A snapshot file to show instead of the live node" };
         var socket = new Option<string?>("--node-socket") { Description = "The node's socket; else PILOT_NODE_SOCKET, else this user's default" };
+        var node = new Option<string?>("--node") { Description = "A node on the LAN, host:port (pilot nodes finds them; pilot connect gets its grant); else PILOT_NODE" };
         var capture = new Option<string?>("--capture") { Description = "Render one frame on the CPU to this PNG (and a .rows.txt beside it), then exit" };
         var size = new Option<string?>("--size") { Description = "The capture's size, <W>x<H>; 1280x800 by default" };
         var page = new Option<string?>("--page") { Description = "The page a capture shows: sessions or flights" };
@@ -56,7 +60,7 @@ internal sealed record GuiOptions
 
         var root = new RootCommand("pilot v2's GUI: every Claude session on the machine, live from the node")
         {
-            Options = { snapshot, socket, capture, size, page, exitAfter, say },
+            Options = { snapshot, socket, node, capture, size, page, exitAfter, say },
         };
         var parsed = root.Parse([.. args]);
 
@@ -77,6 +81,7 @@ internal sealed record GuiOptions
         {
             Snapshot = parsed.GetValue(snapshot),
             NodeSocket = parsed.GetValue(socket),
+            Node = parsed.GetValue(node),
             Capture = parsed.GetValue(capture),
             Page = parsed.GetValue(page) == "flights" ? PilotPage.Flights : PilotPage.Sessions,
         };
@@ -103,9 +108,9 @@ internal sealed record GuiOptions
             // Everything after the session is the text, so it needs no quoting.
             options = options with { SayTo = words[0], SayText = string.Join(' ', words.Skip(1)) };
         }
-        if (options.Snapshot is not null && (options.NodeSocket is not null || options.SayTo is not null))
+        if (options.Snapshot is not null && (options.NodeSocket is not null || options.Node is not null || options.SayTo is not null))
         {
-            error = "--snapshot shows a file, so it takes no node: drop --node-socket and --say.";
+            error = "--snapshot shows a file, so it takes no node: drop --node-socket, --node and --say.";
             return null;
         }
 

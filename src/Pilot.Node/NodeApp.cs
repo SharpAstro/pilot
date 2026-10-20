@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
+using LAN.Lib;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Pilot.Node.Sessions;
@@ -21,7 +22,15 @@ public static class NodeApp
 
         // No args: the command line is the node's own (NodeOptions), not configuration for the host to read.
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], ContentRootPath = AppContext.BaseDirectory });
-        builder.WebHost.ConfigureKestrel(kestrel => kestrel.ListenOnNodeSocket(held));
+        builder.WebHost.ConfigureKestrel(kestrel =>
+        {
+            kestrel.ListenOnNodeSocket(held);
+            if (options.Lan)
+            {
+                // Every address, as a LAN client may come by any of this machine's: what it may do there is NodeLan's.
+                kestrel.ListenAnyIP(options.LanPort);
+            }
+        });
         // The host's own start and stop lines stay; a line per request does not, as every client polls and streams.
         builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
         builder.Services.ConfigureHttpJsonOptions(json => json.SerializerOptions.TypeInfoResolverChain.Insert(0, PilotJsonContext.Default));
@@ -44,6 +53,19 @@ public static class NodeApp
         builder.Services.AddSingleton<IGitHub, GhCli>();
         builder.Services.AddSingleton<LegCommander>();
         builder.Services.AddSingleton<NodeCommands>();
+        builder.Services.AddSingleton<NodeLan>();
+        if (options.Lan && options.LanAnnounce)
+        {
+            builder.Services.AddLanDiscovery(lan =>
+            {
+                lan.ServiceName = NodeWire.LanService;
+                lan.ServicePort = options.LanPort;
+                lan.NodeName = $"{options.Machine} {Environment.MachineName}";
+                lan.StableNodeIdPath = Path.Combine(options.DataFolder, "lan-node-id");
+                lan.Properties["machine"] = options.Machine;
+                lan.Properties["wire"] = NodeWire.Version.ToString(CultureInfo.InvariantCulture);
+            });
+        }
         builder.Services.AddSingleton(services =>
         {
             var legs = services.GetRequiredService<LegCommander>();
@@ -100,8 +122,44 @@ public static class NodeApp
         var app = builder.Build();
         app.UseWebSockets();
         app.RestrictNodeSocketToItsOwner(held);
+        app.Use(GateLanAsync);
         MapRoutes(app);
         return app;
+    }
+
+    /// <summary>
+    /// What a request from the LAN may do: watch (the node, the sessions, the event stream), ask for a grant and read its
+    /// ticket; and, with a grant's token, send commands, which go out under the grant's label. Hooks and the list of
+    /// grants are this machine's alone. A request on the socket passes untouched: its owner is this machine's person.
+    /// </summary>
+    private static async Task GateLanAsync(HttpContext context, RequestDelegate next)
+    {
+        if (!NodeLan.IsRemote(context))
+        {
+            await next(context);
+            return;
+        }
+
+        var path = context.Request.Path.Value ?? "";
+        var get = HttpMethods.IsGet(context.Request.Method);
+        var post = HttpMethods.IsPost(context.Request.Method);
+        var watching = get && (path is NodeWire.NodeRoute or NodeWire.SessionsRoute or NodeWire.EventsRoute || path.StartsWith(NodeWire.GrantsRoute + "/", StringComparison.Ordinal));
+        if (watching || (post && path == NodeWire.GrantsRoute))
+        {
+            await next(context);
+            return;
+        }
+        if (post && path == NodeWire.CommandsRoute && await context.RequestServices.GetRequiredService<NodeLan>().VerifyAsync(context) is { } grant)
+        {
+            context.Items[NodeLan.GrantLabelKey] = grant.Label;
+            await next(context);
+            return;
+        }
+
+        var why = post && path == NodeWire.CommandsRoute
+            ? "a command from the LAN needs a grant: pilot connect <host:port> asks this node's person for one"
+            : "this route is for this machine only";
+        await Results.Json(ResponseEnvelope<CommandResult>.Fail(why, 403), PilotJsonContext.Default.ResponseEnvelopeCommandResult, statusCode: 403).ExecuteAsync(context);
     }
 
     /// <summary>How long <c>GET /api/v1/sessions</c> waits for the tracker's first poll.</summary>
@@ -188,6 +246,8 @@ public static class NodeApp
             await hub.ServeAsync(socket, since, stream is { Length: > 0 } ? stream : null, stopping.Token);
         });
 
+        MapGrantRoutes(app);
+
         // Read by hand rather than bound, so a body that is not a command gets the envelope like any other refusal.
         app.MapPost(NodeWire.CommandsRoute, async (HttpContext context, NodeState state, NodeCommands commands, IHostApplicationLifetime lifetime) =>
         {
@@ -206,6 +266,17 @@ public static class NodeApp
                 return Refuse("A command needs a verb, a target and who sends it");
             }
 
+            // From the LAN, under its grant: named by it, so it can pass for nobody here (the watchtower least), and never
+            // handing out or taking away grants, which this machine's person does.
+            if (context.Items[NodeLan.GrantLabelKey] is string grant)
+            {
+                if (command.Verb is Verbs.AnswerGrant or Verbs.RevokeGrant)
+                {
+                    return Refuse($"{command.Verb} is for this machine only");
+                }
+                command = command with { Who = $"{grant}/{command.Who}" };
+            }
+
             // A say takes seconds and runs off the state's lock. It is not cut short when its client goes: a session
             // stopped and never resumed would be worse than a result nobody reads, which the stream carries anyway.
             // A flight verb runs git, off the lock too, and is not cut short either: a half-made worktree helps nobody.
@@ -214,6 +285,33 @@ public static class NodeApp
                 ? Results.Json(ResponseEnvelope<CommandResult>.Ok(result), PilotJsonContext.Default.ResponseEnvelopeCommandResult)
                 : Results.Json(ResponseEnvelope<CommandResult>.Fail(result.Error ?? "refused", 400, result), PilotJsonContext.Default.ResponseEnvelopeCommandResult, statusCode: 400);
         });
+    }
+
+    private static void MapGrantRoutes(WebApplication app)
+    {
+        app.MapPost(NodeWire.GrantsRoute, async (HttpContext context, NodeLan lan) =>
+        {
+            GrantRequest? ask;
+            try
+            {
+                ask = await JsonSerializer.DeserializeAsync(context.Request.Body, PilotJsonContext.Default.GrantRequest, context.RequestAborted);
+            }
+            catch (JsonException ex)
+            {
+                return Results.Json(ResponseEnvelope<GrantTicket>.Fail($"The body is not an ask: {ex.Message}"), PilotJsonContext.Default.ResponseEnvelopeGrantTicket, statusCode: 400);
+            }
+            if (ask is not { Label.Length: > 0 and <= 60 })
+            {
+                return Results.Json(ResponseEnvelope<GrantTicket>.Fail("An ask needs a label of 1 to 60 characters"), PilotJsonContext.Default.ResponseEnvelopeGrantTicket, statusCode: 400);
+            }
+            return lan.Ask(ask.Label) is { } ticket
+                ? Results.Json(ResponseEnvelope<GrantTicket>.Ok(ticket), PilotJsonContext.Default.ResponseEnvelopeGrantTicket)
+                : Results.Json(ResponseEnvelope<GrantTicket>.Fail("Another ask is waiting for this node's person; try again shortly", 409), PilotJsonContext.Default.ResponseEnvelopeGrantTicket, statusCode: 409);
+        });
+        app.MapGet(NodeWire.GrantsRoute + "/{id}", (string id, NodeLan lan) =>
+            Results.Json(ResponseEnvelope<GrantTicket>.Ok(lan.Ticket(id)), PilotJsonContext.Default.ResponseEnvelopeGrantTicket));
+        app.MapGet(NodeWire.GrantsRoute, async (NodeLan lan, CancellationToken cancellationToken) =>
+            Results.Json(ResponseEnvelope<GrantInfo[]>.Ok(await lan.GrantsAsync(cancellationToken)), PilotJsonContext.Default.ResponseEnvelopeGrantInfoArray));
     }
 
     private static IResult Refuse(string error) =>

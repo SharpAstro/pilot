@@ -17,11 +17,22 @@ if (GuiOptions.Parse(args, out var error) is not { } options)
 }
 
 var socketPath = NodeSocket.Resolve(options.NodeSocket);
+// A node on the LAN (--node, else PILOT_NODE) is only connected to, with the grant pilot connect saved for it; this
+// machine's node is started when none runs, as before.
+var nodeTarget = options.Node ?? (Environment.GetEnvironmentVariable(Pilot.Commands.NodeTargets.EnvironmentVariable) is { Length: > 0 } fromEnv ? fromEnv : null);
+var remoteEndpoint = nodeTarget is not null && NodeClient.IsEndpoint(nodeTarget, out var endpoint) ? endpoint : null;
+NodeClient NewClient() => Pilot.Commands.NodeTargets.Connect(remoteEndpoint, options.NodeSocket);
+string[] NodeArgs() => remoteEndpoint is { } remote ? ["--node", remote] : ["--node-socket", socketPath];
+var nodeWhere = remoteEndpoint ?? socketPath;
 // A socket the user named is only connected to; the default one gets a node started on it when none runs.
 var namedSocket = options.NodeSocket is not null || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(NodeSocket.EnvironmentVariable));
 
 async Task EnsureNodeAsync()
 {
+    if (remoteEndpoint is not null)
+    {
+        return;
+    }
     var (outcome, message) = await NodeLauncher.FindOrStartAsync(socketPath, namedSocket, CancellationToken.None);
     if (outcome != NodeLaunch.Found)
     {
@@ -32,7 +43,7 @@ async Task EnsureNodeAsync()
 if (options.SayTo is { } sayTo)
 {
     await EnsureNodeAsync();
-    using var oneShot = new NodeClient(socketPath);
+    using var oneShot = NewClient();
     return await GuiSay.RunAsync(oneShot, sayTo, options.SayText ?? "", Console.Out, CancellationToken.None);
 }
 
@@ -59,12 +70,12 @@ else if (options.Capture is not null)
 {
     // A capture of the live node is the rows as of now.
     await EnsureNodeAsync();
-    using var oneShot = new NodeClient(socketPath);
+    using var oneShot = NewClient();
     try
     {
         var rows = await oneShot.GetSessionsAsync(CancellationToken.None);
         var now = DateTimeOffset.UtcNow;
-        screen = new SessionsScreen(SessionLine.Build(rows, now), $"live from the node on {socketPath}", now);
+        screen = new SessionsScreen(SessionLine.Build(rows, now), $"live from the node on {nodeWhere}", now);
         // The flights and the cards are on the stream's snapshot, which a capture reads once.
         await using (var events = await oneShot.OpenEventsAsync(since: null, stream: null, CancellationToken.None))
         {
@@ -83,7 +94,7 @@ else if (options.Capture is not null)
 }
 else
 {
-    screen = new SessionsScreen([], $"connecting to the node on {socketPath}", DateTimeOffset.UtcNow);
+    screen = new SessionsScreen([], $"connecting to the node on {nodeWhere}", DateTimeOffset.UtcNow);
 }
 
 if (options.Capture is { } capturePath)
@@ -142,7 +153,7 @@ view.Ui.Focus.FocusChanged += (_, next) =>
 };
 
 // Live: the node's stream feeds the rows, and the say bar talks through the same node.
-using var client = snapshot is null ? new NodeClient(socketPath) : null;
+using var client = snapshot is null ? NewClient() : null;
 // Not `await using`: Main is async (--say and --capture await), and an await here would resume the rest of Main,
 // the SDL window's teardown included, on a thread-pool thread, where closing the window hung. The feed is drained
 // with the loop pumping instead (ShutdownDrain), so the teardown stays on this thread.
@@ -188,7 +199,7 @@ if (feed is not null && client is not null)
     {
         chrome.Flights.Say($"> {line}");
         loop.RequestRedraw();
-        var said = await GuiCommands.RunAsync(line, socketPath, cts.Token);
+        var said = await GuiCommands.RunAsync(line, NodeArgs(), cts.Token);
         chrome.Flights.Say(said);
         Console.WriteLine($"pilot-gui: command `{line}`: {said.ReplaceLineEndings(" / ")}");
         loop.RequestRedraw();
@@ -210,7 +221,7 @@ if (feed is not null && client is not null)
     feed.Start();
 
     // The window opens at once and the feed connects when the node answers; a node is started meanwhile if none runs.
-    _ = Task.Run(async () =>
+    _ = remoteEndpoint is not null ? Task.CompletedTask : Task.Run(async () =>
     {
         var (outcome, message) = await NodeLauncher.FindOrStartAsync(socketPath, namedSocket, CancellationToken.None);
         if (outcome != NodeLaunch.Found)
@@ -306,7 +317,7 @@ loop.OnPointerInput = evt =>
 
 Console.WriteLine($"pilot-gui: window \"{Title}\" open (pid {Environment.ProcessId}), {width}x{height} px at scale {window.DisplayScale:0.##}");
 Console.WriteLine(snapshot is null
-    ? $"pilot-gui: live from the node on {socketPath}"
+    ? $"pilot-gui: live from the node on {nodeWhere}"
     : $"pilot-gui: showing {screen.Summary} from {screen.Source}, as of {snapshot.At.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC");
 Console.WriteLine(snapshot is null
     ? "pilot-gui: Up/Down or a click select a session; type in the bar at the foot and Enter says it; close the window to quit."

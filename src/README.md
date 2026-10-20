@@ -227,6 +227,28 @@ window the higher share wins (v1's figures flipped between whoever repainted las
 header show it (`5h 42% (resets 14:00) · 7d 64% (resets Sat 10:00)`, with its age once it is old); past 90% of the
 5-hour window a For-you card says workers will stop, once per window.
 
+## The LAN
+
+`pilot-node --lan` (port 47731, `--lan-port` for another) listens on the LAN beside its socket and announces itself
+with LAN.Lib's beacon as `pilot-node`. **Seeing is free; a command needs a grant.** Anyone who reaches the port may
+read the node, its sessions and its event stream. A command from the LAN needs a grant's bearer token, and goes out
+under the grant's label (`se2-gui/gui`), so it passes for nobody here, the watchtower least. Hooks and the list of
+grants stay this machine's, and so does answering or revoking a grant. Tokens are kept as hashes (LAN.Lib's
+`LanGrants`); over plain HTTP one can be read off the wire, so this closes "anyone who can reach the port", not a
+hostile network.
+
+```bash
+pilot nodes                                    # the nodes announcing themselves on the LAN, by host:port
+pilot connect 192.168.1.20:47731 [--as se2-gui]  # rings an Allow/Deny card on that node; the token is kept here
+pilot --node 192.168.1.20:47731 status         # any command, against that node (or PILOT_NODE=...)
+pilot-gui --node 192.168.1.20:47731            # the whole window, its buttons and command bar, on that node
+pilot grants / pilot grants revoke <id>        # on the node: who may command it, and taking that back
+```
+
+An ask lives while its asker keeps reading its ticket (LAN.Lib's `LanInvites`: one at a time, gone when the asker
+goes); the token comes back once, on the first read after the Allow, and lives in this user's
+`<data>/client-grants.json`.
+
 ## Cards
 
 An event that needs the controller is one card, with its choices on it (after Sam's campaigner): **Rings** (a gate

@@ -26,8 +26,20 @@ public static class NodeWire
     /// <summary>Every command, as a <see cref="CommandRequest"/>.</summary>
     public const string CommandsRoute = "/api/v1/commands";
 
-    /// <summary><c>POST</c>: one Claude Code hook's stdin, as <c>pilot-node hook</c> forwards it.</summary>
+    /// <summary><c>POST</c>: one Claude Code hook's stdin, as <c>pilot-node hook</c> forwards it. This machine only.</summary>
     public const string HooksRoute = "/api/v1/hooks";
+
+    /// <summary>
+    /// <c>POST</c> a <see cref="GrantRequest"/> to ask for control from another machine; <c>GET /&lt;id&gt;</c> for its
+    /// <see cref="GrantTicket"/>; <c>GET</c> alone, from this machine only, the grants given.
+    /// </summary>
+    public const string GrantsRoute = "/api/v1/grants";
+
+    /// <summary>The service name a node announces on the LAN (LAN.Lib), so a client finds nodes and nothing else.</summary>
+    public const string LanService = "pilot-node";
+
+    /// <summary>The TCP port a node listens on for the LAN (<c>--lan</c>) unless told another.</summary>
+    public const int DefaultLanPort = 47731;
 }
 
 /// <summary>How a node process ends, for whoever started it: a keeper must not restart a node that found another running.</summary>

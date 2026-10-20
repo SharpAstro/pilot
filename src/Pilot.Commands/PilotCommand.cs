@@ -45,13 +45,18 @@ public static class PilotCommand
             Description = "The node's socket; else PILOT_NODE_SOCKET, else this user's default",
             Recursive = true,
         };
+        var node = new Option<string?>("--node")
+        {
+            Description = "A node on the LAN, host:port (pilot nodes finds them); else PILOT_NODE, else this machine's. Commands need pilot connect first",
+            Recursive = true,
+        };
 
         // Every action talks to the node the same way: a refusal is exit 1, a usage problem found late 2, no node 3.
         Command Action(Command command, Func<ParseResult, NodeClient, CancellationToken, Task<int>> run)
         {
             command.SetAction(async (parseResult, ct) =>
             {
-                using var client = new NodeClient(NodeSocket.Resolve(parseResult.GetValue(socket)));
+                using var client = NodeTargets.Connect(parseResult.GetValue(node), parseResult.GetValue(socket));
                 try
                 {
                     return await run(parseResult, client, ct);
@@ -270,10 +275,88 @@ public static class PilotCommand
         var flag = Raise("flag", "for-you", "Raise a card for the controller, without a push");
         var handled = Raise("handled", "handled", "Log a line on what was handled, born closed");
 
-        return new RootCommand("pilot v2's command line, against this machine's node. Inside a flight's plane, --leg defaults to its flying leg.")
+        // the LAN: find nodes, ask one for control, and see or take back what this node has granted
+        var nodes = new Command("nodes", "The pilot nodes announcing themselves on the LAN");
+        nodes.SetAction(async (_, ct) =>
         {
-            Options = { socket },
-            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note, review, tell, watchtower, digest, ring, flag, handled },
+            var peers = await NodeTargets.DiscoverAsync(TimeSpan.FromSeconds(3), ct);
+            if (peers.Count == 0)
+            {
+                await output.WriteLineAsync("no pilot node announced itself on the LAN within 3 s (a node announces with pilot-node --lan)");
+                return 0;
+            }
+            foreach (var peer in peers)
+            {
+                await output.WriteLineAsync($"{peer.EndPoint}  {peer.DisplayName}{(peer.Properties.TryGetValue("machine", out var m) ? $"  ({m})" : "")}");
+            }
+            return 0;
+        });
+
+        var endpoint = Arg("node", "The node, host:port");
+        var askAs = new Option<string?>("--as") { Description = "Who to ask as, as its card and every command will say; else user@machine" };
+        var connectNode = Action(new Command("connect", "Ask a node on the LAN for control: its person allows it on a card there, and the token is kept here")
+            {
+                Arguments = { endpoint },
+                Options = { askAs },
+            },
+            async (p, _, ct) =>
+            {
+                if (!NodeClient.IsEndpoint(p.GetValue(endpoint)!, out var target))
+                {
+                    throw new UsageException($"connect takes a node as host:port, not {p.GetValue(endpoint)}");
+                }
+                using var remote = NodeClient.Remote(target);
+                var label = p.GetValue(askAs) ?? $"{Environment.UserName}@{Environment.MachineName}".ToLowerInvariant();
+                var asked = await remote.AskGrantAsync(label, ct);
+                if (asked is not { Success: true, Response: { } ticket })
+                {
+                    await output.WriteLineAsync($"refused: {asked.Error}");
+                    return 1;
+                }
+                await output.WriteLineAsync($"asked {target} as {label}: a card rings there for its person to Allow or Deny");
+                var until = DateTimeOffset.UtcNow + TimeSpan.FromMinutes(5);
+                while (DateTimeOffset.UtcNow < until)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(2), ct);
+                    var read = await remote.GrantTicketAsync(ticket.Id, ct);
+                    switch (read.Response?.Outcome)
+                    {
+                        case "accepted" when read.Response.Token is { } token:
+                            NodeTargets.Save(target, token);
+                            await output.WriteLineAsync($"allowed: commands go to {target} with --node {target} (or PILOT_NODE={target})");
+                            return 0;
+                        case "declined":
+                            await output.WriteLineAsync($"denied by {target}'s person");
+                            return 1;
+                        case "withdrawn" or "unknown":
+                            await output.WriteLineAsync($"the ask lapsed on {target}; ask again");
+                            return 1;
+                    }
+                }
+                await output.WriteLineAsync($"no answer from {target} within 5 minutes; ask again when its person is there");
+                return 1;
+            });
+
+        var grants = Action(new Command("grants", "The control this node has granted to machines on the LAN"), async (_, client, ct) =>
+        {
+            var given = await client.GrantsAsync(ct);
+            if (given is not { Success: true, Response: { } list })
+            {
+                await output.WriteLineAsync($"refused: {given.Error}");
+                return 1;
+            }
+            await output.WriteLineAsync(list.Length == 0 ? "no grants" : string.Join(Environment.NewLine, list.Select(g => $"{g.Id}  {g.Label}  since {g.GrantedAt.ToLocalTime():yyyy-MM-dd HH:mm}")));
+            return 0;
+        });
+        var grantId = Arg("grant", "The grant's id, from pilot grants");
+        var revoke = Action(new Command("revoke", "Take a grant back: that machine can watch, and no longer command") { Arguments = { grantId } },
+            (p, client, ct) => SendAsync(client, Verbs.RevokeGrant, Verbs.NodeTarget, [p.GetValue(grantId)!], who, output, ct));
+        grants.Subcommands.Add(revoke);
+
+        return new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
+        {
+            Options = { socket, node },
+            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note, review, tell, watchtower, digest, ring, flag, handled, nodes, connectNode, grants },
         };
     }
 
@@ -450,5 +533,5 @@ public static class PilotCommand
         return text.Length == 0 ? "No sessions.\n" : text.ToString();
     }
 
-    private sealed class UsageException(string message) : Exception(message);
+    internal sealed class UsageException(string message) : Exception(message);
 }
