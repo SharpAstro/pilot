@@ -35,7 +35,7 @@ public sealed class ReviewTests : IDisposable
         Git(Repo, "push", "-q", "-u", "origin", "main");
         Git(Repo, "remote", "set-head", "origin", "main");
         var git = new GitCli();
-        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System);
+        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
         _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, git, new Planes(git), _flights, options, TimeProvider.System)
         {
@@ -203,6 +203,10 @@ public sealed class ReviewTests : IDisposable
             await _flights.LandAfterMergeAsync(flight.Code, Ct);
             F(flight.Code).State.ShouldBe(FlightState.Landed);
         }
+
+        // Landing stopped every session the flight had, so none still held its plane.
+        _workers.Stopped.ShouldContain("job00001");
+        _workers.Stopped.ShouldContain("job00002");
 
         // Every session the node started was a leg's worker or a flight's reviewer: no pilot per flight.
         _workers.Started.Select(s => s.Name).ShouldBe(["du1-tia10-core", Reviewer("TIA10"), "du1-tia11-ui", Reviewer("TIA11")]);

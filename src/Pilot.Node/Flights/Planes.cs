@@ -183,7 +183,8 @@ public sealed class Planes(IGit git)
     /// Removes a landed plane's worktree, keeping its branch. Refuses one with changes not committed: its work would go
     /// with it. A worktree already gone, or torn down by Claude Code, is fine.
     /// </summary>
-    public async Task RemoveAsync(string repoPath, string worktree, CancellationToken cancellationToken)
+    /// <returns>Null when the plane is gone; else why its folder is still there (something holds it), which the caller says.</returns>
+    public async Task<string?> RemoveAsync(string repoPath, string worktree, CancellationToken cancellationToken)
     {
         if (!Directory.Exists(worktree) || !await IsRegisteredAsync(repoPath, worktree, cancellationToken))
         {
@@ -192,11 +193,13 @@ public sealed class Planes(IGit git)
             {
                 DeleteLeftover(worktree);
             }
-            catch (FlightException)
+            catch (FlightException ex)
             {
-                // A folder git no longer has, still held: the flight lands all the same; it holds nothing of git's.
+                // A folder git no longer has, still held: the flight lands all the same, as it holds nothing of git's,
+                // but the folder is said, never left in silence.
+                return ex.Message;
             }
-            return;
+            return null;
         }
         var status = await git.RunAsync(["status", "--porcelain"], worktree, cancellationToken);
         if (!status.Ok)
@@ -221,10 +224,11 @@ public sealed class Planes(IGit git)
                 {
                     DeleteLeftover(worktree);
                 }
-                catch (FlightException)
+                catch (FlightException ex)
                 {
+                    return ex.Message;
                 }
-                return;
+                return null;
             }
             // A worker stopped a moment ago can still hold a file open on Windows: give it a few seconds.
             if (++tries >= 5 || !remove.Why.Contains("Permission denied", StringComparison.OrdinalIgnoreCase))
@@ -233,6 +237,7 @@ public sealed class Planes(IGit git)
             }
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
         }
+        return null;
     }
 }
 

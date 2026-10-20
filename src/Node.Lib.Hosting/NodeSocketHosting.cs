@@ -1,8 +1,10 @@
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 
-namespace Pilot.Node;
+namespace Node.Lib.Hosting;
 
-/// <summary>The node on its socket: bound only by the lock's holder, and owner-only on Unix. Adapted from tianwen's <c>NodeSocketHosting</c>.</summary>
+/// <summary>A node on its socket: bound only by the lock's holder, and owner-only on Unix. Lifted from tianwen's <c>NodeSocketHosting</c> and pilot's copy of it.</summary>
 public static class NodeSocketHosting
 {
     /// <summary>
