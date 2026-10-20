@@ -180,6 +180,16 @@ pilot handled <subject> <line>                 # a Handled line
 
 `pilot-node --no-watchtower` keeps none.
 
+### Signals
+
+- **Rings reach your phone.** The watchtower pushes a ring card it leaves open with Claude Code's push notification,
+  once; a For-you card is never pushed.
+- **The digest**, at 08:00 and 18:00 local time (`pilot digest` for one now): a For-you card of what landed, what the
+  node and the watchtower handled, line by line, and what is parked (held flights, failed legs, open cards). A newer
+  digest closes the last; the watchtower pushes it as one short message.
+- **Budgets** are applied by the node: a worker past its leg's budget rings with **Extend** (by half) and **Go around**,
+  and keeps working until you choose. `pilot leg extend <tokens>` raises it by hand.
+
 ## Cards
 
 An event that needs the controller is one card, with its choices on it (after Sam's campaigner): **Rings** (a gate

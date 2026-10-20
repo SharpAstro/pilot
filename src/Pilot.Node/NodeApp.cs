@@ -66,6 +66,8 @@ public static class NodeApp
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());
+        builder.Services.AddSingleton<Digest>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());
         builder.Services.AddSingleton(services => new SessionTracker(
             services.GetRequiredService<NodeState>(),
             services.GetRequiredService<IClaudeAgents>(),

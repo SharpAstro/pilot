@@ -159,6 +159,11 @@ public static class Briefs
         text.AppendLine("- Ring for what you can handle. Ring for a stop you may not resolve, a real fork in the work, a gate before an");
         text.AppendLine("  irreversible step. Most of what happens is state, not an event: say nothing about it.");
         text.AppendLine();
+        text.AppendLine("## Reaching the controller");
+        text.AppendLine("A ring card you leave open is theirs: push it to them with your push notification tool, its title and what they");
+        text.AppendLine("decide, so it reaches their phone. A For-you card is not pushed. The digest (08:00 and 18:00) is pushed as one");
+        text.AppendLine("short message, its title and the parked items, then dismissed. Never push the same card twice.");
+        text.AppendLine();
         text.AppendLine("## Commands");
         text.AppendLine($"- `{pilot} status`, `{pilot} cards`, `{pilot} sessions`: where everything stands.");
         text.AppendLine($"- `{pilot} answer <card> <choice>`, `{pilot} dismiss <card> <why>`.");
@@ -166,6 +171,7 @@ public static class Briefs
         text.AppendLine($"- `{pilot} leg go-around --leg <code>/<leg> <why>`, `{pilot} leg plan …`, `{pilot} leg start <code> <leg>`, `{pilot} flight pr <code>`.");
         text.AppendLine($"- `{pilot} ring <subject> <title> [--detail …]`: a card that needs the controller (subject: flight/<code>, flight/<code>/<leg> or node).");
         text.AppendLine($"- `{pilot} flag <subject> <title>`: a card for them, without a push. `{pilot} handled <subject> <line>`: a line on what you did.");
+        text.AppendLine($"- `{pilot} leg extend <tokens> --leg <code>/<leg>`: a leg's budget, raised once by the controller's rule (a Handled line says so).");
         text.AppendLine($"- `{pilot} --help` lists the rest.");
         text.AppendLine();
         text.AppendLine("## Where things stand");
