@@ -25,7 +25,7 @@
   <PropertyGroup>
     <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\LAN.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
     <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\LAN.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
-    <UseLocalLanLib Condition="'$(UseLocalLanLib)' == '' AND '$(RuntimeIdentifier)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)LAN.Lib\src\LAN.Lib\LAN.Lib.csproj')">true</UseLocalLanLib>
+    <UseLocalLanLib Condition="'$(UseLocalLanLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)LAN.Lib\src\LAN.Lib\LAN.Lib.csproj')">true</UseLocalLanLib>
   </PropertyGroup>
   <ItemGroup Condition="'$(UseLocalLanLib)' == 'true'">
     <ProjectReference Include="$(SharpAstroRoot)LAN.Lib\src\LAN.Lib\LAN.Lib.csproj" />
@@ -36,7 +36,7 @@
 
   <!-- The lock and Kestrel on the socket (SharpAstro/Node.Lib.Hosting), by the same switch as Pilot.Contracts' Node.Lib. -->
   <PropertyGroup>
-    <UseLocalNodeLib Condition="'$(UseLocalNodeLib)' == '' AND '$(RuntimeIdentifier)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)Node.Lib\src\Node.Lib.Hosting\Node.Lib.Hosting.csproj')">true</UseLocalNodeLib>
+    <UseLocalNodeLib Condition="'$(UseLocalNodeLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)Node.Lib\src\Node.Lib.Hosting\Node.Lib.Hosting.csproj')">true</UseLocalNodeLib>
   </PropertyGroup>
   <ItemGroup Condition="'$(UseLocalNodeLib)' == 'true'">
     <ProjectReference Include="$(SharpAstroRoot)Node.Lib\src\Node.Lib.Hosting\Node.Lib.Hosting.csproj" />
