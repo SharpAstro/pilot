@@ -5,7 +5,7 @@ namespace Pilot.Contracts;
 /// <summary>
 /// Where this user's node listens: a Unix domain socket, which is how every client on the machine reaches it. One
 /// helper, shared by the node and its clients, so the two can never look in different places: pilot's names over
-/// Node.Lib's <see cref="Node.Lib.NodeSocketLocation"/>, which tianwen's copy is to move onto too.
+/// Node.Lib's <see cref="Node.Lib.NodeSocketLocation"/> (SharpAstro/Node.Lib), which tianwen's moves onto too.
 /// </summary>
 /// <remarks>
 /// <c>%LOCALAPPDATA%\pilot2\node.sock</c> on Windows; elsewhere under <c>$XDG_RUNTIME_DIR/pilot2</c> when the session

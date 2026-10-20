@@ -15,8 +15,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Pilot.Contracts\Pilot.Contracts.csproj" />
-    <!-- The lock and Kestrel on the socket: the org's shared node pieces. -->
-    <ProjectReference Include="..\Node.Lib.Hosting\Node.Lib.Hosting.csproj" />
     <PackageReference Include="System.CommandLine" />
   </ItemGroup>
 
@@ -34,6 +32,17 @@
   </ItemGroup>
   <ItemGroup Condition="'$(UseLocalLanLib)' != 'true'">
     <PackageReference Include="LAN.Lib" />
+  </ItemGroup>
+
+  <!-- The lock and Kestrel on the socket (SharpAstro/Node.Lib.Hosting), by the same switch as Pilot.Contracts' Node.Lib. -->
+  <PropertyGroup>
+    <UseLocalNodeLib Condition="'$(UseLocalNodeLib)' == '' AND '$(RuntimeIdentifier)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)Node.Lib\src\Node.Lib.Hosting\Node.Lib.Hosting.csproj')">true</UseLocalNodeLib>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalNodeLib)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)Node.Lib\src\Node.Lib.Hosting\Node.Lib.Hosting.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalNodeLib)' != 'true'">
+    <PackageReference Include="Node.Lib.Hosting" />
   </ItemGroup>
 
   <!-- Written global::, so Node.Lib never resolves as Pilot.Node.Lib inside this namespace. -->

@@ -9,9 +9,21 @@
     <RootNamespace>Pilot.Contracts</RootNamespace>
   </PropertyGroup>
 
-  <ItemGroup>
-    <!-- Where the socket is and how a client reaches it: the org's shared node pieces. -->
-    <ProjectReference Include="..\Node.Lib\Node.Lib.csproj" />
+  <!-- Where the socket is and how a client reaches it: the org's shared node pieces (SharpAstro/Node.Lib). -->
+  <!--
+    Node.Lib from the sibling clone when it is there, else the package, as the GUI takes DIR.Lib: see the GUI's project for
+    SharpAstroRoot's two probes and why a publish with a runtime identifier takes the package.
+  -->
+  <PropertyGroup>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\Node.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\Node.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
+    <UseLocalNodeLib Condition="'$(UseLocalNodeLib)' == '' AND '$(RuntimeIdentifier)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)Node.Lib\src\Node.Lib\Node.Lib.csproj')">true</UseLocalNodeLib>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalNodeLib)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)Node.Lib\src\Node.Lib\Node.Lib.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalNodeLib)' != 'true'">
+    <PackageReference Include="Node.Lib" />
   </ItemGroup>
 
 </Project>
