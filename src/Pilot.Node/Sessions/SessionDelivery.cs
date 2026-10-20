@@ -10,7 +10,8 @@ namespace Pilot.Node.Sessions;
 /// <param name="Name">Its name, kept on the copy; null when it has none.</param>
 /// <param name="Cwd">Its working folder, where the copy runs.</param>
 /// <param name="Text">The user turn.</param>
-public sealed record ResumeRequest(string SessionId, string? Name, string Cwd, string Text);
+/// <param name="RemoteControl">Whether the session had Remote Control on, so the copy keeps it: a resume drops it otherwise.</param>
+public sealed record ResumeRequest(string SessionId, string? Name, string Cwd, string Text, bool RemoteControl = false);
 
 /// <summary>A session to reach over the intercom: the name SendMessage knows it by, and its kind, which tells its row in a listing from another of the same name.</summary>
 /// <param name="From">The name the message comes from, as the recipient reads it: <see cref="ClaudeCliDelivery.RelayFrom"/> of the command's sender.</param>
@@ -172,6 +173,10 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, ClaudeProfil
         if (settings.Effort is { Length: > 0 } effort)
         {
             args.AddRange(["--effort", effort]);
+        }
+        if (request.RemoteControl)
+        {
+            args.Add("--remote-control");
         }
         return args;
     }

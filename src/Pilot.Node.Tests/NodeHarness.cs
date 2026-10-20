@@ -56,12 +56,13 @@ internal sealed class NodeHarness : IAsyncDisposable
 
     /// <param name="retainedDeltas">How many deltas the node holds for a resuming client.</param>
     /// <param name="holdFirstListing">Keeps the session tracker's first poll waiting until the test releases it.</param>
-    public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false)
+    /// <param name="watchtower">Keeps a watchtower, started through the fake workers; off by default, as it would count among them.</param>
+    public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false, bool watchtower = false)
     {
         // Short: a socket path must fit in 107 bytes, and the temp folder on Windows is already long.
         var folder = Path.Combine(Path.GetTempPath(), "p2t-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(folder);
-        var options = new NodeOptions(Path.Combine(folder, NodeSocket.DefaultFileName), Path.Combine(folder, "data"), retainedDeltas);
+        var options = new NodeOptions(Path.Combine(folder, NodeSocket.DefaultFileName), Path.Combine(folder, "data"), retainedDeltas, Watchtower: watchtower);
         if (!NodeSocket.TryValidate(options.SocketPath, out var tooLong))
         {
             throw new InvalidOperationException(tooLong);

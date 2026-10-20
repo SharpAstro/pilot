@@ -310,6 +310,10 @@ public sealed class SayTests : IDisposable
         ClaudeCliDelivery.ResumeArguments(new ResumeRequest("sid", "pil5-say-bg", "C:\\work", "text"), settings)
             .ShouldBe(["--bg", "--resume", "sid", "-n", "pil5-say-bg", "--permission-mode", "auto", "--model", "claude-opus-5-5[1m]", "--effort", "high"]);
         ClaudeCliDelivery.ResumeArguments(new ResumeRequest("sid", null, "C:\\work", "text"), ResumeSettings.None).ShouldBe(["--bg", "--resume", "sid"]);
+
+        // A session with Remote Control on keeps it: a resume would drop the watchtower's phone link otherwise.
+        ClaudeCliDelivery.ResumeArguments(new ResumeRequest("sid", null, "C:\\work", "text", RemoteControl: true), ResumeSettings.None)
+            .ShouldBe(["--bg", "--resume", "sid", "--remote-control"]);
     }
 
     [Theory]

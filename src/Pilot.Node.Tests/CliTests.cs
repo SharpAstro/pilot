@@ -175,4 +175,42 @@ public sealed class CliTests : IAsyncLifetime
         gone.ShouldBe(3);
         error.ToString().ShouldContain("no node answers");
     }
+
+    [Fact]
+    public async Task TheWatchtowersCommandsAreSpelledAndItsCardsRaised()
+    {
+        await Ok(_root, "ring", "flight/TIA1", "TIA1 forks", "--detail", "SQLite or JSON");
+        await Ok(_root, "flag", "node", "A quiet note");
+        await Ok(_root, "handled", "node", "Went around TIA1/parser");
+
+        _node.State.Cards().Select(c => (c.Bin, c.Title)).ShouldBe(
+            [(CardBin.Handled, "Went around TIA1/parser"), (CardBin.ForYou, "A quiet note"), (CardBin.Ring, "TIA1 forks")]);
+        var tell = await Pilot(_root, "tell", "hello");
+        (tell.Exit, tell.Output.Trim()).ShouldBe((1, "refused: tell watchtower: this node keeps no watchtower (--no-watchtower)"));
+    }
+
+    [Fact]
+    public void ACommandFromAClaudeSessionIsFromThatSessionByName()
+    {
+        var snapshot = new SnapshotEvent
+        {
+            Seq = 1,
+            At = DateTimeOffset.UnixEpoch,
+            Stream = "s",
+            Notes = [],
+            Sessions =
+            [
+                new SessionRow
+                {
+                    Id = "a1b2c3d4", SessionId = "a1b2c3d4-0000-4000-8000-000000000000", Name = "du1-watchtower", Kind = SessionKind.Background,
+                    Cwd = "/w", Role = SessionRole.Watchtower, ContextTokens = 0, ContextWindow = 1, State = SessionState.Idle, SpendWeighted = 0,
+                    StartedAt = DateTimeOffset.UnixEpoch,
+                },
+            ],
+        };
+
+        PilotCommand.Caller(snapshot, "A1B2C3D4-0000-4000-8000-000000000000").ShouldBe("du1-watchtower");
+        PilotCommand.Caller(snapshot, "ffffffff-0000-4000-8000-000000000000").ShouldBe("cli");
+        PilotCommand.Caller(snapshot, null).ShouldBe("cli");
+    }
 }

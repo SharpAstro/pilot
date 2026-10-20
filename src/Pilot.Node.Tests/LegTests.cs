@@ -17,8 +17,15 @@ internal sealed class FakeWorkers : IWorkerLauncher
 
     public List<string> Stopped { get; } = [];
 
+    /// <summary>What the next start throws, as the claude CLI refusing it; null to start it.</summary>
+    public Exception? Fail { get; set; }
+
     public Task<string> StartAsync(WorkerStart start, CancellationToken cancellationToken)
     {
+        if (Fail is { } fail)
+        {
+            return Task.FromException<string>(fail);
+        }
         Started.Add(start);
         return Task.FromResult($"job{++_next:D5}");
     }
@@ -365,4 +372,9 @@ public sealed class LegCommanderTests : IDisposable
     public void AWorkerStartsInTheBackgroundInAutoModeWithItsModelAndEffort() =>
         ClaudeWorkerLauncher.Arguments(new WorkerStart("du1-tia1-parser", "/r/tianwen", "tia1", "brief", "sonnet", "high"))
             .ShouldBe(["--bg", "-w", "tia1", "-n", "du1-tia1-parser", "--permission-mode", "auto", "--model", "sonnet", "--effort", "high"]);
+
+    [Fact]
+    public void TheWatchtowerStartsInItsOwnFolderWithRemoteControlOn() =>
+        ClaudeWorkerLauncher.Arguments(new WorkerStart("du1-watchtower", "/data/watchtower", null, "brief", null, null, RemoteControl: true))
+            .ShouldBe(["--bg", "--remote-control", "-n", "du1-watchtower", "--permission-mode", "auto"]);
 }

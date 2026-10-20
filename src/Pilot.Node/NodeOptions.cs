@@ -7,8 +7,18 @@ namespace Pilot.Node;
 /// <param name="DataFolder">Where it keeps its state (<c>--data</c>, else <see cref="NodeSocket.DefaultDataFolder"/>).</param>
 /// <param name="RetainedDeltas">How many deltas it holds for a resuming client; tests make it small.</param>
 /// <param name="MachinePrefix">The machine's prefix in session names (<c>--machine</c>, else <c>PILOT_MACHINE</c>, else from its name).</param>
-public sealed record NodeOptions(string SocketPath, string DataFolder, int RetainedDeltas = NodeState.DefaultRetainedDeltas, string? MachinePrefix = null)
+/// <param name="Watchtower">Whether it keeps a watchtower session (<c>--no-watchtower</c> turns it off; a test node keeps none).</param>
+/// <param name="WatchtowerFolderGiven">Where the watchtower runs (<c>--watchtower-folder</c>, else <c>PILOT_WATCHTOWER_FOLDER</c>, else under the data folder).</param>
+public sealed record NodeOptions(
+    string SocketPath, string DataFolder, int RetainedDeltas = NodeState.DefaultRetainedDeltas, string? MachinePrefix = null, bool Watchtower = true, string? WatchtowerFolderGiven = null)
 {
+    /// <summary>
+    /// The folder the watchtower runs in. Claude Code starts no background session in a folder never trusted, so the
+    /// default one needs <c>claude</c> run there once; the node rings with that when it is refused.
+    /// </summary>
+    public string WatchtowerFolder => Path.GetFullPath(WatchtowerFolderGiven
+        ?? (Environment.GetEnvironmentVariable("PILOT_WATCHTOWER_FOLDER") is { Length: > 0 } folder ? folder : Path.Combine(DataFolder, "watchtower")));
+
     /// <summary>The prefix in use: the one given, else <c>PILOT_MACHINE</c>, else the machine name's first two letters and 1.</summary>
     public string Machine => MachinePrefixes.Normalise(MachinePrefix ?? Environment.GetEnvironmentVariable("PILOT_MACHINE"))
         ?? MachinePrefixes.FromName(Environment.MachineName);

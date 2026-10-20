@@ -54,6 +54,18 @@ public static class NodeApp
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<LegWatch>());
+        builder.Services.AddSingleton(services =>
+        {
+            var legs = services.GetRequiredService<LegCommander>();
+            var commands = services.GetRequiredService<NodeCommands>();
+            return new Watchtower(services.GetRequiredService<NodeState>(), services.GetRequiredService<IWorkerLauncher>(), commands.RunAsync,
+                services.GetRequiredService<NodeOptions>(), services.GetRequiredService<TimeProvider>())
+            {
+                Pilot = Briefs.Run(legs.Cli, legs.Socket),
+                Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,
+            };
+        });
+        builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());
         builder.Services.AddSingleton(services => new SessionTracker(
             services.GetRequiredService<NodeState>(),
             services.GetRequiredService<IClaudeAgents>(),
