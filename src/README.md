@@ -100,6 +100,20 @@ budget.
 | `go-around flight/<code>/<leg> <why…>` | A fresh worker for a flying or failed leg. |
 | `merge flight/<code> <head> [squash\|rebase\|merge]` | With every leg done: `gh pr merge --match-head-commit`, refused when the PR moved past the head you reviewed; then the flight lands. |
 
+### Reviews
+
+`flight pr` pushes the plane (every time, so a go-around's commits reach the PR) and starts a fresh reviewer,
+`<machine>-<flight>-review`, in the plane: briefed with every leg's goal and Done-when, the commits and the files, told
+to read the diff and rerun what proves each Done-when, and to change nothing. For now it reviews on its own, with no
+subagents or one at most; its depth is to follow usage headroom, priority and what the diff is later (#74).
+
+- `pilot review pass <report>` from the plane offers the merge: the PR-ready card, with the review's words.
+- `pilot review changes <changes>` rings with **Go around** (the last leg, told the changes; a done leg may go around
+  for a review) and **Ready anyway**. The go-around's finish pushes and starts a fresh review by itself.
+- Only the reviewer gives the verdict; the controller may pass one that asked for changes ("ready anyway"); the
+  watchtower may do neither. A merge needs a passed review. A reviewer that stops without its verdict, or never shows
+  up, rings with **Review again** (`pilot flight review <code>`). No leg may be named `review`.
+
 ### Liveness: no flight derails silently
 
 The node watches every flying leg's worker (`LegWatch`, every 30 s) and never leaves a stalled one unnoticed:

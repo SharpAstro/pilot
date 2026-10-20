@@ -126,6 +126,14 @@ public sealed class CliTests : IAsyncLifetime
         created.Body.ShouldContain("**gpu**: Draw the planets on the GPU");
         _node.State.Flights().Single().PullRequest.ShouldBe(71);
 
+        // The PR opened a fresh reviewer in the plane; its pass, from there, offers the merge.
+        var reviewer = _node.Workers.Started.Last();
+        (reviewer.Name, reviewer.Plane).ShouldBe(("se1-tia1611-review".Replace("se1", _node.Options.Machine.ToLowerInvariant()), "tia1611"));
+        reviewer.Brief.ShouldContain("Done when: The capture shows them");
+        (await Pilot(_root, "cards")).Output.ShouldNotContain("ready to merge");
+        await Ok(plane, "review", "pass", "the capture shows the planets; dotnet test passes");
+        _node.State.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+
         // The PR rang: a card with the merge on the head it was opened at; answering it merges and lands the flight.
         var (_, cards, _) = await Pilot(_root, "cards");
         cards.ShouldContain("c1  RING  TIA1611's PR #71 is ready to merge");

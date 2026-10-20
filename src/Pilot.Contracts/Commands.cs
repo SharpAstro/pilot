@@ -132,6 +132,15 @@ public static class Verbs
     /// <summary><c>dismiss card/&lt;id&gt; [why…]</c>: closes the card with nothing done.</summary>
     public const string Dismiss = "dismiss";
 
+    /// <summary><c>start-review flight/&lt;code&gt;</c>: a fresh reviewer on the flight's branch (open-pr starts one by itself).</summary>
+    public const string StartReview = "start-review";
+
+    /// <summary>
+    /// <c>review flight/&lt;code&gt; pass|changes &lt;report…&gt;</c>: the reviewer's verdict. A pass offers the merge; changes
+    /// ring with a go-around. The controller may pass a review that asked for changes ("ready anyway").
+    /// </summary>
+    public const string Review = "review";
+
     /// <summary><c>extend-budget flight/&lt;code&gt;/&lt;leg&gt; &lt;tokens&gt;</c>: raises the leg's budget, in weighted tokens, to the new figure.</summary>
     public const string ExtendBudget = "extend-budget";
 

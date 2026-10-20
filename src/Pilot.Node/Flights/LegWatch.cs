@@ -26,6 +26,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>A worker past its leg's budget: not a stall, so not among <see cref="Kinds"/>; it closes when the budget is extended or the leg ends.</summary>
     public const string OverBudget = "over-budget";
 
+    /// <summary>A flight's reviewer that stopped, or never showed up, without its verdict.</summary>
+    public const string ReviewStalled = "review-stalled";
+
     /// <summary>Who the watch's commands are from, in the command log and on the cards it closes.</summary>
     public const string Who = "node";
 
@@ -72,11 +75,12 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         }
     }
 
-    /// <summary>One look at every flying leg's worker, acting on what it finds.</summary>
+    /// <summary>One look at every flying leg's worker, and every flight's reviewer, acting on what it finds.</summary>
     public async Task LookAsync(CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
         var sessions = state.Sessions();
+        LookAtReviews(sessions, now);
         foreach (var leg in state.Legs().Where(l => l.State == LegState.Flying && l.WorkerJob is not null))
         {
             var subject = Verbs.LegTarget(leg.Flight, leg.Name);
@@ -185,6 +189,38 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         else
         {
             Ring(leg, Idle, $"{Name(leg)}'s worker stopped with the leg unfinished, and could not be nudged", result.Error, worker);
+        }
+    }
+
+    /// <summary>
+    /// A reviewer working is left alone; one that never showed up, failed, ended, or sat idle past the grace without its
+    /// verdict rings, with a fresh review as the way on.
+    /// </summary>
+    private void LookAtReviews(SessionRow[] sessions, DateTimeOffset now)
+    {
+        foreach (var flight in state.Flights().Where(f => f.State != FlightState.Landed && f.Review is { State: ReviewState.Reviewing, ReviewerJob: not null }))
+        {
+            var review = flight.Review!;
+            var subject = Verbs.FlightTarget(flight.Code);
+            var row = sessions.FirstOrDefault(s => s.Id == review.ReviewerJob);
+            string? why = row switch
+            {
+                null when now - review.StartedAt > ShowUpGrace => $"started {Ago(now, review.StartedAt)} ago and never showed up",
+                null => null,
+                { State: SessionState.Working or SessionState.Waiting } => null,
+                { State: SessionState.Failed } => "it failed",
+                _ when now - (row.LastResponseAt ?? row.StartedAt) >= IdleGrace => $"it stopped {Ago(now, row.LastResponseAt ?? row.StartedAt)} ago without its verdict",
+                _ => null,
+            };
+            if (row is { State: SessionState.Working })
+            {
+                state.CloseCardsAbout(subject, "reviewing again", ReviewStalled);
+            }
+            if (why is not null)
+            {
+                state.RaiseCard(CardBin.Ring, ReviewStalled, subject, $"{flight.Code}'s review stalled", why,
+                    [new CardChoice { Label = "Review again", Verb = Verbs.StartReview, Target = subject }]);
+            }
         }
     }
 
