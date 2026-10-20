@@ -195,11 +195,34 @@ if (feed is not null && client is not null)
 
     // The Flights page flies a flight from here alone: its buttons are verbs, its command bar the CLI's own commands.
     chrome.Flights.CanCommand = true;
+    // The LAN as the dashboard sees it, discovering from the start: a node that cannot listen still shows why.
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            chrome.Flights.Lan = await LanWatch.StartAsync(cts.Token);
+            loop.RequestRedraw();
+        }
+        catch (Exception ex) when (ex is System.Net.Sockets.SocketException or InvalidOperationException)
+        {
+            Console.Error.WriteLine($"pilot-gui: the LAN cannot be watched: {ex.Message}");
+        }
+    });
     chrome.Flights.OnCommand = async line =>
     {
         chrome.Flights.Say($"> {line}");
         loop.RequestRedraw();
+        // A connect waits on the other machine's person; the LAN line says so while it does.
+        var asking = DashboardCommands.ConnectTarget(line);
+        if (asking is not null)
+        {
+            chrome.Flights.Lan?.Asking(asking, DateTimeOffset.UtcNow);
+        }
         var said = await DashboardCommands.RunAsync(line, NodeArgs(), GuiSay.Who, cts.Token);
+        if (asking is not null)
+        {
+            chrome.Flights.Lan?.Answered(asking);
+        }
         chrome.Flights.Say(said);
         Console.WriteLine($"pilot-gui: command `{line}`: {said.ReplaceLineEndings(" / ")}");
         loop.RequestRedraw();
