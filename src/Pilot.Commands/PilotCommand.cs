@@ -516,7 +516,8 @@ public static class PilotCommand
             {
                 for (var i = 0; i < card.Choices.Length; i++)
                 {
-                    text.AppendLine($"      {i + 1}. {card.Choices[i].Label}: pilot answer {card.Id} {i + 1}");
+                    var status = card.Choices[i].Status is { } s ? $" (checks {s})" : "";
+                    text.AppendLine($"      {i + 1}. {card.Choices[i].Label}{status}: pilot answer {card.Id} {i + 1}");
                 }
                 text.AppendLine($"      or: pilot dismiss {card.Id}");
             }

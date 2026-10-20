@@ -94,6 +94,8 @@ public static class NodeApp
             Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "rate-limits.json"),
             services.GetRequiredService<TimeProvider>()));
         builder.Services.AddHostedService(services => services.GetRequiredService<UsageReader>());
+        builder.Services.AddSingleton<PrChecks>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<PrChecks>());
         builder.Services.AddSingleton<Digest>();
         builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());
         builder.Services.AddSingleton(services => new SessionTracker(
