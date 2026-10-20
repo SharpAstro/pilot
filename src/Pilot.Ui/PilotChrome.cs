@@ -1,6 +1,6 @@
 using DIR.Lib;
 
-namespace Pilot.Gui;
+namespace Pilot.Ui;
 
 /// <summary>The pages the rail leads to, top to bottom.</summary>
 internal enum PilotPage

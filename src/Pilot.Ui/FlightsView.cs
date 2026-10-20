@@ -1,7 +1,7 @@
 using DIR.Lib;
 using Pilot.Contracts;
 
-namespace Pilot.Gui;
+namespace Pilot.Ui;
 
 /// <summary>One flight as the Flights page shows it, every field already in words, as <see cref="SessionLine"/> is.</summary>
 internal sealed record FlightLine
@@ -225,6 +225,15 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
     public void Render(FlightsScreen screen, RectF32 bounds)
     {
         BeginFrame();
+        RenderLayout(Tree(screen, bounds.Width / Math.Max(DpiScale, 0.1f)), bounds);
+    }
+
+    /// <summary>
+    /// The page as a tree, for <paramref name="width"/> design units: what <see cref="Render"/> paints on pixels, and
+    /// what pilot-tui arranges in terminal cells (the selection, the command bar and their callbacks the same).
+    /// </summary>
+    internal Layout.Node Tree(FlightsScreen screen, float width)
+    {
         if (screen.Lines.Count == 0)
         {
             ListCursor.Close();
@@ -234,10 +243,10 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
             ListCursor.Open(ListId, Math.Clamp(ListCursor.Index, 0, screen.Lines.Count - 1), screen.Lines.Count);
         }
         _count = screen.Lines.Count;
-        _wide = bounds.Width / Math.Max(DpiScale, 0.1f) >= WideWidth;
+        _wide = width >= WideWidth;
         CommandInput.OnCommit = CommitAsync;
         CommandInput.Placeholder = "a pilot command: flight create 1611 --repo <checkout> · leg start TIA1611 gpu · cards";
-        RenderLayout(Build(screen), bounds);
+        return Build(screen);
     }
 
     private async Task CommitAsync(string text)
@@ -474,6 +483,7 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index));
-        return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
+        // The selection stated as a background too: a terminal paints no focus of its own, and on pixels it is the focus colour.
+        return index == Selected ? row.Bg(RowFocusBg) : (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }
 }

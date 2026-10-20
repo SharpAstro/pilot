@@ -17,12 +17,15 @@
 
   <ItemGroup>
     <Using Include="DIR.Lib.Layout" Alias="Layout" />
+    <!-- The pages and panels live in Pilot.Ui, shared with pilot-tui. -->
+    <Using Include="Pilot.Ui" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Pilot.Contracts\Pilot.Contracts.csproj" />
     <!-- The command bar runs the CLI's own command tree in-process. -->
     <ProjectReference Include="..\Pilot.Commands\Pilot.Commands.csproj" />
+    <ProjectReference Include="..\Pilot.Ui\Pilot.Ui.csproj" />
     <PackageReference Include="System.CommandLine" />
   </ItemGroup>
 

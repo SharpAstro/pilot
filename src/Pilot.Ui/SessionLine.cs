@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using Pilot.Contracts;
 
-namespace Pilot.Gui;
+namespace Pilot.Ui;
 
 /// <summary>
 /// One session row as the GUI shows it: every field already in the words it is drawn in, so the window, the CPU

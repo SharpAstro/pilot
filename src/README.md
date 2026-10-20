@@ -177,6 +177,18 @@ later, an MCP server (#70) host: `flight create 1611 --repo C:\src\tianwen`, `le
 The right panel is the watchtower's: its state and context, its Remote Control link, a box to tell it things, then the
 cards with their buttons (Merge is a card's) and what was handled. The job queue joins it with phase 2.
 
+## The TUI
+
+`pilot-tui` is the same dashboard in a terminal, over SSH as well as locally: the GUI's own pages and panels
+(`Pilot.Ui`), their DIR.Lib trees arranged in terminal cells by Console.Lib (`CellMeasureContext.PixelAuthored`)
+instead of painted on pixels, so a row, a button or the command bar is the same node on both. **1** Sessions, **2**
+Flights, **Ctrl+K** the command bar, **Ctrl+S** the say bar, **Ctrl+T** the watchtower's box, Up/Down to select, a
+click on a cell runs what a click on the pixels would, **q** quits. The watchtower and cards panel shows beside the page
+from 120 columns. `--node host:port` flies a node on the LAN, as everywhere.
+
+The views moved into `Pilot.Ui` (DIR.Lib only, no SDL) for it: the GUI paints `Render`, the TUI arranges `Tree`, and the
+selected row states itself as a background as well as a focus, since a terminal paints no focus of its own.
+
 ## The watchtower
 
 The node keeps one watchtower session, `<machine>-watchtower`: a background session with Remote Control on, so you

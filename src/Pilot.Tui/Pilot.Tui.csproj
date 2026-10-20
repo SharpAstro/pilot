@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>pilot-tui</AssemblyName>
+    <RootNamespace>Pilot.Tui</RootNamespace>
+    <!-- The dashboard in a terminal: the GUI's own pages and panels (Pilot.Ui), arranged in cells by Console.Lib, so it
+         runs over SSH and needs no window. One native binary, as the others are. -->
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="DIR.Lib.Layout" Alias="Layout" />
+    <Using Include="Pilot.Ui" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Pilot.Contracts\Pilot.Contracts.csproj" />
+    <ProjectReference Include="..\Pilot.Commands\Pilot.Commands.csproj" />
+    <ProjectReference Include="..\Pilot.Ui\Pilot.Ui.csproj" />
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+
+  <!-- Console.Lib from the sibling clone when it is there, as the GUI takes DIR.Lib: see the GUI's project for SharpAstroRoot. -->
+  <PropertyGroup>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\Console.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\Console.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
+    <UseLocalConsoleLib Condition="'$(UseLocalConsoleLib)' == '' AND '$(RuntimeIdentifier)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)Console.Lib\src\Console.Lib\Console.Lib.csproj')">true</UseLocalConsoleLib>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalConsoleLib)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)Console.Lib\src\Console.Lib\Console.Lib.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalConsoleLib)' != 'true'">
+    <PackageReference Include="Console.Lib" />
+  </ItemGroup>
+
+</Project>

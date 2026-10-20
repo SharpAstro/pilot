@@ -191,7 +191,7 @@ if (feed is not null && client is not null)
         Console.WriteLine($"pilot-gui: tell watchtower: {chrome.Cards.TellStatus}");
         loop.RequestRedraw();
     };
-    chrome.Cards.OnOpen = url => GuiCommands.Open(url);
+    chrome.Cards.OnOpen = url => DashboardCommands.Open(url);
 
     // The Flights page flies a flight from here alone: its buttons are verbs, its command bar the CLI's own commands.
     chrome.Flights.CanCommand = true;
@@ -199,21 +199,21 @@ if (feed is not null && client is not null)
     {
         chrome.Flights.Say($"> {line}");
         loop.RequestRedraw();
-        var said = await GuiCommands.RunAsync(line, NodeArgs(), cts.Token);
+        var said = await DashboardCommands.RunAsync(line, NodeArgs(), GuiSay.Who, cts.Token);
         chrome.Flights.Say(said);
         Console.WriteLine($"pilot-gui: command `{line}`: {said.ReplaceLineEndings(" / ")}");
         loop.RequestRedraw();
     };
     chrome.Flights.OnAction = action => _ = Task.Run(async () =>
     {
-        var said = await GuiCommands.ActAsync(client, action, cts.Token);
+        var said = await DashboardCommands.ActAsync(client, action, GuiSay.Who, cts.Token);
         chrome.Flights.Say(said);
         Console.WriteLine($"pilot-gui: {said}");
         loop.RequestRedraw();
     });
     chrome.Flights.OnOpen = location =>
     {
-        if (!GuiCommands.Open(location))
+        if (!DashboardCommands.Open(location))
         {
             chrome.Flights.Say($"could not open {location}");
         }

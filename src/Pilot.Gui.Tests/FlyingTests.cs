@@ -86,10 +86,10 @@ public sealed class FlyingTests
     {
         var gone = Path.Combine(Path.GetTempPath(), "p2g-" + Guid.NewGuid().ToString("N")[..8] + ".sock");
 
-        var said = await GuiCommands.RunAsync("pilot status", ["--node-socket", gone], Ct);
+        var said = await DashboardCommands.RunAsync("pilot status", ["--node-socket", gone], "gui", Ct);
 
         said.ShouldContain("no node answers");
-        (await GuiCommands.RunAsync("flight launch", ["--node-socket", gone], Ct)).ShouldContain("pilot --help lists the commands");
+        (await DashboardCommands.RunAsync("flight launch", ["--node-socket", gone], "gui", Ct)).ShouldContain("pilot --help lists the commands");
     }
 
     [Fact]
