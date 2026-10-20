@@ -122,7 +122,7 @@ public static class NodeApp
         var app = builder.Build();
         app.UseWebSockets();
         app.RestrictNodeSocketToItsOwner(held);
-        app.Use(GateLanAsync);
+        app.UseNodeAccessGate(LanPolicy);
         MapRoutes(app);
         return app;
     }
@@ -131,36 +131,37 @@ public static class NodeApp
     /// What a request from the LAN may do: watch (the node, the sessions, the event stream), ask for a grant and read its
     /// ticket; and, with a grant's token, send commands, which go out under the grant's label. Hooks and the list of
     /// grants are this machine's alone. A request on the socket passes untouched: its owner is this machine's person.
+    /// Node.Lib's gate applies it.
     /// </summary>
-    private static async Task GateLanAsync(HttpContext context, RequestDelegate next)
+    private static readonly NodeAccessPolicy LanPolicy = new NodeAccessPolicy
     {
-        if (!NodeLan.IsRemote(context))
+        Classify = context =>
         {
-            await next(context);
-            return;
-        }
-
-        var path = context.Request.Path.Value ?? "";
-        var get = HttpMethods.IsGet(context.Request.Method);
-        var post = HttpMethods.IsPost(context.Request.Method);
-        var watching = get && (path is NodeWire.NodeRoute or NodeWire.SessionsRoute or NodeWire.EventsRoute || path.StartsWith(NodeWire.GrantsRoute + "/", StringComparison.Ordinal));
-        if (watching || (post && path == NodeWire.GrantsRoute))
+            var path = context.Request.Path.Value ?? "";
+            var get = HttpMethods.IsGet(context.Request.Method);
+            var post = HttpMethods.IsPost(context.Request.Method);
+            var watching = get && (path is NodeWire.NodeRoute or NodeWire.SessionsRoute or NodeWire.EventsRoute || path.StartsWith(NodeWire.GrantsRoute + "/", StringComparison.Ordinal));
+            return watching || (post && path == NodeWire.GrantsRoute) ? NodeRouteAccess.Open
+                : post && path == NodeWire.CommandsRoute ? NodeRouteAccess.Command
+                : NodeRouteAccess.ThisMachineOnly;
+        },
+        MayCommand = async context =>
         {
-            await next(context);
-            return;
-        }
-        if (post && path == NodeWire.CommandsRoute && await context.RequestServices.GetRequiredService<NodeLan>().VerifyAsync(context) is { } grant)
-        {
+            if (await context.RequestServices.GetRequiredService<NodeLan>().VerifyAsync(context) is not { } grant)
+            {
+                return false;
+            }
             context.Items[NodeLan.GrantLabelKey] = grant.Label;
-            await next(context);
-            return;
-        }
-
-        var why = post && path == NodeWire.CommandsRoute
-            ? "a command from the LAN needs a grant: pilot connect <host:port> asks this node's person for one"
-            : "this route is for this machine only";
-        await Results.Json(ResponseEnvelope<CommandResult>.Fail(why, 403), PilotJsonContext.Default.ResponseEnvelopeCommandResult, statusCode: 403).ExecuteAsync(context);
-    }
+            return true;
+        },
+        RefuseAsync = (context, access) =>
+        {
+            var why = access is NodeRouteAccess.Command
+                ? "a command from the LAN needs a grant: pilot connect <host:port> asks this node's person for one"
+                : "this route is for this machine only";
+            return Results.Json(ResponseEnvelope<CommandResult>.Fail(why, 403), PilotJsonContext.Default.ResponseEnvelopeCommandResult, statusCode: 403).ExecuteAsync(context);
+        },
+    };
 
     /// <summary>How long <c>GET /api/v1/sessions</c> waits for the tracker's first poll.</summary>
     private static readonly TimeSpan FirstPollBudget = TimeSpan.FromSeconds(10);
