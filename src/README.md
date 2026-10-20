@@ -100,6 +100,22 @@ budget.
 | `go-around flight/<code>/<leg> <why…>` | A fresh worker for a flying or failed leg. |
 | `merge flight/<code> <head> [squash\|rebase\|merge]` | With every leg done: `gh pr merge --match-head-commit`, refused when the PR moved past the head you reviewed; then the flight lands. |
 
+### Liveness: no flight derails silently
+
+The node watches every flying leg's worker (`LegWatch`, every 30 s) and never leaves a stalled one unnoticed:
+
+| The worker | What the node does |
+| --- | --- |
+| stopped by the usage limit, with a reset time | A For-you card saying when it resumes; 2 min after the reset, says "carry on" to it (resumed as a real turn) and closes the card. Stopped again on the same reset, it rings. |
+| stopped by the API with no reset time | Rings, with **Resume** and **Go around**. |
+| idle (or ended) with its leg unfinished, 3 min past its last answer | Nudges it, twice at most, with what is left and how to finish or give up; then rings, with **Nudge** and **Go around**. |
+| waiting on a person | Rings with what it waits on; it is answered in its own session, or gone around. |
+| failed, or never showed up 3 min after its start | Rings, with **Go around**. |
+
+Each nudge and resume is a Handled card. The watch's cards close by themselves once the worker works again, and a
+go-around or a finished leg closes every card about the leg. What it resumed and nudged is kept in memory, so a node
+restarted mid-flight may nudge a worker once more than it would have: a turn, never a stall.
+
 The GUI's rail opens the **Flights** page (Ctrl+2): each flight's code, title, repo and issue, state (held: waiting
 for which), legs (how many done, which flying), branch and sessions.
 
@@ -138,10 +154,12 @@ branch before any worker goes in, and lands one that is already gone.
 
 An event that needs the controller is one card, with its choices on it (after Sam's campaigner): **Rings** (a gate
 before an irreversible step, a stop: waits until someone acts), **For you** (a card, no push) and **Handled** (what the
-node or the watchtower did itself: one line, born closed). A session going quiet is never a card; it changes how its
-row looks. A card leaves when its thing is done: answered, dismissed, or closed by the node when its flight lands or
-its leg finishes. Raised so far: a PR opened with every leg done rings with **Merge** on that head; a failed leg rings
-with **Go around**; a landed flight is a For-you card.
+node or the watchtower did itself: one line, born closed). A session going quiet is not a card by itself; it changes
+how its row looks. A flying leg's worker stalling is: its flight is derailing (see Liveness). A card leaves when its
+thing is done: answered, dismissed, or closed by the node when its flight lands or its leg finishes. Raised so far: a
+PR opened with every leg done rings with **Merge** on that head; a failed leg rings with **Go around**; a landed flight
+is a For-you card; and the leg watch's cards (`worker-stopped`, `-idle`, `-waiting`, `-failed`, `-missing`, and the
+Handled `worker-resumed` and `worker-nudged`).
 
 Each choice is a command; `answer card/<id> <n or label>` runs it as the one answering, through the same route as any
 command, and closes the card (opening it again if the command is refused). `dismiss card/<id> [why]` closes it with

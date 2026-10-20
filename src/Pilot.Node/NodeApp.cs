@@ -44,6 +44,16 @@ public static class NodeApp
         builder.Services.AddSingleton<IGitHub, GhCli>();
         builder.Services.AddSingleton<LegCommander>();
         builder.Services.AddSingleton<NodeCommands>();
+        builder.Services.AddSingleton(services =>
+        {
+            var legs = services.GetRequiredService<LegCommander>();
+            var commands = services.GetRequiredService<NodeCommands>();
+            return new LegWatch(services.GetRequiredService<NodeState>(), commands.RunAsync, services.GetRequiredService<TimeProvider>())
+            {
+                Pilot = Briefs.Run(legs.Cli, legs.Socket),
+            };
+        });
+        builder.Services.AddHostedService(services => services.GetRequiredService<LegWatch>());
         builder.Services.AddSingleton(services => new SessionTracker(
             services.GetRequiredService<NodeState>(),
             services.GetRequiredService<IClaudeAgents>(),
