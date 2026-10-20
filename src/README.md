@@ -131,7 +131,11 @@ go-around or a finished leg closes every card about the leg. What it resumed and
 restarted mid-flight may nudge a worker once more than it would have: a turn, never a stall.
 
 The GUI's rail opens the **Flights** page (Ctrl+2): each flight's code, title, repo and issue, state (held: waiting
-for which), legs (how many done, which flying), branch and sessions.
+for which), legs (how many done, which flying), branch and sessions. Below 1150 design
+units wide it drops Branch and Sessions.
+
+The **Sessions** page does the same below 1200 units (and pilot-tui below 150 columns): it drops Last response and Spend, so
+the Session column keeps room for the role and the session name.
 
 ## The CLI
 

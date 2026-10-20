@@ -79,8 +79,15 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private static readonly RGBAColor32 Failed = new(0xe0, 0x5a, 0x5a, 0xff);
     private static readonly RGBAColor32 Low = new(0x5a, 0x8f, 0xd8, 0xff);
 
+    /// <summary>
+    /// Below this width (design units) the table drops its Last response and Spend columns, so the Session column keeps
+    /// room for the role and the session name: with every column it is the width less ~880, so ~320 here.
+    /// </summary>
+    private const float WideWidth = 1200f;
+
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
     private IReadOnlyList<SessionLine> _lines = [];
+    private bool _wide = true;
 
     /// <summary>The selected row's index into <see cref="SessionsScreen.Lines"/>, or -1 with none.</summary>
     public int Selected => ListCursor.ListId == ListId ? ListCursor.Index : -1;
@@ -113,12 +120,16 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     public void Render(SessionsScreen screen, RectF32 bounds)
     {
         BeginFrame();
-        RenderLayout(Tree(screen), bounds);
+        RenderLayout(Tree(screen, bounds.Width / Math.Max(DpiScale, 0.1f)), bounds);
     }
 
-    /// <summary>The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
-    internal Layout.Node Tree(SessionsScreen screen)
+    /// <summary>
+    /// The page as a tree, for <paramref name="width"/> design units: what <see cref="Render"/> paints, and what pilot-tui
+    /// arranges in cells.
+    /// </summary>
+    internal Layout.Node Tree(SessionsScreen screen, float width)
     {
+        _wide = width >= WideWidth;
         _lines = screen.Lines;
         if (screen.Lines.Count == 0)
         {
@@ -259,18 +270,29 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .Stretch();
     }
 
-    private static Layout.Node ColumnHeader() =>
-        Layout.Builder.HStack(
-                Layout.Builder.Spacer().WFixed(StripeWidth),
-                Label("Session").WStar(),
-                Label("Model").WFixed(ModelWidth),
-                Label("Context").WFixed(ContextWidth),
-                Label("Last response").WFixed(LastWidth),
-                Label("State").WFixed(StateWidth),
-                Label("Spend").WFixed(SpendWidth))
+    private Layout.Node ColumnHeader()
+    {
+        var columns = new List<Layout.Node>
+        {
+            Layout.Builder.Spacer().WFixed(StripeWidth),
+            Label("Session").WStar(),
+            Label("Model").WFixed(ModelWidth),
+            Label("Context").WFixed(ContextWidth),
+        };
+        if (_wide)
+        {
+            columns.Add(Label("Last response").WFixed(LastWidth));
+        }
+        columns.Add(Label("State").WFixed(StateWidth));
+        if (_wide)
+        {
+            columns.Add(Label("Spend").WFixed(SpendWidth));
+        }
+        return Layout.Builder.HStack([.. columns])
             .WithGap(ColumnGap)
             .PadX(8f)
             .RowH(ColumnHeaderHeight);
+    }
 
     private static Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);
 
@@ -281,15 +303,24 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         var body = live ? Body : Dim;
         var stateColor = StateColor(line);
 
-        var row = Layout.Builder.HStack(
-                Layout.Builder.Spacer().Bg(stateColor).WFixed(StripeWidth).HStar(),
-                Cell(Layout.Builder.Text(line.Role, 15f, text), Layout.Builder.Text(line.Name, 12f, Dim)).WStar(),
-                Cell(Layout.Builder.Text(line.Model, 14f, body)).WFixed(ModelWidth),
-                Metered(line.Context, line.ContextFraction, body).WFixed(ContextWidth),
-                Cell(Layout.Builder.Text(line.LastResponse, 14f, body)).WFixed(LastWidth),
-                Cell(Layout.Builder.Text(line.State, 14f, stateColor),
-                    line.WaitingFor is { } waitingFor ? Layout.Builder.Text(waitingFor, 11f, Dim) : null).WFixed(StateWidth),
-                Metered(line.Spend, line.SpendFraction, body).WFixed(SpendWidth))
+        var cells = new List<Layout.Node>
+        {
+            Layout.Builder.Spacer().Bg(stateColor).WFixed(StripeWidth).HStar(),
+            Cell(Layout.Builder.Text(line.Role, 15f, text), Layout.Builder.Text(line.Name, 12f, Dim)).WStar(),
+            Cell(Layout.Builder.Text(line.Model, 14f, body)).WFixed(ModelWidth),
+            Metered(line.Context, line.ContextFraction, body).WFixed(ContextWidth),
+        };
+        if (_wide)
+        {
+            cells.Add(Cell(Layout.Builder.Text(line.LastResponse, 14f, body)).WFixed(LastWidth));
+        }
+        cells.Add(Cell(Layout.Builder.Text(line.State, 14f, stateColor),
+            line.WaitingFor is { } waitingFor ? Layout.Builder.Text(waitingFor, 11f, Dim) : null).WFixed(StateWidth));
+        if (_wide)
+        {
+            cells.Add(Metered(line.Spend, line.SpendFraction, body).WFixed(SpendWidth));
+        }
+        var row = Layout.Builder.HStack([.. cells])
             .WithGap(ColumnGap)
             .Pad(8f, 6f)
             .RowH(RowHeight)

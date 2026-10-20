@@ -63,4 +63,28 @@ public sealed class TerminalTests
         CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen(), 160 * 8f), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored))
             .ShouldContain("flight/tia1611");
     }
+
+    [Fact]
+    public void ANarrowSessionsPageDropsLastResponseAndSpendForTheSessionColumn()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var sessions = new SessionsView<RgbaImage>(vessel);
+        var screen = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
+
+        var narrow = CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen, 100 * 8f), new Rect<int>(0, 0, 100, 40), CellMeasureContext.PixelAuthored));
+        narrow.ShouldContain("Session");
+        narrow.ShouldContain("Model");
+        narrow.ShouldContain("Context");
+        narrow.ShouldContain("State");
+        narrow.ShouldNotContain("Last response");
+        narrow.ShouldNotContain("Spend");
+        // What the Session column is for: the role and the name, whole.
+        narrow.ShouldContain("worker · ORB204 / parser");
+        narrow.ShouldContain("xy1-orb204-parser");
+
+        var wide = CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen, 160 * 8f), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored));
+        wide.ShouldContain("Last response");
+        wide.ShouldContain("Spend");
+        wide.ShouldContain("Session");
+    }
 }
