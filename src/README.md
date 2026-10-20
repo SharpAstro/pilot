@@ -190,6 +190,16 @@ pilot handled <subject> <line>                 # a Handled line
 - **Budgets** are applied by the node: a worker past its leg's budget rings with **Extend** (by half) and **Go around**,
   and keeps working until you choose. `pilot leg extend <tokens>` raises it by hand.
 
+### Usage
+
+The node reads the account's 5-hour and 7-day usage once a minute from `rate-limits.json` in the Claude config folder,
+which the controller's status line writes from the `rate_limits` Claude Code hands it. No login is read and no API
+called. Every open session's status line writes that file from its own last response, so the node keeps only the newest
+figures per window: a later reset is a new window, an earlier one is a stale writer and is ignored, and within one
+window the higher share wins (v1's figures flipped between whoever repainted last). `pilot status` and the GUI's
+header show it (`5h 42% (resets 14:00) · 7d 64% (resets Sat 10:00)`, with its age once it is old); past 90% of the
+5-hour window a For-you card says workers will stop, once per window.
+
 ## Cards
 
 An event that needs the controller is one card, with its choices on it (after Sam's campaigner): **Rings** (a gate
