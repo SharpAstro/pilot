@@ -132,6 +132,7 @@ public sealed class ReviewTests : IDisposable
         var card = Open().ShouldHaveSingleItem();
         (card.Kind, card.Title).ShouldBe((LegCommander.PrReady, "TIA1's PR #71 is ready to merge"));
         card.Detail.ShouldNotBeNull().ShouldContain("Reviewed: the step is in; it is done.");
+        card.Link.ShouldBe("https://github.com/x/tianwen/pull/71");
     }
 
     [Fact]
@@ -202,6 +203,8 @@ public sealed class ReviewTests : IDisposable
             (await Run(merge.Verb, merge.Target, "controller", merge.Args)).Error.ShouldBeNull();
             await _flights.LandAfterMergeAsync(flight.Code, Ct);
             F(flight.Code).State.ShouldBe(FlightState.Landed);
+            // The landed card opens its PR, as the merge card did.
+            _state.Cards().First(c => c.Kind == "landed" && c.Subject == Verbs.FlightTarget(flight.Code)).Link.ShouldNotBeNull().ShouldBe(F(flight.Code).PullRequestUrl);
         }
 
         // Landing stopped every session the flight had, so none still held its plane.

@@ -508,6 +508,10 @@ public static class PilotCommand
                     text.AppendLine($"      {line}");
                 }
             }
+            if (card.Link is { } link)
+            {
+                text.AppendLine($"      {link}");
+            }
             if (card.State == CardState.Open)
             {
                 for (var i = 0; i < card.Choices.Length; i++)

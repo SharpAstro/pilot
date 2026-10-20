@@ -115,6 +115,28 @@ public sealed class FlyingTests
         regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).ShouldContain("watchtower:rc");
     }
 
+    [Fact]
+    public void ACardAboutAPrOpensIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        var opened = new List<string>();
+        chrome.Cards.OnOpen = opened.Add;
+        var card = new CardRow
+        {
+            Id = "c5", Bin = CardBin.ForYou, Kind = "landed", Subject = "flight/DIR112", Title = "DIR112 landed", At = Live.At, State = CardState.Open,
+            Link = "https://github.com/SharpAstro/DIR.Lib/pull/138",
+        };
+
+        chrome.Render(new SessionsScreen([], "test", Live.At), null, CardsScreen.From([card]), new RectF32(0, 0, 1280, 800));
+
+        var regions = new List<ClickableRegion>();
+        chrome.Cards.CollectPaintedRegions(regions);
+        var open = regions.Single(r => r.Result is HitResult.ButtonHit { Action: "card:c5:open" });
+        open.OnClick!.Invoke(InputModifier.None);
+        opened.ShouldBe(["https://github.com/SharpAstro/DIR.Lib/pull/138"]);
+    }
+
     /// <summary>Records compare their array by reference.</summary>
     private sealed class FlightActionComparer : IEqualityComparer<FlightAction>
     {

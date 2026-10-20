@@ -189,6 +189,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             var number = i + 1;
             buttons.Add(Pill(card.Choices[i].Label, $"card:{card.Id}:{number}", () => OnAnswer?.Invoke(card, number)));
         }
+        // The page it is about, one click away: a PR is what a merge card and a landed card are both about.
+        if (card.Link is { } link)
+        {
+            buttons.Add(Pill(link.Contains("/pull/", StringComparison.Ordinal) ? "Open PR" : "Open", $"card:{card.Id}:open", () => OnOpen?.Invoke(link)));
+        }
         buttons.Add(Pill("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
         lines.Add(Layout.Builder.Spacer().RowH(6f));
         lines.Add(Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f).RowH(26f));
