@@ -110,7 +110,7 @@ while (!stop.IsCancellationRequested)
         var (columns, rows) = terminal.Size;
         // Design units per cell, as CellMeasureContext.PixelAuthored counts them: the trees are the GUI's.
         var width = columns * 8f;
-        var pageTree = page == PilotPage.Flights ? flights.Tree(feed.Flights(now), width) : sessions.Tree(feed.Screen(now));
+        var pageTree = page == PilotPage.Flights ? flights.Tree(feed.Flights(now), width) : sessions.Tree(feed.Screen(now), width);
         var cardsScreen = feed.Cards();
         // The panel takes 38 columns (the GUI's 300 units) when there is room beside a usable page, and something to show.
         var tree = columns >= 120 && cardsScreen.HasAny
