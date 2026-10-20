@@ -134,7 +134,9 @@ public sealed class FlyingTests
         chrome.Cards.CollectPaintedRegions(regions);
         var open = regions.Single(r => r.Result is HitResult.ButtonHit { Action: "card:c5:open" });
         open.OnClick!.Invoke(InputModifier.None);
-        opened.ShouldBe(["https://github.com/SharpAstro/DIR.Lib/pull/138"]);
+        // Its title is the same link, as a hyperlink.
+        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "card:c5:title" }).OnClick!.Invoke(InputModifier.None);
+        opened.ShouldBe(["https://github.com/SharpAstro/DIR.Lib/pull/138", "https://github.com/SharpAstro/DIR.Lib/pull/138"]);
     }
 
     /// <summary>Records compare their array by reference.</summary>
