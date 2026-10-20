@@ -255,6 +255,7 @@ loop.OnRender = () =>
         screen = feed.Screen(drawnAt);
         flights = feed.Flights(drawnAt);
         cards = feed.Cards();
+        chrome.Flights.Jobs = feed.Jobs();
     }
 
     view.Ui.FrameId++;

@@ -112,6 +112,7 @@ while (!stop.IsCancellationRequested)
         var width = columns * 8f;
         var pageTree = page == PilotPage.Flights ? flights.Tree(feed.Flights(now), width) : sessions.Tree(feed.Screen(now), width);
         var cardsScreen = feed.Cards();
+        flights.Jobs = feed.Jobs();
         // The panel takes 38 columns (the GUI's 300 units) when there is room beside a usable page, and something to show.
         var tree = columns >= 120 && cardsScreen.HasAny
             ? Layout.Builder.HStack(pageTree.WStar(), cards.Tree(cardsScreen).WFixed(CardsView<RgbaImage>.Width)).Stretch()

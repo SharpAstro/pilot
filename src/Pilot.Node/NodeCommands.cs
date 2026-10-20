@@ -52,6 +52,14 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             var args = command.Args ?? [];
             return state.Complete(command, args.Length == 0 ? "revoke-grant takes the grant's id (pilot grants lists them)" : await Get<NodeLan>().RevokeAsync(args[0], cancellationToken));
         }
+        if (command.Verb == Verbs.Run)
+        {
+            return Get<JobRunner>().Run(command);
+        }
+        if (command.Verb == Verbs.CancelJob)
+        {
+            return Get<JobRunner>().Cancel(command);
+        }
         if (command.Verb == Verbs.Digest)
         {
             Get<Digest>().Raise(Get<TimeProvider>().GetUtcNow());
