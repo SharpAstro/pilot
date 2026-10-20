@@ -27,6 +27,7 @@
     <ProjectReference Include="..\Pilot.Commands\Pilot.Commands.csproj" />
     <ProjectReference Include="..\Pilot.Ui\Pilot.Ui.csproj" />
     <PackageReference Include="System.CommandLine" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
   </ItemGroup>
 
   <!-- The UI face travels with the binary, so a capture draws the same glyphs on every machine. -->

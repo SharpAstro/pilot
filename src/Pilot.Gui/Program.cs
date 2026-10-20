@@ -1,4 +1,5 @@
 using DIR.Lib;
+using Microsoft.Extensions.Logging;
 using Pilot.Contracts;
 using Pilot.Gui;
 using SdlVulkan.Renderer;
@@ -130,6 +131,13 @@ var view = new SessionsView<VulkanContext>(renderer);
 var chrome = new PilotChrome<VulkanContext>(renderer, view) { FontPath = SessionsCapture.FontPath, DpiScale = window.DisplayScale };
 
 using var cts = new CancellationTokenSource();
+// Logging as tianwen's GUI does it: a logger of its own, and the renderer's pointed at the same factory, so its lines get
+// the same timestamps and routing. Warnings and worse go to stderr, beside the GUI's own pilot-gui: lines.
+using var loggerFactory = LoggerFactory.Create(logging => logging
+    .AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; })
+    .AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Warning));
+var logger = loggerFactory.CreateLogger("Pilot.Gui");
+SdlVulkanLog.Logger = loggerFactory.CreateLogger("SdlVulkan.Renderer");
 var tracker = new BackgroundTaskTracker();
 var loop = new SdlEventLoop(window, renderer) { BackgroundColor = new RGBAColor32(0x12, 0x12, 0x18, 0xff) };
 var router = new InputRouter(view.Ui, tracker, loop.RequestRedraw)
@@ -177,8 +185,11 @@ if (feed is not null && client is not null)
         Console.WriteLine($"pilot-gui: {verb} {card.Id} ({card.Title}): {(result.Success ? "done" : result.Response?.Error ?? result.Error)}");
         loop.RequestRedraw();
     }
-    chrome.Cards.OnAnswer = (card, number) => _ = CardCommandAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
-    chrome.Cards.OnDismiss = card => _ = CardCommandAsync(Verbs.Dismiss, card, []);
+    // Every task a click starts goes through the tracker, never `_ =`: it is drained at shutdown and a fault it did not
+    // expect is logged (ProcessCompletions, each frame) rather than lost with an unobserved task.
+    chrome.Cards.OnAnswer = (card, number) => tracker.Run(
+        () => CardCommandAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)]), $"answer {card.Id}");
+    chrome.Cards.OnDismiss = card => tracker.Run(() => CardCommandAsync(Verbs.Dismiss, card, []), $"dismiss {card.Id}");
 
     // The watchtower, from its panel: told things through the node, its Remote Control link one click away.
     chrome.Cards.CanTell = true;
@@ -195,8 +206,9 @@ if (feed is not null && client is not null)
 
     // The Flights page flies a flight from here alone: its buttons are verbs, its command bar the CLI's own commands.
     chrome.Flights.CanCommand = true;
-    // The LAN as the dashboard sees it, discovering from the start: a node that cannot listen still shows why.
-    _ = Task.Run(async () =>
+    // The LAN as the dashboard sees it, discovering from the start: a node that cannot listen still shows why. Tracked,
+    // so shutdown waits for it before it disposes the watch it started.
+    tracker.Run(async () =>
     {
         try
         {
@@ -207,7 +219,7 @@ if (feed is not null && client is not null)
         {
             Console.Error.WriteLine($"pilot-gui: the LAN cannot be watched: {ex.Message}");
         }
-    });
+    }, "watch the LAN");
     chrome.Flights.OnCommand = async line =>
     {
         chrome.Flights.Say($"> {line}");
@@ -227,13 +239,13 @@ if (feed is not null && client is not null)
         Console.WriteLine($"pilot-gui: command `{line}`: {said.ReplaceLineEndings(" / ")}");
         loop.RequestRedraw();
     };
-    chrome.Flights.OnAction = action => _ = Task.Run(async () =>
+    chrome.Flights.OnAction = action => tracker.Run(async () =>
     {
         var said = await DashboardCommands.ActAsync(client, action, GuiSay.Who, cts.Token);
         chrome.Flights.Say(said);
         Console.WriteLine($"pilot-gui: {said}");
         loop.RequestRedraw();
-    });
+    }, "a Flights action");
     chrome.Flights.OnOpen = location =>
     {
         if (!DashboardCommands.Open(location))
@@ -244,18 +256,21 @@ if (feed is not null && client is not null)
     feed.Start();
 
     // The window opens at once and the feed connects when the node answers; a node is started meanwhile if none runs.
-    _ = remoteEndpoint is not null ? Task.CompletedTask : Task.Run(async () =>
+    if (remoteEndpoint is null)
     {
-        var (outcome, message) = await NodeLauncher.FindOrStartAsync(socketPath, namedSocket, CancellationToken.None);
-        if (outcome != NodeLaunch.Found)
+        tracker.Run(async () =>
         {
-            Console.Error.WriteLine($"pilot-gui: {message}");
-        }
-        if (outcome is NodeLaunch.NamedSocketSilent or NodeLaunch.NoNodeBinary or NodeLaunch.DidNotStart)
-        {
-            feed.Problem = message;
-        }
-    });
+            var (outcome, message) = await NodeLauncher.FindOrStartAsync(socketPath, namedSocket, CancellationToken.None);
+            if (outcome != NodeLaunch.Found)
+            {
+                Console.Error.WriteLine($"pilot-gui: {message}");
+            }
+            if (outcome is NodeLaunch.NamedSocketSilent or NodeLaunch.NoNodeBinary or NodeLaunch.DidNotStart)
+            {
+                feed.Problem = message;
+            }
+        }, "find or start the node");
+    }
 }
 
 var announced = (string?)null;
@@ -271,6 +286,11 @@ loop.OnResize = (w, h) =>
 };
 loop.OnRender = () =>
 {
+    // The background work clicks started: a fault it did not expect is logged here, once, instead of vanishing.
+    if (tracker.ProcessCompletions(logger))
+    {
+        loop.RequestRedraw();
+    }
     if (feed is not null)
     {
         drawnVersion = feed.Version;
@@ -352,9 +372,29 @@ if (options.ExitAfter is { } after)
 }
 
 loop.Run(cts.Token);
-if (feed is not null)
-{
-    ShutdownDrain.PumpUntilComplete(loop, feed.DisposeAsync().AsTask(), Console.Error);
-}
+ShutdownDrain.PumpUntilComplete(loop, ShutDownAsync(), Console.Error);
 Console.WriteLine(cts.IsCancellationRequested ? "pilot-gui: --exit-after reached; window closed." : "pilot-gui: window closed.");
 return 0;
+
+// Shutdown, with the loop pumping (ShutdownDrain): the tracked work first, so nothing is still starting what is about to
+// be disposed; then the LAN watch it started, then the feed.
+async Task ShutDownAsync()
+{
+    await cts.CancelAsync();
+    try
+    {
+        await tracker.DrainAsync().WaitAsync(TimeSpan.FromSeconds(5));
+    }
+    catch (TimeoutException)
+    {
+        Console.Error.WriteLine($"pilot-gui: {tracker.PendingCount} background task(s) still running after 5 s; closing anyway");
+    }
+    if (chrome.Flights.Lan is { } lan)
+    {
+        await lan.DisposeAsync();
+    }
+    if (feed is not null)
+    {
+        await feed.DisposeAsync();
+    }
+}
