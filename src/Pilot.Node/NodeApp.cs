@@ -66,6 +66,12 @@ public static class NodeApp
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());
+        // From the profile the tracker reads, so a test node, on a profile of its own, never reads the machine's.
+        builder.Services.AddSingleton(services => new UsageReader(
+            services.GetRequiredService<NodeState>(),
+            Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "rate-limits.json"),
+            services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddHostedService(services => services.GetRequiredService<UsageReader>());
         builder.Services.AddSingleton<Digest>();
         builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());
         builder.Services.AddSingleton(services => new SessionTracker(

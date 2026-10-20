@@ -46,6 +46,7 @@ public sealed class NodeState
     private readonly Dictionary<string, FlightRow> _flights = new Dictionary<string, FlightRow>(StringComparer.Ordinal);
     private readonly Dictionary<(string Flight, string Name), LegRow> _legs = [];
     private readonly Dictionary<string, CardRow> _cards = new Dictionary<string, CardRow>(StringComparer.Ordinal);
+    private UsageRow? _usage;
 
     // The latest deltas, oldest first, serialised once: what a resuming client is sent.
     private readonly Queue<(long Seq, byte[] Json)> _held = new Queue<(long Seq, byte[] Json)>();
@@ -311,6 +312,33 @@ public sealed class NodeState
     private static bool Same(FlightRow a, FlightRow b) =>
         a with { Connections = [] } == b with { Connections = [] } && a.Connections.SequenceEqual(b.Connections, StringComparer.Ordinal);
 
+    /// <summary>The account's usage as last read; null before any.</summary>
+    public UsageRow? Usage()
+    {
+        lock (_gate)
+        {
+            return _usage;
+        }
+    }
+
+    /// <summary>
+    /// Puts the usage read, merged with the held figures so a stale writer never wins (<see cref="UsageRow.Newest"/>),
+    /// when the figures changed, or when the same ones were written again 10 minutes after those held: a status line
+    /// rewrites them each minute, and a delta for each would fill the journal with nothing.
+    /// </summary>
+    public void PutUsage(UsageRow read)
+    {
+        lock (_gate)
+        {
+            var usage = UsageRow.Newest(_usage, read);
+            if (_usage is { } held && held.FiveHour == usage.FiveHour && held.SevenDay == usage.SevenDay && usage.ReadAt - held.ReadAt < TimeSpan.FromMinutes(10))
+            {
+                return;
+            }
+            Publish(new UsageChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Usage = usage });
+        }
+    }
+
     /// <summary>Removes a session row; nothing happens when there is none.</summary>
     public void RemoveSession(string id)
     {
@@ -480,6 +508,9 @@ public sealed class NodeState
             case CardChangedEvent changed:
                 _cards[changed.Card.Id] = changed.Card;
                 break;
+            case UsageChangedEvent usage:
+                _usage = usage.Usage;
+                break;
         }
     }
 
@@ -502,6 +533,7 @@ public sealed class NodeState
         {
             _cards[card.Id] = card;
         }
+        _usage = snapshot.Usage;
         _seq = snapshot.Seq;
     }
 
@@ -515,6 +547,7 @@ public sealed class NodeState
         Flights = [.. _flights.Values],
         Legs = [.. _legs.Values],
         Cards = [.. _cards.Values],
+        Usage = _usage,
     };
 
     private static byte[] Serialize(NodeEvent nodeEvent) => JsonSerializer.SerializeToUtf8Bytes(nodeEvent, PilotJsonContext.Default.NodeEvent);

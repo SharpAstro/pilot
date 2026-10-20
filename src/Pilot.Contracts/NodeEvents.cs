@@ -25,6 +25,7 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(LegChangedEvent), "legChanged")]
 [JsonDerivedType(typeof(CardAddedEvent), "cardAdded")]
 [JsonDerivedType(typeof(CardChangedEvent), "cardChanged")]
+[JsonDerivedType(typeof(UsageChangedEvent), "usageChanged")]
 public abstract record NodeEvent
 {
     /// <summary>
@@ -85,6 +86,9 @@ public sealed record SnapshotEvent : NodeEvent
     }
 
     private readonly CardRow[]? _cards;
+
+    /// <summary>The account's usage as last read; null before the node has read any.</summary>
+    public UsageRow? Usage { get; init; }
 }
 
 /// <summary>A session the node had not seen.</summary>

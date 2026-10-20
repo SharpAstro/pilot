@@ -311,6 +311,10 @@ public static class PilotCommand
     internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null)
     {
         var text = new System.Text.StringBuilder();
+        if (!newestOnly && code is null && snapshot.Usage is { } usage)
+        {
+            text.AppendLine($"usage  {usage.Line(DateTimeOffset.UtcNow, TimeZoneInfo.Local)}");
+        }
         var flights = snapshot.Flights.OrderBy(f => f.State == FlightState.Landed).ThenByDescending(f => f.CreatedAt).ToList();
         if (newestOnly)
         {

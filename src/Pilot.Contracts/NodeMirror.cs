@@ -32,6 +32,9 @@ public sealed class NodeMirror
     /// <summary>The cards, by id.</summary>
     public IReadOnlyDictionary<string, CardRow> Cards => _cards;
 
+    /// <summary>The account's usage as last read; null before any.</summary>
+    public UsageRow? Usage { get; private set; }
+
     /// <summary>
     /// Applies one event. A snapshot replaces everything; a delta must be numbered one past the last, or the mirror
     /// has missed something and throws rather than show a state the node never had.
@@ -62,6 +65,7 @@ public sealed class NodeMirror
             {
                 _cards[card.Id] = card;
             }
+            Usage = snapshot.Usage;
             Stream = snapshot.Stream;
             Seq = snapshot.Seq;
             return;
@@ -107,6 +111,9 @@ public sealed class NodeMirror
                 break;
             case CardChangedEvent changed:
                 _cards[changed.Card.Id] = changed.Card;
+                break;
+            case UsageChangedEvent usage:
+                Usage = usage.Usage;
                 break;
             case CommandResultEvent:
                 // A result changes no state; the deltas the command made carry that.
