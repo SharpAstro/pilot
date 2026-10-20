@@ -132,11 +132,56 @@ public sealed class FlyingTests
 
         var regions = new List<ClickableRegion>();
         chrome.Cards.CollectPaintedRegions(regions);
-        var open = regions.Single(r => r.Result is HitResult.ButtonHit { Action: "card:c5:open" });
-        open.OnClick!.Invoke(InputModifier.None);
-        // Its title is the same link, as a hyperlink.
+        // The title is the link, and the only one: no button that could read as "raise a PR".
+        regions.Any(r => r.Result is HitResult.ButtonHit { Action: "card:c5:open" }).ShouldBeFalse();
         regions.Single(r => r.Result is HitResult.ButtonHit { Action: "card:c5:title" }).OnClick!.Invoke(InputModifier.None);
-        opened.ShouldBe(["https://github.com/SharpAstro/DIR.Lib/pull/138", "https://github.com/SharpAstro/DIR.Lib/pull/138"]);
+        opened.ShouldBe(["https://github.com/SharpAstro/DIR.Lib/pull/138"]);
+    }
+
+    [Theory]
+    [InlineData(null, "Merge")]
+    [InlineData(ChoiceStatus.Passing, "Merge")]
+    [InlineData(ChoiceStatus.Pending, "Merge · checks running")]
+    [InlineData(ChoiceStatus.Failing, "Merge · checks failed")]
+    public void AMergeSaysWhereItsChecksStand(string? status, string label)
+    {
+        CardsView<RgbaImage>.StatusLabel(new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/X", Status = status }).ShouldBe(label);
+    }
+
+    [Fact]
+    public void TheLanLineSaysItIsDiscoveringWhatItHeardAndWhatWaits()
+    {
+        var nodes = new List<LanNode>();
+        var started = Live.At;
+        var lan = LanWatch.Over(() => nodes, started);
+
+        lan.Line(started.AddSeconds(4)).ShouldBe("LAN: discovering… (4 s)");
+        lan.Line(started.AddSeconds(30)).ShouldBe("LAN: no node announced itself yet (still listening)");
+        nodes.Add(new LanNode("192.168.1.20:47731", "LP1 LAPTOP"));
+        lan.Asking("192.168.1.20:47731", started.AddSeconds(30));
+        lan.Line(started.AddSeconds(75)).ShouldBe("LAN: 1 node · waiting for 192.168.1.20:47731 to allow (45 s)");
+        lan.Answered("192.168.1.20:47731");
+        lan.Line(started.AddSeconds(80)).ShouldBe("LAN: 1 node");
+        LanWatch.Over(() => [], started, () => "port 38821 is taken").Line(started).ShouldBe("LAN: discovery unavailable (port 38821 is taken)");
+
+        DashboardCommands.ConnectTarget("connect 192.168.1.20:47731 --as se1-gui").ShouldBe("192.168.1.20:47731");
+        DashboardCommands.ConnectTarget("pilot status").ShouldBeNull();
+    }
+
+    [Fact]
+    public void ANodeHeardOnTheLanHalfWritesItsConnect()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Flights.CanCommand = true;
+        chrome.Flights.Lan = LanWatch.Over(() => [new LanNode("192.168.1.20:47731", "LP1 LAPTOP")], Live.At);
+        chrome.Show(PilotPage.Flights);
+        chrome.Render(new SessionsScreen([], "test", Live.At), new FlightsScreen([], "test", Live.At), new RectF32(0, 0, 1280, 800));
+
+        var regions = new List<ClickableRegion>();
+        chrome.Flights.CollectPaintedRegions(regions);
+        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "lan:192.168.1.20:47731" }).OnClick!.Invoke(InputModifier.None);
+        chrome.Flights.CommandInput.Text.ShouldBe("connect 192.168.1.20:47731");
     }
 
     /// <summary>Records compare their array by reference.</summary>

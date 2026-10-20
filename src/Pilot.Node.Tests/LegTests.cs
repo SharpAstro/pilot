@@ -64,6 +64,11 @@ internal sealed class FakeGitHub : IGitHub
         return Task.CompletedTask;
     }
 
+    /// <summary>What ChecksAsync answers for any PR.</summary>
+    public string? Checks { get; set; }
+
+    public Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult(Checks);
+
     public List<(string Branch, string Base, string Title, string Body)> Created { get; } = [];
 
     public Task<PullRequest> CreateAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken)
@@ -374,10 +379,10 @@ public sealed class LegCommanderTests : IDisposable
     [Fact]
     public void AWorkerStartsInTheBackgroundInAutoModeWithItsModelAndEffort() =>
         ClaudeWorkerLauncher.Arguments(new WorkerStart("du1-tia1-parser", "/r/tianwen", "tia1", "brief", "sonnet", "high"))
-            .ShouldBe(["--bg", "-w", "tia1", "-n", "du1-tia1-parser", "--permission-mode", "auto", "--model", "sonnet", "--effort", "high"]);
+            .ShouldBe(["--bg", "-w", "tia1", "-n", "du1-tia1-parser", "--permission-mode", "auto", "--strict-mcp-config", "--model", "sonnet", "--effort", "high"]);
 
     [Fact]
     public void TheWatchtowerStartsInItsOwnFolderWithRemoteControlOn() =>
         ClaudeWorkerLauncher.Arguments(new WorkerStart("du1-watchtower", "/data/watchtower", null, "brief", null, null, RemoteControl: true))
-            .ShouldBe(["--bg", "--remote-control", "-n", "du1-watchtower", "--permission-mode", "auto"]);
+            .ShouldBe(["--bg", "--remote-control", "-n", "du1-watchtower", "--permission-mode", "auto", "--strict-mcp-config"]);
 }

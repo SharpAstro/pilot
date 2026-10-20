@@ -115,7 +115,7 @@ public sealed class SessionTrackerTests : IDisposable
         _agents.Json = AgentRows.List(
             AgentRows.Background(AgentRows.SessionA, "recent job", "done"),
             AgentRows.Background(AgentRows.SessionB, "recent failure", "failed"),
-            AgentRows.Background(AgentRows.SessionC, "old job", "blocked"));
+            AgentRows.Background(AgentRows.SessionC, "old job", "done"));
         _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Lines.Assistant("m1", input: 1));
         _profile.Append(_profile.TranscriptPath(AgentRows.SessionB), Lines.Assistant("m2", input: 1));
         _profile.Append(_profile.TranscriptPath(AgentRows.SessionC), Lines.Assistant("m3", input: 1));

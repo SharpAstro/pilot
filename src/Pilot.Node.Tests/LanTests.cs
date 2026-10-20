@@ -134,6 +134,17 @@ public sealed class LanTests
         }
     }
 
+    [Fact]
+    public void ARepoOnANodeOnTheLanIsThatMachinesPathSentAsGiven()
+    {
+        using var remote = NodeClient.Remote("172.27.11.241:47731");
+        using var local = new NodeClient(Path.Combine(Path.GetTempPath(), "x.sock"));
+
+        PilotCommand.RepoPath(remote, "/home/sebgod/src/pilot", Path.GetTempPath()).ShouldBe("/home/sebgod/src/pilot");
+        Should.Throw<PilotCommand.UsageException>(() => PilotCommand.RepoPath(remote, null, Path.GetTempPath()));
+        PilotCommand.RepoPath(local, null, Path.GetTempPath()).ShouldBe(Path.GetFullPath(Path.GetTempPath()));
+    }
+
     [Theory]
     [InlineData("127.0.0.1:47731", true)]
     [InlineData("tcp://laptop:47731", true)]

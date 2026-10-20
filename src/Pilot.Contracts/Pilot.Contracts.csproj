@@ -17,7 +17,7 @@
   <PropertyGroup>
     <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\Node.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
     <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\Node.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
-    <UseLocalNodeLib Condition="'$(UseLocalNodeLib)' == '' AND '$(RuntimeIdentifier)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)Node.Lib\src\Node.Lib\Node.Lib.csproj')">true</UseLocalNodeLib>
+    <UseLocalNodeLib Condition="'$(UseLocalNodeLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)Node.Lib\src\Node.Lib\Node.Lib.csproj')">true</UseLocalNodeLib>
   </PropertyGroup>
   <ItemGroup Condition="'$(UseLocalNodeLib)' == 'true'">
     <ProjectReference Include="$(SharpAstroRoot)Node.Lib\src\Node.Lib\Node.Lib.csproj" />

@@ -109,7 +109,7 @@ public static class PilotCommand
         var title = Words("title", "What it is for, in a line", required: false);
         var repo = new Option<string?>("--repo") { Description = "The repo's checkout (any of its worktrees); else this folder" };
         var create = Action(new Command("create", "A flight on an issue of this repo, and its plane") { Arguments = { issue, title }, Options = { repo } },
-            (p, client, ct) => SendAsync(client, Verbs.CreateFlight, Verbs.RepoTarget(Path.GetFullPath(p.GetValue(repo) ?? cwd, cwd)),
+            (p, client, ct) => SendAsync(client, Verbs.CreateFlight, Verbs.RepoTarget(RepoPath(client, p.GetValue(repo), cwd)),
                 [p.GetValue(issue)!, .. p.GetValue(title) ?? []], who, output, ct));
 
         var code = Arg("code", "The flight's code, as TIA1611");
@@ -244,6 +244,80 @@ public static class PilotCommand
         var dismiss = Action(new Command("dismiss", "Close the card with nothing done") { Arguments = { card, dismissWhy } },
             (p, client, ct) => SendAsync(client, Verbs.Dismiss, Verbs.CardTarget(p.GetValue(card)!), p.GetValue(dismissWhy) ?? [], who, output, ct));
 
+        // run, jobs, job: a long run handed to the node, which wakes the session that handed it over
+        var runTimeout = new Option<string?>("--timeout") { Description = "How long it may run: 90m, 2h, 45s; 2h by default, 8h at most" };
+        var runWords = new Argument<string[]>("command") { Description = "The command, after --: pilot run -- dotnet test", Arity = ArgumentArity.OneOrMore };
+        var runCommand = Action(new Command("run", "Hand a long run to the node as a job, then end your turn: the node wakes this session with how it ended")
+            {
+                Arguments = { runWords },
+                Options = { runTimeout },
+            },
+            async (p, client, ct) =>
+            {
+                var seconds = p.GetValue(runTimeout) is { } given
+                    ? (TryDuration(given, out var span) ? (long)span.TotalSeconds : throw new UsageException($"--timeout takes 90m, 2h or 45s, not {given}"))
+                    : 0;
+                // The session to wake: the Claude session running this, by its row on the node; from a terminal, none.
+                var owner = Environment.GetEnvironmentVariable("CLAUDE_CODE_SESSION_ID") is { Length: > 0 } sessionId
+                    ? (await SnapshotAsync(client, ct)).Sessions.FirstOrDefault(s => string.Equals(s.SessionId, sessionId, StringComparison.OrdinalIgnoreCase))
+                    : null;
+                var target = owner is null ? Verbs.NodeTarget : Verbs.SessionTarget(owner.Id);
+                var sent = await client.SendAsync(new CommandRequest
+                {
+                    Verb = Verbs.Run,
+                    Target = target,
+                    Args = [cwd, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
+                    Who = owner?.Name ?? who,
+                }, ct);
+                if (sent is not { Success: true, Response: { Ok: true, Made: { } job } })
+                {
+                    await output.WriteLineAsync($"refused: run: {sent.Response?.Error ?? sent.Error}");
+                    return 1;
+                }
+                // A job may have to wait its turn (the machine is shared between flights): say so, and where it stands. The
+                // node's dispatcher answers a moment after the run, so look for up to two seconds until it has.
+                var made = (await SnapshotAsync(client, ct)).Jobs.FirstOrDefault(j => j.Id == job);
+                for (var tries = 0; tries < 20 && made is { State: JobState.Queued, Step: null }; tries++)
+                {
+                    await Task.Delay(100, ct);
+                    made = (await SnapshotAsync(client, ct)).Jobs.FirstOrDefault(j => j.Id == job);
+                }
+                var how = made is { State: JobState.Queued } ? $"queued ({made.Step})" : "started";
+                await output.WriteLineAsync(owner is null
+                    ? $"job {job} {how}; pilot job {job} shows how it stands"
+                    : $"job {job} {how}. End your turn now: the node tells you how it ended, with its last lines. Do not wait for it or poll it.");
+                return 0;
+            });
+        var jobsCommand = Action(new Command("jobs", "The node's jobs, running first"), async (_, client, ct) =>
+        {
+            var jobs = (await SnapshotAsync(client, ct)).Jobs.OrderBy(j => j.State switch { JobState.Running => 0, JobState.Queued => 1, _ => 2 })
+            .ThenByDescending(j => j.StartedAt).Take(20).ToList();
+            await output.WriteAsync(jobs.Count == 0 ? "No jobs.\n" : string.Concat(jobs.Select(j => JobLine(j) + "\n")));
+            return 0;
+        });
+        var jobId = Arg("job", "The job's id, as j3");
+        var jobShow = Action(new Command("job", "One job: how it stands, and where its whole output is") { Arguments = { jobId } }, async (p, client, ct) =>
+        {
+            if ((await SnapshotAsync(client, ct)).Jobs.FirstOrDefault(j => j.Id == p.GetValue(jobId)) is not { } job)
+            {
+                await output.WriteLineAsync($"refused: there is no job {p.GetValue(jobId)}");
+                return 1;
+            }
+            await output.WriteLineAsync(JobLine(job));
+            await output.WriteLineAsync($"  in {job.Cwd}, for {job.OwnerName ?? "a terminal"}; log {job.LogPath}");
+            if (!client.IsRemote && File.Exists(job.LogPath))
+            {
+                foreach (var line in File.ReadLines(job.LogPath).TakeLast(15))
+                {
+                    await output.WriteLineAsync($"  | {line}");
+                }
+            }
+            return 0;
+        });
+        var cancelJob = Action(new Command("cancel", "Stop a running job; its owner is told") { Arguments = { jobId } },
+            (p, client, ct) => SendAsync(client, Verbs.CancelJob, Verbs.JobTarget(p.GetValue(jobId)!), [], who, output, ct));
+        jobShow.Subcommands.Add(cancelJob);
+
         // say, note
         var session = Arg("session", "The session's row id");
         var text = Words("text", "What to say");
@@ -356,7 +430,7 @@ public static class PilotCommand
         return new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node },
-            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note, review, tell, watchtower, digest, ring, flag, handled, nodes, connectNode, grants },
+            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, ring, flag, handled, nodes, connectNode, grants },
         };
     }
 
@@ -375,6 +449,37 @@ public static class PilotCommand
             ?? throw new UsageException($"{flight.Code} has no leg flying; name it with --leg {flight.Code}/<leg>");
         return (Verbs.LegTarget(flight.Code, leg.Name), leg.Worker ?? "cli");
     }
+
+    /// <summary>A job in a line: <c>j3  running  dotnet test  (se1-tia1-parser, 4m)</c>, its step or how it ended after.</summary>
+    internal static string JobLine(JobRow job)
+    {
+        var state = job.State.ToString().ToLowerInvariant();
+        var end = job.Error is { } error ? $": {error}" : "";
+        var took = (job.EndedAt ?? DateTimeOffset.UtcNow) - job.StartedAt;
+        var told = job.EndedAt is not null && job.Owner is not null && !job.Told ? ", owner not told" : "";
+        return $"{job.Id}  {state}{end}  {job.Command}  ({job.OwnerName ?? "terminal"}, {(int)took.TotalMinutes}m{told}){(job.Step is { } step ? $"  · {step}" : "")}";
+    }
+
+    /// <summary>A duration as people write it: <c>90m</c>, <c>2h</c>, <c>45s</c>.</summary>
+    internal static bool TryDuration(string text, out TimeSpan span)
+    {
+        span = default;
+        if (text.Length < 2 || !long.TryParse(text[..^1], NumberStyles.None, CultureInfo.InvariantCulture, out var n) || n <= 0)
+        {
+            return false;
+        }
+        span = text[^1] switch { 's' => TimeSpan.FromSeconds(n), 'm' => TimeSpan.FromMinutes(n), 'h' => TimeSpan.FromHours(n), _ => default };
+        return span > TimeSpan.Zero;
+    }
+
+    /// <summary>
+    /// The repo a flight is created on, as the node will read it. On this machine's node, the folder resolved here (this
+    /// folder when none is named). On a node on the LAN it is that machine's path, sent as given and never resolved
+    /// against this one (a Windows client turned a Linux node's /home/… into C:\home\…), and it must be named.
+    /// </summary>
+    internal static string RepoPath(NodeClient client, string? named, string cwd) => client.IsRemote
+        ? named ?? throw new UsageException("a flight on a node on the LAN needs --repo <its checkout, as that machine names it>")
+        : Path.GetFullPath(named ?? cwd, cwd);
 
     /// <summary>
     /// The flight whose plane holds <paramref name="cwd"/>, and who is asking: its reviewer while a review is on, as a
@@ -516,7 +621,8 @@ public static class PilotCommand
             {
                 for (var i = 0; i < card.Choices.Length; i++)
                 {
-                    text.AppendLine($"      {i + 1}. {card.Choices[i].Label}: pilot answer {card.Id} {i + 1}");
+                    var status = card.Choices[i].Status is { } s ? $" (checks {s})" : "";
+                    text.AppendLine($"      {i + 1}. {card.Choices[i].Label}{status}: pilot answer {card.Id} {i + 1}");
                 }
                 text.AppendLine($"      or: pilot dismiss {card.Id}");
             }

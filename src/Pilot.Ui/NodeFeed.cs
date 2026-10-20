@@ -64,6 +64,15 @@ internal sealed class NodeFeed : IAsyncDisposable
     public void Start() => _run ??= Task.Run(() => RunAsync(_stop.Token));
 
     /// <summary>The cards panel: the open cards and the latest handled lines.</summary>
+    /// <summary>The node's jobs.</summary>
+    public IReadOnlyList<JobRow> Jobs()
+    {
+        lock (_lock)
+        {
+            return [.. _mirror.Jobs.Values];
+        }
+    }
+
     public CardsScreen Cards()
     {
         lock (_lock)

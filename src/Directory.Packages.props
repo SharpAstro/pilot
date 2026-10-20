@@ -15,6 +15,10 @@
   <ItemGroup>
     <PackageVersion Include="System.CommandLine" Version="2.0.12" />
   </ItemGroup>
+  <!-- The GUI's logging, as tianwen's GUI logs (the same version): its own logger, and the renderer's (SdlVulkanLog). -->
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.12" />
+  </ItemGroup>
   <!-- Pilot.Gui: the SharpAstro stack. A local build compiles the sibling clones instead (the UseLocal* switches in
        Pilot.Gui.csproj); these are what CI restores. -->
   <ItemGroup>
@@ -22,8 +26,8 @@
     <PackageVersion Include="Console.Lib" Version="5.10.*" />
     <PackageVersion Include="LAN.Lib" Version="2.3.*" />
     <!-- The per-user node's socket location, lock and Kestrel hosting (SharpAstro/Node.Lib), shared with tianwen. -->
-    <PackageVersion Include="Node.Lib" Version="1.0.*" />
-    <PackageVersion Include="Node.Lib.Hosting" Version="1.0.*" />
+    <PackageVersion Include="Node.Lib" Version="1.1.*" />
+    <PackageVersion Include="Node.Lib.Hosting" Version="1.1.*" />
     <PackageVersion Include="SdlVulkan.Renderer" Version="7.73.*" />
     <PackageVersion Include="SharpAstro.AppShell" Version="1.2.*" />
     <PackageVersion Include="SharpAstro.Png" Version="3.16.*" />

@@ -1,0 +1,460 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Globalization;
+using System.Threading.Channels;
+using Node.Lib;
+using Pilot.Contracts;
+
+namespace Pilot.Node.Flights;
+
+/// <summary>
+/// The node's jobs (<c>pilot run</c>): a long run handed over by a session, which then ends its turn and is woken with the
+/// result, so no worker sits polling a test suite (v2's phase 2). A job is the node's own, as tianwen's are: it runs on the
+/// node's lifetime, never a request's; it is on the stream like a flight; and only <c>cancel-job</c>, its timeout or the
+/// node stopping end it early. Its owner is told how it ended, a real turn for an idle worker, and a wake that fails rings.
+/// </summary>
+/// <remarks>
+/// <para><b>The machine is shared.</b> Several flights hand jobs to one node, and a full test suite can take gigabytes, so
+/// jobs do not all start at once: at most <see cref="MaxRunning"/> run together, and one starts only while the machine
+/// has <see cref="MinFreeMemory"/> free. The rest wait in the order they came, from every flight alike, each saying where
+/// it stands in its step; their owners end their turns as for any job and are woken when it ends, so a wait costs them
+/// nothing.</para>
+/// <para>A job whose node went away while it ran or waited (a restart) cannot be found again: on start the node marks
+/// every such job as failed for that reason, and tells its owner, rather than leave a worker waiting for a result that
+/// will never come.</para>
+/// </remarks>
+public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider time) : BackgroundService
+{
+    public const string UntoldKind = "job-untold";
+
+    /// <summary>How long a job may run unless its owner said otherwise.</summary>
+    public static readonly TimeSpan DefaultTimeout = TimeSpan.FromHours(2);
+
+    /// <summary>The longest a job may be given.</summary>
+    public static readonly TimeSpan MaxTimeout = TimeSpan.FromHours(8);
+
+    private const int TailLines = 20;
+
+    /// <summary>Says a job's end to its owner: <see cref="NodeCommands.RunAsync"/> with a <c>say</c>.</summary>
+    public Func<CommandRequest, CancellationToken, Task<CommandResult>>? Say { get; set; }
+
+    /// <summary>How often a running job's step (its last line) is put on the stream, so a long run shows it is alive without a delta per line.</summary>
+    public TimeSpan StepEvery { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>How many jobs run at once; the rest wait their turn.</summary>
+    public int MaxRunning { get; init; } = 1;
+
+    /// <summary>The free memory a job needs before it starts: a suite started on a machine already short of it takes the machine down with it.</summary>
+    public long MinFreeMemory { get; init; } = 2L << 30;
+
+    /// <summary>The machine's free memory in bytes, or null when it cannot be read (then memory holds nothing back).</summary>
+    public Func<long?> FreeMemory { get; init; } = MachineMemory.Available;
+
+    /// <summary>How often the queue looks again, for memory that has come free.</summary>
+    public TimeSpan PumpEvery { get; init; } = TimeSpan.FromSeconds(15);
+
+    private readonly ConcurrentDictionary<string, Process> _running = new(StringComparer.Ordinal);
+    // Every job this node handed over, so a recovery knows which ones a previous node left behind.
+    private readonly ConcurrentDictionary<string, byte> _mine = new(StringComparer.Ordinal);
+    // What the dispatcher acts on, one at a time: a job handed over, a cancel of a waiting one, and "look again" (a job
+    // ended, the timer for memory). No lock anywhere: everything that decides who runs happens on the dispatcher alone.
+    private readonly Channel<Signal> _signals = Channel.CreateUnbounded<Signal>(new UnboundedChannelOptions { SingleReader = true });
+    // The waiting jobs, in order. The dispatcher's alone: nothing else reads or writes it.
+    private readonly List<JobRow> _queue = [];
+    // Cancels that reached the dispatcher before their job did (Run puts the row, then hands the job over, and a cancel
+    // can land between the two): the job is cancelled before its turn when it arrives. The dispatcher's alone.
+    private readonly Dictionary<string, string> _withdrawnEarly = new(StringComparer.Ordinal);
+    private CancellationToken _stopping;
+
+    internal abstract record Signal;
+
+    internal sealed record HandedOver(JobRow Job) : Signal;
+
+    internal sealed record Withdrawn(string Id, string Who) : Signal;
+
+    internal sealed record LookAgain : Signal
+    {
+        public static readonly LookAgain Instance = new();
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stopping)
+    {
+        _stopping = stopping;
+        await RecoverAsync(stopping);
+        _ = TickAsync(stopping);
+        try
+        {
+            await foreach (var signal in _signals.Reader.ReadAllAsync(stopping))
+            {
+                Dispatch(signal);
+            }
+        }
+        catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+        {
+        }
+    }
+
+    /// <summary>Asks the dispatcher to look again every <see cref="PumpEvery"/>, for memory that has come free.</summary>
+    private async Task TickAsync(CancellationToken stopping)
+    {
+        using var timer = new PeriodicTimer(PumpEvery, time);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stopping))
+            {
+                Pump();
+            }
+        }
+        catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+        {
+        }
+    }
+
+    /// <summary>Marks the jobs a previous node left running or waiting as failed, and tells their owners.</summary>
+    public async Task RecoverAsync(CancellationToken cancellationToken)
+    {
+        foreach (var job in state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && !_mine.ContainsKey(j.Id)))
+        {
+            var ended = job with
+            {
+                State = JobState.Failed,
+                Error = job.State == JobState.Queued ? "the node stopped before its turn came" : "the node stopped while it ran, so its end was never seen",
+                EndedAt = time.GetUtcNow(),
+            };
+            state.PutJob(ended);
+            await TellAsync(ended, cancellationToken);
+        }
+    }
+
+    /// <summary><c>run session/&lt;id&gt;|node &lt;cwd&gt; &lt;timeout seconds&gt; &lt;command…&gt;</c>: starts the job; its id is the result's <c>Made</c>.</summary>
+    public CommandResult Run(CommandRequest command)
+    {
+        var args = command.Args ?? [];
+        if (args.Length < 3)
+        {
+            return state.Complete(command, "run takes the folder, the timeout in seconds (0 for the default) and the command");
+        }
+        var cwd = args[0];
+        if (!Directory.Exists(cwd))
+        {
+            return state.Complete(command, $"there is no folder {cwd} on this node's machine");
+        }
+        if (!long.TryParse(args[1], NumberStyles.None, CultureInfo.InvariantCulture, out var seconds))
+        {
+            return state.Complete(command, $"the timeout is in whole seconds, not {args[1]}");
+        }
+        var timeout = seconds == 0 ? DefaultTimeout : TimeSpan.FromSeconds(seconds);
+        if (timeout > MaxTimeout)
+        {
+            return state.Complete(command, $"a job may run {MaxTimeout.TotalHours:0} hours at most");
+        }
+        var line = string.Join(' ', args.Skip(2)).Trim();
+        if (line.Length == 0)
+        {
+            return state.Complete(command, "run needs the command to run");
+        }
+
+        SessionRow? owner = null;
+        if (command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal))
+        {
+            var id = command.Target[Verbs.SessionTargetPrefix.Length..];
+            owner = state.Sessions().FirstOrDefault(s => s.Id == id);
+            if (owner is null)
+            {
+                return state.Complete(command, $"There is no session {id} to wake with the result");
+            }
+        }
+        else if (command.Target != Verbs.NodeTarget)
+        {
+            return state.Complete(command, $"run takes a session to wake ({Verbs.SessionTargetPrefix}<id>) or the node, not {command.Target}");
+        }
+
+        var jobId = state.NextJobId();
+        var folder = Path.Combine(options.DataFolder, "jobs");
+        Directory.CreateDirectory(folder);
+        var job = new JobRow
+        {
+            Id = jobId,
+            Command = line,
+            Cwd = cwd,
+            Owner = owner?.Id,
+            OwnerName = owner?.Name,
+            Flight = owner?.Flight,
+            Leg = owner?.Leg,
+            State = JobState.Queued,
+            LogPath = Path.Combine(folder, $"{jobId}.log"),
+            Timeout = timeout,
+            StartedAt = time.GetUtcNow(),
+        };
+        job = job with { QueuedAt = job.StartedAt };
+
+        // Handed to the dispatcher, which starts it at once when nothing waits before it and the machine has room.
+        _mine[jobId] = 0;
+        state.PutJob(job);
+        _signals.Writer.TryWrite(new HandedOver(job));
+        return state.Complete(command, null, made: jobId);
+    }
+
+    /// <summary>Whether the job's process is held as running: what a cancel looks for.</summary>
+    internal bool IsRunning(string id) => _running.ContainsKey(id);
+
+    /// <summary>Asks the dispatcher to look again: a slot or memory may have come free.</summary>
+    public void Pump() => _signals.Writer.TryWrite(LookAgain.Instance);
+
+    /// <summary>
+    /// One signal, on the dispatcher: then every waiting job the machine has room for starts, in order. Internal so a test
+    /// can drive the signals in an order the channel only rarely gives.
+    /// </summary>
+    internal void Dispatch(Signal signal)
+    {
+        switch (signal)
+        {
+            case HandedOver handed when _withdrawnEarly.Remove(handed.Job.Id, out var by):
+                CancelBeforeItsTurn(handed.Job, by);
+                break;
+            case HandedOver handed:
+                _queue.Add(handed.Job);
+                break;
+            case Withdrawn withdrawn when _queue.FindIndex(j => j.Id == withdrawn.Id) is var at and >= 0:
+                var waiting = _queue[at];
+                _queue.RemoveAt(at);
+                CancelBeforeItsTurn(waiting, withdrawn.Who);
+                break;
+            case Withdrawn withdrawn when _running.TryGetValue(withdrawn.Id, out var process):
+                // It started before the cancel reached the dispatcher: stop it as any running job.
+                _cancelled[withdrawn.Id] = withdrawn.Who;
+                Kill(process);
+                break;
+            case Withdrawn withdrawn when state.Jobs().FirstOrDefault(j => j.Id == withdrawn.Id) is { State: JobState.Queued }:
+                // Its hand-over is still behind this in the channel: cancel it when it comes.
+                _withdrawnEarly[withdrawn.Id] = withdrawn.Who;
+                break;
+        }
+
+        while (_queue.Count > 0 && WhyWait() is null)
+        {
+            var next = _queue[0];
+            _queue.RemoveAt(0);
+            if (Start(next with { State = JobState.Running, Step = null, StartedAt = time.GetUtcNow() }) is { } failed)
+            {
+                var ended = next with { State = JobState.Failed, Error = $"it did not start: {failed}", EndedAt = time.GetUtcNow() };
+                state.PutJob(ended);
+                _ = TellAsync(ended, _stopping);
+            }
+        }
+
+        // Each waiting job says where it stands.
+        var why = _queue.Count > 0 ? WhyWait() : null;
+        for (var i = 0; i < _queue.Count; i++)
+        {
+            _queue[i] = _queue[i] with { Step = i == 0 ? $"next in line: {why}" : $"queued, {i} ahead of it" };
+            state.PutJob(_queue[i]);
+        }
+    }
+
+    private void CancelBeforeItsTurn(JobRow job, string who)
+    {
+        var cancelled = job with { State = JobState.Cancelled, Error = $"cancelled by {who} before its turn", Step = null, EndedAt = time.GetUtcNow() };
+        state.PutJob(cancelled);
+        _ = TellAsync(cancelled, _stopping);
+    }
+
+    /// <summary>Why a job may not start now, or null when it may.</summary>
+    private string? WhyWait()
+    {
+        if (_running.Count >= MaxRunning)
+        {
+            return MaxRunning == 1 ? "another job is running" : $"{_running.Count} jobs are running, {MaxRunning} at a time";
+        }
+        return FreeMemory() is { } free && free < MinFreeMemory
+            ? $"waiting for {Gigabytes(MinFreeMemory)} of free memory ({Gigabytes(free)} now)"
+            : null;
+    }
+
+    /// <summary>Starts a job; null when it started, else why not.</summary>
+    private string? Start(JobRow job)
+    {
+        Process process;
+        try
+        {
+            process = StartProcess(job);
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            return ex.Message;
+        }
+        // In _running before the Running row is put: a cancel that sees the row must find the process.
+        _running[job.Id] = process;
+        state.PutJob(job);
+        _ = Task.Run(() => WatchAsync(job, process), CancellationToken.None);
+        return null;
+    }
+
+    private static string Gigabytes(long bytes) => $"{bytes / (double)(1L << 30):0.0} GB";
+
+    /// <summary><c>cancel-job job/&lt;id&gt;</c>: stops it, or takes it out of the queue; its owner is told, as of any job's end.</summary>
+    public CommandResult Cancel(CommandRequest command)
+    {
+        var id = command.Target.StartsWith(Verbs.JobTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.JobTargetPrefix.Length..] : command.Target;
+        if (_running.TryGetValue(id, out var process))
+        {
+            _cancelled[id] = command.Who;
+            Kill(process);
+            return state.Complete(command, null);
+        }
+        if (state.Jobs().FirstOrDefault(j => j.Id == id) is { State: JobState.Queued })
+        {
+            // The dispatcher owns the queue: it takes the job out, or stops it if it has started since.
+            _signals.Writer.TryWrite(new Withdrawn(id, command.Who));
+            return state.Complete(command, null);
+        }
+        return state.Complete(command, state.Jobs().Any(j => j.Id == id) ? $"job {id} is not running" : $"There is no job {id}");
+    }
+
+    private readonly ConcurrentDictionary<string, string> _cancelled = new(StringComparer.Ordinal);
+
+    private static Process StartProcess(JobRow job)
+    {
+        var start = OperatingSystem.IsWindows()
+            ? new ProcessStartInfo("cmd.exe") { ArgumentList = { "/d", "/s", "/c", job.Command } }
+            : new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", job.Command } };
+        start.WorkingDirectory = job.Cwd;
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+        start.UseShellExecute = false;
+        start.CreateNoWindow = true;
+        return Process.Start(start) ?? throw new InvalidOperationException($"`{job.Command}` did not start");
+    }
+
+    private async Task WatchAsync(JobRow job, Process process)
+    {
+        // Its output, from stdout's and stderr's threads, goes through a channel to ONE writer: the log, its last lines
+        // (Node.Lib's ring, read once it has ended) and the step, in the order the lines came, and no lock.
+        var tail = new CircularBuffer<string>(TailLines);
+        var lines = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
+        var timedOut = false;
+        using (var log = new StreamWriter(job.LogPath, append: false) { AutoFlush = true })
+        {
+            var writer = Task.Run(async () =>
+            {
+                var lastStep = time.GetUtcNow();
+                await foreach (var line in lines.Reader.ReadAllAsync(CancellationToken.None))
+                {
+                    await log.WriteLineAsync(line);
+                    tail.Add(line);
+                    // The step, put on the stream now and then: a long run shows it is alive, without a delta per line.
+                    var now = time.GetUtcNow();
+                    if (now - lastStep >= StepEvery && line.Trim().Length > 0)
+                    {
+                        lastStep = now;
+                        state.PutJob(job with { Step = Clip(line) });
+                    }
+                }
+            }, CancellationToken.None);
+            process.OutputDataReceived += (_, e) => { if (e.Data is { } line) { lines.Writer.TryWrite(line); } };
+            process.ErrorDataReceived += (_, e) => { if (e.Data is { } line) { lines.Writer.TryWrite(line); } };
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(_stopping);
+            limit.CancelAfter(job.Timeout);
+            try
+            {
+                await process.WaitForExitAsync(limit.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                timedOut = !_stopping.IsCancellationRequested;
+                Kill(process);
+                await process.WaitForExitAsync(CancellationToken.None);
+            }
+            // The last lines are read once the process has gone and its pipes are drained; then the writer finishes them.
+            process.WaitForExit();
+            lines.Writer.TryComplete();
+            await writer;
+        }
+
+        _running.TryRemove(job.Id, out _);
+        // Its slot is free: the next in line may start.
+        Pump();
+        string[] last = [.. tail.Snapshot];
+        var latest = state.Jobs().FirstOrDefault(j => j.Id == job.Id) ?? job;
+        JobRow ended;
+        if (_cancelled.TryRemove(job.Id, out var by))
+        {
+            ended = latest with { State = JobState.Cancelled, Error = $"cancelled by {by}" };
+        }
+        else if (timedOut)
+        {
+            ended = latest with { State = JobState.Failed, Error = $"stopped after its timeout of {Took(job.Timeout)}" };
+        }
+        else if (_stopping.IsCancellationRequested)
+        {
+            ended = latest with { State = JobState.Failed, Error = "the node stopped while it ran" };
+        }
+        else
+        {
+            ended = process.ExitCode == 0
+                ? latest with { State = JobState.Succeeded, ExitCode = 0 }
+                : latest with { State = JobState.Failed, ExitCode = process.ExitCode, Error = $"exit {process.ExitCode}" };
+        }
+        ended = ended with { Step = last.LastOrDefault(l => l.Trim().Length > 0) is { } l ? Clip(l) : null, EndedAt = time.GetUtcNow() };
+        state.PutJob(ended);
+        await TellAsync(ended, CancellationToken.None, last);
+        process.Dispose();
+    }
+
+    /// <summary>Says how the job ended to its owner, a real turn for an idle worker; a wake that fails rings, so the result is never lost in silence.</summary>
+    private async Task TellAsync(JobRow job, CancellationToken cancellationToken, string[]? last = null)
+    {
+        if (job.Owner is null || Say is null)
+        {
+            return;
+        }
+        var took = (job.EndedAt ?? time.GetUtcNow()) - job.StartedAt;
+        var how = job.State switch
+        {
+            JobState.Succeeded => "succeeded",
+            JobState.Cancelled => job.Error ?? "was cancelled",
+            _ => $"failed: {job.Error}",
+        };
+        var lines = last is { Length: > 0 } ? "\nIts last lines:\n" + string.Join('\n', last.TakeLast(12)) : "";
+        var text = $"Your job {job.Id} (`{job.Command}`, in {job.Cwd}) {how}, after {Took(took)}.{lines}\nThe whole output is in {job.LogPath}. Carry on from here.";
+        var result = await Say(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(job.Owner), Args = [text], Who = LegWatch.Who }, cancellationToken);
+        if (result.Ok)
+        {
+            state.PutJob(job with { Told = true });
+        }
+        else
+        {
+            state.RaiseCard(CardBin.Ring, UntoldKind, Verbs.JobTarget(job.Id), $"{job.Id} ended but {job.OwnerName ?? job.Owner} could not be told",
+                $"{how}; the say was refused: {result.Error}");
+        }
+    }
+
+    private static void Kill(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            // Gone already.
+        }
+    }
+
+    private static string Took(TimeSpan span) =>
+        span.TotalHours >= 1 ? $"{(int)span.TotalHours}h {span.Minutes}m" : span.TotalMinutes >= 1 ? $"{(int)span.TotalMinutes}m {span.Seconds}s" : $"{Math.Max(0, (int)span.TotalSeconds)}s";
+
+    private static string Clip(string line) => line.Trim() is { Length: > 200 } long_ ? long_[..200] + "…" : line.Trim();
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        foreach (var process in _running.Values)
+        {
+            Kill(process);
+        }
+        await base.StopAsync(cancellationToken);
+    }
+}

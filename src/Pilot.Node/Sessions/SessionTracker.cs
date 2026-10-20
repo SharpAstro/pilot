@@ -300,7 +300,7 @@ public sealed class SessionTracker : BackgroundService
     private void Track(ClaudeAgentRow agent, string id, DateTimeOffset now)
     {
         var live = agent.Pid is not null;
-        var ended = !live && SessionStates.Map(agent.Status, agent.State) is SessionState.Ended or SessionState.Failed;
+        var ended = !live && SessionStates.Map(agent.Status, agent.State, live) is SessionState.Ended or SessionState.Failed;
 
         if (ended && _stale.TryGetValue(agent.SessionId, out var checkedAt) && now - checkedAt < StaleRecheck)
         {
