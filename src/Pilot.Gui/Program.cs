@@ -4,6 +4,7 @@ using Pilot.Contracts;
 using Pilot.Gui;
 using SdlVulkan.Renderer;
 using SharpAstro.AppShell;
+using SharpAstro.Png;
 using static SDL3.SDL;
 
 // pilot v2's GUI: every session on the machine as a row, live from the node, and a bar to say something to the
@@ -124,10 +125,12 @@ if (gate is null)
 
 const string Title = "pilot v2 · sessions";
 using var window = SdlVulkanWindow.Create(Title, 1280, 800);
-// The window's icon (the exe's is the ApplicationIcon): a missing or unreadable file leaves the platform's default.
-if (WindowIcon.Load(Path.Combine(AppContext.BaseDirectory, "Resources", "pilot-256.png")) is { } icon)
+// The window's icon (the exe's is the ApplicationIcon): a missing file or one the decoder rejects leaves the platform's
+// default. The decoded array is adopted by the RgbaImage, not copied.
+var iconPath = Path.Combine(AppContext.BaseDirectory, "Resources", "pilot-256.png");
+if (File.Exists(iconPath) && PngImageDecoder.TryDecodeRgba8(File.ReadAllBytes(iconPath), out var iconRgba, out var iconWidth, out var iconHeight))
 {
-    window.SetIcon(icon);
+    window.SetIcon(new RgbaImage(iconWidth, iconHeight, iconRgba));
 }
 window.GetSizeInPixels(out var width, out var height);
 using var context = VulkanContext.Create(window.Instance, window.Surface, (uint)width, (uint)height);
