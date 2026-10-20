@@ -7,7 +7,8 @@ namespace Pilot.Node.Flights;
 /// The flight verbs: <c>create-flight</c>, <c>connect</c> and <c>land</c>. Git work takes seconds, so each runs off the
 /// state's lock, one at a time (two creates must not claim one code), and puts its result on the stream when done.
 /// </summary>
-public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider time)
+/// <param name="workers">Stops the flight's sessions before its plane goes; null in a test that starts none.</param>
+public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider time, IWorkerLauncher? workers = null)
 {
     private readonly SemaphoreSlim _one = new(1, 1);
 
@@ -129,7 +130,29 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         {
             return;
         }
-        await planes.RemoveAsync(flight.RepoPath, flight.Worktree, cancellationToken);
+        // Its sessions first: a worker inside its stop grace, or a reviewer, still has the plane open, and a folder held
+        // open is not removed. Seen live: a flight landed a minute after its worker finished kept its plane.
+        if (workers is not null)
+        {
+            var jobs = state.Legs(flight.Code).Select(l => l.WorkerJob).Append(flight.Review?.ReviewerJob).OfType<string>().Distinct();
+            foreach (var job in jobs)
+            {
+                try
+                {
+                    await workers.StopAsync(job, cancellationToken);
+                }
+                catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                    // Gone already.
+                }
+            }
+        }
+        var leftover = await planes.RemoveAsync(flight.RepoPath, flight.Worktree, cancellationToken);
+        if (leftover is not null)
+        {
+            state.RaiseCard(CardBin.ForYou, "plane-left", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed, but its plane folder is still there",
+                $"{leftover}; nothing of git's is in it, so delete it by hand once whatever holds it lets go");
+        }
         state.PutFlight(flight with { State = FlightState.Landed, LandedAt = time.GetUtcNow() });
 
         // Its cards leave with it, and a quiet one says it is in.
