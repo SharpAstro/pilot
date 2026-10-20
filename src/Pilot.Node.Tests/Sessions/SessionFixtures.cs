@@ -47,6 +47,11 @@ internal sealed class ManualTime(DateTimeOffset start) : TimeProvider
 
     public override DateTimeOffset GetUtcNow() => _now;
 
+    /// <summary>The zone its local times are in: UTC unless a test says otherwise, so no test depends on the machine's.</summary>
+    public TimeZoneInfo Zone { get; set; } = TimeZoneInfo.Utc;
+
+    public override TimeZoneInfo LocalTimeZone => Zone;
+
     public void Advance(TimeSpan by) => _now += by;
 }
 

@@ -38,6 +38,11 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return Raise(command);
         }
+        if (command.Verb == Verbs.Digest)
+        {
+            Get<Digest>().Raise(Get<TimeProvider>().GetUtcNow());
+            return state.Complete(command, null);
+        }
         if (command.Verb == Verbs.Say)
         {
             return await Get<SessionMessenger>().SayAsync(command, cancellationToken);

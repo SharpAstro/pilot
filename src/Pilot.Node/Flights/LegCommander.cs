@@ -31,7 +31,7 @@ public sealed partial class LegCommander(
 
     public static bool Handles(string verb) =>
         verb is Verbs.PlanLeg or Verbs.StartLeg or Verbs.Check or Verbs.FinishLeg or Verbs.GoAround or Verbs.Merge
-            or Verbs.OpenPr or Verbs.AddArtifact;
+            or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget;
 
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
@@ -64,6 +64,9 @@ public sealed partial class LegCommander(
                     break;
                 case Verbs.AddArtifact:
                     AddArtifact(command);
+                    break;
+                case Verbs.ExtendBudget:
+                    ExtendBudget(command);
                     break;
             }
         }
@@ -400,6 +403,22 @@ public sealed partial class LegCommander(
         body.AppendLine();
         body.AppendLine($"Closes #{flight.Issue}.");
         return body.ToString();
+    }
+
+    private void ExtendBudget(CommandRequest command)
+    {
+        var (flight, leg) = LegOf(command.Target);
+        var text = (command.Args ?? []).FirstOrDefault()?.Replace("_", "").Replace(",", "") ?? "";
+        if (!long.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var budget) || budget <= 0)
+        {
+            throw new FlightException($"extend-budget takes the new budget in weighted tokens, as in 6000000, not '{text}'");
+        }
+        if (leg.Budget is { } now && budget <= now)
+        {
+            throw new FlightException(string.Create(CultureInfo.InvariantCulture, $"{flight.Code}/{leg.Name}'s budget is {now:N0} already; an extension raises it"));
+        }
+        state.PutLeg(leg with { Budget = budget });
+        state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), string.Create(CultureInfo.InvariantCulture, $"budget extended to {budget:N0} by {command.Who}"), LegWatch.OverBudget);
     }
 
     private void AddArtifact(CommandRequest command)

@@ -132,6 +132,12 @@ public static class Verbs
     /// <summary><c>dismiss card/&lt;id&gt; [why…]</c>: closes the card with nothing done.</summary>
     public const string Dismiss = "dismiss";
 
+    /// <summary><c>extend-budget flight/&lt;code&gt;/&lt;leg&gt; &lt;tokens&gt;</c>: raises the leg's budget, in weighted tokens, to the new figure.</summary>
+    public const string ExtendBudget = "extend-budget";
+
+    /// <summary><c>digest node</c>: the digest now, as a For-you card, beside the ones at 08:00 and 18:00.</summary>
+    public const string Digest = "digest";
+
     /// <summary><c>tell watchtower &lt;text&gt;</c>: says the text to the node's watchtower, whichever session it is now.</summary>
     public const string Tell = "tell";
 

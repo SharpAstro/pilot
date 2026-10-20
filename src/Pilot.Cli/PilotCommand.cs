@@ -179,7 +179,11 @@ public static class PilotCommand
         var goAround = Action(new Command("go-around", "Stop the leg's worker and start a fresh one, told why") { Arguments = { why }, Options = { leg } },
             (p, client, ct) => OnLeg(p, client, Verbs.GoAround, _ => [Join(p, why)], ct));
 
-        var legCommand = new Command("leg", "Legs: plan, start, finish, go around") { Subcommands = { plan, start, finish, goAround } };
+        var tokens = Arg("tokens", "The new budget in weighted tokens, as 6000000");
+        var extend = Action(new Command("extend", "Raise the leg's budget") { Arguments = { tokens }, Options = { leg } },
+            (p, client, ct) => OnLeg(p, client, Verbs.ExtendBudget, _ => [p.GetValue(tokens)!], ct));
+
+        var legCommand = new Command("leg", "Legs: plan, start, finish, go around, extend") { Subcommands = { plan, start, finish, goAround, extend } };
 
         // check, artifact
         var step = Words("step", "The step's number, or the start of its text");
@@ -229,6 +233,8 @@ public static class PilotCommand
         var restart = Action(new Command("restart", "Stop the watchtower and start a fresh one, briefed from the node's state") { Arguments = { restartWhy } },
             (p, client, ct) => SendAsync(client, Verbs.RestartWatchtower, Verbs.WatchtowerTarget, p.GetValue(restartWhy) ?? [], "cli", output, ct));
         var watchtower = new Command("watchtower", "The node's watchtower session") { Subcommands = { restart } };
+        var digest = Action(new Command("digest", "The digest now: what landed, what was handled, what is parked"),
+            (_, client, ct) => SendAsync(client, Verbs.Digest, Verbs.NodeTarget, [], "cli", output, ct));
 
         var subject = Arg("subject", "What it is about: flight/<code>, flight/<code>/<leg>, session/<id> or node");
         var cardTitle = Arg("title", "The card in a line");
@@ -244,7 +250,7 @@ public static class PilotCommand
         return new RootCommand("pilot v2's command line, against this machine's node. Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket },
-            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note, tell, watchtower, ring, flag, handled },
+            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note, tell, watchtower, digest, ring, flag, handled },
         };
     }
 

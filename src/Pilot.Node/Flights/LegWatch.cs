@@ -23,6 +23,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     public const string Failed = "worker-failed";
     public const string Missing = "worker-missing";
 
+    /// <summary>A worker past its leg's budget: not a stall, so not among <see cref="Kinds"/>; it closes when the budget is extended or the leg ends.</summary>
+    public const string OverBudget = "over-budget";
+
     /// <summary>Who the watch's commands are from, in the command log and on the cards it closes.</summary>
     public const string Who = "node";
 
@@ -88,6 +91,17 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 continue;
             }
             state.CloseCardsAbout(subject, "it showed up", Missing);
+            if (worker.Budget is { } budget && worker.SpendWeighted > budget)
+            {
+                var more = budget + budget / 2;
+                var inv = System.Globalization.CultureInfo.InvariantCulture;
+                state.RaiseCard(CardBin.Ring, OverBudget, subject, $"{Name(leg)}'s worker is past its budget",
+                    string.Create(inv, $"{worker.SpendWeighted:N0} of {budget:N0} weighted tokens; it keeps working until you choose"),
+                    [
+                        new CardChoice { Label = string.Create(inv, $"Extend to {more:N0}"), Verb = Verbs.ExtendBudget, Target = subject, Args = [more.ToString(System.Globalization.CultureInfo.InvariantCulture)] },
+                        new CardChoice { Label = "Go around", Verb = Verbs.GoAround, Target = subject, Args = [string.Create(inv, $"the last worker spent {worker.SpendWeighted:N0} of a {budget:N0} budget")] },
+                    ]);
+            }
 
             switch (worker.State)
             {
