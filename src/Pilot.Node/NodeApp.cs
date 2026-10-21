@@ -49,6 +49,7 @@ public static class NodeApp
         builder.Services.AddSingleton<IGit, GitCli>();
         builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>()));
         builder.Services.AddSingleton<FlightCommander>();
+        builder.Services.AddSingleton<RepoCatalog>();
         builder.Services.AddSingleton<IWorkerLauncher, ClaudeWorkerLauncher>();
         builder.Services.AddSingleton<ICheckRunner, ShellCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
@@ -162,8 +163,9 @@ public static class NodeApp
             var get = HttpMethods.IsGet(context.Request.Method);
             var post = HttpMethods.IsPost(context.Request.Method);
             var watching = get && (path is NodeWire.NodeRoute or NodeWire.SessionsRoute or NodeWire.EventsRoute || path.StartsWith(NodeWire.GrantsRoute + "/", StringComparison.Ordinal));
+            // The repos and their issues name this machine's folders: read for a grant, as a command is made with one.
             return watching || (post && path == NodeWire.GrantsRoute) ? NodeRouteAccess.Open
-                : post && path == NodeWire.CommandsRoute ? NodeRouteAccess.Command
+                : (post && path == NodeWire.CommandsRoute) || (get && path is NodeWire.ReposRoute or NodeWire.IssuesRoute) ? NodeRouteAccess.Command
                 : NodeRouteAccess.ThisMachineOnly;
         },
         MayCommand = async context =>
@@ -269,6 +271,25 @@ public static class NodeApp
         });
 
         MapGrantRoutes(app);
+
+        // The new-flight wizard's reads: the repos a flight can be made in, and a repo's open issues (through gh).
+        app.MapGet(NodeWire.ReposRoute, (RepoCatalog repos) =>
+            Results.Json(ResponseEnvelope<RepoInfo[]>.Ok(repos.Repos()), PilotJsonContext.Default.ResponseEnvelopeRepoInfoArray));
+        app.MapGet(NodeWire.IssuesRoute, async (string? path, IGitHub github, CancellationToken cancellationToken) =>
+        {
+            if (path is not { Length: > 0 } || !Directory.Exists(path))
+            {
+                return Results.Json(ResponseEnvelope<IssueInfo[]>.Fail("path names no checkout on this machine"), PilotJsonContext.Default.ResponseEnvelopeIssueInfoArray, statusCode: 400);
+            }
+            try
+            {
+                return Results.Json(ResponseEnvelope<IssueInfo[]>.Ok(await github.IssuesAsync(path, cancellationToken)), PilotJsonContext.Default.ResponseEnvelopeIssueInfoArray);
+            }
+            catch (FlightException ex)
+            {
+                return Results.Json(ResponseEnvelope<IssueInfo[]>.Fail(ex.Message, 502), PilotJsonContext.Default.ResponseEnvelopeIssueInfoArray, statusCode: 502);
+            }
+        });
 
         // Read by hand rather than bound, so a body that is not a command gets the envelope like any other refusal.
         app.MapPost(NodeWire.CommandsRoute, async (HttpContext context, NodeState state, NodeCommands commands, IHostApplicationLifetime lifetime) =>

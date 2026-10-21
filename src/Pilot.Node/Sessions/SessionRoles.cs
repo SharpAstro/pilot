@@ -95,6 +95,11 @@ public static partial class SessionRoles
             {
                 return new SessionRoleInfo(SessionRole.Reviewer, FlightCode(named.Groups[1].Value), null, null);
             }
+            // <machine>-<flight>-plan plans the flight's legs, and flies none (no leg may be named plan).
+            if (named.Groups[2].Value == "plan")
+            {
+                return new SessionRoleInfo(SessionRole.Planner, FlightCode(named.Groups[1].Value), null, null);
+            }
             return new SessionRoleInfo(SessionRole.Worker, FlightCode(named.Groups[1].Value), named.Groups[2].Value, null);
         }
         var match = name is { Length: > 0 } ? WorkerName().Match(name) : Match.Empty;

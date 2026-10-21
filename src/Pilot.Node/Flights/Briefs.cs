@@ -136,6 +136,47 @@ public static class Briefs
     /// What a flight's reviewer is told: the flight, every leg's goal and Done-when, what the branch holds, and how to give
     /// its verdict. It reads and runs; it changes nothing, so its verdict is about the work as the workers left it.
     /// </summary>
+    /// <summary>
+    /// The planner's brief: read the issue and the code, and plan the flight's legs as the node flies them (one worker each,
+    /// in order, on one branch), then say <c>planned</c>. It writes no code.
+    /// </summary>
+    public static string Plan(FlightRow flight, IReadOnlyList<LegRow> legs, string run)
+    {
+        var text = new StringBuilder();
+        var title = flight.Title is { Length: > 0 } t ? $": {t}" : "";
+        text.AppendLine($"You plan flight {flight.Code} ({flight.Repo} #{flight.Issue}{title}): the legs that will do its issue.");
+        text.AppendLine();
+        text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`. Read the issue");
+        text.AppendLine($"(`gh issue view {flight.Issue} --comments`), the repo's CLAUDE.md, and the code it touches. Do not edit, commit or push");
+        text.AppendLine("anything: you plan, and each leg's worker does the work.");
+        text.AppendLine("Do it yourself, in this session: no subagents, or one at most for a single narrow question.");
+        text.AppendLine();
+        text.AppendLine("How legs fly: one at a time, in order, each by a fresh worker that sees only its own leg, the legs before it and");
+        text.AppendLine("what the branch holds. So each leg must stand on its own: a goal a worker can do in one sitting, a Done-when");
+        text.AppendLine("anyone can check, and a check command the node reruns before it counts the leg done (a test filter, a build).");
+        text.AppendLine("Prefer few legs: one for a small issue, two to four for a larger one, split where a reviewer would want to");
+        text.AppendLine($"see the work land in steps. No leg may be named `{LegCommander.ReviewLeg}` or `{LegCommander.PlanLeg}`.");
+        if (legs.Count > 0)
+        {
+            text.AppendLine();
+            text.AppendLine("Legs it has already (plan any more after them; do not repeat them):");
+            foreach (var leg in legs.OrderBy(l => l.Order))
+            {
+                text.AppendLine($"- {leg.Name} ({leg.State.ToString().ToLowerInvariant()}): {leg.Goal}");
+            }
+        }
+        text.AppendLine();
+        text.AppendLine("## Plan each leg");
+        text.AppendLine($"`{run} leg plan {flight.Code} <name> --goal \"…\" --done-when \"…\" --check \"<command>\" --item \"<step>\" --item \"<step>\"`");
+        text.AppendLine("Name: lower-case letters, digits and dashes. Items are the worker's checklist, in order. Add --model or --effort");
+        text.AppendLine("only when a leg needs more (or less) than the default.");
+        text.AppendLine();
+        text.AppendLine("## When the legs are planned");
+        text.AppendLine($"`{run} flight planned {flight.Code} \"<the plan in a line or two: why these legs, in this order>\"`. It shows the");
+        text.AppendLine("controller the legs with a button to start the first. Then end your turn with the same line.");
+        return text.ToString();
+    }
+
     public static string Review(FlightRow flight, IReadOnlyList<LegRow> legs, PlaneState plane, string run)
     {
         var text = new StringBuilder();

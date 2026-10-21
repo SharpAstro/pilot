@@ -31,7 +31,8 @@ public sealed partial class LegCommander(
 
     public static bool Handles(string verb) =>
         verb is Verbs.PlanLeg or Verbs.StartLeg or Verbs.Check or Verbs.FinishLeg or Verbs.GoAround or Verbs.Merge
-            or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review;
+            or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review
+            or Verbs.PlanFlight or Verbs.Planned;
 
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
@@ -73,6 +74,12 @@ public sealed partial class LegCommander(
                     break;
                 case Verbs.Review:
                     await ReviewAsync(command, cancellationToken);
+                    break;
+                case Verbs.PlanFlight:
+                    await StartPlannerAsync(FlightOf(command.Target), cancellationToken);
+                    break;
+                case Verbs.Planned:
+                    Planned(command);
                     break;
             }
         }
@@ -141,9 +148,9 @@ public sealed partial class LegCommander(
         {
             throw new FlightException("a leg needs a name of lower-case letters, digits and dashes (name=parser)");
         }
-        if (name == ReviewLeg)
+        if (name is ReviewLeg or PlanLeg)
         {
-            throw new FlightException("review names the flight's reviewer, not a leg; call the leg something else");
+            throw new FlightException($"{name} names the flight's {(name == ReviewLeg ? "reviewer" : "planner")}, not a leg; call the leg something else");
         }
         if (string.IsNullOrWhiteSpace(goal) || string.IsNullOrWhiteSpace(doneWhen))
         {
@@ -416,6 +423,12 @@ public sealed partial class LegCommander(
     /// <summary>The leg name reserved for the flight's reviewer: <c>&lt;machine&gt;-&lt;flight&gt;-review</c>.</summary>
     public const string ReviewLeg = "review";
 
+    /// <summary>The name a flight's planner flies under, which no leg may take.</summary>
+    public const string PlanLeg = "plan";
+
+    /// <summary>The card a planner's <c>planned</c> raises, offering the first leg.</summary>
+    public const string PlannedKind = "planned";
+
     public const string ReviewChanges = "review-changes";
 
     public const string PrReady = "pr-ready";
@@ -429,6 +442,41 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"git could not push {flight.Branch}: {push.Why}");
         }
+    }
+
+    /// <summary>
+    /// A planner in the flight's plane: it reads the issue and the code, plans the legs, and says <c>planned</c>. It writes
+    /// no code; a flight that has legs already gets more after them.
+    /// </summary>
+    private async Task StartPlannerAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        if (flight.State == FlightState.Landed)
+        {
+            throw new FlightException($"{flight.Code} has landed");
+        }
+        await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
+        var planner = $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{PlanLeg}";
+        var brief = Briefs.Plan(flight, state.Legs(flight.Code), Briefs.Run(Cli, Socket));
+        await workers.StartAsync(new WorkerStart(planner, flight.RepoPath, PlaneOf(flight), brief, null, null), cancellationToken);
+        state.RaiseCard(CardBin.Handled, "planner-started", Verbs.FlightTarget(flight.Code), $"Started {planner} to plan {flight.Code}'s legs");
+    }
+
+    /// <summary><c>planned flight/&lt;code&gt; &lt;summary&gt;</c>: a card with the legs and the first one's start.</summary>
+    private void Planned(CommandRequest command)
+    {
+        var flight = FlightOf(command.Target);
+        var legs = state.Legs(flight.Code).OrderBy(l => l.Order).ToList();
+        if (legs.FirstOrDefault(l => l.State == LegState.Planned) is not { } first)
+        {
+            throw new FlightException($"{flight.Code} has no leg waiting to start: plan them with plan-leg first");
+        }
+        var summary = string.Join(' ', command.Args ?? []).Trim();
+        var lines = legs.Select(l => $"{l.Order}. {l.Name}: {l.Goal}");
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "planned again", PlannedKind);
+        state.RaiseCard(CardBin.ForYou, PlannedKind, Verbs.FlightTarget(flight.Code),
+            $"{flight.Code}: {legs.Count} {(legs.Count == 1 ? "leg" : "legs")} planned",
+            string.Join('\n', (summary.Length > 0 ? new[] { summary } : []).Concat(lines)),
+            [new CardChoice { Label = $"Start {first.Name}", Verb = Verbs.StartLeg, Target = Verbs.LegTarget(flight.Code, first.Name) }]);
     }
 
     /// <summary>A fresh reviewer on the flight's branch, the last one stopped; any earlier verdict's cards close.</summary>

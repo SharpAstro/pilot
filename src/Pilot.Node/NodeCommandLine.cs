@@ -72,6 +72,11 @@ public static class NodeCommandLine
             DefaultValueFactory = _ => UpdatePolicy.Auto.Name(),
         };
         updatePolicy.AcceptOnlyFromAmong([.. UpdatePolicies.Names]);
+        var repoRoot = new Option<string[]>("--repo-root")
+        {
+            Description = $"A folder whose git clones the new-flight wizard offers (an org root); may be given more than once, beside {Flights.RepoCatalog.RootsVariable} and the flights' own repos' folders",
+            AllowMultipleArgumentsPerToken = false,
+        };
         var releaseFeed = new Option<string?>("--release-feed") { Description = "A folder of pilot-<version>-<rid>.zip to update from instead of GitHub", Hidden = true };
         var after = new Option<int?>(AfterOption) { Description = "Wait for this process to exit before taking the socket", Hidden = true };
         var watchtowerFolder = new Option<string?>("--watchtower-folder") { Description = "Where the watchtower runs, a folder Claude Code trusts; else PILOT_WATCHTOWER_FOLDER, else under --data" };
@@ -105,7 +110,7 @@ public static class NodeCommandLine
 
         var root = new RootCommand("pilot v2's node: one per machine, the one writer of its flights, legs, cards and sessions")
         {
-            Options = { socket, data, machine, noWatchtower, watchtowerFolder, lan, lanPort, localOnly, maxJobs, jobMemory, updatePolicy, releaseFeed, after },
+            Options = { socket, data, machine, noWatchtower, watchtowerFolder, lan, lanPort, localOnly, maxJobs, jobMemory, updatePolicy, releaseFeed, repoRoot, after },
             Subcommands = { hook, hooks },
         };
         root.SetAction(async (parseResult, ct) =>
@@ -128,7 +133,8 @@ public static class NodeCommandLine
                 Lan: wantsLan && mode.MayBindTheNetwork, LanPort: parseResult.GetValue(lanPort),
                 MaxJobs: parseResult.GetValue(maxJobs), JobMemoryGigabytes: parseResult.GetValue(jobMemory),
                 UpdatePolicy: UpdatePolicies.Parse(parseResult.GetValue(updatePolicy)) ?? UpdatePolicy.Auto,
-                ReleaseFeed: parseResult.GetValue(releaseFeed) is { } feed ? Path.GetFullPath(feed) : null);
+                ReleaseFeed: parseResult.GetValue(releaseFeed) is { } feed ? Path.GetFullPath(feed) : null,
+                RepoRootsGiven: parseResult.GetValue(repoRoot) is { Length: > 0 } roots ? [.. roots.Select(Path.GetFullPath)] : null);
             if (parseResult.GetValue(after) is { } predecessor)
             {
                 await WaitForExitAsync(predecessor, ct);

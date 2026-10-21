@@ -145,7 +145,14 @@ public static class PilotCommand
         var reviewStart = Action(new Command("review", "Start a fresh reviewer on the flight's branch (flight pr starts one by itself)") { Arguments = { code } },
             (p, client, ct) => SendAsync(client, Verbs.StartReview, Verbs.FlightTarget(p.GetValue(code)!), [], who, output, ct));
 
-        var flight = new Command("flight", "Flights: create, connect, open a PR, review, merge, land") { Subcommands = { create, connect, pr, reviewStart, merge, land } };
+        // plan: a planner worker plans the legs from the issue; planned: what it says when it is done.
+        var planFlight = Action(new Command("plan", "Start a planner in the plane: it reads the issue and the code and plans the legs") { Arguments = { code } },
+            (p, client, ct) => SendAsync(client, Verbs.PlanFlight, Verbs.FlightTarget(p.GetValue(code)!), [], who, output, ct));
+        var plannedSummary = Words("summary", "The plan in a line or two", required: false);
+        var planned = Action(new Command("planned", "The planner is done: a card shows the legs and starts the first") { Arguments = { code, plannedSummary } },
+            (p, client, ct) => SendAsync(client, Verbs.Planned, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(plannedSummary) ?? [], who, output, ct));
+        var flight = new Command("flight", "Flights: create, plan, connect, open a PR, review, merge, land")
+            { Subcommands = { create, planFlight, planned, connect, pr, reviewStart, merge, land } };
 
         // leg
         var name = Arg("name", "The leg's name: lower-case letters, digits and dashes");

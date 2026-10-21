@@ -23,6 +23,12 @@ public static class NodeWire
     /// <summary>Every session row as of now, a <see cref="SessionRow"/> array in the response envelope (the snapshot's sessions, on their own).</summary>
     public const string SessionsRoute = "/api/v1/sessions";
 
+    /// <summary>The repos a flight can be made in, a <see cref="RepoInfo"/> array: the flights' repos and their sibling clones.</summary>
+    public const string ReposRoute = "/api/v1/repos";
+
+    /// <summary>A repo's open issues, an <see cref="IssueInfo"/> array: <c>?path=&lt;checkout&gt;</c>.</summary>
+    public const string IssuesRoute = "/api/v1/repos/issues";
+
     /// <summary>Every command, as a <see cref="CommandRequest"/>.</summary>
     public const string CommandsRoute = "/api/v1/commands";
 

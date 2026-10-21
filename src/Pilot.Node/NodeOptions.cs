@@ -15,10 +15,11 @@ namespace Pilot.Node;
 /// <param name="LanAnnounce">Whether it announces itself on the LAN (LAN.Lib's UDP beacon) when it listens there; a test node does not.</param>
 /// <param name="UpdatePolicy">What an installed release does when a newer one is out (<c>--update-policy</c>); a test node does not look.</param>
 /// <param name="ReleaseFeed">A folder of release zips to update from instead of GitHub (<c>--release-feed</c>, hidden): offline, or trying an update.</param>
+/// <param name="RepoRootsGiven">Folders whose git clones the new-flight wizard offers (<c>--repo-root</c>), beside the flights' own repos' folders.</param>
 public sealed record NodeOptions(
     string SocketPath, string DataFolder, int RetainedDeltas = NodeState.DefaultRetainedDeltas, string? MachinePrefix = null, bool Watchtower = true, string? WatchtowerFolderGiven = null,
     bool Lan = false, int LanPort = NodeWire.DefaultLanPort, bool LanAnnounce = true, int MaxJobs = 1, double JobMemoryGigabytes = 2,
-    UpdatePolicy UpdatePolicy = UpdatePolicy.Off, string? ReleaseFeed = null)
+    UpdatePolicy UpdatePolicy = UpdatePolicy.Off, string? ReleaseFeed = null, IReadOnlyList<string>? RepoRootsGiven = null)
 {
     /// <summary>
     /// The folder the watchtower runs in. Claude Code starts no background session in a folder never trusted, so the
@@ -26,6 +27,9 @@ public sealed record NodeOptions(
     /// </summary>
     public string WatchtowerFolder => Path.GetFullPath(WatchtowerFolderGiven
         ?? (Environment.GetEnvironmentVariable("PILOT_WATCHTOWER_FOLDER") is { Length: > 0 } folder ? folder : Path.Combine(DataFolder, "watchtower")));
+
+    /// <summary>The repo roots given, none by default.</summary>
+    public IReadOnlyList<string> RepoRoots => RepoRootsGiven ?? [];
 
     /// <summary>The prefix in use: the one given, else <c>PILOT_MACHINE</c>, else the machine name's first two letters and 1.</summary>
     public string Machine => MachinePrefixes.Normalise(MachinePrefix ?? Environment.GetEnvironmentVariable("PILOT_MACHINE"))

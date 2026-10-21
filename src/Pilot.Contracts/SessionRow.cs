@@ -150,6 +150,10 @@ public enum SessionRole
     [JsonStringEnumMemberName("reviewer")]
     Reviewer,
 
+    /// <summary>A session planning a flight's legs from its issue: <c>&lt;machine&gt;-&lt;flight&gt;-plan</c>.</summary>
+    [JsonStringEnumMemberName("planner")]
+    Planner,
+
     /// <summary>Any other session: shown under its repo and folder, and one click from joining a flight.</summary>
     [JsonStringEnumMemberName("adHoc")]
     AdHoc,

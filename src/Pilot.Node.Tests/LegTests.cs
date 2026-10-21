@@ -54,6 +54,15 @@ internal sealed class FakeGitHub : IGitHub
 {
     public PullRequest? Pr { get; set; }
 
+    /// <summary>The open issues, by number, with their titles.</summary>
+    public Dictionary<int, string> Issues { get; } = [];
+
+    public Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken) =>
+        Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value })]);
+
+    public Task<string?> IssueTitleAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult(Issues.TryGetValue(number, out var title) ? title : null);
+
     public List<(int Number, string Head, string Method)> Merged { get; } = [];
 
     public Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken) => Task.FromResult(Pr);
@@ -149,6 +158,51 @@ public sealed class LegCommanderTests : IDisposable
             "check=dotnet test", "budget=4_000_000", "model=sonnet", "item=Write the parser", "item=Test it")).Ok.ShouldBeTrue();
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=render", "goal=Draw the planets", "done-when=The capture shows them")).Ok.ShouldBeTrue();
         return _state.Flights().Single();
+    }
+
+    [Fact]
+    public async Task AFlightMadeWithoutATitleTakesItsIssuesAndItsResultNamesTheCode()
+    {
+        _github.Issues[7] = "Moons of Jupiter";
+        var flights = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System, github: _github);
+
+        var made = await flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["7"], Who = "tests" }, Ct);
+
+        made.Made.ShouldBe("TIA7");
+        _state.Flights().Single().Title.ShouldBe("Moons of Jupiter");
+    }
+
+    [Fact]
+    public async Task APlannerIsStartedInThePlaneAndItsPlannedOffersTheFirstLeg()
+    {
+        var flight = await FlightWithTwoLegs();
+
+        (await Leg(Verbs.PlanFlight, "flight/TIA1")).Ok.ShouldBeTrue();
+
+        var planner = _workers.Started.ShouldHaveSingleItem();
+        (planner.Name, planner.Plane).ShouldBe(("du1-tia1-plan", Path.GetFileName(flight.Worktree)));
+        planner.Brief.ShouldContain("gh issue view 1");
+        planner.Brief.ShouldContain("leg plan TIA1 <name>");
+        planner.Brief.ShouldContain("flight planned TIA1");
+        planner.Brief.ShouldContain("- parser (planned): Parse the ephemeris");
+
+        (await Leg(Verbs.Planned, "flight/TIA1", "parser first, then render")).Ok.ShouldBeTrue();
+
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.PlannedKind);
+        card.Title.ShouldBe("TIA1: 2 legs planned");
+        card.Detail.ShouldBe("parser first, then render\n1. parser: Parse the ephemeris\n2. render: Draw the planets");
+        var start = card.Choices.ShouldHaveSingleItem();
+        (start.Label, start.Verb, start.Target).ShouldBe(("Start parser", Verbs.StartLeg, Verbs.LegTarget("TIA1", "parser")));
+    }
+
+    [Fact]
+    public async Task PlannedWithNoLegToStartIsRefusedAndNoLegIsNamedPlan()
+    {
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+
+        (await Leg(Verbs.Planned, "flight/TIA1")).Error.ShouldBe("TIA1 has no leg waiting to start: plan them with plan-leg first");
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=plan", "goal=g", "done-when=d")).Error
+            .ShouldBe("plan names the flight's planner, not a leg; call the leg something else");
     }
 
     [Fact]
