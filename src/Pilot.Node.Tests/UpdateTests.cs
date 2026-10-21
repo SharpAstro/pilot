@@ -16,6 +16,8 @@ public sealed class UpdateTests : IDisposable
     private const string Page = "https://github.com/SharpAstro/pilot/releases/";
     private static readonly ReleaseLayout Layout = new("pilot", ["pilot-node.exe"]);
 
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2u-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly string _install;
 
@@ -70,9 +72,9 @@ public sealed class UpdateTests : IDisposable
     {
         Install("2.0.1", new() { ["pilot-node.exe"] = "old node", ["Fonts/a.ttf"] = "old font", ["gone.dll"] = "old dll" });
         var feed = Feed("2.0.2", new() { ["pilot-node.exe"] = "new node", ["Fonts/a.ttf"] = "new font", ["Fonts/b.ttf"] = "new font b" });
-        var release = (await feed.LatestAsync(default)).ShouldNotBeNull();
+        var release = (await feed.LatestAsync(Ct)).ShouldNotBeNull();
 
-        var (staging, staged) = await ReleaseInstall.StageAsync(feed, release, _install, "win-arm64", Layout, default);
+        var (staging, staged) = await ReleaseInstall.StageAsync(feed, release, _install, "win-arm64", Layout, Ct);
         // A running binary is held open; it may be renamed, which is all the swap needs of it.
         using (var running = new FileStream(Path.Combine(_install, "pilot-node.exe"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
         {
@@ -93,9 +95,9 @@ public sealed class UpdateTests : IDisposable
     {
         Install("2.0.1", new() { ["pilot-node.exe"] = "old node" });
         var feed = Feed("2.0.2", new() { ["pilot-node.exe"] = "new node" }, sha256: new string('0', 64));
-        var release = (await feed.LatestAsync(default)).ShouldNotBeNull();
+        var release = (await feed.LatestAsync(Ct)).ShouldNotBeNull();
 
-        var refused = await Should.ThrowAsync<ReleaseInstallException>(() => ReleaseInstall.StageAsync(feed, release, _install, "win-arm64", Layout, default));
+        var refused = await Should.ThrowAsync<ReleaseInstallException>(() => ReleaseInstall.StageAsync(feed, release, _install, "win-arm64", Layout, Ct));
 
         refused.Message.ShouldContain("SHA-256 differs");
         Read("pilot-node.exe").ShouldBe("old node");
@@ -105,9 +107,9 @@ public sealed class UpdateTests : IDisposable
     public async Task AZipWithAPathOutsideItsFolderIsRefused()
     {
         var feed = Feed("2.0.2", new() { ["pilot-node.exe"] = "new node", ["../evil.dll"] = "evil" });
-        var release = (await feed.LatestAsync(default)).ShouldNotBeNull();
+        var release = (await feed.LatestAsync(Ct)).ShouldNotBeNull();
 
-        var refused = await Should.ThrowAsync<ReleaseInstallException>(() => ReleaseInstall.StageAsync(feed, release, _install, "win-arm64", Layout, default));
+        var refused = await Should.ThrowAsync<ReleaseInstallException>(() => ReleaseInstall.StageAsync(feed, release, _install, "win-arm64", Layout, Ct));
 
         refused.Message.ShouldContain("not a file inside it");
         File.Exists(Path.Combine(_root, "evil.dll")).ShouldBeFalse();
@@ -119,8 +121,8 @@ public sealed class UpdateTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a file held without FileShare.Delete cannot be renamed on Windows only");
         Install("2.0.1", new() { ["pilot-node.exe"] = "old node", ["pilot.exe"] = "old cli" });
         var feed = Feed("2.0.2", new() { ["pilot-node.exe"] = "new node", ["pilot.exe"] = "new cli" });
-        var release = (await feed.LatestAsync(default)).ShouldNotBeNull();
-        var (staging, staged) = await ReleaseInstall.StageAsync(feed, release, _install, "win-arm64", Layout, default);
+        var release = (await feed.LatestAsync(Ct)).ShouldNotBeNull();
+        var (staging, staged) = await ReleaseInstall.StageAsync(feed, release, _install, "win-arm64", Layout, Ct);
 
         string? failed;
         // The marker lists pilot-node.exe before pilot.exe (sorted), so the node goes in and the CLI is refused.
@@ -143,8 +145,8 @@ public sealed class UpdateTests : IDisposable
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
 
         var ask = Updater(state, feed, UpdatePolicy.Ask, out _, out _);
-        await ask.CheckAsync(default);
-        await ask.CheckAsync(default);
+        await ask.CheckAsync(Ct);
+        await ask.CheckAsync(Ct);
 
         var card = state.Cards(openOnly: true).ShouldHaveSingleItem();
         card.Title.ShouldBe("pilot 2.0.2 is out (this is 2.0.1)");
@@ -157,12 +159,12 @@ public sealed class UpdateTests : IDisposable
             Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow,
         });
         var auto = Updater(state, feed, UpdatePolicy.Auto, out var successors, out var lifetime);
-        await auto.CheckAsync(default);
+        await auto.CheckAsync(Ct);
 
         successors.ShouldBeEmpty();
         lifetime.Stopped.ShouldBeFalse();
         Read(node).ShouldBe("old " + node);
-        var refused = await auto.RunAsync(Command(), default);
+        var refused = await auto.RunAsync(Command(), Ct);
         refused.Error.ShouldBe("1 job is running or waiting: 2.0.2 goes in once they are done");
     }
 
@@ -175,11 +177,11 @@ public sealed class UpdateTests : IDisposable
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var updater = Updater(state, feed, UpdatePolicy.Off, out var successors, out var lifetime);
 
-        var checkedOnly = await updater.RunAsync(Command(UpdateArgs.Check), default);
+        var checkedOnly = await updater.RunAsync(Command(UpdateArgs.Check), Ct);
         checkedOnly.Way.ShouldBe("2.0.2 is out; this is 2.0.1");
         Read(node).ShouldBe("old " + node);
 
-        var installed = await updater.RunAsync(Command(UpdateArgs.Install), default);
+        var installed = await updater.RunAsync(Command(UpdateArgs.Install), Ct);
 
         installed.Ok.ShouldBeTrue(installed.Error);
         installed.Way.ShouldBe("2.0.1 -> 2.0.2; the node restarts");
@@ -199,11 +201,11 @@ public sealed class UpdateTests : IDisposable
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var updater = Updater(state, feed, UpdatePolicy.Auto, out _, out _, version: "2.0.0");
 
-        var refused = await updater.RunAsync(Command(UpdateArgs.Install), default);
+        var refused = await updater.RunAsync(Command(UpdateArgs.Install), Ct);
         refused.Error.ShouldNotBeNull().ShouldContain("--adopt");
         Read(node).ShouldBe("my own build");
 
-        var adopted = await updater.RunAsync(Command(UpdateArgs.Install, UpdateArgs.Adopt), default);
+        var adopted = await updater.RunAsync(Command(UpdateArgs.Install, UpdateArgs.Adopt), Ct);
 
         adopted.Ok.ShouldBeTrue(adopted.Error);
         Read(node).ShouldBe("new " + node);

@@ -130,6 +130,28 @@ public sealed class NodeFeedTests
     }
 
     [Fact]
+    public async Task AWindowOlderThanItsNodeSaysToReopen()
+    {
+        var node = new FakeNode();
+        var nodeVersion = NodeFeed.ClientVersion;
+        await using var feed = new NodeFeed(node.Open, "node.sock", TimeSpan.FromMilliseconds(20), _ => Task.FromResult<string?>(nodeVersion));
+        feed.Start();
+        await Until(() => node.OpenCount == 1);
+        node.Send(Live.Snapshot(4, "s1", Live.Row("aaaa1111", "one")));
+        await Until(() => feed.Connected);
+        feed.Screen(Live.At).Source.ShouldBe("live from the node on node.sock");
+
+        // The node updated itself and restarted: the window reconnects, and asks again.
+        nodeVersion = "99.0.0+abc";
+        node.Close();
+        await Until(() => node.OpenCount == 2);
+        node.Send(Live.Snapshot(5, "s1", Live.Row("aaaa1111", "one")));
+        await Until(() => feed.UpdateNote.Length > 0 && feed.Screen(Live.At).Source.StartsWith("live", StringComparison.Ordinal));
+
+        feed.Screen(Live.At).Source.ShouldBe($"live from the node on node.sock · the node is 99.0.0, this window {NodeFeed.ClientVersion}: reopen to update");
+    }
+
+    [Fact]
     public async Task ADroppedStreamResumesAfterTheLastEventApplied()
     {
         var node = new FakeNode();
