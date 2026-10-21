@@ -22,6 +22,8 @@ internal sealed class TranscriptPane
     private static readonly RGBAColor32 Prompt = new(0xf0, 0xb4, 0x3c, 0xff);
     private static readonly RGBAColor32 Tool = new(0x6f, 0x9b, 0xd8, 0xff);
     private static readonly RGBAColor32 Failed = new(0xe0, 0x5a, 0x5a, 0xff);
+    private static readonly RGBAColor32 Ok = new(0x5c, 0xb8, 0x6e, 0xff);
+    private static readonly RGBAColor32 Running = new(0xe8, 0xb0, 0x4a, 0xff);
     private static readonly RGBAColor32 Button = new(0x2c, 0x35, 0x4a, 0xff);
     private static readonly RGBAColor32 ButtonHover = new(0x3a, 0x46, 0x62, 0xff);
 
@@ -34,6 +36,9 @@ internal sealed class TranscriptPane
     private CancellationTokenSource? _following;
     private int _total;
     private string? _problem;
+
+    // The entries opened past their first lines, by index: a click on "+N lines" opens one, another closes it.
+    private readonly HashSet<int> _expanded = [];
 
     /// <summary>The open session's row id, or null with none open.</summary>
     public string? RowId { get; private set; }
@@ -48,6 +53,9 @@ internal sealed class TranscriptPane
 
     /// <summary>Called when what it shows changed, from whichever thread: the host redraws.</summary>
     public Action? Changed { get; set; }
+
+    /// <summary>Puts text on the clipboard: a refused command's Copy. Null where the host has no clipboard.</summary>
+    public Action<string>? CopyText { get; set; }
 
     /// <summary>The entries it holds now, oldest first.</summary>
     public IReadOnlyList<TranscriptEntry> Entries
@@ -73,6 +81,7 @@ internal sealed class TranscriptPane
             _total = 0;
             _problem = null;
         }
+        _expanded.Clear();
         if (Load is { } load)
         {
             var following = _following = new CancellationTokenSource();
@@ -132,8 +141,11 @@ internal sealed class TranscriptPane
         }
     }
 
-    /// <summary>The pane as a tree, in the space the table takes otherwise.</summary>
-    internal Layout.Node Tree()
+    /// <summary>
+    /// The pane as a tree, in the space the table takes otherwise. <paramref name="live"/>: the session is still running,
+    /// so a call with nothing back yet is running rather than cut off.
+    /// </summary>
+    internal Layout.Node Tree(bool live = true)
     {
         List<TranscriptEntry> entries;
         int total;
@@ -151,33 +163,148 @@ internal sealed class TranscriptPane
                 Layout.Builder.Text(Title ?? "", 16f, Bright).WAuto(),
                 Layout.Builder.Text(problem is null ? shown : $"{shown} · {problem}", 12f, problem is null ? Dim : Failed).WStar())
             .WithGap(12f);
-        var rows = entries.Select(Row).ToArray();
+        var rows = Rows(entries, live).ToArray();
         var list = rows.Length == 0
             ? Layout.Builder.Text(problem ?? "reading the transcript…", 13f, Dim).Stretch()
             : Layout.Builder.VStack(rows).WithGap(6f).WithScroll(_scroll).Stretch();
         return Layout.Builder.VStack(head, list).WithGap(8f).Pad(16f, 8f).Stretch();
     }
 
-    private static Layout.Node Row(TranscriptEntry entry)
+    // The entries as rows: a tool call and what it gave back as one, the result folded under the call; a result whose call
+    // came before the entries held, on its own.
+    private IEnumerable<Layout.Node> Rows(List<TranscriptEntry> entries, bool live)
     {
-        var (label, labelColor, textColor, lines) = entry.Kind switch
+        var results = new Dictionary<string, TranscriptEntry>(StringComparer.Ordinal);
+        foreach (var entry in entries)
         {
-            TranscriptKind.User => ("prompt", Prompt, Bright, 12),
-            TranscriptKind.Assistant => ("claude", Body, Body, 40),
-            TranscriptKind.Thinking => ("thinking", Faint, Faint, 2),
-            TranscriptKind.ToolUse => (entry.Tool ?? "tool", Tool, Dim, 1),
-            TranscriptKind.ToolResult => ("", Faint, Faint, 3),
+            if (entry.Kind is TranscriptKind.ToolResult or TranscriptKind.Error && entry.ToolUseId is { } id)
+            {
+                results.TryAdd(id, entry);
+            }
+        }
+        var calls = entries.Where(e => e.Kind == TranscriptKind.ToolUse && e.ToolUseId is not null).Select(e => e.ToolUseId!).ToHashSet(StringComparer.Ordinal);
+        foreach (var entry in entries)
+        {
+            if (entry.Kind == TranscriptKind.ToolUse)
+            {
+                yield return Call(entry, entry.ToolUseId is { } id && results.TryGetValue(id, out var result) ? result : null, live);
+            }
+            else if (entry.Kind is TranscriptKind.ToolResult or TranscriptKind.Error && entry.ToolUseId is { } id && calls.Contains(id))
+            {
+                // Shown under its call.
+            }
+            else
+            {
+                yield return Row(entry);
+            }
+        }
+    }
+
+    // A tool call with its state as a dot (running, done, failed or refused, or cut off where the session ended first),
+    // then what it gave back: its first lines, the rest a click away.
+    private Layout.Node Call(TranscriptEntry call, TranscriptEntry? result, bool live)
+    {
+        var failed = result is { Kind: TranscriptKind.Error } || result?.Denied is not null;
+        var dot = result is null ? (live ? Running : Faint) : failed ? Failed : Ok;
+        var body = new List<Layout.Node> { Layout.Builder.Text(call.Text, 13f, Dim) };
+        if (result?.Denied is { } denied)
+        {
+            body.Add(Layout.Builder.Text($"Denied · {denied}", 13f, Failed));
+            var command = call.Full ?? call.Text;
+            if (command.Length > 0)
+            {
+                // The call's line says a one-line command already; one over several lines is shown as it was asked.
+                if (call.Full is { } full)
+                {
+                    body.AddRange(full.ReplaceLineEndings("\n").Split('\n').Select(l => Layout.Builder.Text(l, 13f, Bright)));
+                }
+                if (CopyText is { } copy)
+                {
+                    body.Add(Layout.Builder.HStack(
+                            Layout.Builder.Text("Copy the command", 12f, Bright, TextAlign.Center).Pad(10f, 3f).WAuto().Bg(Button).BgHover(ButtonHover)
+                                .Clickable(new HitResult.ButtonHit($"transcript:copy:{call.Index}"), _ => copy(command)),
+                            Layout.Builder.Spacer().WStar()));
+                }
+            }
+        }
+        else if (result is not null)
+        {
+            if (call.Tool == "Read" && result.Kind == TranscriptKind.ToolResult)
+            {
+                // A file read in full says nothing a reader wants in the transcript: how much was read is enough.
+                var count = result.Text.Length == 0 ? 0 : result.Text.ReplaceLineEndings("\n").Split('\n').Length;
+                body.Add(Layout.Builder.Text($"└ Read {count} {(count == 1 ? "line" : "lines")}", 12f, Faint));
+            }
+            else
+            {
+                body.AddRange(Folded(result, result.Text.Length == 0 ? "(no output)" : result.Text, failed ? Failed : Faint, 3, "└ "));
+            }
+        }
+        return Layout.Builder.HStack(
+                Layout.Builder.HStack(
+                        Layout.Builder.Text("●", 12f, dot).WAuto(),
+                        Layout.Builder.Text(call.Tool ?? "tool", 12f, Tool).WStar())
+                    .WithGap(6f)
+                    .WFixed(LabelWidth),
+                Layout.Builder.VStack([.. body]).WStar())
+            .WithGap(10f);
+    }
+
+    private Layout.Node Row(TranscriptEntry entry)
+    {
+        var (label, labelColor, textColor, lines) = entry switch
+        {
+            { Kind: TranscriptKind.User, From: { } from } => (from, Tool, Body, 12),
+            { Kind: TranscriptKind.User, Note: true } => ("", Faint, Faint, 2),
+            { Kind: TranscriptKind.User } => ("prompt", Prompt, Bright, 12),
+            { Kind: TranscriptKind.Assistant } => ("claude", Body, Body, 40),
+            { Kind: TranscriptKind.Thinking } => ("thinking", Faint, Faint, 2),
+            { Kind: TranscriptKind.ToolUse } => (entry.Tool ?? "tool", Tool, Dim, 1),
+            { Kind: TranscriptKind.ToolResult } => ("└", Faint, Faint, 3),
             _ => ("error", Failed, Failed, 4),
         };
-        var text = entry.Text.ReplaceLineEndings("\n").Split('\n');
-        var body = text.Take(lines).Select(l => Layout.Builder.Text(l, 13f, textColor)).ToList();
-        if (text.Length > lines)
+        var body = new List<Layout.Node>();
+        if (entry.From is not null)
         {
-            body.Add(Layout.Builder.Text($"… {text.Length - lines} more {(text.Length - lines == 1 ? "line" : "lines")}", 11f, Faint));
+            body.Add(Layout.Builder.Text("reported", 12f, Dim));
         }
+        if (entry.Denied is { } denied)
+        {
+            body.Add(Layout.Builder.Text($"Denied · {denied}", 13f, Failed));
+        }
+        body.AddRange(Folded(entry, entry.Text, textColor, lines, ""));
         return Layout.Builder.HStack(
                 Layout.Builder.Text(label, 12f, labelColor).WFixed(LabelWidth),
                 Layout.Builder.VStack([.. body]).WStar())
             .WithGap(10f);
+    }
+
+    // An entry's text, its first lines only until it is opened: the line saying how many more is what opens it, and
+    // closes it again.
+    private IEnumerable<Layout.Node> Folded(TranscriptEntry entry, string text, RGBAColor32 color, int lines, string lead)
+    {
+        var all = text.ReplaceLineEndings("\n").Split('\n');
+        var open = _expanded.Contains(entry.Index);
+        var shown = open ? all : all.Take(lines);
+        foreach (var (line, i) in shown.Select((l, i) => (l, i)))
+        {
+            yield return Layout.Builder.Text(i == 0 ? lead + line : lead.Length > 0 ? "  " + line : line, 13f, color);
+        }
+        if (all.Length > lines)
+        {
+            var more = all.Length - lines;
+            var label = open ? "(click to collapse)" : $"… +{more} {(more == 1 ? "line" : "lines")} (click to expand)";
+            yield return Layout.Builder.Text(label, 11f, Dim).WAuto().BgHover(ButtonHover)
+                .Clickable(new HitResult.ButtonHit($"transcript:fold:{entry.Index}"), _ => Toggle(entry.Index));
+        }
+    }
+
+    private void Toggle(int index)
+    {
+        if (!_expanded.Remove(index))
+        {
+            _expanded.Add(index);
+        }
+        Changed?.Invoke();
     }
 }

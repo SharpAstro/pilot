@@ -153,6 +153,64 @@ public sealed class TerminalTests
     }
 
     [Fact]
+    public async Task ACallShowsWithWhatItGaveBackFoldedToItsFirstLinesAndARefusedOneSaysWhy()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var sessions = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        var screen = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
+        var copied = new List<string>();
+        sessions.CopyText = copied.Add;
+        sessions.Transcript.Load = (_, after, _) => Task.FromResult(after < 0
+            ? new TranscriptPage
+            {
+                Total = 6,
+                Entries =
+                [
+                    new() { Index = 0, Kind = TranscriptKind.ToolUse, Tool = "Bash", Text = "dotnet test", ToolUseId = "t1" },
+                    new() { Index = 1, Kind = TranscriptKind.Assistant, Text = "Meanwhile, reading." },
+                    new() { Index = 2, Kind = TranscriptKind.ToolResult, Text = "one\ntwo\nthree\nfour\nfive", ToolUseId = "t1" },
+                    new() { Index = 3, Kind = TranscriptKind.ToolUse, Tool = "Bash", Text = "rm -rf build", ToolUseId = "t2" },
+                    new() { Index = 4, Kind = TranscriptKind.Error, Text = "Permission for this action was denied", ToolUseId = "t2", Denied = "auto mode: [Destructive]" },
+                    new() { Index = 5, Kind = TranscriptKind.User, Text = "## Found it", From = "Explore", FromAgent = "a1" },
+                ],
+            }
+            : new TranscriptPage { Total = 6, Entries = [] });
+        sessions.Tree(screen);
+        sessions.HandleInput(new InputEvent.KeyDown(InputKey.Enter)).ShouldBeTrue();
+        for (var i = 0; i < 100 && sessions.Transcript.Entries.Count < 6; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+        string Described() => CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 160, 60), CellMeasureContext.PixelAuthored));
+        List<ClickableRegion> Regions()
+        {
+            sessions.Render(screen, new RectF32(0, 0, 1280, 800));
+            var regions = new List<ClickableRegion>();
+            sessions.CollectPaintedRegions(regions);
+            return regions;
+        }
+
+        var described = Described();
+        // The result sits under its call, not after the words that came between them, and shows its first three lines.
+        described.IndexOf("└ one", StringComparison.Ordinal).ShouldBeLessThan(described.IndexOf("Meanwhile, reading.", StringComparison.Ordinal));
+        described.ShouldContain("three");
+        described.ShouldNotContain("four");
+        described.ShouldContain("+2 lines (click to expand)");
+        described.ShouldContain("Denied · auto mode: [Destructive]");
+        described.ShouldContain("Explore");
+        described.ShouldContain("reported");
+
+        Regions().Single(r => r.Result is HitResult.ButtonHit { Action: "transcript:fold:2" }).OnClick!.Invoke(InputModifier.None);
+        described = Described();
+        described.ShouldContain("five");
+        described.ShouldContain("(click to collapse)");
+
+        Regions().Single(r => r.Result is HitResult.ButtonHit { Action: "transcript:copy:3" }).OnClick!.Invoke(InputModifier.None);
+        copied.ShouldBe(["rm -rf build"]);
+        sessions.Transcript.Close();
+    }
+
+    [Fact]
     public void ANarrowSessionsPageDropsItsOptionalColumnsForTheSessionColumn()
     {
         using var vessel = new RgbaImageRenderer(1, 1);

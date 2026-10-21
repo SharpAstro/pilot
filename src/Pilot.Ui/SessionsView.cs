@@ -366,7 +366,16 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .RowH(HeaderHeight);
 
     // The table, or the open session's transcript in its place.
-    private Layout.Node Page(SessionsScreen screen) => Transcript.IsOpen ? Transcript.Tree() : Main(screen);
+    private Layout.Node Page(SessionsScreen screen)
+    {
+        if (!Transcript.IsOpen)
+        {
+            return Main(screen);
+        }
+        Transcript.CopyText = CopyText;
+        var open = screen.Lines.FirstOrDefault(l => l.Row.Id == Transcript.RowId);
+        return Transcript.Tree(live: open?.Row.State is not (null or Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed));
+    }
 
     // Open the selected session's transcript; archive every ended session, and show or hide the archived ones: each only
     // while there is something for it to do.
