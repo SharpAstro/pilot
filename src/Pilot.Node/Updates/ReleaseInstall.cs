@@ -297,9 +297,10 @@ public static class ReleaseInstall
     private static bool IsStaging(string folder)
         => string.Equals(Path.GetFileName(Path.TrimEndingDirectorySeparator(folder)), StagingName, StringComparison.OrdinalIgnoreCase);
 
-    // A relative path of plain names, nothing rooted and no . or .. in it; written with /, as a zip's are.
+    // A relative path of plain names, nothing rooted and no . or .. in it; written with /, as a zip's are. No colon
+    // either, whatever the platform: Linux takes C:/x as a folder named C:, but a release made on Windows never has one.
     private static bool IsInside(string path)
-        => path.Length > 0 && !Path.IsPathRooted(path) && !path.Contains('\\')
+        => path.Length > 0 && !Path.IsPathRooted(path) && !path.Contains('\\') && !path.Contains(':')
            && path.Split('/') is var parts
            && parts.All(p => p.Length > 0 && p is not ("." or "..") && p.IndexOfAny(Path.GetInvalidFileNameChars()) < 0);
 }
