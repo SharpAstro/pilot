@@ -238,6 +238,64 @@ public sealed class FlyingTests
         flights.Wizard.Status.ShouldBe("made DIR140, TIA1611");
     }
 
+    [Fact]
+    public void TheWizardIsFlownByTheKeyboardAlone()
+    {
+        var wizard = new NewFlightWizard
+        {
+            LoadRepos = _ => Task.FromResult<RepoInfo[]>([
+                new() { Name = "AppShell", Path = @"C:\src\AppShell" },
+                new() { Name = "DIR.Lib", Path = @"C:\src\DIR.Lib" },
+                new() { Name = "Node.Lib", Path = @"C:\src\Node.Lib" },
+                new() { Name = "tianwen", Path = @"C:\src\tianwen" }]),
+            LoadIssues = (_, _) => Task.FromResult<IssueInfo[]>([new() { Number = 140, Title = "A compute pass" }, new() { Number = 141, Title = "Fonts" }]),
+        };
+        var focus = new TextInputFocus();
+        var tracker = new BackgroundTaskTracker();
+        TextInputInteraction.KeyContext Keys() => new(tracker, focus, () => { }, ActiveSearch: wizard.ActiveSearch);
+        void Type(TextInputState input, string text)
+        {
+            foreach (var c in text)
+            {
+                TextInputInteraction.HandleText(input, c.ToString());
+            }
+        }
+        void Press(InputKey key, InputModifier modifiers = InputModifier.None)
+        {
+            if (!(key is InputKey.Up or InputKey.Down && wizard.ActiveSearch?.HandleNavKey(key) == true))
+            {
+                TextInputInteraction.HandleKey(key, modifiers, Keys());
+            }
+        }
+
+        wizard.Open();
+        focus.Focus(wizard.RepoFilter);
+        // "lib" leaves DIR.Lib and Node.Lib, the first highlighted; Down moves to Node.Lib, Enter chooses it.
+        Type(wizard.RepoFilter, "lib");
+        wizard.RepoResults.Select(r => r.Name).ShouldBe(["DIR.Lib", "Node.Lib"]);
+        Press(InputKey.Down);
+        Press(InputKey.Enter);
+        wizard.Chosen.Select(r => r.Name).ShouldBe(["Node.Lib"]);
+        wizard.GoOn();
+        wizard.Current.ShouldBe(NewFlightWizard.Step.Issues);
+
+        focus.Focus(wizard.IssueFilter);
+        Press(InputKey.Down);
+        Press(InputKey.Enter);
+        wizard.Current.ShouldBe(NewFlightWizard.Step.Review);
+        wizard.Picks.ShouldHaveSingleItem().Issue.Number.ShouldBe(141);
+
+        // Escape goes back a step at a time, and out from the repos.
+        wizard.Back();
+        wizard.Current.ShouldBe(NewFlightWizard.Step.Issues);
+        focus.Focus(wizard.IssueFilter);
+        Press(InputKey.Escape);
+        wizard.Current.ShouldBe(NewFlightWizard.Step.Repos);
+        focus.Focus(wizard.RepoFilter);
+        Press(InputKey.Escape);
+        wizard.IsOpen.ShouldBeFalse();
+    }
+
     /// <summary>Records compare their array by reference.</summary>
     private sealed class FlightActionComparer : IEqualityComparer<FlightAction>
     {

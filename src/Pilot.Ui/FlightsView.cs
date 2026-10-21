@@ -281,7 +281,25 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
         }
     }
 
-    public override bool HandleInput(InputEvent evt) => evt is InputEvent.KeyDown key && HandleListKey(key.Key, key.Modifiers);
+    public override bool HandleInput(InputEvent evt)
+    {
+        // The wizard, open, takes Escape (a step back, or out) and Enter on its review (Create); the flights' list keys wait.
+        if (Wizard.IsOpen)
+        {
+            switch (evt)
+            {
+                case InputEvent.KeyDown { Key: InputKey.Escape }:
+                    Wizard.Back();
+                    return true;
+                case InputEvent.KeyDown { Key: InputKey.Enter } when Wizard.Current == NewFlightWizard.Step.Review:
+                    Wizard.GoOn();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+        return evt is InputEvent.KeyDown key && HandleListKey(key.Key, key.Modifiers);
+    }
 
     internal Layout.Node Build(FlightsScreen screen)
     {

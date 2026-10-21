@@ -151,7 +151,10 @@ var loop = new SdlEventLoop(window, renderer) { BackgroundColor = new RGBAColor3
 var router = new InputRouter(view.Ui, tracker, loop.RequestRedraw)
 {
     Widgets = () => chrome.Widgets,
-    Unhandled = view.HandleInput,
+    // A key nothing painted took goes to the page shown, as a tab's own HandleInput does in tianwen.
+    Unhandled = evt => chrome.Page == PilotPage.Flights ? chrome.Flights.HandleInput(evt) : view.HandleInput(evt),
+    // The new-flight wizard's search boxes take Up and Down while they have the keyboard.
+    ActiveSearch = () => chrome.Page == PilotPage.Flights ? chrome.Flights.Wizard.ActiveSearch : null,
 };
 
 // The platform's text input follows the field that has the keyboard, as tianwen's GUI binds it: once, here.

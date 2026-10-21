@@ -180,7 +180,8 @@ void Handle(ConsoleInputEvent raw)
 {
     var evt = raw.ToInputEvent;
     var fields = () => (IReadOnlyList<TextInputState>)CellLayout.TextInputs(arranged);
-    var context = new TextInputInteraction.KeyContext(tracker, focus, Redraw, TabFields: fields);
+    var context = new TextInputInteraction.KeyContext(tracker, focus, Redraw,
+        ActiveSearch: page == PilotPage.Flights ? flights.Wizard.ActiveSearch : null, TabFields: fields);
     Redraw();
 
     // A click: the arranged tree answers, as the window's regions do; a field's click focuses it.
@@ -230,6 +231,9 @@ void Handle(ConsoleInputEvent raw)
             break;
         case InputEvent.KeyDown(InputKey.T, InputModifier.Ctrl):
             focus.Focus(cards.TellInput);
+            break;
+        case InputEvent.KeyDown(InputKey.Enter, InputModifier.Ctrl) when page == PilotPage.Flights && flights.Wizard.IsOpen:
+            flights.Wizard.GoOn();
             break;
         case InputEvent.KeyDown key:
             // Up and Down move the page's selection, as in the window.
