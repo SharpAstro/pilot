@@ -117,6 +117,9 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private readonly DropdownMenuState<string> _menu = new();
     private RectF32 _menuAt;
 
+    /// <summary>The header's ? card: which pilot this is and where its things are; null shows no ? (a capture).</summary>
+    public AboutCard? About { get; set; }
+
     /// <summary>Opens a session's folder the platform's way (a file manager); the menu's Open its folder.</summary>
     public Action<string>? OnOpen { get; set; }
 
@@ -272,6 +275,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                 : Layout.Builder.VStack(Header(screen), Page(screen).HStar()))
             .Bg(Ground)
             .Stretch();
+        page = About?.Over(page) ?? page;
         return _menu.IsOpen
             ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg))
             : page;
@@ -382,6 +386,10 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         {
             yield return CardsView<TSurface>.Pill(ShowArchived ? "Hide archived" : $"Show archived ({_archivedCount})", "sessions:show-archived",
                 () => ShowArchived = !ShowArchived);
+        }
+        if (About is { } about)
+        {
+            yield return about.Button();
         }
     }
 

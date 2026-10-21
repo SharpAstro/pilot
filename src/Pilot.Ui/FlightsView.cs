@@ -215,6 +215,76 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
     /// <summary>Opens an artifact: a file on the machine, or a URL.</summary>
     public Action<string>? OnOpen { get; set; }
 
+    /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
+    public AboutCard? About { get; set; }
+
+    /// <summary>Puts text on the clipboard; the row menu's Copy entries. Null where the host has no clipboard.</summary>
+    public Action<string>? CopyText { get; set; }
+
+    // A row's right-click menu, hung where the press was.
+    private readonly DropdownMenuState<string> _menu = new();
+    private RectF32 _menuAt;
+    private static readonly RGBAColor32 MenuBg = new(0x1f, 0x21, 0x2b, 0xff);
+
+    /// <summary>The open row menu's entries, in order; empty while it is shut.</summary>
+    public IReadOnlyList<DropdownItem<string>> MenuItems => _menu.IsOpen ? _menu.Items : [];
+
+    /// <summary>
+    /// Opens <paramref name="line"/>'s menu where it was right-clicked, the row selected: what can be done with the flight now
+    /// (its actions), its PR in the browser, its plane's folder, and its code and branch to copy.
+    /// </summary>
+    public void OpenMenu(FlightLine line, int index, PointerPress at)
+    {
+        ListCursor.MoveTo(index);
+        var flight = line.Row;
+        var items = new List<DropdownItem<string>>();
+        if (CanCommand)
+        {
+            foreach (var action in FlightAction.For(line))
+            {
+                items.Add(new DropdownItem<string>(action.Prefill is null ? action.Label : action.Label + "…", action.Verb)
+                {
+                    OnChoose = () =>
+                    {
+                        if (action.Prefill is { } prefill)
+                        {
+                            Prefill(prefill);
+                        }
+                        else
+                        {
+                            OnAction?.Invoke(action);
+                        }
+                    },
+                });
+            }
+        }
+        if (OnOpen is { } open)
+        {
+            if (flight.PullRequestUrl is { } url)
+            {
+                items.Add(new DropdownItem<string>($"Open PR #{flight.PullRequest}", "pr") { OnChoose = () => open(url) });
+            }
+            if (flight.State != FlightState.Landed)
+            {
+                items.Add(new DropdownItem<string>("Open its plane's folder", "plane") { OnChoose = () => open(flight.Worktree) });
+            }
+            items.Add(new DropdownItem<string>("Open its repo's folder", "repo") { OnChoose = () => open(flight.RepoPath) });
+        }
+        if (CopyText is { } copy)
+        {
+            items.Add(new DropdownItem<string>($"Copy {flight.Code}", "copy-code") { OnChoose = () => copy(flight.Code) });
+            items.Add(new DropdownItem<string>("Copy its branch", "copy-branch") { OnChoose = () => copy(flight.Branch) });
+        }
+        if (items.Count == 0)
+        {
+            return;
+        }
+        _menu.Items = [.. items];
+        // Hung where the press was, a point: the menu is as wide as its widest entry, measured, and kept on screen.
+        _menuAt = new RectF32(at.X, at.Y, 0f, 0f);
+        _menu.IsOpen = true;
+    }
+
     /// <summary>The new-flight wizard, opened by the header's New flight; the host gives it its callbacks.</summary>
     public NewFlightWizard Wizard { get; } = new();
 
@@ -314,7 +384,9 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
         {
             parts.Add(CommandBar());
         }
-        return Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch();
+        var page = Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch();
+        page = About?.Over(page) ?? page;
+        return _menu.IsOpen ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg)) : page;
     }
 
     /// <summary>The selected flight: its legs, its review, its artifacts, and what can be done with it.</summary>
@@ -446,7 +518,8 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
                     Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
                     CanCommand && !Wizard.IsOpen && Wizard.LoadRepos is not null
                         ? Pill("New flight", "flights:new", () => Wizard.Open())
-                        : Layout.Builder.Spacer().WFixed(0f))
+                        : Layout.Builder.Spacer().WFixed(0f),
+                    About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f))
                 .WithGap(12f)
                 .RowH(32f),
             Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC", 12f, Dim).RowH(20f),
@@ -538,7 +611,8 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
             .RowH(RowHeight)
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
-            .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index));
+            .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index))
+            .WithContextMenu(at => OpenMenu(line, index, at));
         // The selection stated as a background too: a terminal paints no focus of its own, and on pixels it is the focus colour.
         return index == Selected ? row.Bg(RowFocusBg) : (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }
