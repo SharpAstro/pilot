@@ -307,6 +307,29 @@ public sealed class SayBarTests
         acted[^1].Args.ShouldBe(["undo"]);
     }
 
+    [Fact]
+    public void ARightClickOpensTheRowsMenuWideEnoughToReadAndItsEntriesAct()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var acted = new List<FlightAction>();
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = acted.Add, CanSay = true };
+        var ended = Live.Row("bbbb2222", "ended", SessionState.Ended);
+        var bounds = new RectF32(0, 0, 1280, 800);
+        view.Render(Screen(ended), bounds);
+
+        view.OpenMenu(Screen(ended).Lines[0], 0, new PointerPress(400f, 200f, MouseButton.Right, InputModifier.None, 1));
+        view.Render(Screen(ended), bounds);
+
+        view.MenuItems.Select(i => i.Label).ShouldContain("Archive");
+        var rows = new List<ClickableRegion>();
+        view.CollectPaintedRegions(rows);
+        var menu = rows.Where(r => r.Result is HitResult.ListItemHit { ListId: DropdownMenuState<string>.ListId }).ToList();
+        menu.Count.ShouldBe(view.MenuItems.Count);
+        menu.ShouldAllBe(r => r.Width >= 200f);
+        menu[view.MenuItems.ToList().FindIndex(i => i.Label == "Archive")].OnClick!.Invoke(InputModifier.None);
+        acted.ShouldHaveSingleItem().Target.ShouldBe("session/bbbb2222");
+    }
+
     private static void Hit(List<ClickableRegion> regions, string action)
     {
         var at = regions.FindIndex(r => r.Result is HitResult.ButtonHit hit && hit.Action == action);
