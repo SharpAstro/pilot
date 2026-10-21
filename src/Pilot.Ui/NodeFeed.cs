@@ -28,12 +28,23 @@ internal sealed class NodeFeed : IAsyncDisposable
     private long _version;
     private string _status;
     private bool _connected;
+    private readonly Func<CancellationToken, Task<string?>>? _nodeVersion;
+    // The node's version as of the last connection, when it said; an update restarts the node under this window.
+    private string? _nodeVersionNow;
+
+    /// <summary>This window's version, without the commit: what the node's is held against.</summary>
+    public static string ClientVersion { get; } = Plain(
+        typeof(NodeFeed).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            is [System.Reflection.AssemblyInformationalVersionAttribute info, ..] ? info.InformationalVersion : "0.0.0");
 
     /// <param name="open">Opens the event stream, resuming after <c>since</c> on <c>stream</c> when given.</param>
     /// <param name="socketPath">The node's socket, as the header names the source.</param>
-    public NodeFeed(Func<long?, string?, CancellationToken, Task<INodeEvents>> open, string socketPath, TimeSpan? retry = null)
+    /// <param name="nodeVersion">Asks the node its version, on each connection (null: never asked).</param>
+    public NodeFeed(Func<long?, string?, CancellationToken, Task<INodeEvents>> open, string socketPath, TimeSpan? retry = null,
+        Func<CancellationToken, Task<string?>>? nodeVersion = null)
     {
         _open = open;
+        _nodeVersion = nodeVersion;
         _socketPath = socketPath;
         _retry = retry ?? RetryDelay;
         _status = $"connecting to the node on {socketPath}";
@@ -41,7 +52,23 @@ internal sealed class NodeFeed : IAsyncDisposable
 
     /// <summary>A feed on the node's own client.</summary>
     public static NodeFeed For(NodeClient client) =>
-        new(async (since, stream, ct) => new ClientEvents(await client.OpenEventsAsync(since, stream, ct).ConfigureAwait(false)), client.SocketPath);
+        new(async (since, stream, ct) => new ClientEvents(await client.OpenEventsAsync(since, stream, ct).ConfigureAwait(false)), client.SocketPath,
+            nodeVersion: async ct => (await client.GetNodeAsync(ct).ConfigureAwait(false)).Version);
+
+    /// <summary>
+    /// What the header adds when the node runs a newer release than this window (it updated itself, and this window
+    /// runs on from its old binary): reopen to take it. Empty otherwise.
+    /// </summary>
+    public string UpdateNote
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return UpdateNoteLocked();
+            }
+        }
+    }
 
     /// <summary>Moves on every applied event and every change of connection, so the loop knows to draw again.</summary>
     public long Version => Interlocked.Read(ref _version);
@@ -86,7 +113,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     {
         lock (_lock)
         {
-            return new FlightsScreen(FlightLine.Build(_mirror.Flights.Values, _mirror.Sessions.Values, now, _mirror.Legs.Values), _status, now);
+            return new FlightsScreen(FlightLine.Build(_mirror.Flights.Values, _mirror.Sessions.Values, now, _mirror.Legs.Values), _status + UpdateNoteLocked(), now);
         }
     }
 
@@ -95,7 +122,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     {
         lock (_lock)
         {
-            return new SessionsScreen(SessionLine.Build(_mirror.Sessions.Values, now), _status, now, _mirror.Usage?.Line(now, TimeZoneInfo.Local));
+            return new SessionsScreen(SessionLine.Build(_mirror.Sessions.Values, now), _status + UpdateNoteLocked(), now, _mirror.Usage?.Line(now, TimeZoneInfo.Local));
         }
     }
 
@@ -114,6 +141,7 @@ internal sealed class NodeFeed : IAsyncDisposable
             try
             {
                 await using var events = await _open(since, stream, cancellationToken).ConfigureAwait(false);
+                await AskVersionAsync(cancellationToken).ConfigureAwait(false);
                 while (await events.ReadAsync(cancellationToken).ConfigureAwait(false) is { } next)
                 {
                     Apply(next);
@@ -154,6 +182,37 @@ internal sealed class NodeFeed : IAsyncDisposable
             }
         }
     }
+
+    // The node's version for UpdateNote; a node that does not say leaves the last answer.
+    private async Task AskVersionAsync(CancellationToken cancellationToken)
+    {
+        if (_nodeVersion is null)
+        {
+            return;
+        }
+        try
+        {
+            var version = await _nodeVersion(cancellationToken).ConfigureAwait(false);
+            lock (_lock)
+            {
+                _nodeVersionNow = version ?? _nodeVersionNow;
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or System.Net.Sockets.SocketException or System.Text.Json.JsonException)
+        {
+        }
+    }
+
+    private string UpdateNoteLocked() =>
+        _nodeVersionNow is { } node && IsNewer(ClientVersion, Plain(node))
+            ? $" · the node is {Plain(node)}, this window {ClientVersion}: reopen to update"
+            : "";
+
+    // A version as people read it: no commit after it (2.0.12+3969354…).
+    private static string Plain(string version) => version.Split('+')[0].Trim();
+
+    private static bool IsNewer(string current, string latest)
+        => System.Version.TryParse(current.Split('-')[0], out var have) && System.Version.TryParse(latest.Split('-')[0], out var offered) && offered > have;
 
     private void Apply(NodeEvent next)
     {
