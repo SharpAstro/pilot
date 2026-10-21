@@ -1,6 +1,7 @@
 using System.CommandLine;
 using Node.Lib;
 using Pilot.Contracts;
+using Pilot.Node.Updates;
 
 namespace Pilot.Node;
 
@@ -12,6 +13,15 @@ public static class NodeCommandLine
 {
     /// <summary>Set to <c>1</c> to make a node local-only, as <c>--local-only</c> does (Node.Lib's <see cref="LocalOnlyMode"/>).</summary>
     public const string LocalOnlyVariable = "PILOT_LOCAL_ONLY";
+
+    /// <summary>
+    /// <c>--after &lt;pid&gt;</c>: wait for that process to exit before taking the socket. How a node that installed a
+    /// release hands over to the new one (<see cref="NodeUpdater"/>); not for people, so hidden.
+    /// </summary>
+    public const string AfterOption = "--after";
+
+    /// <summary>How long <see cref="AfterOption"/> waits for the node it takes over from.</summary>
+    public static readonly TimeSpan AfterBudget = TimeSpan.FromMinutes(2);
 
     /// <param name="nodePath">The binary the hooks run; this process's own unless a test names one (a test host is no pilot-node).</param>
     public static Task<int> RunAsync(string[] args, Stream stdin, TextWriter output, TextWriter error, CancellationToken cancellationToken, string? nodePath = null)
@@ -56,6 +66,14 @@ public static class NodeCommandLine
         {
             Description = $"Bind nothing but the socket, whatever --lan says (also {LocalOnlyVariable}=1): for a node an agent starts, which the firewall would otherwise ask about",
         };
+        var updatePolicy = new Option<string>("--update-policy")
+        {
+            Description = "When a newer release of pilot is out: auto installs it once no job runs, and says so; ask raises a card with Update; off does not look. auto by default; only an installed release looks",
+            DefaultValueFactory = _ => UpdatePolicy.Auto.Name(),
+        };
+        updatePolicy.AcceptOnlyFromAmong([.. UpdatePolicies.Names]);
+        var releaseFeed = new Option<string?>("--release-feed") { Description = "A folder of pilot-<version>-<rid>.zip to update from instead of GitHub", Hidden = true };
+        var after = new Option<int?>(AfterOption) { Description = "Wait for this process to exit before taking the socket", Hidden = true };
         var watchtowerFolder = new Option<string?>("--watchtower-folder") { Description = "Where the watchtower runs, a folder Claude Code trusts; else PILOT_WATCHTOWER_FOLDER, else under --data" };
         machine.Validators.Add(result =>
         {
@@ -87,7 +105,7 @@ public static class NodeCommandLine
 
         var root = new RootCommand("pilot v2's node: one per machine, the one writer of its flights, legs, cards and sessions")
         {
-            Options = { socket, data, machine, noWatchtower, watchtowerFolder, lan, lanPort, localOnly, maxJobs, jobMemory },
+            Options = { socket, data, machine, noWatchtower, watchtowerFolder, lan, lanPort, localOnly, maxJobs, jobMemory, updatePolicy, releaseFeed, after },
             Subcommands = { hook, hooks },
         };
         root.SetAction(async (parseResult, ct) =>
@@ -108,9 +126,35 @@ public static class NodeCommandLine
             var options = new NodeOptions(socketPath, Path.GetFullPath(parseResult.GetValue(data) ?? NodeSocket.DefaultDataFolder), MachinePrefix: parseResult.GetValue(machine),
                 Watchtower: !parseResult.GetValue(noWatchtower), WatchtowerFolderGiven: parseResult.GetValue(watchtowerFolder),
                 Lan: wantsLan && mode.MayBindTheNetwork, LanPort: parseResult.GetValue(lanPort),
-                MaxJobs: parseResult.GetValue(maxJobs), JobMemoryGigabytes: parseResult.GetValue(jobMemory));
+                MaxJobs: parseResult.GetValue(maxJobs), JobMemoryGigabytes: parseResult.GetValue(jobMemory),
+                UpdatePolicy: UpdatePolicies.Parse(parseResult.GetValue(updatePolicy)) ?? UpdatePolicy.Auto,
+                ReleaseFeed: parseResult.GetValue(releaseFeed) is { } feed ? Path.GetFullPath(feed) : null);
+            if (parseResult.GetValue(after) is { } predecessor)
+            {
+                await WaitForExitAsync(predecessor, ct);
+            }
             return await NodeProgram.RunAsync(options, error, ct);
         });
         return root;
+    }
+
+    // The node this one takes over from stops once it has started this one; its lock goes with it.
+    private static async Task WaitForExitAsync(int pid, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            budget.CancelAfter(AfterBudget);
+            await process.WaitForExitAsync(budget.Token);
+        }
+        catch (ArgumentException)
+        {
+            // gone already
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Still running after the budget: the lock says so, and this node exits with who holds it.
+        }
     }
 }

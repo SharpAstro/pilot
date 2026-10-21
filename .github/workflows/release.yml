@@ -1,0 +1,123 @@
+name: v2 release
+
+# Pushing a tag v<major>.<minor>.<patch> on main publishes pilot v2 (the node, the CLI, the GUI and the TUI, native AOT)
+# as that tag's GitHub Release: one zip per runtime, pilot-<version>-<rid>.zip, each with the VERSION marker that makes
+# it an installed release. A node installed from one keeps itself on the latest (pilot-node --update-policy, and
+# pilot update). <major>.<minor> must be src/Directory.Build.props' VersionMajorMinor; a -suffix makes a prerelease,
+# which no node takes as the latest. Run by hand (workflow_dispatch, any branch), it only tries the publish: the zips
+# are left as the run's artifacts and nothing is released. Main's pushes publish nothing (dotnet.yml says why).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: 1
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # main's history, for the check below
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Version from the tag
+        id: version
+        working-directory: src
+        run: |
+          MM="$(dotnet msbuild Directory.Build.props -getProperty:VersionMajorMinor -nologo)"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::$GITHUB_REF_NAME is not v<major>.<minor>.<patch>"; exit 1
+            fi
+            if [[ "$version" != "$MM".* ]]; then
+              echo "::error::$GITHUB_REF_NAME is not of $MM, src/Directory.Build.props' VersionMajorMinor"; exit 1
+            fi
+            # A release is of main: a tag on a branch's commit would ship what main never had.
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::$GITHUB_REF_NAME is not on main"; exit 1
+            fi
+          else
+            version="$MM.0-ci.$GITHUB_RUN_NUMBER"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Test
+        working-directory: src
+        run: |
+          dotnet test Pilot.Node.Tests -c Release
+          dotnet test Pilot.Gui.Tests -c Release
+
+  publish:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, rid: win-x64 }
+          - { os: windows-latest, rid: win-arm64 }   # cross-compiled on the x64 runner
+          - { os: ubuntu-latest,  rid: linux-x64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Install the native AOT toolchain
+        # Linux only: the Windows runner's Visual Studio carries the C++ linker native AOT needs.
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends clang zlib1g-dev
+      - name: Publish the node, the CLI, the GUI and the TUI with native AOT
+        # The trim and AOT analyzers (IL2xxx, IL3xxx) only speak on a publish with a runtime, and
+        # TreatWarningsAsErrors (on under GitHub Actions) makes any of them fail the run.
+        run: |
+          for project in Pilot.Node Pilot.Cli Pilot.Gui Pilot.Tui; do
+            dotnet publish src/$project -c Release -r ${{ matrix.rid }} -o publish -p:Version=$VERSION -p:ContinuousIntegrationBuild=true
+          done
+      - name: Zip
+        run: |
+          mkdir dist
+          python .github/release-zip.py publish "$VERSION" ${{ matrix.rid }} "dist/pilot-$VERSION-${{ matrix.rid }}.zip"
+          ls -l dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pilot-${{ matrix.rid }}
+          path: dist/
+
+  release:
+    needs: [check, publish]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the release
+        # GitHub lists each asset's SHA-256 (its digest), which a node checks a download against.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          prerelease=""
+          [[ "$VERSION" == *-* ]] && prerelease="--prerelease"
+          gh release create "$GITHUB_REF_NAME" dist/*.zip --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$GITHUB_REF_NAME" --generate-notes $prerelease

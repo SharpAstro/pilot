@@ -5,6 +5,7 @@ using LAN.Lib;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Pilot.Node.Sessions;
+using Pilot.Node.Updates;
 
 namespace Pilot.Node;
 
@@ -110,6 +111,12 @@ public static class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<PrChecks>());
         builder.Services.AddSingleton<Digest>();
         builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());
+        // Releases of pilot itself: by --update-policy, for an installed release only (NodeUpdater).
+        builder.Services.AddSingleton<IReleaseFeed>(_ => options.ReleaseFeed is { } feed
+            ? new FolderReleaseFeed(feed, NodeUpdater.Layout.Product)
+            : new GhReleaseFeed(NodeUpdater.Repo));
+        builder.Services.AddSingleton<NodeUpdater>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<NodeUpdater>());
         builder.Services.AddSingleton(services => new SessionTracker(
             services.GetRequiredService<NodeState>(),
             services.GetRequiredService<IClaudeAgents>(),

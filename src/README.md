@@ -67,6 +67,39 @@ curl --unix-socket <path> http://localhost/api/v1/node
   `blackbox.jsonl` (one line per command: when, who, verb, target, and what became of it; never compacted). A restart,
   a crash included, carries on with the same stream, the same numbers and every record.
 
+## Install and update
+
+A release is a tag: pushing `v2.0.<n>` on `main` (its `2.0` must be `VersionMajorMinor` in `Directory.Build.props`)
+runs `.github/workflows/release.yml`, which publishes all four binaries with native AOT and attaches
+`pilot-<version>-<rid>.zip` for win-x64, win-arm64 and linux-x64 to that tag's GitHub Release. Main's pushes build and
+test only; no AOT minutes are spent on them. Each zip carries a `VERSION` marker (`<version> <rid>`, then its files),
+which is what makes a folder an **installed release**.
+
+Install one by unzipping it into a folder on `PATH` (`%LOCALAPPDATA%\pilot2\bin` by convention) and running
+`pilot-node hooks install` from there. A folder holding a build of one's own (no marker) is moved onto releases with
+`pilot update --adopt`.
+
+An installed node keeps itself on the latest release by `--update-policy`:
+
+| Policy | When a newer release is out |
+| --- | --- |
+| `auto` (default) | The node installs it once no job is running or waiting (a job is its child, and a restart would cut it short), and says so on a Handled card. |
+| `ask` | A For-you card, *pilot 2.0.12 is out*, with **Update**. |
+| `off` | It does not look. |
+
+It looks a minute after it starts and every 6 hours, through `gh` (the repo is private, and gh's login reads it).
+`pilot update` installs the latest now, whatever the policy; `pilot update --check` only says. An install downloads the
+runtime's zip into `update/` beside the binaries, checks it against the SHA-256 GitHub lists, runs the staged
+`pilot-node --version`, then renames each file it replaces to `<name>~old` and copies the new one in, the marker last;
+one that cannot finish is put back. The node then starts the new `pilot-node --after <its pid>` with its own arguments
+and stops; the new one waits for it and takes the socket. Flights, legs and cards are the store's and carry on, clients
+resume their stream, workers and the watchtower keep running. A GUI or TUI open at the time runs on from its renamed
+binary until it is reopened; the `~old` files go at a later start, once nothing runs from them.
+
+The update code (`Pilot.Node/Updates`: `ReleaseFeed`, `ReleaseInstall`, `UpdatePolicy`) holds no pilot type: it began
+as a copy of YtPlayer's self-update and is meant to move to SharpAstro.AppShell once a second app updates itself the
+same way. `NodeUpdater` is pilot's use of it.
+
 ## Flights
 
 A flight is one issue's work on one repo, coded by the node from the repo's prefix and the issue (`TIA1611`, then
@@ -157,6 +190,7 @@ pilot check <step number or text> [--undo]
 pilot artifact <path or URL> [title…]
 pilot say <session> <text…>
 pilot note <text…>
+pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
 ```
 
 Inside a plane a leg command names no leg: the flight is the one whose worktree holds the folder, the leg its one

@@ -171,6 +171,12 @@ public static class Verbs
     /// <summary><c>digest node</c>: the digest now, as a For-you card, beside the ones at 08:00 and 18:00.</summary>
     public const string Digest = "digest";
 
+    /// <summary>
+    /// <c>update node [check|install] [--adopt]</c>: whether a newer release of pilot is out (<c>check</c>), or installs it
+    /// now and restarts the node; <c>--adopt</c> installs it over a build of one's own.
+    /// </summary>
+    public const string Update = "update";
+
     /// <summary><c>tell watchtower &lt;text&gt;</c>: says the text to the node's watchtower, whichever session it is now.</summary>
     public const string Tell = "tell";
 
