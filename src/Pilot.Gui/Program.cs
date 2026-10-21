@@ -254,6 +254,22 @@ if (feed is not null && client is not null)
         Console.WriteLine($"pilot-gui: command `{line}`: {said.ReplaceLineEndings(" / ")}");
         loop.RequestRedraw();
     };
+    // The new-flight wizard reads the node's repos and issues, and its Create makes the flights through the node.
+    var wizard = chrome.Flights.Wizard;
+    wizard.LoadRepos = async ct => (await client.GetReposAsync(ct)) is { Success: true, Response: { } repos }
+        ? repos
+        : throw new InvalidOperationException("the node did not list its repos");
+    wizard.LoadIssues = async (path, ct) => (await client.GetIssuesAsync(path, ct)) is { Success: true, Response: { } issues }
+        ? issues
+        : throw new InvalidOperationException("the node could not list the issues");
+    wizard.Create = async picks =>
+    {
+        var said = await NewFlights.CreateAsync(client, picks, GuiSay.Who, cts.Token);
+        chrome.Flights.Say(said);
+        Console.WriteLine($"pilot-gui: new flight: {said}");
+        return said;
+    };
+    wizard.Changed = loop.RequestRedraw;
     chrome.Flights.OnAction = action => tracker.Run(async () =>
     {
         var said = await DashboardCommands.ActAsync(client, action, GuiSay.Who, cts.Token);

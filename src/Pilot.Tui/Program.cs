@@ -72,6 +72,19 @@ _ = Task.Run(async () =>
         flights.Say($"the LAN cannot be watched: {ex.Message}");
     }
 });
+flights.Wizard.LoadRepos = async ct => (await client.GetReposAsync(ct)) is { Success: true, Response: { } repos }
+    ? repos
+    : throw new InvalidOperationException("the node did not list its repos");
+flights.Wizard.LoadIssues = async (path, ct) => (await client.GetIssuesAsync(path, ct)) is { Success: true, Response: { } issues }
+    ? issues
+    : throw new InvalidOperationException("the node could not list the issues");
+flights.Wizard.Create = async picks =>
+{
+    var said = await NewFlights.CreateAsync(client, picks, Who, stop.Token);
+    flights.Say(said);
+    return said;
+};
+flights.Wizard.Changed = Redraw;
 flights.OnAction = action => _ = Task.Run(async () =>
 {
     flights.Say(await DashboardCommands.ActAsync(client, action, Who, stop.Token));

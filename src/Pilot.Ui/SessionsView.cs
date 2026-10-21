@@ -275,12 +275,12 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         if (_endedCount > 0 && OnAction is { } act)
         {
             yield return CardsView<TSurface>.Pill($"Archive ended ({_endedCount})", "sessions:archive-ended",
-                () => act(new FlightAction($"archive {_endedCount} ended", Pilot.Contracts.Verbs.Archive, Pilot.Contracts.Verbs.SessionsTarget, []))).RowH(26f);
+                () => act(new FlightAction($"archive {_endedCount} ended", Pilot.Contracts.Verbs.Archive, Pilot.Contracts.Verbs.SessionsTarget, [])));
         }
         if (_archivedCount > 0)
         {
             yield return CardsView<TSurface>.Pill(ShowArchived ? "Hide archived" : $"Show archived ({_archivedCount})", "sessions:show-archived",
-                () => ShowArchived = !ShowArchived).RowH(26f);
+                () => ShowArchived = !ShowArchived);
         }
     }
 

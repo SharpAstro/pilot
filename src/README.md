@@ -111,7 +111,9 @@ prefix, `--machine` or `PILOT_MACHINE`, else from its name).
 
 | Command | What it does |
 | --- | --- |
-| `create-flight repo/<path> <issue> [title…]` | Codes the flight and makes its plane; `<path>` may be any checkout of the repo, a worktree included. |
+| `create-flight repo/<path> <issue> [title…]` | Codes the flight and makes its plane; `<path>` may be any checkout of the repo, a worktree included. Without a title it takes the issue's; the result names the code it made. |
+| `plan-flight flight/<code>` | A planner, `<machine>-<flight>-plan`, in the plane: it reads the issue and the code and plans the legs (`plan-leg`), writing no code, then says `planned`. |
+| `planned flight/<code> [summary…]` | The planner is done: a For-you card lists the legs, with **Start** on the first. No leg may be named `plan`. |
 | `connect flight/<code> <other>` | The flight holds until the other has landed (a cycle is refused). |
 | `land flight/<code>` | Its work is in: the worktree goes when clean (never with changes not committed), the branch and code stay, and flights waiting for it are cleared. |
 
@@ -171,6 +173,12 @@ Ended sessions can be put away: **Archive** on a selected ended row, **Archive e
 all of them, and **Show archived** to list them again (with **Restore**). An archived session is only left out of the
 lists; it stays a row until the node forgets it as any ended one (24 h), and one that runs again is back by itself.
 
+**New flight**, in the Flights header, is the way to start one without typing: pick the repos (in the order their
+flights land, a library before the app that takes it), an open issue in each, and Create. Each repo gets a flight on its
+issue, waiting for the one before it, and a planner; its card offers the first leg's start. The repos are the git clones
+under the node's repo roots (`--repo-root`, `PILOT_REPO_ROOTS`, and the folders the flights' repos sit in), the issues
+come through gh, and the TUI has the same wizard.
+
 The **Sessions** page does the same below 1200 units (and pilot-tui below 150 columns): it drops Last response and Spend, so
 the Session column keeps room for the role and the session name.
 
@@ -182,6 +190,8 @@ the Session column keeps room for the role and the session name.
 pilot status                                   # flights, their legs and artifacts, and the live sessions
 pilot sessions
 pilot flight create <issue> [title…] [--repo <path>]
+pilot flight plan <code>                       # a planner plans the legs from the issue
+pilot flight planned <code> [summary…]         # what the planner says when it is done
 pilot flight connect <code> <other>
 pilot flight pr <code> [title…]                # pushes the plane, opens its PR (body: the legs, Closes #<issue>)
 pilot flight merge <code> <head> [--method squash|rebase|merge]   # or --squash, --rebase, --merge
@@ -354,6 +364,8 @@ A session the API stopped (its transcript's `apiError`, `usage_limit_reached` wi
 | `GET /api/v1/events` | The event stream, a WebSocket: a snapshot carrying the current number, then deltas each numbered one past the last. `?since=<n>&stream=<id>` resumes with the deltas after `n`, or a snapshot when the node no longer holds them or has another stream. |
 | `POST /api/v1/commands` | Every command, `{verb, target, args, who}`. The result is the response and a `commandResult` event on the stream. Verbs: `note node <text>`, `say session/<id> <text>`, and the flight verbs above. |
 | (cards) | `answer card/<id> <choice>`, `dismiss card/<id> [why]`: verbs on `POST /api/v1/commands`. |
+| `GET /api/v1/repos` | The repos a flight can be made in, with their GitHub names; a grant's on the LAN. |
+| `GET /api/v1/repos/issues?path=` | A repo's open issues, through gh; a grant's on the LAN. |
 | `POST /api/v1/hooks` | One Claude Code hook's stdin, as `pilot-node hook` forwards it; always 204. |
 
 HTTP responses come in a `ResponseEnvelope` (`response`, `error`, `statusCode`, `success`); stream events are sent

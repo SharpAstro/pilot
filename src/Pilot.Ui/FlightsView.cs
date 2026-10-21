@@ -219,6 +219,9 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
     /// <summary>Opens an artifact: a file on the machine, or a URL.</summary>
     public Action<string>? OnOpen { get; set; }
 
+    /// <summary>The new-flight wizard, opened by the header's New flight; the host gives it its callbacks.</summary>
+    public NewFlightWizard Wizard { get; } = new();
+
     /// <summary>The node's jobs, for the selected flight's details; set by the host each frame.</summary>
     public IReadOnlyList<JobRow> Jobs { get; set; } = [];
 
@@ -288,8 +291,9 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
     internal Layout.Node Build(FlightsScreen screen)
     {
         var selected = Selected >= 0 && Selected < screen.Lines.Count ? screen.Lines[Selected] : null;
-        var parts = new List<Layout.Node> { Header(screen), Main(screen).HStar() };
-        if (selected is not null)
+        // The wizard takes the flights' place while it is open; the header and the command bar stay.
+        var parts = new List<Layout.Node> { Header(screen), (Wizard.IsOpen ? Wizard.Tree() : Main(screen)).HStar() };
+        if (selected is not null && !Wizard.IsOpen)
         {
             parts.Add(Details(selected));
         }
@@ -426,7 +430,10 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
                     Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
                     Layout.Builder.Text("flights", 20f, Dim).WAuto(),
                     Layout.Builder.Spacer().WStar(),
-                    Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto())
+                    Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
+                    CanCommand && !Wizard.IsOpen && Wizard.LoadRepos is not null
+                        ? Pill("New flight", "flights:new", Wizard.Open)
+                        : Layout.Builder.Spacer().WFixed(0f))
                 .WithGap(12f)
                 .RowH(32f),
             Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC", 12f, Dim).RowH(20f),
@@ -455,7 +462,7 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
     {
         if (screen.Lines.Count == 0)
         {
-            return Layout.Builder.Text("No flights yet: flight create <issue> --repo <checkout> in the bar below makes one", 16f, Dim, TextAlign.Center).Stretch();
+            return Layout.Builder.Text("No flights yet: New flight, above, makes one", 16f, Dim, TextAlign.Center).Stretch();
         }
 
         var rows = new Layout.Node[screen.Lines.Count];
