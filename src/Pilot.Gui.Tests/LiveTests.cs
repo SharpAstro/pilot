@@ -325,7 +325,9 @@ public sealed class SayBarTests
         view.CollectPaintedRegions(rows);
         var menu = rows.Where(r => r.Result is HitResult.ListItemHit { ListId: DropdownMenuState<string>.ListId }).ToList();
         menu.Count.ShouldBe(view.MenuItems.Count);
-        menu.ShouldAllBe(r => r.Width >= 200f);
+        // As wide as its widest entry ("Say to ended…" and the rest), every row the same, and on screen.
+        menu.Select(r => r.Width).Distinct().ShouldHaveSingleItem().ShouldBeGreaterThan(80f);
+        menu.ShouldAllBe(r => r.X >= 0f && r.X + r.Width <= bounds.Width);
         menu[view.MenuItems.ToList().FindIndex(i => i.Label == "Archive")].OnClick!.Invoke(InputModifier.None);
         acted.ShouldHaveSingleItem().Target.ShouldBe("session/bbbb2222");
     }

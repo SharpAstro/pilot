@@ -63,9 +63,6 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private const float SpendWidth = 160f;
     private const float ActWidth = 84f;
 
-    // The row menu's width, design units: room for "New flight in SdlVulkan.Renderer…".
-    private const float MenuWidth = 280f;
-
     // The room the Session column keeps for a role and a name ("worker · ORB204 / parser"): the optional columns drop
     // before it gives any of it up.
     private const float SessionMin = 200f;
@@ -327,8 +324,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             return;
         }
         _menu.Items = [.. items];
-        // Hung where the press was; DIR.Lib's Dropdown is as wide as its anchor, so the anchor carries the menu's width.
-        _menuAt = new RectF32(at.X, at.Y, MenuWidth, 1f);
+        // Hung where the press was, a point: the menu is as wide as its widest entry, measured, and kept on screen.
+        _menuAt = new RectF32(at.X, at.Y, 0f, 0f);
         _menu.IsOpen = true;
     }
 
