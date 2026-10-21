@@ -166,8 +166,7 @@ go-around or a finished leg closes every card about the leg. What it resumed and
 restarted mid-flight may nudge a worker once more than it would have: a turn, never a stall.
 
 The GUI's rail opens the **Flights** page (Ctrl+2): each flight's code, title, repo and issue, state (held: waiting
-for which), legs (how many done, which flying), branch and sessions. Below 1150 design
-units wide it drops Branch and Sessions.
+for which), legs (how many done, which flying), branch and sessions. As the window narrows it drops Sessions, then Branch.
 
 Ended sessions can be put away: **Archive** on a selected ended row, **Archive ended (N)** in the Sessions header for
 all of them, and **Show archived** to list them again (with **Restore**). An archived session is only left out of the
@@ -179,8 +178,13 @@ issue, waiting for the one before it, and a planner; its card offers the first l
 under the node's repo roots (`--repo-root`, `PILOT_REPO_ROOTS`, and the folders the flights' repos sit in), the issues
 come through gh, and the TUI has the same wizard.
 
-The **Sessions** page does the same below 1200 units (and pilot-tui below 150 columns): it drops Last response and Spend, so
+The **Sessions** page drops Spend, Last response, the archive button and Model as the window narrows (in pilot-tui too), so
 the Session column keeps room for the role and the session name.
+
+Every page is laid out by the layout engine, never by hand: rows size to their content, a column that cannot have its
+whole width collapses (`CollapseBelow`), and nothing multiplies by the DPI or measures a width to choose what to show.
+`LayoutDrivenTests` reads the views' sources and fails on a computed size, a hand-applied DPI or a width breakpoint, as
+tianwen's own checks do.
 
 ## The CLI
 

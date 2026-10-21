@@ -207,7 +207,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 Layout.Builder.Spacer().Bg(accent).WFixed(3f).HStar(),
                 Layout.Builder.VStack([.. lines]).Pad(10f, 8f).WStar())
             .Bg(CardBg)
-            .RowH(30f + 22f + 18f * Math.Min(3, card.Detail?.Split('\n').Length ?? 0) + 6f + 26f + 16f);
+            .HAuto();
     }
 
     /// <summary>A small button: what the cards' choices are, and what the Sessions page's archive buttons borrow.</summary>

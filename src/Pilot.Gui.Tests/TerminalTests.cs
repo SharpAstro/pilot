@@ -38,7 +38,7 @@ public sealed class TerminalTests
         var acted = new List<FlightAction>();
         flights.OnAction = acted.Add;
 
-        var arranged = Layout.Engine.Arrange(flights.Tree(Screen(), 160 * 8f), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
+        var arranged = Layout.Engine.Arrange(flights.Tree(Screen()), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
         var described = CellLayout.Describe(arranged);
 
         described.ShouldContain("TIA1611");
@@ -58,22 +58,22 @@ public sealed class TerminalTests
         using var vessel = new RgbaImageRenderer(1, 1);
         var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)).Flights;
 
-        CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen(), 100 * 8f), new Rect<int>(0, 0, 100, 40), CellMeasureContext.PixelAuthored))
+        CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen()), new Rect<int>(0, 0, 100, 40), CellMeasureContext.PixelAuthored))
             .ShouldNotContain("flight/tia1611");
-        CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen(), 160 * 8f), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored))
+        CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen()), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored))
             .ShouldContain("flight/tia1611");
     }
 
     [Fact]
-    public void ANarrowSessionsPageDropsLastResponseAndSpendForTheSessionColumn()
+    public void ANarrowSessionsPageDropsItsOptionalColumnsForTheSessionColumn()
     {
         using var vessel = new RgbaImageRenderer(1, 1);
         var sessions = new SessionsView<RgbaImage>(vessel);
         var screen = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
 
-        var narrow = CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen, 100 * 8f), new Rect<int>(0, 0, 100, 40), CellMeasureContext.PixelAuthored));
+        var narrow = CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 100, 40), CellMeasureContext.PixelAuthored));
         narrow.ShouldContain("Session");
-        narrow.ShouldContain("Model");
+        narrow.ShouldNotContain("Model");
         narrow.ShouldContain("Context");
         narrow.ShouldContain("State");
         narrow.ShouldNotContain("Last response");
@@ -82,7 +82,8 @@ public sealed class TerminalTests
         narrow.ShouldContain("worker · ORB204 / parser");
         narrow.ShouldContain("xy1-orb204-parser");
 
-        var wide = CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen, 160 * 8f), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored));
+        var wide = CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored));
+        wide.ShouldContain("Model");
         wide.ShouldContain("Last response");
         wide.ShouldContain("Spend");
         wide.ShouldContain("Session");

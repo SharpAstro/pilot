@@ -153,7 +153,6 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
 {
     public const string ListId = "flights";
 
-    private const float HeaderHeight = 64f;
     private const float ColumnHeaderHeight = 28f;
     private const float RowHeight = 54f;
     private const float Gutter = 16f;
@@ -181,12 +180,9 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
 
     private const float DetailHeight = 168f;
     private const float DetailColumn = 380f;
+    // Branch and Sessions are the columns a narrow window drops, each as it can no longer have its whole width (Optional);
+    // the engine decides, from the room it has.
 
-    /// <summary>Below this width (design units) the table drops its Branch and Sessions columns, as the right panel takes 300.</summary>
-    private const float WideWidth = 1150f;
-
-    private bool _wide = true;
-    private const float CommandBarHeight = 52f;
     private const float OutputLineHeight = 16f;
     private const int OutputLines = 4;
 
@@ -231,14 +227,14 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
     public void Render(FlightsScreen screen, RectF32 bounds)
     {
         BeginFrame();
-        RenderLayout(Tree(screen, bounds.Width / Math.Max(DpiScale, 0.1f)), bounds);
+        RenderLayout(Tree(screen), bounds);
     }
 
     /// <summary>
     /// The page as a tree, for <paramref name="width"/> design units: what <see cref="Render"/> paints on pixels, and
     /// what pilot-tui arranges in terminal cells (the selection, the command bar and their callbacks the same).
     /// </summary>
-    internal Layout.Node Tree(FlightsScreen screen, float width)
+    internal Layout.Node Tree(FlightsScreen screen)
     {
         if (screen.Lines.Count == 0)
         {
@@ -249,7 +245,6 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
             ListCursor.Open(ListId, Math.Clamp(ListCursor.Index, 0, screen.Lines.Count - 1), screen.Lines.Count);
         }
         _count = screen.Lines.Count;
-        _wide = width >= WideWidth;
         CommandInput.OnCommit = CommitAsync;
         CommandInput.Placeholder = "a pilot command: flight create 1611 --repo <checkout> · leg start TIA1611 gpu · cards";
         return Build(screen);
@@ -414,7 +409,7 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
         return Layout.Builder.VStack([.. lines])
             .Pad(Gutter, 4f)
             .Bg(HeaderBg)
-            .RowH(CommandBarHeight + OutputLineHeight * output.Count);
+            .HAuto();
     }
 
     /// <summary>The dashboard's eye on the LAN; its line and the nodes it heard show under the header when set.</summary>
@@ -455,7 +450,7 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
         return Layout.Builder.VStack([.. rows])
             .Pad(Gutter, 6f)
             .Bg(HeaderBg)
-            .RowH(HeaderHeight + (Lan is null ? 0f : LanRowHeight));
+            .HAuto();
     }
 
     private Layout.Node Main(FlightsScreen screen)
@@ -479,12 +474,9 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
             Label("Repo").WFixed(WhereWidth),
             Label("State").WFixed(StateWidth),
             Label("Legs").WFixed(LegsWidth),
+            Optional(Label("Branch"), BranchWidth),
+            Optional(Label("Sessions"), SessionsWidth),
         };
-        if (_wide)
-        {
-            columns.Add(Label("Branch").WFixed(BranchWidth));
-            columns.Add(Label("Sessions").WFixed(SessionsWidth));
-        }
         return Layout.Builder.VStack(
                 Layout.Builder.HStack([.. columns])
                     .WithGap(ColumnGap)
@@ -496,6 +488,12 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
     }
 
     private static Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);
+
+    /// <summary>
+    /// A column the page drops on a narrow window: its whole <paramref name="width"/> while there is room, gone once the
+    /// engine could give it less. Header and rows both say it, so they drop together.
+    /// </summary>
+    private static Layout.Node Optional(Layout.Node cell, float width) => cell.WStar(1f, 0f, width).CollapseBelow(width);
 
     private Layout.Node Row(FlightLine line, int index)
     {
@@ -513,12 +511,9 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
                     Layout.Builder.Text(line.StateDetail ?? "", 11f, Dim).RowH(18f))
                 .WFixed(StateWidth),
             Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body).WFixed(LegsWidth),
+            Optional(Layout.Builder.Text(line.Branch, 12f, Dim), BranchWidth),
+            Optional(Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body), SessionsWidth),
         };
-        if (_wide)
-        {
-            cells.Add(Layout.Builder.Text(line.Branch, 12f, Dim).WFixed(BranchWidth));
-            cells.Add(Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body).WFixed(SessionsWidth));
-        }
         var row = Layout.Builder.HStack([.. cells])
             .WithGap(ColumnGap)
             .Pad(8f, 6f)

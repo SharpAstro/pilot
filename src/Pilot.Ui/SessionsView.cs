@@ -63,6 +63,10 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private const float SpendWidth = 160f;
     private const float ActWidth = 84f;
 
+    // The room the Session column keeps for a role and a name ("worker · ORB204 / parser"): the optional columns drop
+    // before it gives any of it up.
+    private const float SessionMin = 200f;
+
     private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
     private static readonly RGBAColor32 HeaderBg = new(0x1b, 0x1c, 0x24, 0xff);
     private static readonly RGBAColor32 RowAltBg = new(0x16, 0x17, 0x1e, 0xff);
@@ -80,15 +84,12 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private static readonly RGBAColor32 Failed = new(0xe0, 0x5a, 0x5a, 0xff);
     private static readonly RGBAColor32 Low = new(0x5a, 0x8f, 0xd8, 0xff);
 
-    /// <summary>
-    /// Below this width (design units) the table drops its Last response and Spend columns, so the Session column keeps
-    /// room for the role and the session name: with every column it is the width less ~880, so ~320 here.
-    /// </summary>
-    private const float WideWidth = 1200f;
+    // Model, Last response, Spend and the archive button are the columns a narrow window drops, each as it can no longer
+    // have its whole width (Optional), so the Session column keeps its SessionMin for the role and the name. The engine
+    // decides, from the room it has; no width is measured here.
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
     private IReadOnlyList<SessionLine> _lines = [];
-    private bool _wide = true;
 
     /// <summary>The selected row's index into <see cref="SessionsScreen.Lines"/>, or -1 with none.</summary>
     public int Selected => ListCursor.ListId == ListId ? ListCursor.Index : -1;
@@ -131,16 +132,15 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     public void Render(SessionsScreen screen, RectF32 bounds)
     {
         BeginFrame();
-        RenderLayout(Tree(screen, bounds.Width / Math.Max(DpiScale, 0.1f)), bounds);
+        RenderLayout(Tree(screen), bounds);
     }
 
     /// <summary>
-    /// The page as a tree, for <paramref name="width"/> design units: what <see cref="Render"/> paints, and what pilot-tui
-    /// arranges in cells.
+    /// The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells. Whatever room it gets, the
+    /// engine fits it: the optional columns drop as they can no longer be whole.
     /// </summary>
-    internal Layout.Node Tree(SessionsScreen screen, float width)
+    internal Layout.Node Tree(SessionsScreen screen)
     {
-        _wide = width >= WideWidth;
         // Archived rows are left out unless asked for: the selection and the count follow what is shown.
         _archivedCount = screen.Lines.Count(l => l.Row.Archived);
         _endedCount = screen.Lines.Count(l => !l.Row.Archived && l.Row.State is Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed);
@@ -309,20 +309,14 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         var columns = new List<Layout.Node>
         {
             Layout.Builder.Spacer().WFixed(StripeWidth),
-            Label("Session").WStar(),
-            Label("Model").WFixed(ModelWidth),
+            Label("Session").WStar(1f, SessionMin),
+            Optional(Label("Model"), ModelWidth),
             Label("Context").WFixed(ContextWidth),
+            Optional(Label("Last response"), LastWidth),
+            Label("State").WFixed(StateWidth),
+            Optional(Label("Spend"), SpendWidth),
+            Optional(Layout.Builder.Spacer(), ActWidth),
         };
-        if (_wide)
-        {
-            columns.Add(Label("Last response").WFixed(LastWidth));
-        }
-        columns.Add(Label("State").WFixed(StateWidth));
-        if (_wide)
-        {
-            columns.Add(Label("Spend").WFixed(SpendWidth));
-        }
-        columns.Add(Layout.Builder.Spacer().WFixed(ActWidth));
         return Layout.Builder.HStack([.. columns])
             .WithGap(ColumnGap)
             .PadX(8f)
@@ -330,6 +324,12 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     }
 
     private static Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);
+
+    /// <summary>
+    /// A column the page drops on a narrow window: its whole <paramref name="width"/> while there is room, gone once the
+    /// engine could give it less. Header and rows both say it, so they drop together.
+    /// </summary>
+    private static Layout.Node Optional(Layout.Node cell, float width) => cell.WStar(1f, 0f, width).CollapseBelow(width);
 
     private Layout.Node Row(SessionLine line, int index)
     {
@@ -341,21 +341,15 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         var cells = new List<Layout.Node>
         {
             Layout.Builder.Spacer().Bg(stateColor).WFixed(StripeWidth).HStar(),
-            Cell(Layout.Builder.Text(line.Role, 15f, text), Layout.Builder.Text(line.Name, 12f, Dim)).WStar(),
-            Cell(Layout.Builder.Text(line.Model, 14f, body)).WFixed(ModelWidth),
+            Cell(Layout.Builder.Text(line.Role, 15f, text), Layout.Builder.Text(line.Name, 12f, Dim)).WStar(1f, SessionMin),
+            Optional(Cell(Layout.Builder.Text(line.Model, 14f, body)), ModelWidth),
             Metered(line.Context, line.ContextFraction, body).WFixed(ContextWidth),
+            Optional(Cell(Layout.Builder.Text(line.LastResponse, 14f, body)), LastWidth),
+            Cell(Layout.Builder.Text(line.State, 14f, stateColor),
+                line.WaitingFor is { } waitingFor ? Layout.Builder.Text(waitingFor, 11f, Dim) : null).WFixed(StateWidth),
+            Optional(Metered(line.Spend, line.SpendFraction, body), SpendWidth),
+            Optional(Act(line, index), ActWidth),
         };
-        if (_wide)
-        {
-            cells.Add(Cell(Layout.Builder.Text(line.LastResponse, 14f, body)).WFixed(LastWidth));
-        }
-        cells.Add(Cell(Layout.Builder.Text(line.State, 14f, stateColor),
-            line.WaitingFor is { } waitingFor ? Layout.Builder.Text(waitingFor, 11f, Dim) : null).WFixed(StateWidth));
-        if (_wide)
-        {
-            cells.Add(Metered(line.Spend, line.SpendFraction, body).WFixed(SpendWidth));
-        }
-        cells.Add(Act(line, index).WFixed(ActWidth));
         var row = Layout.Builder.HStack([.. cells])
             .WithGap(ColumnGap)
             .Pad(8f, 6f)
