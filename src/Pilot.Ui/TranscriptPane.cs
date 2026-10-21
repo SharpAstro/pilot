@@ -50,6 +50,9 @@ internal sealed class TranscriptPane
     // The entries opened past their first lines, by index: a click on "+N lines" opens one, another closes it.
     private readonly HashSet<int> _expanded = [];
 
+    // Each Markdown entry's tree, by its index and whether it is opened.
+    private readonly Dictionary<(int Index, bool Open), Layout.Node> _markdown = [];
+
     // Opened at a moment (a card's): the transcript from the first entry at or after it, that entry marked, held at the
     // top of a list that does not follow the end until Jump to end.
     private DateTimeOffset? _at;
@@ -104,6 +107,7 @@ internal sealed class TranscriptPane
             _queued = [];
         }
         _expanded.Clear();
+        _markdown.Clear();
         _at = at;
         _atScroll.AtomOffset = 0;
         _scroll.ScrollToEnd();
@@ -374,8 +378,14 @@ internal sealed class TranscriptPane
     private IEnumerable<Layout.Node> FoldedMarkdown(TranscriptEntry entry, Layout.MarkdownStyle style, int lines)
     {
         var all = entry.Text.ReplaceLineEndings("\n").Split('\n');
-        var source = _expanded.Contains(entry.Index) || all.Length <= lines ? entry.Text : string.Join("\n", all.Take(lines));
-        yield return Layout.Builder.Markdown(source, style with { OnLink = OpenLink is null ? null : Follow });
+        var open = _expanded.Contains(entry.Index);
+        // Parsed once per entry, folded or opened: the tree is rebuilt every frame, and a node is immutable.
+        if (!_markdown.TryGetValue((entry.Index, open), out var document))
+        {
+            var source = open || all.Length <= lines ? entry.Text : string.Join("\n", all.Take(lines));
+            _markdown[(entry.Index, open)] = document = Layout.Builder.Markdown(source, style with { OnLink = OpenLink is null ? null : Follow });
+        }
+        yield return document;
         if (Fold(entry, all.Length, lines) is { } fold)
         {
             yield return fold;
