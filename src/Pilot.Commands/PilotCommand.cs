@@ -337,6 +337,13 @@ public static class PilotCommand
         var watchtower = new Command("watchtower", "The node's watchtower session") { Subcommands = { restart } };
         var digest = Action(new Command("digest", "The digest now: what landed, what was handled, what is parked"),
             (_, client, ct) => SendAsync(client, Verbs.Digest, Verbs.NodeTarget, [], who, output, ct));
+        // update: the node installs the latest release of pilot over the folder it runs from, and restarts.
+        var updateCheck = new Option<bool>("--check") { Description = "Only say whether a newer release is out" };
+        var updateAdopt = new Option<bool>("--adopt") { Description = "Install the latest release over a build of one's own, which then updates itself" };
+        var update = Action(new Command("update", "Install the latest release of pilot where the node runs from, and restart the node; its flights and sessions carry on")
+            { Options = { updateCheck, updateAdopt } },
+            (p, client, ct) => SendAsync(client, Verbs.Update, Verbs.NodeTarget,
+                [p.GetValue(updateCheck) ? "check" : "install", .. p.GetValue(updateAdopt) ? new[] { "--adopt" } : []], who, output, ct));
 
         var subject = Arg("subject", "What it is about: flight/<code>, flight/<code>/<leg>, session/<id> or node");
         var cardTitle = Arg("title", "The card in a line");
@@ -430,7 +437,7 @@ public static class PilotCommand
         return new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node },
-            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, ring, flag, handled, nodes, connectNode, grants },
+            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, ring, flag, handled, nodes, connectNode, grants },
         };
     }
 

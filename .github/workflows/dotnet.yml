@@ -20,6 +20,10 @@ env:
   # not be able to land in it.
   DOTNET_NOLOGO: 1
 
+# No AOT publish here: a push to main builds and tests only, so a busy day of merges costs no AOT minutes. The node,
+# CLI, GUI and TUI are published with native AOT by release.yml, on a v<major>.<minor>.<patch> tag (or by hand, which
+# only tries the publish), and that is also where the trim and AOT analyzers speak.
+#
 # There is no publish-nuget job: v2 ships no package yet (the node is an executable, and its contracts stay inside
 # this repo until a client outside it needs them). Add the org's artifact-mediated publish job when one does.
 jobs:
@@ -66,14 +70,3 @@ jobs:
     - name: Test the GUI
       # The sessions view rendered on the CPU from the sample snapshot: no display and no GPU needed.
       run: dotnet test Pilot.Gui.Tests -c $BUILD_CONF --no-build --logger "console;verbosity=detailed"
-    - name: Install the native AOT toolchain
-      # Linux only: the Windows runner's Visual Studio carries the C++ linker native AOT needs.
-      if: runner.os == 'Linux'
-      run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends clang zlib1g-dev
-    - name: Publish the node, the CLI, the GUI and the TUI with native AOT
-      # All four ship as native AOT. The trim and AOT analyzers (IL2xxx, IL3xxx) only speak on a publish with a
-      # runtime, not on a build, and TreatWarningsAsErrors (on under GitHub Actions) makes any of them fail the run.
-      run: |
-        for project in Pilot.Node Pilot.Cli Pilot.Gui Pilot.Tui; do
-          dotnet publish $project -c $BUILD_CONF -r ${{ matrix.rid }} -o "$RUNNER_TEMP/publish" -p:Version=${VERSION_PREFIX}${VERSION_REV}${VERSION_HASH} -p:FileVersion=${VERSION_PREFIX}.${VERSION_REV} -p:ContinuousIntegrationBuild=true
-        done

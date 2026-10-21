@@ -1,6 +1,7 @@
 using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Pilot.Node.Sessions;
+using Pilot.Node.Updates;
 
 namespace Pilot.Node;
 
@@ -64,6 +65,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             Get<Digest>().Raise(Get<TimeProvider>().GetUtcNow());
             return state.Complete(command, null);
+        }
+        if (command.Verb == Verbs.Update)
+        {
+            return await Get<NodeUpdater>().RunAsync(command, cancellationToken);
         }
         if (command.Verb == Verbs.Say)
         {

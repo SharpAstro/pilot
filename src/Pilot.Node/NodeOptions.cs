@@ -1,4 +1,5 @@
 using Pilot.Contracts;
+using Pilot.Node.Updates;
 
 namespace Pilot.Node;
 
@@ -12,9 +13,12 @@ namespace Pilot.Node;
 /// <param name="Lan">Whether it listens on the LAN too (<c>--lan</c>): seeing for anyone who reaches the port, commands for a grant.</param>
 /// <param name="LanPort">The TCP port it listens on for the LAN (<c>--lan-port</c>).</param>
 /// <param name="LanAnnounce">Whether it announces itself on the LAN (LAN.Lib's UDP beacon) when it listens there; a test node does not.</param>
+/// <param name="UpdatePolicy">What an installed release does when a newer one is out (<c>--update-policy</c>); a test node does not look.</param>
+/// <param name="ReleaseFeed">A folder of release zips to update from instead of GitHub (<c>--release-feed</c>, hidden): offline, or trying an update.</param>
 public sealed record NodeOptions(
     string SocketPath, string DataFolder, int RetainedDeltas = NodeState.DefaultRetainedDeltas, string? MachinePrefix = null, bool Watchtower = true, string? WatchtowerFolderGiven = null,
-    bool Lan = false, int LanPort = NodeWire.DefaultLanPort, bool LanAnnounce = true, int MaxJobs = 1, double JobMemoryGigabytes = 2)
+    bool Lan = false, int LanPort = NodeWire.DefaultLanPort, bool LanAnnounce = true, int MaxJobs = 1, double JobMemoryGigabytes = 2,
+    UpdatePolicy UpdatePolicy = UpdatePolicy.Off, string? ReleaseFeed = null)
 {
     /// <summary>
     /// The folder the watchtower runs in. Claude Code starts no background session in a folder never trusted, so the
