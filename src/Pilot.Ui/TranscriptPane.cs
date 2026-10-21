@@ -24,6 +24,7 @@ internal sealed class TranscriptPane
     private static readonly RGBAColor32 Failed = new(0xe0, 0x5a, 0x5a, 0xff);
     private static readonly RGBAColor32 Ok = new(0x5c, 0xb8, 0x6e, 0xff);
     private static readonly RGBAColor32 Running = new(0xe8, 0xb0, 0x4a, 0xff);
+    private static readonly RGBAColor32 Marked = new(0x2a, 0x24, 0x18, 0xff);
     private static readonly RGBAColor32 Button = new(0x2c, 0x35, 0x4a, 0xff);
     private static readonly RGBAColor32 ButtonHover = new(0x3a, 0x46, 0x62, 0xff);
 
@@ -37,8 +38,15 @@ internal sealed class TranscriptPane
     private int _total;
     private string? _problem;
 
+    private string[] _queued = [];
+
     // The entries opened past their first lines, by index: a click on "+N lines" opens one, another closes it.
     private readonly HashSet<int> _expanded = [];
+
+    // Opened at a moment (a card's): the transcript from the first entry at or after it, that entry marked, held at the
+    // top of a list that does not follow the end until Jump to end.
+    private DateTimeOffset? _at;
+    private readonly ListScrollController _atScroll = new() { Mode = ScrollBarMode.Interactive, Anchor = ScrollAnchor.Top };
 
     /// <summary>The open session's row id, or null with none open.</summary>
     public string? RowId { get; private set; }
@@ -69,8 +77,11 @@ internal sealed class TranscriptPane
         }
     }
 
-    /// <summary>Opens <paramref name="line"/>'s transcript and follows it until <see cref="Close"/> or another opens.</summary>
-    public void Open(SessionLine line)
+    /// <summary>
+    /// Opens <paramref name="line"/>'s transcript and follows it until <see cref="Close"/> or another opens: at its end, or
+    /// with <paramref name="at"/> from the first entry at or after that moment, marked, until Jump to end.
+    /// </summary>
+    public void Open(SessionLine line, DateTimeOffset? at = null)
     {
         Close();
         RowId = line.Row.Id;
@@ -80,8 +91,12 @@ internal sealed class TranscriptPane
             _entries.Clear();
             _total = 0;
             _problem = null;
+            _queued = [];
         }
         _expanded.Clear();
+        _at = at;
+        _atScroll.AtomOffset = 0;
+        _scroll.ScrollToEnd();
         if (Load is { } load)
         {
             var following = _following = new CancellationTokenSource();
@@ -114,6 +129,7 @@ internal sealed class TranscriptPane
                 {
                     _entries.AddRange(page.Entries.Where(e => _entries.Count == 0 || e.Index > _entries[^1].Index));
                     _total = page.Total;
+                    _queued = page.Queued ?? [];
                     _problem = null;
                 }
                 Changed?.Invoke();
@@ -150,25 +166,69 @@ internal sealed class TranscriptPane
         List<TranscriptEntry> entries;
         int total;
         string? problem;
+        string[] queued;
         lock (_lock)
         {
             entries = [.. _entries];
             total = _total;
             problem = _problem;
+            queued = _queued;
         }
-        var shown = entries.Count < total ? $"its last {entries.Count} of {total}" : $"{total} {(total == 1 ? "entry" : "entries")}";
-        var head = Layout.Builder.HStack(
-                Layout.Builder.Text("Back to the sessions", 13f, Bright, TextAlign.Center).Pad(12f, 5f).WAuto().Bg(Button).BgHover(ButtonHover)
-                    .Clickable(new HitResult.ButtonHit("transcript:back"), _ => Close()),
-                Layout.Builder.Text(Title ?? "", 16f, Bright).WAuto(),
-                Layout.Builder.Text(problem is null ? shown : $"{shown} · {problem}", 12f, problem is null ? Dim : Failed).WStar())
-            .WithGap(12f);
-        var rows = Rows(entries, live).ToArray();
-        var list = rows.Length == 0
+        // Opened at a moment: from the first entry at or after it (the first held, if all of them are later).
+        var from = -1;
+        if (_at is { } at && entries.Count > 0)
+        {
+            from = Math.Max(0, entries.FindIndex(e => e.At >= at));
+            entries = entries[from..];
+        }
+        var shown = entries.Count < total ? $"{(from >= 0 ? "from the moment" : "its last")} {entries.Count} of {total}" : $"{total} {(total == 1 ? "entry" : "entries")}";
+        var head = new List<Layout.Node>
+        {
+            Layout.Builder.Text("Back to the sessions", 13f, Bright, TextAlign.Center).Pad(12f, 5f).WAuto().Bg(Button).BgHover(ButtonHover)
+                .Clickable(new HitResult.ButtonHit("transcript:back"), _ => Close()),
+            Layout.Builder.Text(Title ?? "", 16f, Bright).WAuto(),
+            Layout.Builder.Text(live ? "● live" : "session ended", 12f, live ? Ok : Faint).WAuto(),
+            Layout.Builder.Text(problem is null ? shown : $"{shown} · {problem}", 12f, problem is null ? Dim : Failed).WStar(),
+        };
+        // Jump to end: while the reader is up in its history, or held at a moment.
+        if (_at is not null || !_scroll.IsFollowingEnd)
+        {
+            head.Add(Layout.Builder.Text("Jump to end", 13f, Bright, TextAlign.Center).Pad(12f, 5f).WAuto().Bg(Button).BgHover(ButtonHover)
+                .Clickable(new HitResult.ButtonHit("transcript:end"), _ => JumpToEnd()));
+        }
+        var rows = Rows(entries, live).ToList();
+        if (from >= 0 && rows.Count > 0)
+        {
+            // The entry the moment fell on, marked.
+            rows[0] = Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(3f).Bg(Prompt), rows[0].WStar()).WithGap(6f).Bg(Marked);
+        }
+        if (live)
+        {
+            rows.AddRange(queued.Select(Waiting));
+        }
+        var list = rows.Count == 0
             ? Layout.Builder.Text(problem ?? "reading the transcript…", 13f, Dim).Stretch()
-            : Layout.Builder.VStack(rows).WithGap(6f).WithScroll(_scroll).Stretch();
-        return Layout.Builder.VStack(head, list).WithGap(8f).Pad(16f, 8f).Stretch();
+            : Layout.Builder.VStack([.. rows]).WithGap(6f).WithScroll(from >= 0 ? _atScroll : _scroll).Stretch();
+        return Layout.Builder.VStack(Layout.Builder.HStack([.. head]).WithGap(12f), list).WithGap(8f).Pad(16f, 8f).Stretch();
     }
+
+    // Back to the end of the whole transcript, following it again.
+    private void JumpToEnd()
+    {
+        _at = null;
+        _scroll.ScrollToEnd();
+        Changed?.Invoke();
+    }
+
+    // A message handed to the session that it has not read yet: last, dim, and saying so.
+    private static Layout.Node Waiting(string text) =>
+        Layout.Builder.HStack(
+                Layout.Builder.Text("queued", 12f, Faint).WFixed(LabelWidth),
+                Layout.Builder.VStack([
+                    Layout.Builder.Text("not read yet: it reads this at its next step", 11f, Faint),
+                    .. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim)),
+                ]).WStar())
+            .WithGap(10f);
 
     // The entries as rows: a tool call and what it gave back as one, the result folded under the call; a result whose call
     // came before the entries held, on its own.

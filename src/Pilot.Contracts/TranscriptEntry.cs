@@ -83,4 +83,10 @@ public sealed record TranscriptPage
 
     /// <summary>How many entries the transcript has in all.</summary>
     public required int Total { get; init; }
+
+    /// <summary>
+    /// Messages handed to the session that it has not read yet, oldest first: Claude Code queues what is typed or said
+    /// while a turn runs, and the session reads it at its next step. Null with none.
+    /// </summary>
+    public string[]? Queued { get; init; }
 }

@@ -175,8 +175,12 @@ or refused, amber running, grey cut off by the session ending. A refused call sa
 reason, a safety check, don't-ask mode, a permission rule, or you) with the command and **Copy the command**. Prompts
 read as a person says them: Claude Code's reminders left out, a background task finishing or a command's output as a
 dim note, a slash command as typed, a subagent's hand-back under its name. It follows the session live, pinned to its
-end until you scroll up; the say bar stays under it. Escape, or **Back to the sessions**, goes back. The node reads each transcript on from where its last
-read stopped (`GET /api/v1/sessions/<id>/transcript?after=<n>`, a grant's on the LAN).
+end until you scroll up, when **Jump to end** follows it again; the header says whether the session is live or ended,
+and the say bar stays under it. What you said while the session was busy shows last, dim, as **queued**, until the
+session reads it at its next step. A card about a leg's worker (stalled, idle, past its budget) has **Its
+transcript**: the worker's transcript from the moment the card was raised, that entry marked, until **Jump to end**.
+Escape, or **Back to the sessions**, goes back. The node reads each transcript on from where its last read stopped
+(`GET /api/v1/sessions/<id>/transcript?after=<n>`, a grant's on the LAN).
 
 Ended sessions can be put away: **Archive** on a selected ended row, **Archive ended (N)** in the Sessions header for
 all of them, and **Show archived** to list them again (with **Restore**). An archived session is only left out of the

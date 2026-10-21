@@ -107,6 +107,32 @@ public sealed class TranscriptBookTests : IDisposable
         entries[4].FromAgent.ShouldBe("a1");
     }
 
+    [Fact]
+    public void AMessageQueuedForABusySessionWaitsUntilItIsTakenAsATurnOrMidTurn()
+    {
+        var path = _profile.TranscriptPath(Session);
+        _profile.Append(path,
+            """{"type":"queue-operation","operation":"enqueue","content":"and the other test too"}""",
+            """{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<summary>done</summary>\n</task-notification>"}""",
+            """{"type":"queue-operation","operation":"enqueue","content":"then push it"}""");
+        var book = new TranscriptBook(_profile.Profile);
+
+        // Claude Code's own (a task finishing) is not someone's words waiting.
+        book.Read(Session, -1).ShouldNotBeNull().Queued.ShouldBe(["and the other test too", "then push it"]);
+
+        // Taken mid-turn: a remove, then the attachment.
+        _profile.Append(path,
+            """{"type":"queue-operation","operation":"remove","content":"and the other test too"}""",
+            """{"type":"attachment","attachment":{"type":"queued_command","prompt":"and the other test too"}}""");
+        book.Read(Session, -1).ShouldNotBeNull().Queued.ShouldBe(["then push it"]);
+
+        // Taken as a new turn: a dequeue, then the user line.
+        _profile.Append(path,
+            """{"type":"queue-operation","operation":"dequeue"}""",
+            """{"type":"user","message":{"role":"user","content":"then push it"}}""");
+        book.Read(Session, -1).ShouldNotBeNull().Queued.ShouldBeNull();
+    }
+
     [Theory]
     [InlineData("Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Destructive] deletes the repo. Try again.", "auto mode: [Destructive]")]
     [InlineData("Permission for this command was denied by a built-in Claude Code safety check: it writes outside the project.", "a built-in safety check")]

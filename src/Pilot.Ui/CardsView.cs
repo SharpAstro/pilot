@@ -90,6 +90,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>Opens the watchtower's Remote Control link.</summary>
     public Action<string>? OnOpen { get; set; }
 
+    /// <summary>The session a card is about, whose transcript its <b>Its transcript</b> opens; null for a card about none.</summary>
+    public Func<CardRow, SessionLine?>? TranscriptOf { get; set; }
+
+    /// <summary>Opens <paramref name="line"/>'s transcript at the moment the card was raised.</summary>
+    public Action<CardRow, SessionLine>? OnTranscript { get; set; }
+
     private static readonly RGBAColor32 Live = new(0x4c, 0xc3, 0x8a, 0xff);
 
     public void Render(CardsScreen screen, RectF32 bounds)
@@ -198,6 +204,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             var number = i + 1;
             var choice = card.Choices[i];
             buttons.Add(Pill(StatusLabel(choice), $"card:{card.Id}:{number}", () => OnAnswer?.Invoke(card, number), StatusTint(choice.Status)));
+        }
+        // A card about a leg's worker reads best beside what the worker was doing when it was raised.
+        if (OnTranscript is { } open && TranscriptOf?.Invoke(card) is { } session)
+        {
+            buttons.Add(Pill("Its transcript", $"card:{card.Id}:transcript", () => open(card, session)));
         }
         buttons.Add(Pill("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
         lines.Add(Layout.Builder.Spacer().RowH(6f));

@@ -211,6 +211,68 @@ public sealed class TerminalTests
     }
 
     [Fact]
+    public async Task OpenedAtAMomentTheTranscriptStartsThereUntilJumpToEndAndSaysWhatIsQueued()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var sessions = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        var screen = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
+        var line = screen.Lines.First(l => l.Row.State is not (SessionState.Ended or SessionState.Failed));
+        var at = new DateTimeOffset(2026, 10, 21, 8, 0, 0, TimeSpan.Zero);
+        sessions.Transcript.Load = (_, after, _) => Task.FromResult(new TranscriptPage
+        {
+            Total = 2,
+            Entries = after < 0
+                ? [
+                    new() { Index = 0, At = at.AddMinutes(-5), Kind = TranscriptKind.Assistant, Text = "Earlier words." },
+                    new() { Index = 1, At = at.AddSeconds(3), Kind = TranscriptKind.Assistant, Text = "Stuck on the build." },
+                ]
+                : [],
+            Queued = ["then push it"],
+        });
+        sessions.Tree(screen);
+
+        sessions.Transcript.Open(line, at);
+        for (var i = 0; i < 100 && sessions.Transcript.Entries.Count < 2; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+        string Described() => CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 160, 60), CellMeasureContext.PixelAuthored));
+
+        var described = Described();
+        described.ShouldContain("● live");
+        described.ShouldContain("Stuck on the build.");
+        described.ShouldNotContain("Earlier words.");
+        described.ShouldContain("not read yet");
+        described.ShouldContain("then push it");
+
+        sessions.Render(screen, new RectF32(0, 0, 1280, 800));
+        var regions = new List<ClickableRegion>();
+        sessions.CollectPaintedRegions(regions);
+        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "transcript:end" }).OnClick!.Invoke(InputModifier.None);
+
+        described = Described();
+        described.ShouldContain("Earlier words.");
+        described.ShouldNotContain("Jump to end");
+        sessions.Transcript.Close();
+    }
+
+    [Fact]
+    public void ACardAboutALegNamesItsWorkersSession()
+    {
+        var screen = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
+        var worker = screen.Lines[0];
+        var flights = Screen() with
+        {
+            Lines = [.. Screen().Lines.Select(f => f with { LegRows = [.. f.LegRows.Select(l => l.Name == "parser" ? l with { Worker = worker.Name } : l)] })],
+        };
+        CardRow Card(string subject) => new() { Id = "c1", Bin = CardBin.Ring, Kind = "worker-idle", Subject = subject, Title = "t", At = Live.At, State = CardState.Open };
+
+        PilotChrome<RgbaImage>.WorkerOf(Card("flight/TIA1611/parser"), flights, screen).ShouldBe(worker);
+        PilotChrome<RgbaImage>.WorkerOf(Card("flight/TIA1611"), flights, screen).ShouldBeNull();
+        PilotChrome<RgbaImage>.WorkerOf(Card("flight/TIA1611/renderer"), flights, screen).ShouldBeNull();
+    }
+
+    [Fact]
     public void ANarrowSessionsPageDropsItsOptionalColumnsForTheSessionColumn()
     {
         using var vessel = new RgbaImageRenderer(1, 1);
