@@ -167,6 +167,10 @@ The GUI's rail opens the **Flights** page (Ctrl+2): each flight's code, title, r
 for which), legs (how many done, which flying), branch and sessions. Below 1150 design
 units wide it drops Branch and Sessions.
 
+Ended sessions can be put away: **Archive** on a selected ended row, **Archive ended (N)** in the Sessions header for
+all of them, and **Show archived** to list them again (with **Restore**). An archived session is only left out of the
+lists; it stays a row until the node forgets it as any ended one (24 h), and one that runs again is back by itself.
+
 The **Sessions** page does the same below 1200 units (and pilot-tui below 150 columns): it drops Last response and Spend, so
 the Session column keeps room for the role and the session name.
 
@@ -191,6 +195,7 @@ pilot artifact <path or URL> [title…]
 pilot say <session> <text…>
 pilot note <text…>
 pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
+pilot archive <session> | --ended [--undo]      # put ended sessions away, out of the lists (or back)
 ```
 
 Inside a plane a leg command names no leg: the flight is the one whose worktree holds the folder, the leg its one

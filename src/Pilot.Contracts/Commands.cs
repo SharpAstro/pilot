@@ -177,6 +177,15 @@ public static class Verbs
     /// </summary>
     public const string Update = "update";
 
+    /// <summary>
+    /// <c>archive session/&lt;id&gt; [undo]</c>: puts an ended session away, out of the lists; <c>archive sessions</c> does
+    /// it to every ended one. <c>undo</c> brings it (or them) back.
+    /// </summary>
+    public const string Archive = "archive";
+
+    /// <summary>Every session, as a target: <c>archive sessions</c>.</summary>
+    public const string SessionsTarget = "sessions";
+
     /// <summary><c>tell watchtower &lt;text&gt;</c>: says the text to the node's watchtower, whichever session it is now.</summary>
     public const string Tell = "tell";
 

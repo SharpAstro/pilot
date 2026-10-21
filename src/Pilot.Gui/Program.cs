@@ -186,6 +186,13 @@ if (feed is not null && client is not null)
         Console.WriteLine($"pilot-gui: say to {line.Name}: {result}");
         loop.RequestRedraw();
     };
+    // The Sessions page's archive buttons: a verb on the node, its answer under the say bar.
+    view.OnAction = action => tracker.Run(async () =>
+    {
+        view.SayStatus = await DashboardCommands.ActAsync(client, action, GuiSay.Who, cts.Token);
+        Console.WriteLine($"pilot-gui: {view.SayStatus}");
+        loop.RequestRedraw();
+    }, "a Sessions action");
     // A card's button is a command on the node, as a click anywhere else is; the stream closes the card.
     async Task CardCommandAsync(string verb, CardRow card, string[] args)
     {

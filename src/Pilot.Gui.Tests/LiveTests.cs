@@ -274,6 +274,47 @@ public sealed class SayBarTests
     private static SessionsScreen Screen(params SessionRow[] rows) => new(SessionLine.Build(rows, Live.At), "test", Live.At);
 
     [Fact]
+    public void ArchivedSessionsAreLeftOutUntilShownAndTheButtonsArchiveThroughTheNode()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var acted = new List<FlightAction>();
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = acted.Add };
+        var live = Live.Row("aaaa1111", "live", SessionState.Working);
+        var ended = Live.Row("bbbb2222", "ended", SessionState.Ended);
+        var archived = Live.Row("cccc3333", "archived", SessionState.Ended) with { Archived = true };
+        var bounds = new RectF32(0, 0, 1280, 800);
+
+        view.Render(Screen(live, ended, archived), bounds);
+        view.Select(Screen(live, ended).Lines.ToList().FindIndex(l => l.Row.Id == "bbbb2222"));
+        view.Render(Screen(live, ended, archived), bounds);
+
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        Hit(regions, "sessions:archive-ended");
+        Hit(regions, "session:bbbb2222:archive");
+        acted.Select(a => (a.Verb, a.Target, a.Args.Length)).ShouldBe([(Verbs.Archive, Verbs.SessionsTarget, 0), (Verbs.Archive, "session/bbbb2222", 0)]);
+
+        // The archived one is left out until the header's toggle shows it.
+        view.SelectedId.ShouldBe("bbbb2222");
+        Hit(regions, "sessions:show-archived");
+        view.ShowArchived.ShouldBeTrue();
+        view.Render(Screen(live, ended, archived), bounds);
+        view.Select(Screen(live, ended, archived).Lines.ToList().FindIndex(l => l.Row.Id == "cccc3333"));
+        view.Render(Screen(live, ended, archived), bounds);
+        regions.Clear();
+        view.CollectPaintedRegions(regions);
+        Hit(regions, "session:cccc3333:restore");
+        acted[^1].Args.ShouldBe(["undo"]);
+    }
+
+    private static void Hit(List<ClickableRegion> regions, string action)
+    {
+        var at = regions.FindIndex(r => r.Result is HitResult.ButtonHit hit && hit.Action == action);
+        at.ShouldBeGreaterThanOrEqualTo(0, $"no {action} among {string.Join(", ", regions.Select(r => r.Result))}");
+        regions[at].OnClick!.Invoke(InputModifier.None);
+    }
+
+    [Fact]
     public void TheSelectionFollowsItsSessionWhenTheRowsReorder()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);

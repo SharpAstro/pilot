@@ -30,6 +30,13 @@ public sealed record SessionRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string[]? EarlierSessionIds { get; init; }
 
+    /// <summary>
+    /// Put away by someone (<c>archive</c>): an ended session the lists leave out unless asked. It stays a row until the
+    /// node forgets it as any ended one; working again (resumed, said to) puts it back.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Archived { get; init; }
+
     /// <summary>The session's name (<c>claude -n</c>, <c>/rename</c>): the agents row's <c>name</c>, or <see cref="Id"/> when it has none.</summary>
     public required string Name { get; init; }
 

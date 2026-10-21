@@ -61,6 +61,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private const float LastWidth = 120f;
     private const float StateWidth = 160f;
     private const float SpendWidth = 160f;
+    private const float ActWidth = 84f;
 
     private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
     private static readonly RGBAColor32 HeaderBg = new(0x1b, 0x1c, 0x24, 0xff);
@@ -107,6 +108,16 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// <summary>The selected session's name, which the say bar names as its target.</summary>
     private string? SayTarget => Selected >= 0 && Selected < _lines.Count ? _lines[Selected].Name : null;
 
+    /// <summary>Whether archived sessions are listed too; off by default, the header's toggle flips it.</summary>
+    public bool ShowArchived { get; set; }
+
+    /// <summary>Runs a button's verb on the node (archive one, archive every ended one, bring one back).</summary>
+    public Action<FlightAction>? OnAction { get; set; }
+
+    // What the header says about what is left out, and what Archive ended would put away; set by Tree.
+    private int _archivedCount;
+    private int _endedCount;
+
     /// <summary>Called with the selected session's line and the text when Enter is pressed in the say bar.</summary>
     public Func<SessionLine, string, Task>? OnSay { get; set; }
 
@@ -130,6 +141,13 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     internal Layout.Node Tree(SessionsScreen screen, float width)
     {
         _wide = width >= WideWidth;
+        // Archived rows are left out unless asked for: the selection and the count follow what is shown.
+        _archivedCount = screen.Lines.Count(l => l.Row.Archived);
+        _endedCount = screen.Lines.Count(l => !l.Row.Archived && l.Row.State is Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed);
+        if (!ShowArchived && _archivedCount > 0)
+        {
+            screen = screen with { Lines = [.. screen.Lines.Where(l => !l.Row.Archived)] };
+        }
         _lines = screen.Lines;
         if (screen.Lines.Count == 0)
         {
@@ -235,13 +253,14 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .Bg(HeaderBg)
             .RowH(SayBarHeight);
 
-    private static Layout.Node Header(SessionsScreen screen) =>
+    private Layout.Node Header(SessionsScreen screen) =>
         Layout.Builder.VStack(
-                Layout.Builder.HStack(
+                Layout.Builder.HStack([
                         Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
                         Layout.Builder.Text("sessions", 20f, Dim).WAuto(),
                         Layout.Builder.Spacer().WStar(),
-                        Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto())
+                        Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
+                        .. HeaderButtons()])
                     .WithGap(12f)
                     .RowH(32f),
                 Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC{(screen.Usage is { } usage ? $" · usage {usage}" : "")}", 12f, Dim)
@@ -249,6 +268,21 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .Pad(Gutter, 6f)
             .Bg(HeaderBg)
             .RowH(HeaderHeight);
+
+    // Archive every ended session, and show or hide the archived ones: only while there is something for them to do.
+    private IEnumerable<Layout.Node> HeaderButtons()
+    {
+        if (_endedCount > 0 && OnAction is { } act)
+        {
+            yield return CardsView<TSurface>.Pill($"Archive ended ({_endedCount})", "sessions:archive-ended",
+                () => act(new FlightAction($"archive {_endedCount} ended", Pilot.Contracts.Verbs.Archive, Pilot.Contracts.Verbs.SessionsTarget, []))).RowH(26f);
+        }
+        if (_archivedCount > 0)
+        {
+            yield return CardsView<TSurface>.Pill(ShowArchived ? "Hide archived" : $"Show archived ({_archivedCount})", "sessions:show-archived",
+                () => ShowArchived = !ShowArchived).RowH(26f);
+        }
+    }
 
     private Layout.Node Main(SessionsScreen screen)
     {
@@ -288,6 +322,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         {
             columns.Add(Label("Spend").WFixed(SpendWidth));
         }
+        columns.Add(Layout.Builder.Spacer().WFixed(ActWidth));
         return Layout.Builder.HStack([.. columns])
             .WithGap(ColumnGap)
             .PadX(8f)
@@ -320,6 +355,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         {
             cells.Add(Metered(line.Spend, line.SpendFraction, body).WFixed(SpendWidth));
         }
+        cells.Add(Act(line, index).WFixed(ActWidth));
         var row = Layout.Builder.HStack([.. cells])
             .WithGap(ColumnGap)
             .Pad(8f, 6f)
@@ -330,6 +366,20 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
         // The selection stated as a background too: a terminal paints no focus of its own, and on pixels it is the focus colour.
         return index == Selected ? row.Bg(RowFocusBg) : (index & 1) == 1 ? row.Bg(RowAltBg) : row;
+    }
+
+    /// <summary>The selected ended session's button: Archive it, or Restore one archived; nothing on any other row.</summary>
+    private Layout.Node Act(SessionLine line, int index)
+    {
+        if (index != Selected || OnAction is not { } act
+            || line.Row.State is not (Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed))
+        {
+            return Layout.Builder.Spacer();
+        }
+        var target = Pilot.Contracts.Verbs.SessionTarget(line.Row.Id);
+        return Cell(line.Row.Archived
+            ? CardsView<TSurface>.Pill("Restore", $"session:{line.Row.Id}:restore", () => act(new FlightAction($"restore {line.Name}", Pilot.Contracts.Verbs.Archive, target, ["undo"])))
+            : CardsView<TSurface>.Pill("Archive", $"session:{line.Row.Id}:archive", () => act(new FlightAction($"archive {line.Name}", Pilot.Contracts.Verbs.Archive, target, []))));
     }
 
     /// <summary>

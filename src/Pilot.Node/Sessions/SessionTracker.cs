@@ -187,7 +187,8 @@ public sealed class SessionTracker : BackgroundService
             // A user turn has just been given to it: it is working on it.
             Put(previous with
             {
-                SessionId = newSessionId, State = SessionState.Working, WaitingFor = null,
+                // Said to again: back in the lists if it was put away.
+                SessionId = newSessionId, State = SessionState.Working, WaitingFor = null, Archived = false,
                 EarlierSessionIds = [.. previous.EarlierSessionIds ?? [], previous.SessionId],
             });
         }
@@ -347,7 +348,50 @@ public sealed class SessionTracker : BackgroundService
         {
             Id = id,
             EarlierSessionIds = _rows.TryGetValue(id, out var known) ? known.EarlierSessionIds : null,
+            // Put away stays put away while it stays ended; running again brings it back.
+            Archived = known is { Archived: true } && ended,
         });
+    }
+
+    /// <summary>
+    /// <c>archive session/&lt;id&gt; [undo]</c> or <c>archive sessions [undo]</c>: puts ended sessions away (or back). A
+    /// running one is refused: it would only come back.
+    /// </summary>
+    public CommandResult Archive(CommandRequest command)
+    {
+        var undo = (command.Args ?? []).Contains("undo");
+        _gate.Wait();
+        try
+        {
+            List<SessionRow> rows;
+            if (command.Target == Verbs.SessionsTarget)
+            {
+                rows = [.. _rows.Values.Where(r => r.State is SessionState.Ended or SessionState.Failed && r.Archived == undo)];
+            }
+            else if (command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal)
+                     && _rows.TryGetValue(command.Target[Verbs.SessionTargetPrefix.Length..], out var row))
+            {
+                if (row.State is not (SessionState.Ended or SessionState.Failed))
+                {
+                    return _state.Complete(command, $"{row.Name} is {row.State.ToString().ToLowerInvariant()}: only an ended session is archived");
+                }
+                rows = [row];
+            }
+            else
+            {
+                return _state.Complete(command, $"archive takes session/<id> or {Verbs.SessionsTarget}, and there is no {command.Target}");
+            }
+
+            foreach (var archived in rows)
+            {
+                Put(archived with { Archived = !undo });
+            }
+            return _state.Complete(command, null, way: $"{rows.Count} {(rows.Count == 1 ? "session" : "sessions")} {(undo ? "back" : "archived")}");
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     private void Put(SessionRow row)

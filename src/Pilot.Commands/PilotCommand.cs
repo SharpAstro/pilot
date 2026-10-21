@@ -337,6 +337,17 @@ public static class PilotCommand
         var watchtower = new Command("watchtower", "The node's watchtower session") { Subcommands = { restart } };
         var digest = Action(new Command("digest", "The digest now: what landed, what was handled, what is parked"),
             (_, client, ct) => SendAsync(client, Verbs.Digest, Verbs.NodeTarget, [], who, output, ct));
+        // archive: ended sessions put away, out of the lists (or back, with --undo).
+        var archiveSession = new Argument<string?>("session") { Description = "The session's row id; leave it out with --ended", Arity = ArgumentArity.ZeroOrOne };
+        var archiveEnded = new Option<bool>("--ended") { Description = "Every ended session" };
+        var archiveUndo = new Option<bool>("--undo") { Description = "Bring it (or them) back into the lists" };
+        var archive = Action(new Command("archive", "Put an ended session away, out of the lists; --ended does every ended one")
+            { Arguments = { archiveSession }, Options = { archiveEnded, archiveUndo } },
+            (p, client, ct) => p.GetValue(archiveSession) is { } id && !p.GetValue(archiveEnded)
+                ? SendAsync(client, Verbs.Archive, Verbs.SessionTarget(id), p.GetValue(archiveUndo) ? ["undo"] : [], who, output, ct)
+                : p.GetValue(archiveEnded)
+                    ? SendAsync(client, Verbs.Archive, Verbs.SessionsTarget, p.GetValue(archiveUndo) ? ["undo"] : [], who, output, ct)
+                    : throw new UsageException("archive takes a session's row id, or --ended"));
         // update: the node installs the latest release of pilot over the folder it runs from, and restarts.
         var updateCheck = new Option<bool>("--check") { Description = "Only say whether a newer release is out" };
         var updateAdopt = new Option<bool>("--adopt") { Description = "Install the latest release over a build of one's own, which then updates itself" };
@@ -437,7 +448,7 @@ public static class PilotCommand
         return new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node },
-            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, ring, flag, handled, nodes, connectNode, grants },
+            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, archive, ring, flag, handled, nodes, connectNode, grants },
         };
     }
 

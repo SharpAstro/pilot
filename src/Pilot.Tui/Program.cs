@@ -78,6 +78,11 @@ flights.OnAction = action => _ = Task.Run(async () =>
     Redraw();
 });
 flights.OnOpen = location => flights.Say(DashboardCommands.Open(location) ? $"opened {location}" : $"could not open {location}");
+sessions.OnAction = action => _ = Task.Run(async () =>
+{
+    sessions.SayStatus = await DashboardCommands.ActAsync(client, action, Who, stop.Token);
+    Redraw();
+});
 sessions.OnSay = async (line, text) =>
 {
     var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(line.Row.Id), Args = [text], Who = Who }, stop.Token);
