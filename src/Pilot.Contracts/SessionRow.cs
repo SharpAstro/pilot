@@ -21,6 +21,15 @@ public sealed record SessionRow
     /// <summary>The full session UUID: the agents row's <c>sessionId</c>, which names the transcript file.</summary>
     public required string SessionId { get; init; }
 
+    /// <summary>
+    /// The session ids this row ran under before <see cref="SessionId"/>, oldest first: a resume continues a session under
+    /// a new id, and its row follows it there. Kept on the row so a restarted node knows those copies for this row's, not
+    /// sessions of their own; and each names a transcript of this session's history. Null for a session never resumed
+    /// (so rows still compare equal as records, which an array would not).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string[]? EarlierSessionIds { get; init; }
+
     /// <summary>The session's name (<c>claude -n</c>, <c>/rename</c>): the agents row's <c>name</c>, or <see cref="Id"/> when it has none.</summary>
     public required string Name { get; init; }
 

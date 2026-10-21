@@ -185,7 +185,11 @@ public sealed class SessionTracker : BackgroundService
             _rowOf[newSessionId] = id;
             _endedAt.Remove(id);
             // A user turn has just been given to it: it is working on it.
-            Put(previous with { SessionId = newSessionId, State = SessionState.Working, WaitingFor = null });
+            Put(previous with
+            {
+                SessionId = newSessionId, State = SessionState.Working, WaitingFor = null,
+                EarlierSessionIds = [.. previous.EarlierSessionIds ?? [], previous.SessionId],
+            });
         }
         finally
         {
@@ -338,7 +342,12 @@ public sealed class SessionTracker : BackgroundService
             _repos[agent.Cwd] = repo = RepoOf.Find(agent.Cwd);
         }
 
-        Put(SessionRowBuilder.Build(agent, facts, record, repo, JoinFlight(SessionRoles.Resolve(agent.Name, background: agent.Kind == "background"), agent.Cwd), Hooks.Of(agent.SessionId)) with { Id = id });
+        // A row built afresh from the listing keeps the copies it followed: they are this row's history, not the listing's.
+        Put(SessionRowBuilder.Build(agent, facts, record, repo, JoinFlight(SessionRoles.Resolve(agent.Name, background: agent.Kind == "background"), agent.Cwd), Hooks.Of(agent.SessionId)) with
+        {
+            Id = id,
+            EarlierSessionIds = _rows.TryGetValue(id, out var known) ? known.EarlierSessionIds : null,
+        });
     }
 
     private void Put(SessionRow row)
@@ -374,6 +383,16 @@ public sealed class SessionTracker : BackgroundService
         {
             _rows[row.Id] = row;
             _endedAt[row.Id] = now;
+            // The resumes it followed, as the store kept them: without them, a restarted node would take each copy a
+            // resume left behind for a session of its own, and the row's own copy for a new row.
+            if (!row.SessionId.StartsWith(row.Id, StringComparison.Ordinal))
+            {
+                _rowOf[row.SessionId] = row.Id;
+            }
+            foreach (var earlier in row.EarlierSessionIds ?? [])
+            {
+                _superseded.Add(earlier);
+            }
         }
     }
 

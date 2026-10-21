@@ -3,15 +3,22 @@ using Pilot.Contracts;
 namespace Pilot.Node.Flights;
 
 /// <summary>
-/// The node's one watchtower session, <c>&lt;machine&gt;-watchtower</c>, kept running: started with Remote Control on so
+/// The node's one watchtower session, <c>&lt;machine&gt;-watchtower</c>, kept running while there is something to watch
+/// (<see cref="Watching"/>: a flight not landed, a job, a ring): started with Remote Control on so
 /// the controller reaches it from claude.ai or a phone, briefed from the node's state, and fed every Ring and For-you
 /// card as it opens. One that ended or failed is started again; one the usage limit stopped is resumed once the limit
 /// resets; one whose context has grown past <see cref="ContextLimit"/> is replaced, idle, by a fresh one briefed anew,
 /// so it never drags a long conversation along (#36). A watchtower that cannot be started rings, never stays silent.
 /// <para>
-/// Idle for <see cref="RoundEvery"/>, it is sent on a round: it looks at where everything stands and acts on what
-/// stalled. That turn also keeps its prompt cache warm: the cache lives an hour, and a watchtower woken after that
-/// reads its whole context again at full price, which is what made v1's long-lived sessions dear.
+/// Idle for <see cref="RoundEvery"/> while a leg flies, it is sent on a round: it looks at where everything stands and
+/// acts on what stalled. That turn also keeps its prompt cache warm: the cache lives an hour, and a watchtower woken after
+/// that reads its whole context again at full price, which is what made v1's long-lived sessions dear.
+/// </para>
+/// <para>
+/// With nothing to watch it costs nothing: none is started, and one idle <see cref="QuietFor"/> after the last thing to
+/// watch is stopped. A round every 50 minutes with no flight in the air spent 3.5M tokens in a day on "quiet". The next
+/// flight, job or ring starts a fresh one, briefed from the state: cheaper than waking an old conversation whose cache
+/// has gone cold.
 /// </para>
 /// </summary>
 /// <remarks>
@@ -39,6 +46,9 @@ public sealed class Watchtower(
     public const string RoundText = "Round: look at where everything stands (status and cards). Act on anything stalled or waiting that is yours, "
         + "ring for what needs the controller, and otherwise end your turn with one word: quiet.";
 
+    /// <summary>How long it is kept once there is nothing to watch, idle, before it is stopped.</summary>
+    public TimeSpan QuietFor { get; init; } = TimeSpan.FromMinutes(15);
+
     /// <summary>How long after a failed start the next one is tried.</summary>
     public TimeSpan RetryAfter { get; init; } = TimeSpan.FromMinutes(10);
 
@@ -65,6 +75,8 @@ public sealed class Watchtower(
     private DateTimeOffset? _resumedAfter;
     private DateTimeOffset? _roundAt;
     private bool _adopted;
+    // When there was last something to watch; the node's start counts, so one running then is kept QuietFor first.
+    private DateTimeOffset? _watchingAt;
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
@@ -105,14 +117,42 @@ public sealed class Watchtower(
 
     private static bool Live(SessionRow row) => row.State is SessionState.Working or SessionState.Waiting or SessionState.Idle;
 
-    /// <summary>One look: keeps it running and tells it the cards it has not heard of.</summary>
+    /// <summary>
+    /// What there is to watch, in words, or null for nothing: a flight not landed, a job running or waiting, a ring open
+    /// (other than about the watchtower itself).
+    /// </summary>
+    public string? Watching()
+    {
+        if (state.Flights().FirstOrDefault(f => f.State != FlightState.Landed) is { } flight)
+        {
+            return $"{flight.Code} is {(flight.State == FlightState.Held ? "held" : "in the air")}";
+        }
+        if (state.Jobs().FirstOrDefault(j => j.State is JobState.Running or JobState.Queued) is { } job)
+        {
+            return $"job {job.Id} is {(job.State == JobState.Running ? "running" : "waiting")}";
+        }
+        return state.Cards(openOnly: true).FirstOrDefault(c => c.Bin == CardBin.Ring && c.Subject != Verbs.WatchtowerTarget) is { } ring
+            ? $"{ring.Id} rings"
+            : null;
+    }
+
+    /// <summary>One look: keeps it running while there is something to watch, and tells it the cards it has not heard of.</summary>
     public async Task LookAsync(CancellationToken cancellationToken)
     {
+        if (!options.Watchtower)
+        {
+            return;
+        }
         await _one.WaitAsync(cancellationToken);
         try
         {
             var now = time.GetUtcNow();
             var row = Current();
+            var watching = Watching();
+            if (watching is not null || _watchingAt is null)
+            {
+                _watchingAt = now;
+            }
             if (!_adopted)
             {
                 // A watchtower already running when the node starts saw the cards open now.
@@ -122,6 +162,16 @@ public sealed class Watchtower(
                     _job = row.Id;
                     TellAllOpen();
                 }
+            }
+
+            if (watching is null)
+            {
+                // Nothing to watch: none is started, and an idle one goes once it has been quiet long enough.
+                if (row is { State: SessionState.Idle } && now - _watchingAt >= QuietFor)
+                {
+                    await StopQuietAsync(row, cancellationToken);
+                }
+                return;
             }
 
             if (row is { ApiError: { } error } && row.State != SessionState.Working)
@@ -137,7 +187,7 @@ public sealed class Watchtower(
                 }
                 if (now >= _nextTry)
                 {
-                    await StartAsync(row is null ? "none was running" : $"the last one {row.State.ToString().ToLowerInvariant()}", cancellationToken);
+                    await StartAsync($"{watching}, and {(row is null ? "none was running" : $"the last one {row.State.ToString().ToLowerInvariant()}")}", cancellationToken);
                 }
                 return;
             }
@@ -148,7 +198,9 @@ public sealed class Watchtower(
                 await StartAsync($"its context reached {100.0 * row.ContextTokens / row.ContextWindow:0}% of its window", cancellationToken, row);
                 return;
             }
+            // Rounds only while a leg flies: a flight waiting on a merge or a ring has nothing for a round to find.
             if (!await TellNewCardsAsync(row, cancellationToken) && row.State == SessionState.Idle
+                && state.Legs().Any(l => l.State == LegState.Flying)
                 && now - (row.LastResponseAt ?? row.StartedAt) >= RoundEvery && (_roundAt is null || now - _roundAt >= RoundEvery))
             {
                 _roundAt = now;
@@ -265,6 +317,23 @@ public sealed class Watchtower(
         state.CloseCardsAbout(Verbs.WatchtowerTarget, "a fresh one started", Down, Stopped);
         state.RaiseCard(CardBin.Handled, "watchtower-started", Verbs.WatchtowerTarget, $"Started a fresh watchtower: {why}");
         return true;
+    }
+
+    /// <summary>Stops a watchtower with nothing left to watch, and says so; the next thing to watch starts a fresh one.</summary>
+    private async Task StopQuietAsync(SessionRow row, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await launcher.StopAsync(row.Id, cancellationToken);
+        }
+        catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            // Gone already: there is nothing to stop.
+        }
+        _job = null;
+        _startedAt = null;
+        state.RaiseCard(CardBin.Handled, "watchtower-parked", Verbs.WatchtowerTarget,
+            $"Stopped the watchtower: nothing to watch for {QuietFor.TotalMinutes:0} minutes; the next flight, job or ring starts a fresh one");
     }
 
     /// <summary>Takes every open card as told: a fresh watchtower has them in its brief.</summary>
