@@ -237,6 +237,26 @@ public sealed class SayTests : IDisposable
     }
 
     [Fact]
+    public async Task AResumedRowStaysOneRowAcrossARestartOfTheNode()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "done", cwd: Cwd, startedAt: Recent));
+        _delivery.ListingAfterResume = AgentRows.List(
+            AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "done", cwd: Cwd, startedAt: Recent),
+            AgentRows.Background(FakeSessionDelivery.Copy, "pil5-say-bg", "done", cwd: Cwd, startedAt: Recent));
+        await _tracker.PollAsync(Ct);
+        await _messenger.SayAsync(Say("b2c3d4e5", "a round"), Ct);
+        _state.Sessions().ShouldHaveSingleItem().EarlierSessionIds.ShouldBe([AgentRows.SessionB]);
+
+        // A restarted node: a tracker of its own, seeded from the store, polls a listing with both copies in it.
+        var restarted = new SessionTracker(_state, _agents, _profile.Options(), () => false, TimeProvider.System, NullLogger<SessionTracker>.Instance);
+        await restarted.PollAsync(Ct);
+
+        var row = _state.Sessions().ShouldHaveSingleItem();
+        (row.Id, row.SessionId).ShouldBe(("b2c3d4e5", FakeSessionDelivery.Copy));
+        row.EarlierSessionIds.ShouldBe([AgentRows.SessionB]);
+    }
+
+    [Fact]
     public async Task AResumedRowIsResumedAgainFromItsNewSessionId()
     {
         _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "done", cwd: Cwd, startedAt: Recent));

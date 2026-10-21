@@ -24,6 +24,20 @@ public sealed class WatchtowerTests
     {
         _state = new NodeState(new InMemoryJournal(), _time);
         _tower = new Watchtower(_state, _workers, Run, _options, _time) { Pilot = "pilot" };
+        // Something to watch: a flight in the air with a leg flying. Tests of a quiet node land it (Quiet).
+        _state.PutFlight(new FlightRow
+        {
+            Code = "TIA9", Repo = "tianwen", RepoPath = "/r", Issue = 9, Branch = "flight/tia9", Worktree = "/r/w", Base = "main",
+            State = FlightState.Flying, CreatedAt = Start,
+        });
+        _state.PutLeg(new LegRow { Flight = "TIA9", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying });
+    }
+
+    /// <summary>Nothing left to watch: the flight lands, its leg done.</summary>
+    private void Quiet()
+    {
+        _state.PutLeg(new LegRow { Flight = "TIA9", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done });
+        _state.PutFlight(_state.Flights().Single() with { State = FlightState.Landed, LandedAt = _time.GetUtcNow() });
     }
 
     private Task<CommandResult> Run(CommandRequest command, CancellationToken cancellationToken)
@@ -66,11 +80,50 @@ public sealed class WatchtowerTests
         (start.Name, start.RepoPath, start.Plane, start.RemoteControl).ShouldBe(("du1-watchtower", _options.WatchtowerFolder, (string?)null, true));
         start.Brief.ShouldContain("You are du1-watchtower");
         start.Brief.ShouldContain("c1 [ring] about flight/TIA1/parser: TIA1/parser failed");
-        _state.Cards().Single(c => c.Bin == CardBin.Handled).Title.ShouldBe("Started a fresh watchtower: none was running");
+        _state.Cards().Single(c => c.Bin == CardBin.Handled).Title.ShouldBe("Started a fresh watchtower: TIA9 is in the air, and none was running");
 
         // In its brief already: the card is not said to it again once it runs.
         Row("job00001", SessionState.Idle);
         await _tower.LookAsync(Ct);
+        _said.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task WithNothingToWatchNoneIsStartedAndAnIdleOneIsStoppedOnceQuietLongEnough()
+    {
+        Quiet();
+        await _tower.LookAsync(Ct);
+        _workers.Started.ShouldBeEmpty();
+
+        // One already running when there is nothing to watch: kept for QuietFor, then stopped, once.
+        Row("job00007", SessionState.Idle);
+        _time.Advance(TimeSpan.FromMinutes(14));
+        await _tower.LookAsync(Ct);
+        _workers.Stopped.ShouldBeEmpty();
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _tower.LookAsync(Ct);
+        _workers.Stopped.ShouldBe(["job00007"]);
+        _state.Cards().Single(c => c.Bin == CardBin.Handled).Title.ShouldStartWith("Stopped the watchtower: nothing to watch");
+        _said.ShouldBeEmpty();
+
+        // The next thing to watch starts a fresh one, and says why.
+        Row("job00007", SessionState.Ended);
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9/parser", "TIA9/parser failed");
+        await _tower.LookAsync(Ct);
+        _workers.Started.ShouldHaveSingleItem();
+        _state.Cards().ShouldContain(c => c.Title == "Started a fresh watchtower: c2 rings, and the last one ended");
+    }
+
+    [Fact]
+    public async Task NoRoundIsSentWhileNoLegFlies()
+    {
+        Row("job00001", SessionState.Idle, lastResponse: Start);
+        // The flight waits on its merge: in the air, but no leg flying.
+        _state.PutLeg(new LegRow { Flight = "TIA9", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done });
+        _time.Advance(TimeSpan.FromMinutes(51));
+
+        await _tower.LookAsync(Ct);
+
         _said.ShouldBeEmpty();
     }
 
@@ -145,7 +198,7 @@ public sealed class WatchtowerTests
         await _tower.LookAsync(Ct);
 
         _workers.Started.Count.ShouldBe(2);
-        _state.Cards().First(c => c.Bin == CardBin.Handled).Title.ShouldBe("Started a fresh watchtower: the last one ended");
+        _state.Cards().First(c => c.Bin == CardBin.Handled).Title.ShouldBe("Started a fresh watchtower: TIA9 is in the air, and the last one ended");
     }
 
     [Fact]

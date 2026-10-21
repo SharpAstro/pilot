@@ -236,8 +236,9 @@ never from an earlier watchtower's conversation, and the node says every Ring an
 
 | When | The node |
 | --- | --- |
-| none runs, or it ended or failed | starts a fresh one (a Handled line says why) |
-| idle 50 min | sends it on a round: look at status and cards, act on what stalled, else answer "quiet". The round is a turn inside the prompt cache's hour, so the cache stays warm; a watchtower woken cold re-reads its whole context at full price |
+| there is something to watch (a flight not landed, a job running or waiting, a ring open) and none runs, or it ended or failed | starts a fresh one (a Handled line says why) |
+| nothing to watch | starts none; one already running is stopped once it has been idle 15 min with nothing to watch (a Handled line). With nothing in the air a watchtower costs nothing; the next flight, job or ring starts a fresh one, briefed from the state |
+| idle 50 min while a leg flies | sends it on a round: look at status and cards, act on what stalled, else answer "quiet". The round is a turn inside the prompt cache's hour, so the cache stays warm; a watchtower woken cold re-reads its whole context at full price |
 | idle past 70% of its context window | replaces it with a fresh one |
 | stopped by the usage limit | a For-you card until the reset, then resumes it |
 | it cannot be started | rings with why: Claude Code starts no background session in a folder never trusted, so run `claude` in that folder once and accept the prompt |
