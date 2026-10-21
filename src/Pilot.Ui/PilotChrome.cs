@@ -57,6 +57,8 @@ internal sealed class PilotChrome<TSurface>
         Flights = new FlightsView<TSurface>(renderer);
         Cards = new CardsView<TSurface>(renderer);
         sessions.ShareWith(Flights, Cards);
+        sessions.About = About;
+        Flights.About = About;
         Rail = new TabBar<TSurface>(renderer)
         {
             Side = TabStripSide.Left,
@@ -67,6 +69,9 @@ internal sealed class PilotChrome<TSurface>
     }
 
     public TabBar<TSurface> Rail { get; }
+
+    /// <summary>The header's ? card, the same on every page.</summary>
+    public AboutCard About { get; } = new();
 
     public SessionsView<TSurface> Sessions { get; }
 

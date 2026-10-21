@@ -96,6 +96,19 @@ sessions.Transcript.Load = async (rowId, after, ct) => (await client.GetTranscri
     : throw new InvalidOperationException("the node has no transcript for this session");
 sessions.Transcript.Changed = Redraw;
 sessions.OnOpen = folder => DashboardCommands.Open(folder);
+NodeInfo? nodeInfo = null;
+chrome.About.Facts = () => AboutFacts.For("pilot-tui", nodeInfo, client.SocketPath);
+chrome.About.Opening = () => _ = Task.Run(async () =>
+{
+    try
+    {
+        nodeInfo = await client.GetNodeAsync(stop.Token);
+    }
+    catch (Exception ex) when (ex is HttpRequestException or IOException)
+    {
+    }
+    Redraw();
+});
 sessions.OnAction = action => _ = Task.Run(async () =>
 {
     sessions.SayStatus = await DashboardCommands.ActAsync(client, action, Who, stop.Token);

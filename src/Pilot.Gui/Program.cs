@@ -201,6 +201,15 @@ if (feed is not null && client is not null)
     view.Transcript.Changed = loop.RequestRedraw;
     // The session menu's folder and copy entries.
     view.OnOpen = folder => DashboardCommands.Open(folder);
+    chrome.Flights.CopyText = text => SetClipboardText(text);
+    // The ? card: this window and the node it talks to, asked again each time it opens.
+    NodeInfo? nodeInfo = null;
+    chrome.About.Facts = () => AboutFacts.For("pilot-gui", nodeInfo, nodeWhere);
+    chrome.About.Opening = () => tracker.Run(async () =>
+    {
+        nodeInfo = await client.GetNodeAsync(cts.Token);
+        loop.RequestRedraw();
+    }, "the ? card's node");
     view.OnNewFlight = repo =>
     {
         chrome.Show(PilotPage.Flights);

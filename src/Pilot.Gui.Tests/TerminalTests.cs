@@ -53,6 +53,40 @@ public sealed class TerminalTests
     }
 
     [Fact]
+    public void AFlightsMenuOffersItsActionsItsFoldersAndCopiesAndTheQuestionMarkSaysWhereThingsAre()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        var flights = chrome.Flights;
+        flights.CanCommand = true;
+        var acted = new List<FlightAction>();
+        var copied = new List<string>();
+        flights.OnAction = acted.Add;
+        flights.OnOpen = _ => { };
+        flights.CopyText = copied.Add;
+        var screen = Screen();
+        flights.Tree(screen);
+
+        flights.OpenMenu(screen.Lines[0], 0, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
+
+        flights.MenuItems.Select(i => i.Label).ShouldBe(["Start render", "Plan a leg…", "Open its plane's folder", "Open its repo's folder", "Copy TIA1611", "Copy its branch"]);
+        flights.MenuItems[0].OnChoose!();
+        acted.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.StartLeg);
+        flights.MenuItems[^1].OnChoose!();
+        copied.ShouldBe(["flight/tia1611"]);
+
+        chrome.About.Facts = () => AboutFacts.For("pilot-gui", null, "node.sock");
+        chrome.About.Toggle();
+        var described = CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored));
+        described.ShouldContain("pilot-gui");
+        described.ShouldContain(NodeFeed.ClientVersion);
+        described.ShouldContain("not answering on node.sock");
+        described.ShouldContain("Ctrl+S");
+        chrome.About.Close();
+        CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored)).ShouldNotContain("Ctrl+S");
+    }
+
+    [Fact]
     public void ANarrowTerminalDropsTheBranchAndSessionsColumns()
     {
         using var vessel = new RgbaImageRenderer(1, 1);
