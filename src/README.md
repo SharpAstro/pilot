@@ -168,6 +168,12 @@ restarted mid-flight may nudge a worker once more than it would have: a turn, ne
 The GUI's rail opens the **Flights** page (Ctrl+2): each flight's code, title, repo and issue, state (held: waiting
 for which), legs (how many done, which flying), branch and sessions. As the window narrows it drops Sessions, then Branch.
 
+**A session's transcript** opens in place of the table: double-click its row, press Enter on it, or **Open transcript**
+in the header. It shows what was asked, what the assistant said, each tool call in a line with the first lines of what
+it gave back, and errors in red, and it follows the session live, pinned to its end until you scroll up; the say bar
+stays under it. Escape, or **Back to the sessions**, goes back. The node reads each transcript on from where its last
+read stopped (`GET /api/v1/sessions/<id>/transcript?after=<n>`, a grant's on the LAN).
+
 Ended sessions can be put away: **Archive** on a selected ended row, **Archive ended (N)** in the Sessions header for
 all of them, and **Show archived** to list them again (with **Restore**). An archived session is only left out of the
 lists; it stays a row until the node forgets it as any ended one (24 h), and one that runs again is back by itself.
@@ -368,6 +374,7 @@ A session the API stopped (its transcript's `apiError`, `usage_limit_reached` wi
 | `GET /api/v1/events` | The event stream, a WebSocket: a snapshot carrying the current number, then deltas each numbered one past the last. `?since=<n>&stream=<id>` resumes with the deltas after `n`, or a snapshot when the node no longer holds them or has another stream. |
 | `POST /api/v1/commands` | Every command, `{verb, target, args, who}`. The result is the response and a `commandResult` event on the stream. Verbs: `note node <text>`, `say session/<id> <text>`, and the flight verbs above. |
 | (cards) | `answer card/<id> <choice>`, `dismiss card/<id> [why]`: verbs on `POST /api/v1/commands`. |
+| `GET /api/v1/sessions/<id>/transcript?after=<n>` | A session's transcript as entries after the n-th (its last 300 without one); a grant's on the LAN. |
 | `GET /api/v1/repos` | The repos a flight can be made in, with their GitHub names; a grant's on the LAN. |
 | `GET /api/v1/repos/issues?path=` | A repo's open issues, through gh; a grant's on the LAN. |
 | `POST /api/v1/hooks` | One Claude Code hook's stdin, as `pilot-node hook` forwards it; always 204. |

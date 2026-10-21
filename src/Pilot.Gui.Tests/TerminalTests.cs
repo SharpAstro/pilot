@@ -65,6 +65,60 @@ public sealed class TerminalTests
     }
 
     [Fact]
+    public async Task EnterOpensTheSelectedSessionsTranscriptWhichFollowsItAndEscapeGoesBack()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var sessions = new SessionsView<RgbaImage>(vessel);
+        var screen = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
+        var asked = new List<(string Row, int After)>();
+        sessions.Transcript.Load = (row, after, _) =>
+        {
+            lock (asked)
+            {
+                asked.Add((row, after));
+            }
+            return Task.FromResult(after < 0
+                ? new TranscriptPage
+                {
+                    Total = 3,
+                    Entries =
+                    [
+                        new() { Index = 0, Kind = TranscriptKind.User, Text = "Fix the flaky clock test" },
+                        new() { Index = 1, Kind = TranscriptKind.ToolUse, Tool = "Bash", Text = "dotnet test --filter Clock" },
+                        new() { Index = 2, Kind = TranscriptKind.Error, Text = "1 failed\nClockTests.Ticks" },
+                    ],
+                }
+                : new TranscriptPage { Total = 4, Entries = [new() { Index = 3, Kind = TranscriptKind.Assistant, Text = "Fixed it." }] });
+        };
+        string Described() => CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored));
+        Described();
+
+        sessions.HandleInput(new InputEvent.KeyDown(InputKey.Enter)).ShouldBeTrue();
+        for (var i = 0; i < 100 && sessions.Transcript.Entries.Count < 4; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+
+        sessions.Transcript.IsOpen.ShouldBeTrue();
+        var described = Described();
+        described.ShouldContain("Fix the flaky clock test");
+        described.ShouldContain("Bash");
+        described.ShouldContain("dotnet test --filter Clock");
+        described.ShouldContain("ClockTests.Ticks");
+        described.ShouldContain("Fixed it.");
+        described.ShouldNotContain("Last response");
+        // The first read asked for the last entries; the next only for what came after them.
+        lock (asked)
+        {
+            asked.Take(2).ShouldBe([(screen.Lines[0].Row.Id, -1), (screen.Lines[0].Row.Id, 2)]);
+        }
+
+        sessions.HandleInput(new InputEvent.KeyDown(InputKey.Escape)).ShouldBeTrue();
+        sessions.Transcript.IsOpen.ShouldBeFalse();
+        Described().ShouldContain("Last response");
+    }
+
+    [Fact]
     public void ANarrowSessionsPageDropsItsOptionalColumnsForTheSessionColumn()
     {
         using var vessel = new RgbaImageRenderer(1, 1);

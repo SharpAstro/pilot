@@ -186,6 +186,13 @@ if (feed is not null && client is not null)
         Console.WriteLine($"pilot-gui: say to {line.Name}: {result}");
         loop.RequestRedraw();
     };
+    // The Sessions page's transcript pane reads the node's transcript route, and follows it while open.
+    view.Transcript.Load = async (rowId, after, ct) =>
+    {
+        var envelope = await client.GetTranscriptAsync(rowId, after, ct);
+        return envelope is { Success: true, Response: { } page } ? page : throw new InvalidOperationException(envelope.Error);
+    };
+    view.Transcript.Changed = loop.RequestRedraw;
     // The Sessions page's archive buttons: a verb on the node, its answer under the say bar.
     view.OnAction = action => tracker.Run(async () =>
     {

@@ -109,6 +109,9 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// <summary>The selected session's name, which the say bar names as its target.</summary>
     private string? SayTarget => Selected >= 0 && Selected < _lines.Count ? _lines[Selected].Name : null;
 
+    /// <summary>The open session's transcript, shown in place of the table: double-click a row, Enter, or Open transcript.</summary>
+    public TranscriptPane Transcript { get; } = new();
+
     /// <summary>Whether archived sessions are listed too; off by default, the header's toggle flips it.</summary>
     public bool ShowArchived { get; set; }
 
@@ -217,6 +220,17 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     public override bool HandleInput(InputEvent evt)
     {
+        // Enter opens the selected session's transcript; Escape goes back to the table.
+        if (evt is InputEvent.KeyDown { Key: InputKey.Enter } && !Transcript.IsOpen && Selected >= 0 && Selected < _lines.Count && Transcript.Load is not null)
+        {
+            Transcript.Open(_lines[Selected]);
+            return true;
+        }
+        if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && Transcript.IsOpen)
+        {
+            Transcript.Close();
+            return true;
+        }
         if (evt is not InputEvent.KeyDown key || !HandleListKey(key.Key, key.Modifiers))
         {
             return false;
@@ -232,8 +246,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// <summary>The whole screen as one tree: header, then the main area, then the say bar when there is a node.</summary>
     internal Layout.Node Build(SessionsScreen screen) =>
         (CanSay
-            ? Layout.Builder.VStack(Header(screen), Main(screen).HStar(), SayBar())
-            : Layout.Builder.VStack(Header(screen), Main(screen).HStar()))
+            ? Layout.Builder.VStack(Header(screen), Page(screen).HStar(), SayBar())
+            : Layout.Builder.VStack(Header(screen), Page(screen).HStar()))
             .Bg(Ground)
             .Stretch();
 
@@ -269,9 +283,18 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .Bg(HeaderBg)
             .RowH(HeaderHeight);
 
-    // Archive every ended session, and show or hide the archived ones: only while there is something for them to do.
+    // The table, or the open session's transcript in its place.
+    private Layout.Node Page(SessionsScreen screen) => Transcript.IsOpen ? Transcript.Tree() : Main(screen);
+
+    // Open the selected session's transcript; archive every ended session, and show or hide the archived ones: each only
+    // while there is something for it to do.
     private IEnumerable<Layout.Node> HeaderButtons()
     {
+        if (!Transcript.IsOpen && Transcript.Load is not null && Selected >= 0 && Selected < _lines.Count)
+        {
+            var line = _lines[Selected];
+            yield return CardsView<TSurface>.Pill("Open transcript", "sessions:open-transcript", () => Transcript.Open(line));
+        }
         if (_endedCount > 0 && OnAction is { } act)
         {
             yield return CardsView<TSurface>.Pill($"Archive ended ({_endedCount})", "sessions:archive-ended",
@@ -356,7 +379,15 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .RowH(RowHeight)
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
-            .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index));
+            .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index))
+            .DoubleClickable(_ =>
+            {
+                Select(index);
+                if (Transcript.Load is not null)
+                {
+                    Transcript.Open(line);
+                }
+            });
 
         // The selection stated as a background too: a terminal paints no focus of its own, and on pixels it is the focus colour.
         return index == Selected ? row.Bg(RowFocusBg) : (index & 1) == 1 ? row.Bg(RowAltBg) : row;
