@@ -96,6 +96,19 @@ public sealed class NodeClient : IDisposable
             : throw new HttpRequestException($"The node did not say what it is: {envelope?.Error}");
     }
 
+    /// <summary>A session's transcript: the entries after <paramref name="after"/>, or its last ones for a negative one.</summary>
+    public Task<ResponseEnvelope<TranscriptPage>> GetTranscriptAsync(string rowId, int after, CancellationToken cancellationToken) =>
+        GetEnvelopeAsync($"{NodeWire.TranscriptRoute(rowId)}?after={after.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+            PilotJsonContext.Default.ResponseEnvelopeTranscriptPage, cancellationToken);
+
+    /// <summary><c>GET /api/v1/repos</c>: the repos a flight can be made in.</summary>
+    public Task<ResponseEnvelope<RepoInfo[]>> GetReposAsync(CancellationToken cancellationToken) =>
+        GetEnvelopeAsync(NodeWire.ReposRoute, PilotJsonContext.Default.ResponseEnvelopeRepoInfoArray, cancellationToken);
+
+    /// <summary><c>GET /api/v1/repos/issues?path=</c>: the open issues of the repo checked out at <paramref name="path"/>.</summary>
+    public Task<ResponseEnvelope<IssueInfo[]>> GetIssuesAsync(string path, CancellationToken cancellationToken) =>
+        GetEnvelopeAsync($"{NodeWire.IssuesRoute}?path={Uri.EscapeDataString(path)}", PilotJsonContext.Default.ResponseEnvelopeIssueInfoArray, cancellationToken);
+
     /// <summary><c>GET /api/v1/sessions</c>: every session row as of now, newest start first.</summary>
     public async Task<SessionRow[]> GetSessionsAsync(CancellationToken cancellationToken)
     {

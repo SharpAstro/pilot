@@ -61,12 +61,18 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private const float LastWidth = 120f;
     private const float StateWidth = 160f;
     private const float SpendWidth = 160f;
+    private const float ActWidth = 84f;
+
+    // The room the Session column keeps for a role and a name ("worker · ORB204 / parser"): the optional columns drop
+    // before it gives any of it up.
+    private const float SessionMin = 200f;
 
     private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
     private static readonly RGBAColor32 HeaderBg = new(0x1b, 0x1c, 0x24, 0xff);
     private static readonly RGBAColor32 RowAltBg = new(0x16, 0x17, 0x1e, 0xff);
     private static readonly RGBAColor32 RowHoverBg = new(0x22, 0x24, 0x2e, 0xff);
     private static readonly RGBAColor32 RowFocusBg = new(0x26, 0x33, 0x4a, 0xff);
+    private static readonly RGBAColor32 MenuBg = new(0x1f, 0x21, 0x2b, 0xff);
     private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
     private static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
     private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
@@ -79,15 +85,12 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private static readonly RGBAColor32 Failed = new(0xe0, 0x5a, 0x5a, 0xff);
     private static readonly RGBAColor32 Low = new(0x5a, 0x8f, 0xd8, 0xff);
 
-    /// <summary>
-    /// Below this width (design units) the table drops its Last response and Spend columns, so the Session column keeps
-    /// room for the role and the session name: with every column it is the width less ~880, so ~320 here.
-    /// </summary>
-    private const float WideWidth = 1200f;
+    // Model, Last response, Spend and the archive button are the columns a narrow window drops, each as it can no longer
+    // have its whole width (Optional), so the Session column keeps its SessionMin for the role and the name. The engine
+    // decides, from the room it has; no width is measured here.
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
     private IReadOnlyList<SessionLine> _lines = [];
-    private bool _wide = true;
 
     /// <summary>The selected row's index into <see cref="SessionsScreen.Lines"/>, or -1 with none.</summary>
     public int Selected => ListCursor.ListId == ListId ? ListCursor.Index : -1;
@@ -107,6 +110,38 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// <summary>The selected session's name, which the say bar names as its target.</summary>
     private string? SayTarget => Selected >= 0 && Selected < _lines.Count ? _lines[Selected].Name : null;
 
+    /// <summary>The open session's transcript, shown in place of the table: double-click a row, Enter, or Open transcript.</summary>
+    public TranscriptPane Transcript { get; } = new();
+
+    /// <summary>A row's right-click menu: what can be done with that session, each entry its own action.</summary>
+    private readonly DropdownMenuState<string> _menu = new();
+    private RectF32 _menuAt;
+
+    /// <summary>Opens a session's folder the platform's way (a file manager); the menu's Open its folder.</summary>
+    public Action<string>? OnOpen { get; set; }
+
+    /// <summary>Opens the new-flight wizard with a repo chosen (by its name): the menu's New flight in it.</summary>
+    public Action<string>? OnNewFlight { get; set; }
+
+    /// <summary>Puts text on the clipboard; the menu's Copy entries. Null where the host has no clipboard.</summary>
+    public Action<string>? CopyText { get; set; }
+
+    /// <summary>Whether a row's right-click menu is open.</summary>
+    public bool MenuOpen => _menu.IsOpen;
+
+    /// <summary>The open menu's entries, in order.</summary>
+    public IReadOnlyList<DropdownItem<string>> MenuItems => _menu.Items;
+
+    /// <summary>Whether archived sessions are listed too; off by default, the header's toggle flips it.</summary>
+    public bool ShowArchived { get; set; }
+
+    /// <summary>Runs a button's verb on the node (archive one, archive every ended one, bring one back).</summary>
+    public Action<FlightAction>? OnAction { get; set; }
+
+    // What the header says about what is left out, and what Archive ended would put away; set by Tree.
+    private int _archivedCount;
+    private int _endedCount;
+
     /// <summary>Called with the selected session's line and the text when Enter is pressed in the say bar.</summary>
     public Func<SessionLine, string, Task>? OnSay { get; set; }
 
@@ -120,16 +155,22 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     public void Render(SessionsScreen screen, RectF32 bounds)
     {
         BeginFrame();
-        RenderLayout(Tree(screen, bounds.Width / Math.Max(DpiScale, 0.1f)), bounds);
+        RenderLayout(Tree(screen), bounds);
     }
 
     /// <summary>
-    /// The page as a tree, for <paramref name="width"/> design units: what <see cref="Render"/> paints, and what pilot-tui
-    /// arranges in cells.
+    /// The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells. Whatever room it gets, the
+    /// engine fits it: the optional columns drop as they can no longer be whole.
     /// </summary>
-    internal Layout.Node Tree(SessionsScreen screen, float width)
+    internal Layout.Node Tree(SessionsScreen screen)
     {
-        _wide = width >= WideWidth;
+        // Archived rows are left out unless asked for: the selection and the count follow what is shown.
+        _archivedCount = screen.Lines.Count(l => l.Row.Archived);
+        _endedCount = screen.Lines.Count(l => !l.Row.Archived && l.Row.State is Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed);
+        if (!ShowArchived && _archivedCount > 0)
+        {
+            screen = screen with { Lines = [.. screen.Lines.Where(l => !l.Row.Archived)] };
+        }
         _lines = screen.Lines;
         if (screen.Lines.Count == 0)
         {
@@ -199,6 +240,17 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     public override bool HandleInput(InputEvent evt)
     {
+        // Enter opens the selected session's transcript; Escape goes back to the table.
+        if (evt is InputEvent.KeyDown { Key: InputKey.Enter } && !Transcript.IsOpen && Selected >= 0 && Selected < _lines.Count && Transcript.Load is not null)
+        {
+            Transcript.Open(_lines[Selected]);
+            return true;
+        }
+        if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && Transcript.IsOpen)
+        {
+            Transcript.Close();
+            return true;
+        }
         if (evt is not InputEvent.KeyDown key || !HandleListKey(key.Key, key.Modifiers))
         {
             return false;
@@ -211,13 +263,71 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         return true;
     }
 
-    /// <summary>The whole screen as one tree: header, then the main area, then the say bar when there is a node.</summary>
-    internal Layout.Node Build(SessionsScreen screen) =>
-        (CanSay
-            ? Layout.Builder.VStack(Header(screen), Main(screen).HStar(), SayBar())
-            : Layout.Builder.VStack(Header(screen), Main(screen).HStar()))
+    /// <summary>The whole screen as one tree: header, then the main area, then the say bar when there is a node; a row's
+    /// menu over it while open.</summary>
+    internal Layout.Node Build(SessionsScreen screen)
+    {
+        var page = (CanSay
+                ? Layout.Builder.VStack(Header(screen), Page(screen).HStar(), SayBar())
+                : Layout.Builder.VStack(Header(screen), Page(screen).HStar()))
             .Bg(Ground)
             .Stretch();
+        return _menu.IsOpen
+            ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg))
+            : page;
+    }
+
+    /// <summary>
+    /// Opens <paramref name="line"/>'s menu where it was right-clicked, the row selected: open its transcript, say something
+    /// to it, archive or restore it, open its folder, copy its session id. Each entry is only there while it can be done.
+    /// </summary>
+    public void OpenMenu(SessionLine line, int index, PointerPress at)
+    {
+        Select(index);
+        var row = line.Row;
+        var ended = row.State is Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed;
+        var target = Pilot.Contracts.Verbs.SessionTarget(row.Id);
+        var items = new List<DropdownItem<string>>();
+        if (Transcript.Load is not null)
+        {
+            items.Add(new DropdownItem<string>("Open transcript", "transcript") { OnChoose = () => Transcript.Open(line) });
+        }
+        if (CanSay)
+        {
+            items.Add(new DropdownItem<string>($"Say to {line.Name}…", "say") { OnChoose = () => Ui.Focus.Focus(SayInput) });
+        }
+        if (OnAction is { } stop && row.Kind == Pilot.Contracts.SessionKind.Background && !ended)
+        {
+            items.Add(new DropdownItem<string>("Stop", "stop") { OnChoose = () => stop(new FlightAction($"stop {line.Name}", Pilot.Contracts.Verbs.Stop, target, [])) });
+        }
+        if (OnNewFlight is { } newFlight && row.Repo is { Length: > 0 } repo)
+        {
+            items.Add(new DropdownItem<string>($"New flight in {repo}…", "new-flight") { OnChoose = () => newFlight(repo) });
+        }
+        if (OnAction is { } act && ended)
+        {
+            items.Add(row.Archived
+                ? new DropdownItem<string>("Restore", "restore") { OnChoose = () => act(new FlightAction($"restore {line.Name}", Pilot.Contracts.Verbs.Archive, target, ["undo"])) }
+                : new DropdownItem<string>("Archive", "archive") { OnChoose = () => act(new FlightAction($"archive {line.Name}", Pilot.Contracts.Verbs.Archive, target, [])) });
+        }
+        if (OnOpen is { } open && row.Cwd.Length > 0)
+        {
+            items.Add(new DropdownItem<string>("Open its folder", "folder") { OnChoose = () => open(row.Cwd) });
+        }
+        if (CopyText is { } copy)
+        {
+            items.Add(new DropdownItem<string>("Copy session id", "copy-id") { OnChoose = () => copy(row.SessionId) });
+            items.Add(new DropdownItem<string>("Copy its folder", "copy-folder") { OnChoose = () => copy(row.Cwd) });
+        }
+        if (items.Count == 0)
+        {
+            return;
+        }
+        _menu.Items = [.. items];
+        // Hung where the press was, a point: the menu is as wide as its widest entry, measured, and kept on screen.
+        _menuAt = new RectF32(at.X, at.Y, 0f, 0f);
+        _menu.IsOpen = true;
+    }
 
     // The target sits beside the field, not only in its placeholder: the field holds the keyboard from the first frame,
     // and a focused field hides its placeholder.
@@ -235,13 +345,14 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .Bg(HeaderBg)
             .RowH(SayBarHeight);
 
-    private static Layout.Node Header(SessionsScreen screen) =>
+    private Layout.Node Header(SessionsScreen screen) =>
         Layout.Builder.VStack(
-                Layout.Builder.HStack(
+                Layout.Builder.HStack([
                         Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
                         Layout.Builder.Text("sessions", 20f, Dim).WAuto(),
                         Layout.Builder.Spacer().WStar(),
-                        Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto())
+                        Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
+                        .. HeaderButtons()])
                     .WithGap(12f)
                     .RowH(32f),
                 Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC{(screen.Usage is { } usage ? $" · usage {usage}" : "")}", 12f, Dim)
@@ -249,6 +360,30 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .Pad(Gutter, 6f)
             .Bg(HeaderBg)
             .RowH(HeaderHeight);
+
+    // The table, or the open session's transcript in its place.
+    private Layout.Node Page(SessionsScreen screen) => Transcript.IsOpen ? Transcript.Tree() : Main(screen);
+
+    // Open the selected session's transcript; archive every ended session, and show or hide the archived ones: each only
+    // while there is something for it to do.
+    private IEnumerable<Layout.Node> HeaderButtons()
+    {
+        if (!Transcript.IsOpen && Transcript.Load is not null && Selected >= 0 && Selected < _lines.Count)
+        {
+            var line = _lines[Selected];
+            yield return CardsView<TSurface>.Pill("Open transcript", "sessions:open-transcript", () => Transcript.Open(line));
+        }
+        if (_endedCount > 0 && OnAction is { } act)
+        {
+            yield return CardsView<TSurface>.Pill($"Archive ended ({_endedCount})", "sessions:archive-ended",
+                () => act(new FlightAction($"archive {_endedCount} ended", Pilot.Contracts.Verbs.Archive, Pilot.Contracts.Verbs.SessionsTarget, [])));
+        }
+        if (_archivedCount > 0)
+        {
+            yield return CardsView<TSurface>.Pill(ShowArchived ? "Hide archived" : $"Show archived ({_archivedCount})", "sessions:show-archived",
+                () => ShowArchived = !ShowArchived);
+        }
+    }
 
     private Layout.Node Main(SessionsScreen screen)
     {
@@ -275,19 +410,14 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         var columns = new List<Layout.Node>
         {
             Layout.Builder.Spacer().WFixed(StripeWidth),
-            Label("Session").WStar(),
-            Label("Model").WFixed(ModelWidth),
+            Label("Session").WStar(1f, SessionMin),
+            Optional(Label("Model"), ModelWidth),
             Label("Context").WFixed(ContextWidth),
+            Optional(Label("Last response"), LastWidth),
+            Label("State").WFixed(StateWidth),
+            Optional(Label("Spend"), SpendWidth),
+            Optional(Layout.Builder.Spacer(), ActWidth),
         };
-        if (_wide)
-        {
-            columns.Add(Label("Last response").WFixed(LastWidth));
-        }
-        columns.Add(Label("State").WFixed(StateWidth));
-        if (_wide)
-        {
-            columns.Add(Label("Spend").WFixed(SpendWidth));
-        }
         return Layout.Builder.HStack([.. columns])
             .WithGap(ColumnGap)
             .PadX(8f)
@@ -295,6 +425,12 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     }
 
     private static Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);
+
+    /// <summary>
+    /// A column the page drops on a narrow window: its whole <paramref name="width"/> while there is room, gone once the
+    /// engine could give it less. Header and rows both say it, so they drop together.
+    /// </summary>
+    private static Layout.Node Optional(Layout.Node cell, float width) => cell.WStar(1f, 0f, width).CollapseBelow(width);
 
     private Layout.Node Row(SessionLine line, int index)
     {
@@ -306,30 +442,48 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         var cells = new List<Layout.Node>
         {
             Layout.Builder.Spacer().Bg(stateColor).WFixed(StripeWidth).HStar(),
-            Cell(Layout.Builder.Text(line.Role, 15f, text), Layout.Builder.Text(line.Name, 12f, Dim)).WStar(),
-            Cell(Layout.Builder.Text(line.Model, 14f, body)).WFixed(ModelWidth),
+            Cell(Layout.Builder.Text(line.Role, 15f, text), Layout.Builder.Text(line.Name, 12f, Dim)).WStar(1f, SessionMin),
+            Optional(Cell(Layout.Builder.Text(line.Model, 14f, body)), ModelWidth),
             Metered(line.Context, line.ContextFraction, body).WFixed(ContextWidth),
+            Optional(Cell(Layout.Builder.Text(line.LastResponse, 14f, body)), LastWidth),
+            Cell(Layout.Builder.Text(line.State, 14f, stateColor),
+                line.WaitingFor is { } waitingFor ? Layout.Builder.Text(waitingFor, 11f, Dim) : null).WFixed(StateWidth),
+            Optional(Metered(line.Spend, line.SpendFraction, body), SpendWidth),
+            Optional(Act(line, index), ActWidth),
         };
-        if (_wide)
-        {
-            cells.Add(Cell(Layout.Builder.Text(line.LastResponse, 14f, body)).WFixed(LastWidth));
-        }
-        cells.Add(Cell(Layout.Builder.Text(line.State, 14f, stateColor),
-            line.WaitingFor is { } waitingFor ? Layout.Builder.Text(waitingFor, 11f, Dim) : null).WFixed(StateWidth));
-        if (_wide)
-        {
-            cells.Add(Metered(line.Spend, line.SpendFraction, body).WFixed(SpendWidth));
-        }
         var row = Layout.Builder.HStack([.. cells])
             .WithGap(ColumnGap)
             .Pad(8f, 6f)
             .RowH(RowHeight)
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
-            .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index));
+            .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index))
+            .WithContextMenu(at => OpenMenu(line, index, at))
+            .DoubleClickable(_ =>
+            {
+                Select(index);
+                if (Transcript.Load is not null)
+                {
+                    Transcript.Open(line);
+                }
+            });
 
         // The selection stated as a background too: a terminal paints no focus of its own, and on pixels it is the focus colour.
         return index == Selected ? row.Bg(RowFocusBg) : (index & 1) == 1 ? row.Bg(RowAltBg) : row;
+    }
+
+    /// <summary>The selected ended session's button: Archive it, or Restore one archived; nothing on any other row.</summary>
+    private Layout.Node Act(SessionLine line, int index)
+    {
+        if (index != Selected || OnAction is not { } act
+            || line.Row.State is not (Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed))
+        {
+            return Layout.Builder.Spacer();
+        }
+        var target = Pilot.Contracts.Verbs.SessionTarget(line.Row.Id);
+        return Cell(line.Row.Archived
+            ? CardsView<TSurface>.Pill("Restore", $"session:{line.Row.Id}:restore", () => act(new FlightAction($"restore {line.Name}", Pilot.Contracts.Verbs.Archive, target, ["undo"])))
+            : CardsView<TSurface>.Pill("Archive", $"session:{line.Row.Id}:archive", () => act(new FlightAction($"archive {line.Name}", Pilot.Contracts.Verbs.Archive, target, []))));
     }
 
     /// <summary>

@@ -184,6 +184,118 @@ public sealed class FlyingTests
         chrome.Flights.CommandInput.Text.ShouldBe("connect 192.168.1.20:47731");
     }
 
+    [Fact]
+    public async Task TheWizardMakesAFlightPerRepoInTheOrderTheyWerePickedWithTheirIssues()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        var flights = chrome.Flights;
+        flights.CanCommand = true;
+        RepoInfo[] repos =
+        [
+            new() { Name = "tianwen", Path = @"C:\src\tianwen", GitHub = "SharpAstro/tianwen", Flights = 3 },
+            new() { Name = "DIR.Lib", Path = @"C:\src\DIR.Lib", GitHub = "SharpAstro/DIR.Lib" },
+        ];
+        var issues = new Dictionary<string, IssueInfo[]>
+        {
+            [@"C:\src\tianwen"] = [new() { Number = 1611, Title = "GPU stacking" }],
+            [@"C:\src\DIR.Lib"] = [new() { Number = 140, Title = "A compute pass" }, new() { Number = 141, Title = "Fonts" }],
+        };
+        IReadOnlyList<NewFlightPick>? made = null;
+        flights.Wizard.LoadRepos = _ => Task.FromResult(repos);
+        flights.Wizard.LoadIssues = (path, _) => Task.FromResult(issues[path]);
+        flights.Wizard.Create = picks =>
+        {
+            made = picks;
+            return Task.FromResult("made DIR140, TIA1611");
+        };
+        chrome.Show(PilotPage.Flights);
+
+        void Click(string action)
+        {
+            chrome.Render(new SessionsScreen([], "test", Live.At), new FlightsScreen([], "test", Live.At), new RectF32(0, 0, 1280, 800));
+            var regions = new List<ClickableRegion>();
+            flights.CollectPaintedRegions(regions);
+            var at = regions.FindIndex(r => r.Result is HitResult.ButtonHit hit && hit.Action == action);
+            at.ShouldBeGreaterThanOrEqualTo(0, $"no {action} among {string.Join(", ", regions.Select(r => r.Result))}");
+            regions[at].OnClick!.Invoke(InputModifier.None);
+        }
+
+        Click("flights:new");
+        flights.Wizard.IsOpen.ShouldBeTrue();
+        // The library first: the app's flight waits for it.
+        Click("wizard:repo:DIR.Lib");
+        Click("wizard:repo:tianwen");
+        Click("wizard:next");
+        Click("wizard:issue:140");
+        Click("wizard:issue:1611");
+        flights.Wizard.Current.ShouldBe(NewFlightWizard.Step.Review);
+        Click("wizard:create");
+        await Task.Yield();
+
+        made.ShouldNotBeNull().Select(p => (p.Repo.Name, p.Issue.Number)).ShouldBe([("DIR.Lib", 140), ("tianwen", 1611)]);
+        flights.Wizard.IsOpen.ShouldBeFalse();
+        flights.Wizard.Status.ShouldBe("made DIR140, TIA1611");
+    }
+
+    [Fact]
+    public void TheWizardIsFlownByTheKeyboardAlone()
+    {
+        var wizard = new NewFlightWizard
+        {
+            LoadRepos = _ => Task.FromResult<RepoInfo[]>([
+                new() { Name = "AppShell", Path = @"C:\src\AppShell" },
+                new() { Name = "DIR.Lib", Path = @"C:\src\DIR.Lib" },
+                new() { Name = "Node.Lib", Path = @"C:\src\Node.Lib" },
+                new() { Name = "tianwen", Path = @"C:\src\tianwen" }]),
+            LoadIssues = (_, _) => Task.FromResult<IssueInfo[]>([new() { Number = 140, Title = "A compute pass" }, new() { Number = 141, Title = "Fonts" }]),
+        };
+        var focus = new TextInputFocus();
+        var tracker = new BackgroundTaskTracker();
+        TextInputInteraction.KeyContext Keys() => new(tracker, focus, () => { }, ActiveSearch: wizard.ActiveSearch);
+        void Type(TextInputState input, string text)
+        {
+            foreach (var c in text)
+            {
+                TextInputInteraction.HandleText(input, c.ToString());
+            }
+        }
+        void Press(InputKey key, InputModifier modifiers = InputModifier.None)
+        {
+            if (!(key is InputKey.Up or InputKey.Down && wizard.ActiveSearch?.HandleNavKey(key) == true))
+            {
+                TextInputInteraction.HandleKey(key, modifiers, Keys());
+            }
+        }
+
+        wizard.Open();
+        focus.Focus(wizard.RepoFilter);
+        // "lib" leaves DIR.Lib and Node.Lib, the first highlighted; Down moves to Node.Lib, Enter chooses it.
+        Type(wizard.RepoFilter, "lib");
+        wizard.RepoResults.Select(r => r.Name).ShouldBe(["DIR.Lib", "Node.Lib"]);
+        Press(InputKey.Down);
+        Press(InputKey.Enter);
+        wizard.Chosen.Select(r => r.Name).ShouldBe(["Node.Lib"]);
+        wizard.GoOn();
+        wizard.Current.ShouldBe(NewFlightWizard.Step.Issues);
+
+        focus.Focus(wizard.IssueFilter);
+        Press(InputKey.Down);
+        Press(InputKey.Enter);
+        wizard.Current.ShouldBe(NewFlightWizard.Step.Review);
+        wizard.Picks.ShouldHaveSingleItem().Issue.Number.ShouldBe(141);
+
+        // Escape goes back a step at a time, and out from the repos.
+        wizard.Back();
+        wizard.Current.ShouldBe(NewFlightWizard.Step.Issues);
+        focus.Focus(wizard.IssueFilter);
+        Press(InputKey.Escape);
+        wizard.Current.ShouldBe(NewFlightWizard.Step.Repos);
+        focus.Focus(wizard.RepoFilter);
+        Press(InputKey.Escape);
+        wizard.IsOpen.ShouldBeFalse();
+    }
+
     /// <summary>Records compare their array by reference.</summary>
     private sealed class FlightActionComparer : IEqualityComparer<FlightAction>
     {

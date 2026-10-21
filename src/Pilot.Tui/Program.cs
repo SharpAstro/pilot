@@ -72,12 +72,35 @@ _ = Task.Run(async () =>
         flights.Say($"the LAN cannot be watched: {ex.Message}");
     }
 });
+flights.Wizard.LoadRepos = async ct => (await client.GetReposAsync(ct)) is { Success: true, Response: { } repos }
+    ? repos
+    : throw new InvalidOperationException("the node did not list its repos");
+flights.Wizard.LoadIssues = async (path, ct) => (await client.GetIssuesAsync(path, ct)) is { Success: true, Response: { } issues }
+    ? issues
+    : throw new InvalidOperationException("the node could not list the issues");
+flights.Wizard.Create = async picks =>
+{
+    var said = await NewFlights.CreateAsync(client, picks, Who, stop.Token);
+    flights.Say(said);
+    return said;
+};
+flights.Wizard.Changed = Redraw;
 flights.OnAction = action => _ = Task.Run(async () =>
 {
     flights.Say(await DashboardCommands.ActAsync(client, action, Who, stop.Token));
     Redraw();
 });
 flights.OnOpen = location => flights.Say(DashboardCommands.Open(location) ? $"opened {location}" : $"could not open {location}");
+sessions.Transcript.Load = async (rowId, after, ct) => (await client.GetTranscriptAsync(rowId, after, ct)) is { Success: true, Response: { } page }
+    ? page
+    : throw new InvalidOperationException("the node has no transcript for this session");
+sessions.Transcript.Changed = Redraw;
+sessions.OnOpen = folder => DashboardCommands.Open(folder);
+sessions.OnAction = action => _ = Task.Run(async () =>
+{
+    sessions.SayStatus = await DashboardCommands.ActAsync(client, action, Who, stop.Token);
+    Redraw();
+});
 sessions.OnSay = async (line, text) =>
 {
     var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(line.Row.Id), Args = [text], Who = Who }, stop.Token);
@@ -113,6 +136,12 @@ terminal.EnterAlternateScreen();
 terminal.EnableCellBuffer();
 
 var page = PilotPage.Sessions;
+// The session menu's New flight in its repo: the Flights page, with the wizard open on it.
+sessions.OnNewFlight = repo =>
+{
+    page = PilotPage.Flights;
+    flights.Wizard.Open(repo);
+};
 var arranged = System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>>.Empty;
 var drawnVersion = -1L;
 var drawnAt = DateTimeOffset.MinValue;
@@ -133,7 +162,7 @@ while (!stop.IsCancellationRequested)
         var (columns, rows) = terminal.Size;
         // Design units per cell, as CellMeasureContext.PixelAuthored counts them: the trees are the GUI's.
         var width = columns * 8f;
-        var pageTree = page == PilotPage.Flights ? flights.Tree(feed.Flights(now), width) : sessions.Tree(feed.Screen(now), width);
+        var pageTree = page == PilotPage.Flights ? flights.Tree(feed.Flights(now)) : sessions.Tree(feed.Screen(now));
         var cardsScreen = feed.Cards();
         flights.Jobs = feed.Jobs();
         // The panel takes 38 columns (the GUI's 300 units) when there is room beside a usable page, and something to show.
@@ -158,7 +187,8 @@ void Handle(ConsoleInputEvent raw)
 {
     var evt = raw.ToInputEvent;
     var fields = () => (IReadOnlyList<TextInputState>)CellLayout.TextInputs(arranged);
-    var context = new TextInputInteraction.KeyContext(tracker, focus, Redraw, TabFields: fields);
+    var context = new TextInputInteraction.KeyContext(tracker, focus, Redraw,
+        ActiveSearch: page == PilotPage.Flights ? flights.Wizard.ActiveSearch : null, TabFields: fields);
     Redraw();
 
     // A click: the arranged tree answers, as the window's regions do; a field's click focuses it.
@@ -208,6 +238,9 @@ void Handle(ConsoleInputEvent raw)
             break;
         case InputEvent.KeyDown(InputKey.T, InputModifier.Ctrl):
             focus.Focus(cards.TellInput);
+            break;
+        case InputEvent.KeyDown(InputKey.Enter, InputModifier.Ctrl) when page == PilotPage.Flights && flights.Wizard.IsOpen:
+            flights.Wizard.GoOn();
             break;
         case InputEvent.KeyDown key:
             // Up and Down move the page's selection, as in the window.

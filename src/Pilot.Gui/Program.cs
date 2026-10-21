@@ -151,7 +151,13 @@ var loop = new SdlEventLoop(window, renderer) { BackgroundColor = new RGBAColor3
 var router = new InputRouter(view.Ui, tracker, loop.RequestRedraw)
 {
     Widgets = () => chrome.Widgets,
-    Unhandled = view.HandleInput,
+    // A key nothing painted took goes to the page shown, as a tab's own HandleInput does in tianwen.
+    Unhandled = evt => chrome.Page == PilotPage.Flights ? chrome.Flights.HandleInput(evt) : view.HandleInput(evt),
+    // The system clipboard, for the text fields' copy and paste and the menus' Copy entries.
+    GetClipboardText = GetClipboardText,
+    SetClipboardText = text => SetClipboardText(text),
+    // The new-flight wizard's search boxes take Up and Down while they have the keyboard.
+    ActiveSearch = () => chrome.Page == PilotPage.Flights ? chrome.Flights.Wizard.ActiveSearch : null,
 };
 
 // The platform's text input follows the field that has the keyboard, as tianwen's GUI binds it: once, here.
@@ -186,6 +192,28 @@ if (feed is not null && client is not null)
         Console.WriteLine($"pilot-gui: say to {line.Name}: {result}");
         loop.RequestRedraw();
     };
+    // The Sessions page's transcript pane reads the node's transcript route, and follows it while open.
+    view.Transcript.Load = async (rowId, after, ct) =>
+    {
+        var envelope = await client.GetTranscriptAsync(rowId, after, ct);
+        return envelope is { Success: true, Response: { } page } ? page : throw new InvalidOperationException(envelope.Error);
+    };
+    view.Transcript.Changed = loop.RequestRedraw;
+    // The session menu's folder and copy entries.
+    view.OnOpen = folder => DashboardCommands.Open(folder);
+    view.OnNewFlight = repo =>
+    {
+        chrome.Show(PilotPage.Flights);
+        chrome.Flights.Wizard.Open(repo);
+    };
+    view.CopyText = text => SetClipboardText(text);
+    // The Sessions page's archive buttons: a verb on the node, its answer under the say bar.
+    view.OnAction = action => tracker.Run(async () =>
+    {
+        view.SayStatus = await DashboardCommands.ActAsync(client, action, GuiSay.Who, cts.Token);
+        Console.WriteLine($"pilot-gui: {view.SayStatus}");
+        loop.RequestRedraw();
+    }, "a Sessions action");
     // A card's button is a command on the node, as a click anywhere else is; the stream closes the card.
     async Task CardCommandAsync(string verb, CardRow card, string[] args)
     {
@@ -247,6 +275,22 @@ if (feed is not null && client is not null)
         Console.WriteLine($"pilot-gui: command `{line}`: {said.ReplaceLineEndings(" / ")}");
         loop.RequestRedraw();
     };
+    // The new-flight wizard reads the node's repos and issues, and its Create makes the flights through the node.
+    var wizard = chrome.Flights.Wizard;
+    wizard.LoadRepos = async ct => (await client.GetReposAsync(ct)) is { Success: true, Response: { } repos }
+        ? repos
+        : throw new InvalidOperationException("the node did not list its repos");
+    wizard.LoadIssues = async (path, ct) => (await client.GetIssuesAsync(path, ct)) is { Success: true, Response: { } issues }
+        ? issues
+        : throw new InvalidOperationException("the node could not list the issues");
+    wizard.Create = async picks =>
+    {
+        var said = await NewFlights.CreateAsync(client, picks, GuiSay.Who, cts.Token);
+        chrome.Flights.Say(said);
+        Console.WriteLine($"pilot-gui: new flight: {said}");
+        return said;
+    };
+    wizard.Changed = loop.RequestRedraw;
     chrome.Flights.OnAction = action => tracker.Run(async () =>
     {
         var said = await DashboardCommands.ActAsync(client, action, GuiSay.Who, cts.Token);

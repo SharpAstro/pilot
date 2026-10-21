@@ -177,6 +177,32 @@ public static class Verbs
     /// </summary>
     public const string Update = "update";
 
+    /// <summary>
+    /// <c>plan-flight flight/&lt;code&gt;</c>: a planner worker, <c>&lt;machine&gt;-&lt;flight&gt;-plan</c>, in the flight's plane:
+    /// it reads the issue and the code and plans the legs (<c>plan-leg</c>), then says <c>planned</c>.
+    /// </summary>
+    public const string PlanFlight = "plan-flight";
+
+    /// <summary>
+    /// <c>planned flight/&lt;code&gt; &lt;summary…&gt;</c>: the planner is done; a card offers the first leg's start.
+    /// </summary>
+    public const string Planned = "planned";
+
+    /// <summary>
+    /// <c>stop session/&lt;id&gt;</c>: stops a running background session (<c>claude stop</c>); its row ends. An interactive
+    /// one is refused: someone is at it.
+    /// </summary>
+    public const string Stop = "stop";
+
+    /// <summary>
+    /// <c>archive session/&lt;id&gt; [undo]</c>: puts an ended session away, out of the lists; <c>archive sessions</c> does
+    /// it to every ended one. <c>undo</c> brings it (or them) back.
+    /// </summary>
+    public const string Archive = "archive";
+
+    /// <summary>Every session, as a target: <c>archive sessions</c>.</summary>
+    public const string SessionsTarget = "sessions";
+
     /// <summary><c>tell watchtower &lt;text&gt;</c>: says the text to the node's watchtower, whichever session it is now.</summary>
     public const string Tell = "tell";
 

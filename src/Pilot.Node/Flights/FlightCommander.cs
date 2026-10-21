@@ -8,7 +8,8 @@ namespace Pilot.Node.Flights;
 /// state's lock, one at a time (two creates must not claim one code), and puts its result on the stream when done.
 /// </summary>
 /// <param name="workers">Stops the flight's sessions before its plane goes; null in a test that starts none.</param>
-public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider time, IWorkerLauncher? workers = null)
+/// <param name="github">Gives a flight made without a title its issue's; null in a test that names its titles.</param>
+public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider time, IWorkerLauncher? workers = null, IGitHub? github = null)
 {
     private readonly SemaphoreSlim _one = new(1, 1);
 
@@ -21,12 +22,13 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         try
         {
             string? error = null;
+            string? made = null;
             try
             {
                 switch (command.Verb)
                 {
                     case Verbs.CreateFlight:
-                        await CreateAsync(command, cancellationToken);
+                        made = await CreateAsync(command, cancellationToken);
                         break;
                     case Verbs.Connect:
                         Connect(command);
@@ -40,7 +42,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             {
                 error = ex.Message;
             }
-            return state.Complete(command, error);
+            return state.Complete(command, error, made: made);
         }
         finally
         {
@@ -48,7 +50,8 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         }
     }
 
-    private async Task CreateAsync(CommandRequest command, CancellationToken cancellationToken)
+    /// <summary>Makes the flight; returns its code, which the result carries as what it made.</summary>
+    private async Task<string> CreateAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         if (!command.Target.StartsWith(Verbs.RepoTargetPrefix, StringComparison.Ordinal) || command.Target.Length == Verbs.RepoTargetPrefix.Length)
         {
@@ -71,6 +74,11 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
 
         var plane = await planes.MakeAsync(repoPath, code, cancellationToken);
         var title = string.Join(' ', args.Skip(1)).Trim();
+        if (title.Length == 0 && github is not null)
+        {
+            // No title given: the issue's own, so the flight reads as what it is about.
+            title = (await github.IssueTitleAsync(plane.RepoPath, issue, cancellationToken))?.Trim() ?? "";
+        }
         state.PutFlight(new FlightRow
         {
             Code = code,
@@ -84,6 +92,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             State = FlightState.Flying,
             CreatedAt = time.GetUtcNow(),
         });
+        return code;
     }
 
     private void Connect(CommandRequest command)

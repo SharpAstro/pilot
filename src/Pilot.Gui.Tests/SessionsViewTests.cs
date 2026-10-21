@@ -20,6 +20,7 @@ public sealed class SessionsViewTests
         "pilot · ORB204 | pilot-12 | Opus 5.5 · high | 213k / 1M · 21% | last response 28m ago | idle | spend 6.4M / 10M · 64%",
         "worker · LIB117 / bump | xy1-lib117-bump | no response yet | 0 / 200k · 0% | last response none yet | failed | spend 0 / 1M · 0%",
         "reviewer · ORB204 / parser | xy1-orb204-review | Opus 5.5 · high | 143k / 200k · 72% | last response 1h 42m ago | ended | spend 1.29M / 2M · 65%",
+        "planner · ORB204 | xy1-orb204-plan | Opus 5.5 · high | 143k / 200k · 72% | last response 1h 42m ago | ended | spend 1.29M / 2M · 65%",
     ];
 
     private static SessionsScreen SampleScreen()
@@ -43,8 +44,8 @@ public sealed class SessionsViewTests
         var view = SessionsCapture.Render(renderer, screen);
 
         SessionsCapture.RowsText(screen).ShouldBe(string.Join('\n', ExpectedRows) + "\n");
-        PaintedRows(view).Select(h => h.Index).Order().ShouldBe([0, 1, 2, 3, 4, 5]);
-        screen.Summary.ShouldBe("6 sessions · 4 live · 1 waiting on you");
+        PaintedRows(view).Select(h => h.Index).Order().ShouldBe([0, 1, 2, 3, 4, 5, 6]);
+        screen.Summary.ShouldBe("7 sessions · 4 live · 1 waiting on you");
     }
 
     [Fact]
@@ -55,7 +56,7 @@ public sealed class SessionsViewTests
         screen.Lines.Select(l => l.Row.State).ShouldBe(
         [
             SessionState.Waiting, SessionState.Working, SessionState.Working, SessionState.Idle,
-            SessionState.Failed, SessionState.Ended,
+            SessionState.Failed, SessionState.Ended, SessionState.Ended,
         ]);
         screen.Lines.TakeWhile(l => l.IsLive).Count().ShouldBe(4);
     }

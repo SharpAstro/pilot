@@ -16,7 +16,7 @@ public sealed class FixtureTests
     {
         var snapshot = JsonSerializer.Deserialize(File.ReadAllText(FixturePath), PilotJsonContext.Default.NodeEvent).ShouldBeOfType<SnapshotEvent>();
 
-        snapshot.Sessions.Length.ShouldBe(6);
+        snapshot.Sessions.Length.ShouldBe(7);
         snapshot.Sessions.Select(s => s.Role).Distinct().Order().ShouldBe(Enum.GetValues<SessionRole>());
         snapshot.Sessions.Select(s => s.State).Distinct().Order().ShouldBe(Enum.GetValues<SessionState>());
         snapshot.Sessions.Select(s => s.Kind).Distinct().Order().ShouldBe(Enum.GetValues<SessionKind>());

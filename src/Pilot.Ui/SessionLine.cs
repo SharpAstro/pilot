@@ -123,6 +123,7 @@ internal sealed partial record SessionLine
         SessionRole.Pilot => "pilot",
         SessionRole.Worker => "worker",
         SessionRole.Reviewer => "reviewer",
+        SessionRole.Planner => "planner",
         SessionRole.Watchtower => "watchtower",
         _ => "ad hoc",
     };

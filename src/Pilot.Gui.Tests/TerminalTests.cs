@@ -38,7 +38,7 @@ public sealed class TerminalTests
         var acted = new List<FlightAction>();
         flights.OnAction = acted.Add;
 
-        var arranged = Layout.Engine.Arrange(flights.Tree(Screen(), 160 * 8f), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
+        var arranged = Layout.Engine.Arrange(flights.Tree(Screen()), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
         var described = CellLayout.Describe(arranged);
 
         described.ShouldContain("TIA1611");
@@ -58,22 +58,76 @@ public sealed class TerminalTests
         using var vessel = new RgbaImageRenderer(1, 1);
         var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)).Flights;
 
-        CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen(), 100 * 8f), new Rect<int>(0, 0, 100, 40), CellMeasureContext.PixelAuthored))
+        CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen()), new Rect<int>(0, 0, 100, 40), CellMeasureContext.PixelAuthored))
             .ShouldNotContain("flight/tia1611");
-        CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen(), 160 * 8f), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored))
+        CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen()), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored))
             .ShouldContain("flight/tia1611");
     }
 
     [Fact]
-    public void ANarrowSessionsPageDropsLastResponseAndSpendForTheSessionColumn()
+    public async Task EnterOpensTheSelectedSessionsTranscriptWhichFollowsItAndEscapeGoesBack()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var sessions = new SessionsView<RgbaImage>(vessel);
+        var screen = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
+        var asked = new List<(string Row, int After)>();
+        sessions.Transcript.Load = (row, after, _) =>
+        {
+            lock (asked)
+            {
+                asked.Add((row, after));
+            }
+            return Task.FromResult(after < 0
+                ? new TranscriptPage
+                {
+                    Total = 3,
+                    Entries =
+                    [
+                        new() { Index = 0, Kind = TranscriptKind.User, Text = "Fix the flaky clock test" },
+                        new() { Index = 1, Kind = TranscriptKind.ToolUse, Tool = "Bash", Text = "dotnet test --filter Clock" },
+                        new() { Index = 2, Kind = TranscriptKind.Error, Text = "1 failed\nClockTests.Ticks" },
+                    ],
+                }
+                : new TranscriptPage { Total = 4, Entries = [new() { Index = 3, Kind = TranscriptKind.Assistant, Text = "Fixed it." }] });
+        };
+        string Described() => CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored));
+        Described();
+
+        sessions.HandleInput(new InputEvent.KeyDown(InputKey.Enter)).ShouldBeTrue();
+        for (var i = 0; i < 100 && sessions.Transcript.Entries.Count < 4; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+
+        sessions.Transcript.IsOpen.ShouldBeTrue();
+        var described = Described();
+        described.ShouldContain("Fix the flaky clock test");
+        described.ShouldContain("Bash");
+        described.ShouldContain("dotnet test --filter Clock");
+        described.ShouldContain("ClockTests.Ticks");
+        described.ShouldContain("Fixed it.");
+        described.ShouldNotContain("Last response");
+        // The first read asked for the last entries; the next only for what came after them.
+        lock (asked)
+        {
+            asked.Take(2).ShouldBe([(screen.Lines[0].Row.Id, -1), (screen.Lines[0].Row.Id, 2)]);
+        }
+
+        sessions.HandleInput(new InputEvent.KeyDown(InputKey.Escape)).ShouldBeTrue();
+        sessions.Transcript.IsOpen.ShouldBeFalse();
+        Described().ShouldContain("Last response");
+    }
+
+    [Fact]
+    public void ANarrowSessionsPageDropsItsOptionalColumnsForTheSessionColumn()
     {
         using var vessel = new RgbaImageRenderer(1, 1);
         var sessions = new SessionsView<RgbaImage>(vessel);
         var screen = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
 
-        var narrow = CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen, 100 * 8f), new Rect<int>(0, 0, 100, 40), CellMeasureContext.PixelAuthored));
+        var narrow = CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 100, 40), CellMeasureContext.PixelAuthored));
         narrow.ShouldContain("Session");
-        narrow.ShouldContain("Model");
+        narrow.ShouldNotContain("Model");
         narrow.ShouldContain("Context");
         narrow.ShouldContain("State");
         narrow.ShouldNotContain("Last response");
@@ -82,7 +136,8 @@ public sealed class TerminalTests
         narrow.ShouldContain("worker · ORB204 / parser");
         narrow.ShouldContain("xy1-orb204-parser");
 
-        var wide = CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen, 160 * 8f), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored));
+        var wide = CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored));
+        wide.ShouldContain("Model");
         wide.ShouldContain("Last response");
         wide.ShouldContain("Spend");
         wide.ShouldContain("Session");

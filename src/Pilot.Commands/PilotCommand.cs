@@ -145,7 +145,14 @@ public static class PilotCommand
         var reviewStart = Action(new Command("review", "Start a fresh reviewer on the flight's branch (flight pr starts one by itself)") { Arguments = { code } },
             (p, client, ct) => SendAsync(client, Verbs.StartReview, Verbs.FlightTarget(p.GetValue(code)!), [], who, output, ct));
 
-        var flight = new Command("flight", "Flights: create, connect, open a PR, review, merge, land") { Subcommands = { create, connect, pr, reviewStart, merge, land } };
+        // plan: a planner worker plans the legs from the issue; planned: what it says when it is done.
+        var planFlight = Action(new Command("plan", "Start a planner in the plane: it reads the issue and the code and plans the legs") { Arguments = { code } },
+            (p, client, ct) => SendAsync(client, Verbs.PlanFlight, Verbs.FlightTarget(p.GetValue(code)!), [], who, output, ct));
+        var plannedSummary = Words("summary", "The plan in a line or two", required: false);
+        var planned = Action(new Command("planned", "The planner is done: a card shows the legs and starts the first") { Arguments = { code, plannedSummary } },
+            (p, client, ct) => SendAsync(client, Verbs.Planned, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(plannedSummary) ?? [], who, output, ct));
+        var flight = new Command("flight", "Flights: create, plan, connect, open a PR, review, merge, land")
+            { Subcommands = { create, planFlight, planned, connect, pr, reviewStart, merge, land } };
 
         // leg
         var name = Arg("name", "The leg's name: lower-case letters, digits and dashes");
@@ -337,6 +344,17 @@ public static class PilotCommand
         var watchtower = new Command("watchtower", "The node's watchtower session") { Subcommands = { restart } };
         var digest = Action(new Command("digest", "The digest now: what landed, what was handled, what is parked"),
             (_, client, ct) => SendAsync(client, Verbs.Digest, Verbs.NodeTarget, [], who, output, ct));
+        // archive: ended sessions put away, out of the lists (or back, with --undo).
+        var archiveSession = new Argument<string?>("session") { Description = "The session's row id; leave it out with --ended", Arity = ArgumentArity.ZeroOrOne };
+        var archiveEnded = new Option<bool>("--ended") { Description = "Every ended session" };
+        var archiveUndo = new Option<bool>("--undo") { Description = "Bring it (or them) back into the lists" };
+        var archive = Action(new Command("archive", "Put an ended session away, out of the lists; --ended does every ended one")
+            { Arguments = { archiveSession }, Options = { archiveEnded, archiveUndo } },
+            (p, client, ct) => p.GetValue(archiveSession) is { } id && !p.GetValue(archiveEnded)
+                ? SendAsync(client, Verbs.Archive, Verbs.SessionTarget(id), p.GetValue(archiveUndo) ? ["undo"] : [], who, output, ct)
+                : p.GetValue(archiveEnded)
+                    ? SendAsync(client, Verbs.Archive, Verbs.SessionsTarget, p.GetValue(archiveUndo) ? ["undo"] : [], who, output, ct)
+                    : throw new UsageException("archive takes a session's row id, or --ended"));
         // update: the node installs the latest release of pilot over the folder it runs from, and restarts.
         var updateCheck = new Option<bool>("--check") { Description = "Only say whether a newer release is out" };
         var updateAdopt = new Option<bool>("--adopt") { Description = "Install the latest release over a build of one's own, which then updates itself" };
@@ -437,7 +455,7 @@ public static class PilotCommand
         return new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node },
-            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, ring, flag, handled, nodes, connectNode, grants },
+            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, archive, ring, flag, handled, nodes, connectNode, grants },
         };
     }
 

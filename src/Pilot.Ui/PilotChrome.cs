@@ -22,8 +22,15 @@ internal enum PilotPage
 /// </remarks>
 internal sealed class PilotChrome<TSurface>
 {
-    // Design units, scaled by DpiScale, as tianwen's rail (BaseSidebarWidth 52).
+    // Design units, as tianwen's rail (BaseSidebarWidth 52); the engine maps them to pixels.
     private const float RailWidth = 52f;
+
+    // The rail's glyph, larger than a label's, as the rail holds a mark and nothing else.
+    private const float RailIconSize = 19.5f;
+
+    private const string RailKey = "rail";
+    private const string PageKey = "page";
+    private const string CardsKey = "cards";
 
     private static readonly RGBAColor32 RailBg = new(0x16, 0x17, 0x1e, 0xff);
     private static readonly RGBAColor32 RailHover = new(0x22, 0x24, 0x2e, 0xff);
@@ -41,8 +48,11 @@ internal sealed class PilotChrome<TSurface>
     private readonly List<TabItem<PilotPage>> _items = [];
     private Action<PilotPage>? _select;
 
+    private readonly Renderer<TSurface> _renderer;
+
     public PilotChrome(Renderer<TSurface> renderer, SessionsView<TSurface> sessions)
     {
+        _renderer = renderer;
         Sessions = sessions;
         Flights = new FlightsView<TSurface>(renderer);
         Cards = new CardsView<TSurface>(renderer);
@@ -122,7 +132,6 @@ internal sealed class PilotChrome<TSurface>
     /// <param name="cards">The cards panel's screen; null draws it empty.</param>
     public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, RectF32 bounds)
     {
-        var rail = RailWidth * DpiScale;
         _items.Clear();
         foreach (var (page, icon, label, shortcut, locked) in Pages)
         {
@@ -148,24 +157,41 @@ internal sealed class PilotChrome<TSurface>
             HoverBackground = RailHover,
             ActiveBackground = RailActive,
         };
-        Rail.IconSize = 15f * 1.3f * DpiScale;
-        Rail.Render(new RectF32(bounds.X, bounds.Y, rail, bounds.Height), _items, Page);
-        // The cards panel takes room only when it has something: the sessions table needs the width more than an
-        // empty "nothing waits on you".
-        var panel = cards is { HasAny: true } ? CardsView<TSurface>.Width * DpiScale : 0f;
-        var area = new RectF32(bounds.X + rail, bounds.Y, bounds.Width - rail - panel, bounds.Height);
-        ShowsCards = panel > 0f;
-        if (panel > 0f)
+        // The tab bar takes its icon in pixels; its own scale maps the design size.
+        Rail.IconSize = Rail.Scale.ToSurface(RailIconSize);
+
+        // The window as a tree: the rail, the page, and the cards panel, which takes room only when it has something
+        // (the sessions table needs the width more than an empty "nothing waits on you"). The engine places them at the
+        // window's scale; each is painted into its own leaf.
+        ShowsCards = cards is { HasAny: true };
+        var tree = ShowsCards
+            ? Layout.Builder.HStack(Layout.Builder.Fill(key: RailKey).ColW(RailWidth), Layout.Builder.Fill(key: PageKey).Stretch(),
+                Layout.Builder.Fill(key: CardsKey).ColW(CardsView<TSurface>.Width))
+            : Layout.Builder.HStack(Layout.Builder.Fill(key: RailKey).ColW(RailWidth), Layout.Builder.Fill(key: PageKey).Stretch());
+        var arranged = Layout.Engine.Arrange(tree.Stretch(), new Rect<float>(bounds.X, bounds.Y, bounds.Width, bounds.Height),
+            new PixelMeasureContext<TSurface>(_renderer, FontPath, DpiScale));
+        foreach (var leaf in arranged)
         {
-            Cards.Render(cards!, new RectF32(bounds.X + bounds.Width - panel, bounds.Y, panel, bounds.Height));
-        }
-        if (Page == PilotPage.Flights)
-        {
-            Flights.Render(flights ?? new FlightsScreen([], screen.Source, screen.AsOf), area);
-        }
-        else
-        {
-            Sessions.Render(screen, area);
+            if (leaf.Node is not Layout.Node.Leaf { Content: Layout.Content.Fill { Key: { } key } })
+            {
+                continue;
+            }
+            var rect = new RectF32(leaf.Bounds.X, leaf.Bounds.Y, leaf.Bounds.Width, leaf.Bounds.Height);
+            switch (key)
+            {
+                case RailKey:
+                    Rail.Render(rect, _items, Page);
+                    break;
+                case CardsKey:
+                    Cards.Render(cards!, rect);
+                    break;
+                case PageKey when Page == PilotPage.Flights:
+                    Flights.Render(flights ?? new FlightsScreen([], screen.Source, screen.AsOf), rect);
+                    break;
+                case PageKey:
+                    Sessions.Render(screen, rect);
+                    break;
+            }
         }
     }
 }

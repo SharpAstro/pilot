@@ -186,6 +186,13 @@ public interface IGitHub
     /// aside), null with no checks or when GitHub would not say.
     /// </summary>
     Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken);
+
+    /// <summary>The repo's open issues, most recently updated first.</summary>
+    /// <exception cref="FlightException">gh could not list them.</exception>
+    Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken);
+
+    /// <summary>Issue <paramref name="number"/>'s title, or null when gh cannot say.</summary>
+    Task<string?> IssueTitleAsync(string repoPath, int number, CancellationToken cancellationToken);
 }
 
 /// <summary><see cref="IGitHub"/> by the gh CLI, as v1's dashboard merged (<c>gh pr merge --match-head-commit</c>).</summary>
@@ -248,6 +255,38 @@ public sealed class GhCli : IGitHub
         }
         return await PullRequestAsync(repoPath, branch, cancellationToken)
             ?? throw new FlightException($"gh opened {branch}'s PR but could not read it back: {output.Trim()}");
+    }
+
+    public async Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["issue", "list", "--state", "open", "--limit", "200", "--json", "number,title,labels,updatedAt"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not list the issues: {error.Trim()}");
+        }
+        using var doc = JsonDocument.Parse(output);
+        return [.. doc.RootElement.EnumerateArray()
+            .Select(i => new IssueInfo
+            {
+                Number = i.GetProperty("number").GetInt32(),
+                Title = i.GetProperty("title").GetString() ?? "",
+                Labels = i.TryGetProperty("labels", out var labels) && labels.ValueKind == JsonValueKind.Array
+                    ? [.. labels.EnumerateArray().Select(l => l.TryGetProperty("name", out var n) ? n.GetString() : null).OfType<string>()]
+                    : [],
+                UpdatedAt = i.TryGetProperty("updatedAt", out var at) && at.TryGetDateTimeOffset(out var when) ? when : null,
+            })
+            .OrderByDescending(i => i.UpdatedAt)];
+    }
+
+    public async Task<string?> IssueTitleAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (exit, output, _) = await RunAsync(["issue", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "title"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            return null;
+        }
+        using var doc = JsonDocument.Parse(output);
+        return doc.RootElement.TryGetProperty("title", out var title) ? title.GetString() : null;
     }
 
     private static async Task<(int Exit, string Output, string Error)> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)

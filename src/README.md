@@ -111,7 +111,9 @@ prefix, `--machine` or `PILOT_MACHINE`, else from its name).
 
 | Command | What it does |
 | --- | --- |
-| `create-flight repo/<path> <issue> [title…]` | Codes the flight and makes its plane; `<path>` may be any checkout of the repo, a worktree included. |
+| `create-flight repo/<path> <issue> [title…]` | Codes the flight and makes its plane; `<path>` may be any checkout of the repo, a worktree included. Without a title it takes the issue's; the result names the code it made. |
+| `plan-flight flight/<code>` | A planner, `<machine>-<flight>-plan`, in the plane: it reads the issue and the code and plans the legs (`plan-leg`), writing no code, then says `planned`. |
+| `planned flight/<code> [summary…]` | The planner is done: a For-you card lists the legs, with **Start** on the first. No leg may be named `plan`. |
 | `connect flight/<code> <other>` | The flight holds until the other has landed (a cycle is refused). |
 | `land flight/<code>` | Its work is in: the worktree goes when clean (never with changes not committed), the branch and code stay, and flights waiting for it are cleared. |
 
@@ -164,11 +166,31 @@ go-around or a finished leg closes every card about the leg. What it resumed and
 restarted mid-flight may nudge a worker once more than it would have: a turn, never a stall.
 
 The GUI's rail opens the **Flights** page (Ctrl+2): each flight's code, title, repo and issue, state (held: waiting
-for which), legs (how many done, which flying), branch and sessions. Below 1150 design
-units wide it drops Branch and Sessions.
+for which), legs (how many done, which flying), branch and sessions. As the window narrows it drops Sessions, then Branch.
 
-The **Sessions** page does the same below 1200 units (and pilot-tui below 150 columns): it drops Last response and Spend, so
+**A session's transcript** opens in place of the table: double-click its row, press Enter on it, or **Open transcript**
+in the header. It shows what was asked, what the assistant said, each tool call in a line with the first lines of what
+it gave back, and errors in red, and it follows the session live, pinned to its end until you scroll up; the say bar
+stays under it. Escape, or **Back to the sessions**, goes back. The node reads each transcript on from where its last
+read stopped (`GET /api/v1/sessions/<id>/transcript?after=<n>`, a grant's on the LAN).
+
+Ended sessions can be put away: **Archive** on a selected ended row, **Archive ended (N)** in the Sessions header for
+all of them, and **Show archived** to list them again (with **Restore**). An archived session is only left out of the
+lists; it stays a row until the node forgets it as any ended one (24 h), and one that runs again is back by itself.
+
+**New flight**, in the Flights header, is the way to start one without typing: pick the repos (in the order their
+flights land, a library before the app that takes it), an open issue in each, and Create. Each repo gets a flight on its
+issue, waiting for the one before it, and a planner; its card offers the first leg's start. The repos are the git clones
+under the node's repo roots (`--repo-root`, `PILOT_REPO_ROOTS`, and the folders the flights' repos sit in), the issues
+come through gh, and the TUI has the same wizard.
+
+The **Sessions** page drops Spend, Last response, the archive button and Model as the window narrows (in pilot-tui too), so
 the Session column keeps room for the role and the session name.
+
+Every page is laid out by the layout engine, never by hand: rows size to their content, a column that cannot have its
+whole width collapses (`CollapseBelow`), and nothing multiplies by the DPI or measures a width to choose what to show.
+`LayoutDrivenTests` reads the views' sources and fails on a computed size, a hand-applied DPI or a width breakpoint, as
+tianwen's own checks do.
 
 ## The CLI
 
@@ -178,6 +200,8 @@ the Session column keeps room for the role and the session name.
 pilot status                                   # flights, their legs and artifacts, and the live sessions
 pilot sessions
 pilot flight create <issue> [title…] [--repo <path>]
+pilot flight plan <code>                       # a planner plans the legs from the issue
+pilot flight planned <code> [summary…]         # what the planner says when it is done
 pilot flight connect <code> <other>
 pilot flight pr <code> [title…]                # pushes the plane, opens its PR (body: the legs, Closes #<issue>)
 pilot flight merge <code> <head> [--method squash|rebase|merge]   # or --squash, --rebase, --merge
@@ -191,6 +215,7 @@ pilot artifact <path or URL> [title…]
 pilot say <session> <text…>
 pilot note <text…>
 pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
+pilot archive <session> | --ended [--undo]      # put ended sessions away, out of the lists (or back)
 ```
 
 Inside a plane a leg command names no leg: the flight is the one whose worktree holds the folder, the leg its one
@@ -349,6 +374,9 @@ A session the API stopped (its transcript's `apiError`, `usage_limit_reached` wi
 | `GET /api/v1/events` | The event stream, a WebSocket: a snapshot carrying the current number, then deltas each numbered one past the last. `?since=<n>&stream=<id>` resumes with the deltas after `n`, or a snapshot when the node no longer holds them or has another stream. |
 | `POST /api/v1/commands` | Every command, `{verb, target, args, who}`. The result is the response and a `commandResult` event on the stream. Verbs: `note node <text>`, `say session/<id> <text>`, and the flight verbs above. |
 | (cards) | `answer card/<id> <choice>`, `dismiss card/<id> [why]`: verbs on `POST /api/v1/commands`. |
+| `GET /api/v1/sessions/<id>/transcript?after=<n>` | A session's transcript as entries after the n-th (its last 300 without one); a grant's on the LAN. |
+| `GET /api/v1/repos` | The repos a flight can be made in, with their GitHub names; a grant's on the LAN. |
+| `GET /api/v1/repos/issues?path=` | A repo's open issues, through gh; a grant's on the LAN. |
 | `POST /api/v1/hooks` | One Claude Code hook's stdin, as `pilot-node hook` forwards it; always 204. |
 
 HTTP responses come in a `ResponseEnvelope` (`response`, `error`, `statusCode`, `success`); stream events are sent
