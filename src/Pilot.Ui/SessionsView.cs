@@ -72,6 +72,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private static readonly RGBAColor32 RowAltBg = new(0x16, 0x17, 0x1e, 0xff);
     private static readonly RGBAColor32 RowHoverBg = new(0x22, 0x24, 0x2e, 0xff);
     private static readonly RGBAColor32 RowFocusBg = new(0x26, 0x33, 0x4a, 0xff);
+    private static readonly RGBAColor32 MenuBg = new(0x1f, 0x21, 0x2b, 0xff);
     private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
     private static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
     private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
@@ -111,6 +112,25 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     /// <summary>The open session's transcript, shown in place of the table: double-click a row, Enter, or Open transcript.</summary>
     public TranscriptPane Transcript { get; } = new();
+
+    /// <summary>A row's right-click menu: what can be done with that session, each entry its own action.</summary>
+    private readonly DropdownMenuState<string> _menu = new();
+    private RectF32 _menuAt;
+
+    /// <summary>Opens a session's folder the platform's way (a file manager); the menu's Open its folder.</summary>
+    public Action<string>? OnOpen { get; set; }
+
+    /// <summary>Opens the new-flight wizard with a repo chosen (by its name): the menu's New flight in it.</summary>
+    public Action<string>? OnNewFlight { get; set; }
+
+    /// <summary>Puts text on the clipboard; the menu's Copy entries. Null where the host has no clipboard.</summary>
+    public Action<string>? CopyText { get; set; }
+
+    /// <summary>Whether a row's right-click menu is open.</summary>
+    public bool MenuOpen => _menu.IsOpen;
+
+    /// <summary>The open menu's entries, in order.</summary>
+    public IReadOnlyList<DropdownItem<string>> MenuItems => _menu.Items;
 
     /// <summary>Whether archived sessions are listed too; off by default, the header's toggle flips it.</summary>
     public bool ShowArchived { get; set; }
@@ -243,13 +263,70 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         return true;
     }
 
-    /// <summary>The whole screen as one tree: header, then the main area, then the say bar when there is a node.</summary>
-    internal Layout.Node Build(SessionsScreen screen) =>
-        (CanSay
-            ? Layout.Builder.VStack(Header(screen), Page(screen).HStar(), SayBar())
-            : Layout.Builder.VStack(Header(screen), Page(screen).HStar()))
+    /// <summary>The whole screen as one tree: header, then the main area, then the say bar when there is a node; a row's
+    /// menu over it while open.</summary>
+    internal Layout.Node Build(SessionsScreen screen)
+    {
+        var page = (CanSay
+                ? Layout.Builder.VStack(Header(screen), Page(screen).HStar(), SayBar())
+                : Layout.Builder.VStack(Header(screen), Page(screen).HStar()))
             .Bg(Ground)
             .Stretch();
+        return _menu.IsOpen
+            ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg))
+            : page;
+    }
+
+    /// <summary>
+    /// Opens <paramref name="line"/>'s menu where it was right-clicked, the row selected: open its transcript, say something
+    /// to it, archive or restore it, open its folder, copy its session id. Each entry is only there while it can be done.
+    /// </summary>
+    public void OpenMenu(SessionLine line, int index, PointerPress at)
+    {
+        Select(index);
+        var row = line.Row;
+        var ended = row.State is Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed;
+        var target = Pilot.Contracts.Verbs.SessionTarget(row.Id);
+        var items = new List<DropdownItem<string>>();
+        if (Transcript.Load is not null)
+        {
+            items.Add(new DropdownItem<string>("Open transcript", "transcript") { OnChoose = () => Transcript.Open(line) });
+        }
+        if (CanSay)
+        {
+            items.Add(new DropdownItem<string>($"Say to {line.Name}…", "say") { OnChoose = () => Ui.Focus.Focus(SayInput) });
+        }
+        if (OnAction is { } stop && row.Kind == Pilot.Contracts.SessionKind.Background && !ended)
+        {
+            items.Add(new DropdownItem<string>("Stop", "stop") { OnChoose = () => stop(new FlightAction($"stop {line.Name}", Pilot.Contracts.Verbs.Stop, target, [])) });
+        }
+        if (OnNewFlight is { } newFlight && row.Repo is { Length: > 0 } repo)
+        {
+            items.Add(new DropdownItem<string>($"New flight in {repo}…", "new-flight") { OnChoose = () => newFlight(repo) });
+        }
+        if (OnAction is { } act && ended)
+        {
+            items.Add(row.Archived
+                ? new DropdownItem<string>("Restore", "restore") { OnChoose = () => act(new FlightAction($"restore {line.Name}", Pilot.Contracts.Verbs.Archive, target, ["undo"])) }
+                : new DropdownItem<string>("Archive", "archive") { OnChoose = () => act(new FlightAction($"archive {line.Name}", Pilot.Contracts.Verbs.Archive, target, [])) });
+        }
+        if (OnOpen is { } open && row.Cwd.Length > 0)
+        {
+            items.Add(new DropdownItem<string>("Open its folder", "folder") { OnChoose = () => open(row.Cwd) });
+        }
+        if (CopyText is { } copy)
+        {
+            items.Add(new DropdownItem<string>("Copy session id", "copy-id") { OnChoose = () => copy(row.SessionId) });
+            items.Add(new DropdownItem<string>("Copy its folder", "copy-folder") { OnChoose = () => copy(row.Cwd) });
+        }
+        if (items.Count == 0)
+        {
+            return;
+        }
+        _menu.Items = [.. items];
+        _menuAt = new RectF32(at.X, at.Y, 1f, 1f);
+        _menu.IsOpen = true;
+    }
 
     // The target sits beside the field, not only in its placeholder: the field holds the keyboard from the first frame,
     // and a focused field hides its placeholder.
@@ -380,6 +457,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index))
+            .WithContextMenu(at => OpenMenu(line, index, at))
             .DoubleClickable(_ =>
             {
                 Select(index);

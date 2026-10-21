@@ -49,6 +49,35 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         return result;
     }
 
+    /// <summary><c>stop session/&lt;id&gt;</c>: a running background session stopped; an interactive or ended one refused.</summary>
+    public async Task<CommandResult> StopAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var id = command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.SessionTargetPrefix.Length..] : null;
+        if (id is null || state.Sessions().FirstOrDefault(r => r.Id == id) is not { } row)
+        {
+            return state.Complete(command, id is null ? $"stop takes a session target, {Verbs.SessionTargetPrefix}<id>, not {command.Target}" : $"There is no session {id}");
+        }
+        if (row.Kind != SessionKind.Background)
+        {
+            return state.Complete(command, $"{row.Name} is interactive: someone is at it, so it is stopped there, not from here");
+        }
+        if (row.State is SessionState.Ended or SessionState.Failed)
+        {
+            return state.Complete(command, $"{row.Name} has {row.State.ToString().ToLowerInvariant()} already");
+        }
+        try
+        {
+            await delivery.StopAsync(row.SessionId, cancellationToken);
+        }
+        catch (Exception ex) when (ex is SessionDeliveryException or TimeoutException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return state.Complete(command, $"{row.Name} could not be stopped: {ex.Message}");
+        }
+        tracker.Kick();
+        await log.WriteLineAsync($"stop: who={command.Who} target={command.Target} stopped");
+        return state.Complete(command, null);
+    }
+
     private async Task<(string? Way, string? SessionId)> DeliverAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         if (!command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal) || command.Target.Length == Verbs.SessionTargetPrefix.Length)

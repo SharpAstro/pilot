@@ -445,7 +445,7 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
                     Layout.Builder.Spacer().WStar(),
                     Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
                     CanCommand && !Wizard.IsOpen && Wizard.LoadRepos is not null
-                        ? Pill("New flight", "flights:new", Wizard.Open)
+                        ? Pill("New flight", "flights:new", () => Wizard.Open())
                         : Layout.Builder.Spacer().WFixed(0f))
                 .WithGap(12f)
                 .RowH(32f),

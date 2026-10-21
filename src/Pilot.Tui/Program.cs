@@ -95,6 +95,7 @@ sessions.Transcript.Load = async (rowId, after, ct) => (await client.GetTranscri
     ? page
     : throw new InvalidOperationException("the node has no transcript for this session");
 sessions.Transcript.Changed = Redraw;
+sessions.OnOpen = folder => DashboardCommands.Open(folder);
 sessions.OnAction = action => _ = Task.Run(async () =>
 {
     sessions.SayStatus = await DashboardCommands.ActAsync(client, action, Who, stop.Token);
@@ -135,6 +136,12 @@ terminal.EnterAlternateScreen();
 terminal.EnableCellBuffer();
 
 var page = PilotPage.Sessions;
+// The session menu's New flight in its repo: the Flights page, with the wizard open on it.
+sessions.OnNewFlight = repo =>
+{
+    page = PilotPage.Flights;
+    flights.Wizard.Open(repo);
+};
 var arranged = System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>>.Empty;
 var drawnVersion = -1L;
 var drawnAt = DateTimeOffset.MinValue;

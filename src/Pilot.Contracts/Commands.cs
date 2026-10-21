@@ -189,6 +189,12 @@ public static class Verbs
     public const string Planned = "planned";
 
     /// <summary>
+    /// <c>stop session/&lt;id&gt;</c>: stops a running background session (<c>claude stop</c>); its row ends. An interactive
+    /// one is refused: someone is at it.
+    /// </summary>
+    public const string Stop = "stop";
+
+    /// <summary>
     /// <c>archive session/&lt;id&gt; [undo]</c>: puts an ended session away, out of the lists; <c>archive sessions</c> does
     /// it to every ended one. <c>undo</c> brings it (or them) back.
     /// </summary>

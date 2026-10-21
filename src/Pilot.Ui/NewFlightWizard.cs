@@ -59,6 +59,7 @@ internal sealed class NewFlightWizard
     private RepoInfo[]? _repos;
     private string? _reposError;
     private int _issueFor;
+    private string? _startWith;
 
     public NewFlightWizard()
     {
@@ -112,8 +113,10 @@ internal sealed class NewFlightWizard
     /// <summary>The flights it would make now, in order.</summary>
     public IReadOnlyList<NewFlightPick> Picks => [.. _chosen.Where(r => _picked.ContainsKey(r.Path)).Select(r => new NewFlightPick(r, _picked[r.Path]))];
 
-    public void Open()
+    /// <param name="repo">A repo to start with chosen, by its name (a session's): chosen once the repos are in.</param>
+    public void Open(string? repo = null)
     {
+        _startWith = repo;
         IsOpen = true;
         Current = Step.Repos;
         _chosen.Clear();
@@ -268,6 +271,13 @@ internal sealed class NewFlightWizard
         {
             failed(ex);
         }
+        // Opened from a session: its repo comes chosen.
+        if (_startWith is { } name && _repos?.FirstOrDefault(r => string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase)) is { } repo
+            && !_chosen.Contains(repo))
+        {
+            _chosen.Add(repo);
+        }
+        _startWith = null;
         search.Refresh();
         Changed?.Invoke();
     }

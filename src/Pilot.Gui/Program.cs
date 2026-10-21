@@ -153,6 +153,9 @@ var router = new InputRouter(view.Ui, tracker, loop.RequestRedraw)
     Widgets = () => chrome.Widgets,
     // A key nothing painted took goes to the page shown, as a tab's own HandleInput does in tianwen.
     Unhandled = evt => chrome.Page == PilotPage.Flights ? chrome.Flights.HandleInput(evt) : view.HandleInput(evt),
+    // The system clipboard, for the text fields' copy and paste and the menus' Copy entries.
+    GetClipboardText = GetClipboardText,
+    SetClipboardText = text => SetClipboardText(text),
     // The new-flight wizard's search boxes take Up and Down while they have the keyboard.
     ActiveSearch = () => chrome.Page == PilotPage.Flights ? chrome.Flights.Wizard.ActiveSearch : null,
 };
@@ -196,6 +199,14 @@ if (feed is not null && client is not null)
         return envelope is { Success: true, Response: { } page } ? page : throw new InvalidOperationException(envelope.Error);
     };
     view.Transcript.Changed = loop.RequestRedraw;
+    // The session menu's folder and copy entries.
+    view.OnOpen = folder => DashboardCommands.Open(folder);
+    view.OnNewFlight = repo =>
+    {
+        chrome.Show(PilotPage.Flights);
+        chrome.Flights.Wizard.Open(repo);
+    };
+    view.CopyText = text => SetClipboardText(text);
     // The Sessions page's archive buttons: a verb on the node, its answer under the say bar.
     view.OnAction = action => tracker.Run(async () =>
     {
