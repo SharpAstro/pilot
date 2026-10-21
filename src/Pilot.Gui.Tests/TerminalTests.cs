@@ -139,7 +139,8 @@ public sealed class TerminalTests
         described.ShouldContain("Bash");
         described.ShouldContain("dotnet test --filter Clock");
         described.ShouldContain("ClockTests.Ticks");
-        described.ShouldContain("Fixed it.");
+        // What the assistant wrote is Markdown, a leaf a word.
+        described.ShouldContain("\"Fixed ");
         described.ShouldNotContain("Last response");
         // The first read asked for the last entries; the next only for what came after them.
         lock (asked)
@@ -192,7 +193,7 @@ public sealed class TerminalTests
 
         var described = Described();
         // The result sits under its call, not after the words that came between them, and shows its first three lines.
-        described.IndexOf("└ one", StringComparison.Ordinal).ShouldBeLessThan(described.IndexOf("Meanwhile, reading.", StringComparison.Ordinal));
+        described.IndexOf("└ one", StringComparison.Ordinal).ShouldBeLessThan(described.IndexOf("Meanwhile,", StringComparison.Ordinal));
         described.ShouldContain("three");
         described.ShouldNotContain("four");
         described.ShouldContain("+2 lines (click to expand)");
@@ -240,8 +241,8 @@ public sealed class TerminalTests
 
         var described = Described();
         described.ShouldContain("● live");
-        described.ShouldContain("Stuck on the build.");
-        described.ShouldNotContain("Earlier words.");
+        described.ShouldContain("Stuck");
+        described.ShouldNotContain("Earlier");
         described.ShouldContain("not read yet");
         described.ShouldContain("then push it");
 
@@ -251,8 +252,49 @@ public sealed class TerminalTests
         regions.Single(r => r.Result is HitResult.ButtonHit { Action: "transcript:end" }).OnClick!.Invoke(InputModifier.None);
 
         described = Described();
-        described.ShouldContain("Earlier words.");
+        described.ShouldContain("Earlier");
         described.ShouldNotContain("Jump to end");
+        sessions.Transcript.Close();
+    }
+
+    [Fact]
+    public async Task WhatTheAssistantWroteReadsAsMarkdownAndOnlyAWebLinkOpens()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var sessions = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        var screen = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
+        var opened = new List<string>();
+        sessions.OnOpen = opened.Add;
+        sessions.Transcript.Load = (_, after, _) => Task.FromResult(new TranscriptPage
+        {
+            Total = 1,
+            Entries = after < 0
+                ? [new() { Index = 0, Kind = TranscriptKind.Assistant, Text = "## Found it\n\nThe **clock** was `UtcNow`: a long paragraph that wraps at the width of the pane rather than running off its edge, as a line of plain text did, cut wherever the window happened to end and losing the rest of what the assistant said.\n\n| file | change |\n|---|---|\n| Clock.cs | takes the injected time |\n\n```\nvar now = time.GetUtcNow();\n```\n\n- see [the PR](https://github.com/x/y/pull/1)\n- or [this](file:///C:/Windows/notepad.exe)" }]
+                : [],
+        });
+        sessions.Tree(screen);
+        sessions.HandleInput(new InputEvent.KeyDown(InputKey.Enter)).ShouldBeTrue();
+        for (var i = 0; i < 100 && sessions.Transcript.Entries.Count < 1; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+
+        var described = CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 160, 60), CellMeasureContext.PixelAuthored));
+        described.ShouldContain("Found");
+        described.ShouldContain("clock");
+        described.ShouldContain("UtcNow");
+        described.ShouldContain("•");
+        described.ShouldNotContain("**");
+        described.ShouldNotContain("##");
+
+        sessions.Render(screen, new RectF32(0, 0, 1280, 800));
+        var regions = new List<ClickableRegion>();
+        sessions.CollectPaintedRegions(regions);
+        foreach (var link in regions.Where(r => r.Result is HitResult.LinkHit).ToList())
+        {
+            link.OnClick!.Invoke(InputModifier.None);
+        }
+        opened.Distinct().ShouldBe(["https://github.com/x/y/pull/1"]);
         sessions.Transcript.Close();
     }
 

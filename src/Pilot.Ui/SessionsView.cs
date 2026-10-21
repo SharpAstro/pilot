@@ -373,6 +373,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             return Main(screen);
         }
         Transcript.CopyText = CopyText;
+        Transcript.OpenLink = OnOpen;
         var open = screen.Lines.FirstOrDefault(l => l.Row.Id == Transcript.RowId);
         return Transcript.Tree(live: open?.Row.State is not (null or Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed));
     }

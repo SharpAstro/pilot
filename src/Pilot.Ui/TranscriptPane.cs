@@ -25,6 +25,13 @@ internal sealed class TranscriptPane
     private static readonly RGBAColor32 Ok = new(0x5c, 0xb8, 0x6e, 0xff);
     private static readonly RGBAColor32 Running = new(0xe8, 0xb0, 0x4a, 0xff);
     private static readonly RGBAColor32 Marked = new(0x2a, 0x24, 0x18, 0xff);
+
+    // The assistant's words and a subagent's report as Markdown, on the pane's colours; its thinking the same, dimmed.
+    private static readonly Layout.MarkdownStyle Prose = new() { Text = Body, Strong = Bright, Link = Tool, Muted = Dim };
+    private static readonly Layout.MarkdownStyle Thought = new()
+    {
+        Text = Faint, Strong = Dim, Emphasis = Faint, Code = Dim, Link = Dim, Muted = Faint, CodeBackground = new(0x18, 0x19, 0x20, 0xff),
+    };
     private static readonly RGBAColor32 Button = new(0x2c, 0x35, 0x4a, 0xff);
     private static readonly RGBAColor32 ButtonHover = new(0x3a, 0x46, 0x62, 0xff);
 
@@ -64,6 +71,9 @@ internal sealed class TranscriptPane
 
     /// <summary>Puts text on the clipboard: a refused command's Copy. Null where the host has no clipboard.</summary>
     public Action<string>? CopyText { get; set; }
+
+    /// <summary>Opens a link in what the assistant wrote. Null leaves links as coloured text.</summary>
+    public Action<string>? OpenLink { get; set; }
 
     /// <summary>The entries it holds now, oldest first.</summary>
     public IReadOnlyList<TranscriptEntry> Entries
@@ -196,20 +206,21 @@ internal sealed class TranscriptPane
             head.Add(Layout.Builder.Text("Jump to end", 13f, Bright, TextAlign.Center).Pad(12f, 5f).WAuto().Bg(Button).BgHover(ButtonHover)
                 .Clickable(new HitResult.ButtonHit("transcript:end"), _ => JumpToEnd()));
         }
-        var rows = Rows(entries, live).ToList();
+        // Each row the pane's width: a paragraph wraps at the width it is given, and an unstretched row gives it none.
+        var rows = Rows(entries, live).Select(r => r.WStar()).ToList();
         if (from >= 0 && rows.Count > 0)
         {
             // The entry the moment fell on, marked.
-            rows[0] = Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(3f).Bg(Prompt), rows[0].WStar()).WithGap(6f).Bg(Marked);
+            rows[0] = Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(3f).Bg(Prompt), rows[0].WStar()).WithGap(6f).Bg(Marked).WStar();
         }
         if (live)
         {
-            rows.AddRange(queued.Select(Waiting));
+            rows.AddRange(queued.Select(q => Waiting(q).WStar()));
         }
         var list = rows.Count == 0
             ? Layout.Builder.Text(problem ?? "reading the transcript…", 13f, Dim).Stretch()
             : Layout.Builder.VStack([.. rows]).WithGap(6f).WithScroll(from >= 0 ? _atScroll : _scroll).Stretch();
-        return Layout.Builder.VStack(Layout.Builder.HStack([.. head]).WithGap(12f), list).WithGap(8f).Pad(16f, 8f).Stretch();
+        return Layout.Builder.VStack(Layout.Builder.HStack([.. head]).WithGap(12f).WStar(), list).WithGap(8f).Pad(16f, 8f).Stretch();
     }
 
     // Back to the end of the whole transcript, following it again.
@@ -332,7 +343,10 @@ internal sealed class TranscriptPane
         {
             body.Add(Layout.Builder.Text($"Denied · {denied}", 13f, Failed));
         }
-        body.AddRange(Folded(entry, entry.Text, textColor, lines, ""));
+        // What the assistant wrote, and what a subagent reported, is Markdown; prompts and notes are said as typed.
+        body.AddRange(entry is { Kind: TranscriptKind.Assistant or TranscriptKind.Thinking } or { From: not null }
+            ? FoldedMarkdown(entry, entry.Kind == TranscriptKind.Thinking ? Thought : Prose, lines)
+            : Folded(entry, entry.Text, textColor, lines, ""));
         return Layout.Builder.HStack(
                 Layout.Builder.Text(label, 12f, labelColor).WFixed(LabelWidth),
                 Layout.Builder.VStack([.. body]).WStar())
@@ -350,13 +364,45 @@ internal sealed class TranscriptPane
         {
             yield return Layout.Builder.Text(i == 0 ? lead + line : lead.Length > 0 ? "  " + line : line, 13f, color);
         }
-        if (all.Length > lines)
+        if (Fold(entry, all.Length, lines) is { } fold)
         {
-            var more = all.Length - lines;
-            var label = open ? "(click to collapse)" : $"… +{more} {(more == 1 ? "line" : "lines")} (click to expand)";
-            yield return Layout.Builder.Text(label, 11f, Dim).WAuto().BgHover(ButtonHover)
-                .Clickable(new HitResult.ButtonHit($"transcript:fold:{entry.Index}"), _ => Toggle(entry.Index));
+            yield return fold;
         }
+    }
+
+    // An entry's Markdown, drawn from its first source lines until it is opened, as Folded draws plain text.
+    private IEnumerable<Layout.Node> FoldedMarkdown(TranscriptEntry entry, Layout.MarkdownStyle style, int lines)
+    {
+        var all = entry.Text.ReplaceLineEndings("\n").Split('\n');
+        var source = _expanded.Contains(entry.Index) || all.Length <= lines ? entry.Text : string.Join("\n", all.Take(lines));
+        yield return Layout.Builder.Markdown(source, style with { OnLink = OpenLink is null ? null : Follow });
+        if (Fold(entry, all.Length, lines) is { } fold)
+        {
+            yield return fold;
+        }
+    }
+
+    // A link in the transcript, opened only when it is a web page: the opener runs whatever it is handed, and a session's
+    // words are no reason to run a file on this machine.
+    private void Follow(string url)
+    {
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http")
+        {
+            OpenLink?.Invoke(uri.AbsoluteUri);
+        }
+    }
+
+    // The line under a folded entry that opens it and closes it again, or null for one short enough to show whole.
+    private Layout.Node? Fold(TranscriptEntry entry, int count, int lines)
+    {
+        if (count <= lines)
+        {
+            return null;
+        }
+        var more = count - lines;
+        var label = _expanded.Contains(entry.Index) ? "(click to collapse)" : $"… +{more} {(more == 1 ? "line" : "lines")} (click to expand)";
+        return Layout.Builder.Text(label, 11f, Dim).WAuto().BgHover(ButtonHover)
+            .Clickable(new HitResult.ButtonHit($"transcript:fold:{entry.Index}"), _ => Toggle(entry.Index));
     }
 
     private void Toggle(int index)

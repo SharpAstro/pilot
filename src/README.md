@@ -170,7 +170,9 @@ for which), legs (how many done, which flying), branch and sessions. As the wind
 
 **A session's transcript** opens in place of the table: double-click its row, press Enter on it, or **Open transcript**
 in the header. It shows what was asked, what the assistant said, and each tool call in a line with what it gave back
-folded under it to its first lines (**+N lines** opens the rest). A dot gives the call's state: green done, red failed
+folded under it to its first lines (**+N lines** opens the rest). What the assistant wrote, its thinking and a
+subagent's report read as Markdown (DIR.Lib's `Layout.Builder.Markdown`): headings, lists, tables, code and links,
+wrapped at the pane's width; a link opens in the browser, and only a web link opens. A dot gives the call's state: green done, red failed
 or refused, amber running, grey cut off by the session ending. A refused call says what refused it (auto mode and its
 reason, a safety check, don't-ask mode, a permission rule, or you) with the command and **Copy the command**. Prompts
 read as a person says them: Claude Code's reminders left out, a background task finishing or a command's output as a
