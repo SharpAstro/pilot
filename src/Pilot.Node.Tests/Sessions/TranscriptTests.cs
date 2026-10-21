@@ -192,4 +192,28 @@ public sealed class TranscriptTests : IDisposable
         ClaudeProfile.IsSafeId("a1b2c3d4-0000-4000-8000-000000000001").ShouldBeTrue();
         ClaudeProfile.IsSafeId("../x").ShouldBeFalse();
     }
+
+    [Fact]
+    public void ASessionsSubagentsAreListedAsTheirRecordsSayAndOneThatHandedBackIsDone()
+    {
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Lines.Assistant("m1", input: 1));
+        var explore = _profile.SubagentPath(AgentRows.SessionA, "a1");
+        _profile.Append(explore, Lines.Assistant("s1", input: 1));
+        File.WriteAllText(Path.ChangeExtension(explore, ".meta.json"),
+            """{"agentType":"Explore","description":"Find the clock","toolUseId":"toolu_1","finished":true}""");
+        var review = _profile.SubagentPath(AgentRows.SessionA, "b2");
+        _profile.Append(review, Lines.Assistant("s2", input: 1));
+        File.WriteAllText(Path.ChangeExtension(review, ".meta.json"), """{"agentType":"general-purpose","description":"Review it","toolUseId":"toolu_2"}""");
+        var transcripts = new SessionTranscripts(_profile.Profile, AgentRows.SessionA);
+
+        var subagents = transcripts.Refresh().Subagents.ShouldNotBeNull();
+        subagents.Select(s => (s.Id, s.Type, s.Description, s.ToolUseId, s.Working)).ShouldBe([
+            ("a1", "Explore", "Find the clock", "toolu_1", false),
+            ("b2", "general-purpose", "Review it", "toolu_2", true),
+        ], ignoreOrder: true);
+
+        // Its hand-back is in its transcript before its record says so.
+        _profile.Append(review, """{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"tool_use","id":"t9","name":"SubagentHandback","input":{"report":"done"}}]}}""");
+        transcripts.Refresh().Subagents.ShouldNotBeNull().Single(s => s.Id == "b2").Working.ShouldBeFalse();
+    }
 }

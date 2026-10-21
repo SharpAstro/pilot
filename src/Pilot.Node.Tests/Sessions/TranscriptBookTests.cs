@@ -62,6 +62,19 @@ public sealed class TranscriptBookTests : IDisposable
     }
 
     [Fact]
+    public void ASubagentsTranscriptIsReadByItsIdAndOnlyAnIdItHas()
+    {
+        _profile.Append(_profile.TranscriptPath(Session), """{"type":"user","message":{"role":"user","content":"main"}}""");
+        _profile.Append(_profile.SubagentPath(Session, "a1"), """{"type":"user","isSidechain":true,"message":{"role":"user","content":"Find the clock"}}""");
+        var book = new TranscriptBook(_profile.Profile);
+
+        book.Read(Session, -1, "a1").ShouldNotBeNull().Entries.ShouldHaveSingleItem().Text.ShouldBe("Find the clock");
+        book.Read(Session, -1).ShouldNotBeNull().Entries.ShouldHaveSingleItem().Text.ShouldBe("main");
+        book.Read(Session, -1, "b2").ShouldBeNull();
+        book.Read(Session, -1, "../a1").ShouldBeNull();
+    }
+
+    [Fact]
     public void ASessionWithNoTranscriptHasNone() => new TranscriptBook(_profile.Profile).Read(Session, -1).ShouldBeNull();
 
     [Fact]

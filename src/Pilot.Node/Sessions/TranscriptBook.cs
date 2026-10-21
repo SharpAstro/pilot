@@ -22,19 +22,30 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
     private readonly Dictionary<string, Reader> _readers = new(StringComparer.Ordinal);
     private readonly Lock _lock = new();
 
-    /// <summary>The entries after <paramref name="after"/> (its last <see cref="FirstRead"/> for a negative one); null when
-    /// the session has no transcript.</summary>
-    public TranscriptPage? Read(string sessionId, int after)
+    /// <summary>The entries after <paramref name="after"/> (its last <see cref="FirstRead"/> for a negative one), of the
+    /// session's transcript or with <paramref name="agent"/> its subagent's; null when there is no such transcript.</summary>
+    public TranscriptPage? Read(string sessionId, int after, string? agent = null)
     {
         lock (_lock)
         {
-            if (!_readers.TryGetValue(sessionId, out var reader))
+            var key = agent is null ? sessionId : $"{sessionId}/{agent}";
+            if (!_readers.TryGetValue(key, out var reader))
             {
                 if (profile.FindTranscript(sessionId) is not { } path)
                 {
                     return null;
                 }
-                _readers[sessionId] = reader = new Reader(path);
+                if (agent is not null)
+                {
+                    // Matched against the files there are, never joined into a path: an id is the caller's to send.
+                    var file = $"agent-{agent}.jsonl";
+                    if (ClaudeProfile.SubagentFiles(path).FirstOrDefault(f => string.Equals(Path.GetFileName(f), file, StringComparison.Ordinal)) is not { } found)
+                    {
+                        return null;
+                    }
+                    path = found;
+                }
+                _readers[key] = reader = new Reader(path);
             }
             reader.Refresh();
             var entries = reader.Entries;

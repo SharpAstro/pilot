@@ -193,9 +193,9 @@ if (feed is not null && client is not null)
         loop.RequestRedraw();
     };
     // The Sessions page's transcript pane reads the node's transcript route, and follows it while open.
-    view.Transcript.Load = async (rowId, after, ct) =>
+    view.Transcript.Load = async (rowId, agent, after, ct) =>
     {
-        var envelope = await client.GetTranscriptAsync(rowId, after, ct);
+        var envelope = await client.GetTranscriptAsync(rowId, after, ct, agent);
         return envelope is { Success: true, Response: { } page } ? page : throw new InvalidOperationException(envelope.Error);
     };
     view.Transcript.Changed = loop.RequestRedraw;

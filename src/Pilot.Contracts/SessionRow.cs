@@ -31,6 +31,13 @@ public sealed record SessionRow
     public string[]? EarlierSessionIds { get; init; }
 
     /// <summary>
+    /// The subagents it started, in the order it started them: each has a transcript of its own. Null with none (and
+    /// kept as the same array while they stay as they were, so rows still compare equal as records).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SubagentRow[]? Subagents { get; init; }
+
+    /// <summary>
     /// Put away by someone (<c>archive</c>): an ended session the lists leave out unless asked. It stays a row until the
     /// node forgets it as any ended one; working again (resumed, said to) puts it back.
     /// </summary>
@@ -157,6 +164,25 @@ public enum SessionRole
     /// <summary>Any other session: shown under its repo and folder, and one click from joining a flight.</summary>
     [JsonStringEnumMemberName("adHoc")]
     AdHoc,
+}
+
+/// <summary>A subagent a session started (Claude Code's <c>Agent</c> tool): its own transcript beside the session's.</summary>
+public sealed record SubagentRow
+{
+    /// <summary>Its agent id: its transcript is <c>&lt;session&gt;/subagents/agent-&lt;id&gt;.jsonl</c>, and the transcript route takes it as <c>agent</c>.</summary>
+    public required string Id { get; init; }
+
+    /// <summary>What kind of agent it is (<c>Explore</c>, <c>general-purpose</c>); null where its record does not say.</summary>
+    public string? Type { get; init; }
+
+    /// <summary>What it was asked to do, in a few words.</summary>
+    public string? Description { get; init; }
+
+    /// <summary>The call in the session's transcript that started it, so the call can lead to it.</summary>
+    public string? ToolUseId { get; init; }
+
+    /// <summary>Still at it: it has not handed back and its record does not say it finished.</summary>
+    public bool Working { get; init; }
 }
 
 /// <summary>Where a session is now.</summary>

@@ -97,8 +97,8 @@ public sealed class NodeClient : IDisposable
     }
 
     /// <summary>A session's transcript: the entries after <paramref name="after"/>, or its last ones for a negative one.</summary>
-    public Task<ResponseEnvelope<TranscriptPage>> GetTranscriptAsync(string rowId, int after, CancellationToken cancellationToken) =>
-        GetEnvelopeAsync($"{NodeWire.TranscriptRoute(rowId)}?after={after.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+    public Task<ResponseEnvelope<TranscriptPage>> GetTranscriptAsync(string rowId, int after, CancellationToken cancellationToken, string? agent = null) =>
+        GetEnvelopeAsync($"{NodeWire.TranscriptRoute(rowId)}?after={after.ToString(System.Globalization.CultureInfo.InvariantCulture)}{(agent is null ? "" : $"&agent={Uri.EscapeDataString(agent)}")}",
             PilotJsonContext.Default.ResponseEnvelopeTranscriptPage, cancellationToken);
 
     /// <summary><c>GET /api/v1/repos</c>: the repos a flight can be made in.</summary>

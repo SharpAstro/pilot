@@ -91,7 +91,7 @@ flights.OnAction = action => _ = Task.Run(async () =>
     Redraw();
 });
 flights.OnOpen = location => flights.Say(DashboardCommands.Open(location) ? $"opened {location}" : $"could not open {location}");
-sessions.Transcript.Load = async (rowId, after, ct) => (await client.GetTranscriptAsync(rowId, after, ct)) is { Success: true, Response: { } page }
+sessions.Transcript.Load = async (rowId, agent, after, ct) => (await client.GetTranscriptAsync(rowId, after, ct, agent)) is { Success: true, Response: { } page }
     ? page
     : throw new InvalidOperationException("the node has no transcript for this session");
 sessions.Transcript.Changed = Redraw;

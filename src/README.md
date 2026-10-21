@@ -184,6 +184,12 @@ transcript**: the worker's transcript from the moment the card was raised, that 
 Escape, or **Back to the sessions**, goes back. The node reads each transcript on from where its last read stopped
 (`GET /api/v1/sessions/<id>/transcript?after=<n>`, a grant's on the LAN).
 
+**Subagents.** A session that started subagents says how many under its name (**▸ 2 subagents, 1 working**); a click
+there, or Right on the selected row, lists them under it (Left puts them away): each one's type, what it was asked, and
+whether it is working or done, from Claude Code's record of it (`agent-<id>.meta.json`) and its hand-back. A click on
+one opens its own transcript (`…/transcript?agent=<id>`, only an id the row lists). In a transcript, chips go between
+the session's own and each subagent's, and the call that started a subagent, or its hand-back, leads to it.
+
 Ended sessions can be put away: **Archive** on a selected ended row, **Archive ended (N)** in the Sessions header for
 all of them, and **Show archived** to list them again (with **Restore**). An archived session is only left out of the
 lists; it stays a row until the node forgets it as any ended one (24 h), and one that runs again is back by itself.

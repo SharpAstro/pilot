@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using Pilot.Contracts;
 
 namespace Pilot.Node.Sessions;
 
@@ -16,7 +17,8 @@ public sealed record TranscriptFacts(
     DateTimeOffset? LastResponseAt,
     long SpendWeighted,
     string? PendingQuestion,
-    ApiStop? Stop = null)
+    ApiStop? Stop = null,
+    IReadOnlyList<SubagentRow>? Subagents = null)
 {
     public static readonly TranscriptFacts None = new(null, null, null, 0, null, 0, null);
 }
@@ -35,6 +37,7 @@ internal sealed class TranscriptTail(string path)
     private static readonly byte[] Usage = "\"usage\""u8.ToArray();
     private static readonly byte[] ToolResult = "tool_result"u8.ToArray();
     private static readonly byte[] ApiErrorKey = "\"apiError\""u8.ToArray();
+    private static readonly byte[] Handback = "\"name\":\"SubagentHandback\""u8.ToArray();
 
     private readonly Dictionary<string, MessageUsage> _messages = new Dictionary<string, MessageUsage>(StringComparer.Ordinal);
     private long _offset;
@@ -55,6 +58,9 @@ internal sealed class TranscriptTail(string path)
 
     /// <summary>The API error that ended the last turn, until a real reply comes after it.</summary>
     public ApiStop? Stop { get; private set; }
+
+    /// <summary>A subagent's transcript that has called <c>SubagentHandback</c>: its report is in, and it is done.</summary>
+    public bool HandedBack { get; private set; }
 
     /// <summary>Reads what was appended since the last call. Returns whether anything new was read.</summary>
     public bool Refresh()
@@ -130,6 +136,7 @@ internal sealed class TranscriptTail(string path)
         _messages.Clear();
         LastTurn = null;
         Stop = null;
+        HandedBack = false;
         _pendingToolId = _pendingQuestion = _lastMessageId = null;
     }
 
@@ -148,6 +155,10 @@ internal sealed class TranscriptTail(string path)
         if (span.IndexOf(ApiErrorKey) >= 0)
         {
             NoteApiError(line);
+        }
+        if (span.IndexOf(Handback) >= 0)
+        {
+            HandedBack = true;
         }
         if (span.IndexOf(Usage) < 0)
         {
@@ -348,6 +359,53 @@ internal sealed class SessionTranscripts(ClaudeProfile profile, string sessionId
         }
 
         var turn = _main.LastTurn;
-        return new TranscriptFacts(turn?.Model, turn?.RequestedModel, turn?.Effort, turn?.ContextTokens ?? 0, turn?.At, _spend, _main.PendingQuestion, _main.Stop);
+        return new TranscriptFacts(turn?.Model, turn?.RequestedModel, turn?.Effort, turn?.ContextTokens ?? 0, turn?.At, _spend, _main.PendingQuestion, _main.Stop,
+            _subagents.Count == 0 ? null : Subagents());
+    }
+
+    // The subagents in the order they started, each as its record (agent-<id>.meta.json) says: what it is, what it was
+    // asked, the call that started it, and whether it finished. The record is read again only while it is still at it.
+    private List<SubagentRow> Subagents()
+    {
+        foreach (var (file, tail) in _subagents)
+        {
+            if (!_records.TryGetValue(file, out var known) || known.Working)
+            {
+                var record = SubagentRecord.Read(file, known?.Started);
+                _records[file] = record with { Working = record.Working && !tail.HandedBack };
+            }
+        }
+        return [.. _records.Values.OrderBy(r => r.Started).Select(r => r.Row with { Working = r.Working })];
+    }
+
+    private readonly Dictionary<string, SubagentRecord> _records = new(StringComparer.Ordinal);
+
+    private sealed record SubagentRecord(SubagentRow Row, DateTime Started, bool Working)
+    {
+        public static SubagentRecord Read(string file, DateTime? started)
+        {
+            var name = System.IO.Path.GetFileNameWithoutExtension(file);
+            var id = name.StartsWith("agent-", StringComparison.Ordinal) ? name["agent-".Length..] : name;
+            string? type = null, description = null, toolUseId = null;
+            var finished = false;
+            try
+            {
+                var meta = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(file) ?? "", name + ".meta.json");
+                if (File.Exists(meta))
+                {
+                    using var doc = JsonDocument.Parse(File.ReadAllBytes(meta));
+                    var root = doc.RootElement;
+                    type = ClaudeAgentsJson.Text(root, "agentType");
+                    description = ClaudeAgentsJson.Text(root, "description");
+                    toolUseId = ClaudeAgentsJson.Text(root, "toolUseId");
+                    finished = root.TryGetProperty("finished", out var f) && f.ValueKind == JsonValueKind.True;
+                }
+                started ??= File.GetCreationTimeUtc(file);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+            {
+            }
+            return new SubagentRecord(new SubagentRow { Id = id, Type = type, Description = description, ToolUseId = toolUseId }, started ?? DateTime.MinValue, !finished);
+        }
     }
 }

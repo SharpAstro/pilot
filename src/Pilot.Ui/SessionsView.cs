@@ -49,6 +49,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     public static readonly KeyChord SayShortcut = new(InputKey.S, InputModifier.Ctrl);
     private const float ColumnHeaderHeight = 28f;
     private const float RowHeight = 54f;
+    private const float SubagentRowHeight = 28f;
+    private const float SubagentIndent = 16f;
     private const float FirstLine = 22f;
     private const float SecondLine = 18f;
     private const float Gutter = 16f;
@@ -112,6 +114,9 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     /// <summary>The open session's transcript, shown in place of the table: double-click a row, Enter, or Open transcript.</summary>
     public TranscriptPane Transcript { get; } = new();
+
+    // The sessions whose subagents are listed under them, by row id.
+    private readonly HashSet<string> _subagentsOpen = new(StringComparer.Ordinal);
 
     /// <summary>A row's right-click menu: what can be done with that session, each entry its own action.</summary>
     private readonly DropdownMenuState<string> _menu = new();
@@ -254,6 +259,13 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             Transcript.Close();
             return true;
         }
+        // Right lists the selected session's subagents under it, Left puts them away.
+        if (evt is InputEvent.KeyDown { Key: InputKey.Right or InputKey.Left } arrow && !Transcript.IsOpen && Selected >= 0 && Selected < _lines.Count
+            && _lines[Selected].Row.Subagents is { Length: > 0 })
+        {
+            var id = _lines[Selected].Row.Id;
+            return arrow.Key == InputKey.Right ? _subagentsOpen.Add(id) : _subagentsOpen.Remove(id);
+        }
         if (evt is not InputEvent.KeyDown key || !HandleListKey(key.Key, key.Modifiers))
         {
             return false;
@@ -375,7 +387,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         Transcript.CopyText = CopyText;
         Transcript.OpenLink = OnOpen;
         var open = screen.Lines.FirstOrDefault(l => l.Row.Id == Transcript.RowId);
-        return Transcript.Tree(live: open?.Row.State is not (null or Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed));
+        return Transcript.Tree(live: open?.Row.State is not (null or Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed), open?.Row.Subagents);
     }
 
     // Open the selected session's transcript; archive every ended session, and show or hide the archived ones: each only
@@ -410,15 +422,22 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             return Layout.Builder.Text("No sessions", 16f, Dim, TextAlign.Center).Stretch();
         }
 
-        var rows = new Layout.Node[screen.Lines.Count];
-        for (var i = 0; i < rows.Length; i++)
+        var rows = new List<Layout.Node>(screen.Lines.Count);
+        for (var i = 0; i < screen.Lines.Count; i++)
         {
-            rows[i] = Row(screen.Lines[i], i);
+            var line = screen.Lines[i];
+            rows.Add(Row(line, i));
+            // An opened session's subagents under it, one row each: not rows of the list the arrows step through, but
+            // each a click from its transcript.
+            if (line.Row.Subagents is { Length: > 0 } subagents && _subagentsOpen.Contains(line.Row.Id))
+            {
+                rows.AddRange(subagents.Select(s => SubagentRow(line, s)));
+            }
         }
 
         return Layout.Builder.VStack(
                 ColumnHeader(),
-                Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch())
+                Layout.Builder.VStack([.. rows]).WithScroll(_scroll).Stretch())
             .Pad(Gutter, 8f)
             .Stretch();
     }
@@ -460,7 +479,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         var cells = new List<Layout.Node>
         {
             Layout.Builder.Spacer().Bg(stateColor).WFixed(StripeWidth).HStar(),
-            Cell(Layout.Builder.Text(line.Role, 15f, text), Layout.Builder.Text(line.Name, 12f, Dim)).WStar(1f, SessionMin),
+            Cell(Layout.Builder.Text(line.Role, 15f, text), NameLine(line)).WStar(1f, SessionMin),
             Optional(Cell(Layout.Builder.Text(line.Model, 14f, body)), ModelWidth),
             Metered(line.Context, line.ContextFraction, body).WFixed(ContextWidth),
             Optional(Cell(Layout.Builder.Text(line.LastResponse, 14f, body)), LastWidth),
@@ -488,6 +507,53 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
         // The selection stated as a background too: a terminal paints no focus of its own, and on pixels it is the focus colour.
         return index == Selected ? row.Bg(RowFocusBg) : (index & 1) == 1 ? row.Bg(RowAltBg) : row;
+    }
+
+    // A session's name, and for one that started subagents how many, as the toggle that lists them under it.
+    private Layout.Node NameLine(SessionLine line)
+    {
+        var name = Layout.Builder.Text(line.Name, 12f, Dim);
+        if (line.Row.Subagents is not { Length: > 0 } subagents)
+        {
+            return name;
+        }
+        var open = _subagentsOpen.Contains(line.Row.Id);
+        var working = subagents.Count(s => s.Working);
+        var label = $"{(open ? "▾" : "▸")} {subagents.Length} {(subagents.Length == 1 ? "subagent" : "subagents")}{(working > 0 ? $", {working} working" : "")}";
+        return Layout.Builder.HStack(
+            name.WAuto(),
+            Layout.Builder.Text(label, 12f, working > 0 ? Working : Dim).WAuto().BgHover(RowHoverBg)
+                .Clickable(new HitResult.ButtonHit($"session:{line.Row.Id}:subagents"), _ => ToggleSubagents(line.Row.Id)),
+            Layout.Builder.Spacer().WStar()).WithGap(8f);
+    }
+
+    // One of a session's subagents, under its row: what it is, what it was asked, and whether it is at it; a click opens
+    // its transcript.
+    private Layout.Node SubagentRow(SessionLine line, Pilot.Contracts.SubagentRow subagent) =>
+        Layout.Builder.HStack(
+                Layout.Builder.Spacer().WFixed(StripeWidth),
+                Layout.Builder.Spacer().WFixed(SubagentIndent),
+                Layout.Builder.Text($"↳ {subagent.Type ?? "subagent"}", 13f, Body).WAuto(),
+                Layout.Builder.Text(subagent.Description ?? "", 12f, Dim).WStar(),
+                Layout.Builder.Text(subagent.Working ? "working" : "done", 12f, subagent.Working ? Working : Ended).WFixed(StateWidth))
+            .WithGap(ColumnGap)
+            .Pad(8f, 2f)
+            .RowH(SubagentRowHeight)
+            .BgHover(RowHoverBg)
+            .Clickable(new HitResult.ButtonHit($"session:{line.Row.Id}:agent:{subagent.Id}"), _ =>
+            {
+                if (Transcript.Load is not null)
+                {
+                    Transcript.Open(line, agent: subagent.Id);
+                }
+            });
+
+    private void ToggleSubagents(string rowId)
+    {
+        if (!_subagentsOpen.Remove(rowId))
+        {
+            _subagentsOpen.Add(rowId);
+        }
     }
 
     /// <summary>The selected ended session's button: Archive it, or Restore one archived; nothing on any other row.</summary>
