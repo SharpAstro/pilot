@@ -185,6 +185,18 @@ public static class Verbs
     public const string Update = "update";
 
     /// <summary>
+    /// <c>set node &lt;key&gt; [value…]</c>: saves a setting in the node's settings file (no value, or <c>default</c>, takes
+    /// it out); the node restarts to run with it once no job would be cut short. This machine only.
+    /// </summary>
+    public const string Set = "set";
+
+    /// <summary>
+    /// <c>setup node &lt;check&gt;</c>: makes the fix a setup check offers (<c>autostart</c>, <c>hooks</c>, <c>lan</c>,
+    /// <c>firewall</c>, <c>trust</c>); <c>setup node no-autostart</c> takes the logon entry out. This machine only.
+    /// </summary>
+    public const string Setup = "setup";
+
+    /// <summary>
     /// <c>plan-flight flight/&lt;code&gt;</c>: a planner worker, <c>&lt;machine&gt;-&lt;flight&gt;-plan</c>, in the flight's plane:
     /// it reads the issue and the code and plans the legs (<c>plan-leg</c>), then says <c>planned</c>.
     /// </summary>

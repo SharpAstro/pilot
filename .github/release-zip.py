@@ -2,6 +2,9 @@
 
     python .github/release-zip.py <publish folder> <version> <rid> <zip>
 
+The publish is either native AOT (a tagged release: four executables and a few native libraries) or framework-dependent
+(the beta channel: the same four executables as app hosts, beside their .dll and the libraries they reference).
+
 The marker (src/Pilot.Node/Updates/ReleaseInstall.cs reads it) is "<version> <rid>", then every file the zip holds, a
 line each, relative and written with /: a node updates only an install whose marker names its own version, and an
 update deletes only the files the old marker listed. Symbols and XML docs are left out. Entries are written with / and,
@@ -25,7 +28,11 @@ def main(publish, version, rid, out):
                 continue
             files.append(rel)
     files.sort()
-    executables = [f for f in files if f.split(".")[0] in ("pilot", "pilot-node", "pilot-gui", "pilot-tui") and "/" not in f]
+    # The four executables, as their name alone (Linux) or with .exe (Windows). A framework-dependent publish (the beta
+    # channel's) also holds pilot.dll and pilot.runtimeconfig.json beside each, which are not executables.
+    names = ("pilot", "pilot-node", "pilot-gui", "pilot-tui")
+    exe = ".exe" if rid.startswith("win-") else ""
+    executables = [f for f in files if f in tuple(n + exe for n in names)]
     if len(executables) != 4:
         sys.exit(f"the publish has {executables}, not pilot, pilot-node, pilot-gui and pilot-tui")
     marker = "\n".join([f"{version} {rid}"] + sorted(files + ["VERSION"])) + "\n"

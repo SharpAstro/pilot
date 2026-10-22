@@ -16,11 +16,19 @@ namespace Pilot.Node;
 /// <param name="UpdatePolicy">What an installed release does when a newer one is out (<c>--update-policy</c>); a test node does not look.</param>
 /// <param name="ReleaseFeed">A folder of release zips to update from instead of GitHub (<c>--release-feed</c>, hidden): offline, or trying an update.</param>
 /// <param name="RepoRootsGiven">Folders whose git clones the new-flight wizard offers (<c>--repo-root</c>), beside the flights' own repos' folders.</param>
+/// <param name="UpdateChannel">Which releases an installed one follows (<c>--update-channel</c>): the tagged ones, or main's beta.</param>
+/// <param name="Saved">The settings file as it was read at the start (<see cref="NodeSettings"/>); the values above already include it.</param>
+/// <param name="CommandLineKeys">The settings (<see cref="NodeSettings.Keys"/>) the command line or the environment gave, which win over the file.</param>
+/// <param name="LocalOnly">Whether the node was started to bind nothing but its socket, whatever the settings say about the LAN.</param>
 public sealed record NodeOptions(
     string SocketPath, string DataFolder, int RetainedDeltas = NodeState.DefaultRetainedDeltas, string? MachinePrefix = null, bool Watchtower = true, string? WatchtowerFolderGiven = null,
     bool Lan = false, int LanPort = NodeWire.DefaultLanPort, bool LanAnnounce = true, int MaxJobs = 1, double JobMemoryGigabytes = 2,
-    UpdatePolicy UpdatePolicy = UpdatePolicy.Off, string? ReleaseFeed = null, IReadOnlyList<string>? RepoRootsGiven = null)
+    UpdatePolicy UpdatePolicy = UpdatePolicy.Off, string? ReleaseFeed = null, IReadOnlyList<string>? RepoRootsGiven = null,
+    UpdateChannel UpdateChannel = UpdateChannel.Stable, NodeSettings? Saved = null, IReadOnlySet<string>? CommandLineKeys = null, bool LocalOnly = false)
 {
+    /// <summary>The settings file this node reads and the Settings page writes.</summary>
+    public string SettingsFile => NodeSettings.PathIn(DataFolder);
+
     /// <summary>
     /// The folder the watchtower runs in. Claude Code starts no background session in a folder never trusted, so the
     /// default one needs <c>claude</c> run there once; the node rings with that when it is refused.

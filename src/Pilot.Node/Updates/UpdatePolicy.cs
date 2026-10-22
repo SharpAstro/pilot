@@ -30,3 +30,32 @@ public static class UpdatePolicies
 
     public static string Name(this UpdatePolicy policy) => Names[(int)policy];
 }
+
+/// <summary>Which releases an installed one follows.</summary>
+public enum UpdateChannel
+{
+    /// <summary>The tagged releases: native AOT, one per version.</summary>
+    Stable,
+
+    /// <summary>
+    /// Main as it moves: every push to main replaces the <c>beta</c> prerelease's zips (a Debug build that needs the .NET
+    /// runtime), and a stable release newer than it is taken too. Back on stable, a node waits for a release newer than
+    /// the beta it runs rather than going back.
+    /// </summary>
+    Beta,
+}
+
+/// <summary>An <see cref="UpdateChannel"/> as a command line and the settings file spell it.</summary>
+public static class UpdateChannels
+{
+    public static IReadOnlyList<string> Names { get; } = ["stable", "beta"];
+
+    public static UpdateChannel? Parse(string? text) => text?.Trim().ToLowerInvariant() switch
+    {
+        "stable" => UpdateChannel.Stable,
+        "beta" => UpdateChannel.Beta,
+        _ => null,
+    };
+
+    public static string Name(this UpdateChannel channel) => Names[(int)channel];
+}

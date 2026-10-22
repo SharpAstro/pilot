@@ -20,9 +20,11 @@ env:
   # not be able to land in it.
   DOTNET_NOLOGO: 1
 
-# No AOT publish here: a push to main builds and tests only, so a busy day of merges costs no AOT minutes. The node,
-# CLI, GUI and TUI are published with native AOT by release.yml, on a v<major>.<minor>.<patch> tag (or by hand, which
-# only tries the publish), and that is also where the trim and AOT analyzers speak.
+# No AOT publish here: a push to main costs no AOT minutes. The node, CLI, GUI and TUI are published with native AOT by
+# release.yml, on a v<major>.<minor>.<patch> tag (or by hand, which only tries the publish), and that is also where the
+# trim and AOT analyzers speak. What a push to main does publish, once its build and tests pass, is the beta channel:
+# a framework-dependent Debug build per runtime (a minute, no AOT), as the zips of the one `beta` prerelease, replaced
+# each push (see the beta jobs below).
 #
 # There is no publish-nuget job: v2 ships no package yet (the node is an executable, and its contracts stay inside
 # this repo until a client outside it needs them). Add the org's artifact-mediated publish job when one does.
@@ -70,3 +72,93 @@ jobs:
     - name: Test the GUI
       # The sessions view rendered on the CPU from the sample snapshot: no display and no GPU needed.
       run: dotnet test Pilot.Gui.Tests -c $BUILD_CONF --no-build --logger "console;verbosity=detailed"
+
+  # The beta channel: main's every push, as pilot-<version>-<rid>.zip on the `beta` prerelease, which a node on
+  # --update-channel beta (the Settings page's Update channel) takes. <version> is the next patch after the latest tag,
+  # a prerelease of it numbered by this run (2.0.4-beta.57), so tagging 2.0.4 is newer than every beta of it and a beta
+  # node moves onto the release, then onto 2.0.5-beta.N with the next push. Debug and framework-dependent: quick to
+  # build, and it runs on the .NET runtime the machine has (with ASP.NET Core's, for the node). A prerelease is never
+  # GitHub's latest release, so a node on the stable channel never sees it.
+  beta-publish:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, rid: win-x64 }
+          - { os: windows-latest, rid: win-arm64 }
+          - { os: ubuntu-latest,  rid: linux-x64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0   # the tags, for the version
+    - uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: 10.0.x
+    - name: Version
+      run: |
+        MM="$(cd src && dotnet msbuild Directory.Build.props -getProperty:VersionMajorMinor -nologo)"
+        latest="$(git tag --list "v$MM.*" --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)"
+        # The patch after the latest tag of this major.minor, or .0 when it has none yet.
+        if [ -n "$latest" ]; then patch=$(( ${latest##*.} + 1 )); else patch=0; fi
+        echo "VERSION=$MM.$patch-beta.${{ github.run_number }}" >> "$GITHUB_ENV"
+    - name: Publish the node, the CLI, the GUI and the TUI (Debug, framework-dependent)
+      run: |
+        for project in Pilot.Node Pilot.Cli Pilot.Gui Pilot.Tui; do
+          dotnet publish src/$project -c Debug -r ${{ matrix.rid }} --self-contained false -p:PublishAot=false \
+            -o publish -p:Version=$VERSION -p:ContinuousIntegrationBuild=true
+        done
+    - name: Zip
+      run: |
+        mkdir dist
+        python .github/release-zip.py publish "$VERSION" ${{ matrix.rid }} "dist/pilot-$VERSION-${{ matrix.rid }}.zip"
+        ls -l dist
+        echo "$VERSION" > dist/version.txt
+    - uses: actions/upload-artifact@v7
+      with:
+        name: beta-${{ matrix.rid }}
+        path: dist/
+        # Only the next job reads it: kept a day, so the Actions storage holds nothing a beta has replaced.
+        retention-days: 1
+
+  beta-release:
+    needs: beta-publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One at a time, in order: two pushes close together must not interleave their uploads and deletions.
+    concurrency:
+      group: beta-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/download-artifact@v8
+      with:
+        path: dist
+        merge-multiple: true
+    - name: Replace the beta prerelease's zips
+      # New zips up first, then the tag moved and the title (the version a node reads) changed, then the old zips out:
+      # a node looking at any moment finds a title whose zips are there. GitHub lists each zip's SHA-256, as for a release.
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+      run: |
+        VERSION="$(cat dist/version.txt)"; rm dist/version.txt
+        if ! gh release view beta --repo "$REPO" >/dev/null 2>&1; then
+          gh release create beta --repo "$REPO" --prerelease --target "$GITHUB_SHA" --title "v$VERSION" \
+            --notes "main as it moves: a Debug, framework-dependent build of every push. Settings, Update channel: beta." dist/*.zip
+          exit 0
+        fi
+        gh release upload beta dist/*.zip --repo "$REPO" --clobber
+        gh api -X PATCH "repos/$REPO/git/refs/tags/beta" -f sha="$GITHUB_SHA" -F force=true >/dev/null
+        gh release edit beta --repo "$REPO" --prerelease --title "v$VERSION" \
+          --notes "main at $GITHUB_SHA ($VERSION): a Debug, framework-dependent build. Settings, Update channel: beta."
+        gh release view beta --repo "$REPO" --json assets --jq '.assets[].name' | grep -v "^pilot-$VERSION-" | while read -r old; do
+          gh release delete-asset beta "$old" --repo "$REPO" --yes
+        done

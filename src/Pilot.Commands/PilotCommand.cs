@@ -455,10 +455,49 @@ public static class PilotCommand
             (p, client, ct) => SendAsync(client, Verbs.RevokeGrant, Verbs.NodeTarget, [p.GetValue(grantId)!], who, output, ct));
         grants.Subcommands.Add(revoke);
 
+        // The Settings page's, for a terminal and an agent: this machine's node only.
+        var settings = Action(new Command("settings", "This node's setup checklist and settings, and where each setting's value comes from"), async (_, client, ct) =>
+        {
+            var page = await client.GetSettingsAsync(ct);
+            if (page is not { Success: true, Response: { } shown })
+            {
+                await output.WriteLineAsync($"refused: {page.Error}");
+                return 1;
+            }
+            foreach (var check in shown.Checks)
+            {
+                await output.WriteLineAsync($"{(check.Ok ? "ok  " : check.Optional ? "--  " : "TODO")} {check.Title}: {check.Line}{(check.Fix is null ? "" : $"  (pilot setup {check.Key})")}");
+            }
+            await output.WriteLineAsync();
+            foreach (var setting in shown.Settings)
+            {
+                var value = setting.Value.Replace('\n', ';');
+                var note = setting.Source == SettingSources.CommandLine ? "command line"
+                    : setting.Pending ? $"saved as {(setting.Saved ?? "default").Replace('\n', ';')}, at the next start"
+                    : setting.Source;
+                await output.WriteLineAsync($"{setting.Key,-15} {(value.Length == 0 ? "-" : value)}  ({note})");
+            }
+            if (shown.Restart is { } restart)
+            {
+                await output.WriteLineAsync();
+                await output.WriteLineAsync(restart);
+            }
+            return 0;
+        });
+        var settingKey = Arg("setting", "lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory or lan-port");
+        var settingValue = Words("value", "Its value (every folder, for repo-roots); none, or default, takes it out", required: false);
+        var set = Action(new Command("set", "Save a setting; the node restarts to run with it once no job runs") { Arguments = { settingKey, settingValue } },
+            (p, client, ct) => SendAsync(client, Verbs.Set, Verbs.NodeTarget, [p.GetValue(settingKey)!, .. p.GetValue(settingValue) ?? []], who, output, ct));
+        var checkKey = Arg("check", "autostart, no-autostart, hooks, lan, firewall or trust");
+        var setupCommand = Action(new Command("setup", "Make a setup check's fix: the logon entry, the hooks, the LAN, the firewall rule (asks for elevation), the trust prompt") { Arguments = { checkKey } },
+            (p, client, ct) => SendAsync(client, Verbs.Setup, Verbs.NodeTarget, [p.GetValue(checkKey)!], who, output, ct));
+        settings.Subcommands.Add(set);
+        settings.Subcommands.Add(setupCommand);
+
         return new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node },
-            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, archive, ring, flag, handled, nodes, connectNode, grants },
+            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, archive, ring, flag, handled, nodes, connectNode, grants, settings },
         };
     }
 

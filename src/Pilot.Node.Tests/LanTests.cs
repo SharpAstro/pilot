@@ -69,6 +69,12 @@ public sealed class LanTests
         // Nor does it hand out grants.
         (await granted.SendAsync(new CommandRequest { Verb = Verbs.AnswerGrant, Target = Verbs.NodeTarget, Args = ["x", "allow"], Who = "tests" }, Ct))
             .Error.ShouldBe("answer-grant is for this machine only");
+        // Nor change this node's settings or setup, nor read them.
+        (await granted.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["lan", "off"], Who = "tests" }, Ct))
+            .Error.ShouldBe("set is for this machine only");
+        (await granted.SendAsync(new CommandRequest { Verb = Verbs.Setup, Target = Verbs.NodeTarget, Args = ["firewall"], Who = "tests" }, Ct))
+            .Error.ShouldBe("setup is for this machine only");
+        (await granted.GetSettingsAsync(Ct)).Error.ShouldBe("this route is for this machine only");
 
         // Revoked, it watches again and commands nothing.
         var grant = (await node.Client.GrantsAsync(Ct)).Response.ShouldNotBeNull().ShouldHaveSingleItem();

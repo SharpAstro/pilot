@@ -37,6 +37,9 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
 
     public TimeSpan CheckEvery { get; init; } = TimeSpan.FromHours(6);
 
+    /// <summary>How often a node on the beta channel looks: main moves far more often than releases are tagged.</summary>
+    public TimeSpan BetaCheckEvery { get; init; } = TimeSpan.FromMinutes(15);
+
     /// <summary>How often a found release waits for the jobs to finish before it is installed.</summary>
     public TimeSpan BusyRetryEvery { get; init; } = TimeSpan.FromMinutes(1);
 
@@ -46,7 +49,7 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
     public string Version { get; init; } = CurrentVersion;
 
     /// <summary>Starts the installed node to take over from this one; false if it did not start. A test replaces it.</summary>
-    public Func<string, bool> StartSuccessor { get; init; } = StartNode;
+    public Func<string, bool> StartSuccessor { get; init; } = NodeRestarter.Start;
 
     /// <summary>Runs the staged <c>pilot-node --version</c> before it goes in: a release that does not start here is not
     /// installed. A test replaces it.</summary>
@@ -89,7 +92,7 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
                 }
                 if (time.GetUtcNow() >= next)
                 {
-                    next = time.GetUtcNow() + CheckEvery;
+                    next = time.GetUtcNow() + (options.UpdateChannel == UpdateChannel.Beta ? BetaCheckEvery : CheckEvery);
                     await CheckAsync(stopping);
                 }
             }
@@ -219,45 +222,9 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
     }
 
     // A job running or waiting its turn: a restart would cut it short, so an update waits for it.
-    private string? Busy()
-    {
-        var jobs = state.Jobs().Count(j => j.State is JobState.Running or JobState.Queued);
-        return jobs == 0 ? null : $"{jobs} job{(jobs == 1 ? " is" : "s are")} running or waiting";
-    }
+    private string? Busy() => NodeRestarter.Busy(state);
 
     private static string Executable(string name) => OperatingSystem.IsWindows() ? name + ".exe" : name;
-
-    private static bool StartNode(string node)
-    {
-        try
-        {
-            var start = new ProcessStartInfo(node)
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WorkingDirectory = Path.GetDirectoryName(node)!,
-            };
-            start.ArgumentList.Add(NodeCommandLine.AfterOption);
-            start.ArgumentList.Add(Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            // This node's own arguments, less an --after it was started with.
-            var own = Environment.GetCommandLineArgs().Skip(1).ToList();
-            for (var i = 0; i < own.Count; i++)
-            {
-                if (own[i] == NodeCommandLine.AfterOption)
-                {
-                    i++;
-                    continue;
-                }
-                start.ArgumentList.Add(own[i]);
-            }
-            using var process = Process.Start(start);
-            return process is not null;
-        }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
-        {
-            return false;
-        }
-    }
 
     private static async Task<string?> SmokeAsync(string node, string version, CancellationToken cancellationToken)
     {

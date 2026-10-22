@@ -473,7 +473,7 @@ public sealed class NodeLauncherTests
 public sealed class RailTests
 {
     [Fact]
-    public void TheRailHasEveryPageAndOnlySettingsIsLocked()
+    public void TheRailHasEveryPageAndNoneIsLocked()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var view = new SessionsView<RgbaImage>(renderer);
@@ -481,15 +481,15 @@ public sealed class RailTests
         chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 1280, 800));
 
         PilotChrome<RgbaImage>.Pages.Select(p => p.Label).ShouldBe(["Sessions", "Flights", "Background tasks", "Fleet", "Settings"]);
-        PilotChrome<RgbaImage>.Pages.Where(p => p.Locked is null).Select(p => p.Page).ShouldBe([PilotPage.Sessions, PilotPage.Flights, PilotPage.Jobs, PilotPage.Fleet]);
+        PilotChrome<RgbaImage>.Pages.Where(p => p.Locked is null).Select(p => p.Page).ShouldBe([PilotPage.Sessions, PilotPage.Flights, PilotPage.Jobs, PilotPage.Fleet, PilotPage.Settings]);
         chrome.Page.ShouldBe(PilotPage.Sessions);
 
         var regions = new List<ClickableRegion>();
         chrome.Rail.CollectPaintedRegions(regions);
-        // One cell per page down the rail's 52 px: Sessions, Flights, Background tasks and Fleet live, Settings a disabled cell.
+        // One cell per page down the rail's 52 px, every one live.
         var cells = regions.Where(r => r.Result is HitResult.ListItemHit).ToList();
         cells.Count.ShouldBe(5);
-        cells.Count(r => r.Result is HitResult.ListItemHit { ListId: TabBarRegions.Tabs }).ShouldBe(4);
+        cells.Count(r => r.Result is HitResult.ListItemHit { ListId: TabBarRegions.Tabs }).ShouldBe(5);
         cells.ShouldAllBe(r => r.X + r.Width <= 53f);
     }
 }
@@ -560,9 +560,9 @@ public sealed class FlightsPageTests
         var regions = new List<ClickableRegion>();
         chrome.Flights.CollectPaintedRegions(regions);
         regions.Count(r => r.Result is HitResult.ListItemHit { ListId: FlightsView<RgbaImage>.ListId }).ShouldBe(2);
-        // A locked page is never shown.
+        // Settings, the last page to arrive, is shown like the others.
         chrome.Show(PilotPage.Settings);
-        chrome.Page.ShouldBe(PilotPage.Flights);
+        chrome.Page.ShouldBe(PilotPage.Settings);
     }
 }
 

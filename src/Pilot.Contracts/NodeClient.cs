@@ -105,6 +105,10 @@ public sealed class NodeClient : IDisposable
     public Task<ResponseEnvelope<JobLog>> GetJobLogAsync(string jobId, CancellationToken cancellationToken) =>
         GetEnvelopeAsync(NodeWire.JobLogRoute(jobId), PilotJsonContext.Default.ResponseEnvelopeJobLog, cancellationToken);
 
+    /// <summary><c>GET /api/v1/settings</c>: the node's settings and its setup checklist; this machine only.</summary>
+    public Task<ResponseEnvelope<SettingsPage>> GetSettingsAsync(CancellationToken cancellationToken) =>
+        GetEnvelopeAsync(NodeWire.SettingsRoute, PilotJsonContext.Default.ResponseEnvelopeSettingsPage, cancellationToken);
+
     /// <summary><c>GET /api/v1/repos</c>: the repos a flight can be made in.</summary>
     public Task<ResponseEnvelope<RepoInfo[]>> GetReposAsync(CancellationToken cancellationToken) =>
         GetEnvelopeAsync(NodeWire.ReposRoute, PilotJsonContext.Default.ResponseEnvelopeRepoInfoArray, cancellationToken);

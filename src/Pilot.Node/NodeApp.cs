@@ -122,9 +122,15 @@ public static class NodeApp
         // Releases of pilot itself: by --update-policy, for an installed release only (NodeUpdater).
         builder.Services.AddSingleton<IReleaseFeed>(_ => options.ReleaseFeed is { } feed
             ? new FolderReleaseFeed(feed, NodeUpdater.Layout.Product)
-            : new GhReleaseFeed(NodeUpdater.Repo));
+            : new GhReleaseFeed(NodeUpdater.Repo, channel: options.UpdateChannel));
         builder.Services.AddSingleton<NodeUpdater>();
         builder.Services.AddHostedService(services => services.GetRequiredService<NodeUpdater>());
+        // The Settings page: a saved setting restarts the node to run with it, and the setup checklist's fixes.
+        builder.Services.AddSingleton<NodeRestarter>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<NodeRestarter>());
+        builder.Services.AddSingleton(services => new NodeSetup(options, Environment.ProcessPath ?? "pilot-node",
+            services.GetRequiredService<SessionTrackerOptions>().Profile.Root));
+        builder.Services.AddSingleton<NodeSettingsCommands>();
         builder.Services.AddSingleton(services => new SessionTracker(
             services.GetRequiredService<NodeState>(),
             services.GetRequiredService<IClaudeAgents>(),
@@ -302,6 +308,9 @@ public static class NodeApp
                 : Results.Json(ResponseEnvelope<JobLog>.Ok(JobLogs.Tail(job.LogPath) ?? new JobLog { Lines = [], Length = 0 }), PilotJsonContext.Default.ResponseEnvelopeJobLog));
 
         // The new-flight wizard's reads: the repos a flight can be made in, and a repo's open issues (through gh).
+        // This machine only: the LAN policy lets no route through it does not name.
+        app.MapGet(NodeWire.SettingsRoute, async (NodeSettingsCommands settings, CancellationToken cancellationToken) =>
+            Results.Json(ResponseEnvelope<SettingsPage>.Ok(await settings.PageAsync(cancellationToken)), PilotJsonContext.Default.ResponseEnvelopeSettingsPage));
         app.MapGet(NodeWire.ReposRoute, (RepoCatalog repos) =>
             Results.Json(ResponseEnvelope<RepoInfo[]>.Ok(repos.Repos()), PilotJsonContext.Default.ResponseEnvelopeRepoInfoArray));
         app.MapGet(NodeWire.IssuesRoute, async (string? path, IGitHub github, CancellationToken cancellationToken) =>
@@ -339,10 +348,10 @@ public static class NodeApp
             }
 
             // From the LAN, under its grant: named by it, so it can pass for nobody here (the watchtower least), and never
-            // handing out or taking away grants, which this machine's person does.
+            // handing out or taking away grants, nor changing the node's settings or setup, which this machine's person does.
             if (context.Items[NodeLan.GrantLabelKey] is string grant)
             {
-                if (command.Verb is Verbs.AnswerGrant or Verbs.RevokeGrant)
+                if (command.Verb is Verbs.AnswerGrant or Verbs.RevokeGrant or Verbs.Set or Verbs.Setup)
                 {
                     return Refuse($"{command.Verb} is for this machine only");
                 }
