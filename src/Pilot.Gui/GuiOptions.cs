@@ -27,7 +27,7 @@ internal sealed record GuiOptions
     /// <summary>Render one frame on the CPU to this PNG (and a sibling <c>.rows.txt</c>), then exit without a window.</summary>
     public string? Capture { get; init; }
 
-    /// <summary>The page a capture shows: sessions, or flights.</summary>
+    /// <summary>The page a capture shows: sessions, flights, or jobs.</summary>
     public PilotPage Page { get; init; } = PilotPage.Sessions;
 
     public int Width { get; init; } = 1280;
@@ -48,8 +48,8 @@ internal sealed record GuiOptions
         var node = new Option<string?>("--node") { Description = "A node on the LAN, host:port (pilot nodes finds them; pilot connect gets its grant); else PILOT_NODE" };
         var capture = new Option<string?>("--capture") { Description = "Render one frame on the CPU to this PNG (and a .rows.txt beside it), then exit" };
         var size = new Option<string?>("--size") { Description = "The capture's size, <W>x<H>; 1280x800 by default" };
-        var page = new Option<string?>("--page") { Description = "The page a capture shows: sessions or flights" };
-        page.AcceptOnlyFromAmong("sessions", "flights");
+        var page = new Option<string?>("--page") { Description = "The page a capture shows: sessions, flights or jobs" };
+        page.AcceptOnlyFromAmong("sessions", "flights", "jobs");
         var exitAfter = new Option<string?>("--exit-after") { Description = "Close the window by itself after this long: 5s, 500ms, 2m" };
         var say = new Option<string[]>("--say")
         {
@@ -83,7 +83,7 @@ internal sealed record GuiOptions
             NodeSocket = parsed.GetValue(socket),
             Node = parsed.GetValue(node),
             Capture = parsed.GetValue(capture),
-            Page = parsed.GetValue(page) == "flights" ? PilotPage.Flights : PilotPage.Sessions,
+            Page = parsed.GetValue(page) switch { "flights" => PilotPage.Flights, "jobs" => PilotPage.Jobs, _ => PilotPage.Sessions },
         };
         if (parsed.GetValue(size) is { } sizeText)
         {

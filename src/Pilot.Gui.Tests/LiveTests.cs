@@ -473,7 +473,7 @@ public sealed class NodeLauncherTests
 public sealed class RailTests
 {
     [Fact]
-    public void TheRailHasEveryPageAndOnlySessionsIsOpen()
+    public void TheRailHasEveryPageAndOnlySettingsIsLocked()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var view = new SessionsView<RgbaImage>(renderer);
@@ -481,15 +481,15 @@ public sealed class RailTests
         chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 1280, 800));
 
         PilotChrome<RgbaImage>.Pages.Select(p => p.Label).ShouldBe(["Sessions", "Flights", "Background tasks", "Settings"]);
-        PilotChrome<RgbaImage>.Pages.Where(p => p.Locked is null).Select(p => p.Page).ShouldBe([PilotPage.Sessions, PilotPage.Flights]);
+        PilotChrome<RgbaImage>.Pages.Where(p => p.Locked is null).Select(p => p.Page).ShouldBe([PilotPage.Sessions, PilotPage.Flights, PilotPage.Jobs]);
         chrome.Page.ShouldBe(PilotPage.Sessions);
 
         var regions = new List<ClickableRegion>();
         chrome.Rail.CollectPaintedRegions(regions);
-        // One cell per page down the rail's 52 px: Sessions and Flights live, the locked two as disabled cells.
+        // One cell per page down the rail's 52 px: Sessions, Flights and Background tasks live, Settings a disabled cell.
         var cells = regions.Where(r => r.Result is HitResult.ListItemHit).ToList();
         cells.Count.ShouldBe(4);
-        cells.Count(r => r.Result is HitResult.ListItemHit { ListId: TabBarRegions.Tabs }).ShouldBe(2);
+        cells.Count(r => r.Result is HitResult.ListItemHit { ListId: TabBarRegions.Tabs }).ShouldBe(3);
         cells.ShouldAllBe(r => r.X + r.Width <= 53f);
     }
 }

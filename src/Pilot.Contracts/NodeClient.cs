@@ -101,6 +101,10 @@ public sealed class NodeClient : IDisposable
         GetEnvelopeAsync($"{NodeWire.TranscriptRoute(rowId)}?after={after.ToString(System.Globalization.CultureInfo.InvariantCulture)}{(agent is null ? "" : $"&agent={Uri.EscapeDataString(agent)}")}",
             PilotJsonContext.Default.ResponseEnvelopeTranscriptPage, cancellationToken);
 
+    /// <summary>The end of a job's output: its last lines, and how long the whole of it is.</summary>
+    public Task<ResponseEnvelope<JobLog>> GetJobLogAsync(string jobId, CancellationToken cancellationToken) =>
+        GetEnvelopeAsync(NodeWire.JobLogRoute(jobId), PilotJsonContext.Default.ResponseEnvelopeJobLog, cancellationToken);
+
     /// <summary><c>GET /api/v1/repos</c>: the repos a flight can be made in.</summary>
     public Task<ResponseEnvelope<RepoInfo[]>> GetReposAsync(CancellationToken cancellationToken) =>
         GetEnvelopeAsync(NodeWire.ReposRoute, PilotJsonContext.Default.ResponseEnvelopeRepoInfoArray, cancellationToken);

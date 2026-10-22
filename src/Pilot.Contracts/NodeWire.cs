@@ -32,6 +32,18 @@ public static class NodeWire
     /// <summary>The route pattern of <see cref="TranscriptRoute"/>, as the node maps it.</summary>
     public const string TranscriptPattern = SessionsRoute + "/{id}/transcript";
 
+    /// <summary>The node's jobs: <c>/api/v1/jobs/&lt;id&gt;/log</c> is one's output, its end, as a <see cref="JobLog"/>.</summary>
+    public const string JobsRoute = "/api/v1/jobs";
+
+    /// <summary>
+    /// The end of a job's output, a <see cref="JobLog"/>: <c>/api/v1/jobs/&lt;id&gt;/log</c>. A grant's on the LAN, as a
+    /// transcript is: it is what ran on this machine.
+    /// </summary>
+    public static string JobLogRoute(string jobId) => $"{JobsRoute}/{Uri.EscapeDataString(jobId)}/log";
+
+    /// <summary>The route pattern of <see cref="JobLogRoute"/>, as the node maps it.</summary>
+    public const string JobLogPattern = JobsRoute + "/{id}/log";
+
     /// <summary>The repos a flight can be made in, a <see cref="RepoInfo"/> array: the flights' repos and their sibling clones.</summary>
     public const string ReposRoute = "/api/v1/repos";
 

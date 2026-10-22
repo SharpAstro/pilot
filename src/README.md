@@ -40,8 +40,8 @@ pilot-gui --snapshot <file.json> [--capture out.png]         # a snapshot file i
 - **Node:** with no node on the default socket, the GUI starts one (`pilot-node` beside it, or the source tree's
   build of the same configuration), detached so it outlives the window; a socket named with `--node-socket` or
   `PILOT_NODE_SOCKET` is only connected to.
-- **Rail:** the left rail, as tianwen's: Sessions (Ctrl+1), and Flights, Background tasks and Settings locked until
-  the legs that bring them.
+- **Rail:** the left rail, as tianwen's: Sessions (Ctrl+1), Flights (Ctrl+2) and Background tasks (Ctrl+3), and
+  Settings locked until the leg that brings it.
 - **Live:** the window follows the node's event stream, resumes with `since` after a drop, and says so in its header
   while no node answers, trying again every 2 s. The selection follows its session as the rows reorder.
 - **Say:** type in the bar at the foot (Ctrl+S takes the keyboard there from anywhere) and Enter says it to the selected session (the node's `say`: an idle background
@@ -232,12 +232,26 @@ pilot say <session> <text…>
 pilot note <text…>
 pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
 pilot archive <session> | --ended [--undo]      # put ended sessions away, out of the lists (or back)
+pilot run [--timeout 90m] -- <command…>        # a long run handed to the node as a job (see Jobs)
+pilot jobs                                     # the node's jobs, running first
+pilot job <id>                                 # one job, and where its whole output is
+pilot job cancel <id>                          # stops it, running or waiting; its owner is told
 ```
 
 Inside a plane a leg command names no leg: the flight is the one whose worktree holds the folder, the leg its one
 flying, and the command is sent as that leg's worker, so the black box says which worker ticked what. A worker's brief
 gives it these commands by the CLI's full path (beside the node, else the source tree's build), with `--node-socket`
 when its node is not on the default socket. Exit codes: 0 done, 1 refused by the node (it says why), 2 usage, 3 no node.
+
+### Jobs
+
+A full test suite, a build or a training run is a job, not a worker's turn: `pilot run -- dotnet test` hands it to
+the node, which runs it in the folder it was handed from, and the worker ends its turn instead of sitting in a poll
+loop. When it ends (by itself, on its timeout, 2 h by default and 8 h at most, or cancelled) the node wakes the session
+that handed it over with how it ended, its last lines and the path of its whole log. Jobs from every flight share the
+machine: `pilot-node --max-jobs <n>` run at once (1 by default) and only with `--job-memory <GB>` free (2 by default);
+the rest wait in the order they came, each saying what it waits on. A job's log is kept in the node's data folder
+(`jobs/<id>.log`), and its end is served for the GUI (`GET /api/v1/jobs/<id>/log`, a grant's on the LAN).
 
 A worker that finishes its own leg is stopped after 90 s, once it has said its report. Claude Code tears down a worktree
 its `-w` session entered when that job ends by itself, keeping the branch; the node checks a plane out again from its
@@ -254,14 +268,22 @@ takes the CLI's own commands, run in-process through the same command tree (`Pil
 later, an MCP server (#70) host: `flight create 1611 --repo C:\src\tianwen`, `leg plan …`, `cards`.
 
 The right panel is the watchtower's: its state and context, its Remote Control link, a box to tell it things, then the
-cards with their buttons (Merge is a card's) and what was handled. The job queue joins it with phase 2.
+cards with their buttons (Merge is a card's) and what was handled.
+
+The **Background tasks** page (Ctrl+3) is the node's jobs: running first, then those waiting in the order they will
+start, then the ended, last ended first. Each row has the job's command, whom it wakes (the flight and leg, a session,
+or a terminal), its state with what it is doing, waits on or came to, when it started and how long it ran; a job that
+ended without its owner being told says so. The selected job shows its folder, log and timeout beside the end of its
+output (its last 200 lines, read from the node every 2 s while selected), with **Cancel** while it runs or waits,
+**Its session** (the transcript of the session it wakes, from when it was handed over) and **Open log**; its
+right-click menu adds its folder and Copy entries.
 
 ## The TUI
 
 `pilot-tui` is the same dashboard in a terminal, over SSH as well as locally: the GUI's own pages and panels
 (`Pilot.Ui`), their DIR.Lib trees arranged in terminal cells by Console.Lib (`CellMeasureContext.PixelAuthored`)
 instead of painted on pixels, so a row, a button or the command bar is the same node on both. **1** Sessions, **2**
-Flights, **Ctrl+K** the command bar, **Ctrl+S** the say bar, **Ctrl+T** the watchtower's box, Up/Down to select, a
+Flights, **3** Background tasks, **Ctrl+K** the command bar, **Ctrl+S** the say bar, **Ctrl+T** the watchtower's box, Up/Down to select, a
 click on a cell runs what a click on the pixels would, **q** quits. The watchtower and cards panel shows beside the page
 from 120 columns. `--node host:port` flies a node on the LAN, as everywhere.
 
@@ -391,6 +413,7 @@ A session the API stopped (its transcript's `apiError`, `usage_limit_reached` wi
 | `POST /api/v1/commands` | Every command, `{verb, target, args, who}`. The result is the response and a `commandResult` event on the stream. Verbs: `note node <text>`, `say session/<id> <text>`, and the flight verbs above. |
 | (cards) | `answer card/<id> <choice>`, `dismiss card/<id> [why]`: verbs on `POST /api/v1/commands`. |
 | `GET /api/v1/sessions/<id>/transcript?after=<n>` | A session's transcript as entries after the n-th (its last 300 without one); a grant's on the LAN. |
+| `GET /api/v1/jobs/<id>/log` | The end of a job's output: its last 200 lines from its last 64 KiB, the log's length, and whether it was clipped; a grant's on the LAN. |
 | `GET /api/v1/repos` | The repos a flight can be made in, with their GitHub names; a grant's on the LAN. |
 | `GET /api/v1/repos/issues?path=` | A repo's open issues, through gh; a grant's on the LAN. |
 | `POST /api/v1/hooks` | One Claude Code hook's stdin, as `pilot-node hook` forwards it; always 204. |
