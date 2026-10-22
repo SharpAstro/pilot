@@ -9,7 +9,8 @@ namespace Pilot.Ui;
 /// <param name="Source">Where the data comes from, as the header says it: <c>snapshot file snapshot.sample.json</c>.</param>
 /// <param name="AsOf">The moment the rows describe, which "3m ago" counts from.</param>
 /// <param name="Usage">The account's usage in a line (<see cref="UsageRow.Line"/>); null when the node has none.</param>
-internal sealed record SessionsScreen(IReadOnlyList<SessionLine> Lines, string Source, DateTimeOffset AsOf, string? Usage = null)
+/// <param name="Account">Whose usage it is, and whose sessions these are, in a line (<see cref="AccountRow.Line"/>); null when the node knows none.</param>
+internal sealed record SessionsScreen(IReadOnlyList<SessionLine> Lines, string Source, DateTimeOffset AsOf, string? Usage = null, string? Account = null)
 {
     /// <summary>The header's count: <c>6 sessions · 4 live · 1 waiting on you</c>.</summary>
     public string Summary
@@ -371,7 +372,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                         .. HeaderButtons()])
                     .WithGap(12f)
                     .RowH(32f),
-                Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC{(screen.Usage is { } usage ? $" · usage {usage}" : "")}", 12f, Dim)
+                Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC{(screen.Account is { } account ? $" · {account}" : "")}{(screen.Usage is { } usage ? $" · usage {usage}" : "")}", 12f, Dim)
                     .RowH(20f))
             .Pad(Gutter, 6f)
             .Bg(HeaderBg)

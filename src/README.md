@@ -79,6 +79,13 @@ Install one by unzipping it into a folder on `PATH` (`%LOCALAPPDATA%\pilot2\bin`
 `pilot-node hooks install` from there. A folder holding a build of one's own (no marker) is moved onto releases with
 `pilot update --adopt`.
 
+`pilot-node autostart install -- <node options>` starts the node at logon with those options, and now if none answers
+on its socket: a value in the user's `Run` key on Windows (through `conhost --headless`, so no console window), a
+systemd user unit on Linux (`Restart=always`, so a self-update's restart is the unit's own; exit code 3, another node on
+the socket, is not retried). The options are checked by the node's own parser before anything is written.
+`autostart show` says what is there, `autostart remove` takes it out. Without it the node runs while something
+started it: by hand, or the GUI, whose node listens on its socket only, never on the LAN.
+
 An installed node keeps itself on the latest release by `--update-policy`:
 
 | Policy | When a newer release is out |
@@ -348,8 +355,12 @@ is tried again in 10 min. This replaced the watchtower's keep-warm round every 5
 ### Usage
 
 The node reads the account's 5-hour and 7-day usage once a minute from `rate-limits.json` in the Claude config folder,
-which the controller's status line writes from the `rate_limits` Claude Code hands it. No login is read and no API
-called. Every open session's status line writes that file from its own last response, so the node keeps only the newest
+which the controller's status line writes from the `rate_limits` Claude Code hands it, and **whose** it is from Claude
+Code's `.claude.json` (its `oauthAccount`: email, display name, organisation and plan; inside `CLAUDE_CONFIG_DIR`
+when that is set, else in the home folder). No token is read and no API called. The account rides on the usage row, so
+it shows even where no status line writes figures, and a login changed to another account starts its figures over
+rather than merging them. `pilot status`, the Sessions header (`ada@example.org (Example, team) · usage …`) and the
+`?` card say it, so on a fleet of machines on different accounts it is plain whose node, sessions and usage these are. Every open session's status line writes that file from its own last response, so the node keeps only the newest
 figures per window: a later reset is a new window, an earlier one is a stale writer and is ignored, and within one
 window the higher share wins (v1's figures flipped between whoever repainted last). `pilot status` and the GUI's
 header show it (`5h 42% (resets 14:00) · 7d 64% (resets Sat 10:00)`, with its age once it is old); past 90% of the
@@ -382,6 +393,27 @@ pilot grants / pilot grants revoke <id>        # on the node: who may command it
 An ask lives while its asker keeps reading its ticket (LAN.Lib's `LanInvites`: one at a time, gone when the asker
 goes); the token comes back once, on the first read after the Allow, and lives in this user's
 `<data>/client-grants.json`.
+
+### Another machine in the fleet
+
+Each machine runs its own node, on its own person's Claude account: a node is the one writer of its machine's
+sessions, flights and jobs, and never speaks for another. To bring a second machine (a desktop beside a laptop) in:
+
+1. **Install a release** there as above (`gh auth login` first: the releases are the private repo's, and so is the
+   self-update), then `pilot-node hooks install`.
+2. **Start it on the LAN at logon:** `pilot-node autostart install -- --lan --machine SE2 --repo-root <org root>`.
+   `--machine` keeps its session names apart from the other machine's (`se2-watchtower`, not two `xx1-watchtower`);
+   `--repo-root` is what its new-flight wizard offers. Allow `pilot-node` through the firewall on the private network
+   when Windows asks (TCP 47731, and LAN.Lib's discovery).
+3. **Trust the watchtower's folder once:** run `claude` in `%LOCALAPPDATA%\pilot2\watchtower` and accept the prompt,
+   or its node rings that it cannot start one.
+4. **Usage figures** need a status line there that writes `rate-limits.json` (the same one as here); without it the
+   node still says whose account it is, with no figures.
+5. **From the other machine:** `pilot nodes` hears it; `pilot connect <host>:47731` rings an Allow/Deny card on it, to be
+   allowed there; then `pilot-gui --node <host>:47731` (or the TUI, or any `pilot` command) flies that node, its
+   header saying its account.
+
+One window shows one node for now: a window per node, each saying whose it is.
 
 ## Cards
 

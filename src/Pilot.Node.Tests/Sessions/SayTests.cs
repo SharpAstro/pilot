@@ -173,7 +173,7 @@ public sealed class SayTests : IDisposable
         var result = await _messenger.CompactAsync(new CommandRequest { Verb = Verbs.Compact, Target = "session/b2c3d4e5", Args = [], Who = "node" }, Ct);
 
         result.Ok.ShouldBeFalse();
-        result.Error.ShouldContain("not idle: a compaction is only ever its next turn");
+        result.Error!.ShouldContain("not idle: a compaction is only ever its next turn");
         _delivery.Calls.ShouldBeEmpty();
     }
 

@@ -6,7 +6,7 @@ using Xunit;
 
 namespace Pilot.Node.Tests;
 
-/// <summary>Usage: read from the status line's file, never from a login, and only the newest figures kept.</summary>
+/// <summary>Usage: read from the status line's file, never from a login's tokens, only the newest figures kept, and whose they are.</summary>
 public sealed class UsageTests : IDisposable
 {
     private static readonly DateTimeOffset Now = new DateTimeOffset(2026, 10, 20, 12, 0, 0, TimeSpan.Zero);
@@ -86,6 +86,60 @@ public sealed class UsageTests : IDisposable
         _state.Seq.ShouldBe(seq);
         _state.Usage().ShouldNotBeNull().FiveHour!.UsedPercent.ShouldBe(60);
         _state.Snapshot().Usage.ShouldBe(_state.Usage());
+    }
+
+    private string Account(string json)
+    {
+        var path = Path.Combine(_folder, ".claude.json");
+        System.IO.File.WriteAllText(path, json);
+        return path;
+    }
+
+    [Fact]
+    public void TheAccountIsClaudeCodesLoginOnRecordAndNothingElse()
+    {
+        var path = Account("""{"oauthAccount":{"emailAddress":"ada@example.org","displayName":"Ada","organizationName":"Example","organizationType":"claude_team","accountUuid":"x"},"userID":"y"}""");
+
+        var account = ClaudeAccount.Read(path).ShouldNotBeNull();
+
+        account.ShouldBe(new AccountRow { Email = "ada@example.org", Name = "Ada", Organization = "Example", Plan = "team" });
+        account.Line().ShouldBe("ada@example.org (Example, team)");
+        new AccountRow { Email = "bo@example.org" }.Line().ShouldBe("bo@example.org");
+        ClaudeAccount.Read(Account("""{"userID":"y"}""")).ShouldBeNull();
+        ClaudeAccount.Read(Path.Combine(_folder, "none.json")).ShouldBeNull();
+    }
+
+    [Fact]
+    public void TheAccountFileIsInsideAConfiguredProfileElseBesideTheDefaultOne()
+    {
+        var profile = Path.Combine(_folder, ".claude");
+        Directory.CreateDirectory(profile);
+
+        ClaudeAccount.FileFor(profile).ShouldBe(Path.Combine(_folder, ".claude.json"));
+        System.IO.File.WriteAllText(Path.Combine(profile, ".claude.json"), "{}");
+        ClaudeAccount.FileFor(profile).ShouldBe(Path.Combine(profile, ".claude.json"));
+    }
+
+    [Fact]
+    public void TheAccountIsPutWithItsFiguresOrAloneWhenNoStatusLineWritesThem()
+    {
+        var reader = new UsageReader(_state, File, _time) { AccountFile = Account("""{"oauthAccount":{"emailAddress":"ada@example.org"}}""") };
+
+        reader.Read();
+        _state.Usage().ShouldNotBeNull().Account!.Email.ShouldBe("ada@example.org");
+        _state.Usage()!.HasFigures.ShouldBeFalse();
+
+        Write(42, Reset);
+        reader.Read();
+        _state.Usage()!.HasFigures.ShouldBeTrue();
+        _state.Usage()!.Account!.Email.ShouldBe("ada@example.org");
+
+        // Logged in as someone else: their figures start over rather than merge with the last account's.
+        Account("""{"oauthAccount":{"emailAddress":"bo@example.org"}}""");
+        Write(5, Reset);
+        reader.Read();
+        _state.Usage()!.Account!.Email.ShouldBe("bo@example.org");
+        _state.Usage()!.FiveHour!.UsedPercent.ShouldBe(5);
     }
 
     [Fact]

@@ -131,7 +131,9 @@ internal sealed class NodeFeed : IAsyncDisposable
     {
         lock (_lock)
         {
-            return new SessionsScreen(SessionLine.Build(_mirror.Sessions.Values, now), _status + UpdateNoteLocked(), now, _mirror.Usage?.Line(now, TimeZoneInfo.Local));
+            var usage = _mirror.Usage;
+            return new SessionsScreen(SessionLine.Build(_mirror.Sessions.Values, now), _status + UpdateNoteLocked(), now,
+                usage is { HasFigures: true } ? usage.Line(now, TimeZoneInfo.Local) : null, usage?.Account?.Line());
         }
     }
 
