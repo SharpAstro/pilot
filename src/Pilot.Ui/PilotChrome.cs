@@ -9,6 +9,7 @@ internal enum PilotPage
     Sessions,
     Flights,
     Jobs,
+    Fleet,
     Settings,
 }
 
@@ -18,8 +19,8 @@ internal enum PilotPage
 /// capture paint the same.
 /// </summary>
 /// <remarks>
-/// Sessions, Flights and Background tasks are pages. Settings is on the rail from the start, locked until the leg that
-/// brings it (its tooltip says so), so the layout #51 describes is settled before it arrives.
+/// Sessions, Flights, Background tasks and Fleet are pages. Settings is on the rail from the start, locked until the leg
+/// that brings it (its tooltip says so), so the layout #51 describes is settled before it arrives.
 /// </remarks>
 internal sealed class PilotChrome<TSurface>
 {
@@ -43,7 +44,8 @@ internal sealed class PilotChrome<TSurface>
         (PilotPage.Sessions, "\U0001F4AC", "Sessions", new KeyChord(InputKey.D1, InputModifier.Ctrl), null),
         (PilotPage.Flights, "✈", "Flights", new KeyChord(InputKey.D2, InputModifier.Ctrl), null),
         (PilotPage.Jobs, "⚒", "Background tasks", new KeyChord(InputKey.D3, InputModifier.Ctrl), null),
-        (PilotPage.Settings, "⚙","Settings", new KeyChord(InputKey.D4, InputModifier.Ctrl), "comes later"),
+        (PilotPage.Fleet, "\U0001F310", "Fleet", new KeyChord(InputKey.D4, InputModifier.Ctrl), null),
+        (PilotPage.Settings, "⚙","Settings", new KeyChord(InputKey.D5, InputModifier.Ctrl), "comes later"),
     ];
 
     private readonly List<TabItem<PilotPage>> _items = [];
@@ -57,11 +59,13 @@ internal sealed class PilotChrome<TSurface>
         Sessions = sessions;
         Flights = new FlightsView<TSurface>(renderer);
         Jobs = new JobsView<TSurface>(renderer);
+        Fleet = new FleetView<TSurface>(renderer);
         Cards = new CardsView<TSurface>(renderer);
-        sessions.ShareWith(Flights, Jobs, Cards);
+        sessions.ShareWith(Flights, Jobs, Fleet, Cards);
         sessions.About = About;
         Flights.About = About;
         Jobs.About = About;
+        Fleet.About = About;
         Rail = new TabBar<TSurface>(renderer)
         {
             Side = TabStripSide.Left,
@@ -83,6 +87,9 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>The Background tasks page: the node's jobs.</summary>
     public JobsView<TSurface> Jobs { get; }
 
+    /// <summary>The Fleet page: every node at once.</summary>
+    public FleetView<TSurface> Fleet { get; }
+
     /// <summary>The cards panel down the right, on every page.</summary>
     public CardsView<TSurface> Cards { get; }
 
@@ -94,11 +101,12 @@ internal sealed class PilotChrome<TSurface>
     {
         PilotPage.Flights => [Rail, Flights, Cards],
         PilotPage.Jobs => [Rail, Jobs, Cards],
+        PilotPage.Fleet => [Rail, Fleet, Cards],
         _ => [Rail, Sessions, Cards],
     };
 
     /// <summary>The page shown, as a widget: what takes the keys nothing else did.</summary>
-    public IPixelWidget PageWidget => Page switch { PilotPage.Flights => Flights, PilotPage.Jobs => Jobs, _ => Sessions };
+    public IPixelWidget PageWidget => Page switch { PilotPage.Flights => Flights, PilotPage.Jobs => Jobs, PilotPage.Fleet => Fleet, _ => Sessions };
 
     /// <summary>Whether the last frame drew the cards panel.</summary>
     public bool ShowsCards { get; private set; }
@@ -156,6 +164,7 @@ internal sealed class PilotChrome<TSurface>
             Sessions.DpiScale = value;
             Flights.DpiScale = value;
             Jobs.DpiScale = value;
+            Fleet.DpiScale = value;
             Cards.DpiScale = value;
             Rail.DpiScale = value;
         }
@@ -169,6 +178,7 @@ internal sealed class PilotChrome<TSurface>
             Sessions.FontPath = value;
             Flights.FontPath = value;
             Jobs.FontPath = value;
+            Fleet.FontPath = value;
             Cards.FontPath = value;
             Rail.FontPath = value;
             // The rail's glyphs are emoji, which the UI face lacks: the platform's colour emoji face draws them
@@ -189,8 +199,11 @@ internal sealed class PilotChrome<TSurface>
     /// <param name="cards">The cards panel's screen; null draws it empty.</param>
     public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, RectF32 bounds) => Render(screen, flights, cards, null, bounds);
 
+    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, RectF32 bounds) => Render(screen, flights, cards, jobs, null, bounds);
+
     /// <param name="jobs">The Background tasks page's screen; null shows it empty, as a snapshot file without jobs is.</param>
-    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, RectF32 bounds)
+    /// <param name="fleet">The Fleet page's screen; null shows it empty, as a snapshot file has no fleet.</param>
+    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, RectF32 bounds)
     {
         _items.Clear();
         foreach (var (page, icon, label, shortcut, locked) in Pages)
@@ -244,6 +257,9 @@ internal sealed class PilotChrome<TSurface>
                     break;
                 case CardsKey:
                     Cards.Render(cards!, rect);
+                    break;
+                case PageKey when Page == PilotPage.Fleet:
+                    Fleet.Render(fleet ?? new FleetScreen([], screen.AsOf), rect);
                     break;
                 case PageKey when Page == PilotPage.Jobs:
                     Jobs.Render(jobs ?? new JobsScreen([], screen.Source, screen.AsOf), rect);

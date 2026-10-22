@@ -29,8 +29,11 @@ internal sealed class NodeFeed : IAsyncDisposable
     private string _status;
     private bool _connected;
     private readonly Func<CancellationToken, Task<string?>>? _nodeVersion;
+    private readonly Func<CancellationToken, Task<NodeInfo>>? _nodeInfo;
     // The node's version as of the last connection, when it said; an update restarts the node under this window.
     private string? _nodeVersionNow;
+    // What the node said it is, as of the last connection: its machine and its account, for the fleet.
+    private NodeInfo? _node;
 
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(
@@ -40,11 +43,13 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// <param name="open">Opens the event stream, resuming after <c>since</c> on <c>stream</c> when given.</param>
     /// <param name="socketPath">The node's socket, as the header names the source.</param>
     /// <param name="nodeVersion">Asks the node its version, on each connection (null: never asked).</param>
+    /// <param name="nodeInfo">Asks the node what it is, on each connection, its version included (null: never asked).</param>
     public NodeFeed(Func<long?, string?, CancellationToken, Task<INodeEvents>> open, string socketPath, TimeSpan? retry = null,
-        Func<CancellationToken, Task<string?>>? nodeVersion = null)
+        Func<CancellationToken, Task<string?>>? nodeVersion = null, Func<CancellationToken, Task<NodeInfo>>? nodeInfo = null)
     {
         _open = open;
         _nodeVersion = nodeVersion;
+        _nodeInfo = nodeInfo;
         _socketPath = socketPath;
         _retry = retry ?? RetryDelay;
         _status = $"connecting to the node on {socketPath}";
@@ -53,7 +58,45 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// <summary>A feed on the node's own client.</summary>
     public static NodeFeed For(NodeClient client) =>
         new(async (since, stream, ct) => new ClientEvents(await client.OpenEventsAsync(since, stream, ct).ConfigureAwait(false)), client.SocketPath,
-            nodeVersion: async ct => (await client.GetNodeAsync(ct).ConfigureAwait(false)).Version);
+            nodeInfo: client.GetNodeAsync);
+
+    /// <summary>What the node said it is, as of its last connection; null until it has.</summary>
+    public NodeInfo? Node
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _node;
+            }
+        }
+    }
+
+    /// <summary>The node in a few counts, as the Fleet page shows each one.</summary>
+    public NodeSummary Summary(DateTimeOffset now)
+    {
+        lock (_lock)
+        {
+            var usage = _mirror.Usage;
+            var sessions = _mirror.Sessions.Values;
+            return new NodeSummary
+            {
+                Connected = _connected,
+                Status = _status,
+                Node = _node,
+                Stream = _mirror.Stream,
+                Account = usage?.Account?.Line(),
+                Usage = usage is { HasFigures: true } ? usage.Line(now, TimeZoneInfo.Local) : null,
+                LiveSessions = sessions.Count(s => s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle),
+                WaitingOnYou = sessions.Count(s => s.State == SessionState.Waiting),
+                Flying = _mirror.Flights.Values.Count(f => f.State == FlightState.Flying),
+                Held = _mirror.Flights.Values.Count(f => f.State == FlightState.Held),
+                JobsRunning = _mirror.Jobs.Values.Count(j => j.State == JobState.Running),
+                JobsQueued = _mirror.Jobs.Values.Count(j => j.State == JobState.Queued),
+                Rings = _mirror.Cards.Values.Count(c => c.State == CardState.Open && c.Bin == CardBin.Ring),
+            };
+        }
+    }
 
     /// <summary>
     /// What the header adds when the node runs a newer release than this window (it updated itself, and this window
@@ -194,19 +237,21 @@ internal sealed class NodeFeed : IAsyncDisposable
         }
     }
 
-    // The node's version for UpdateNote; a node that does not say leaves the last answer.
+    // The node's version for UpdateNote, and what it is for the fleet; a node that does not say leaves the last answer.
     private async Task AskVersionAsync(CancellationToken cancellationToken)
     {
-        if (_nodeVersion is null)
+        if (_nodeVersion is null && _nodeInfo is null)
         {
             return;
         }
         try
         {
-            var version = await _nodeVersion(cancellationToken).ConfigureAwait(false);
+            var info = _nodeInfo is null ? null : await _nodeInfo(cancellationToken).ConfigureAwait(false);
+            var version = info?.Version ?? (_nodeVersion is null ? null : await _nodeVersion(cancellationToken).ConfigureAwait(false));
             lock (_lock)
             {
                 _nodeVersionNow = version ?? _nodeVersionNow;
+                _node = info ?? _node;
             }
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or System.Net.Sockets.SocketException or System.Text.Json.JsonException)

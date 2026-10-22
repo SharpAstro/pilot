@@ -7,11 +7,11 @@ using Pilot.Contracts;
 
 // pilot-tui: the dashboard in a terminal. The GUI's own pages and panels (Pilot.Ui), their trees arranged in cells by
 // Console.Lib rather than painted on pixels: the Sessions page (1), the Flights page (2) with its command bar and
-// buttons, the Background tasks page (3), and the watchtower's panel with its cards, all live from this machine's node
-// or one on the LAN.
+// buttons, the Background tasks page (3), the Fleet page (4), and the watchtower's panel with its cards, all live from
+// this machine's node or one on the LAN.
 var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN, host:port; else PILOT_NODE, else this machine's" };
 var socketOption = new Option<string?>("--node-socket") { Description = "This machine's node's socket; else PILOT_NODE_SOCKET, else this user's default" };
-var root = new RootCommand("pilot v2's dashboard in a terminal: 1 sessions, 2 flights, 3 jobs, Ctrl+K the command bar, Ctrl+T the watchtower, q quits")
+var root = new RootCommand("pilot v2's dashboard in a terminal: 1 sessions, 2 flights, 3 jobs, 4 fleet, Ctrl+K the command bar, Ctrl+T the watchtower, q quits")
 {
     Options = { nodeOption, socketOption },
 };
@@ -28,6 +28,10 @@ const string Who = "tui";
 
 using var client = NodeTargets.Connect(remote, parsed.GetValue(socketOption));
 await using var feed = NodeFeed.For(client);
+// The fleet beyond this node: every node heard on the LAN or granted to this user, watched on its own stream.
+await using var fleetWatch = new FleetWatch();
+var fleetKnownAt = DateTimeOffset.MinValue;
+IReadOnlySet<string> granted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
 // The views are the GUI's, generic over the surface; their renderer is never painted with here (the trees are arranged
 // in cells), so a one-pixel CPU surface stands in for it.
@@ -36,6 +40,7 @@ var sessions = new SessionsView<RgbaImage>(vessel) { CanSay = true };
 var chrome = new PilotChrome<RgbaImage>(vessel, sessions);
 var flights = chrome.Flights;
 var jobs = chrome.Jobs;
+var fleet = chrome.Fleet;
 var cards = chrome.Cards;
 var focus = sessions.Ui.Focus;
 var tracker = new BackgroundTaskTracker();
@@ -151,6 +156,19 @@ jobs.OnCancel = job => _ = Task.Run(async () =>
     Redraw();
 });
 jobs.OnOpen = location => DashboardCommands.Open(location);
+// The Fleet page: a terminal opens no window, so Open says how to fly that node from another one; Connect asks it.
+fleet.OnOpen = line =>
+{
+    fleet.Said = $"in another terminal: pilot-tui --node {line.Where}";
+    Redraw();
+};
+fleet.OnConnect = line => _ = Task.Run(async () =>
+{
+    fleet.Said = $"asking {line.Machine} ({line.Where}) for a grant: allow it on that machine";
+    Redraw();
+    fleet.Said = (await DashboardCommands.RunAsync($"connect {line.Where}", nodeArgs, Who, stop.Token)).ReplaceLineEndings(" ").Trim();
+    Redraw();
+});
 feed.Start();
 
 await using var terminal = new VirtualTerminal();
@@ -184,10 +202,17 @@ while (!stop.IsCancellationRequested)
     }
 
     var now = DateTimeOffset.UtcNow;
-    if (dirty || feed.Version != drawnVersion || now - drawnAt >= TimeSpan.FromSeconds(1))
+    if (dirty || feed.Version + fleetWatch.Version != drawnVersion || now - drawnAt >= TimeSpan.FromSeconds(1))
     {
         dirty = false;
-        drawnVersion = feed.Version;
+        drawnVersion = feed.Version + fleetWatch.Version;
+        // Who is in the fleet, looked at every few seconds: the grants are a file, the LAN a listener.
+        if (now - fleetKnownAt >= TimeSpan.FromSeconds(5))
+        {
+            fleetKnownAt = now;
+            granted = new HashSet<string>(NodeTargets.Granted(), StringComparer.OrdinalIgnoreCase);
+            fleetWatch.Know(granted.Select(e => (e, (string?)null)).Concat((flights.Lan?.Nodes ?? []).Select(n => (n.Endpoint, (string?)n.Name))));
+        }
         drawnAt = now;
         var (columns, rows) = terminal.Size;
         // Design units per cell, as CellMeasureContext.PixelAuthored counts them: the trees are the GUI's.
@@ -196,6 +221,8 @@ while (!stop.IsCancellationRequested)
         {
             PilotPage.Flights => flights.Tree(feed.Flights(now)),
             PilotPage.Jobs => jobs.Tree(feed.JobsPage(now)),
+            PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(remote ?? client.SocketPath, feed.Summary(now),
+                e => string.Equals(e, remote, StringComparison.OrdinalIgnoreCase) || granted.Contains(e), now)),
             _ => sessions.Tree(feed.Screen(now)),
         };
         var cardsScreen = feed.Cards();
@@ -265,6 +292,9 @@ void Handle(ConsoleInputEvent raw)
             break;
         case InputEvent.KeyDown(InputKey.D3, _):
             page = PilotPage.Jobs;
+            break;
+        case InputEvent.KeyDown(InputKey.D4, _):
+            page = PilotPage.Fleet;
             break;
         case InputEvent.KeyDown(InputKey.K, InputModifier.Ctrl):
             page = PilotPage.Flights;

@@ -113,8 +113,9 @@ if (options.Capture is { } capturePath)
     return 0;
 }
 
-// One window per user: a second launch raises the first one and leaves.
-var gateChannel = InstanceGate.ChannelFor("pilot-v2-gui");
+// One window per user and node: a second launch on the same node raises the first one and leaves, and a window on
+// another node (the Fleet page's Open) is a window of its own, saying whose it is.
+var gateChannel = InstanceGate.ChannelFor("pilot-v2-gui", remoteEndpoint?.ToLowerInvariant() ?? "");
 using var gate = InstanceGate.TryClaim(gateChannel);
 if (gate is null)
 {
@@ -127,7 +128,7 @@ if (gate is null)
     Console.WriteLine("pilot-gui: another pilot v2 window holds the gate but did not answer; opening one anyway.");
 }
 
-const string Title = "pilot v2 · sessions";
+var Title = remoteEndpoint is null ? "pilot v2 · sessions" : $"pilot v2 · {remoteEndpoint}";
 using var window = SdlVulkanWindow.Create(Title, 1280, 800);
 // The window's icon (the exe's is the ApplicationIcon): a missing file or one the decoder rejects leaves the platform's
 // default. The decoded array is adopted by the RgbaImage, not copied.
@@ -332,6 +333,31 @@ if (feed is not null && client is not null)
     }, $"cancel {job.Id}");
     chrome.Jobs.OnOpen = location => DashboardCommands.Open(location);
     chrome.Jobs.CopyText = text => SetClipboardText(text);
+    // The Fleet page: a window of its own on another node, and an ask for a grant where there is none.
+    chrome.Fleet.OnOpen = line =>
+    {
+        try
+        {
+            using var other = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!) { ArgumentList = { "--node", line.Where }, UseShellExecute = false });
+            chrome.Fleet.Said = $"opened a window on {line.Machine} ({line.Where})";
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            chrome.Fleet.Said = $"could not open a window on {line.Where}: {ex.Message}";
+        }
+        loop.RequestRedraw();
+    };
+    chrome.Fleet.OnConnect = line => tracker.Run(async () =>
+    {
+        chrome.Fleet.Said = $"asking {line.Machine} ({line.Where}) for a grant: allow it on that machine";
+        chrome.Flights.Lan?.Asking(line.Where, DateTimeOffset.UtcNow);
+        loop.RequestRedraw();
+        var said = await DashboardCommands.RunAsync($"connect {line.Where}", NodeArgs(), GuiSay.Who, cts.Token);
+        chrome.Flights.Lan?.Answered(line.Where);
+        chrome.Fleet.Said = said.ReplaceLineEndings(" ").Trim();
+        Console.WriteLine($"pilot-gui: connect {line.Where}: {chrome.Fleet.Said}");
+        loop.RequestRedraw();
+    }, $"connect {line.Where}");
     feed.Start();
 
     // The window opens at once and the feed connects when the node answers; a node is started meanwhile if none runs.
@@ -357,6 +383,12 @@ var drawnVersion = -1L;
 var drawnAt = DateTimeOffset.MinValue;
 CardsScreen? cards = snapshot is null ? null : CardsScreen.From(snapshot.Cards);
 JobsScreen? jobs = snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
+FleetScreen? fleet = null;
+// The fleet beyond this window's node: every node heard on the LAN or granted to this user, watched on its own stream.
+// Disposed in the shutdown drain with the feed, never by an await here (see the feed's note).
+var fleetWatch = new FleetWatch();
+var fleetKnownAt = DateTimeOffset.MinValue;
+IReadOnlySet<string> granted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
 // A card about a leg opens its worker's transcript from the moment the card was raised.
 chrome.LinkCardTranscripts(() => screen, () => flights ?? new FlightsScreen([], screen.Source, screen.AsOf));
@@ -375,17 +407,25 @@ loop.OnRender = () =>
     }
     if (feed is not null)
     {
-        drawnVersion = feed.Version;
+        drawnVersion = feed.Version + fleetWatch.Version;
         drawnAt = DateTimeOffset.UtcNow;
         screen = feed.Screen(drawnAt);
         flights = feed.Flights(drawnAt);
         cards = feed.Cards();
         chrome.Flights.Jobs = feed.Jobs();
         jobs = feed.JobsPage(drawnAt);
+        // Who is in the fleet, looked at every few seconds: the grants are a file, the LAN a listener.
+        if (drawnAt - fleetKnownAt >= TimeSpan.FromSeconds(5))
+        {
+            fleetKnownAt = drawnAt;
+            granted = new HashSet<string>(Pilot.Commands.NodeTargets.Granted(), StringComparer.OrdinalIgnoreCase);
+            fleetWatch.Know(granted.Select(e => (e, (string?)null)).Concat((chrome.Flights.Lan?.Nodes ?? []).Select(n => (n.Endpoint, (string?)n.Name))));
+        }
+        fleet = fleetWatch.Screen(nodeWhere, feed.Summary(drawnAt), e => string.Equals(e, remoteEndpoint, StringComparison.OrdinalIgnoreCase) || granted.Contains(e), drawnAt);
     }
 
     view.Ui.FrameId++;
-    chrome.Render(screen, flights, cards, jobs, new RectF32(0, 0, width, height));
+    chrome.Render(screen, flights, cards, jobs, fleet, new RectF32(0, 0, width, height));
     router.AfterPaint();
 
     // Say which session is selected whenever it changes, so stdout follows what the window shows.
@@ -405,7 +445,7 @@ loop.CheckNeedsRedraw = () =>
     }
 
     // A new event from the node, or a second gone by for the "ago" column.
-    if (feed is not null && (feed.Version != drawnVersion || DateTimeOffset.UtcNow - drawnAt >= TimeSpan.FromSeconds(1)))
+    if (feed is not null && (feed.Version + fleetWatch.Version != drawnVersion || DateTimeOffset.UtcNow - drawnAt >= TimeSpan.FromSeconds(1)))
     {
         return true;
     }
@@ -461,7 +501,7 @@ Console.WriteLine(cts.IsCancellationRequested ? "pilot-gui: --exit-after reached
 return 0;
 
 // Shutdown, with the loop pumping (ShutdownDrain): the tracked work first, so nothing is still starting what is about to
-// be disposed; then the LAN watch it started, then the feed.
+// be disposed; then the LAN watch it started, then the fleet's feeds and the window's own.
 async Task ShutDownAsync()
 {
     await cts.CancelAsync();
@@ -477,6 +517,7 @@ async Task ShutDownAsync()
     {
         await lan.DisposeAsync();
     }
+    await fleetWatch.DisposeAsync();
     if (feed is not null)
     {
         await feed.DisposeAsync();
