@@ -11,7 +11,7 @@ using Pilot.Contracts;
 // this machine's node or one on the LAN.
 var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN, host:port; else PILOT_NODE, else this machine's" };
 var socketOption = new Option<string?>("--node-socket") { Description = "This machine's node's socket; else PILOT_NODE_SOCKET, else this user's default" };
-var root = new RootCommand("pilot v2's dashboard in a terminal: 1 sessions, 2 flights, 3 jobs, 4 fleet, Ctrl+K the command bar, Ctrl+T the watchtower, q quits")
+var root = new RootCommand("pilot v2's dashboard in a terminal: 1 sessions, 2 flights, 3 jobs, 4 fleet, 5 settings, Ctrl+K the command bar, Ctrl+T the watchtower, q quits")
 {
     Options = { nodeOption, socketOption },
 };
@@ -41,6 +41,7 @@ var chrome = new PilotChrome<RgbaImage>(vessel, sessions);
 var flights = chrome.Flights;
 var jobs = chrome.Jobs;
 var fleet = chrome.Fleet;
+var settings = chrome.Settings;
 var cards = chrome.Cards;
 var focus = sessions.Ui.Focus;
 var tracker = new BackgroundTaskTracker();
@@ -169,6 +170,15 @@ fleet.OnConnect = line => _ = Task.Run(async () =>
     fleet.Said = (await DashboardCommands.RunAsync($"connect {line.Where}", nodeArgs, Who, stop.Token)).ReplaceLineEndings(" ").Trim();
     Redraw();
 });
+// The Settings page: this machine's node only, as its route is.
+if (remote is null)
+{
+    settings.Load = async ct => (await client.GetSettingsAsync(ct)) is { Success: true, Response: { } page }
+        ? page
+        : throw new InvalidOperationException("the node did not send its settings");
+    settings.Send = (verb, args, ct) => SettingsCommands.SendAsync(client, verb, args, Who, ct);
+    settings.Changed = Redraw;
+}
 feed.Start();
 
 await using var terminal = new VirtualTerminal();
@@ -223,6 +233,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.Jobs => jobs.Tree(feed.JobsPage(now)),
             PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(remote ?? client.SocketPath, feed.Summary(now),
                 e => string.Equals(e, remote, StringComparison.OrdinalIgnoreCase) || granted.Contains(e), now)),
+            PilotPage.Settings => settings.Tree(now),
             _ => sessions.Tree(feed.Screen(now)),
         };
         var cardsScreen = feed.Cards();
@@ -295,6 +306,9 @@ void Handle(ConsoleInputEvent raw)
             break;
         case InputEvent.KeyDown(InputKey.D4, _):
             page = PilotPage.Fleet;
+            break;
+        case InputEvent.KeyDown(InputKey.D5, _):
+            page = PilotPage.Settings;
             break;
         case InputEvent.KeyDown(InputKey.K, InputModifier.Ctrl):
             page = PilotPage.Flights;

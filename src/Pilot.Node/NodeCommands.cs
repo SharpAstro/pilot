@@ -15,8 +15,9 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
     /// <summary>Runs <paramref name="command"/>; its result is on the stream too. Long work (a say, git, a merge) runs off the state's lock.</summary>
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
-        // The watchtower handles what it may; a merge or a landing is the controller's, by any route, a card's included.
-        if (command.Verb is Verbs.Merge or Verbs.Land or Verbs.Review && string.Equals(command.Who, Get<Watchtower>().Name, StringComparison.Ordinal))
+        // The watchtower handles what it may; a merge or a landing is the controller's, by any route, a card's included,
+        // and so are the node's settings and setup.
+        if (command.Verb is Verbs.Merge or Verbs.Land or Verbs.Review or Verbs.Set or Verbs.Setup && string.Equals(command.Who, Get<Watchtower>().Name, StringComparison.Ordinal))
         {
             return state.Complete(command, $"{command.Verb} is the controller's, not the watchtower's: leave its card open for them");
         }
@@ -73,6 +74,14 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (command.Verb == Verbs.Archive)
         {
             return Get<SessionTracker>().Archive(command);
+        }
+        if (command.Verb == Verbs.Set)
+        {
+            return Get<NodeSettingsCommands>().Set(command);
+        }
+        if (command.Verb == Verbs.Setup)
+        {
+            return await Get<NodeSettingsCommands>().SetupAsync(command, cancellationToken);
         }
         if (command.Verb == Verbs.Update)
         {

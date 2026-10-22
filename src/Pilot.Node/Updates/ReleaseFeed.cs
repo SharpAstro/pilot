@@ -19,7 +19,7 @@ public sealed record ReleaseAsset(string Name, string Url, string? Sha256);
 /// <summary>Where releases come from: the latest one, and a download of one of its assets.</summary>
 public interface IReleaseFeed
 {
-    /// <summary>The latest release (never a prerelease or a draft); null when there is no answer to be had. Never throws
+    /// <summary>The latest release (never a draft, nor a prerelease off the beta channel); null when there is no answer to be had. Never throws
     /// for want of one: an update check is not worth failing anything over.</summary>
     Task<Release?> LatestAsync(CancellationToken cancellationToken);
 
@@ -33,9 +33,46 @@ public static class ReleaseVersions
 {
     /// <summary>Whether <paramref name="latest"/> is newer than <paramref name="current"/>; a version either cannot read as
     /// one is not.</summary>
-    public static bool IsNewer(string current, string latest)
-        => Version.TryParse(Numbers(current), out var have) && Version.TryParse(Numbers(latest), out var offered)
-           && offered > have;
+    public static bool IsNewer(string current, string latest) => Compare(latest, current) > 0;
+
+    /// <summary>
+    /// <paramref name="a"/> against <paramref name="b"/> as semantic versions: the numbers first, then a release above
+    /// its own prereleases (<c>2.0.4</c> &gt; <c>2.0.4-beta.9</c>), then the prereleases' parts in turn, a number by
+    /// value (<c>beta.10</c> &gt; <c>beta.9</c>). Null when either is not a version.
+    /// </summary>
+    public static int? Compare(string a, string b)
+    {
+        var (numbersA, suffixA) = Split(a);
+        var (numbersB, suffixB) = Split(b);
+        if (!System.Version.TryParse(numbersA, out var va) || !System.Version.TryParse(numbersB, out var vb))
+        {
+            return null;
+        }
+        var byNumbers = va.CompareTo(vb);
+        if (byNumbers != 0 || suffixA == suffixB)
+        {
+            return byNumbers;
+        }
+        if (suffixA.Length == 0 || suffixB.Length == 0)
+        {
+            return suffixA.Length == 0 ? 1 : -1;
+        }
+        var partsA = suffixA.Split('.');
+        var partsB = suffixB.Split('.');
+        for (var i = 0; i < Math.Min(partsA.Length, partsB.Length); i++)
+        {
+            var numericA = long.TryParse(partsA[i], out var na);
+            var numericB = long.TryParse(partsB[i], out var nb);
+            var byPart = numericA && numericB ? na.CompareTo(nb)
+                : numericA != numericB ? (numericA ? -1 : 1)
+                : string.CompareOrdinal(partsA[i], partsB[i]);
+            if (byPart != 0)
+            {
+                return Math.Sign(byPart);
+            }
+        }
+        return partsA.Length.CompareTo(partsB.Length);
+    }
 
     /// <summary>A tag's or a build's version as people read it: no v in front, no commit after (<c>2.0.12+3969354…</c>).</summary>
     public static string Plain(string version)
@@ -52,12 +89,12 @@ public static class ReleaseVersions
     /// <summary>Whether <paramref name="text"/> is a version: <c>2.0.12</c>, or <c>2.1.0-rc1</c>.</summary>
     public static bool IsVersion(string text) => Version.TryParse(text.Split('-')[0], out _);
 
-    // The numbers alone, for Version: a pre-release's suffix (2.1.0-rc1) is left off.
-    private static string Numbers(string version)
+    // The numbers, for Version, and a pre-release's suffix after them (2.1.0-rc1 is 2.1.0 and rc1).
+    private static (string Numbers, string Suffix) Split(string version)
     {
         var v = Plain(version);
         var dash = v.IndexOf('-');
-        return dash < 0 ? v : v[..dash];
+        return dash < 0 ? (v, "") : (v[..dash], v[(dash + 1)..]);
     }
 }
 
@@ -96,15 +133,52 @@ public sealed class FolderReleaseFeed(string folder, string product) : IReleaseF
 /// <c>gh release download</c>, so a private repo works with the login gh already has, and no token is read here.
 /// </summary>
 /// <param name="repo"><c>owner/name</c>.</param>
-public sealed class GhReleaseFeed(string repo, string gh = "gh") : IReleaseFeed
+/// <param name="channel">On <see cref="UpdateChannel.Beta"/>, the <see cref="BetaTag"/> prerelease is looked at too, and
+/// the newer of it and the latest release is the latest.</param>
+public sealed class GhReleaseFeed(string repo, string gh = "gh", UpdateChannel channel = UpdateChannel.Stable) : IReleaseFeed
 {
+    /// <summary>The tag of the prerelease every push to main replaces the zips of; its title is their version.</summary>
+    public const string BetaTag = "beta";
+
     /// <summary>Where a release's page must be for it to count as one of this repo's.</summary>
     public string ReleasesPage { get; } = $"https://github.com/{repo}/releases/";
 
     public async Task<Release?> LatestAsync(CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(["api", $"repos/{repo}/releases/latest"], TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
-        return exit == 0 ? ParseLatest(output, ReleasesPage) : null;
+        var (exit, output, _) = await RunAsync(["api", $"repos/{repo}/releases/latest"], TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
+        var latest = exit == 0 ? ParseLatest(output, ReleasesPage) : null;
+        if (channel != UpdateChannel.Beta)
+        {
+            return latest;
+        }
+        var (betaExit, betaOutput, _) = await RunAsync(["api", $"repos/{repo}/releases/tags/{BetaTag}"], TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
+        var beta = betaExit == 0 ? ParseBeta(betaOutput, ReleasesPage) : null;
+        return latest is null ? beta
+            : beta is null ? latest
+            : ReleaseVersions.Compare(beta.Version, latest.Version) > 0 ? beta : latest;
+    }
+
+    /// <summary>Reads GitHub's answer for the <see cref="BetaTag"/> prerelease, whose version is its title; null when it is
+    /// not one, or its page is not under <paramref name="releasesPage"/>.</summary>
+    public static Release? ParseBeta(string json, string releasesPage)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            return root.ValueKind == JsonValueKind.Object
+                   && root.TryGetProperty("tag_name", out var tag) && tag.GetString() == BetaTag
+                   && root.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String
+                   && root.TryGetProperty("html_url", out var url) && url.ValueKind == JsonValueKind.String
+                   && ReleaseVersions.Plain(name.GetString()!) is { Length: > 0 } version && ReleaseVersions.IsVersion(version)
+                   && url.GetString() is { } page && page.StartsWith(releasesPage, StringComparison.Ordinal)
+                ? new Release(version, BetaTag, page) { Assets = AssetsOf(root, releasesPage + "download/") }
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     public async Task DownloadAsync(Release release, ReleaseAsset asset, string file, CancellationToken cancellationToken)

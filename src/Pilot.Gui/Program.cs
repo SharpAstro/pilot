@@ -358,6 +358,15 @@ if (feed is not null && client is not null)
         Console.WriteLine($"pilot-gui: connect {line.Where}: {chrome.Fleet.Said}");
         loop.RequestRedraw();
     }, $"connect {line.Where}");
+    // The Settings page: this machine's node only, as its route is (a node on the LAN keeps its settings to itself).
+    if (remoteEndpoint is null)
+    {
+        chrome.Settings.Load = async ct => (await client.GetSettingsAsync(ct)) is { Success: true, Response: { } page }
+            ? page
+            : throw new InvalidOperationException("the node did not send its settings");
+        chrome.Settings.Send = (verb, args, ct) => SettingsCommands.SendAsync(client, verb, args, GuiSay.Who, ct);
+        chrome.Settings.Changed = loop.RequestRedraw;
+    }
     feed.Start();
 
     // The window opens at once and the feed connects when the node answers; a node is started meanwhile if none runs.

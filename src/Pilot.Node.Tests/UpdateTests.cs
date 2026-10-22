@@ -54,8 +54,30 @@ public sealed class UpdateTests : IDisposable
     [InlineData("2.0.12", "2.0.9", false)]
     [InlineData("2.0.12", "2.1.0-rc1", true)]
     [InlineData("2.0.12", "nonsense", false)]
+    // The beta channel's: a release is newer than its own betas, a later beta than an earlier, by number not by text.
+    [InlineData("2.0.4-beta.9", "2.0.4", true)]
+    [InlineData("2.0.4", "2.0.4-beta.9", false)]
+    [InlineData("2.0.4-beta.9", "2.0.4-beta.10", true)]
+    [InlineData("2.0.4-beta.10+abc", "2.0.4-beta.9", false)]
+    [InlineData("2.0.3", "2.0.4-beta.1", true)]
+    [InlineData("2.0.4-beta.57", "2.0.3", false)]
     public void ANewerReleaseIsOneWithHigherNumbers(string current, string latest, bool newer)
         => ReleaseVersions.IsNewer(current, latest).ShouldBe(newer);
+
+    [Fact]
+    public void TheBetaPrereleaseIsReadByItsTitle()
+    {
+        var json = $$"""
+            {"tag_name":"beta","name":"v2.0.4-beta.57","prerelease":true,"html_url":"{{Page}}tag/beta",
+             "assets":[{"name":"pilot-2.0.4-beta.57-win-x64.zip","browser_download_url":"{{Page}}download/beta/pilot-2.0.4-beta.57-win-x64.zip","digest":"sha256:ABC"}]}
+            """;
+
+        var beta = GhReleaseFeed.ParseBeta(json, Page).ShouldNotBeNull();
+
+        (beta.Version, beta.Tag).ShouldBe(("2.0.4-beta.57", "beta"));
+        ReleaseInstall.AssetFor(beta, "win-x64", NodeUpdater.Layout).ShouldNotBeNull().Sha256.ShouldBe("abc");
+        GhReleaseFeed.ParseBeta(json.Replace("\"tag_name\":\"beta\"", "\"tag_name\":\"v2.0.4\""), Page).ShouldBeNull();
+    }
 
     [Fact]
     public void AMarkerListsFilesInsideTheFolderOnly()

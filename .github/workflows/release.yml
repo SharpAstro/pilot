@@ -5,7 +5,8 @@ name: v2 release
 # it an installed release. A node installed from one keeps itself on the latest (pilot-node --update-policy, and
 # pilot update). <major>.<minor> must be src/Directory.Build.props' VersionMajorMinor; a -suffix makes a prerelease,
 # which no node takes as the latest. Run by hand (workflow_dispatch, any branch), it only tries the publish: the zips
-# are left as the run's artifacts and nothing is released. Main's pushes publish nothing (dotnet.yml says why).
+# are left as the run's artifacts and nothing is released. Main's pushes publish only the beta channel's prerelease
+# (dotnet.yml says how); a release clears the Actions artifacts earlier runs left, which only cost storage.
 on:
   push:
     tags: ['v*']
@@ -106,6 +107,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      actions: write   # to delete spent artifacts
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -121,3 +123,13 @@ jobs:
           [[ "$VERSION" == *-* ]] && prerelease="--prerelease"
           gh release create "$GITHUB_REF_NAME" dist/*.zip --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "$GITHUB_REF_NAME" --generate-notes $prerelease
+      - name: Clear the Actions artifacts of earlier runs
+        # The zips that matter are release assets now, which Actions storage does not count; the artifacts every run
+        # passed between its jobs (this one's, the beta channel's) are spent, and only use up the storage budget.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.workflow_run.id != $GITHUB_RUN_ID) | .id" | while read -r id; do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id" && echo "deleted artifact $id"
+          done

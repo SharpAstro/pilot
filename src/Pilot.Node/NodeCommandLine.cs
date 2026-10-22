@@ -72,6 +72,12 @@ public static class NodeCommandLine
             DefaultValueFactory = _ => UpdatePolicy.Auto.Name(),
         };
         updatePolicy.AcceptOnlyFromAmong([.. UpdatePolicies.Names]);
+        var updateChannel = new Option<string>("--update-channel")
+        {
+            Description = "Which releases an installed pilot follows: stable (the tagged releases) or beta (main's every push, a Debug build on the .NET runtime). stable by default",
+            DefaultValueFactory = _ => UpdateChannel.Stable.Name(),
+        };
+        updateChannel.AcceptOnlyFromAmong([.. UpdateChannels.Names]);
         var repoRoot = new Option<string[]>("--repo-root")
         {
             Description = $"A folder whose git clones the new-flight wizard offers (an org root); may be given more than once, beside {Flights.RepoCatalog.RootsVariable} and the flights' own repos' folders",
@@ -136,10 +142,32 @@ public static class NodeCommandLine
             Subcommands = { install, removeAutostart, showAutostart },
         };
 
+        // setup: everything a command line can do to put this machine's node in the fleet, then the checklist.
+        var setupMachine = new Option<string?>("--machine") { Description = "The machine's prefix in session names, two letters and a number (DE1); else from its name" };
+        setupMachine.Validators.Add(result =>
+        {
+            if (result.GetValueOrDefault<string?>() is { } value && MachinePrefixes.Normalise(value) is null)
+            {
+                result.AddError($"--machine takes two letters and a number, as in DE1, not {value}");
+            }
+        });
+        var setupRepoRoot = new Option<string[]>("--repo-root") { Description = "A folder of git clones the new-flight wizard offers (an org root); may be given more than once", AllowMultipleArgumentsPerToken = false };
+        var setupChannel = new Option<string?>("--update-channel") { Description = "stable (the tagged releases) or beta (main's every push)" };
+        setupChannel.AcceptOnlyFromAmong([.. UpdateChannels.Names]);
+        var noFirewall = new Option<bool>("--no-firewall") { Description = "Make no firewall rule (Windows asks for elevation to make one)" };
+        var setup = new Command("setup", "Put this machine's node in the fleet: the LAN on, hooks, start at logon, the firewall; then what is left for you")
+        {
+            Options = { data, setupMachine, setupRepoRoot, setupChannel, noFirewall },
+        };
+        setup.SetAction((parseResult, ct) => NodeSetupCommand.RunAsync(
+            NodeSocket.Resolve(parseResult.GetValue(socket)), Path.GetFullPath(parseResult.GetValue(data) ?? NodeSocket.DefaultDataFolder),
+            parseResult.GetValue(setupMachine), parseResult.GetValue(setupRepoRoot), parseResult.GetValue(setupChannel), !parseResult.GetValue(noFirewall),
+            nodePath, output, error, ct));
+
         var root = new RootCommand("pilot v2's node: one per machine, the one writer of its flights, legs, cards and sessions")
         {
-            Options = { socket, data, machine, noWatchtower, watchtowerFolder, lan, lanPort, localOnly, maxJobs, jobMemory, updatePolicy, releaseFeed, repoRoot, after },
-            Subcommands = { hook, hooks, autostart },
+            Options = { socket, data, machine, noWatchtower, watchtowerFolder, lan, lanPort, localOnly, maxJobs, jobMemory, updatePolicy, updateChannel, releaseFeed, repoRoot, after },
+            Subcommands = { hook, hooks, autostart, setup },
         };
         root.SetAction(async (parseResult, ct) =>
         {
@@ -152,17 +180,45 @@ public static class NodeCommandLine
             // Local-only wins over --lan: it is how a launcher keeps a node it starts off the network.
             var mode = LocalOnlyMode.Of(LocalOnlyVariable, parseResult.GetValue(localOnly));
             var wantsLan = parseResult.GetValue(lan);
-            if (wantsLan && !mode.MayBindTheNetwork)
+            if (wantsLan && !mode.MayBindTheNetwork && parseResult.GetResult(lan) is { Implicit: false })
             {
                 await error.WriteLineAsync($"local-only ({LocalOnlyMode.Argument} or {LocalOnlyVariable}): --lan is ignored, the node listens on its socket only");
             }
             var options = new NodeOptions(socketPath, Path.GetFullPath(parseResult.GetValue(data) ?? NodeSocket.DefaultDataFolder), MachinePrefix: parseResult.GetValue(machine),
                 Watchtower: !parseResult.GetValue(noWatchtower), WatchtowerFolderGiven: parseResult.GetValue(watchtowerFolder),
-                Lan: wantsLan && mode.MayBindTheNetwork, LanPort: parseResult.GetValue(lanPort),
+                Lan: wantsLan, LanPort: parseResult.GetValue(lanPort),
                 MaxJobs: parseResult.GetValue(maxJobs), JobMemoryGigabytes: parseResult.GetValue(jobMemory),
                 UpdatePolicy: UpdatePolicies.Parse(parseResult.GetValue(updatePolicy)) ?? UpdatePolicy.Auto,
+                UpdateChannel: UpdateChannels.Parse(parseResult.GetValue(updateChannel)) ?? UpdateChannel.Stable,
                 ReleaseFeed: parseResult.GetValue(releaseFeed) is { } feed ? Path.GetFullPath(feed) : null,
                 RepoRootsGiven: parseResult.GetValue(repoRoot) is { Length: > 0 } roots ? [.. roots.Select(Path.GetFullPath)] : null);
+            // The settings file under the command line: what the Settings page saved, wherever this start did not say.
+            // The environment's PILOT_MACHINE counts as said, as it wins over the file just as --machine does.
+            var given = new HashSet<string>(StringComparer.Ordinal);
+            void Said(string key, Option option)
+            {
+                if (parseResult.GetResult(option) is { Implicit: false })
+                {
+                    given.Add(key);
+                }
+            }
+            Said(NodeSettings.LanKey, lan);
+            Said(NodeSettings.LanPortKey, lanPort);
+            Said(NodeSettings.MachineKey, machine);
+            Said(NodeSettings.RepoRootsKey, repoRoot);
+            Said(NodeSettings.UpdatePolicyKey, updatePolicy);
+            Said(NodeSettings.UpdateChannelKey, updateChannel);
+            Said(NodeSettings.MaxJobsKey, maxJobs);
+            Said(NodeSettings.JobMemoryKey, jobMemory);
+            if (Environment.GetEnvironmentVariable("PILOT_MACHINE") is { Length: > 0 })
+            {
+                given.Add(NodeSettings.MachineKey);
+            }
+            options = NodeSettings.Read(options.SettingsFile).Over(options, given);
+            if (!mode.MayBindTheNetwork)
+            {
+                options = options with { Lan = false, LocalOnly = true };
+            }
             if (parseResult.GetValue(after) is { } predecessor)
             {
                 await WaitForExitAsync(predecessor, ct);

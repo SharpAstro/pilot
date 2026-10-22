@@ -40,8 +40,8 @@ pilot-gui --snapshot <file.json> [--capture out.png]         # a snapshot file i
 - **Node:** with no node on the default socket, the GUI starts one (`pilot-node` beside it, or the source tree's
   build of the same configuration), detached so it outlives the window; a socket named with `--node-socket` or
   `PILOT_NODE_SOCKET` is only connected to.
-- **Rail:** the left rail, as tianwen's: Sessions (Ctrl+1), Flights (Ctrl+2), Background tasks (Ctrl+3) and Fleet
-  (Ctrl+4), and Settings locked until the leg that brings it.
+- **Rail:** the left rail, as tianwen's: Sessions (Ctrl+1), Flights (Ctrl+2), Background tasks (Ctrl+3), Fleet
+  (Ctrl+4) and Settings (Ctrl+5).
 - **Live:** the window follows the node's event stream, resumes with `since` after a drop, and says so in its header
   while no node answers, trying again every 2 s. The selection follows its session as the rows reorder.
 - **Say:** type in the bar at the foot (Ctrl+S takes the keyboard there from anywhere) and Enter says it to the selected session (the node's `say`: an idle background
@@ -72,14 +72,16 @@ curl --unix-socket <path> http://localhost/api/v1/node
 A release is a tag: pushing `v2.0.<n>` on `main` (its `2.0` must be `VersionMajorMinor` in `Directory.Build.props`)
 runs `.github/workflows/release.yml`, which publishes all four binaries with native AOT and attaches
 `pilot-<version>-<rid>.zip` for win-x64, win-arm64 and linux-x64 to that tag's GitHub Release. Main's pushes build and
-test only; no AOT minutes are spent on them. Each zip carries a `VERSION` marker (`<version> <rid>`, then its files),
+test, and publish the beta channel (below); no AOT minutes are spent on them. Each zip carries a `VERSION` marker (`<version> <rid>`, then its files),
 which is what makes a folder an **installed release**.
 
 Install one by unzipping it into a folder on `PATH` (`%LOCALAPPDATA%\pilot2\bin` by convention) and running
 `pilot-node hooks install` from there. A folder holding a build of one's own (no marker) is moved onto releases with
 `pilot update --adopt`.
 
-`pilot-node autostart install -- <node options>` starts the node at logon with those options, and now if none answers
+`pilot-node setup` does the rest for a machine joining the fleet (see *Another machine in the fleet*). Under it,
+`pilot-node autostart install -- <node options>` starts the node at logon with those options (none, once the settings
+file holds them), and now if none answers
 on its socket: a value in the user's `Run` key on Windows (through `conhost --headless`, so no console window), a
 systemd user unit on Linux (`Restart=always`, so a self-update's restart is the unit's own; exit code 3, another node on
 the socket, is not retried). The options are checked by the node's own parser before anything is written.
@@ -94,7 +96,17 @@ An installed node keeps itself on the latest release by `--update-policy`:
 | `ask` | A For-you card, *pilot 2.0.12 is out*, with **Update**. |
 | `off` | It does not look. |
 
-It looks a minute after it starts and every 6 hours, through `gh` (the repo is private, and gh's login reads it).
+`--update-channel` (the Settings page's **Update channel**) says which releases it follows:
+
+| Channel | Follows |
+| --- | --- |
+| `stable` (default) | The tagged releases, native AOT. |
+| `beta` | Main as it moves. Every push to main that builds and passes its tests also publishes a framework-dependent Debug build of each runtime (a minute, no AOT) as the zips of the one `beta` prerelease, replaced each time; its title is their version, the next patch after the latest tag as a prerelease numbered by the run (`2.0.4-beta.57`). A beta node takes the newer of that and the latest release, so tagging `2.0.4` moves it onto the release, and the next push onto `2.0.5-beta.N`. It needs the .NET 10 runtime with ASP.NET Core's on the machine. Back on stable, a node waits for a release newer than the beta it runs rather than going back. |
+
+A prerelease is never GitHub's latest release, so a stable node never sees the beta. A tag's release run also deletes
+the Actions artifacts earlier runs left (the zips that matter are release assets, which Actions storage does not count).
+
+It looks a minute after it starts and every 6 hours (15 minutes on beta), through `gh` (the repo is private, and gh's login reads it).
 `pilot update` installs the latest now, whatever the policy; `pilot update --check` only says. An install downloads the
 runtime's zip into `update/` beside the binaries, checks it against the SHA-256 GitHub lists, runs the staged
 `pilot-node --version`, then renames each file it replaces to `<name>~old` and copies the new one in, the marker last;
@@ -291,7 +303,7 @@ right-click menu adds its folder and Copy entries.
 `pilot-tui` is the same dashboard in a terminal, over SSH as well as locally: the GUI's own pages and panels
 (`Pilot.Ui`), their DIR.Lib trees arranged in terminal cells by Console.Lib (`CellMeasureContext.PixelAuthored`)
 instead of painted on pixels, so a row, a button or the command bar is the same node on both. **1** Sessions, **2**
-Flights, **3** Background tasks, **4** Fleet, **Ctrl+K** the command bar, **Ctrl+S** the say bar, **Ctrl+T** the watchtower's box, Up/Down to select, a
+Flights, **3** Background tasks, **4** Fleet, **5** Settings, **Ctrl+K** the command bar, **Ctrl+S** the say bar, **Ctrl+T** the watchtower's box, Up/Down to select, a
 click on a cell runs what a click on the pixels would, **q** quits. The watchtower and cards panel shows beside the page
 from 120 columns. `--node host:port` flies a node on the LAN, as everywhere.
 
@@ -400,18 +412,17 @@ Each machine runs its own node, on its own person's Claude account: a node is th
 sessions, flights and jobs, and never speaks for another. To bring a second machine (a desktop beside a laptop) in:
 
 1. **Install a release** there as above (`gh auth login` first: the releases are the private repo's, and so is the
-   self-update), then `pilot-node hooks install`.
-2. **Start it on the LAN at logon:** `pilot-node autostart install -- --lan --machine SE2 --repo-root <org root>`.
-   `--machine` keeps its session names apart from the other machine's (`se2-watchtower`, not two `xx1-watchtower`);
-   `--repo-root` is what its new-flight wizard offers. Allow `pilot-node` through the firewall on the private network
-   when Windows asks (TCP 47731, and LAN.Lib's discovery).
-3. **Trust the watchtower's folder once:** run `claude` in `%LOCALAPPDATA%\pilot2\watchtower` and accept the prompt,
-   or its node rings that it cannot start one.
-4. **Usage figures** need a status line there that writes `rate-limits.json` (the same one as here); without it the
-   node still says whose account it is, with no figures.
-5. **From the other machine:** `pilot nodes` hears it; `pilot connect <host>:47731` rings an Allow/Deny card on it, to be
-   allowed there; then `pilot-gui --node <host>:47731` (or the TUI, or any `pilot` command) flies that node, its
-   header saying its account.
+   self-update).
+2. **`pilot-node setup`** (with `--repo-root <org root>`, and `--machine SE2` where the machine name's first two letters
+   would clash with another machine's prefix). It saves the LAN on (and what was given) in the node's settings file,
+   installs the hooks, installs the logon entry and starts the node, and asks Windows for elevation once to let
+   `pilot-node` in on private networks. It ends with the checklist: what is left is a person's.
+3. **What is left**, which the GUI's **Settings** page (Ctrl+5) also lists with a button for each the node can fix:
+   the watchtower's folder trusted once (Claude Code's own prompt, which the page opens in a titled window; a folder
+   above it that is trusted already covers it), gh signed in, and usage figures (a status line that writes
+   `rate-limits.json`; without it the node still says whose account it is, with no figures).
+4. **From the other machine:** its Fleet page hears the new node by itself; **Connect** on its row (or
+   `pilot connect <host>:47731`) rings an Allow/Deny card on it, to be allowed there; then **Open** flies it.
 
 **The Fleet page** (Ctrl+4 in the GUI, 4 in the TUI) is every node at once: this window's first, then every node heard
 on the LAN or granted to this user, each on a feed of its own (its event stream, watched without a grant as anyone on
@@ -421,6 +432,27 @@ doing instead. **Open** opens a window flying that node (a window per node: the 
 so a second Open of the same node raises its window); **Connect** asks a node for a grant, as `pilot connect` does,
 when this user has none, and the node watched only says so. A node heard twice (on its socket and on the LAN) is one
 row, by its stream. In the TUI, Open says the `pilot-tui --node` to run in another terminal.
+
+### Settings
+
+The node's settings live in `settings.json` in its data folder, read at every start: on the LAN, its machine prefix,
+repo roots, update channel and policy, jobs at once, job memory, and the LAN port. The command line wins over the
+file (an autostart entry made before the file existed still pins what it names), and a key the file leaves out takes
+the default; a value it cannot read is passed over, never fatal. `pilot-node setup` writes it, and so does the
+**Settings** page (Ctrl+5 in the GUI, 5 in the TUI), or `pilot settings set <key> [value…]`.
+
+A change restarts the node to run with it, once no job runs or waits (a job is its child): the node starts its
+successor with its own arguments and `--after <its pid>`, and stops, as a self-update does, so flights, sessions and
+the watchtower carry on and clients resume their stream. A setting the command line gives is saved but says it does
+not count until the command line stops giving it.
+
+Above the settings, the page has the setup checklist: started at logon, Claude Code's hooks for this binary, on the
+LAN, the firewall rule for this binary (Windows), the watchtower's folder trusted (read from Claude Code's own record,
+a folder above it counting), gh signed in, and usage figures. Each says how it stands; those the node can fix have a
+button (`setup node <check>`): the logon entry, the hooks, the LAN, the firewall rule (one elevation prompt, which
+replaces an earlier install's rule), the trust prompt (opened in a window titled for what it is). `pilot settings`
+prints both. The route and both verbs are this machine's only: a grant from the LAN never reaches them, and nor does
+the watchtower.
 
 ## Cards
 

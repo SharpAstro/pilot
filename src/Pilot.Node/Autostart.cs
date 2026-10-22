@@ -155,12 +155,15 @@ public static class Autostart
         return 0;
     }
 
+    /// <summary>What starts the node at logon, in a line, or null when nothing does.</summary>
+    public static string? Entry() => OperatingSystem.IsWindows() ? ReadRun()
+        : OperatingSystem.IsLinux() && File.Exists(UnitPath()) ? $"{UnitPath()}: {File.ReadAllLines(UnitPath()).FirstOrDefault(l => l.StartsWith("ExecStart=", StringComparison.Ordinal))?["ExecStart=".Length..]}"
+        : null;
+
     /// <summary>Says what starts the node at logon, if anything.</summary>
     public static async Task<int> ShowAsync(TextWriter output)
     {
-        var entry = OperatingSystem.IsWindows() ? ReadRun()
-            : OperatingSystem.IsLinux() && File.Exists(UnitPath()) ? $"{UnitPath()}: {File.ReadAllLines(UnitPath()).FirstOrDefault(l => l.StartsWith("ExecStart=", StringComparison.Ordinal))?["ExecStart=".Length..]}"
-            : null;
+        var entry = Entry();
         await output.WriteLineAsync(entry is null ? "autostart: none; pilot-node autostart install -- --lan starts the node at logon" : $"autostart: {entry}");
         return 0;
     }
@@ -191,17 +194,39 @@ public static class Autostart
         return key?.GetValue(Name) as string;
     }
 
+    // Started as logon starts it, through conhost --headless, so it has a console of its own and no window. Its
+    // standard handles are pipes closed at once rather than the caller's: a node started from a shell whose output is
+    // captured (an agent's, a script's) would otherwise hold that pipe open for as long as it runs, and the install
+    // that started it would never seem to end.
     private static bool StartWindows(string nodePath, IReadOnlyList<string> nodeArgs)
     {
         try
         {
-            var start = new ProcessStartInfo(nodePath) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(nodePath)! };
+            var conhost = Environment.GetFolderPath(Environment.SpecialFolder.System).TrimEnd('\\') + @"\conhost.exe";
+            var start = new ProcessStartInfo(conhost)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetDirectoryName(nodePath)!,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            start.ArgumentList.Add("--headless");
+            start.ArgumentList.Add(nodePath);
             foreach (var arg in nodeArgs)
             {
                 start.ArgumentList.Add(arg);
             }
             using var process = Process.Start(start);
-            return process is not null;
+            if (process is null)
+            {
+                return false;
+            }
+            process.StandardInput.Close();
+            process.StandardOutput.Close();
+            process.StandardError.Close();
+            return true;
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
         {
