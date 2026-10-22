@@ -169,9 +169,13 @@ The GUI's rail opens the **Flights** page (Ctrl+2): each flight's code, title, r
 for which), legs (how many done, which flying), branch and sessions. As the window narrows it drops Sessions, then Branch.
 
 **A session's transcript** opens in place of the table: double-click its row, press Enter on it, or **Open transcript**
-in the header. It shows what was asked, what the assistant said, each tool call in a line with the first lines of what
-it gave back, and errors in red, and it follows the session live, pinned to its end until you scroll up; the say bar
-stays under it. Escape, or **Back to the sessions**, goes back. The node reads each transcript on from where its last
+in the header. It shows what was asked, what the assistant said, and each tool call in a line with what it gave back
+folded under it to its first lines (**+N lines** opens the rest). A dot gives the call's state: green done, red failed
+or refused, amber running, grey cut off by the session ending. A refused call says what refused it (auto mode and its
+reason, a safety check, don't-ask mode, a permission rule, or you) with the command and **Copy the command**. Prompts
+read as a person says them: Claude Code's reminders left out, a background task finishing or a command's output as a
+dim note, a slash command as typed, a subagent's hand-back under its name. It follows the session live, pinned to its
+end until you scroll up; the say bar stays under it. Escape, or **Back to the sessions**, goes back. The node reads each transcript on from where its last
 read stopped (`GET /api/v1/sessions/<id>/transcript?after=<n>`, a grant's on the LAN).
 
 Ended sessions can be put away: **Archive** on a selected ended row, **Archive ended (N)** in the Sessions header for
