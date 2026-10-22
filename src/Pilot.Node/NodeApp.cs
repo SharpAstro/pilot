@@ -91,6 +91,9 @@ public static class NodeApp
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());
+        builder.Services.AddSingleton(services => new Compactor(services.GetRequiredService<NodeState>(), services.GetRequiredService<Watchtower>(),
+            services.GetRequiredService<NodeCommands>().RunAsync, services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddHostedService(services => services.GetRequiredService<Compactor>());
         // From the profile the tracker reads, so a test node, on a profile of its own, never reads the machine's.
         builder.Services.AddSingleton(services => new UsageReader(
             services.GetRequiredService<NodeState>(),

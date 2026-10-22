@@ -145,6 +145,51 @@ public sealed class SayTests : IDisposable
     }
 
     [Fact]
+    public async Task ACompactionResumesAnIdleBackgroundSessionWithSlashCompactAndItsFocus()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "done", pid: 4343, status: "idle", cwd: Cwd));
+        _delivery.ListingAfterStop = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "done", cwd: Cwd, startedAt: Recent));
+        await _tracker.PollAsync(Ct);
+
+        var result = await _messenger.CompactAsync(new CommandRequest { Verb = Verbs.Compact, Target = "session/b2c3d4e5", Args = ["Keep", "the leg"], Who = "node" }, Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        result.Way.ShouldBe(SayWays.Resumed);
+        _delivery.Resumes.ShouldHaveSingleItem().Text.ShouldBe("/compact Keep the leg");
+        _log.ToString().ShouldContain("compact: who=node target=session/b2c3d4e5 way=resumed");
+    }
+
+    [Theory]
+    [InlineData("working", "busy")]
+    [InlineData("done", null)]
+    public async Task ACompactionOfASessionNotIdleIsRefusedNeverSaidAsWords(string state, string? status)
+    {
+        // Mid-turn, it would be relayed as words; ended, it would be woken for nothing.
+        _agents.Json = AgentRows.List(status is null
+            ? AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", state, cwd: Cwd, startedAt: Recent)
+            : AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", state, pid: 4343, status: status, cwd: Cwd));
+        await _tracker.PollAsync(Ct);
+
+        var result = await _messenger.CompactAsync(new CommandRequest { Verb = Verbs.Compact, Target = "session/b2c3d4e5", Args = [], Who = "node" }, Ct);
+
+        result.Ok.ShouldBeFalse();
+        result.Error.ShouldContain("not idle: a compaction is only ever its next turn");
+        _delivery.Calls.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ACompactionOfAnInteractiveSessionIsRefused()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "pil5-say-int", status: "idle"));
+        await _tracker.PollAsync(Ct);
+
+        var result = await _messenger.CompactAsync(new CommandRequest { Verb = Verbs.Compact, Target = "session/a1b2c3d4", Args = [], Who = "node" }, Ct);
+
+        result.Error.ShouldBe("pil5-say-int is interactive: someone is at it, so /compact is typed there, not sent from here");
+        _delivery.Calls.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task AnEndedBackgroundSessionIsResumedWithoutAStop()
     {
         _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "done", cwd: Cwd, startedAt: Recent));

@@ -234,9 +234,9 @@ public static class Briefs
         text.AppendLine("## How you are woken");
         text.AppendLine("The node says new cards to you as they open (a card is one event with its choices), and the controller talks to");
         text.AppendLine("you here, from the GUI or by Remote Control. Act on each message, say in a line or two what you did, and end your");
-        text.AppendLine("turn: between messages you sit idle, and that is fine. Do not poll or wait in a loop: when you have been idle");
-        text.AppendLine("for 50 minutes the node sends you on a round (look at status and cards, act on what stalled), which also keeps");
-        text.AppendLine("your prompt cache warm. Keep a quiet round to one word.");
+        text.AppendLine("turn: between messages you sit idle, and that is fine. Do not poll or wait in a loop: the node watches the");
+        text.AppendLine("workers for stalls and says the cards to you. Idle for long, you are compacted (/compact) before your prompt");
+        text.AppendLine("cache goes cold, and wake on a summary: `pilot status` and `pilot cards` always say where things stand now.");
         text.AppendLine();
         text.AppendLine("## What you may do");
         text.AppendLine("- Answer a card whose choice is a go-around, a resume or a nudge, when the card's detail shows it is the right one.");

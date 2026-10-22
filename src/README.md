@@ -229,6 +229,7 @@ pilot leg go-around <why…>
 pilot check <step number or text> [--undo]
 pilot artifact <path or URL> [title…]
 pilot say <session> <text…>
+pilot compact <session> [focus…]               # an idle background session's /compact, as its next turn (see Compaction)
 pilot note <text…>
 pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
 pilot archive <session> | --ended [--undo]      # put ended sessions away, out of the lists (or back)
@@ -301,8 +302,7 @@ never from an earlier watchtower's conversation, and the node says every Ring an
 | --- | --- |
 | there is something to watch (a flight not landed, a job running or waiting, a ring open) and none runs, or it ended or failed | starts a fresh one (a Handled line says why) |
 | nothing to watch | starts none; one already running is stopped once it has been idle 15 min with nothing to watch (a Handled line). With nothing in the air a watchtower costs nothing; the next flight, job or ring starts a fresh one, briefed from the state |
-| idle 50 min while a leg flies | sends it on a round: look at status and cards, act on what stalled, else answer "quiet". The round is a turn inside the prompt cache's hour, so the cache stays warm; a watchtower woken cold re-reads its whole context at full price |
-| idle past 70% of its context window | replaces it with a fresh one |
+| idle 50 min with more than 100k of context, or past 70% of its window | compacts it (see Compaction): it keeps its conversation as a summary, never replaced by a fresh one for its size |
 | stopped by the usage limit | a For-you card until the reset, then resumes it |
 | it cannot be started | rings with why: Claude Code starts no background session in a folder never trusted, so run `claude` in that folder once and accept the prompt |
 
@@ -320,6 +320,20 @@ pilot handled <subject> <line>                 # a Handled line
 ```
 
 `pilot-node --no-watchtower` keeps none.
+
+### Compaction
+
+Claude Code's prompt cache lives an hour, and a session woken after that reads its whole context again at full price.
+The node's compactor is a heartbeat over the background sessions it will wake again: the watchtower while it has
+something to watch, and any session waiting on a job of its own (a worker that handed a suite over with `pilot run`,
+idle until the job wakes it). Each one idle 50 min with more than 100k of context is compacted while its cache is
+still warm, and one past 70% of its window as soon as it is idle: `compact session/<id>`, which resumes it with Claude
+Code's `/compact` as its next turn, its focus what the summary keeps (for a worker, its task and the job it waits on).
+Below 100k a cold read costs little more than the summary, and a fresh session starts near 50k anyway. A session is
+compacted once per stretch of idleness, not again until it has answered something; one mid-turn is refused, never sent
+`/compact` as words, and an interactive session is never touched. Each compaction is a Handled line, and one refused
+is tried again in 10 min. This replaced the watchtower's keep-warm round every 50 min: finding stalls is the leg watch's.
+`pilot compact <session> [focus…]` does it by hand.
 
 ### Signals
 
@@ -410,7 +424,7 @@ A session the API stopped (its transcript's `apiError`, `usage_limit_reached` wi
 | --- | --- |
 | `GET /api/v1/node` | Which node this is: wire version, build version, machine, pid, started at, data folder, socket, stream. |
 | `GET /api/v1/events` | The event stream, a WebSocket: a snapshot carrying the current number, then deltas each numbered one past the last. `?since=<n>&stream=<id>` resumes with the deltas after `n`, or a snapshot when the node no longer holds them or has another stream. |
-| `POST /api/v1/commands` | Every command, `{verb, target, args, who}`. The result is the response and a `commandResult` event on the stream. Verbs: `note node <text>`, `say session/<id> <text>`, and the flight verbs above. |
+| `POST /api/v1/commands` | Every command, `{verb, target, args, who}`. The result is the response and a `commandResult` event on the stream. Verbs: `note node <text>`, `say session/<id> <text>`, `compact session/<id> [focus]`, and the flight verbs above. |
 | (cards) | `answer card/<id> <choice>`, `dismiss card/<id> [why]`: verbs on `POST /api/v1/commands`. |
 | `GET /api/v1/sessions/<id>/transcript?after=<n>` | A session's transcript as entries after the n-th (its last 300 without one); a grant's on the LAN. |
 | `GET /api/v1/jobs/<id>/log` | The end of a job's output: its last 200 lines from its last 64 KiB, the log's length, and whether it was clipped; a grant's on the LAN. |

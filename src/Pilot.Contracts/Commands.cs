@@ -70,6 +70,13 @@ public static class Verbs
     public const string Say = "say";
 
     /// <summary>
+    /// <c>compact session/&lt;id&gt; [focus…]</c>: compacts an idle background session's conversation (Claude Code's
+    /// <c>/compact</c>, the focus what its summary keeps), resuming it with that as its next turn. A session mid-turn or
+    /// interactive is refused.
+    /// </summary>
+    public const string Compact = "compact";
+
+    /// <summary>
     /// <c>create-flight repo/&lt;path&gt; &lt;issue&gt; [title…]</c>: a flight on that issue of the repo checked out at the
     /// path, coded by the node, with its plane (worktree and branch) made from the repo's default branch.
     /// </summary>

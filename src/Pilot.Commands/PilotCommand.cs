@@ -330,6 +330,9 @@ public static class PilotCommand
         var text = Words("text", "What to say");
         var say = Action(new Command("say", "Say something to a session through the node") { Arguments = { session, text } },
             (p, client, ct) => SendAsync(client, Verbs.Say, Verbs.SessionTarget(p.GetValue(session)!), [Join(p, text)], who, output, ct));
+        var focus = Words("focus", "What its summary keeps, as /compact takes it", required: false);
+        var compact = Action(new Command("compact", "Compact an idle background session's conversation (/compact): its next turn, a summary") { Arguments = { session, focus } },
+            (p, client, ct) => SendAsync(client, Verbs.Compact, Verbs.SessionTarget(p.GetValue(session)!), p.GetValue(focus) ?? [], who, output, ct));
         var noteText = Words("text", "The note");
         var note = Action(new Command("note", "Keep a note on the node, for every client") { Arguments = { noteText } },
             (p, client, ct) => SendAsync(client, Verbs.Note, Verbs.NodeTarget, [Join(p, noteText)], who, output, ct));
@@ -455,7 +458,7 @@ public static class PilotCommand
         return new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node },
-            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, archive, ring, flag, handled, nodes, connectNode, grants },
+            Subcommands = { status, sessions, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, archive, ring, flag, handled, nodes, connectNode, grants },
         };
     }
 

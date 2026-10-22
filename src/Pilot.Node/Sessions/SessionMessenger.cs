@@ -10,6 +10,11 @@ namespace Pilot.Node.Sessions;
 /// turn, and its row follows it to the new session id; a background session mid-turn, and any live interactive
 /// session, gets the text over the intercom, as a cross-session message. An interactive session is never stopped: it
 /// is someone's open terminal.
+/// <para>
+/// <c>compact session/&lt;id&gt; [focus…]</c> is a say of <c>/compact</c> that may only resume: an idle background session
+/// is resumed with it as its first prompt, which Claude Code runs as the command. Said over the intercom to a session
+/// mid-turn, it would be words, so a session no longer idle at the fresh look is refused instead.
+/// </para>
 /// </summary>
 /// <remarks>
 /// Done outside <see cref="NodeState.Execute"/>, as a delivery takes seconds; its result goes on the stream when it is
@@ -22,7 +27,15 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _busy = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.Ordinal);
 
     /// <summary>Does <paramref name="command"/>, a <c>say</c>, and puts its result on the stream.</summary>
-    public async Task<CommandResult> SayAsync(CommandRequest command, CancellationToken cancellationToken)
+    public Task<CommandResult> SayAsync(CommandRequest command, CancellationToken cancellationToken) => DoAsync(command, compact: false, cancellationToken);
+
+    /// <summary>Does <paramref name="command"/>, a <c>compact</c>, and puts its result on the stream.</summary>
+    public Task<CommandResult> CompactAsync(CommandRequest command, CancellationToken cancellationToken) => DoAsync(command, compact: true, cancellationToken);
+
+    /// <summary>The command a compaction resumes a session with: Claude Code's own, its words what the summary keeps.</summary>
+    public static string CompactPrompt(string focus) => focus.Length == 0 ? "/compact" : $"/compact {focus}";
+
+    private async Task<CommandResult> DoAsync(CommandRequest command, bool compact, CancellationToken cancellationToken)
     {
         var clock = Stopwatch.StartNew();
         string? way = null;
@@ -30,7 +43,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         string? error;
         try
         {
-            (way, sessionId) = await DeliverAsync(command, cancellationToken);
+            (way, sessionId) = await DeliverAsync(command, compact, cancellationToken);
             error = null;
         }
         catch (SessionDeliveryException ex)
@@ -44,7 +57,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
 
         var result = state.Complete(command, error, way, sessionId);
         var outcome = error is null ? "delivered" + (sessionId is null ? "" : $" as {sessionId}") : $"refused: {error}";
-        await log.WriteLineAsync($"say: who={command.Who} target={command.Target} way={way ?? "none"} {outcome} ({(long)clock.Elapsed.TotalMilliseconds} ms)");
+        await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} target={command.Target} way={way ?? "none"} {outcome} ({(long)clock.Elapsed.TotalMilliseconds} ms)");
         await log.FlushAsync(cancellationToken);
         return result;
     }
@@ -78,15 +91,19 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         return state.Complete(command, null);
     }
 
-    private async Task<(string? Way, string? SessionId)> DeliverAsync(CommandRequest command, CancellationToken cancellationToken)
+    private async Task<(string? Way, string? SessionId)> DeliverAsync(CommandRequest command, bool compact, CancellationToken cancellationToken)
     {
         if (!command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal) || command.Target.Length == Verbs.SessionTargetPrefix.Length)
         {
-            throw new SessionDeliveryException($"say takes a session target, {Verbs.SessionTargetPrefix}<id>, not {command.Target}");
+            throw new SessionDeliveryException($"{command.Verb} takes a session target, {Verbs.SessionTargetPrefix}<id>, not {command.Target}");
         }
         var id = command.Target[Verbs.SessionTargetPrefix.Length..];
         var text = string.Join(' ', command.Args).Trim();
-        if (text.Length == 0)
+        if (compact)
+        {
+            text = CompactPrompt(text);
+        }
+        else if (text.Length == 0)
         {
             throw new SessionDeliveryException("say session needs the text to say");
         }
@@ -100,6 +117,12 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             await tracker.PollAsync(cancellationToken);
             var rows = state.Sessions();
             var row = rows.FirstOrDefault(r => r.Id == id) ?? throw new SessionDeliveryException($"There is no session {id}");
+            if (compact && row is not { Kind: SessionKind.Background, State: SessionState.Idle })
+            {
+                throw new SessionDeliveryException(row.Kind == SessionKind.Background
+                    ? $"{row.Name} is {row.State.ToString().ToLowerInvariant()}, not idle: a compaction is only ever its next turn, never words said into one"
+                    : $"{row.Name} is interactive: someone is at it, so /compact is typed there, not sent from here");
+            }
 
             switch (Choose(row))
             {
