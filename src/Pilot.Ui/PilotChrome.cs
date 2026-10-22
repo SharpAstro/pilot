@@ -1,4 +1,5 @@
 using DIR.Lib;
+using Pilot.Contracts;
 
 namespace Pilot.Ui;
 
@@ -96,6 +97,33 @@ internal sealed class PilotChrome<TSurface>
         {
             Page = page;
         }
+    }
+
+    /// <summary>
+    /// Gives a card about a leg <b>Its transcript</b>: the leg's worker's transcript on the Sessions page, from the
+    /// moment the card was raised. The host says what the node shows now (<paramref name="sessions"/>,
+    /// <paramref name="flights"/>) and, where it keeps the page itself, how to show one (<paramref name="show"/>).
+    /// </summary>
+    public void LinkCardTranscripts(Func<SessionsScreen> sessions, Func<FlightsScreen> flights, Action<PilotPage>? show = null)
+    {
+        Cards.TranscriptOf = card => WorkerOf(card, flights(), sessions());
+        Cards.OnTranscript = (card, line) =>
+        {
+            (show ?? Show)(PilotPage.Sessions);
+            Sessions.Transcript.Open(line, card.At);
+        };
+    }
+
+    /// <summary>The session of the worker of the leg <paramref name="card"/> is about (its subject <c>flight/&lt;code&gt;/&lt;leg&gt;</c>), or null.</summary>
+    internal static SessionLine? WorkerOf(CardRow card, FlightsScreen flights, SessionsScreen sessions)
+    {
+        if (!card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal)
+            || card.Subject[Verbs.FlightTargetPrefix.Length..].Split('/') is not [var code, var leg])
+        {
+            return null;
+        }
+        var worker = flights.Lines.FirstOrDefault(f => f.Code == code)?.LegRows.FirstOrDefault(l => l.Name == leg)?.Worker;
+        return worker is null ? null : sessions.Lines.FirstOrDefault(l => string.Equals(l.Name, worker, StringComparison.OrdinalIgnoreCase));
     }
 
     public float DpiScale

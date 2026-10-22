@@ -84,6 +84,7 @@ public static class SessionRowBuilder
                 ? hookWaiting ?? agent.WaitingFor ?? record?.WaitingFor ?? transcripts.PendingQuestion ?? (agent.State == "blocked" ? SessionStates.BlockedWaitingFor : null)
                 : null,
             SpendWeighted = transcripts.SpendWeighted,
+            Subagents = transcripts.Subagents is { Count: > 0 } subagents ? [.. subagents] : null,
             ApiError = apiError,
             ApiErrorResetsAt = transcripts.Stop?.ResetsAt,
             Budget = role.Budget,

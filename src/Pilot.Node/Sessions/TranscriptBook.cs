@@ -22,24 +22,38 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
     private readonly Dictionary<string, Reader> _readers = new(StringComparer.Ordinal);
     private readonly Lock _lock = new();
 
-    /// <summary>The entries after <paramref name="after"/> (its last <see cref="FirstRead"/> for a negative one); null when
-    /// the session has no transcript.</summary>
-    public TranscriptPage? Read(string sessionId, int after)
+    /// <summary>The entries after <paramref name="after"/> (its last <see cref="FirstRead"/> for a negative one), of the
+    /// session's transcript or with <paramref name="agent"/> its subagent's; null when there is no such transcript.</summary>
+    public TranscriptPage? Read(string sessionId, int after, string? agent = null)
     {
         lock (_lock)
         {
-            if (!_readers.TryGetValue(sessionId, out var reader))
+            var key = agent is null ? sessionId : $"{sessionId}/{agent}";
+            if (!_readers.TryGetValue(key, out var reader))
             {
                 if (profile.FindTranscript(sessionId) is not { } path)
                 {
                     return null;
                 }
-                _readers[sessionId] = reader = new Reader(path);
+                if (agent is not null)
+                {
+                    // Matched against the files there are, never joined into a path: an id is the caller's to send.
+                    var file = $"agent-{agent}.jsonl";
+                    if (ClaudeProfile.SubagentFiles(path).FirstOrDefault(f => string.Equals(Path.GetFileName(f), file, StringComparison.Ordinal)) is not { } found)
+                    {
+                        return null;
+                    }
+                    path = found;
+                }
+                _readers[key] = reader = new Reader(path);
             }
             reader.Refresh();
             var entries = reader.Entries;
             var from = after < 0 ? Math.Max(0, entries.Count - FirstRead) : Math.Min(entries.Count, after + 1);
-            return new TranscriptPage { Entries = [.. entries.Skip(from).Take(Page)], Total = entries.Count };
+            return new TranscriptPage
+            {
+                Entries = [.. entries.Skip(from).Take(Page)], Total = entries.Count, Queued = reader.Queued.Count > 0 ? [.. reader.Queued] : null,
+            };
         }
     }
 
@@ -50,6 +64,9 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         private readonly List<byte> _partial = [];
 
         public List<TranscriptEntry> Entries { get; } = [];
+
+        /// <summary>The messages queued for the session that it has not taken yet, oldest first.</summary>
+        public List<string> Queued { get; } = [];
 
         public void Refresh()
         {
@@ -62,6 +79,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                     _offset = 0;
                     _partial.Clear();
                     Entries.Clear();
+                    Queued.Clear();
                 }
                 file.Seek(_offset, SeekOrigin.Begin);
                 var buffer = new byte[64 * 1024];
@@ -97,6 +115,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
             try
             {
                 using var doc = JsonDocument.Parse(line);
+                Queue(doc.RootElement);
                 var at = doc.RootElement.TryGetProperty("timestamp", out var t) && t.TryGetDateTimeOffset(out var when) ? when : (DateTimeOffset?)null;
                 foreach (var entry in Read(doc.RootElement))
                 {
@@ -105,6 +124,51 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
             }
             catch (JsonException)
             {
+            }
+        }
+
+        /// <summary>
+        /// Keeps <see cref="Queued"/>: Claude Code records a message handed to a busy session as an enqueue, and the
+        /// session takes it at its next step, as a new turn (a dequeue, then a user line with its text) or mid-turn (a
+        /// remove, then an attachment with its text). What Claude Code queues for itself (a task finishing, a
+        /// subagent's hand-back) is left out: those are not someone's words waiting to be read.
+        /// </summary>
+        private void Queue(JsonElement line)
+        {
+            var type = Str(line, "type");
+            if (type == "queue-operation" && Str(line, "operation") == "enqueue")
+            {
+                if (Str(line, "content") is { Length: > 0 } content && !content.TrimStart().StartsWith('<'))
+                {
+                    Queued.Add(content.Trim());
+                }
+                return;
+            }
+            if (Queued.Count == 0)
+            {
+                return;
+            }
+            var taken = type switch
+            {
+                "queue-operation" when Str(line, "operation") == "remove" => Str(line, "content"),
+                "attachment" when line.TryGetProperty("attachment", out var attachment) => PromptText(attachment),
+                "user" when line.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.Object
+                    && message.TryGetProperty("content", out var content) => content.ValueKind switch
+                    {
+                        JsonValueKind.String => content.GetString(),
+                        JsonValueKind.Array => string.Join("\n", content.EnumerateArray().Select(p => Str(p, "text")).OfType<string>()),
+                        _ => null,
+                    },
+                _ => null,
+            };
+            if (taken is { Length: > 0 })
+            {
+                // Compared on the first of the queued text: a long message can come back with more round it.
+                var i = Queued.FindIndex(q => taken.Contains(q[..Math.Min(200, q.Length)], StringComparison.Ordinal));
+                if (i >= 0)
+                {
+                    Queued.RemoveAt(i);
+                }
             }
         }
 

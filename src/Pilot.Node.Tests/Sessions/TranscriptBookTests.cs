@@ -62,6 +62,19 @@ public sealed class TranscriptBookTests : IDisposable
     }
 
     [Fact]
+    public void ASubagentsTranscriptIsReadByItsIdAndOnlyAnIdItHas()
+    {
+        _profile.Append(_profile.TranscriptPath(Session), """{"type":"user","message":{"role":"user","content":"main"}}""");
+        _profile.Append(_profile.SubagentPath(Session, "a1"), """{"type":"user","isSidechain":true,"message":{"role":"user","content":"Find the clock"}}""");
+        var book = new TranscriptBook(_profile.Profile);
+
+        book.Read(Session, -1, "a1").ShouldNotBeNull().Entries.ShouldHaveSingleItem().Text.ShouldBe("Find the clock");
+        book.Read(Session, -1).ShouldNotBeNull().Entries.ShouldHaveSingleItem().Text.ShouldBe("main");
+        book.Read(Session, -1, "b2").ShouldBeNull();
+        book.Read(Session, -1, "../a1").ShouldBeNull();
+    }
+
+    [Fact]
     public void ASessionWithNoTranscriptHasNone() => new TranscriptBook(_profile.Profile).Read(Session, -1).ShouldBeNull();
 
     [Fact]
@@ -105,6 +118,32 @@ public sealed class TranscriptBookTests : IDisposable
         ]);
         entries.ShouldAllBe(e => e.Kind == TranscriptKind.User);
         entries[4].FromAgent.ShouldBe("a1");
+    }
+
+    [Fact]
+    public void AMessageQueuedForABusySessionWaitsUntilItIsTakenAsATurnOrMidTurn()
+    {
+        var path = _profile.TranscriptPath(Session);
+        _profile.Append(path,
+            """{"type":"queue-operation","operation":"enqueue","content":"and the other test too"}""",
+            """{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<summary>done</summary>\n</task-notification>"}""",
+            """{"type":"queue-operation","operation":"enqueue","content":"then push it"}""");
+        var book = new TranscriptBook(_profile.Profile);
+
+        // Claude Code's own (a task finishing) is not someone's words waiting.
+        book.Read(Session, -1).ShouldNotBeNull().Queued.ShouldBe(["and the other test too", "then push it"]);
+
+        // Taken mid-turn: a remove, then the attachment.
+        _profile.Append(path,
+            """{"type":"queue-operation","operation":"remove","content":"and the other test too"}""",
+            """{"type":"attachment","attachment":{"type":"queued_command","prompt":"and the other test too"}}""");
+        book.Read(Session, -1).ShouldNotBeNull().Queued.ShouldBe(["then push it"]);
+
+        // Taken as a new turn: a dequeue, then the user line.
+        _profile.Append(path,
+            """{"type":"queue-operation","operation":"dequeue"}""",
+            """{"type":"user","message":{"role":"user","content":"then push it"}}""");
+        book.Read(Session, -1).ShouldNotBeNull().Queued.ShouldBeNull();
     }
 
     [Theory]

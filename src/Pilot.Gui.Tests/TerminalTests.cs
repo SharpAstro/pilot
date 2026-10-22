@@ -105,7 +105,7 @@ public sealed class TerminalTests
         var sessions = new SessionsView<RgbaImage>(vessel);
         var screen = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
         var asked = new List<(string Row, int After)>();
-        sessions.Transcript.Load = (row, after, _) =>
+        sessions.Transcript.Load = (row, _, after, _) =>
         {
             lock (asked)
             {
@@ -139,7 +139,8 @@ public sealed class TerminalTests
         described.ShouldContain("Bash");
         described.ShouldContain("dotnet test --filter Clock");
         described.ShouldContain("ClockTests.Ticks");
-        described.ShouldContain("Fixed it.");
+        // What the assistant wrote is Markdown, a leaf a word.
+        described.ShouldContain("\"Fixed ");
         described.ShouldNotContain("Last response");
         // The first read asked for the last entries; the next only for what came after them.
         lock (asked)
@@ -160,7 +161,7 @@ public sealed class TerminalTests
         var screen = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
         var copied = new List<string>();
         sessions.CopyText = copied.Add;
-        sessions.Transcript.Load = (_, after, _) => Task.FromResult(after < 0
+        sessions.Transcript.Load = (_, _, after, _) => Task.FromResult(after < 0
             ? new TranscriptPage
             {
                 Total = 6,
@@ -192,7 +193,7 @@ public sealed class TerminalTests
 
         var described = Described();
         // The result sits under its call, not after the words that came between them, and shows its first three lines.
-        described.IndexOf("└ one", StringComparison.Ordinal).ShouldBeLessThan(described.IndexOf("Meanwhile, reading.", StringComparison.Ordinal));
+        described.IndexOf("└ one", StringComparison.Ordinal).ShouldBeLessThan(described.IndexOf("Meanwhile,", StringComparison.Ordinal));
         described.ShouldContain("three");
         described.ShouldNotContain("four");
         described.ShouldContain("+2 lines (click to expand)");
@@ -208,6 +209,186 @@ public sealed class TerminalTests
         Regions().Single(r => r.Result is HitResult.ButtonHit { Action: "transcript:copy:3" }).OnClick!.Invoke(InputModifier.None);
         copied.ShouldBe(["rm -rf build"]);
         sessions.Transcript.Close();
+    }
+
+    [Fact]
+    public async Task OpenedAtAMomentTheTranscriptStartsThereUntilJumpToEndAndSaysWhatIsQueued()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var sessions = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        var screen = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
+        var line = screen.Lines.First(l => l.Row.State is not (SessionState.Ended or SessionState.Failed));
+        var at = new DateTimeOffset(2026, 10, 21, 8, 0, 0, TimeSpan.Zero);
+        sessions.Transcript.Load = (_, _, after, _) => Task.FromResult(new TranscriptPage
+        {
+            Total = 2,
+            Entries = after < 0
+                ? [
+                    new() { Index = 0, At = at.AddMinutes(-5), Kind = TranscriptKind.Assistant, Text = "Earlier words." },
+                    new() { Index = 1, At = at.AddSeconds(3), Kind = TranscriptKind.Assistant, Text = "Stuck on the build." },
+                ]
+                : [],
+            Queued = ["then push it"],
+        });
+        sessions.Tree(screen);
+
+        sessions.Transcript.Open(line, at);
+        for (var i = 0; i < 100 && sessions.Transcript.Entries.Count < 2; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+        string Described() => CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 160, 60), CellMeasureContext.PixelAuthored));
+
+        var described = Described();
+        described.ShouldContain("● live");
+        described.ShouldContain("Stuck");
+        described.ShouldNotContain("Earlier");
+        described.ShouldContain("not read yet");
+        described.ShouldContain("then push it");
+
+        sessions.Render(screen, new RectF32(0, 0, 1280, 800));
+        var regions = new List<ClickableRegion>();
+        sessions.CollectPaintedRegions(regions);
+        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "transcript:end" }).OnClick!.Invoke(InputModifier.None);
+
+        described = Described();
+        described.ShouldContain("Earlier");
+        described.ShouldNotContain("Jump to end");
+        sessions.Transcript.Close();
+    }
+
+    [Fact]
+    public async Task WhatTheAssistantWroteReadsAsMarkdownAndOnlyAWebLinkOpens()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var sessions = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        var screen = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
+        var opened = new List<string>();
+        sessions.OnOpen = opened.Add;
+        sessions.Transcript.Load = (_, _, after, _) => Task.FromResult(new TranscriptPage
+        {
+            Total = 1,
+            Entries = after < 0
+                ? [new() { Index = 0, Kind = TranscriptKind.Assistant, Text = "## Found it\n\nThe **clock** was `UtcNow`: a long paragraph that wraps at the width of the pane rather than running off its edge, as a line of plain text did, cut wherever the window happened to end and losing the rest of what the assistant said.\n\n| file | change |\n|---|---|\n| Clock.cs | takes the injected time |\n\n```\nvar now = time.GetUtcNow();\n```\n\n- see [the PR](https://github.com/x/y/pull/1)\n- or [this](file:///C:/Windows/notepad.exe)" }]
+                : [],
+        });
+        sessions.Tree(screen);
+        sessions.HandleInput(new InputEvent.KeyDown(InputKey.Enter)).ShouldBeTrue();
+        for (var i = 0; i < 100 && sessions.Transcript.Entries.Count < 1; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+
+        var described = CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 160, 60), CellMeasureContext.PixelAuthored));
+        described.ShouldContain("Found");
+        described.ShouldContain("clock");
+        described.ShouldContain("UtcNow");
+        described.ShouldContain("•");
+        described.ShouldNotContain("**");
+        described.ShouldNotContain("##");
+
+        sessions.Render(screen, new RectF32(0, 0, 1280, 800));
+        var regions = new List<ClickableRegion>();
+        sessions.CollectPaintedRegions(regions);
+        foreach (var link in regions.Where(r => r.Result is HitResult.LinkHit).ToList())
+        {
+            link.OnClick!.Invoke(InputModifier.None);
+        }
+        opened.Distinct().ShouldBe(["https://github.com/x/y/pull/1"]);
+        sessions.Transcript.Close();
+    }
+
+    [Fact]
+    public async Task ASessionsSubagentsListUnderItsRowAndEachOpensItsOwnTranscript()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var sessions = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        var sample = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
+        var parent = sample.Lines[0];
+        SubagentRow[] subagents =
+        [
+            new() { Id = "a1", Type = "Explore", Description = "Find the clock", ToolUseId = "toolu_1", Working = false },
+            new() { Id = "b2", Type = "general-purpose", Description = "Review the fix", ToolUseId = "toolu_2", Working = true },
+        ];
+        var screen = sample with { Lines = [parent with { Row = parent.Row with { Subagents = subagents } }, .. sample.Lines.Skip(1)] };
+        var asked = new List<string?>();
+        sessions.Transcript.Load = (_, agent, after, _) =>
+        {
+            lock (asked)
+            {
+                asked.Add(agent);
+            }
+            return Task.FromResult(new TranscriptPage
+            {
+                Total = 1,
+                Entries = after >= 0 ? [] : agent is null
+                    ? [new() { Index = 0, Kind = TranscriptKind.ToolUse, Tool = "Agent", Text = "Find the clock", ToolUseId = "toolu_1" }]
+                    : [new() { Index = 0, Kind = TranscriptKind.User, Text = $"asked {agent}" }],
+            });
+        };
+        string Described() => CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 160, 60), CellMeasureContext.PixelAuthored));
+        List<ClickableRegion> Regions()
+        {
+            sessions.Render(screen, new RectF32(0, 0, 1280, 800));
+            var regions = new List<ClickableRegion>();
+            sessions.CollectPaintedRegions(regions);
+            return regions;
+        }
+        void Click(string action) => Regions().Single(r => r.Result is HitResult.ButtonHit b && b.Action == action).OnClick!.Invoke(InputModifier.None);
+        async Task Loaded(string? agent)
+        {
+            for (var i = 0; i < 100 && (sessions.Transcript.Agent != agent || sessions.Transcript.Entries.Count < 1); i++)
+            {
+                await Task.Delay(50, TestContext.Current.CancellationToken);
+            }
+        }
+
+        Described().ShouldContain("▸ 2 subagents, 1 working");
+        Described().ShouldNotContain("Find the clock");
+
+        // The toggle lists them under the row; Left puts them away again, Right brings them back.
+        Click($"session:{parent.Row.Id}:subagents");
+        var described = Described();
+        described.ShouldContain("▾ 2 subagents");
+        described.ShouldContain("↳ Explore");
+        described.ShouldContain("Find the clock");
+        described.ShouldContain("Review the fix");
+        sessions.HandleInput(new InputEvent.KeyDown(InputKey.Left)).ShouldBeTrue();
+        Described().ShouldNotContain("Find the clock");
+        sessions.HandleInput(new InputEvent.KeyDown(InputKey.Right)).ShouldBeTrue();
+
+        // A subagent's row opens its transcript; the chips go between it and the session's own.
+        Click($"session:{parent.Row.Id}:agent:a1");
+        await Loaded("a1");
+        Described().ShouldContain("asked a1");
+        Described().ShouldContain("main");
+        Click("transcript:agent:main");
+        await Loaded(null);
+        // The call that started a subagent leads to it.
+        Described().ShouldContain("open Explore transcript");
+        Click("transcript:spawn:0");
+        await Loaded("a1");
+        lock (asked)
+        {
+            asked.Distinct().ShouldBe(["a1", null]);
+        }
+        sessions.Transcript.Close();
+    }
+
+    [Fact]
+    public void ACardAboutALegNamesItsWorkersSession()
+    {
+        var screen = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
+        var worker = screen.Lines[0];
+        var flights = Screen() with
+        {
+            Lines = [.. Screen().Lines.Select(f => f with { LegRows = [.. f.LegRows.Select(l => l.Name == "parser" ? l with { Worker = worker.Name } : l)] })],
+        };
+        CardRow Card(string subject) => new() { Id = "c1", Bin = CardBin.Ring, Kind = "worker-idle", Subject = subject, Title = "t", At = Live.At, State = CardState.Open };
+
+        PilotChrome<RgbaImage>.WorkerOf(Card("flight/TIA1611/parser"), flights, screen).ShouldBe(worker);
+        PilotChrome<RgbaImage>.WorkerOf(Card("flight/TIA1611"), flights, screen).ShouldBeNull();
+        PilotChrome<RgbaImage>.WorkerOf(Card("flight/TIA1611/renderer"), flights, screen).ShouldBeNull();
     }
 
     [Fact]

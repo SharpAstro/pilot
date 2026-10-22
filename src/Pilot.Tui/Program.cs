@@ -91,7 +91,7 @@ flights.OnAction = action => _ = Task.Run(async () =>
     Redraw();
 });
 flights.OnOpen = location => flights.Say(DashboardCommands.Open(location) ? $"opened {location}" : $"could not open {location}");
-sessions.Transcript.Load = async (rowId, after, ct) => (await client.GetTranscriptAsync(rowId, after, ct)) is { Success: true, Response: { } page }
+sessions.Transcript.Load = async (rowId, agent, after, ct) => (await client.GetTranscriptAsync(rowId, after, ct, agent)) is { Success: true, Response: { } page }
     ? page
     : throw new InvalidOperationException("the node has no transcript for this session");
 sessions.Transcript.Changed = Redraw;
@@ -149,6 +149,8 @@ terminal.EnterAlternateScreen();
 terminal.EnableCellBuffer();
 
 var page = PilotPage.Sessions;
+// A card about a leg opens its worker's transcript from the moment the card was raised.
+chrome.LinkCardTranscripts(() => feed.Screen(DateTimeOffset.UtcNow), () => feed.Flights(DateTimeOffset.UtcNow), shown => page = shown);
 // The session menu's New flight in its repo: the Flights page, with the wizard open on it.
 sessions.OnNewFlight = repo =>
 {

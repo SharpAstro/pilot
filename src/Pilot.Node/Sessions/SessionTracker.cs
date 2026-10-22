@@ -344,12 +344,15 @@ public sealed class SessionTracker : BackgroundService
         }
 
         // A row built afresh from the listing keeps the copies it followed: they are this row's history, not the listing's.
-        Put(SessionRowBuilder.Build(agent, facts, record, repo, JoinFlight(SessionRoles.Resolve(agent.Name, background: agent.Kind == "background"), agent.Cwd), Hooks.Of(agent.SessionId)) with
+        var built = SessionRowBuilder.Build(agent, facts, record, repo, JoinFlight(SessionRoles.Resolve(agent.Name, background: agent.Kind == "background"), agent.Cwd), Hooks.Of(agent.SessionId));
+        Put(built with
         {
             Id = id,
             EarlierSessionIds = _rows.TryGetValue(id, out var known) ? known.EarlierSessionIds : null,
             // Put away stays put away while it stays ended; running again brings it back.
             Archived = known is { Archived: true } && ended,
+            // The same subagents as before are the same array, or the row would differ on every poll.
+            Subagents = known?.Subagents is { } were && built.Subagents is { } are && were.SequenceEqual(are) ? were : built.Subagents,
         });
     }
 

@@ -276,11 +276,14 @@ public static class NodeApp
 
         MapGrantRoutes(app);
 
-        // A session's transcript, for the transcript page: by its row, read on from where the last read stopped.
-        app.MapGet(NodeWire.TranscriptPattern, (string id, int? after, NodeState state, TranscriptBook transcripts) =>
+        // A session's transcript, for the transcript page: by its row, read on from where the last read stopped; with
+        // ?agent=, one of its subagents', named only as the row lists them.
+        app.MapGet(NodeWire.TranscriptPattern, (string id, int? after, string? agent, NodeState state, TranscriptBook transcripts) =>
             state.Sessions().FirstOrDefault(r => r.Id == id) is not { } row
                 ? Results.Json(ResponseEnvelope<TranscriptPage>.Fail($"There is no session {id}", 404), PilotJsonContext.Default.ResponseEnvelopeTranscriptPage, statusCode: 404)
-                : transcripts.Read(row.SessionId, after ?? -1) is { } page
+                : agent is not null && row.Subagents?.Any(s => s.Id == agent) != true
+                    ? Results.Json(ResponseEnvelope<TranscriptPage>.Fail($"{row.Name} has no subagent {agent}", 404), PilotJsonContext.Default.ResponseEnvelopeTranscriptPage, statusCode: 404)
+                : transcripts.Read(row.SessionId, after ?? -1, agent) is { } page
                     ? Results.Json(ResponseEnvelope<TranscriptPage>.Ok(page), PilotJsonContext.Default.ResponseEnvelopeTranscriptPage)
                     : Results.Json(ResponseEnvelope<TranscriptPage>.Fail($"{row.Name} has no transcript yet", 404), PilotJsonContext.Default.ResponseEnvelopeTranscriptPage, statusCode: 404));
 

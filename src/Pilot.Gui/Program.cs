@@ -193,9 +193,9 @@ if (feed is not null && client is not null)
         loop.RequestRedraw();
     };
     // The Sessions page's transcript pane reads the node's transcript route, and follows it while open.
-    view.Transcript.Load = async (rowId, after, ct) =>
+    view.Transcript.Load = async (rowId, agent, after, ct) =>
     {
-        var envelope = await client.GetTranscriptAsync(rowId, after, ct);
+        var envelope = await client.GetTranscriptAsync(rowId, after, ct, agent);
         return envelope is { Success: true, Response: { } page } ? page : throw new InvalidOperationException(envelope.Error);
     };
     view.Transcript.Changed = loop.RequestRedraw;
@@ -339,6 +339,8 @@ var drawnVersion = -1L;
 var drawnAt = DateTimeOffset.MinValue;
 CardsScreen? cards = snapshot is null ? null : CardsScreen.From(snapshot.Cards);
 FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
+// A card about a leg opens its worker's transcript from the moment the card was raised.
+chrome.LinkCardTranscripts(() => screen, () => flights ?? new FlightsScreen([], screen.Source, screen.AsOf));
 loop.OnResize = (w, h) =>
 {
     width = (int)w;

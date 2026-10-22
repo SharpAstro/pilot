@@ -170,13 +170,25 @@ for which), legs (how many done, which flying), branch and sessions. As the wind
 
 **A session's transcript** opens in place of the table: double-click its row, press Enter on it, or **Open transcript**
 in the header. It shows what was asked, what the assistant said, and each tool call in a line with what it gave back
-folded under it to its first lines (**+N lines** opens the rest). A dot gives the call's state: green done, red failed
+folded under it to its first lines (**+N lines** opens the rest). What the assistant wrote, its thinking and a
+subagent's report read as Markdown (DIR.Lib's `Layout.Builder.Markdown`): headings, lists, tables, code and links,
+wrapped at the pane's width; a link opens in the browser, and only a web link opens. A dot gives the call's state: green done, red failed
 or refused, amber running, grey cut off by the session ending. A refused call says what refused it (auto mode and its
 reason, a safety check, don't-ask mode, a permission rule, or you) with the command and **Copy the command**. Prompts
 read as a person says them: Claude Code's reminders left out, a background task finishing or a command's output as a
 dim note, a slash command as typed, a subagent's hand-back under its name. It follows the session live, pinned to its
-end until you scroll up; the say bar stays under it. Escape, or **Back to the sessions**, goes back. The node reads each transcript on from where its last
-read stopped (`GET /api/v1/sessions/<id>/transcript?after=<n>`, a grant's on the LAN).
+end until you scroll up, when **Jump to end** follows it again; the header says whether the session is live or ended,
+and the say bar stays under it. What you said while the session was busy shows last, dim, as **queued**, until the
+session reads it at its next step. A card about a leg's worker (stalled, idle, past its budget) has **Its
+transcript**: the worker's transcript from the moment the card was raised, that entry marked, until **Jump to end**.
+Escape, or **Back to the sessions**, goes back. The node reads each transcript on from where its last read stopped
+(`GET /api/v1/sessions/<id>/transcript?after=<n>`, a grant's on the LAN).
+
+**Subagents.** A session that started subagents says how many under its name (**▸ 2 subagents, 1 working**); a click
+there, or Right on the selected row, lists them under it (Left puts them away): each one's type, what it was asked, and
+whether it is working or done, from Claude Code's record of it (`agent-<id>.meta.json`) and its hand-back. A click on
+one opens its own transcript (`…/transcript?agent=<id>`, only an id the row lists). In a transcript, chips go between
+the session's own and each subagent's, and the call that started a subagent, or its hand-back, leads to it.
 
 Ended sessions can be put away: **Archive** on a selected ended row, **Archive ended (N)** in the Sessions header for
 all of them, and **Show archived** to list them again (with **Restore**). An archived session is only left out of the

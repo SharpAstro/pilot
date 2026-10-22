@@ -24,6 +24,14 @@ internal sealed class TranscriptPane
     private static readonly RGBAColor32 Failed = new(0xe0, 0x5a, 0x5a, 0xff);
     private static readonly RGBAColor32 Ok = new(0x5c, 0xb8, 0x6e, 0xff);
     private static readonly RGBAColor32 Running = new(0xe8, 0xb0, 0x4a, 0xff);
+    private static readonly RGBAColor32 Marked = new(0x2a, 0x24, 0x18, 0xff);
+
+    // The assistant's words and a subagent's report as Markdown, on the pane's colours; its thinking the same, dimmed.
+    private static readonly Layout.MarkdownStyle Prose = new() { Text = Body, Strong = Bright, Link = Tool, Muted = Dim };
+    private static readonly Layout.MarkdownStyle Thought = new()
+    {
+        Text = Faint, Strong = Dim, Emphasis = Faint, Code = Dim, Link = Dim, Muted = Faint, CodeBackground = new(0x18, 0x19, 0x20, 0xff),
+    };
     private static readonly RGBAColor32 Button = new(0x2c, 0x35, 0x4a, 0xff);
     private static readonly RGBAColor32 ButtonHover = new(0x3a, 0x46, 0x62, 0xff);
 
@@ -37,8 +45,24 @@ internal sealed class TranscriptPane
     private int _total;
     private string? _problem;
 
+    private string[] _queued = [];
+
+    // The session as it was opened: switching to one of its subagents' transcripts, or back, opens it again.
+    private SessionLine? _line;
+
+    // Its subagents as the session's row lists them now, as of the last tree.
+    private IReadOnlyList<SubagentRow> _subagents = [];
+
     // The entries opened past their first lines, by index: a click on "+N lines" opens one, another closes it.
     private readonly HashSet<int> _expanded = [];
+
+    // Each Markdown entry's tree, by its index and whether it is opened.
+    private readonly Dictionary<(int Index, bool Open), Layout.Node> _markdown = [];
+
+    // Opened at a moment (a card's): the transcript from the first entry at or after it, that entry marked, held at the
+    // top of a list that does not follow the end until Jump to end.
+    private DateTimeOffset? _at;
+    private readonly ListScrollController _atScroll = new() { Mode = ScrollBarMode.Interactive, Anchor = ScrollAnchor.Top };
 
     /// <summary>The open session's row id, or null with none open.</summary>
     public string? RowId { get; private set; }
@@ -48,14 +72,23 @@ internal sealed class TranscriptPane
 
     public bool IsOpen => RowId is not null;
 
-    /// <summary>Reads a session's transcript after an entry (or its last entries, for -1): the node's transcript route.</summary>
-    public Func<string, int, CancellationToken, Task<TranscriptPage>>? Load { get; set; }
+    /// <summary>
+    /// Reads a session's transcript, or with an agent id its subagent's, after an entry (or its last entries, for -1):
+    /// the node's transcript route.
+    /// </summary>
+    public Func<string, string?, int, CancellationToken, Task<TranscriptPage>>? Load { get; set; }
+
+    /// <summary>The subagent whose transcript is open, or null for the session's own.</summary>
+    public string? Agent { get; private set; }
 
     /// <summary>Called when what it shows changed, from whichever thread: the host redraws.</summary>
     public Action? Changed { get; set; }
 
     /// <summary>Puts text on the clipboard: a refused command's Copy. Null where the host has no clipboard.</summary>
     public Action<string>? CopyText { get; set; }
+
+    /// <summary>Opens a link in what the assistant wrote. Null leaves links as coloured text.</summary>
+    public Action<string>? OpenLink { get; set; }
 
     /// <summary>The entries it holds now, oldest first.</summary>
     public IReadOnlyList<TranscriptEntry> Entries
@@ -69,23 +102,33 @@ internal sealed class TranscriptPane
         }
     }
 
-    /// <summary>Opens <paramref name="line"/>'s transcript and follows it until <see cref="Close"/> or another opens.</summary>
-    public void Open(SessionLine line)
+    /// <summary>
+    /// Opens <paramref name="line"/>'s transcript and follows it until <see cref="Close"/> or another opens: at its end, or
+    /// with <paramref name="at"/> from the first entry at or after that moment, marked, until Jump to end.
+    /// </summary>
+    public void Open(SessionLine line, DateTimeOffset? at = null, string? agent = null)
     {
         Close();
         RowId = line.Row.Id;
+        Agent = agent;
         Title = $"{line.Role} · {line.Name}";
+        _line = line;
         lock (_lock)
         {
             _entries.Clear();
             _total = 0;
             _problem = null;
+            _queued = [];
         }
         _expanded.Clear();
+        _markdown.Clear();
+        _at = at;
+        _atScroll.AtomOffset = 0;
+        _scroll.ScrollToEnd();
         if (Load is { } load)
         {
             var following = _following = new CancellationTokenSource();
-            _ = FollowAsync(line.Row.Id, load, following.Token);
+            _ = FollowAsync(line.Row.Id, agent, load, following.Token);
         }
     }
 
@@ -95,10 +138,11 @@ internal sealed class TranscriptPane
         _following?.Dispose();
         _following = null;
         RowId = null;
+        Agent = null;
         Title = null;
     }
 
-    private async Task FollowAsync(string rowId, Func<string, int, CancellationToken, Task<TranscriptPage>> load, CancellationToken cancellationToken)
+    private async Task FollowAsync(string rowId, string? agent, Func<string, string?, int, CancellationToken, Task<TranscriptPage>> load, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -109,11 +153,12 @@ internal sealed class TranscriptPane
                 {
                     after = _entries.Count == 0 ? -1 : _entries[^1].Index;
                 }
-                var page = await load(rowId, after, cancellationToken).ConfigureAwait(false);
+                var page = await load(rowId, agent, after, cancellationToken).ConfigureAwait(false);
                 lock (_lock)
                 {
                     _entries.AddRange(page.Entries.Where(e => _entries.Count == 0 || e.Index > _entries[^1].Index));
                     _total = page.Total;
+                    _queued = page.Queued ?? [];
                     _problem = null;
                 }
                 Changed?.Invoke();
@@ -145,30 +190,109 @@ internal sealed class TranscriptPane
     /// The pane as a tree, in the space the table takes otherwise. <paramref name="live"/>: the session is still running,
     /// so a call with nothing back yet is running rather than cut off.
     /// </summary>
-    internal Layout.Node Tree(bool live = true)
+    internal Layout.Node Tree(bool live = true, IReadOnlyList<SubagentRow>? subagents = null)
     {
+        _subagents = subagents ?? [];
+        // A subagent's transcript is live while the session is and the subagent has not handed back.
+        if (Agent is { } agent)
+        {
+            live &= _subagents.FirstOrDefault(s => s.Id == agent)?.Working == true;
+        }
         List<TranscriptEntry> entries;
         int total;
         string? problem;
+        string[] queued;
         lock (_lock)
         {
             entries = [.. _entries];
             total = _total;
             problem = _problem;
+            queued = _queued;
         }
-        var shown = entries.Count < total ? $"its last {entries.Count} of {total}" : $"{total} {(total == 1 ? "entry" : "entries")}";
-        var head = Layout.Builder.HStack(
-                Layout.Builder.Text("Back to the sessions", 13f, Bright, TextAlign.Center).Pad(12f, 5f).WAuto().Bg(Button).BgHover(ButtonHover)
-                    .Clickable(new HitResult.ButtonHit("transcript:back"), _ => Close()),
-                Layout.Builder.Text(Title ?? "", 16f, Bright).WAuto(),
-                Layout.Builder.Text(problem is null ? shown : $"{shown} · {problem}", 12f, problem is null ? Dim : Failed).WStar())
-            .WithGap(12f);
-        var rows = Rows(entries, live).ToArray();
-        var list = rows.Length == 0
+        // Opened at a moment: from the first entry at or after it (the first held, if all of them are later).
+        var from = -1;
+        if (_at is { } at && entries.Count > 0)
+        {
+            from = Math.Max(0, entries.FindIndex(e => e.At >= at));
+            entries = entries[from..];
+        }
+        var shown = entries.Count < total ? $"{(from >= 0 ? "from the moment" : "its last")} {entries.Count} of {total}" : $"{total} {(total == 1 ? "entry" : "entries")}";
+        var head = new List<Layout.Node>
+        {
+            Layout.Builder.Text("Back to the sessions", 13f, Bright, TextAlign.Center).Pad(12f, 5f).WAuto().Bg(Button).BgHover(ButtonHover)
+                .Clickable(new HitResult.ButtonHit("transcript:back"), _ => Close()),
+            Layout.Builder.Text(Title ?? "", 16f, Bright).WAuto(),
+            Layout.Builder.Text(live ? "● live" : "session ended", 12f, live ? Ok : Faint).WAuto(),
+            Layout.Builder.Text(problem is null ? shown : $"{shown} · {problem}", 12f, problem is null ? Dim : Failed).WStar(),
+        };
+        // Jump to end: while the reader is up in its history, or held at a moment.
+        if (_at is not null || !_scroll.IsFollowingEnd)
+        {
+            head.Add(Layout.Builder.Text("Jump to end", 13f, Bright, TextAlign.Center).Pad(12f, 5f).WAuto().Bg(Button).BgHover(ButtonHover)
+                .Clickable(new HitResult.ButtonHit("transcript:end"), _ => JumpToEnd()));
+        }
+        // Each row the pane's width: a paragraph wraps at the width it is given, and an unstretched row gives it none.
+        var rows = Rows(entries, live).Select(r => r.WStar()).ToList();
+        if (from >= 0 && rows.Count > 0)
+        {
+            // The entry the moment fell on, marked.
+            rows[0] = Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(3f).Bg(Prompt), rows[0].WStar()).WithGap(6f).Bg(Marked).WStar();
+        }
+        if (live)
+        {
+            rows.AddRange(queued.Select(q => Waiting(q).WStar()));
+        }
+        var list = rows.Count == 0
             ? Layout.Builder.Text(problem ?? "reading the transcript…", 13f, Dim).Stretch()
-            : Layout.Builder.VStack(rows).WithGap(6f).WithScroll(_scroll).Stretch();
-        return Layout.Builder.VStack(head, list).WithGap(8f).Pad(16f, 8f).Stretch();
+            : Layout.Builder.VStack([.. rows]).WithGap(6f).WithScroll(from >= 0 ? _atScroll : _scroll).Stretch();
+        return _subagents.Count == 0
+            ? Layout.Builder.VStack(Layout.Builder.HStack([.. head]).WithGap(12f).WStar(), list).WithGap(8f).Pad(16f, 8f).Stretch()
+            : Layout.Builder.VStack(Layout.Builder.HStack([.. head]).WithGap(12f).WStar(), Agents(), list).WithGap(8f).Pad(16f, 8f).Stretch();
     }
+
+    // The session and each subagent it started, one chip each: the open transcript lit, a click on another opens that one.
+    private Layout.Node Agents()
+    {
+        var chips = new List<Layout.Node> { Chip("main", null, Agent is null, working: null) };
+        chips.AddRange(_subagents.Select(s => Chip(s.Type ?? "subagent", s.Id, Agent == s.Id, s.Working)));
+        return Layout.Builder.WrapH([.. chips]).WithGap(6f).WithLineGap(4f).WStar();
+    }
+
+    private Layout.Node Chip(string label, string? agent, bool open, bool? working)
+    {
+        var text = working is { } w ? $"{(w ? "●" : "○")} {label}" : label;
+        var chip = Layout.Builder.Text(text, 12f, open ? Bright : Dim, TextAlign.Center).Pad(10f, 3f).WAuto().Bg(open ? ButtonHover : Button);
+        var description = agent is null ? null : _subagents.FirstOrDefault(s => s.Id == agent)?.Description;
+        chip = description is null ? chip : chip.WithTooltip(description);
+        return open || _line is not { } line
+            ? chip
+            : chip.BgHover(ButtonHover).Clickable(new HitResult.ButtonHit($"transcript:agent:{agent ?? "main"}"), _ => OpenAgent(line, agent));
+    }
+
+    /// <summary>Opens the open session's subagent <paramref name="agent"/> (or, null, the session's own transcript).</summary>
+    internal void OpenAgent(SessionLine line, string? agent)
+    {
+        Open(line, agent: agent);
+        Changed?.Invoke();
+    }
+
+    // Back to the end of the whole transcript, following it again.
+    private void JumpToEnd()
+    {
+        _at = null;
+        _scroll.ScrollToEnd();
+        Changed?.Invoke();
+    }
+
+    // A message handed to the session that it has not read yet: last, dim, and saying so.
+    private static Layout.Node Waiting(string text) =>
+        Layout.Builder.HStack(
+                Layout.Builder.Text("queued", 12f, Faint).WFixed(LabelWidth),
+                Layout.Builder.VStack([
+                    Layout.Builder.Text("not read yet: it reads this at its next step", 11f, Faint),
+                    .. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim)),
+                ]).WStar())
+            .WithGap(10f);
 
     // The entries as rows: a tool call and what it gave back as one, the result folded under the call; a result whose call
     // came before the entries held, on its own.
@@ -207,6 +331,11 @@ internal sealed class TranscriptPane
         var failed = result is { Kind: TranscriptKind.Error } || result?.Denied is not null;
         var dot = result is null ? (live ? Running : Faint) : failed ? Failed : Ok;
         var body = new List<Layout.Node> { Layout.Builder.Text(call.Text, 13f, Dim) };
+        // A call that started a subagent leads to its transcript.
+        if (_subagents.FirstOrDefault(s => s.ToolUseId is not null && s.ToolUseId == call.ToolUseId) is { } started)
+        {
+            body.Add(AgentLink(started, $"open {started.Type ?? "its"} transcript", $"transcript:spawn:{call.Index}"));
+        }
         if (result?.Denied is { } denied)
         {
             body.Add(Layout.Builder.Text($"Denied · {denied}", 13f, Failed));
@@ -266,13 +395,18 @@ internal sealed class TranscriptPane
         var body = new List<Layout.Node>();
         if (entry.From is not null)
         {
-            body.Add(Layout.Builder.Text("reported", 12f, Dim));
+            body.Add(_subagents.FirstOrDefault(s => s.Id == entry.FromAgent) is { } reporter
+                ? Layout.Builder.HStack(Layout.Builder.Text("reported · ", 12f, Dim).WAuto(), AgentLink(reporter, "open its transcript", $"transcript:report:{entry.Index}"), Layout.Builder.Spacer().WStar())
+                : Layout.Builder.Text("reported", 12f, Dim));
         }
         if (entry.Denied is { } denied)
         {
             body.Add(Layout.Builder.Text($"Denied · {denied}", 13f, Failed));
         }
-        body.AddRange(Folded(entry, entry.Text, textColor, lines, ""));
+        // What the assistant wrote, and what a subagent reported, is Markdown; prompts and notes are said as typed.
+        body.AddRange(entry is { Kind: TranscriptKind.Assistant or TranscriptKind.Thinking } or { From: not null }
+            ? FoldedMarkdown(entry, entry.Kind == TranscriptKind.Thinking ? Thought : Prose, lines)
+            : Folded(entry, entry.Text, textColor, lines, ""));
         return Layout.Builder.HStack(
                 Layout.Builder.Text(label, 12f, labelColor).WFixed(LabelWidth),
                 Layout.Builder.VStack([.. body]).WStar())
@@ -290,13 +424,58 @@ internal sealed class TranscriptPane
         {
             yield return Layout.Builder.Text(i == 0 ? lead + line : lead.Length > 0 ? "  " + line : line, 13f, color);
         }
-        if (all.Length > lines)
+        if (Fold(entry, all.Length, lines) is { } fold)
         {
-            var more = all.Length - lines;
-            var label = open ? "(click to collapse)" : $"… +{more} {(more == 1 ? "line" : "lines")} (click to expand)";
-            yield return Layout.Builder.Text(label, 11f, Dim).WAuto().BgHover(ButtonHover)
-                .Clickable(new HitResult.ButtonHit($"transcript:fold:{entry.Index}"), _ => Toggle(entry.Index));
+            yield return fold;
         }
+    }
+
+    // An entry's Markdown, drawn from its first source lines until it is opened, as Folded draws plain text.
+    private IEnumerable<Layout.Node> FoldedMarkdown(TranscriptEntry entry, Layout.MarkdownStyle style, int lines)
+    {
+        var all = entry.Text.ReplaceLineEndings("\n").Split('\n');
+        var open = _expanded.Contains(entry.Index);
+        // Parsed once per entry, folded or opened: the tree is rebuilt every frame, and a node is immutable.
+        if (!_markdown.TryGetValue((entry.Index, open), out var document))
+        {
+            var source = open || all.Length <= lines ? entry.Text : string.Join("\n", all.Take(lines));
+            _markdown[(entry.Index, open)] = document = Layout.Builder.Markdown(source, style with { OnLink = OpenLink is null ? null : Follow });
+        }
+        yield return document;
+        if (Fold(entry, all.Length, lines) is { } fold)
+        {
+            yield return fold;
+        }
+    }
+
+    // A line that opens a subagent's transcript, in place of the session's.
+    private Layout.Node AgentLink(SubagentRow subagent, string label, string action) =>
+        _line is not { } line
+            ? Layout.Builder.Text(label, 12f, Dim)
+            : Layout.Builder.Text($"{label} ›", 12f, Tool).WAuto().BgHover(ButtonHover)
+                .Clickable(new HitResult.ButtonHit(action), _ => OpenAgent(line, subagent.Id));
+
+    // A link in the transcript, opened only when it is a web page: the opener runs whatever it is handed, and a session's
+    // words are no reason to run a file on this machine.
+    private void Follow(string url)
+    {
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http")
+        {
+            OpenLink?.Invoke(uri.AbsoluteUri);
+        }
+    }
+
+    // The line under a folded entry that opens it and closes it again, or null for one short enough to show whole.
+    private Layout.Node? Fold(TranscriptEntry entry, int count, int lines)
+    {
+        if (count <= lines)
+        {
+            return null;
+        }
+        var more = count - lines;
+        var label = _expanded.Contains(entry.Index) ? "(click to collapse)" : $"… +{more} {(more == 1 ? "line" : "lines")} (click to expand)";
+        return Layout.Builder.Text(label, 11f, Dim).WAuto().BgHover(ButtonHover)
+            .Clickable(new HitResult.ButtonHit($"transcript:fold:{entry.Index}"), _ => Toggle(entry.Index));
     }
 
     private void Toggle(int index)
