@@ -28,7 +28,8 @@ public static class Autostart
     /// <summary>The command line the Run value holds: the node, windowless, with its options.</summary>
     public static string WindowsCommand(string nodePath, IReadOnlyList<string> nodeArgs, string? systemRoot = null)
     {
-        var conhost = Path.Combine(systemRoot ?? Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe");
+        // Joined by hand: a Run value is a Windows path, whatever the platform this is built on (Path.Combine joins with /).
+        var conhost = (systemRoot ?? Environment.GetFolderPath(Environment.SpecialFolder.System)).TrimEnd('\\') + @"\conhost.exe";
         return string.Join(' ', new[] { Quote(conhost), "--headless", Quote(nodePath) }.Concat(nodeArgs.Select(Quote)));
     }
 
