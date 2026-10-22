@@ -5,12 +5,16 @@ namespace Pilot.Node.Sessions;
 
 /// <summary>
 /// Reads the account's usage once a minute from <c>rate-limits.json</c> in the Claude config folder, which the
-/// controller's status line writes from the <c>rate_limits</c> Claude Code hands it: no login is read, no API called.
+/// controller's status line writes from the <c>rate_limits</c> Claude Code hands it, and the account itself from Claude
+/// Code's <c>.claude.json</c> (<see cref="ClaudeAccount"/>): no token is read, no API called.
 /// Past <see cref="HighPercent"/> of the 5-hour window it raises a For-you card, once per window, since workers stop
 /// there and a stop the controller saw coming is no surprise.
 /// </summary>
 public sealed class UsageReader(NodeState state, string file, TimeProvider time) : BackgroundService
 {
+    /// <summary>Claude Code's <c>.claude.json</c>, whose login names the account; null reads none.</summary>
+    public string? AccountFile { get; init; }
+
     public const string HighKind = "usage-high";
 
     /// <summary>The 5-hour share past which a card says workers will stop soon.</summary>
@@ -34,10 +38,14 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
         }
     }
 
-    /// <summary>One read: puts the figures and warns when the 5-hour window is nearly spent; nothing when the file is missing or unreadable.</summary>
+    /// <summary>
+    /// One read: puts the account and its figures, and warns when the 5-hour window is nearly spent. With no figures the
+    /// account is put alone, so a node whose status line writes none still says whose it is; nothing when there is neither.
+    /// </summary>
     public void Read()
     {
-        if (Parse(file) is not { } read)
+        var account = AccountFile is { } path ? ClaudeAccount.Read(path) : null;
+        if ((Parse(file) is { } figures ? figures with { Account = account } : account is null ? null : new UsageRow { Account = account, ReadAt = time.GetUtcNow() }) is not { } read)
         {
             return;
         }

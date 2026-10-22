@@ -385,7 +385,8 @@ public sealed class NodeState
         lock (_gate)
         {
             var usage = UsageRow.Newest(_usage, read);
-            if (_usage is { } held && held.FiveHour == usage.FiveHour && held.SevenDay == usage.SevenDay && usage.ReadAt - held.ReadAt < TimeSpan.FromMinutes(10))
+            if (_usage is { } held && held.Account == usage.Account && held.FiveHour == usage.FiveHour && held.SevenDay == usage.SevenDay
+                && usage.ReadAt - held.ReadAt < TimeSpan.FromMinutes(10))
             {
                 return;
             }

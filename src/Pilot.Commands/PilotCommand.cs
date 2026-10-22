@@ -564,7 +564,11 @@ public static class PilotCommand
     internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null)
     {
         var text = new System.Text.StringBuilder();
-        if (!newestOnly && code is null && snapshot.Usage is { } usage)
+        if (!newestOnly && code is null && snapshot.Usage?.Account is { } account)
+        {
+            text.AppendLine($"account  {account.Line()}");
+        }
+        if (!newestOnly && code is null && snapshot.Usage is { HasFigures: true } usage)
         {
             text.AppendLine($"usage  {usage.Line(DateTimeOffset.UtcNow, TimeZoneInfo.Local)}");
         }

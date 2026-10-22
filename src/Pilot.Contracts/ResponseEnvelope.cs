@@ -44,4 +44,7 @@ public sealed record NodeInfo
 
     /// <summary>The event stream's id (<see cref="SnapshotEvent.Stream"/>).</summary>
     public required string Stream { get; init; }
+
+    /// <summary>The Claude account its sessions run under; null when Claude Code has no login on record.</summary>
+    public AccountRow? Account { get; init; }
 }

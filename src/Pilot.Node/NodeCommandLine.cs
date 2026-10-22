@@ -7,7 +7,7 @@ namespace Pilot.Node;
 
 /// <summary>
 /// <c>pilot-node</c>'s command line, on System.CommandLine as tianwen's CLI is: the node itself by default, <c>hook</c>
-/// (what Claude Code runs on each hook) and <c>hooks install|remove</c>.
+/// (what Claude Code runs on each hook), <c>hooks install|remove</c> and <c>autostart install|remove|show</c>.
 /// </summary>
 public static class NodeCommandLine
 {
@@ -108,10 +108,38 @@ public static class NodeCommandLine
             },
         };
 
+        // autostart: this node at logon, with the node's own options after --, checked by the node's own parser first.
+        var nodeArgs = new Argument<string[]>("node-options")
+        {
+            Description = @"The node's options, after --: pilot-node autostart install -- --lan --repo-root C:\src\org",
+            Arity = ArgumentArity.ZeroOrMore,
+        };
+        var install = new Command("install", "Start this node when you log in, with the options after --, and now when none runs") { Arguments = { nodeArgs } };
+        install.SetAction(async (parseResult, ct) =>
+        {
+            var given = parseResult.GetValue(nodeArgs) ?? [];
+            var check = Build(stdin, output, error, nodePath).Parse(given);
+            if (check.Errors.Count > 0 || check.CommandResult.Command is not RootCommand)
+            {
+                await error.WriteLineAsync($"pilot-node: autostart takes the node's own options, and these are not: {(check.Errors.Count > 0 ? check.Errors[0].Message : string.Join(' ', given))}");
+                return NodeExitCodes.InvalidArguments;
+            }
+            var socketGiven = given.SkipWhile(a => a != "--node-socket").Skip(1).FirstOrDefault() ?? parseResult.GetValue(socket);
+            return await Autostart.InstallAsync(nodePath, given, NodeSocket.Resolve(socketGiven), output, error, ct);
+        });
+        var removeAutostart = new Command("remove", "Stop starting this node at logon; the node running now runs on");
+        removeAutostart.SetAction((_, ct) => Autostart.RemoveAsync(output, ct));
+        var showAutostart = new Command("show", "What starts this node at logon, if anything");
+        showAutostart.SetAction(_ => Autostart.ShowAsync(output));
+        var autostart = new Command("autostart", "Start this node when you log in (a Run entry on Windows, a systemd user unit on Linux)")
+        {
+            Subcommands = { install, removeAutostart, showAutostart },
+        };
+
         var root = new RootCommand("pilot v2's node: one per machine, the one writer of its flights, legs, cards and sessions")
         {
             Options = { socket, data, machine, noWatchtower, watchtowerFolder, lan, lanPort, localOnly, maxJobs, jobMemory, updatePolicy, releaseFeed, repoRoot, after },
-            Subcommands = { hook, hooks },
+            Subcommands = { hook, hooks, autostart },
         };
         root.SetAction(async (parseResult, ct) =>
         {

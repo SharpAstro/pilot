@@ -98,7 +98,10 @@ public static class NodeApp
         builder.Services.AddSingleton(services => new UsageReader(
             services.GetRequiredService<NodeState>(),
             Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "rate-limits.json"),
-            services.GetRequiredService<TimeProvider>()));
+            services.GetRequiredService<TimeProvider>())
+        {
+            AccountFile = ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root),
+        });
         builder.Services.AddHostedService(services => services.GetRequiredService<UsageReader>());
         builder.Services.AddSingleton(services =>
         {
@@ -234,6 +237,7 @@ public static class NodeApp
                 DataFolder = options.DataFolder,
                 SocketPath = options.SocketPath,
                 Stream = state.Stream,
+                Account = state.Usage()?.Account,
             }),
             PilotJsonContext.Default.ResponseEnvelopeNodeInfo));
 

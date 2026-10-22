@@ -100,6 +100,7 @@ internal static class AboutFacts
         (program, NodeFeed.ClientVersion),
         ("its folder", Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory)),
         ("node", node is null ? $"not answering on {where}" : $"{node.Version.Split('+')[0]} · {node.MachinePrefix} · pid {node.ProcessId}"),
+        ("account", node?.Account?.Line() ?? (node is null ? "—" : "no login on record")),
         ("node socket", node?.SocketPath ?? where),
         ("node data", node?.DataFolder ?? "—"),
     ];
