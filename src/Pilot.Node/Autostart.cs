@@ -125,8 +125,26 @@ public static class Autostart
             return 0;
         }
         var started = OperatingSystem.IsWindows() ? StartWindows(nodePath, nodeArgs) : await SystemctlAsync(["start", Name + ".service"], cancellationToken) is null;
-        await output.WriteLineAsync(started ? "autostart: started the node now" : "autostart: the entry is in place, but the node could not be started now; it starts at the next logon");
-        return 0;
+        // Started is not running: said only once it answers on its socket.
+        var answers = started && await AnswersWithinAsync(socketPath, TimeSpan.FromSeconds(15), cancellationToken);
+        await output.WriteLineAsync(answers ? "autostart: started the node now; it answers on its socket"
+            : started ? $"autostart: the entry is in place and the node was started, but it did not answer on {socketPath} within 15 s; run pilot-node by hand to see why"
+            : "autostart: the entry is in place, but the node could not be started now; it starts at the next logon");
+        return answers || !started ? 0 : 1;
+    }
+
+    private static async Task<bool> AnswersWithinAsync(string socketPath, TimeSpan budget, CancellationToken cancellationToken)
+    {
+        var until = DateTimeOffset.UtcNow + budget;
+        while (DateTimeOffset.UtcNow < until)
+        {
+            if (await NodeSocket.IsListeningAsync(socketPath, cancellationToken))
+            {
+                return true;
+            }
+            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+        }
+        return false;
     }
 
     /// <summary>Takes the entry out; the node running now runs on.</summary>
@@ -194,16 +212,16 @@ public static class Autostart
         return key?.GetValue(Name) as string;
     }
 
-    // Started as logon starts it, through conhost --headless, so it has a console of its own and no window. Its
-    // standard handles are pipes closed at once rather than the caller's: a node started from a shell whose output is
-    // captured (an agent's, a script's) would otherwise hold that pipe open for as long as it runs, and the install
-    // that started it would never seem to end.
+    // Started directly, windowless (CreateNoWindow gives it a hidden console of its own), on standard handles that are
+    // pipes closed at once rather than the caller's: a node started from a shell whose output is captured (an agent's,
+    // a script's) would otherwise hold that pipe open for as long as it runs, and the install that started it would
+    // never seem to end. Not through conhost --headless, as the Run entry is: conhost exits when its stdin ends, and a
+    // closed pipe ends at once, taking the node with it. A node writing to a closed pipe loses the line, nothing more.
     private static bool StartWindows(string nodePath, IReadOnlyList<string> nodeArgs)
     {
         try
         {
-            var conhost = Environment.GetFolderPath(Environment.SpecialFolder.System).TrimEnd('\\') + @"\conhost.exe";
-            var start = new ProcessStartInfo(conhost)
+            var start = new ProcessStartInfo(nodePath)
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -212,8 +230,6 @@ public static class Autostart
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
-            start.ArgumentList.Add("--headless");
-            start.ArgumentList.Add(nodePath);
             foreach (var arg in nodeArgs)
             {
                 start.ArgumentList.Add(arg);
