@@ -82,6 +82,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return await Get<SessionMessenger>().SayAsync(command, cancellationToken);
         }
+        if (command.Verb == Verbs.Compact)
+        {
+            return await Get<SessionMessenger>().CompactAsync(command, cancellationToken);
+        }
         if (FlightCommander.Handles(command.Verb))
         {
             return await Get<FlightCommander>().RunAsync(command, cancellationToken);

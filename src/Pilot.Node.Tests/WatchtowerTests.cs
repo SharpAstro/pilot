@@ -6,7 +6,7 @@ using Xunit;
 
 namespace Pilot.Node.Tests;
 
-/// <summary>The watchtower: kept running with Remote Control on, fed the cards, sent on rounds that keep its cache warm, and rung for when it cannot run.</summary>
+/// <summary>The watchtower: kept running with Remote Control on, fed the cards, kept with its conversation, and rung for when it cannot run.</summary>
 public sealed class WatchtowerTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -115,15 +115,17 @@ public sealed class WatchtowerTests
     }
 
     [Fact]
-    public async Task NoRoundIsSentWhileNoLegFlies()
+    public async Task IdleLongOrPastMostOfItsWindowItIsKeptWithItsConversationAndSentNoRound()
     {
-        Row("job00001", SessionState.Idle, lastResponse: Start);
-        // The flight waits on its merge: in the air, but no leg flying.
-        _state.PutLeg(new LegRow { Flight = "TIA9", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done });
-        _time.Advance(TimeSpan.FromMinutes(51));
+        await _tower.LookAsync(Ct);
+        Row("job00001", SessionState.Idle, lastResponse: Start, context: 150_000);
+        _time.Advance(TimeSpan.FromHours(2));
 
         await _tower.LookAsync(Ct);
 
+        // The compactor's to compact, not the watchtower's to replace or keep warm.
+        _workers.Started.Count.ShouldBe(1);
+        _workers.Stopped.ShouldBeEmpty();
         _said.ShouldBeEmpty();
     }
 
@@ -145,45 +147,6 @@ public sealed class WatchtowerTests
         say.Args[0].ShouldContain("A card opened:");
         say.Args[0].ShouldContain("TIA1's PR #7 is ready to merge. Choices: 1 Merge.");
         say.Args[0].ShouldNotContain("raised by the watchtower");
-    }
-
-    [Fact]
-    public async Task IdleForFiftyMinutesItIsSentOnARoundThatKeepsItsCacheWarm()
-    {
-        await _tower.LookAsync(Ct);
-        Row("job00001", SessionState.Idle, lastResponse: Start);
-
-        _time.Advance(TimeSpan.FromMinutes(49));
-        await _tower.LookAsync(Ct);
-        _said.ShouldBeEmpty();
-
-        _time.Advance(TimeSpan.FromMinutes(1));
-        await _tower.LookAsync(Ct);
-        _said.ShouldHaveSingleItem().Args.ShouldBe([Watchtower.RoundText]);
-
-        // Its answer to the round is a response like any other: the next round is fifty minutes after it.
-        await _tower.LookAsync(Ct);
-        _said.Count.ShouldBe(1);
-        Row("job00001", SessionState.Idle, lastResponse: _time.GetUtcNow());
-        _time.Advance(TimeSpan.FromMinutes(50));
-        await _tower.LookAsync(Ct);
-        _said.Count.ShouldBe(2);
-    }
-
-    [Fact]
-    public async Task PastItsContextLimitAnIdleOneIsReplacedByAFreshOne()
-    {
-        await _tower.LookAsync(Ct);
-        Row("job00001", SessionState.Working, context: 150_000);
-        await _tower.LookAsync(Ct);
-        _workers.Started.Count.ShouldBe(1);
-
-        Row("job00001", SessionState.Idle, context: 150_000);
-        await _tower.LookAsync(Ct);
-
-        _workers.Stopped.ShouldBe(["job00001"]);
-        _workers.Started.Count.ShouldBe(2);
-        _state.Cards().First(c => c.Bin == CardBin.Handled).Title.ShouldBe("Started a fresh watchtower: its context reached 75% of its window");
     }
 
     [Fact]

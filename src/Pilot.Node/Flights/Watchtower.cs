@@ -7,12 +7,12 @@ namespace Pilot.Node.Flights;
 /// (<see cref="Watching"/>: a flight not landed, a job, a ring): started with Remote Control on so
 /// the controller reaches it from claude.ai or a phone, briefed from the node's state, and fed every Ring and For-you
 /// card as it opens. One that ended or failed is started again; one the usage limit stopped is resumed once the limit
-/// resets; one whose context has grown past <see cref="ContextLimit"/> is replaced, idle, by a fresh one briefed anew,
-/// so it never drags a long conversation along (#36). A watchtower that cannot be started rings, never stays silent.
+/// resets. A watchtower that cannot be started rings, never stays silent.
 /// <para>
-/// Idle for <see cref="RoundEvery"/> while a leg flies, it is sent on a round: it looks at where everything stands and
-/// acts on what stalled. That turn also keeps its prompt cache warm: the cache lives an hour, and a watchtower woken after
-/// that reads its whole context again at full price, which is what made v1's long-lived sessions dear.
+/// It keeps its conversation: what it did and told the controller is worth more than a fresh brief. Long idle, or grown
+/// past its share of the window, it is compacted instead (<see cref="Compactor"/>), so it wakes on a summary rather than
+/// re-reading a long conversation whose prompt cache has gone cold. Stalls are the node's to find (<see cref="LegWatch"/>),
+/// so it is not sent on rounds to keep its cache warm.
 /// </para>
 /// <para>
 /// With nothing to watch it costs nothing: none is started, and one idle <see cref="QuietFor"/> after the last thing to
@@ -36,15 +36,6 @@ public sealed class Watchtower(
 
     /// <summary>How often it looks.</summary>
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(10);
-
-    /// <summary>The share of its context window past which an idle watchtower is replaced by a fresh one.</summary>
-    public double ContextLimit { get; init; } = 0.7;
-
-    /// <summary>How long it sits idle before a round: inside the prompt cache's hour, so the round finds it warm.</summary>
-    public TimeSpan RoundEvery { get; init; } = TimeSpan.FromMinutes(50);
-
-    public const string RoundText = "Round: look at where everything stands (status and cards). Act on anything stalled or waiting that is yours, "
-        + "ring for what needs the controller, and otherwise end your turn with one word: quiet.";
 
     /// <summary>How long it is kept once there is nothing to watch, idle, before it is stopped.</summary>
     public TimeSpan QuietFor { get; init; } = TimeSpan.FromMinutes(15);
@@ -73,7 +64,6 @@ public sealed class Watchtower(
     private DateTimeOffset? _startedAt;
     private DateTimeOffset _nextTry = DateTimeOffset.MinValue;
     private DateTimeOffset? _resumedAfter;
-    private DateTimeOffset? _roundAt;
     private bool _adopted;
     // When there was last something to watch; the node's start counts, so one running then is kept QuietFor first.
     private DateTimeOffset? _watchingAt;
@@ -193,19 +183,7 @@ public sealed class Watchtower(
             }
 
             state.CloseCardsAbout(Verbs.WatchtowerTarget, "it is running", Down);
-            if (row.State == SessionState.Idle && row.ContextWindow > 0 && row.ContextTokens > ContextLimit * row.ContextWindow)
-            {
-                await StartAsync($"its context reached {100.0 * row.ContextTokens / row.ContextWindow:0}% of its window", cancellationToken, row);
-                return;
-            }
-            // Rounds only while a leg flies: a flight waiting on a merge or a ring has nothing for a round to find.
-            if (!await TellNewCardsAsync(row, cancellationToken) && row.State == SessionState.Idle
-                && state.Legs().Any(l => l.State == LegState.Flying)
-                && now - (row.LastResponseAt ?? row.StartedAt) >= RoundEvery && (_roundAt is null || now - _roundAt >= RoundEvery))
-            {
-                _roundAt = now;
-                await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [RoundText], Who = LegWatch.Who }, cancellationToken);
-            }
+            await TellNewCardsAsync(row, cancellationToken);
         }
         finally
         {
