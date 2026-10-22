@@ -60,6 +60,25 @@ public sealed record JobRow
     public bool Told { get; init; }
 }
 
+/// <summary>The end of a job's output, as the Background tasks page shows it: the whole is in <see cref="JobRow.LogPath"/>.</summary>
+public sealed record JobLog
+{
+    /// <summary>How many of its last lines are sent at most.</summary>
+    public const int LineLimit = 200;
+
+    /// <summary>How much of its end is read at most: a test suite's log can be megabytes.</summary>
+    public const int ByteLimit = 64 * 1024;
+
+    /// <summary>Its last lines, oldest first; empty while it has written none.</summary>
+    public required string[] Lines { get; init; }
+
+    /// <summary>How long the whole log is, in bytes.</summary>
+    public required long Length { get; init; }
+
+    /// <summary>Whether there is more before <see cref="Lines"/>.</summary>
+    public bool Clipped { get; init; }
+}
+
 /// <summary>Where a job stands.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<JobState>))]
 public enum JobState

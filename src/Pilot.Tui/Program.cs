@@ -6,11 +6,12 @@ using Pilot.Commands;
 using Pilot.Contracts;
 
 // pilot-tui: the dashboard in a terminal. The GUI's own pages and panels (Pilot.Ui), their trees arranged in cells by
-// Console.Lib rather than painted on pixels: the Sessions page (1) and the Flights page (2), its command bar and
-// buttons, and the watchtower's panel with its cards, all live from this machine's node or one on the LAN.
+// Console.Lib rather than painted on pixels: the Sessions page (1), the Flights page (2) with its command bar and
+// buttons, the Background tasks page (3), and the watchtower's panel with its cards, all live from this machine's node
+// or one on the LAN.
 var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN, host:port; else PILOT_NODE, else this machine's" };
 var socketOption = new Option<string?>("--node-socket") { Description = "This machine's node's socket; else PILOT_NODE_SOCKET, else this user's default" };
-var root = new RootCommand("pilot v2's dashboard in a terminal: 1 sessions, 2 flights, Ctrl+K the command bar, Ctrl+T the watchtower, q quits")
+var root = new RootCommand("pilot v2's dashboard in a terminal: 1 sessions, 2 flights, 3 jobs, Ctrl+K the command bar, Ctrl+T the watchtower, q quits")
 {
     Options = { nodeOption, socketOption },
 };
@@ -34,6 +35,7 @@ using var vessel = new RgbaImageRenderer(1, 1);
 var sessions = new SessionsView<RgbaImage>(vessel) { CanSay = true };
 var chrome = new PilotChrome<RgbaImage>(vessel, sessions);
 var flights = chrome.Flights;
+var jobs = chrome.Jobs;
 var cards = chrome.Cards;
 var focus = sessions.Ui.Focus;
 var tracker = new BackgroundTaskTracker();
@@ -136,6 +138,19 @@ cards.OnTell = async text =>
     Redraw();
 };
 cards.OnOpen = url => DashboardCommands.Open(url);
+// The Background tasks page: a job's log followed while it is selected, Cancel a verb on the node.
+jobs.CanCommand = true;
+jobs.LoadLog = async (id, ct) => (await client.GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
+    ? log
+    : throw new InvalidOperationException($"the node did not send {id}'s log");
+jobs.Changed = Redraw;
+jobs.OnCancel = job => _ = Task.Run(async () =>
+{
+    var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = [], Who = Who }, stop.Token);
+    flights.Say(envelope.Success && envelope.Response is { Ok: true } ? $"cancelled {job.Id}" : $"cancel {job.Id}: {envelope.Response?.Error ?? envelope.Error}");
+    Redraw();
+});
+jobs.OnOpen = location => DashboardCommands.Open(location);
 feed.Start();
 
 await using var terminal = new VirtualTerminal();
@@ -177,7 +192,12 @@ while (!stop.IsCancellationRequested)
         var (columns, rows) = terminal.Size;
         // Design units per cell, as CellMeasureContext.PixelAuthored counts them: the trees are the GUI's.
         var width = columns * 8f;
-        var pageTree = page == PilotPage.Flights ? flights.Tree(feed.Flights(now)) : sessions.Tree(feed.Screen(now));
+        var pageTree = page switch
+        {
+            PilotPage.Flights => flights.Tree(feed.Flights(now)),
+            PilotPage.Jobs => jobs.Tree(feed.JobsPage(now)),
+            _ => sessions.Tree(feed.Screen(now)),
+        };
         var cardsScreen = feed.Cards();
         flights.Jobs = feed.Jobs();
         // The panel takes 38 columns (the GUI's 300 units) when there is room beside a usable page, and something to show.
@@ -243,6 +263,9 @@ void Handle(ConsoleInputEvent raw)
         case InputEvent.KeyDown(InputKey.D2, _):
             page = PilotPage.Flights;
             break;
+        case InputEvent.KeyDown(InputKey.D3, _):
+            page = PilotPage.Jobs;
+            break;
         case InputEvent.KeyDown(InputKey.K, InputModifier.Ctrl):
             page = PilotPage.Flights;
             focus.Focus(flights.CommandInput);
@@ -259,7 +282,7 @@ void Handle(ConsoleInputEvent raw)
             break;
         case InputEvent.KeyDown key:
             // Up and Down move the page's selection, as in the window.
-            _ = page == PilotPage.Flights ? flights.HandleInput(key) : sessions.HandleInput(key);
+            _ = chrome.PageWidget.HandleInput(key);
             break;
     }
 }

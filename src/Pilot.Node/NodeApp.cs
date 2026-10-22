@@ -167,7 +167,8 @@ public static class NodeApp
             // The repos and their issues name this machine's folders, and a transcript is a session's words: read for a
             // grant, as a command is made with one.
             var granted = get && (path is NodeWire.ReposRoute or NodeWire.IssuesRoute
-                || path.StartsWith(NodeWire.SessionsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/transcript", StringComparison.Ordinal));
+                || path.StartsWith(NodeWire.SessionsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/transcript", StringComparison.Ordinal)
+                || path.StartsWith(NodeWire.JobsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/log", StringComparison.Ordinal));
             return watching || (post && path == NodeWire.GrantsRoute) ? NodeRouteAccess.Open
                 : (post && path == NodeWire.CommandsRoute) || granted ? NodeRouteAccess.Command
                 : NodeRouteAccess.ThisMachineOnly;
@@ -286,6 +287,12 @@ public static class NodeApp
                 : transcripts.Read(row.SessionId, after ?? -1, agent) is { } page
                     ? Results.Json(ResponseEnvelope<TranscriptPage>.Ok(page), PilotJsonContext.Default.ResponseEnvelopeTranscriptPage)
                     : Results.Json(ResponseEnvelope<TranscriptPage>.Fail($"{row.Name} has no transcript yet", 404), PilotJsonContext.Default.ResponseEnvelopeTranscriptPage, statusCode: 404));
+
+        // A job's output, its end, for the Background tasks page; the whole is in its log, on this machine.
+        app.MapGet(NodeWire.JobLogPattern, (string id, NodeState state) =>
+            state.Jobs().FirstOrDefault(j => j.Id == id) is not { } job
+                ? Results.Json(ResponseEnvelope<JobLog>.Fail($"There is no job {id}", 404), PilotJsonContext.Default.ResponseEnvelopeJobLog, statusCode: 404)
+                : Results.Json(ResponseEnvelope<JobLog>.Ok(JobLogs.Tail(job.LogPath) ?? new JobLog { Lines = [], Length = 0 }), PilotJsonContext.Default.ResponseEnvelopeJobLog));
 
         // The new-flight wizard's reads: the repos a flight can be made in, and a repo's open issues (through gh).
         app.MapGet(NodeWire.ReposRoute, (RepoCatalog repos) =>

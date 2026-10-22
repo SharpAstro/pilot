@@ -53,6 +53,7 @@ SessionsScreen screen;
 SnapshotEvent? snapshot = null;
 FlightsScreen? capturedFlights = null;
 CardsScreen? capturedCards = null;
+JobsScreen? capturedJobs = null;
 if (options.Snapshot is { } snapshotFile)
 {
     var snapshotPath = Path.GetFullPath(snapshotFile);
@@ -85,6 +86,7 @@ else if (options.Capture is not null)
             {
                 capturedFlights = new FlightsScreen(FlightLine.Build(live.Flights, live.Sessions, now, live.Legs), screen.Source, now);
                 capturedCards = CardsScreen.From(live.Cards);
+                capturedJobs = new JobsScreen(JobLine.Build(live.Jobs, now), screen.Source, now);
             }
         }
     }
@@ -103,7 +105,9 @@ if (options.Capture is { } capturePath)
 {
     capturedFlights ??= snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
     capturedCards ??= snapshot is null ? null : CardsScreen.From(snapshot.Cards);
-    var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards);
+    capturedJobs ??= snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
+    var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
+        jobs: capturedJobs);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;
@@ -152,7 +156,7 @@ var router = new InputRouter(view.Ui, tracker, loop.RequestRedraw)
 {
     Widgets = () => chrome.Widgets,
     // A key nothing painted took goes to the page shown, as a tab's own HandleInput does in tianwen.
-    Unhandled = evt => chrome.Page == PilotPage.Flights ? chrome.Flights.HandleInput(evt) : view.HandleInput(evt),
+    Unhandled = evt => chrome.PageWidget.HandleInput(evt),
     // The system clipboard, for the text fields' copy and paste and the menus' Copy entries.
     GetClipboardText = GetClipboardText,
     SetClipboardText = text => SetClipboardText(text),
@@ -314,6 +318,20 @@ if (feed is not null && client is not null)
             chrome.Flights.Say($"could not open {location}");
         }
     };
+    // The Background tasks page: a job's log followed while it is selected, Cancel a verb on the node.
+    chrome.Jobs.CanCommand = true;
+    chrome.Jobs.LoadLog = async (id, ct) => (await client.GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
+        ? log
+        : throw new InvalidOperationException($"the node did not send {id}'s log");
+    chrome.Jobs.Changed = loop.RequestRedraw;
+    chrome.Jobs.OnCancel = job => tracker.Run(async () =>
+    {
+        var result = await client.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = [], Who = GuiSay.Who }, cts.Token);
+        Console.WriteLine($"pilot-gui: cancel {job.Id}: {(result.Success && result.Response is { Ok: true } ? "done" : result.Response?.Error ?? result.Error)}");
+        loop.RequestRedraw();
+    }, $"cancel {job.Id}");
+    chrome.Jobs.OnOpen = location => DashboardCommands.Open(location);
+    chrome.Jobs.CopyText = text => SetClipboardText(text);
     feed.Start();
 
     // The window opens at once and the feed connects when the node answers; a node is started meanwhile if none runs.
@@ -338,6 +356,7 @@ var announced = (string?)null;
 var drawnVersion = -1L;
 var drawnAt = DateTimeOffset.MinValue;
 CardsScreen? cards = snapshot is null ? null : CardsScreen.From(snapshot.Cards);
+JobsScreen? jobs = snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
 FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
 // A card about a leg opens its worker's transcript from the moment the card was raised.
 chrome.LinkCardTranscripts(() => screen, () => flights ?? new FlightsScreen([], screen.Source, screen.AsOf));
@@ -362,10 +381,11 @@ loop.OnRender = () =>
         flights = feed.Flights(drawnAt);
         cards = feed.Cards();
         chrome.Flights.Jobs = feed.Jobs();
+        jobs = feed.JobsPage(drawnAt);
     }
 
     view.Ui.FrameId++;
-    chrome.Render(screen, flights, cards, new RectF32(0, 0, width, height));
+    chrome.Render(screen, flights, cards, jobs, new RectF32(0, 0, width, height));
     router.AfterPaint();
 
     // Say which session is selected whenever it changes, so stdout follows what the window shows.

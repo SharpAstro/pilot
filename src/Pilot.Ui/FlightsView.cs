@@ -499,6 +499,7 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
         return Layout.Builder.VStack([.. lines])
             .Pad(Gutter, 4f)
             .Bg(HeaderBg)
+            .WStar()
             .HAuto();
     }
 
@@ -541,6 +542,7 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
         return Layout.Builder.VStack([.. rows])
             .Pad(Gutter, 6f)
             .Bg(HeaderBg)
+            .WStar()
             .HAuto();
     }
 

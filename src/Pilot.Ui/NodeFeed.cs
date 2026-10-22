@@ -90,7 +90,6 @@ internal sealed class NodeFeed : IAsyncDisposable
 
     public void Start() => _run ??= Task.Run(() => RunAsync(_stop.Token));
 
-    /// <summary>The cards panel: the open cards and the latest handled lines.</summary>
     /// <summary>The node's jobs.</summary>
     public IReadOnlyList<JobRow> Jobs()
     {
@@ -100,6 +99,16 @@ internal sealed class NodeFeed : IAsyncDisposable
         }
     }
 
+    /// <summary>The Background tasks page: the node's jobs as of <paramref name="now"/>.</summary>
+    public JobsScreen JobsPage(DateTimeOffset now)
+    {
+        lock (_lock)
+        {
+            return new JobsScreen(JobLine.Build(_mirror.Jobs.Values, now), _status + UpdateNoteLocked(), now);
+        }
+    }
+
+    /// <summary>The cards panel: the open cards and the latest handled lines.</summary>
     public CardsScreen Cards()
     {
         lock (_lock)
