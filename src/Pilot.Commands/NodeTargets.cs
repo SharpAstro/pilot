@@ -37,6 +37,9 @@ public static class NodeTargets
         return tokens.TryGetValue(endpoint.ToLowerInvariant(), out var token) ? token : null;
     }
 
+    /// <summary>The nodes on the LAN this user holds a grant for, by <c>host:port</c>: the fleet beyond this machine.</summary>
+    public static IReadOnlyList<string> Granted(string? tokenFile = null) => [.. Load(tokenFile ?? TokenFile).Keys.Order(StringComparer.Ordinal)];
+
     /// <summary>Saves <paramref name="token"/> for <paramref name="endpoint"/>, over any earlier one.</summary>
     public static void Save(string endpoint, string token, string? tokenFile = null)
     {

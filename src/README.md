@@ -40,8 +40,8 @@ pilot-gui --snapshot <file.json> [--capture out.png]         # a snapshot file i
 - **Node:** with no node on the default socket, the GUI starts one (`pilot-node` beside it, or the source tree's
   build of the same configuration), detached so it outlives the window; a socket named with `--node-socket` or
   `PILOT_NODE_SOCKET` is only connected to.
-- **Rail:** the left rail, as tianwen's: Sessions (Ctrl+1), Flights (Ctrl+2) and Background tasks (Ctrl+3), and
-  Settings locked until the leg that brings it.
+- **Rail:** the left rail, as tianwen's: Sessions (Ctrl+1), Flights (Ctrl+2), Background tasks (Ctrl+3) and Fleet
+  (Ctrl+4), and Settings locked until the leg that brings it.
 - **Live:** the window follows the node's event stream, resumes with `since` after a drop, and says so in its header
   while no node answers, trying again every 2 s. The selection follows its session as the rows reorder.
 - **Say:** type in the bar at the foot (Ctrl+S takes the keyboard there from anywhere) and Enter says it to the selected session (the node's `say`: an idle background
@@ -291,7 +291,7 @@ right-click menu adds its folder and Copy entries.
 `pilot-tui` is the same dashboard in a terminal, over SSH as well as locally: the GUI's own pages and panels
 (`Pilot.Ui`), their DIR.Lib trees arranged in terminal cells by Console.Lib (`CellMeasureContext.PixelAuthored`)
 instead of painted on pixels, so a row, a button or the command bar is the same node on both. **1** Sessions, **2**
-Flights, **3** Background tasks, **Ctrl+K** the command bar, **Ctrl+S** the say bar, **Ctrl+T** the watchtower's box, Up/Down to select, a
+Flights, **3** Background tasks, **4** Fleet, **Ctrl+K** the command bar, **Ctrl+S** the say bar, **Ctrl+T** the watchtower's box, Up/Down to select, a
 click on a cell runs what a click on the pixels would, **q** quits. The watchtower and cards panel shows beside the page
 from 120 columns. `--node host:port` flies a node on the LAN, as everywhere.
 
@@ -413,7 +413,14 @@ sessions, flights and jobs, and never speaks for another. To bring a second mach
    allowed there; then `pilot-gui --node <host>:47731` (or the TUI, or any `pilot` command) flies that node, its
    header saying its account.
 
-One window shows one node for now: a window per node, each saying whose it is.
+**The Fleet page** (Ctrl+4 in the GUI, 4 in the TUI) is every node at once: this window's first, then every node heard
+on the LAN or granted to this user, each on a feed of its own (its event stream, watched without a grant as anyone on
+the LAN may). A row says the node's machine and where it is reached, whose account it runs on and its usage, its live
+sessions and how many wait on you, its flights and jobs, and its rings; a node not reached says what its connection is
+doing instead. **Open** opens a window flying that node (a window per node: the one-window-per-user gate is per node,
+so a second Open of the same node raises its window); **Connect** asks a node for a grant, as `pilot connect` does,
+when this user has none, and the node watched only says so. A node heard twice (on its socket and on the LAN) is one
+row, by its stream. In the TUI, Open says the `pilot-tui --node` to run in another terminal.
 
 ## Cards
 
