@@ -35,21 +35,29 @@ internal sealed record FlightLine
     /// <summary>Its sessions: <c>2 sessions · 1 live</c>, or <c>no session</c>.</summary>
     public required string Sessions { get; init; }
 
+    /// <summary>The node it flies on, when the page merges several; null on a page of one node, this window's.</summary>
+    public NodeMark? Node { get; init; }
+
     /// <summary>The line as a dump writes it.</summary>
-    public string ToDumpLine() =>
-        string.Join(" | ", Code, Title, Where, StateDetail is null ? State : $"{State} ({StateDetail})", Legs, Branch, Sessions);
+    public string ToDumpLine()
+    {
+        var line = string.Join(" | ", Code, Title, Where, StateDetail is null ? State : $"{State} ({StateDetail})", Legs, Branch, Sessions);
+        return Node is { } node ? $"{node.Name} | {line}" : line;
+    }
 
     /// <summary>The flights in drawing order: flying, then held, then landed, newest first within each.</summary>
     public static IReadOnlyList<FlightLine> Build(IEnumerable<FlightRow> flights, IEnumerable<SessionRow> sessions, DateTimeOffset now, IEnumerable<LegRow>? legs = null)
     {
         var byFlight = sessions.Where(s => s.Flight is not null).ToLookup(s => s.Flight!, StringComparer.Ordinal);
         var legsOf = (legs ?? []).ToLookup(l => l.Flight, StringComparer.Ordinal);
-        return flights
-            .OrderBy(f => f.State switch { FlightState.Flying => 0, FlightState.Held => 1, _ => 2 })
-            .ThenByDescending(f => f.CreatedAt)
-            .Select(f => From(f, byFlight[f.Code].ToList(), now) with { Legs = LegsText([.. legsOf[f.Code].OrderBy(l => l.Order)]), LegRows = [.. legsOf[f.Code].OrderBy(l => l.Order)] })
-            .ToList();
+        return Order(flights.Select(f => From(f, byFlight[f.Code].ToList(), now) with { Legs = LegsText([.. legsOf[f.Code].OrderBy(l => l.Order)]), LegRows = [.. legsOf[f.Code].OrderBy(l => l.Order)] }));
     }
+
+    /// <summary>Lines in drawing order (<see cref="Build"/>'s), several nodes' merged.</summary>
+    public static IReadOnlyList<FlightLine> Order(IEnumerable<FlightLine> lines) =>
+        lines.OrderBy(l => l.Row.State switch { FlightState.Flying => 0, FlightState.Held => 1, _ => 2 })
+            .ThenByDescending(l => l.Row.CreatedAt)
+            .ToList();
 
     /// <summary>A flight's legs in a line: how many, how many done, and the one flying or failed.</summary>
     internal static string LegsText(IReadOnlyList<LegRow> legs)
@@ -107,6 +115,9 @@ internal sealed record FlightsScreen(IReadOnlyList<FlightLine> Lines, string Sou
 /// </summary>
 internal sealed record FlightAction(string Label, string Verb, string Target, string[] Args, string? Prefill = null)
 {
+    /// <summary>The node it is for: its row's; null is this window's.</summary>
+    public NodeMark? Node { get; init; }
+
     /// <summary>The actions open to <paramref name="line"/>'s flight now, in the order a controller reaches for them.</summary>
     public static IReadOnlyList<FlightAction> For(FlightLine line)
     {
@@ -146,7 +157,7 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
             actions.Add(new FlightAction($"Remove {next.Name}", Verbs.RemoveLeg, Verbs.LegTarget(code, next.Name), [], $"leg remove {code} {next.Name} "));
         }
         actions.Add(new FlightAction("Plan a leg", Verbs.PlanLeg, target, [], $"leg plan {code} <name> --goal \"...\" --done-when \"...\" --item \"...\""));
-        return actions;
+        return [.. actions.Select(a => a with { Node = line.Node })];
     }
 }
 
@@ -171,6 +182,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private const float BranchWidth = 150f;
     private const float LegsWidth = 210f;
     private const float SessionsWidth = 170f;
+    private const float NodeWidth = 64f;
 
     private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
     private static readonly RGBAColor32 HeaderBg = new(0x1b, 0x1c, 0x24, 0xff);
@@ -225,6 +237,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
     public AboutCard? About { get; set; }
+
+    /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
+    public NodeFilter? Nodes { get; set; }
 
     /// <summary>Puts text on the clipboard; the row menu's Copy entries. Null where the host has no clipboard.</summary>
     public Action<string>? CopyText { get; set; }
@@ -539,15 +554,16 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     {
         var rows = new List<Layout.Node>
         {
-            Layout.Builder.HStack(
+            Layout.Builder.HStack([
                     Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
                     Layout.Builder.Text("flights", 20f, Dim).WAuto(),
+                    .. (Nodes?.Pills() ?? []),
                     Layout.Builder.Spacer().WStar(),
                     Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
                     CanCommand && !Wizard.IsOpen && Wizard.LoadRepos is not null
                         ? Pill("New flight", "flights:new", () => Wizard.Open())
                         : Layout.Builder.Spacer().WFixed(0f),
-                    About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f))
+                    About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f)])
                 .WithGap(12f)
                 .RowH(32f),
             Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC", 12f, Dim).RowH(20f),
@@ -581,9 +597,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         }
 
         var rows = new Layout.Node[screen.Lines.Count];
+        var marked = screen.Lines.Any(l => l.Node is not null);
         for (var i = 0; i < rows.Length; i++)
         {
-            rows[i] = Row(screen.Lines[i], i);
+            rows[i] = Row(screen.Lines[i], i, marked);
         }
 
         var columns = new List<Layout.Node>
@@ -597,6 +614,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             Optional(Label("Branch"), BranchWidth),
             Optional(Label("Sessions"), SessionsWidth),
         };
+        if (marked)
+        {
+            columns.Insert(1, Label("Node").WFixed(NodeWidth));
+        }
         return Layout.Builder.VStack(
                 Layout.Builder.HStack([.. columns])
                     .WithGap(ColumnGap)
@@ -615,7 +636,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// </summary>
     private static Layout.Node Optional(Layout.Node cell, float width) => cell.WStar(1f, 0f, width).CollapseBelow(width);
 
-    private Layout.Node Row(FlightLine line, int index)
+    private Layout.Node Row(FlightLine line, int index, bool marked)
     {
         var landed = line.Row.State == FlightState.Landed;
         var color = line.Row.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
@@ -634,6 +655,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             Optional(Layout.Builder.Text(line.Branch, 12f, Dim), BranchWidth),
             Optional(Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body), SessionsWidth),
         };
+        if (marked)
+        {
+            cells.Insert(1, Layout.Builder.Text(line.Node?.Name ?? "", 13f, landed ? Dim : Body).WFixed(NodeWidth));
+        }
         var row = Layout.Builder.HStack([.. cells])
             .WithGap(ColumnGap)
             .Pad(8f, 6f)

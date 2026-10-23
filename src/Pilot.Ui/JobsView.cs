@@ -32,19 +32,27 @@ internal sealed record JobLine
     /// <summary>Whether it ended and its owner was not told yet: a wake that failed shows.</summary>
     public bool Untold { get; init; }
 
+    /// <summary>The node it runs on, when the page merges several; null on a page of one node, this window's.</summary>
+    public NodeMark? Node { get; init; }
+
+    /// <summary>What the selection follows: its id, which another node's job may share, so with that node's key before it.</summary>
+    public string Key => Node is null or { Here: true } ? Id : $"{Node.Key}/{Id}";
+
     /// <summary>Whether it may still be cancelled: running or queued.</summary>
     public bool Live => Row.State is JobState.Running or JobState.Queued;
 
     /// <summary>The line as a dump writes it.</summary>
     public string ToDumpLine() =>
-        string.Join(" | ", Id, Command, For, StateDetail is null ? State : $"{State} ({StateDetail})", Started, Took.Length == 0 ? "-" : Took) + (Untold ? " | owner not told" : "");
+        (Node is { } node ? $"{node.Name} | " : "") + string.Join(" | ", Id, Command, For, StateDetail is null ? State : $"{State} ({StateDetail})", Started, Took.Length == 0 ? "-" : Took) + (Untold ? " | owner not told" : "");
 
     /// <summary>The jobs in drawing order: running, then queued in the order they wait, then the ended, last ended first.</summary>
-    public static IReadOnlyList<JobLine> Build(IEnumerable<JobRow> jobs, DateTimeOffset now) =>
-        jobs.OrderBy(j => j.State switch { JobState.Running => 0, JobState.Queued => 1, _ => 2 })
-            .ThenBy(j => j.State == JobState.Queued ? j.QueuedAt ?? j.StartedAt : DateTimeOffset.MinValue)
-            .ThenByDescending(j => j.EndedAt ?? j.StartedAt)
-            .Select(j => From(j, now))
+    public static IReadOnlyList<JobLine> Build(IEnumerable<JobRow> jobs, DateTimeOffset now) => Order(jobs.Select(j => From(j, now)));
+
+    /// <summary>Lines in drawing order (<see cref="Build"/>'s), several nodes' merged.</summary>
+    public static IReadOnlyList<JobLine> Order(IEnumerable<JobLine> lines) =>
+        lines.OrderBy(l => l.Row.State switch { JobState.Running => 0, JobState.Queued => 1, _ => 2 })
+            .ThenBy(l => l.Row.State == JobState.Queued ? l.Row.QueuedAt ?? l.Row.StartedAt : DateTimeOffset.MinValue)
+            .ThenByDescending(l => l.Row.EndedAt ?? l.Row.StartedAt)
             .ToList();
 
     public static JobLine From(JobRow job, DateTimeOffset now) => new()
@@ -105,6 +113,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private const float StateWidth = 220f;
     private const float StartedWidth = 110f;
     private const float TookWidth = 90f;
+    private const float NodeWidth = 64f;
     private const float DetailHeight = 260f;
     private const float FactsColumn = 420f;
     private const float FactLabel = 70f;
@@ -171,6 +180,12 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
     public AboutCard? About { get; set; }
 
+    /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
+    public NodeFilter? Nodes { get; set; }
+
+    /// <summary>The node of the job whose log is followed, whose route <see cref="LoadLog"/> reads; null is this window's.</summary>
+    public NodeMark? FollowingNode { get; private set; }
+
     /// <summary>The selected job's index, or -1.</summary>
     public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
@@ -211,35 +226,38 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
         _count = screen.Lines.Count;
         var selected = Selected >= 0 && Selected < screen.Lines.Count ? screen.Lines[Selected] : null;
-        Follow(selected?.Id);
+        Follow(selected);
         return Build(screen, selected);
     }
 
-    /// <summary>Follows <paramref name="jobId"/>'s log, reading it every <see cref="Every"/>; another, or none, stops the last.</summary>
-    private void Follow(string? jobId)
+    /// <summary>Follows <paramref name="line"/>'s log, reading it every <see cref="Every"/>; another, or none, stops the last.</summary>
+    private void Follow(JobLine? line)
     {
-        if (jobId == _logFor)
+        // Followed by its key, as two nodes' jobs may share an id; read by its id, from its node.
+        var key = line?.Key;
+        if (key == _logFor)
         {
             return;
         }
+        FollowingNode = line?.Node;
         _following?.Cancel();
         _following?.Dispose();
         _following = null;
         lock (_lock)
         {
-            _logFor = jobId;
+            _logFor = key;
             _log = null;
             _logProblem = null;
         }
         _logScroll.ScrollToEnd();
-        if (jobId is not null && LoadLog is { } load)
+        if (line is not null && LoadLog is { } load)
         {
             var following = _following = new CancellationTokenSource();
-            _ = FollowAsync(jobId, load, following.Token);
+            _ = FollowAsync(line.Key, line.Id, load, following.Token);
         }
     }
 
-    private async Task FollowAsync(string jobId, Func<string, CancellationToken, Task<JobLog>> load, CancellationToken cancellationToken)
+    private async Task FollowAsync(string key, string jobId, Func<string, CancellationToken, Task<JobLog>> load, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -249,8 +267,8 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                 bool changed;
                 lock (_lock)
                 {
-                    changed = _logFor == jobId && (_log is null || _log.Length != log.Length || _logProblem is not null);
-                    if (_logFor == jobId)
+                    changed = _logFor == key && (_log is null || _log.Length != log.Length || _logProblem is not null);
+                    if (_logFor == key)
                     {
                         _log = log;
                         _logProblem = null;
@@ -338,12 +356,13 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     private Layout.Node Header(JobsScreen screen) =>
         Layout.Builder.VStack(
-                Layout.Builder.HStack(
+                Layout.Builder.HStack([
                         Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
                         Layout.Builder.Text("background tasks", 20f, Dim).WAuto(),
+                        .. (Nodes?.Pills() ?? []),
                         Layout.Builder.Spacer().WStar(),
                         Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
-                        About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f))
+                        About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f)])
                     .WithGap(12f)
                     .RowH(32f),
                 Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC", 12f, Dim).RowH(20f))
@@ -360,9 +379,10 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
 
         var rows = new Layout.Node[screen.Lines.Count];
+        var marked = screen.Lines.Any(l => l.Node is not null);
         for (var i = 0; i < rows.Length; i++)
         {
-            rows[i] = Row(screen.Lines[i], i);
+            rows[i] = Row(screen.Lines[i], i, marked);
         }
 
         var columns = new List<Layout.Node>
@@ -375,6 +395,10 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             Optional(Label("Started"), StartedWidth),
             Optional(Label("Took"), TookWidth),
         };
+        if (marked)
+        {
+            columns.Insert(1, Label("Node").WFixed(NodeWidth));
+        }
         return Layout.Builder.VStack(
                 Layout.Builder.HStack([.. columns])
                     .WithGap(ColumnGap)
@@ -388,7 +412,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private static RGBAColor32 ColorOf(JobState state) =>
         state switch { JobState.Running => Running, JobState.Queued => Queued, JobState.Succeeded => Succeeded, JobState.Failed => Failed, _ => Dim };
 
-    private Layout.Node Row(JobLine line, int index)
+    private Layout.Node Row(JobLine line, int index, bool marked)
     {
         var ended = !line.Live;
         var color = ColorOf(line.Row.State);
@@ -405,6 +429,10 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             Optional(Layout.Builder.Text(line.Started, 13f, Dim), StartedWidth),
             Optional(Layout.Builder.Text(line.Took, 13f, ended ? Dim : Body), TookWidth),
         };
+        if (marked)
+        {
+            cells.Insert(1, Layout.Builder.Text(line.Node?.Name ?? "", 13f, ended ? Dim : Body).WFixed(NodeWidth));
+        }
         var row = Layout.Builder.HStack([.. cells])
             .WithGap(ColumnGap)
             .Pad(8f, 6f)

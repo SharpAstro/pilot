@@ -185,14 +185,27 @@ using var client = snapshot is null ? NewClient() : null;
 // the SDL window's teardown included, on a thread-pool thread, where closing the window hung. The feed is drained
 // with the loop pumping instead (ShutdownDrain), so the teardown stays on this thread.
 var feed = client is null ? null : NodeFeed.For(client);
-if (feed is not null && client is not null)
+// The fleet beyond this window's node: every node heard on the LAN or granted to this user, watched on its own stream,
+// its rows merged into every page. Disposed in the shutdown drain with the feed, never by an await here (see the feed's note).
+var fleetWatch = new FleetWatch();
+var fleetKnownAt = DateTimeOffset.MinValue;
+IReadOnlySet<string> granted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+bool CanCommand(string where) => string.Equals(where, remoteEndpoint, StringComparison.OrdinalIgnoreCase) || granted.Contains(where);
+// A row's command goes to the node it came from: this window's client for its own, the grant's for another's.
+using var clients = client is null ? null : new FleetClients(client, CanCommand);
+if (feed is not null && client is not null && clients is not null)
 {
     view.CanSay = true;
     view.OnSay = async (line, text) =>
     {
+        if (clients.For(line.Node) is not { } to)
+        {
+            view.SayStatus = FleetClients.WatchOnly(line.Node);
+            return;
+        }
         view.SayStatus = $"saying to {line.Name}…";
         loop.RequestRedraw();
-        var result = await GuiSay.SendAsync(client, line.Row.Id, text, cts.Token);
+        var result = await GuiSay.SendAsync(to, line.Row.Id, text, cts.Token);
         view.SayStatus = result;
         Console.WriteLine($"pilot-gui: say to {line.Name}: {result}");
         loop.RequestRedraw();
@@ -200,7 +213,8 @@ if (feed is not null && client is not null)
     // The Sessions page's transcript pane reads the node's transcript route, and follows it while open.
     view.Transcript.Load = async (rowId, agent, after, ct) =>
     {
-        var envelope = await client.GetTranscriptAsync(rowId, after, ct, agent);
+        // Read from the node the open session runs on; reading needs no grant, as watching does not.
+        var envelope = await clients.For(view.Transcript.Node, command: false)!.GetTranscriptAsync(rowId, after, ct, agent);
         return envelope is { Success: true, Response: { } page } ? page : throw new InvalidOperationException(envelope.Error);
     };
     view.Transcript.Changed = loop.RequestRedraw;
@@ -224,14 +238,20 @@ if (feed is not null && client is not null)
     // The Sessions page's archive buttons: a verb on the node, its answer under the say bar.
     view.OnAction = action => tracker.Run(async () =>
     {
-        view.SayStatus = await DashboardCommands.ActAsync(client, action, GuiSay.Who, cts.Token);
+        view.SayStatus = clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, GuiSay.Who, cts.Token) : FleetClients.WatchOnly(action.Node);
         Console.WriteLine($"pilot-gui: {view.SayStatus}");
         loop.RequestRedraw();
     }, "a Sessions action");
     // A card's button is a command on the node, as a click anywhere else is; the stream closes the card.
     async Task CardCommandAsync(string verb, CardRow card, string[] args)
     {
-        var result = await client.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.CardTarget(card.Id), Args = args, Who = GuiSay.Who }, cts.Token);
+        // A card raised on another node is answered there.
+        if (clients.For(chrome.Cards.NodeOf(card)) is not { } to)
+        {
+            Console.WriteLine($"pilot-gui: {verb} {card.Id}: {FleetClients.WatchOnly(chrome.Cards.NodeOf(card))}");
+            return;
+        }
+        var result = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.CardTarget(card.Id), Args = args, Who = GuiSay.Who }, cts.Token);
         Console.WriteLine($"pilot-gui: {verb} {card.Id} ({card.Title}): {(result.Success ? "done" : result.Response?.Error ?? result.Error)}");
         loop.RequestRedraw();
     }
@@ -307,7 +327,7 @@ if (feed is not null && client is not null)
     wizard.Changed = loop.RequestRedraw;
     chrome.Flights.OnAction = action => tracker.Run(async () =>
     {
-        var said = await DashboardCommands.ActAsync(client, action, GuiSay.Who, cts.Token);
+        var said = clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, GuiSay.Who, cts.Token) : FleetClients.WatchOnly(action.Node);
         chrome.Flights.Say(said);
         Console.WriteLine($"pilot-gui: {said}");
         loop.RequestRedraw();
@@ -321,13 +341,19 @@ if (feed is not null && client is not null)
     };
     // The Background tasks page: a job's log followed while it is selected, Cancel a verb on the node.
     chrome.Jobs.CanCommand = true;
-    chrome.Jobs.LoadLog = async (id, ct) => (await client.GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
+    chrome.Jobs.LoadLog = async (id, ct) => (await clients.For(chrome.Jobs.FollowingNode, command: false)!.GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
         ? log
         : throw new InvalidOperationException($"the node did not send {id}'s log");
     chrome.Jobs.Changed = loop.RequestRedraw;
+    // Cancel is the selected job's, whose log is followed: its node's.
     chrome.Jobs.OnCancel = job => tracker.Run(async () =>
     {
-        var result = await client.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = [], Who = GuiSay.Who }, cts.Token);
+        if (clients.For(chrome.Jobs.FollowingNode) is not { } to)
+        {
+            Console.WriteLine($"pilot-gui: cancel {job.Id}: {FleetClients.WatchOnly(chrome.Jobs.FollowingNode)}");
+            return;
+        }
+        var result = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = [], Who = GuiSay.Who }, cts.Token);
         Console.WriteLine($"pilot-gui: cancel {job.Id}: {(result.Success && result.Response is { Ok: true } ? "done" : result.Response?.Error ?? result.Error)}");
         loop.RequestRedraw();
     }, $"cancel {job.Id}");
@@ -393,11 +419,6 @@ var drawnAt = DateTimeOffset.MinValue;
 CardsScreen? cards = snapshot is null ? null : CardsScreen.From(snapshot.Cards);
 JobsScreen? jobs = snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
 FleetScreen? fleet = null;
-// The fleet beyond this window's node: every node heard on the LAN or granted to this user, watched on its own stream.
-// Disposed in the shutdown drain with the feed, never by an await here (see the feed's note).
-var fleetWatch = new FleetWatch();
-var fleetKnownAt = DateTimeOffset.MinValue;
-IReadOnlySet<string> granted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
 // A card about a leg opens its worker's transcript from the moment the card was raised.
 chrome.LinkCardTranscripts(() => screen, () => flights ?? new FlightsScreen([], screen.Source, screen.AsOf));
@@ -418,11 +439,6 @@ loop.OnRender = () =>
     {
         drawnVersion = feed.Version + fleetWatch.Version;
         drawnAt = DateTimeOffset.UtcNow;
-        screen = feed.Screen(drawnAt);
-        flights = feed.Flights(drawnAt);
-        cards = feed.Cards();
-        chrome.Flights.Jobs = feed.Jobs();
-        jobs = feed.JobsPage(drawnAt);
         // Who is in the fleet, looked at every few seconds: the grants are a file, the LAN a listener.
         if (drawnAt - fleetKnownAt >= TimeSpan.FromSeconds(5))
         {
@@ -430,7 +446,14 @@ loop.OnRender = () =>
             granted = new HashSet<string>(Pilot.Commands.NodeTargets.Granted(), StringComparer.OrdinalIgnoreCase);
             fleetWatch.Know(granted.Select(e => (e, (string?)null)).Concat((chrome.Flights.Lan?.Nodes ?? []).Select(n => (n.Endpoint, (string?)n.Name))));
         }
-        fleet = fleetWatch.Screen(nodeWhere, feed.Summary(drawnAt), e => string.Equals(e, remoteEndpoint, StringComparison.OrdinalIgnoreCase) || granted.Contains(e), drawnAt);
+        // Every node's rows on every page, each marked with its node, as the header's node selection picks them.
+        var pages = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, drawnAt);
+        screen = pages.Sessions;
+        flights = pages.Flights;
+        cards = pages.Cards;
+        chrome.Flights.Jobs = pages.JobRows;
+        jobs = pages.Jobs;
+        fleet = fleetWatch.Screen(nodeWhere, feed.Summary(drawnAt), CanCommand, drawnAt);
     }
 
     view.Ui.FrameId++;

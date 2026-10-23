@@ -442,6 +442,20 @@ output (its last 200 lines, read from the node every 2 s while selected), with *
 **Its session** (the transcript of the session it wakes, from when it was handed over) and **Open log**; its
 right-click menu adds its folder and Copy entries.
 
+**One window for the fleet.** Sessions, Flights, Background tasks and the cards panel are every node's at once, not
+only this window's: the feeds the Fleet page already keeps (this window's node, and each node heard on the LAN or
+granted to you, one stream each) are merged into one list per page (`FleetWatch.Pages`), and a node heard at two
+addresses, or this window's own heard again on the LAN, is counted once by its stream. With more than one node every
+row says whose it is: a **Node** column (`SE1`, the machine prefix, else the machine's name), and a card's `RING` or
+`for you` line ends in its node. Each header then carries the node selection as pills: **All nodes** (the default), or
+one node, or several (a click adds or takes one away). It filters every page and the cards panel alike, the Fleet page
+too, and is the window's own, kept in memory for as long as it is open, so switching pages keeps it. The selection on
+Sessions follows the session as rows of several nodes interleave (two nodes' rows may share an id, so another node's
+row is keyed by its node as well). A row's buttons, say bar, archive, card answers and Cancel go to the node the row came
+from, with the grant `pilot connect` saved for it; a node without one is watched, its transcripts and logs read, but a
+command on it says to **Connect** on the Fleet page first. The command bar and the new-flight wizard stay this window's
+node's. pilot-tui shows the same merged pages.
+
 ## The TUI
 
 `pilot-tui` is the same dashboard in a terminal, over SSH as well as locally: the GUI's own pages and panels

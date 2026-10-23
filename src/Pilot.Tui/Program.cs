@@ -28,10 +28,15 @@ const string Who = "tui";
 
 using var client = NodeTargets.Connect(remote, parsed.GetValue(socketOption));
 await using var feed = NodeFeed.For(client);
-// The fleet beyond this node: every node heard on the LAN or granted to this user, watched on its own stream.
+// The fleet beyond this node: every node heard on the LAN or granted to this user, watched on its own stream, its rows
+// merged into every page.
 await using var fleetWatch = new FleetWatch();
 var fleetKnownAt = DateTimeOffset.MinValue;
 IReadOnlySet<string> granted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+bool CanCommand(string where) => string.Equals(where, remote, StringComparison.OrdinalIgnoreCase) || granted.Contains(where);
+// A row's command goes to the node it came from: this terminal's client for its own, the grant's for another's.
+using var clients = new FleetClients(client, CanCommand);
+var nodeWhere = remote ?? client.SocketPath;
 
 // The views are the GUI's, generic over the surface; their renderer is never painted with here (the trees are arranged
 // in cells), so a one-pixel CPU surface stands in for it.
@@ -95,11 +100,11 @@ flights.Wizard.Create = async picks =>
 flights.Wizard.Changed = Redraw;
 flights.OnAction = action => _ = Task.Run(async () =>
 {
-    flights.Say(await DashboardCommands.ActAsync(client, action, Who, stop.Token));
+    flights.Say(clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, Who, stop.Token) : FleetClients.WatchOnly(action.Node));
     Redraw();
 });
 flights.OnOpen = location => flights.Say(DashboardCommands.Open(location) ? $"opened {location}" : $"could not open {location}");
-sessions.Transcript.Load = async (rowId, agent, after, ct) => (await client.GetTranscriptAsync(rowId, after, ct, agent)) is { Success: true, Response: { } page }
+sessions.Transcript.Load = async (rowId, agent, after, ct) => (await clients.For(sessions.Transcript.Node, command: false)!.GetTranscriptAsync(rowId, after, ct, agent)) is { Success: true, Response: { } page }
     ? page
     : throw new InvalidOperationException("the node has no transcript for this session");
 sessions.Transcript.Changed = Redraw;
@@ -119,18 +124,31 @@ chrome.About.Opening = () => _ = Task.Run(async () =>
 });
 sessions.OnAction = action => _ = Task.Run(async () =>
 {
-    sessions.SayStatus = await DashboardCommands.ActAsync(client, action, Who, stop.Token);
+    sessions.SayStatus = clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, Who, stop.Token) : FleetClients.WatchOnly(action.Node);
     Redraw();
 });
 sessions.OnSay = async (line, text) =>
 {
-    var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(line.Row.Id), Args = [text], Who = Who }, stop.Token);
+    if (clients.For(line.Node) is not { } to)
+    {
+        sessions.SayStatus = FleetClients.WatchOnly(line.Node);
+        Redraw();
+        return;
+    }
+    var envelope = await to.SendAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(line.Row.Id), Args = [text], Who = Who }, stop.Token);
     sessions.SayStatus = envelope.Success ? $"said to {line.Name}" : $"refused: {envelope.Response?.Error ?? envelope.Error}";
     Redraw();
 };
 async Task CardAsync(string verb, CardRow card, string[] cardArgs)
 {
-    var envelope = await client.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.CardTarget(card.Id), Args = cardArgs, Who = Who }, stop.Token);
+    // A card raised on another node is answered there.
+    if (clients.For(cards.NodeOf(card)) is not { } to)
+    {
+        flights.Say($"{verb} {card.Id}: {FleetClients.WatchOnly(cards.NodeOf(card))}");
+        Redraw();
+        return;
+    }
+    var envelope = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.CardTarget(card.Id), Args = cardArgs, Who = Who }, stop.Token);
     flights.Say(envelope.Success ? $"{verb} {card.Id}: done" : $"{verb} {card.Id}: {envelope.Response?.Error ?? envelope.Error}");
     Redraw();
 }
@@ -146,13 +164,20 @@ cards.OnTell = async text =>
 cards.OnOpen = url => DashboardCommands.Open(url);
 // The Background tasks page: a job's log followed while it is selected, Cancel a verb on the node.
 jobs.CanCommand = true;
-jobs.LoadLog = async (id, ct) => (await client.GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
+jobs.LoadLog = async (id, ct) => (await clients.For(jobs.FollowingNode, command: false)!.GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
     ? log
     : throw new InvalidOperationException($"the node did not send {id}'s log");
 jobs.Changed = Redraw;
+// Cancel is the selected job's, whose log is followed: its node's.
 jobs.OnCancel = job => _ = Task.Run(async () =>
 {
-    var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = [], Who = Who }, stop.Token);
+    if (clients.For(jobs.FollowingNode) is not { } to)
+    {
+        flights.Say($"cancel {job.Id}: {FleetClients.WatchOnly(jobs.FollowingNode)}");
+        Redraw();
+        return;
+    }
+    var envelope = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = [], Who = Who }, stop.Token);
     flights.Say(envelope.Success && envelope.Response is { Ok: true } ? $"cancelled {job.Id}" : $"cancel {job.Id}: {envelope.Response?.Error ?? envelope.Error}");
     Redraw();
 });
@@ -193,7 +218,8 @@ terminal.EnableCellBuffer();
 
 var page = PilotPage.Sessions;
 // A card about a leg opens its worker's transcript from the moment the card was raised.
-chrome.LinkCardTranscripts(() => feed.Screen(DateTimeOffset.UtcNow), () => feed.Flights(DateTimeOffset.UtcNow), shown => page = shown);
+FleetPages? merged = null;
+chrome.LinkCardTranscripts(() => merged?.Sessions ?? feed.Screen(DateTimeOffset.UtcNow), () => merged?.Flights ?? feed.Flights(DateTimeOffset.UtcNow), shown => page = shown);
 // The session menu's New flight in its repo: the Flights page, with the wizard open on it.
 sessions.OnNewFlight = repo =>
 {
@@ -227,17 +253,18 @@ while (!stop.IsCancellationRequested)
         var (columns, rows) = terminal.Size;
         // Design units per cell, as CellMeasureContext.PixelAuthored counts them: the trees are the GUI's.
         var width = columns * 8f;
+        // Every node's rows on every page, each marked with its node, as the header's node selection picks them.
+        var pages = merged = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now);
         var pageTree = page switch
         {
-            PilotPage.Flights => flights.Tree(feed.Flights(now)),
-            PilotPage.Jobs => jobs.Tree(feed.JobsPage(now)),
-            PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(remote ?? client.SocketPath, feed.Summary(now),
-                e => string.Equals(e, remote, StringComparison.OrdinalIgnoreCase) || granted.Contains(e), now)),
+            PilotPage.Flights => flights.Tree(pages.Flights),
+            PilotPage.Jobs => jobs.Tree(pages.Jobs),
+            PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, now)),
             PilotPage.Settings => settings.Tree(now),
-            _ => sessions.Tree(feed.Screen(now)),
+            _ => sessions.Tree(pages.Sessions),
         };
-        var cardsScreen = feed.Cards();
-        flights.Jobs = feed.Jobs();
+        var cardsScreen = pages.Cards;
+        flights.Jobs = pages.JobRows;
         // The panel takes 38 columns (the GUI's 300 units) when there is room beside a usable page, and something to show.
         var tree = columns >= 120 && cardsScreen.HasAny
             ? Layout.Builder.HStack(pageTree.WStar(), cards.Tree(cardsScreen).WFixed(CardsView<RgbaImage>.Width)).Stretch()
