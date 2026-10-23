@@ -312,9 +312,11 @@ public static class PilotCommand
             }
             await output.WriteLineAsync(JobLine(job));
             await output.WriteLineAsync($"  in {job.Cwd}, for {job.OwnerName ?? "a terminal"}; log {job.LogPath}");
-            if (!client.IsRemote && File.Exists(job.LogPath))
+            // Through the node's job log route, as the GUI reads it: the node opens a running job's log alongside its
+            // writer, where a plain read of the file here was refused while the job ran, and it works from the LAN too.
+            if (await client.GetJobLogAsync(job.Id, ct) is { Success: true, Response: { } log })
             {
-                foreach (var line in File.ReadLines(job.LogPath).TakeLast(15))
+                foreach (var line in log.Lines.TakeLast(15))
                 {
                     await output.WriteLineAsync($"  | {line}");
                 }
