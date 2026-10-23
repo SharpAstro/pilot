@@ -111,6 +111,19 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>The share of the account's 7-day window, in percent, past which a start rings once per window
+    /// (<see cref="NodeSettings.WeekLimitKey"/>); 90 unless the settings say otherwise. It rings and holds nothing.</summary>
+    public double WeekLimit
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.WeekLimit ?? 90;
+            }
+        }
+    }
+
     /// <summary>Whether <paramref name="value"/> names a model: an alias (sonnet, opus) or a full id (claude-opus-5-5[1m]).</summary>
     public static bool IsModel(string value) => ModelName().IsMatch(value);
 

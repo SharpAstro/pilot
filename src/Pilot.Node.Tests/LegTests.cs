@@ -214,6 +214,59 @@ public sealed class LegCommanderTests : IDisposable
     }
 
     [Fact]
+    public async Task APlannerAskedForOverASpentWindowWaitsSaysUntilWhenAndStartsByItselfOnceItHasReset()
+    {
+        await FlightWithTwoLegs();
+        _legs.Models = new RoleModels(null);
+        _state.PutUsage(new UsageRow { ReadAt = DateTimeOffset.UtcNow, FiveHour = new UsageWindow { UsedPercent = 95, ResetsAt = DateTimeOffset.UtcNow.AddHours(1) } });
+
+        (await Leg(Verbs.PlanFlight, "flight/TIA1")).Ok.ShouldBeTrue();
+        await _legs.AdvanceAllAsync(Ct);
+
+        _workers.Started.ShouldBeEmpty();
+        // The sweep holds the flight's own first leg too, which has its card; the planner's is one, said once.
+        var waits = _state.Cards().Where(c => c.Kind == LegCommander.NextStepKind && c.Title.Contains("planner", StringComparison.Ordinal)).ShouldHaveSingleItem();
+        (waits.Bin, waits.Subject).ShouldBe((CardBin.Handled, "flight/TIA1"));
+        waits.Title.ShouldStartWith("TIA1 waits to start its planner: the 5-hour window is 95 % spent");
+
+        // The window resets (a later reset is a new window): the sweep starts it, with no one asking again.
+        _state.PutUsage(new UsageRow { ReadAt = DateTimeOffset.UtcNow, FiveHour = new UsageWindow { UsedPercent = 4, ResetsAt = DateTimeOffset.UtcNow.AddHours(6) } });
+        await _legs.AdvanceAllAsync(Ct);
+
+        // The sweep starts the flight's first leg as well, once the window allows it.
+        _workers.Started.Count(w => w.Name == "du1-tia1-plan").ShouldBe(1);
+        _state.Cards().Count(c => c.Kind == "planner-started").ShouldBe(1);
+        await _legs.AdvanceAllAsync(Ct);
+        _workers.Started.Count(w => w.Name == "du1-tia1-plan").ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task APriorityReposPlannerUsesItsOwnLimitAndOneWithNoFiguresIsStartedAtOnce()
+    {
+        await FlightWithTwoLegs();
+        var repo = _state.Flights().Single().Repo;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), "priority-repos", [repo]).Settings);
+
+        // 95 % is past the start limit (90) and under the priority limit (98): this repo's planner is not held by it.
+        _state.PutUsage(new UsageRow { ReadAt = DateTimeOffset.UtcNow, FiveHour = new UsageWindow { UsedPercent = 95, ResetsAt = DateTimeOffset.UtcNow.AddHours(1) } });
+        (await Leg(Verbs.PlanFlight, "flight/TIA1")).Ok.ShouldBeTrue();
+
+        _workers.Started.ShouldHaveSingleItem();
+        _state.Cards().Where(c => c.Kind == LegCommander.NextStepKind).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task APlannerWithNoFiguresForTheWindowIsStartedAtOnce()
+    {
+        await FlightWithTwoLegs();
+        _legs.Models = new RoleModels(null);
+
+        (await Leg(Verbs.PlanFlight, "flight/TIA1")).Ok.ShouldBeTrue();
+
+        _workers.Started.ShouldHaveSingleItem();
+    }
+
+    [Fact]
     public async Task PlannedWithNoLegToStartIsRefusedAndNoLegIsNamedPlan()
     {
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();

@@ -56,10 +56,12 @@ public static class NodeApp
         builder.Services.AddSingleton<ICheckRunner, ShellCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
         builder.Services.AddSingleton(_ => new RoleModels(options.Saved));
+        builder.Services.AddSingleton(services => new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton(services =>
         {
             var legs = ActivatorUtilities.CreateInstance<LegCommander>(services);
             legs.Models = services.GetRequiredService<RoleModels>();
+            legs.Gate = services.GetRequiredService<StartGate>();
             return legs;
         });
         builder.Services.AddSingleton<NodeCommands>();
@@ -96,11 +98,16 @@ public static class NodeApp
                 Pilot = Briefs.Run(legs.Cli, legs.Socket),
                 Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,
                 Models = services.GetRequiredService<RoleModels>(),
+                Gate = services.GetRequiredService<StartGate>(),
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());
         builder.Services.AddSingleton(services => new Compactor(services.GetRequiredService<NodeState>(), services.GetRequiredService<Watchtower>(),
-            services.GetRequiredService<NodeCommands>().RunAsync, services.GetRequiredService<TimeProvider>()));
+            services.GetRequiredService<NodeCommands>().RunAsync, services.GetRequiredService<TimeProvider>())
+        {
+            Models = services.GetRequiredService<RoleModels>(),
+            Gate = services.GetRequiredService<StartGate>(),
+        });
         builder.Services.AddHostedService(services => services.GetRequiredService<Compactor>());
         // From the profile the tracker reads, so a test node, on a profile of its own, never reads the machine's.
         builder.Services.AddSingleton(services => new UsageReader(

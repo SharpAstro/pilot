@@ -21,6 +21,12 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     /// <summary>What its Handled lines are.</summary>
     public const string Kind = "session-compacted";
 
+    /// <summary>The limits a compaction's resume waits on; a test's compactor takes the defaults.</summary>
+    public RoleModels Models { get; set; } = RoleModels.Unset;
+
+    /// <summary>What holds a start while the 5-hour window is spent: the node's one gate, shared with the leg sweep and the watchtower.</summary>
+    public StartGate Gate { get; set; } = new(state, time);
+
     /// <summary>How often it looks.</summary>
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(30);
 
@@ -118,6 +124,13 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     {
         var subject = row.Flight is { } flight ? row.Leg is { } leg ? Verbs.LegTarget(flight, leg) : Verbs.FlightTarget(flight)
             : row.Name == watchtower.Name ? Verbs.WatchtowerTarget : Verbs.NodeTarget;
+        // A compaction resumes a session for a turn of its own, so a spent 5-hour window holds it as it holds any start: not marked
+        // compacted, so the next look takes it once the window has reset. The flight's repo may have runway, as for its legs.
+        var limit = row.Flight is { } code && state.Flights().FirstOrDefault(f => f.Code == code) is { } owner ? Models.StartLimitFor(owner.Repo) : Models.StartLimit;
+        if (Gate.Hold($"{Verbs.Compact} {row.Id}", limit, Models.WeekLimit, Kind, subject, $"Compaction of {row.Name} waits ({why})"))
+        {
+            return;
+        }
         var result = await run(new CommandRequest { Verb = Verbs.Compact, Target = Verbs.SessionTarget(row.Id), Args = [focus], Who = LegWatch.Who }, cancellationToken);
         if (result.Ok)
         {
