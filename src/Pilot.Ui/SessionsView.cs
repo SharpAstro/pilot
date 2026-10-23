@@ -613,7 +613,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// <summary>The selected ended session's button: Archive it, or Restore one archived; nothing on any other row.</summary>
     private Layout.Node Act(SessionLine line, int index)
     {
-        if (index != Selected || OnAction is not { } act
+        if (index != Selected || OnAction is not { } act || WatchOnly(line) is not null
             || line.Row.State is not (Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed))
         {
             return Layout.Builder.Spacer();

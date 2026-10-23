@@ -101,6 +101,24 @@ public sealed class SteerByNodeTests : IAsyncDisposable
         Arrange(view, screen).Text.ShouldNotContain("Connect to");
     }
 
+    [Fact]
+    public void AnEndedRowOnANodeWithNoGrantOffersNeitherArchiveNorRestore()
+    {
+        using var here = NodeClient.Remote(_se1.Endpoint);
+        using var clients = new FleetClients(here, _ => false, e => NodeClient.Remote(e));
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var view = new SessionsView<RgbaImage>(vessel) { CanSteer = clients.CanSteer, OnAction = _ => { }, OnConnect = _ => { } };
+        var screen = new SessionsScreen(SessionLine.Order([
+            SessionLine.From(Live.Row("aaaa0002", "le1-done", SessionState.Ended), Live.At) with { Node = Le1 },
+        ]), "test", Live.At);
+        view.Tree(screen);
+        view.Select(0);
+
+        var (arranged, _) = Arrange(view, screen);
+        var actions = arranged.Select(a => a.Node.Hit is HitResult.ButtonHit { Action: var action } ? action : null).OfType<string>().ToList();
+        actions.ShouldNotContain(a => a.EndsWith(":archive") || a.EndsWith(":restore"));
+    }
+
     private static FlightLine FlightOn(string code, NodeMark node) => FlightLine.Build([new FlightRow
     {
         Code = code, Repo = "tianwen", RepoPath = "/r/tianwen", Issue = 1, Branch = "flight/" + code.ToLowerInvariant(), Worktree = "/w", Base = "origin/main",
