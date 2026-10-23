@@ -172,6 +172,10 @@ subagents or one at most; its depth is to follow usage headroom, priority and wh
 - `pilot review pass <report>` from the plane offers the merge: the PR-ready card, with the review's words.
 - `pilot review changes <changes>` rings with **Go around** (the last leg, told the changes; a done leg may go around
   for a review) and **Ready anyway**. The go-around's finish pushes and starts a fresh review by itself.
+- GitHub is told the verdict (`gh pr ready`) before the node keeps it: **changes** mark the PR a draft (`--undo`), so it
+  cannot be merged on GitHub with the fixes pending, and a pass (the reviewer's, or "ready anyway") marks it ready
+  before the merge card is raised. A gh that fails refuses the verdict, which the reviewer says again. A PR opened for
+  a review round starts ready, as the review runs on it; the merge card's merge still refuses a moved head.
 - Only the reviewer gives the verdict; the controller may pass one that asked for changes ("ready anyway"); the
   watchtower may do neither. A merge needs a passed review. A reviewer that stops without its verdict, or never shows
   up, rings with **Review again** (`pilot flight review <code>`). No leg may be named `review`.

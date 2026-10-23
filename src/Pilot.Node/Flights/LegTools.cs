@@ -177,6 +177,13 @@ public interface IGitHub
     /// <summary>Merges PR <paramref name="number"/> by <paramref name="method"/>, refused by GitHub unless its head is still <paramref name="head"/>.</summary>
     Task MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Marks PR <paramref name="number"/> a draft (<paramref name="draft"/>), which GitHub will not merge, or ready for review
+    /// again. Asking for the state it is in already is no error.
+    /// </summary>
+    /// <exception cref="FlightException">gh could not change it.</exception>
+    Task SetDraftAsync(string repoPath, int number, bool draft, CancellationToken cancellationToken);
+
     /// <summary>Opens a PR from <paramref name="branch"/> (pushed already) into <paramref name="baseBranch"/>; returns it.</summary>
     Task<PullRequest> CreateAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken);
 
@@ -242,6 +249,20 @@ public sealed class GhCli : IGitHub
         if (exit != 0)
         {
             throw new FlightException($"gh could not merge #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+    }
+
+    public async Task SetDraftAsync(string repoPath, int number, bool draft, CancellationToken cancellationToken)
+    {
+        var args = new List<string> { "pr", "ready", number.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+        if (draft)
+        {
+            args.Add("--undo");
+        }
+        var (exit, output, error) = await RunAsync(args, repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not mark #{number} {(draft ? "a draft" : "ready for review")}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
     }
 
