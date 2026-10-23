@@ -31,6 +31,10 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     public const string GhKey = "gh";
     public const string UsageKey = "usage";
     public const string GuardHooksKey = "guard-hooks";
+    public const string BuildRspKey = "build-rsp";
+
+    /// <summary>The response file that turns MSBuild node reuse off, as runaway-agent's <c>machine/</c> folder and install.sh name it.</summary>
+    public const string BuildRsp = "Directory.Build.rsp";
 
     /// <summary>The firewall rule's name, which the check looks for and the fix replaces.</summary>
     public const string FirewallRule = "pilot-node";
@@ -40,6 +44,9 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
 
     /// <summary>A runaway-agent clone to take the guard scripts from, or null when there is none; a test replaces it.</summary>
     public Func<string?> FindRunawayAgent { get; init; } = RunawayAgentClone;
+
+    /// <summary>The folder the response file goes in: the user's home, where install.sh puts it; a test points it elsewhere.</summary>
+    public string MachineFolder { get; init; } = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
     /// <summary>Runs a program and gives its exit code and output; a test replaces it.</summary>
     public Func<string, IReadOnlyList<string>, TimeSpan, (int Exit, string Output)> Run { get; init; } = RunProcess;
@@ -69,6 +76,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             Fix = hooks ? null : "Install hooks",
         });
         checks.Add(GuardHooksCheck());
+        checks.Add(BuildRspCheck());
 
         var lanWanted = options.Saved?.Lan ?? options.Lan;
         checks.Add(options.Lan
@@ -139,6 +147,8 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             }
             case GuardHooksKey:
                 return InstallGuardHooks();
+            case BuildRspKey:
+                return InstallBuildRsp();
             case FirewallKey:
                 if (!OperatingSystem.IsWindows())
                 {
@@ -158,7 +168,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                     ? null
                     : $"no window opened: run claude in {options.WatchtowerFolder} and accept its trust prompt";
             default:
-                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, HooksKey, GuardHooksKey, LanKey, FirewallKey, TrustKey })}, not {key}";
+                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, HooksKey, GuardHooksKey, BuildRspKey, LanKey, FirewallKey, TrustKey })}, not {key}";
         }
     }
 
@@ -268,6 +278,88 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         var to = Path.Combine(folder, script);
         return !File.Exists(to) || !File.ReadAllBytes(Path.Combine(clone, script)).AsSpan().SequenceEqual(File.ReadAllBytes(to));
     }
+
+    /// <summary>
+    /// Whether runaway-agent's <c>machine/Directory.Build.rsp</c> is in the user's home folder as its install.sh installs
+    /// it. MSBuild reads one found by walking up from the project, so every build under home, a flight's included, gets
+    /// <c>-nodeReuse:false</c> and its worker nodes exit with the build: idle nodes held worktree folders and gigabytes.
+    /// Optional, as the guard hooks are. The copy is compared with the clone's; with no clone a file that is there passes,
+    /// since there is nothing to compare it with, and a missing one says where to get runaway-agent.
+    /// </summary>
+    private SetupCheck BuildRspCheck()
+    {
+        const string Title = "MSBuild node reuse off";
+        var target = Path.Combine(MachineFolder, BuildRsp);
+        try
+        {
+            var clone = FindRunawayAgent();
+            var source = clone is null ? null : Path.Combine(clone, "machine", BuildRsp);
+            if (source is not null && !File.Exists(source))
+            {
+                // A clone older than the file: the guard hooks may still come from it, this cannot.
+                return new SetupCheck { Key = BuildRspKey, Title = Title, Ok = false, Line = $"{target} not checked: {clone} has no machine/{BuildRsp}, so pull it, or get runaway-agent from {GuardHooks.Home}", Optional = true };
+            }
+            if (!File.Exists(target))
+            {
+                return source is null
+                    ? new SetupCheck { Key = BuildRspKey, Title = Title, Ok = false, Line = $"no {target}, and no runaway-agent clone found under the repo folders: get it from {GuardHooks.Home} and clone it beside the others", Optional = true }
+                    : new SetupCheck { Key = BuildRspKey, Title = Title, Ok = false, Line = $"no {target}: builds leave idle MSBuild nodes behind that hold folders and memory; taken from {source}", Fix = "Install response file", Optional = true };
+            }
+            if (source is not null && BuildRspDiffers(source, target))
+            {
+                return new SetupCheck { Key = BuildRspKey, Title = Title, Ok = false, Line = $"{target} differs from {source}; the fix keeps it as a .bak copy beside it", Fix = "Install response file", Optional = true };
+            }
+            return new SetupCheck { Key = BuildRspKey, Title = Title, Ok = true, Line = target, Optional = true };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return new SetupCheck { Key = BuildRspKey, Title = Title, Ok = false, Line = $"{target}: {ex.Message}", Optional = true };
+        }
+    }
+
+    /// <summary>
+    /// Copies the response file from the runaway-agent clone to the home folder; null when done, else why not. A file that
+    /// differs is copied to <c>Directory.Build.rsp.bak-&lt;UTC timestamp&gt;</c> first, as install.sh does, and one that is
+    /// the same is left alone, so a second run changes nothing and makes no backup.
+    /// </summary>
+    private string? InstallBuildRsp()
+    {
+        try
+        {
+            var clone = FindRunawayAgent();
+            if (clone is null)
+            {
+                return $"no runaway-agent clone found under the repo folders: get it from {GuardHooks.Home} and clone it beside the others";
+            }
+            var source = Path.Combine(clone, "machine", BuildRsp);
+            if (!File.Exists(source))
+            {
+                return $"{clone} has no machine/{BuildRsp}: pull runaway-agent";
+            }
+
+            var target = Path.Combine(MachineFolder, BuildRsp);
+            if (File.Exists(target))
+            {
+                if (!BuildRspDiffers(source, target))
+                {
+                    return null;
+                }
+                var backup = $"{target}.bak-{DateTime.UtcNow:yyyyMMddTHHmmssZ}";
+                File.Copy(target, backup, overwrite: false);
+                File.SetLastWriteTimeUtc(backup, File.GetLastWriteTimeUtc(target));
+            }
+            Directory.CreateDirectory(MachineFolder);
+            File.Copy(source, target, overwrite: true);
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return $"{Path.Combine(MachineFolder, BuildRsp)}: {ex.Message}";
+        }
+    }
+
+    private static bool BuildRspDiffers(string source, string target) =>
+        !File.ReadAllBytes(source).AsSpan().SequenceEqual(File.ReadAllBytes(target));
 
     /// <summary>The first <c>runaway-agent</c> clone under the user's <c>source/repos/*</c> that has all three guard scripts, or null.</summary>
     private static string? RunawayAgentClone()
