@@ -95,6 +95,13 @@ public sealed partial class LegCommander(
             _one.Release();
         }
 
+        // A leg done (or its failed read accepted): the flight goes on by itself to what needs no person, its next leg or
+        // its PR (which starts its review), after this lock is let go. Off, a card offers it, so a flight never just sits.
+        if (error is null && command.Verb == Verbs.FinishLeg && (command.Args ?? []).FirstOrDefault() is "done" or "accepted")
+        {
+            await AdvanceAsync(LegOf(command.Target).Flight, cancellationToken);
+        }
+
         // A merge lands its flight through the flight verbs' own lock, after this one's is let go.
         if (error is null && command.Verb == Verbs.Merge)
         {
@@ -108,6 +115,85 @@ public sealed partial class LegCommander(
             }
         }
         return state.Complete(command, error);
+    }
+
+    /// <summary>The kind of card that says a flight's next step waits, or did not go.</summary>
+    public const string NextStepKind = "next-step";
+
+    // The step each flight's advance last carded: said once, not every sweep, until the flight moves on.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _rung = new(StringComparer.Ordinal);
+
+    /// <summary>Every flying flight's next step, where it has one: what the node's sweep runs every minute.</summary>
+    public async Task AdvanceAllAsync(CancellationToken cancellationToken)
+    {
+        foreach (var flight in state.Flights().Where(f => f.State == FlightState.Flying))
+        {
+            await AdvanceAsync(flight, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// What a flight does once a leg of it is done: its next planned leg starts, or, every leg done and no PR open yet, its
+    /// PR opens and its review starts. The merge stays the controller's. The one thing that holds it is the account's
+    /// 5-hour window (<see cref="RoleModels.StartLimit"/>): while that is spent the step waits, says until when, and the
+    /// sweep takes it once the window resets. PIL118, TIA1737 and TIA1778 sat for hours with a leg done and no one told,
+    /// 2026-10-23.
+    /// </summary>
+    private async Task AdvanceAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        if (!Models.Advances || state.Flights().FirstOrDefault(f => f.Code == flight.Code) is not { State: FlightState.Flying } current)
+        {
+            return;
+        }
+        var legs = state.Legs(current.Code).OrderBy(l => l.Order).ToList();
+        if (legs.Count == 0 || legs.Any(l => l.State is LegState.Flying or LegState.Failed))
+        {
+            return;
+        }
+        CommandRequest? step = legs.FirstOrDefault(l => l.State == LegState.Planned) is { } next
+            ? new CommandRequest { Verb = Verbs.StartLeg, Target = Verbs.LegTarget(current.Code, next.Name), Who = "node" }
+            : current.PullRequest is null
+                ? new CommandRequest { Verb = Verbs.OpenPr, Target = Verbs.FlightTarget(current.Code), Who = "node" }
+                : null;
+        if (step is null)
+        {
+            _rung.TryRemove(current.Code, out _);
+            return;
+        }
+        var label = step.Verb == Verbs.StartLeg ? $"start {step.Target.Split('/')[^1]}" : "open its PR";
+        if (WindowSpent(Models.StartLimitFor(current.Repo)) is { } wait)
+        {
+            if (_rung.TryGetValue(current.Code, out var said) && said == $"wait {step.Target}")
+            {
+                return;
+            }
+            _rung[current.Code] = $"wait {step.Target}";
+            state.RaiseCard(CardBin.Handled, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} waits to {label}: {wait}");
+            return;
+        }
+        if (_rung.TryGetValue(current.Code, out var failed) && failed == $"failed {step.Target}")
+        {
+            return;
+        }
+        var result = await RunAsync(step, cancellationToken);
+        if (result.Ok)
+        {
+            _rung.TryRemove(current.Code, out _);
+            return;
+        }
+        _rung[current.Code] = $"failed {step.Target}";
+        state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not {label} by itself", result.Error,
+            [new CardChoice { Label = char.ToUpperInvariant(label[0]) + label[1..], Verb = step.Verb, Target = step.Target, Args = step.Args }]);
+    }
+
+    /// <summary>Why the account's 5-hour window holds a start, and until when; null when it does not, or no fresh figures say.</summary>
+    private string? WindowSpent(double limit)
+    {
+        var now = time.GetUtcNow();
+        return state.Usage() is { FiveHour: { } window } usage && now - usage.ReadAt < TimeSpan.FromMinutes(30)
+               && window.UsedPercent >= limit && window.ResetsAt is { } resets && resets > now
+            ? $"the 5-hour window is {window.UsedPercent:0} % spent (the limit is {limit:0} %); it goes on after {resets.ToLocalTime():HH:mm}"
+            : null;
     }
 
     private void Plan(CommandRequest command)
