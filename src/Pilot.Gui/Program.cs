@@ -347,7 +347,12 @@ if (feed is not null && client is not null && clients is not null)
     wizard.CreateIssue = (path, title, body) => RepoActions.CreateIssueAsync(client, path, title, body, GuiSay.Who, cts.Token);
     wizard.Changed = loop.RequestRedraw;
     // The Repos page's Sync runs on this window's node; its New flight opens the wizard at that repo's issues.
-    chrome.Repos.SyncRepos = ct => RepoActions.SyncAsync(client, GuiSay.Who, ct);
+    chrome.Repos.SyncRepos = async ct =>
+    {
+        var outcomes = await RepoActions.SyncAsync(client, GuiSay.Who, ct);
+        feed?.RefreshRepos();
+        return outcomes;
+    };
     chrome.Repos.Changed = loop.RequestRedraw;
     chrome.Repos.OnNewFlight = line =>
     {

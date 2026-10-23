@@ -108,7 +108,12 @@ flights.Wizard.Create = async picks =>
 };
 flights.Wizard.CreateIssue = (path, title, body) => RepoActions.CreateIssueAsync(client, path, title, body, Who, stop.Token);
 flights.Wizard.Changed = Redraw;
-repos.SyncRepos = ct => RepoActions.SyncAsync(client, Who, ct);
+repos.SyncRepos = async ct =>
+{
+    var outcomes = await RepoActions.SyncAsync(client, Who, ct);
+    feed.RefreshRepos();
+    return outcomes;
+};
 repos.Changed = Redraw;
 flights.OnAction = action => _ = Task.Run(async () =>
 {
