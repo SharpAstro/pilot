@@ -102,7 +102,12 @@ failed wake loses nothing. Only the controller amends, a held flight too. The pi
 co-pilot, **fold** into a leg, a new **leg**, or a new **flight** for you to launch, changes the route, and records
 it with `pilot classify <id> fold|leg|flight [--leg <leg>] --why "<why>"`, which writes an indented `Class:` line
 under it (other lines there stay) and logs it as the pilot's. The dashboard's plan data gives each a state: open,
-classified, done once its leg is done, or *to the controller* for a new flight. A fold's fuel is
+classified, done once its leg is done, or for a new flight *to the controller* until you launch it, then *launched*.
+The launch form opened from the amendment's *Launch as a flight…* sends the amendment with `POST /api/launch`, which
+refuses one already launched and, once the launch went through, writes a `Launched: <time>` line under it (logged);
+the form adds ` · Session: <id>` through `POST /api/flights/<flight>/launched` once the pilot is up, which the card
+links. The same request (one line, any case) is filed once: a second `amend` of it is refused naming the first, and
+the page's form does not send while its filing is in flight. A fold's fuel is
 `pilot amend-budget <leg> <tokens> --amendment <id>`, the leg's pilot's only: the amendment's own estimate, an
 increment, added to the leg's budget on your authority, with no watchtower and whatever the refuel switch says. It
 needs account headroom (none on march on, for a marching flight) and keeps the amendment's additions, its calls

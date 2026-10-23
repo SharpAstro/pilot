@@ -3654,6 +3654,94 @@ class AmendmentTests(Case):
         self.assertEqual([(a["id"], a["state"]) for a in p["amendments"]],
                          [("A1", "open"), ("A2", "classified"), ("A3", "to the controller"), ("A4", "done")])
 
+    def test_the_same_request_is_filed_once(self):
+        self.plan("s1", PLAN)
+        self.amend("Also export the page labels")
+        with self.assertRaises(SystemExit) as e:
+            self.amend("also  export the\npage labels")          # as the plan keeps it: one line, any case
+        self.assertEqual(str(e.exception), "pilot: amendment A1 already files this request for this flight; it is not filed again "
+                                           "(a request that is new says so in its words)")
+        self.assertEqual([a["id"] for a in pilot.parse_plan(self.text())["amendments"]], ["A1"])
+        self.assertEqual(len(self.told), 1)                       # its pilot was told once, not again
+        self.amend("Rotate thumbnails too")
+        self.assertEqual([a["id"] for a in pilot.parse_plan(self.text())["amendments"]], ["A1", "A2"])
+
+    def test_a_launched_new_flight_shows_launched_and_keeps_the_other_lines(self):
+        self.plan("s1", PLAN)
+        self.amend("Add a PDF/A mode")
+        self.classify("A1", "flight")
+        with self.assertRaisesRegex(ValueError, "no amendment A9"):
+            pilot.launchable_amendment("s1", "A9")
+        self.assertEqual(pilot.plans_view([], pilot.registered())[0]["amendments"][0]["state"], "to the controller")
+        pilot.launched_amendment("s1", "a1")
+        a = pilot.plans_view([], pilot.registered())[0]["amendments"][0]
+        self.assertEqual((a["state"], a["class"], bool(a["launched"]), a["launchedSession"]), ("launched", "flight", True, ""))
+        self.assertTrue(self.log_of("s1")[-1].endswith("Amendment A1 launched by the controller as a new flight"))
+        with self.assertRaisesRegex(ValueError, "already launched"):
+            pilot.launchable_amendment("s1", "A1")
+        # The session follows once the launch form has seen the pilot; the time stays, one line, and no second log.
+        at, session = a["launched"], "0123abcd-0123-4abc-8abc-0123456789ab"
+        pilot.launched_amendment("s1", "A1", session)
+        a = pilot.parse_plan(self.text())["amendments"][0]
+        self.assertEqual((a["launched"], a["launchedSession"], a["class"]), (at, session, "flight"))
+        self.assertEqual(self.text().count("Launched:"), 1)
+        self.assertEqual(sum("launched by the controller" in l for l in self.log_of("s1")), 1)
+        self.classify("A1", "flight", why="still a new flight after a second look at it")   # a reclassify keeps it launched
+        self.assertEqual(pilot.parse_plan(self.text())["amendments"][0]["launched"], at)
+        self.amend("Rotate thumbnails too")
+        self.classify("A2", "fold", "fix")
+        with self.assertRaisesRegex(ValueError, "not a new flight"):
+            pilot.launched_amendment("s1", "A2")
+
+    def test_the_launch_endpoint_records_the_amendment_once_the_launch_went_through(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        self.plan("s1", PLAN)
+        self.amend("Add a PDF/A mode")
+        self.classify("A1", "flight")
+        launches, fails = [], []
+        real = pilot.launch
+        def fake_launch(path, resume=None, where="terminal", message="", as_pilot=True, hold=False):
+            if fails:
+                raise ValueError("that directory is not one Claude Code has a record of")
+            launches.append(message)
+            return {"where": where}
+        pilot.launch = fake_launch
+        srv = pilot.http.server.ThreadingHTTPServer(("127.0.0.1", 0), pilot.Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            def post(path, body):
+                req = urllib.request.Request(f"http://127.0.0.1:{srv.server_address[1]}{path}", json.dumps(body).encode("utf-8"),
+                                             {"Content-Type": "application/json", "X-Pilot": "1"}, method="POST")
+                try:
+                    with urllib.request.urlopen(req) as r:
+                        return r.status, json.loads(r.read())
+                except urllib.error.HTTPError as e:
+                    with e:
+                        return e.code, json.loads(e.read())
+            state = lambda: pilot.plans_view([], pilot.registered())[0]["amendments"][0]["state"]
+            body = {"path": "C:/x", "message": "Add a PDF/A mode", "amendment": {"plan": "WA1", "id": "A1"}}
+            fails.append(1)
+            self.assertEqual(post("/api/launch", body)[0], 409)    # a launch that failed is no launch
+            self.assertEqual(state(), "to the controller")
+            fails.clear()
+            self.assertEqual(post("/api/launch", body), (200, {"where": "terminal"}))
+            self.assertEqual(state(), "launched")
+            code, err = post("/api/launch", body)                   # a second launch from it is refused, not started
+            self.assertEqual(code, 409)
+            self.assertIn("already launched", err["error"])
+            self.assertEqual(len(launches), 1)
+            session = "0123abcd-0123-4abc-8abc-0123456789ab"
+            self.assertEqual(post("/api/flights/s1/launched", {"id": "A1", "session": session})[0], 200)
+            self.assertEqual(pilot.parse_plan(self.text())["amendments"][0]["launchedSession"], session)
+            self.assertEqual(post("/api/flights/s1/launched", {"id": "A1", "session": "no"})[0], 409)
+            self.assertEqual(post("/api/launch", {"path": "C:/x", "amendment": {"plan": "WA1", "id": "A7"}})[0], 409)
+        finally:
+            pilot.launch = real
+            srv.shutdown()
+            srv.server_close()
+
     def test_the_endpoint_amends_and_says_how_the_pilot_was_reached(self):
         import threading
         import urllib.error
@@ -3675,6 +3763,9 @@ class AmendmentTests(Case):
                              (200, {"ok": True, "sessionId": "s1", "id": "A1", "reached": "told its pilot pilot-x through the intercom"}))
             self.assertEqual(post("/api/flights/s1/amend", {"text": "Rotate thumbnails too"})[1]["id"], "A2")
             self.assertEqual(post("/api/flights/WA1/amend", {"text": ""})[0], 409)
+            code, err = post("/api/flights/WA1/amend", {"text": "Also export the page labels"})     # filed twice: refused
+            self.assertEqual(code, 409)
+            self.assertIn("amendment A1 already files this request", err["error"])
             self.assertEqual(post("/api/flights/ZZ9/amend", {"text": "anything at all"})[0], 409)
             self.assertEqual([a["text"] for a in pilot.parse_plan(self.text())["amendments"]], ["Also export the page labels", "Rotate thumbnails too"])
         finally:

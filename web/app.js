@@ -942,6 +942,7 @@ const amendState = a => ({
   classified: ["working", "classified · in the route"],
   done: ["done", "✓ done: its leg is done"],
   "to the controller": ["blocked", "to you: launch it as a flight"],
+  launched: ["done", `✓ launched as a flight${a.launched ? ` · ${a.launched}` : ""}`],
 })[a.state] || ["other", a.state || a.status];
 
 // A fold's Budget line, pilot.py's {budget, budgetLeg}: the tokens it has added to that leg so far, as the plan has it.
@@ -954,6 +955,9 @@ const amendedLegs = p => {
   return by;
 };
 
+// The flight a launched amendment came up as, named by its plan when the dashboard has it, else as a flight.
+const launchedName = a => { const l = (S?.plans || []).find(x => x.sessionId === a.launchedSession); return l ? (l.flight ? `Flight ${l.flight}` : "the new flight") + ` · ${l.title}` : "the new flight"; };
+
 // The pilot session's directory, for the launch form a new-flight amendment opens: the flight's repo.
 const flightPath = (p, s) => (s.pilots || []).find(x => x.sessionId === p.sessionId)?.cwd || p.repoPath || "";
 
@@ -963,7 +967,10 @@ function amendmentsHtml(p, s, fold) {
   const open = as.filter(a => a.state === "open").length, mine = as.filter(a => a.state === "to the controller").length;
   const rows = as.map(a => {
     const [cls, label] = amendState(a);
-    const launch = a.class === "flight" ? `<button data-launchamend="${esc(p.sessionId)}" data-id="${esc(a.id)}" title="Open the launch form with this request as the new flight's first message; you launch it">Launch as a flight…</button>` : "";
+    // A new flight offers its launch until the controller has launched it; then it links the flight it came up as,
+    // once the launch form has seen that pilot's plan (the link follows its session).
+    const launch = a.state === "to the controller" ? `<button data-launchamend="${esc(p.sessionId)}" data-id="${esc(a.id)}" title="Open the launch form with this request as the new flight's first message; you launch it">Launch as a flight…</button>`
+      : a.state === "launched" && a.launchedSession ? `<a href="#/plan/${esc(a.launchedSession)}" title="the flight this amendment was launched as">${esc(launchedName(a))} ›</a>` : "";
     return `<li class="amend ${esc(a.state.replace(/\s+/g, "-"))}"><div class="amhead"><b>${esc(a.id)}</b> <span class="sub">${esc(a.at)}</span>
       <span class="amclass ${esc(a.class || "none")}">${esc(amendClass(a))}</span> <span class="chip ${cls}">${esc(label)}</span>${a.budget ? ` <span class="ambudget" title="weighted tokens this fold has added to its leg's budget so far">⛽ ${esc(ambudget(a))}</span>` : ""}</div>
       <div class="amtext">${md(a.text, true)}</div>${a.why ? `<div class="sub amwhy">why: ${esc(a.why)}</div>` : ""}${launch ? `<div class="choices">${launch}</div>` : ""}</li>`;
@@ -988,6 +995,7 @@ function amendFormHtml(p) {
 async function sendAmendment(sid) {
   const f = amendForm.get(sid);
   const text = (document.querySelector(`textarea[data-amendtext="${CSS.escape(sid)}"]`)?.value ?? f?.text ?? "").trim();
+  if (f?.busy) return;            // Ctrl+Enter again while the POST is slow would file it twice
   if (!f || !text) { if (f) { f.note = "write the request first"; render(); } return; }
   f.text = text; f.busy = true; f.note = ""; document.activeElement?.blur(); render();
   try {
@@ -2203,6 +2211,9 @@ VIEWS.launch = root => {
   // A new-flight amendment opens the form with its request as the first message (msg); the rest is the controller's.
   const q = new URLSearchParams(location.hash.includes("?") ? location.hash.slice(location.hash.indexOf("?") + 1) : "");
   if (q.get("msg")) $(".s-msg", root).value = q.get("msg");
+  // The amendment this launch is for, "<plan id>/<A id>": the server records the launch on it.
+  const [amPlan, amId] = (q.get("amend") || "").split("/");
+  const amendment = amPlan && amId ? {plan: amPlan, id: amId} : null;
   (async () => {
     projects = await (await fetch("/api/projects")).json().catch(() => []);
     fill(q.get("path"), q.has("path"));
@@ -2215,14 +2226,14 @@ VIEWS.launch = root => {
   // After a launch, the page waits for the session to come up, then goes to its flight plan once the pilot has
   // opened one, or to its session page when it was not started as the pilot. A new session is the first in that
   // directory started after the launch; a resumed one keeps its id; a background one is known by its job id.
-  let pending = null;
+  let pending = null, linked = false;
   $(".s-go", root).addEventListener("click", async () => {
     const btn = $(".s-go", root);
     btn.disabled = true; put($(".s-result", root), "launching…");
     try {
       const resume = $('input[name="sess"]:checked', root)?.value || null, asPilot = $(".s-aspilot", root).checked;
       const j = await post("/api/launch", {path: sel.value, resume, where: $('input[name="where"]:checked', root).value,
-        message: $(".s-msg", root).value, asPilot, hold: asPilot && $(".s-hold", root).checked});
+        message: $(".s-msg", root).value, asPilot, hold: asPilot && $(".s-hold", root).checked, amendment});
       pending = {path: norm(sel.value), resume, job: j.id || null, asPilot, at: Date.now(), where: j.where};
       put($(".s-result", root), (j.where === "terminal" ? "opened in a new Windows Terminal tab"
         : `started in the background as ${esc(j.id)}: <button data-copy="claude attach ${esc(j.id)}">copy attach</button>`)
@@ -2241,6 +2252,8 @@ VIEWS.launch = root => {
       return;
     }
     const plan = (s.plans || []).find(x => x.sessionId === p.sessionId);
+    // Its amendment links the launched flight once its session is known.
+    if (amendment && !linked) { linked = true; post(`/api/flights/${amendment.plan}/launched`, {id: amendment.id, session: p.sessionId}).catch(() => { linked = false; }); }
     if (plan || !pending.asPilot || waited > 180) { pending = null; location.hash = plan ? `#/plan/${p.sessionId}` : `#/s/${p.sessionId}`; return; }
     put($(".s-result", root), `${esc(p.name)} is up; waiting for it to open its flight plan… <a href="#/s/${esc(p.sessionId)}">its session ›</a>`);
   }};
@@ -2387,7 +2400,7 @@ document.addEventListener("click", async e => {
     const p = (S.plans || []).find(x => x.sessionId === t.dataset.launchamend), a = p?.amendments?.find(x => x.id === t.dataset.id);
     if (!a) return;
     const msg = `Amendment ${a.id} to ${p.flight ? `flight ${p.flight}` : "flight"} ${p.title}, handed back as a new flight: ${a.text}`;
-    location.hash = `#/launch?` + new URLSearchParams({path: flightPath(p, S), msg});
+    location.hash = `#/launch?` + new URLSearchParams({path: flightPath(p, S), msg, amend: `${p.sessionId}/${a.id}`});
     return;
   }
   if (t.dataset.restore) {
