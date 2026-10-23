@@ -1,3 +1,4 @@
+using Node.Lib;
 using Pilot.Contracts;
 
 namespace Pilot.Gui;
