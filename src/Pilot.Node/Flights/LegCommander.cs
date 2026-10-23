@@ -136,6 +136,8 @@ public sealed partial class LegCommander(
                 return $"{code}'s plane holds changes not committed, so it is not rebased by itself";
             }
             await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
+            // A base that is no branch on the remote is the remote's default first, as when its PR opened.
+            flight = await RepairBaseAsync(flight, cancellationToken);
             var rebase = await git.RunAsync(["rebase", flight.Base], flight.Worktree, cancellationToken);
             if (!rebase.Ok)
             {

@@ -204,6 +204,43 @@ public sealed class ReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task APassedPrThatConflictsWithItsBaseIsRebasedAndReviewedAfresh()
+    {
+        var flight = await NewFlight("6", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA6"), "controller");
+        (await Run(Verbs.Review, "flight/TIA6", Reviewer("TIA6"), "pass", "fine")).Ok.ShouldBeTrue();
+        // main moves on after the review.
+        File.WriteAllText(Path.Combine(Repo, "later.txt"), "later\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "commit", "-q", "-m", "later on main");
+        Git(Repo, "push", "-q", "origin", "main");
+
+        (await _legs.RebaseOntoBaseAsync("TIA6", Ct)).ShouldBeNull();
+
+        Git(F("TIA6").Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
+        F("TIA6").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        Open().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ARebaseThatConflictsIsUndoneAndSaysSo()
+    {
+        var flight = await NewFlight("7", "parser");
+        File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
+        await Fly(flight, "parser");
+        File.WriteAllText(Path.Combine(Repo, "README.md"), "ours\n");
+        Git(Repo, "commit", "-qam", "README on main");
+        Git(Repo, "push", "-q", "origin", "main");
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+
+        (await _legs.RebaseOntoBaseAsync("TIA7", Ct)).ShouldNotBeNull().ShouldContain("conflicts");
+
+        Git(flight.Worktree, "rev-parse", "HEAD").ShouldBe(head);
+        Git(flight.Worktree, "status", "--porcelain").ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task ChangesRingWithAGoAroundWhoseFinishIsReviewedAfreshOrReadyAnyway()
     {
         var flight = await NewFlight("2", "parser");
