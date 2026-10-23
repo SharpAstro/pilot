@@ -17,8 +17,8 @@ internal readonly record struct CanvasCard(string Code, FlightLine? Line, int In
     public float Bottom => Y + FlightCanvas.CardHeight;
 }
 
-/// <summary>A connection: <paramref name="From"/> is waited for, <paramref name="To"/> is held by it. Points are canvas design units.</summary>
-internal readonly record struct CanvasEdge(string From, string To, float X0, float Y0, float X1, float Y1);
+/// <summary>A connection: <paramref name="From"/> is waited for, <paramref name="To"/> is held by it. Points are canvas design units; <paramref name="ToCard"/> is the held card's position in the canvas's cards.</summary>
+internal readonly record struct CanvasEdge(string From, string To, float X0, float Y0, float X1, float Y1, int ToCard);
 
 /// <summary>
 /// The Flights page's canvas as pure geometry: a card per flight in a column by connection depth, so every arrow points
@@ -54,67 +54,92 @@ internal sealed class FlightCanvas
 
     public static FlightCanvas Build(IReadOnlyList<FlightLine> lines)
     {
-        var index = new Dictionary<string, int>(StringComparer.Ordinal);
+        // Cards are keyed by position: codes are unique per machine only, so a merged page can hold one code twice.
+        var byCode = new Dictionary<string, List<int>>(StringComparer.Ordinal);
         for (var i = 0; i < lines.Count; i++)
         {
-            index.TryAdd(lines[i].Code, i);
+            if (!byCode.TryGetValue(lines[i].Code, out var same))
+            {
+                byCode[lines[i].Code] = same = [];
+            }
+            same.Add(i);
         }
 
-        // Ghosts: connected codes the page does not have, in order of first mention.
-        var ghosts = new List<string>();
+        // Ghosts: connected codes the page does not have, in order of first mention, one per code.
+        var ghostCodes = new List<string>();
         foreach (var line in lines)
         {
             foreach (var code in line.Row.Connections)
             {
-                if (!index.ContainsKey(code) && !ghosts.Contains(code))
+                if (!byCode.ContainsKey(code) && !ghostCodes.Contains(code))
                 {
-                    ghosts.Add(code);
+                    ghostCodes.Add(code);
                 }
             }
+        }
+        var ghostId = ghostCodes.Select((c, g) => (c, g)).ToDictionary(x => x.c, x => lines.Count + x.g, StringComparer.Ordinal);
+
+        // A connection resolves to the flight of that code on the holder's own node, else the page's first one, else its ghost.
+        int Resolve(int holder, string code)
+        {
+            if (!byCode.TryGetValue(code, out var candidates))
+            {
+                return ghostId[code];
+            }
+            var node = lines[holder].Node?.Key;
+            foreach (var c in candidates)
+            {
+                if (lines[c].Node?.Key == node)
+                {
+                    return c;
+                }
+            }
+            return candidates[0];
         }
 
         // Depth: one more than the deepest flight waited for. A connection met again while its flight is still being
         // resolved closes a cycle; it is dropped, so the walk ends and no arrow points back.
-        var depth = new Dictionary<string, int>(StringComparer.Ordinal);
-        var visiting = new HashSet<string>(StringComparer.Ordinal);
+        var depth = new Dictionary<int, int>();
+        var visiting = new HashSet<int>();
         var broken = new List<(string, string)>();
-        var kept = new HashSet<(string, string)>();
+        var kept = new HashSet<(int, int)>();
 
-        int Depth(string code)
+        int Depth(int id)
         {
-            if (depth.TryGetValue(code, out var known))
+            if (depth.TryGetValue(id, out var known))
             {
                 return known;
             }
-            visiting.Add(code);
+            visiting.Add(id);
             var d = 0;
-            if (index.TryGetValue(code, out var at))
+            if (id < lines.Count)
             {
-                foreach (var waited in lines[at].Row.Connections.Distinct())
+                foreach (var code in lines[id].Row.Connections.Distinct())
                 {
-                    if (waited == code || visiting.Contains(waited))
+                    var waited = Resolve(id, code);
+                    if (waited == id || visiting.Contains(waited))
                     {
-                        broken.Add((waited, code));
+                        broken.Add((code, lines[id].Code));
                         continue;
                     }
-                    kept.Add((waited, code));
+                    kept.Add((waited, id));
                     d = Math.Max(d, Depth(waited) + 1);
                 }
             }
-            visiting.Remove(code);
-            depth[code] = d;
+            visiting.Remove(id);
+            depth[id] = d;
             return d;
         }
 
-        foreach (var line in lines)
+        for (var i = 0; i < lines.Count; i++)
         {
-            Depth(line.Code);
+            Depth(i);
         }
 
         // Stable within a column: the page's own order, then ghosts in the order they were met.
         var order = lines.Select((l, i) => (l.Code, Line: (FlightLine?)l, Index: i))
-            .Concat(ghosts.Select(g => (Code: g, Line: (FlightLine?)null, Index: -1)))
-            .Select(x => (x.Code, x.Line, x.Index, Column: depth.GetValueOrDefault(x.Code)))
+            .Concat(ghostCodes.Select(g => (Code: g, Line: (FlightLine?)null, Index: -1)))
+            .Select((x, id) => (x.Code, x.Line, x.Index, Column: depth.GetValueOrDefault(id)))
             .ToList();
         var rows = new Dictionary<int, int>();
         var cards = new List<CanvasCard>();
@@ -125,14 +150,12 @@ internal sealed class FlightCanvas
             cards.Add(new CanvasCard(code, line, i, column, row, Margin + column * (CardWidth + GapX), Margin + row * (CardHeight + GapY)));
         }
 
-        var byCode = cards.ToDictionary(c => c.Code, StringComparer.Ordinal);
         var edges = new List<CanvasEdge>();
-        foreach (var (from, to) in kept.OrderBy(k => byCode[k.Item2].Index < 0 ? int.MaxValue : byCode[k.Item2].Index).ThenBy(k => k.Item1, StringComparer.Ordinal))
+        foreach (var (from, to) in kept.OrderBy(k => k.Item2).ThenBy(k => k.Item1))
         {
-            if (byCode.TryGetValue(from, out var a) && byCode.TryGetValue(to, out var b))
-            {
-                edges.Add(new CanvasEdge(from, to, a.Right, a.Y + CardHeight / 2f, b.X, b.Y + CardHeight / 2f));
-            }
+            var a = cards[from];
+            var b = cards[to];
+            edges.Add(new CanvasEdge(a.Code, b.Code, a.Right, a.Y + CardHeight / 2f, b.X, b.Y + CardHeight / 2f, to));
         }
 
         var columns = cards.Count == 0 ? 0 : cards.Max(c => c.Column) + 1;

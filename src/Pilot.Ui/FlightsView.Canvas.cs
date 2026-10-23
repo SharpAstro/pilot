@@ -150,7 +150,7 @@ internal sealed partial class FlightsView<TSurface>
             var y0 = rect.Y + edge.Y0 * s;
             var x1 = rect.X + edge.X1 * s;
             var y1 = rect.Y + edge.Y1 * s;
-            var held = _canvas.Find(edge.To)?.Line?.Row.State == FlightState.Held;
+            var held = _canvas.Cards[edge.ToCard].Line?.Row.State == FlightState.Held;
             var color = held ? Held : Dim;
             Renderer.DrawLine(x0, y0, x1, y1, color, thick);
             // Two strokes back from the tip, a spread either side of the line.

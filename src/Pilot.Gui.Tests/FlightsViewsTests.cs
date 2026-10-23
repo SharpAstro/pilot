@@ -139,7 +139,6 @@ public sealed class FlightsViewsTests
 
         var image = renderer.Surface;
         var painted = 0;
-        var arrowPixels = 0;
         for (var i = 0; i < image.Width * image.Height; i++)
         {
             byte r = image.Pixels[i * 4], g = image.Pixels[i * 4 + 1], b = image.Pixels[i * 4 + 2];
@@ -149,13 +148,21 @@ public sealed class FlightsViewsTests
             }
             painted++;
             (r >= g && r >= b && g == 0 && b == 0).ShouldBeTrue($"pixel {i} is {r:x2}{g:x2}{b:x2}");
-            if (r == 0xe0)
-            {
-                arrowPixels++;
-            }
         }
         painted.ShouldBeGreaterThan(1000);
-        arrowPixels.ShouldBeGreaterThan(30);
+        // An arrow is a long horizontal run of the held red; a card's 4-wide stripe and anti-aliased text are not.
+        var longest = 0;
+        for (var y = 0; y < image.Height; y++)
+        {
+            var run = 0;
+            for (var x = 0; x < image.Width; x++)
+            {
+                var i = (y * image.Width + x) * 4;
+                run = image.Pixels[i] == 0xe0 && image.Pixels[i + 1] == 0 && image.Pixels[i + 2] == 0 ? run + 1 : 0;
+                longest = Math.Max(longest, run);
+            }
+        }
+        longest.ShouldBeGreaterThan(30);
         view.Canvas.Edges.Count.ShouldBe(2);
     }
 }
