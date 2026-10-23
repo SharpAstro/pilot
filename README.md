@@ -482,3 +482,7 @@ Traps found on the way:
   a resumed pilot subscribes to its flying workers again. A background resume does fork the id; then
   `pilot plan --session <old id>` reopens the plan.
 - Every worker gets the same model (the account's default unless `~/.pilot/pilot.json` or `--model` says otherwise).
+
+## Licence
+
+pilot is free software under the GNU General Public License, version 3 ([LICENSE](LICENSE)).
