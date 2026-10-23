@@ -180,8 +180,16 @@ public sealed class SessionTracker : BackgroundService
                 return;
             }
 
-            _superseded.Add(previous.SessionId);
-            _transcripts.Remove(previous.SessionId);
+            // Resumed in place, under its own id (Claude Code does so for the full session id): nothing is left behind
+            // to pass over. Marking its own id superseded hid the running session from every poll, so the row read
+            // ended and the watchtower started a fresh one beside it on each say (DE1, 2026-10-23).
+            var inPlace = newSessionId == previous.SessionId;
+            if (!inPlace)
+            {
+                _superseded.Add(previous.SessionId);
+                _transcripts.Remove(previous.SessionId);
+            }
+            _superseded.Remove(newSessionId);
             _rowOf[newSessionId] = id;
             _endedAt.Remove(id);
             // A user turn has just been given to it: it is working on it.
@@ -189,7 +197,7 @@ public sealed class SessionTracker : BackgroundService
             {
                 // Said to again: back in the lists if it was put away.
                 SessionId = newSessionId, State = SessionState.Working, WaitingFor = null, Archived = false,
-                EarlierSessionIds = [.. previous.EarlierSessionIds ?? [], previous.SessionId],
+                EarlierSessionIds = inPlace ? previous.EarlierSessionIds : [.. previous.EarlierSessionIds ?? [], previous.SessionId],
             });
         }
         finally
@@ -436,9 +444,13 @@ public sealed class SessionTracker : BackgroundService
             {
                 _rowOf[row.SessionId] = row.Id;
             }
+            // Never its own: a row stored by a node that took an in-place resume for a copy lists its own id here.
             foreach (var earlier in row.EarlierSessionIds ?? [])
             {
-                _superseded.Add(earlier);
+                if (earlier != row.SessionId)
+                {
+                    _superseded.Add(earlier);
+                }
             }
         }
     }

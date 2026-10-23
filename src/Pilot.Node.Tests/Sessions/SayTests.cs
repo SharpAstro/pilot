@@ -31,6 +31,9 @@ internal sealed class FakeSessionDelivery(FakeClaudeAgents agents) : ISessionDel
 
     public List<ResumeRequest> Resumes { get; } = [];
 
+    /// <summary>The session id a resume continues under: <see cref="Copy"/>, or the resumed one's own for a resume in place.</summary>
+    public string? ResumesAs { get; set; }
+
     public List<RelayRequest> Relays { get; } = [];
 
     /// <summary>The listing once the stopped session's process has gone.</summary>
@@ -70,7 +73,7 @@ internal sealed class FakeSessionDelivery(FakeClaudeAgents agents) : ISessionDel
         {
             await during();
         }
-        return Copy;
+        return ResumesAs ?? Copy;
     }
 
     public Task<string> RelayAsync(RelayRequest request, CancellationToken cancellationToken)
@@ -314,6 +317,42 @@ public sealed class SayTests : IDisposable
         await _messenger.SayAsync(Say("b2c3d4e5", "second"), Ct);
 
         _delivery.Resumes.Select(r => r.SessionId).ShouldBe([AgentRows.SessionB, FakeSessionDelivery.Copy]);
+    }
+
+    [Fact]
+    public async Task ASessionResumedInPlaceStaysListedUnderItsOwnIdAndIsNotEnded()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "done", pid: 4343, status: "idle", cwd: Cwd));
+        _delivery.ListingAfterStop = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "done", cwd: Cwd, startedAt: Recent));
+        // Claude Code wakes it under its own id: the same session, a new process.
+        _delivery.ListingAfterResume = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "working", pid: 5454, status: "busy", cwd: Cwd));
+        _delivery.ResumesAs = AgentRows.SessionB;
+        await _tracker.PollAsync(Ct);
+
+        await _messenger.SayAsync(Say("b2c3d4e5", "the marker"), Ct);
+        await _tracker.PollAsync(Ct);
+
+        var row = _state.Sessions().ShouldHaveSingleItem();
+        (row.Id, row.SessionId, row.State).ShouldBe(("b2c3d4e5", AgentRows.SessionB, SessionState.Working));
+        row.EarlierSessionIds.ShouldBeNull();
+
+        // A restarted node polls the same listing and keeps it too.
+        var restarted = new SessionTracker(_state, _agents, _profile.Options(), () => false, TimeProvider.System, NullLogger<SessionTracker>.Instance);
+        await restarted.PollAsync(Ct);
+        _state.Sessions().ShouldHaveSingleItem().State.ShouldBe(SessionState.Working);
+    }
+
+    [Fact]
+    public async Task ARowStoredWithItsOwnIdAmongItsEarlierOnesIsStillListedAfterARestart()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "working", pid: 5454, status: "idle", cwd: Cwd));
+        await _tracker.PollAsync(Ct);
+        _state.PutSession(_state.Sessions().Single() with { EarlierSessionIds = [AgentRows.SessionB] });
+
+        var restarted = new SessionTracker(_state, _agents, _profile.Options(), () => false, TimeProvider.System, NullLogger<SessionTracker>.Instance);
+        await restarted.PollAsync(Ct);
+
+        _state.Sessions().ShouldHaveSingleItem().State.ShouldBe(SessionState.Idle);
     }
 
     [Fact]
