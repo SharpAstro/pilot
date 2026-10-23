@@ -47,7 +47,9 @@ pilot-gui --snapshot <file.json> [--capture out.png]         # a snapshot file i
   while no node answers, trying again every 2 s. The selection follows its session as the rows reorder.
 - **Say:** type in the bar at the foot (Ctrl+S takes the keyboard there from anywhere) and Enter says it to the selected session (the node's `say`: an idle background
   session is resumed with it, a busy or interactive one gets it as a message). `--say` finds a session by row id,
-  session id or its start, or name.
+  session id or its start, or name. With text in the bar, a **Say to all shown (N)** pill in the header says it to every shown row
+  `pilot say-all` would pick with its defaults (active, no validators, no watchtower, none archived), after the archived toggle
+  and the node pills; a watch-only node's rows are skipped, and the status line sums up (`said to 3, 1 refused`).
 - **Inspector:** a Debug build against the sibling clones attaches SdlVulkan.Renderer's debug inspector, so an agent
   can screenshot the real window and drive it. Release builds and package builds leave it out.
 

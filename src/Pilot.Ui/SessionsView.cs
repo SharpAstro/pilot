@@ -1,4 +1,5 @@
 using DIR.Lib;
+using Pilot.Commands;
 
 namespace Pilot.Ui;
 
@@ -173,6 +174,74 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     /// <summary>Called with the selected session's line and the text when Enter is pressed in the say bar.</summary>
     public Func<SessionLine, string, Task>? OnSay { get; set; }
+
+    /// <summary>
+    /// Says the text to one session of "Say to all shown" and answers whether it was delivered (false: refused, or not sent).
+    /// The view picks the rows, skips watch-only ones and sums up; the host sends, as it does for <see cref="OnSay"/>.
+    /// </summary>
+    public Func<SessionLine, string, Task<bool>>? OnSayAll { get; set; }
+
+    /// <summary>
+    /// The shown rows "Say to all shown" tells: those <c>pilot say-all</c> picks with its defaults (active, no validators,
+    /// no watchtower, never an archived one), after the archived toggle and the node pills have left rows out.
+    /// </summary>
+    private IReadOnlyList<SessionLine> SayAllPicks
+    {
+        get
+        {
+            var filter = new SayAllFilter();
+            return [.. _lines.Where(l => filter.Matches(l.Row))];
+        }
+    }
+
+    /// <summary>How many rows "Say to all shown" would tell, which its pill counts; 0 when there is no node to tell them through.</summary>
+    public int SayAllCount => CanSay && OnSayAll is not null ? SayAllPicks.Count : 0;
+
+    /// <summary>
+    /// Sends the say bar's text to every row <see cref="SayAllCount"/> counts, one after the other, and clears the bar.
+    /// A watch-only node's rows are not said to; <see cref="SayStatus"/> sums up: <c>said to 3, 1 refused</c>.
+    /// </summary>
+    internal async Task SayAllAsync()
+    {
+        var text = SayInput.Text.Trim();
+        var picks = SayAllPicks;
+        if (OnSayAll is not { } send || !CanSay || text.Length == 0 || picks.Count == 0)
+        {
+            return;
+        }
+
+        SayInput.Text = "";
+        SayInput.CursorPos = 0;
+        int said = 0, refused = 0, watched = 0;
+        foreach (var line in picks)
+        {
+            if (WatchOnly(line) is not null)
+            {
+                watched++;
+                continue;
+            }
+
+            bool delivered;
+            try
+            {
+                delivered = await send(line, text);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                delivered = false;
+            }
+            if (delivered)
+            {
+                said++;
+            }
+            else
+            {
+                refused++;
+            }
+        }
+
+        SayStatus = $"said to {said}{(refused > 0 ? $", {refused} refused" : "")}{(watched > 0 ? $", {watched} watch-only" : "")}";
+    }
 
     /// <summary>
     /// Hands this view's window context to the other pages and panels, so the one input router (built on this view's
@@ -456,14 +525,19 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         return Transcript.Tree(live: open?.Row.State is not (null or Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed), open?.Row.Subagents);
     }
 
-    // Open the selected session's transcript; archive every ended session, and show or hide the archived ones: each only
-    // while there is something for it to do.
+    // Open the selected session's transcript; say the bar's text to all shown; archive every ended session, and show or hide
+    // the archived ones: each only while there is something for it to do.
     private IEnumerable<Layout.Node> HeaderButtons()
     {
         if (!Transcript.IsOpen && Transcript.Load is not null && Selected >= 0 && Selected < _lines.Count)
         {
             var line = _lines[Selected];
             yield return CardsView<TSurface>.Pill("Open transcript", "sessions:open-transcript", () => Transcript.Open(line));
+        }
+        // The say bar's text to every shown row say-all would pick: only with text in the bar and a row to tell.
+        if (!Transcript.IsOpen && !string.IsNullOrWhiteSpace(SayInput.Text) && SayAllCount is > 0 and var sayAll)
+        {
+            yield return CardsView<TSurface>.Pill($"Say to all shown ({sayAll})", "sessions:say-all", () => _ = SayAllAsync());
         }
         if (_endedCount > 0 && OnAction is { } act)
         {
