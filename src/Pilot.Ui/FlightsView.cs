@@ -184,18 +184,26 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private const float SessionsWidth = 170f;
     private const float NodeWidth = 64f;
 
-    private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
-    private static readonly RGBAColor32 HeaderBg = new(0x1b, 0x1c, 0x24, 0xff);
-    private static readonly RGBAColor32 RowAltBg = new(0x16, 0x17, 0x1e, 0xff);
-    private static readonly RGBAColor32 RowHoverBg = new(0x22, 0x24, 0x2e, 0xff);
-    private static readonly RGBAColor32 RowFocusBg = new(0x26, 0x33, 0x4a, 0xff);
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
-    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
-    private static readonly RGBAColor32 Faint = new(0x5c, 0x5f, 0x6c, 0xff);
-    private static readonly RGBAColor32 Flying = new(0x4c, 0xc3, 0x8a, 0xff);
-    private static readonly RGBAColor32 Held = new(0xf0, 0xb4, 0x3c, 0xff);
-    private static readonly RGBAColor32 Landed = new(0x6f, 0x9b, 0xd8, 0xff);
+
+    // The colours come from the palette of the view shown, so night repaints the same builders.
+    private FlightsPalette P => Mode == FlightsViewMode.Night && CanvasAvailable ? FlightsPalette.Night : FlightsPalette.Standard;
+    private RGBAColor32 Ground => P.Ground;
+    private RGBAColor32 HeaderBg => P.HeaderBg;
+    private RGBAColor32 RowAltBg => P.RowAltBg;
+    private RGBAColor32 RowHoverBg => P.RowHoverBg;
+    private RGBAColor32 RowFocusBg => P.RowFocusBg;
+    private RGBAColor32 Bright => P.Bright;
+    private RGBAColor32 Body => P.Body;
+    private RGBAColor32 Dim => P.Dim;
+    private RGBAColor32 Faint => P.Faint;
+    private RGBAColor32 Flying => P.Flying;
+    private RGBAColor32 Held => P.Held;
+    private RGBAColor32 Landed => P.Landed;
+    private RGBAColor32 PanelBg => P.PanelBg;
+    private RGBAColor32 Button => P.Button;
+    private RGBAColor32 ButtonHover => P.ButtonHover;
+    private RGBAColor32 Failed => P.Failed;
+    private RGBAColor32 MenuBg => P.MenuBg;
 
     private const float DetailHeight = 168f;
     private const float DetailColumn = 380f;
@@ -205,10 +213,6 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private const float OutputLineHeight = 16f;
     private const int OutputLines = 4;
 
-    private static readonly RGBAColor32 PanelBg = new(0x18, 0x19, 0x21, 0xff);
-    private static readonly RGBAColor32 Button = new(0x2a, 0x3a, 0x58, 0xff);
-    private static readonly RGBAColor32 ButtonHover = new(0x35, 0x4a, 0x70, 0xff);
-    private static readonly RGBAColor32 Failed = new(0xe0, 0x5a, 0x5a, 0xff);
 
     /// <summary>Ctrl+K puts the keyboard in the command bar.</summary>
     public static readonly KeyChord CommandShortcut = new(InputKey.K, InputModifier.Ctrl);
@@ -259,7 +263,6 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     // A row's right-click menu, hung where the press was.
     private readonly DropdownMenuState<string> _menu = new();
     private RectF32 _menuAt;
-    private static readonly RGBAColor32 MenuBg = new(0x1f, 0x21, 0x2b, 0xff);
 
     /// <summary>The open row menu's entries, in order; empty while it is shut.</summary>
     public IReadOnlyList<DropdownItem<string>> MenuItems => _menu.IsOpen ? _menu.Items : [];
@@ -543,7 +546,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             .Clickable(new HitResult.ButtonHit(action), _ => OnOpen?.Invoke(location))
             .RowH(20f);
 
-    private static Layout.Node Pill(string label, string action, Action onClick) =>
+    private Layout.Node Pill(string label, string action, Action onClick) =>
         Layout.Builder.Text(label, 12f, Bright, TextAlign.Center)
             .Pad(10f, 4f)
             .WAuto()
@@ -626,6 +629,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             return CanvasBody(screen);
         }
+        if (GridShown)
+        {
+            return GridBody(screen);
+        }
 
         var rows = new Layout.Node[screen.Lines.Count];
         var marked = screen.Lines.Any(l => l.Node is not null);
@@ -659,7 +666,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             .Stretch();
     }
 
-    private static Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);
+    private Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);
 
     /// <summary>
     /// A column the page drops on a narrow window: its whole <paramref name="width"/> while there is room, gone once the

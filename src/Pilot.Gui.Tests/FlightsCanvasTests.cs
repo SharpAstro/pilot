@@ -108,7 +108,7 @@ public sealed class FlightsCanvasTests
     private static (RgbaImageRenderer Renderer, FlightsView<RgbaImage> View) Page(bool canvas, params FlightRow[] flights)
     {
         var renderer = new RgbaImageRenderer(1280, 800);
-        var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, ShowCanvas = canvas };
+        var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = canvas ? FlightsViewMode.Canvas : FlightsViewMode.List };
         view.Render(new FlightsScreen(FlightLine.Build(flights, [], Live.At), "test", Live.At), new RectF32(0, 0, 1280, 800));
         return (renderer, view);
     }
