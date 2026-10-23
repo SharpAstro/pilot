@@ -49,42 +49,45 @@ internal sealed class AboutCard
     public void Close() => IsOpen = false;
 
     /// <summary>The header's button.</summary>
-    public Layout.Node Button() =>
-        Layout.Builder.Text("?", 14f, Bright, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(ButtonBg).BgHover(ButtonHover)
+    public Layout.Node Button(FlightsPalette? night = null) =>
+        Layout.Builder.Text("?", 14f, night?.Bright ?? Bright, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(night?.Button ?? ButtonBg).BgHover(night?.ButtonHover ?? ButtonHover)
             .Clickable(new HitResult.ButtonHit("about:toggle"), _ => Toggle())
             .WithTooltip("Which pilot this is, where its things are, and the keys");
 
     /// <summary><paramref name="page"/>, with the card over its top right while it is open.</summary>
-    public Layout.Node Over(Layout.Node page) => IsOpen
-        ? Layout.Builder.Overlay(page, Layout.Builder.Anchored(Card(), Layout.DockSide.Right, margin: 12f))
+    public Layout.Node Over(Layout.Node page, FlightsPalette? night = null) => IsOpen
+        ? Layout.Builder.Overlay(page, Layout.Builder.Anchored(Card(night), Layout.DockSide.Right, margin: 12f))
         : page;
 
-    private Layout.Node Card()
+    private Layout.Node Card(FlightsPalette? night)
     {
+        var bright = night?.Bright ?? Bright;
+        var body = night?.Body ?? Body;
+        var hover = night?.ButtonHover ?? ButtonHover;
         var rows = new List<Layout.Node>
         {
             Layout.Builder.HStack(
-                    Layout.Builder.Text("pilot", 16f, Bright).WStar(),
-                    Layout.Builder.Text("×", 16f, Body, TextAlign.Center).Pad(8f, 0f).WAuto().BgHover(ButtonHover)
+                    Layout.Builder.Text("pilot", 16f, bright).WStar(),
+                    Layout.Builder.Text("×", 16f, body, TextAlign.Center).Pad(8f, 0f).WAuto().BgHover(hover)
                         .Clickable(new HitResult.ButtonHit("about:close"), _ => Close()))
                 .RowH(26f),
         };
         foreach (var (label, value) in Facts?.Invoke() ?? [])
         {
-            rows.Add(Line(label, value));
+            rows.Add(Line(label, value, night));
         }
-        rows.Add(Layout.Builder.Text("Keys", 13f, Bright).RowH(24f));
+        rows.Add(Layout.Builder.Text("Keys", 13f, bright).RowH(24f));
         foreach (var (keys, what) in Keys)
         {
-            rows.Add(Line(keys, what));
+            rows.Add(Line(keys, what, night));
         }
-        return Layout.Builder.VStack([.. rows]).WithGap(2f).Pad(14f, 10f).Bg(CardBg).WAuto().HAuto();
+        return Layout.Builder.VStack([.. rows]).WithGap(2f).Pad(14f, 10f).Bg(night?.MenuBg ?? CardBg).WAuto().HAuto();
     }
 
-    private static Layout.Node Line(string label, string value) =>
+    private static Layout.Node Line(string label, string value, FlightsPalette? night) =>
         Layout.Builder.HStack(
-                Layout.Builder.Text(label, 12f, Dim).WFixed(140f),
-                Layout.Builder.Text(value, 12f, Body, trim: TextTrim.Start).WAuto())
+                Layout.Builder.Text(label, 12f, night?.Dim ?? Dim).WFixed(140f),
+                Layout.Builder.Text(value, 12f, night?.Body ?? Body, trim: TextTrim.Start).WAuto())
             .WithGap(10f)
             .RowH(20f);
 }

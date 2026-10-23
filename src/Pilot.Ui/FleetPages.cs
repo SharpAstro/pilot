@@ -58,18 +58,20 @@ internal sealed class NodeFilter
     }
 
     /// <summary>The header's pills: All nodes, then each node, the shown ones lit; nothing while there is one node.</summary>
-    public IEnumerable<Layout.Node> Pills()
+    public IEnumerable<Layout.Node> Pills(FlightsPalette? night = null)
     {
         if (Choices.Count < 2)
         {
             yield break;
         }
         var all = All;
-        yield return CardsView<RgbaImage>.Pill("All nodes", "nodes:all", ShowAll, all ? Lit : null);
+        var lit = night is null ? Lit : (night.RowFocusBg, night.ButtonHover);
+        (RGBAColor32, RGBAColor32)? plain = night is null ? null : (night.Button, night.ButtonHover);
+        yield return CardsView<RgbaImage>.Pill("All nodes", "nodes:all", ShowAll, all ? lit : plain, night?.Bright);
         foreach (var choice in Choices)
         {
             var key = choice.Key;
-            yield return CardsView<RgbaImage>.Pill(choice.Name, $"nodes:{key}", () => Toggle(key), !all && _picked.Contains(key) ? Lit : null);
+            yield return CardsView<RgbaImage>.Pill(choice.Name, $"nodes:{key}", () => Toggle(key), !all && _picked.Contains(key) ? lit : plain, night?.Bright);
         }
     }
 

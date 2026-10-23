@@ -1,4 +1,5 @@
 using DIR.Lib;
+using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Pilot.Ui;
 using Shouldly;
@@ -30,10 +31,14 @@ public sealed class FlightsViewsTests
         Flight("D", minutes: 4), Flight("E", minutes: 5), Flight("F", FlightState.Held, 6, "A"),
     ];
 
-    private static (RgbaImageRenderer Renderer, FlightsView<RgbaImage> View) Page(FlightsViewMode mode, int width, params FlightRow[] flights)
+    private static (RgbaImageRenderer Renderer, FlightsView<RgbaImage> View) Page(FlightsViewMode mode, int width, params FlightRow[] flights) =>
+        Page(mode, width, null, flights);
+
+    private static (RgbaImageRenderer Renderer, FlightsView<RgbaImage> View) Page(FlightsViewMode mode, int width, Action<FlightsView<RgbaImage>>? configure, params FlightRow[] flights)
     {
         var renderer = new RgbaImageRenderer((uint)width, 800);
         var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = mode };
+        configure?.Invoke(view);
         view.Render(new FlightsScreen(FlightLine.Build(flights, [], Live.At), "test", Live.At), new RectF32(0, 0, width, 800));
         return (renderer, view);
     }
@@ -93,7 +98,10 @@ public sealed class FlightsViewsTests
 
         var line = FlightLine.Build(Six(), [], Live.At).Single(l => l.Code == "F");
         line.StateDetail.ShouldBe("waiting for A");
-        view.Tree(new FlightsScreen([line], "test", Live.At)).ToString().ShouldNotBeNull();
+        var arranged = Layout.Engine.Arrange(view.Tree(new FlightsScreen([line], "test", Live.At)), new Rect<float>(0, 0, 1400, 800),
+            new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>()
+            .Select(t => t.Value).ShouldContain("waiting for A");
         FlightCanvas.GridCardHeight.ShouldBeGreaterThan(FlightCanvas.CardHeight);
     }
 
@@ -115,9 +123,19 @@ public sealed class FlightsViewsTests
     [Fact]
     public void NightPaintsNothingButRedOnBlack()
     {
+        // As the window draws it: the About button and card, two nodes' pills, the command bar and a selected flight's strip.
         var (renderer, view) = Page(FlightsViewMode.Night, 1280,
+            v =>
+            {
+                var about = new AboutCard { Facts = () => [("node", "test")] };
+                about.Toggle();
+                v.About = about;
+                v.CanCommand = true;
+                v.Nodes = new NodeFilter { Choices = [new NodeMark("a", "a", "SE1", true), new NodeMark("b", "b", "LE1", false)] };
+            },
             Flight("A"), Flight("B", FlightState.Held, 1, "A", "GONE1"), Flight("C", FlightState.Landed, 2));
         using var _ = renderer;
+        view.Selected.ShouldBeGreaterThanOrEqualTo(0);
 
         var image = renderer.Surface;
         var painted = 0;
