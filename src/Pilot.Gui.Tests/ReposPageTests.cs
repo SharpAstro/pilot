@@ -252,6 +252,41 @@ public sealed class ReposPageTests
     }
 
     [Fact]
+    public async Task AFinishedSyncReadsTheReposAgainAtOnceAndTheRowsShowTheNewStatus()
+    {
+        var node = new FakeNode();
+        var reads = 0;
+        await using var feed = new NodeFeed(node.Open, "node.sock", TimeSpan.FromMilliseconds(20), repoLoader: _ =>
+        {
+            // The first read sees every repo; after the sync the node reports one fewer.
+            var n = Interlocked.Increment(ref reads);
+            return Task.FromResult<RepoStatus[]?>(n == 1 ? Sample() : Sample().Take(2).ToArray());
+        });
+        feed.Start();
+        await Until(() => node.OpenCount > 0);
+        node.Send(Live.Snapshot(1, "s-se1"));
+        await Until(() => feed.Connected);
+        var start = DateTimeOffset.UtcNow;
+
+        feed.Repos(start, wanted: true);
+        await Until(() => feed.Repos(start, wanted: true).Lines.Count == 3);
+        reads.ShouldBe(1);
+
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var (_, repos) = Chrome(vessel);
+        repos.SyncRepos = _ =>
+        {
+            feed.RefreshRepos();
+            return Task.FromResult<RepoSyncOutcome[]>([]);
+        };
+        await repos.SyncAsync();
+
+        // Same instant, well inside the cadence: it reads again anyway.
+        await Until(() => feed.Repos(start, wanted: true).Lines.Count == 2);
+        reads.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task ReposAreReadFromTheNodeOnlyWhileThePageIsWantedAndKeptForAWhile()
     {
         var node = new FakeNode();

@@ -216,6 +216,16 @@ internal sealed class NodeFeed : IAsyncDisposable
         }
     }
 
+    /// <summary>Makes the next <see cref="Repos"/> read the repos again at once, without waiting for <see cref="RepoRefresh"/>: a sync just changed them.</summary>
+    public void RefreshRepos()
+    {
+        lock (_lock)
+        {
+            _reposAt = DateTimeOffset.MinValue;
+        }
+        Interlocked.Increment(ref _version);
+    }
+
     private async Task LoadReposAsync(CancellationToken cancellationToken)
     {
         RepoStatus[]? read = null;
