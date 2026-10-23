@@ -50,6 +50,12 @@ public static class NodeWire
     /// <summary>The repos a flight can be made in, a <see cref="RepoInfo"/> array: the flights' repos and their sibling clones.</summary>
     public const string ReposRoute = "/api/v1/repos";
 
+    /// <summary>
+    /// Where each repo stands, a <see cref="RepoStatus"/> array: the node's cache of git and gh, refreshed by itself;
+    /// <c>?refresh=true</c> waits for a fresh read. A grant's on the LAN, as <see cref="ReposRoute"/> is.
+    /// </summary>
+    public const string RepoStatusRoute = "/api/v1/repos/status";
+
     /// <summary>A repo's open issues, an <see cref="IssueInfo"/> array: <c>?path=&lt;checkout&gt;</c>.</summary>
     public const string IssuesRoute = "/api/v1/repos/issues";
 

@@ -113,6 +113,10 @@ public sealed class NodeClient : IDisposable
     public Task<ResponseEnvelope<RepoInfo[]>> GetReposAsync(CancellationToken cancellationToken) =>
         GetEnvelopeAsync(NodeWire.ReposRoute, PilotJsonContext.Default.ResponseEnvelopeRepoInfoArray, cancellationToken);
 
+    /// <summary><c>GET /api/v1/repos/status</c>: every repo's worktrees and open PRs, as the node last read them; <paramref name="refresh"/> waits for a fresh read.</summary>
+    public Task<ResponseEnvelope<RepoStatus[]>> GetRepoStatusAsync(CancellationToken cancellationToken, bool refresh = false) =>
+        GetEnvelopeAsync(refresh ? $"{NodeWire.RepoStatusRoute}?refresh=true" : NodeWire.RepoStatusRoute, PilotJsonContext.Default.ResponseEnvelopeRepoStatusArray, cancellationToken);
+
     /// <summary><c>GET /api/v1/repos/issues?path=</c>: the open issues of the repo checked out at <paramref name="path"/>.</summary>
     public Task<ResponseEnvelope<IssueInfo[]>> GetIssuesAsync(string path, CancellationToken cancellationToken) =>
         GetEnvelopeAsync($"{NodeWire.IssuesRoute}?path={Uri.EscapeDataString(path)}", PilotJsonContext.Default.ResponseEnvelopeIssueInfoArray, cancellationToken);

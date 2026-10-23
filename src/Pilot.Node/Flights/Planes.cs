@@ -60,6 +60,9 @@ public sealed class GitCli : IGit
     }
 }
 
+/// <summary>A worktree git lists: its folder, its branch (null when detached) and whether its folder is gone (prunable).</summary>
+public sealed record WorktreeEntry(string Path, string? Branch, bool Prunable);
+
 /// <summary>A plane as made: its repo's main checkout, its branch and worktree, and what the branch was made from.</summary>
 public sealed record Plane(string RepoPath, string Branch, string Worktree, string Base);
 
@@ -140,24 +143,102 @@ public sealed class Planes(IGit git)
     /// <summary>Whether git has <paramref name="worktree"/> as a worktree of the repo, not merely a folder there.</summary>
     public async Task<bool> IsRegisteredAsync(string repoPath, string worktree, CancellationToken cancellationToken)
     {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var wanted = Path.TrimEndingDirectorySeparator(Path.GetFullPath(worktree));
+        // A torn-down one is still listed, marked prunable: that is gone.
+        return await WorktreesAsync(repoPath, cancellationToken) is { } listed
+            && listed.FirstOrDefault(w => string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(w.Path)), wanted, comparison)) is { Prunable: false };
+    }
+
+    /// <summary>
+    /// The repo's worktrees as <c>git worktree list --porcelain</c> says them, the main checkout first; null when git
+    /// cannot list them.
+    /// </summary>
+    public async Task<IReadOnlyList<WorktreeEntry>?> WorktreesAsync(string repoPath, CancellationToken cancellationToken)
+    {
         var list = await git.RunAsync(["worktree", "list", "--porcelain"], repoPath, cancellationToken);
         if (!list.Ok)
         {
-            return false;
+            return null;
         }
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        var wanted = Path.TrimEndingDirectorySeparator(Path.GetFullPath(worktree));
-        // One block per worktree, blank-line separated. A torn-down one is still listed, marked prunable: that is gone.
+        var entries = new List<WorktreeEntry>();
+        // One block per worktree, blank-line separated.
         foreach (var block in list.Output.Replace("\r", "", StringComparison.Ordinal).Split("\n\n"))
         {
             var lines = block.Split('\n');
-            if (lines.FirstOrDefault(l => l.StartsWith("worktree ", StringComparison.Ordinal)) is { } head
-                && string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(head["worktree ".Length..].Trim())), wanted, comparison))
+            if (lines.FirstOrDefault(l => l.StartsWith("worktree ", StringComparison.Ordinal)) is not { } head)
             {
-                return !lines.Any(l => l.StartsWith("prunable", StringComparison.Ordinal));
+                continue;
+            }
+            var branch = lines.FirstOrDefault(l => l.StartsWith("branch ", StringComparison.Ordinal)) is { } b ? b["branch ".Length..].Trim() : null;
+            entries.Add(new WorktreeEntry(head["worktree ".Length..].Trim(),
+                branch is not null && branch.StartsWith("refs/heads/", StringComparison.Ordinal) ? branch["refs/heads/".Length..] : branch,
+                lines.Any(l => l.StartsWith("prunable", StringComparison.Ordinal))));
+        }
+        return entries;
+    }
+
+    /// <summary>The remote's default branch as last fetched (<c>origin/main</c>), read without a fetch; null when the repo has no origin to say.</summary>
+    public async Task<string?> DefaultRefAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        var head = await git.RunAsync(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repoPath, cancellationToken);
+        if (head.Ok && head.Output.Trim().Length > 0)
+        {
+            return head.Output.Trim();
+        }
+        foreach (var guess in new[] { "origin/main", "origin/master" })
+        {
+            if ((await git.RunAsync(["rev-parse", "--verify", "--quiet", $"refs/remotes/{guess}"], repoPath, cancellationToken)).Ok)
+            {
+                return guess;
             }
         }
-        return false;
+        return null;
+    }
+
+    /// <summary>The commits <paramref name="path"/>'s HEAD is ahead of and behind <paramref name="baseRef"/>; null when git cannot count them.</summary>
+    public async Task<(int Ahead, int Behind)?> AheadBehindAsync(string path, string baseRef, CancellationToken cancellationToken)
+    {
+        // Left is what only the base has (behind), right what only HEAD has (ahead).
+        var count = await git.RunAsync(["rev-list", "--left-right", "--count", $"{baseRef}...HEAD"], path, cancellationToken);
+        var parts = count.Ok ? count.Output.Split(['\t', ' ', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries) : [];
+        return parts.Length == 2 && int.TryParse(parts[0], out var behind) && int.TryParse(parts[1], out var ahead) ? (ahead, behind) : null;
+    }
+
+    /// <summary>The diff of <paramref name="path"/>'s HEAD against <paramref name="baseRef"/> as a PR shows it (three dots); null when git cannot say.</summary>
+    public async Task<(int Files, int Added, int Removed)?> DiffStatAsync(string path, string baseRef, CancellationToken cancellationToken)
+    {
+        var numstat = await git.RunAsync(["diff", "--numstat", $"{baseRef}...HEAD"], path, cancellationToken);
+        if (!numstat.Ok)
+        {
+            return null;
+        }
+        var files = 0;
+        var added = 0;
+        var removed = 0;
+        foreach (var row in numstat.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var parts = row.Split('\t');
+            if (parts.Length < 3)
+            {
+                continue;
+            }
+            files++;
+            // A binary file is "-" and "-": a file, no lines.
+            added += int.TryParse(parts[0], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var a) ? a : 0;
+            removed += int.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var r) ? r : 0;
+        }
+        return (files, added, removed);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="path"/> holds changes not committed; null when git cannot say. For a main checkout,
+    /// <paramref name="withoutPlanes"/> leaves out <c>.claude/worktrees</c>, which holds the planes and is no change of its own.
+    /// </summary>
+    public async Task<bool?> IsDirtyAsync(string path, CancellationToken cancellationToken, bool withoutPlanes = false)
+    {
+        var status = await git.RunAsync(withoutPlanes ? ["status", "--porcelain", "--", ".", ":(exclude).claude/worktrees"] : ["status", "--porcelain"], path, cancellationToken);
+        return status.Ok ? status.Output.Trim().Length > 0 : null;
     }
 
     /// <summary>

@@ -1,0 +1,185 @@
+using Microsoft.Extensions.Hosting;
+using Pilot.Contracts;
+
+namespace Pilot.Node.Flights;
+
+/// <summary>
+/// Keeps a <see cref="RepoStatus"/> for every repo the <see cref="RepoCatalog"/> lists, read from git and gh (no fetch, no
+/// model) and cached with the time it was read, so <c>GET /api/v1/repos/status</c> never waits on them. Refreshed every
+/// <see cref="Interval"/> once something has asked, and on demand; never more than one refresh runs at once, and one asked
+/// for while another runs gets that one's answer. A git or gh call that fails leaves its part of the repo's status empty
+/// and says so in its <see cref="RepoStatus.Errors"/>, never failing the rest.
+/// </summary>
+public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes, IGitHub github, TimeProvider time) : BackgroundService
+{
+    private readonly object _gate = new();
+    private readonly TaskCompletionSource _asked = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private Task<RepoStatus[]>? _running;
+    private RepoStatus[]? _latest;
+    private CancellationToken _stopping;
+
+    public TimeSpan Interval { get; init; } = TimeSpan.FromMinutes(3);
+
+    /// <summary>How many repos are read at once.</summary>
+    public int Parallelism { get; init; } = 4;
+
+    /// <summary>
+    /// The cached statuses, or a first read when there is none yet; a fresh read when <paramref name="refresh"/>. The first
+    /// ask starts the timer: a node nobody asks of reads no repo.
+    /// </summary>
+    public Task<RepoStatus[]> StatusAsync(bool refresh, CancellationToken cancellationToken)
+    {
+        _asked.TrySetResult();
+        return !refresh && _latest is { } cached ? Task.FromResult(cached) : RefreshAsync(cancellationToken);
+    }
+
+    /// <summary>Reads every repo afresh; joins the refresh already running, if one is.</summary>
+    public Task<RepoStatus[]> RefreshAsync(CancellationToken cancellationToken)
+    {
+        Task<RepoStatus[]> run;
+        lock (_gate)
+        {
+            run = _running ??= Task.Run(ReadAllAsync);
+        }
+        return run.WaitAsync(cancellationToken);
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stopping)
+    {
+        _stopping = stopping;
+        try
+        {
+            await _asked.Task.WaitAsync(stopping);
+            while (!stopping.IsCancellationRequested)
+            {
+                try
+                {
+                    await RefreshAsync(stopping);
+                }
+                catch (Exception ex) when (!stopping.IsCancellationRequested)
+                {
+                    await Console.Error.WriteLineAsync($"repo watch: one read failed, reading again: {ex.Message}");
+                }
+                await Task.Delay(Interval, time, stopping);
+            }
+        }
+        catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+        {
+        }
+    }
+
+    private async Task<RepoStatus[]> ReadAllAsync()
+    {
+        try
+        {
+            var flights = state.Flights();
+            var catalog = repos.Repos();
+            var now = time.GetUtcNow();
+            var statuses = new RepoStatus[catalog.Length];
+            await Parallel.ForEachAsync(Enumerable.Range(0, catalog.Length),
+                new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Parallelism), CancellationToken = _stopping },
+                async (i, token) => statuses[i] = await ReadAsync(catalog[i], flights, now, token));
+            return _latest = statuses;
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _running = null;
+            }
+        }
+    }
+
+    private async Task<RepoStatus> ReadAsync(RepoInfo repo, FlightRow[] allFlights, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var errors = new List<string>();
+        var flights = allFlights.Where(f => SamePath(f.RepoPath, repo.Path)).ToArray();
+
+        async Task<T?> Ref<T>(string what, Func<Task<T?>> read) where T : class
+        {
+            try
+            {
+                return await read();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                errors.Add($"{what}: {ex.Message}");
+                return null;
+            }
+        }
+
+        async Task<T?> Value<T>(string what, Func<Task<T?>> read) where T : struct
+        {
+            try
+            {
+                return await read() ?? Failed<T>(what);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                errors.Add($"{what}: {ex.Message}");
+                return null;
+            }
+        }
+
+        T? Failed<T>(string what) where T : struct
+        {
+            errors.Add($"git could not read {what}");
+            return null;
+        }
+
+        var entries = await Ref("worktrees", () => planes.WorktreesAsync(repo.Path, cancellationToken));
+        if (entries is null && errors.Count == 0)
+        {
+            errors.Add("git could not list the worktrees");
+        }
+        var defaultRef = await Ref("default branch", () => planes.DefaultRefAsync(repo.Path, cancellationToken));
+        var dirty = await Value("main checkout's status", () => planes.IsDirtyAsync(repo.Path, cancellationToken, withoutPlanes: true));
+        (int Ahead, int Behind)? sync = defaultRef is null ? null : await Value($"main checkout against {defaultRef}", () => planes.AheadBehindAsync(repo.Path, defaultRef, cancellationToken));
+
+        var worktrees = new List<WorktreeStatus>();
+        foreach (var entry in (entries ?? []).Skip(1).Where(e => !e.Prunable && Directory.Exists(e.Path)))
+        {
+            var wDirty = await Value($"{entry.Path}'s status", () => planes.IsDirtyAsync(entry.Path, cancellationToken));
+            (int Files, int Added, int Removed)? diff = defaultRef is null ? null : await Value($"{entry.Path}'s diff", () => planes.DiffStatAsync(entry.Path, defaultRef, cancellationToken));
+            worktrees.Add(new WorktreeStatus
+            {
+                Path = entry.Path,
+                Branch = entry.Branch,
+                Flight = flights.FirstOrDefault(f => SamePath(f.Worktree, entry.Path))?.Code,
+                Dirty = wDirty ?? false,
+                Files = diff?.Files ?? 0,
+                Added = diff?.Added ?? 0,
+                Removed = diff?.Removed ?? 0,
+            });
+        }
+
+        var prs = new List<PullRequestStatus>();
+        if (repo.GitHub is not null)
+        {
+            var listed = await Ref("open PRs", async () => await github.OpenPullRequestsAsync(repo.Path, cancellationToken));
+            prs.AddRange((listed ?? []).Select(p => p with { Flight = flights.FirstOrDefault(f => f.Branch == p.Head)?.Code }));
+        }
+
+        return new RepoStatus
+        {
+            Name = repo.Name,
+            Path = repo.Path,
+            GitHub = repo.GitHub,
+            Tracked = repo.Flights > 0 || worktrees.Any(w => w.Flight is not null) || prs.Any(p => p.Flight is not null),
+            Flights = repo.Flights,
+            DefaultBranch = defaultRef is null ? null : defaultRef.StartsWith("origin/", StringComparison.Ordinal) ? defaultRef["origin/".Length..] : defaultRef,
+            Branch = entries?.FirstOrDefault()?.Branch,
+            Dirty = dirty ?? false,
+            Ahead = sync?.Ahead,
+            Behind = sync?.Behind,
+            Worktrees = [.. worktrees],
+            PullRequests = [.. prs],
+            Errors = [.. errors],
+            UpdatedAt = now,
+        };
+    }
+
+    private static bool SamePath(string a, string b) =>
+        string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)), Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+}

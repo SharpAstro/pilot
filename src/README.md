@@ -331,6 +331,23 @@ whole width collapses (`CollapseBelow`), and nothing multiplies by the DPI or me
 `LayoutDrivenTests` reads the views' sources and fails on a computed size, a hand-applied DPI or a width breakpoint, as
 tianwen's own checks do.
 
+## Repo status
+
+`RepoWatch` keeps a `RepoStatus` for every repo `RepoCatalog` lists (the clones under the roots), so the Repos tab and
+`pilot repos` never wait on git or gh. Per repo it holds the remote's default branch (`origin/HEAD`, as last fetched; the
+node fetches nothing here), the main checkout's branch, whether it is dirty (the planes under `.claude/worktrees` do not
+count) and how far HEAD is ahead of and behind `origin/<default>`; its other worktrees (path, branch, the flight whose plane
+it is by the plane's path, dirty, and the diff against `origin/<default>` as files, lines added and lines removed, three-dot
+as a PR shows it); and its open PRs from one `gh pr list` call (number, title, head, draft or ready, checks as
+`passing`/`pending`/`failing`, and the flight whose branch it is).
+
+A repo is **tracked** when a flight has flown in it (landed ones included) or it holds a worktree or an open PR of a flight;
+every other repo under the roots is kept with `Tracked: false`, so a client shows either. A git or gh call that fails
+leaves its part empty and adds a note to the repo's `Errors`; the rest of the status stands.
+
+The cache is read every three minutes once something has asked (a node nobody asks of reads no repo) and on demand with
+`?refresh=true`; one refresh runs at a time, and one asked for while another runs gets that one's result. No model is used.
+
 ## The CLI
 
 `pilot` (Pilot.Cli, native AOT) spells the node's commands for the controller, the watchtower, workers and scripts. All three binaries parse their command lines with System.CommandLine, as tianwen's CLI does, so `--help` on any command lists its arguments and options:
@@ -338,6 +355,7 @@ tianwen's own checks do.
 ```bash
 pilot status                                   # flights, their legs and artifacts, and the live sessions
 pilot sessions
+pilot repos [--all] [--refresh]                # each tracked repo: branch, worktrees (flight, diff stat) and open PRs; --all adds untracked ones
 pilot flight create <issue> [title…] [--repo <path>]
 pilot flight plan <code>                       # a planner plans the legs from the issue
 pilot flight planned <code> [summary…]         # what the planner says when it is done
@@ -745,6 +763,7 @@ A session the API stopped (its transcript's `apiError`, `usage_limit_reached` wi
 | `GET /api/v1/sessions/<id>/transcript?after=<n>` | A session's transcript as entries after the n-th (its last 300 without one); a grant's on the LAN. |
 | `GET /api/v1/jobs/<id>/log` | The end of a job's output: its last 200 lines from its last 64 KiB, the log's length, and whether it was clipped; a grant's on the LAN. |
 | `GET /api/v1/repos` | The repos a flight can be made in, with their GitHub names; a grant's on the LAN. |
+| `GET /api/v1/repos/status` | Each repo's state, a `RepoStatus[]` from the node's cache (see Repo status); `?refresh=true` waits for a fresh read. A grant's on the LAN. |
 | `GET /api/v1/repos/issues?path=` | A repo's open issues, through gh; a grant's on the LAN. |
 | `POST /api/v1/hooks` | One Claude Code hook's stdin, as `pilot-node hook` forwards it; always 204. |
 
