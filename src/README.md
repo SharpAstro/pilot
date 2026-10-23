@@ -241,16 +241,34 @@ team): `pilot review pr <owner>/<repo>#<n>` or `pilot review pr <its URL>` (the 
   doubt is a question), name each finding's file and line, change and post nothing, and keep to one session.
   Claude Code starts no background session in a folder never trusted, so the clone cache needs `claude` run in
   `<data>/clones` once (which covers every clone made there); a start refused for it says so, and leaves no worktree.
-- **The verdict.** From its worktree the reviewer says `pilot review approve|changes|comment "<summary, then each
-  finding>"` (the node's `pr-verdict`), once: only it may, and on the gh login's own PR only `comment`, as GitHub takes
-  nothing else there (its brief says so too). It rings: a `pr-review-ready` card, *<repo>#<n>: review ready, <verdict>*,
-  with the author, the head it read and the findings, linked to the PR. The reviewer is stopped 90 s later.
+- **The verdict.** From its worktree the reviewer says `pilot review approve|changes|comment "<summary>" --finding
+  "<path:line> <what is wrong>" …` (the node's `pr-verdict`), once, with a `--finding` for each finding on a line of the
+  head (its path from the repo's root): only it may, and on the gh login's own PR only `comment`, as GitHub takes
+  nothing else there (its brief says so too). The node diffs the worktree against `origin/<base>` (three dots, as
+  GitHub does) and marks each finding whose line is in a hunk's new side inline; GitHub refuses a whole review over
+  one comment outside the diff, so the others go in the review's body under *On lines outside the diff*. It writes
+  the review as GitHub takes it to `<data>/reviews/<owner>/<repo>-<n>.json` (the draft: `commit_id` the pinned head,
+  `event`, `body` the summary and those findings, `comments` one per inline finding on its `RIGHT` side), and rings:
+  a `pr-review-ready` card, *<repo>#<n>: review ready, <verdict>*, with the author, the head it read, the event it
+  posts as and under whom, how many comments go inline, the draft's path and the findings, linked to the PR, and one
+  choice, **Post**. The reviewer is stopped 90 s later.
+- **Post.** The card's **Post** (`post-review pr/<owner>/<repo>#<n>`) puts the review on the PR as one review, under
+  gh's login: the draft is written again with the event that login takes (`APPROVE` for approve, `REQUEST_CHANGES` for
+  changes, `COMMENT` for comment, and `COMMENT` whatever the verdict on the login's own PR, as GitHub refuses the others
+  there), then posted in exactly one call, the shape Sam's `shared/review-post.md` writes out: `gh api -X POST
+  repos/<owner>/<repo>/pulls/<n>/reviews --input <the draft's full path> -q '.id, .state, .html_url'`, run by the node
+  with no shell. Never twice: the post is marked on the review before the call, the review GitHub made (its id, state
+  and page) is kept on it and the card's outcome says it (*Post: review <id>, <state>, under <login>*, the card then
+  linking to the review), and a second post is refused, as is one after a call that went and never said back (it may
+  be on the PR; look there). Only a post GitHub refused outright may go again. Posting is a write to GitHub in the
+  controller's name, a gate like a merge: refused from the watchtower, and from the reviewer.
 - **Nothing left behind.** Once that card closes (dismissed, or answered), the reviewer is stopped if it still runs and
   the worktree is removed, whatever it holds (a build's output is nobody's work), at once and by a sweep every 30 s
   that a node restart cannot skip. One held open is said on a For-you `pr-review-left` card and tried again. A fresh
-  `review pr` of the same PR ends the last review first. The clone, the cache's or the person's, stays.
+  `review pr` of the same PR ends the last review first. The clone, the cache's or the person's, stays, and so does
+  the draft.
 
-Posting the review to GitHub from its card is the next step of #113. `pilot status` lists the reviews not over.
+`pilot status` lists the reviews not over.
 
 ### Liveness: no flight derails silently
 
@@ -332,7 +350,7 @@ pilot leg finish done|failed [report…]         # done: the node reruns the che
 pilot leg go-around <why…>
 pilot review pass|changes <report…>            # a flight's reviewer, from its plane (--flight <code> elsewhere)
 pilot review pr <owner>/<repo>#<n>|<url>       # a reviewer on any PR, pinned at its head (see Any PR's review)
-pilot review approve|changes|comment <report…> # a PR's reviewer, from its worktree (--pr <owner>/<repo>#<n> elsewhere)
+pilot review approve|changes|comment <report…> [--finding "<path:line> <body>"]…   # a PR's reviewer, from its worktree (--pr <owner>/<repo>#<n> elsewhere)
 pilot check <step number or text> [--undo]
 pilot artifact <path or URL> [title…]
 pilot say <session> <text…>
@@ -621,7 +639,8 @@ is a For-you card; a leg started with a sibling clone behind its origin raises a
 watch's cards (`worker-stopped`, `-idle`, `-waiting`, `-failed`, `-missing`, and the Handled `worker-resumed` and
 `worker-nudged`); a session that stopped twice in a turn with files not committed in its plane rings
 (`stopped-uncommitted`, see Hooks); and a PR's review rings with its verdict (`pr-review-ready`, about
-`pr/<owner>/<repo>#<n>`), its worktree going when the card closes (see Any PR's review).
+`pr/<owner>/<repo>#<n>`) and **Post**, which posts it to GitHub once, its worktree going when the card closes (see Any
+PR's review).
 
 Each choice is a command; `answer card/<id> <n or label>` runs it as the one answering, through the same route as any
 command, and closes the card (opening it again if the command is refused). `dismiss card/<id> [why]` closes it with

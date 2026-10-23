@@ -134,6 +134,26 @@ internal sealed class FakeGitHub : IGitHub
     public string? Login { get; set; } = "controller";
 
     public Task<string?> LoginAsync(CancellationToken cancellationToken) => Task.FromResult(Login);
+
+    /// <summary>Every review posted: the repo, the PR, the payload's path, and the payload as it was read when it went.</summary>
+    public List<(string Repo, int Number, string Path, string Payload)> Posted { get; } = [];
+
+    /// <summary>When set, a post fails with it: a FlightException as GitHub refusing it, anything else as a post that never said back.</summary>
+    public Exception? PostFails { get; set; }
+
+    public Task<PostedReview> PostReviewAsync(string repo, int number, string payload, CancellationToken cancellationToken)
+    {
+        if (PostFails is { } fails)
+        {
+            return Task.FromException<PostedReview>(fails);
+        }
+        var text = File.ReadAllText(payload);
+        Posted.Add((repo, number, payload, text));
+        var id = 9000 + Posted.Count;
+        using var doc = System.Text.Json.JsonDocument.Parse(text);
+        var state = doc.RootElement.GetProperty("event").GetString() switch { "APPROVE" => "APPROVED", "REQUEST_CHANGES" => "CHANGES_REQUESTED", _ => "COMMENTED" };
+        return Task.FromResult(new PostedReview(id, state, $"https://github.com/{repo}/pull/{number}#pullrequestreview-{id}"));
+    }
 }
 
 /// <summary>Legs: planned in order, flown one at a time by fresh workers, done only on a passing rerun, and a flight merged guarded on its head.</summary>
