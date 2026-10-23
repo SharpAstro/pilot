@@ -27,6 +27,23 @@ public sealed class NodeLan(NodeState state, NodeOptions options, TimeProvider t
     private readonly ConcurrentDictionary<string, string> _issued = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _loaded = new(1, 1);
     private bool _isLoaded;
+    private ITimer? _sweep;
+
+    /// <summary>How often an ask whose asker stopped reading its ticket is looked for, so its card closes with it.</summary>
+    public static readonly TimeSpan SweepEvery = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Closes the ask card once no ask waits: an asker that gave up (pilot connect stops after a while) never reads its
+    /// ticket again, so without this its card stayed open, and its Allow pointed at an ask long gone (SE1's ask on DE1,
+    /// 2026-10-23: refused an hour later, and a second ask folded into the stale card). Started on the first ask.
+    /// </summary>
+    public void Sweep()
+    {
+        if (_asks.Pending is null && state.Cards(openOnly: true).Any(c => c.Kind == AskedKind))
+        {
+            state.CloseCardsAbout(Verbs.NodeTarget, "the asker went away", AskedKind);
+        }
+    }
 
     /// <summary>Whether a request came over TCP, from the LAN (or this machine's loopback), rather than the node's socket.</summary>
     public static bool IsRemote(HttpContext context) => context.Connection.RemoteIpAddress is not null;
@@ -67,6 +84,9 @@ public sealed class NodeLan(NodeState state, NodeOptions options, TimeProvider t
         {
             return null;
         }
+        // A card of an earlier ask is the earlier ask's: its Allow names that ask. Closed, so this one gets its own.
+        state.CloseCardsAbout(Verbs.NodeTarget, "a newer ask came", AskedKind);
+        _sweep ??= time.CreateTimer(_ => Sweep(), null, SweepEvery, SweepEvery);
         state.RaiseCard(CardBin.Ring, AskedKind, Verbs.NodeTarget, $"{label} asks to fly flights on this node",
             $"from the LAN; an Allow lets it run any command here as {label}/…, until revoked (pilot grants)",
             [
@@ -124,6 +144,7 @@ public sealed class NodeLan(NodeState state, NodeOptions options, TimeProvider t
 
     public void Dispose()
     {
+        _sweep?.Dispose();
         _grants.Dispose();
         _loaded.Dispose();
     }
