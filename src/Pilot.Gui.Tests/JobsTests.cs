@@ -117,7 +117,7 @@ public sealed class JobsTests
         var (_, jobs) = Chrome(vessel);
         var reads = 0;
         var changed = new SemaphoreSlim(0);
-        jobs.LoadLog = (id, _) =>
+        jobs.LoadLog = (_, id, _) =>
         {
             Interlocked.Increment(ref reads);
             return Task.FromResult(new JobLog { Lines = [$"{id}: Restore complete", $"{id}: Passed Parser.NestedGroups"], Length = 4096 });

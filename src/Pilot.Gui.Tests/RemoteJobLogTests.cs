@@ -36,7 +36,7 @@ public sealed class RemoteJobLogTests
         var jobs = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Jobs;
         var changed = new SemaphoreSlim(0);
         // As pilot-gui's Program wires it.
-        jobs.LoadLog = async (id, ct) => (await clients.For(jobs.FollowingNode, command: false)!.GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
+        jobs.LoadLog = async (node, id, ct) => (await clients.For(node, command: false)!.GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
             ? log
             : throw new InvalidOperationException($"the node did not send {id}'s log");
         jobs.Changed = () => changed.Release();
