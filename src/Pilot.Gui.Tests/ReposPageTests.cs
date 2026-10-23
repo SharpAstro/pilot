@@ -324,6 +324,124 @@ public sealed class ReposPageTests
         watch.Pages("node.sock", here, filter, now, reposWanted: true).Repos!.Lines.ShouldHaveSingleItem().Name.ShouldBe("orbit-laptop");
     }
 
+    private static void ClickCell(ReposView<RgbaImage> repos, ReposScreen screen, Func<HitResult.ButtonHit, bool> which)
+    {
+        var arranged = Arrange(repos, screen);
+        var node = arranged.First(a => a.Node.Hit is HitResult.ButtonHit b && which(b));
+        CellLayout.HitTest(arranged, node.Bounds.X, node.Bounds.Y);
+    }
+
+    [Fact]
+    public async Task SyncShowsItRunningThenEachReposOutcomeAndAnythingTheNodeRefuses()
+    {
+        using var renderer = new RgbaImageRenderer(1, 1);
+        var (_, repos) = Chrome(renderer);
+        var screen = Screen();
+        CellLayout.Describe(Arrange(repos, screen)).ShouldNotContain("Sync");
+
+        var running = new TaskCompletionSource<RepoSyncOutcome[]>();
+        var redraws = 0;
+        repos.SyncRepos = _ => running.Task;
+        repos.Changed = () => redraws++;
+        CellLayout.Describe(Arrange(repos, screen)).ShouldContain("Sync");
+
+        ClickCell(repos, screen, b => b.Action == "repos:sync");
+        repos.Syncing.ShouldBeTrue();
+        CellLayout.Describe(Arrange(repos, screen)).ShouldContain("Syncing…");
+        // A second press while it runs does nothing.
+        ClickCell(repos, screen, b => b.Action == "repos:sync");
+
+        running.SetResult([
+            new RepoSyncOutcome { Name = "orbit", Status = RepoSyncStatus.Updated, Detail = "main took 2 commits from origin/main" },
+            new RepoSyncOutcome { Name = "widgets", Status = RepoSyncStatus.Skipped, Detail = "the main checkout is on feature/grid, not main" },
+        ]);
+        await Until(() => !repos.Syncing);
+        redraws.ShouldBe(2);
+        var text = CellLayout.Describe(Arrange(repos, screen));
+        text.ShouldContain("sync: 1 skipped, 1 updated");
+        text.ShouldContain("orbit  updated  main took 2 commits from origin/main");
+        text.ShouldContain("widgets  skipped  the main checkout is on feature/grid, not main");
+
+        ClickCell(repos, screen, b => b.Action == "repos:sync-clear");
+        CellLayout.Describe(Arrange(repos, screen)).ShouldNotContain("sync:");
+
+        repos.SyncRepos = _ => Task.FromException<RepoSyncOutcome[]>(new InvalidOperationException("watchtower: not yours"));
+        await repos.SyncAsync();
+        repos.SyncError.ShouldBe("watchtower: not yours");
+        CellLayout.Describe(Arrange(repos, screen)).ShouldContain("sync refused: watchtower: not yours");
+    }
+
+    [Fact]
+    public async Task NewFlightOnARowOpensTheWizardOnThatReposIssuesAndANewIssueIsCreatedAndPicked()
+    {
+        using var renderer = new RgbaImageRenderer(1, 1);
+        var (_, repos) = Chrome(renderer);
+        var screen = Screen();
+        var orbit = Sample()[0];
+        var wizard = new NewFlightWizard
+        {
+            LoadRepos = _ => Task.FromResult<RepoInfo[]>([
+                new() { Name = "widgets", Path = "/home/ada/src/example-org/widgets" },
+                new() { Name = orbit.Name, Path = orbit.Path, GitHub = orbit.GitHub }]),
+            LoadIssues = (_, _) => Task.FromResult<IssueInfo[]>([new() { Number = 204, Title = "Parser" }]),
+        };
+        RepoLine? asked = null;
+        repos.OnNewFlight = line =>
+        {
+            asked = line;
+            wizard.Open(line.Status.Path, atIssues: true);
+        };
+
+        ClickCell(repos, screen, b => b.Action == $"repo:{screen.Lines[0].Key}:new-flight");
+
+        asked.ShouldNotBeNull().Name.ShouldBe("orbit");
+        // Straight to that repo's issues: no repos step.
+        wizard.IsOpen.ShouldBeTrue();
+        wizard.Current.ShouldBe(NewFlightWizard.Step.Issues);
+        wizard.Chosen.Select(r => r.Name).ShouldBe(["orbit"]);
+        wizard.IssueResults.Select(i => i.Number).ShouldBe([204]);
+
+        // No New issue without the node's way to make one; with it, a form that Escape closes first.
+        wizard.BeginNewIssue();
+        wizard.NewIssueOpen.ShouldBeFalse();
+        var made = new List<(string Path, string Title, string? Body)>();
+        string? refuse = "gh is not signed in";
+        wizard.CreateIssue = (path, title, body) =>
+        {
+            made.Add((path, title, body));
+            return refuse is { } why ? Task.FromException<IssueInfo>(new InvalidOperationException(why)) : Task.FromResult(new IssueInfo { Number = 300, Title = title });
+        };
+        wizard.BeginNewIssue();
+        wizard.NewIssueOpen.ShouldBeTrue();
+        wizard.ActiveSearch.ShouldBeNull();
+        wizard.Back();
+        wizard.NewIssueOpen.ShouldBeFalse();
+        wizard.Current.ShouldBe(NewFlightWizard.Step.Issues);
+
+        // A title is needed; a refusal keeps the form and says why.
+        wizard.BeginNewIssue();
+        await wizard.CreateIssueAsync();
+        wizard.IssueStatus.ShouldBe("failed: an issue needs a title");
+        wizard.IssueTitle.Text = "Rings";
+        wizard.IssueBody.Text = "  around Saturn ";
+        await wizard.CreateIssueAsync();
+        wizard.IssueStatus.ShouldBe("failed: gh is not signed in");
+        wizard.NewIssueOpen.ShouldBeTrue();
+
+        // Created: picked as the repo's issue, so the review is next with it.
+        refuse = null;
+        await wizard.CreateIssueAsync();
+        made.Last().ShouldBe((orbit.Path, "Rings", "around Saturn"));
+        wizard.NewIssueOpen.ShouldBeFalse();
+        wizard.Current.ShouldBe(NewFlightWizard.Step.Review);
+        var pick = wizard.Picks.ShouldHaveSingleItem();
+        (pick.Repo.Name, pick.Issue.Number, pick.Issue.Title).ShouldBe(("orbit", 300, "Rings"));
+
+        // Back to the issues: the new issue is listed with the others.
+        wizard.Back();
+        wizard.IssueResults.Select(i => i.Number).ShouldBe([300, 204]);
+    }
+
     private static NodeInfo Info(string prefix, string stream) => new()
     {
         WireVersion = 1, Version = "2.0.9", MachineName = prefix == "SE1" ? "DESKTOP-7" : "LAPTOP-3", MachinePrefix = prefix, ProcessId = 1, StartedAt = Live.At,

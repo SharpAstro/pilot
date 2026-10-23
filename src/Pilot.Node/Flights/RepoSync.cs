@@ -88,7 +88,7 @@ public sealed class RepoSync(IGit git, Planes planes, RepoWatch watch)
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return Outcome(RepoSyncStatus.Failed, $"git ran past {Timeout.TotalSeconds:0} seconds and was stopped");
+            return Outcome(RepoSyncStatus.Failed, $"git ran past {Timeout.TotalSeconds:0.##} seconds and was stopped");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
