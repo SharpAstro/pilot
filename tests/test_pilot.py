@@ -3385,6 +3385,90 @@ class UploadTests(Case):
         self.assertTrue(line.endswith(f"Controller to w-fix (intercom): this is what I see... [image uploads/{names[0]}] [image uploads/{names[1]}]"), line)
         self.assertIn(f"[image uploads/{names[1]}]", self.last_box()[0])
 
+    def age(self, name, seconds):
+        old = time.time() - seconds
+        os.utime(pilot.UPLOADS / name, (old, old))
+
+    def test_the_same_image_uploaded_again_is_the_same_upload_and_counts_as_used(self):
+        # The ?attach= preview posts its seed images on every page load: they must not pile up as copies.
+        first = pilot.save_upload(self.IMAGES["png"])
+        self.age(first[0], 3 * 24 * 3600)
+        self.assertEqual(pilot.save_upload(self.IMAGES["png"]), first)
+        self.assertEqual(len(list(pilot.UPLOADS.iterdir())), 1)
+        self.assertGreater((pilot.UPLOADS / first[0]).stat().st_mtime, time.time() - 60, "reusing it is using it")
+        self.assertNotEqual(pilot.save_upload(self.IMAGES["png"] + b"y")[0], first[0], "other bytes are another upload")
+        self.assertNotEqual(pilot.save_upload(self.IMAGES["gif"])[0], first[0])
+
+    def test_the_upload_route_reuses_an_upload_of_the_same_bytes(self):
+        call = self.serve()
+        ids = {json.loads(call("/api/uploads", self.IMAGES["jpg"])[2])["id"] for _ in range(3)}
+        self.assertEqual(len(ids), 1)
+        self.assertEqual(len(list(pilot.UPLOADS.iterdir())), 1)
+
+    def test_an_upload_taken_out_of_every_box_without_a_send_is_deleted_at_once(self):
+        a, b = (pilot.save_upload(self.IMAGES[k])[0] for k in ("png", "gif"))
+        pilot.set_drafts("page1", [a, b])
+        self.assertTrue((pilot.UPLOADS / a).is_file() and (pilot.UPLOADS / b).is_file())
+        pilot.set_drafts("page1", [b])
+        self.assertFalse((pilot.UPLOADS / a).exists(), "removed from its box: discarded")
+        self.assertTrue((pilot.UPLOADS / b).is_file())
+        pilot.set_drafts("page1", [])
+        self.assertFalse((pilot.UPLOADS / b).exists(), "the last box emptied")
+
+    def test_a_discarded_upload_stays_while_another_box_or_a_sent_message_has_it(self):
+        a, b = (pilot.save_upload(self.IMAGES[k])[0] for k in ("png", "webp"))
+        pilot.set_drafts("page1", [a, b])
+        pilot.set_drafts("page2", [a])
+        pilot.message_text({"text": "x", "images": [b]})          # b went out in a message
+        pilot.set_drafts("page1", [])
+        self.assertTrue((pilot.UPLOADS / a).is_file(), "another page's box still holds it")
+        self.assertTrue((pilot.UPLOADS / b).is_file(), "a session was told to Read it")
+        self.assertEqual(pilot.sent_uploads(), {b})
+        pilot.set_drafts("page2", [])
+        self.assertFalse((pilot.UPLOADS / a).exists())
+
+    def test_the_drafts_route_deletes_what_a_page_dropped_and_takes_nothing_else(self):
+        call = self.serve()
+        a = json.loads(call("/api/uploads", self.IMAGES["png"])[2])["id"]
+        post = lambda page, names: call("/api/uploads/drafts", json.dumps({"page": page, "names": names}).encode(), ctype="application/json")
+        self.assertEqual(post("p1", [a])[0], 200)
+        self.assertTrue((pilot.UPLOADS / a).is_file())
+        self.assertEqual(post("p1", [])[0], 200)
+        self.assertFalse((pilot.UPLOADS / a).exists())
+        self.assertEqual(post("../x", [])[0], 400)
+        self.assertEqual(post("p1", "nope")[0], 400)
+        self.assertEqual(call("/api/uploads/drafts", b"{}", ctype="application/json", headers={})[0], 403)
+
+    def test_a_drafts_list_cannot_name_a_file_that_is_not_an_upload(self):
+        keep = pilot.UPLOADS / "notes.txt"
+        pilot.set_drafts("p1", [])
+        pilot.UPLOADS.mkdir(parents=True, exist_ok=True)
+        keep.write_text("mine")
+        pilot.set_drafts("p1", ["notes.txt", "../notes.txt", 7])
+        pilot.set_drafts("p1", [])
+        self.assertTrue(keep.is_file())
+
+    def test_on_start_uploads_past_the_retention_go_unless_a_box_holds_them(self):
+        old, drafted, fresh, sent = (pilot.save_upload(self.IMAGES[k])[0] for k in ("png", "jpg", "gif", "webp"))
+        pilot.message_text({"text": "x", "images": [sent]})
+        for n in (old, drafted, sent):
+            self.age(n, pilot.UPLOAD_RETENTION + 3600)
+        self.age(fresh, pilot.UPLOAD_RETENTION - 3600)
+        pilot.set_drafts("p1", [drafted])
+        self.assertEqual(sorted(pilot.sweep_uploads()), sorted([old, sent]))
+        self.assertEqual(sorted(f.name for f in pilot.UPLOADS.iterdir() if f.name != pilot.UPLOAD_SENT), sorted([drafted, fresh]))
+        self.assertEqual(pilot.sent_uploads(), set(), "the marker forgets what is gone")
+
+    def test_a_message_sent_again_restarts_its_uploads_retention(self):
+        n = pilot.save_upload(self.IMAGES["png"])[0]
+        self.age(n, pilot.UPLOAD_RETENTION + 3600)
+        pilot.message_text({"text": "again", "images": [n]})
+        self.assertEqual(pilot.sweep_uploads(), [])
+        self.assertTrue((pilot.UPLOADS / n).is_file())
+
+    def test_sweeping_with_no_uploads_folder_is_nothing(self):
+        self.assertEqual(pilot.sweep_uploads(), [])
+
 
 class AmendmentTests(Case):
     """The controller's amendments to a flight: `amend` files one in the plan's `## Amendments` and tells the pilot,

@@ -1433,6 +1433,13 @@ UPLOAD_MAX = 10 * 1024 * 1024
 UPLOAD_MAGIC = ((b"\x89PNG\r\n\x1a\n", "png"), (b"\xff\xd8\xff", "jpg"), (b"GIF87a", "gif"), (b"GIF89a", "gif"))
 UPLOAD_NAME = r"([0-9a-f]{32})\.(png|jpg|jpeg|gif|webp)"
 UPLOAD_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}
+# An upload no message was sent with and no open draft holds is deleted at once; one a message was sent with is kept
+# this long after its last use, since the session it went to, its plan log and its transcript name the path and a
+# Read of it must still work.
+UPLOAD_RETENTION = 7 * 24 * 3600
+UPLOAD_SENT = "sent.json"                  # in the uploads folder: the names a message was sent with
+DRAFTS = {}                                # page id -> the upload names its message boxes hold, as that page last said
+DRAFTS_LOCK = threading.Lock()
 
 
 def upload_ext(data):
@@ -1443,14 +1450,79 @@ def upload_ext(data):
 
 
 def save_upload(data):
-    """Saves an uploaded image as `<state>/uploads/<random hex>.<ext>`; returns its name and absolute path."""
+    """Saves an uploaded image as `<state>/uploads/<random hex>.<ext>`; returns its name and absolute path. An image
+    already there with the same bytes is reused, and counts as used now: the `?attach=` preview uploads its seeds on
+    every page load, and a screenshot pasted twice is one file."""
     ext = upload_ext(data)
     if not ext:
         raise ValueError("not a PNG, JPEG, GIF or WebP image")
     UPLOADS.mkdir(parents=True, exist_ok=True)
+    for f in UPLOADS.glob(f"*.{ext}"):
+        if re.fullmatch(UPLOAD_NAME, f.name) and f.stat().st_size == len(data) and f.read_bytes() == data:
+            os.utime(f)
+            return f.name, f.as_posix()
     name = f"{os.urandom(16).hex()}.{ext}"
     (UPLOADS / name).write_bytes(data)
     return name, (UPLOADS / name).as_posix()
+
+
+def sent_uploads():
+    """The names a message was sent with, from the marker file in the uploads folder."""
+    try:
+        names = json.loads((UPLOADS / UPLOAD_SENT).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    return {n for n in names if isinstance(n, str) and re.fullmatch(UPLOAD_NAME, n)} if isinstance(names, list) else set()
+
+
+def mark_sent(names):
+    """Records that a message went out with these uploads, and counts them as used now, so the retention runs from
+    the last message that named them."""
+    with DRAFTS_LOCK:
+        for n in names:
+            os.utime(UPLOADS / n)
+        (UPLOADS / UPLOAD_SENT).write_text(json.dumps(sorted(sent_uploads() | set(names))), encoding="utf-8")
+
+
+def drafted_uploads():
+    """The uploads some page's message box holds right now."""
+    with DRAFTS_LOCK:
+        return set().union(*DRAFTS.values())
+
+
+def set_drafts(page, names):
+    """A page says which uploads its message boxes hold. Those it held before and no box holds now, that no message
+    was sent with and no other page holds, were discarded: they are deleted at once."""
+    names = {n for n in names if isinstance(n, str) and re.fullmatch(UPLOAD_NAME, n)}
+    with DRAFTS_LOCK:
+        before = DRAFTS.get(page, set())
+        if names:
+            DRAFTS[page] = names
+        else:
+            DRAFTS.pop(page, None)
+    keep = sent_uploads() | drafted_uploads()
+    for n in before - names - keep:
+        (UPLOADS / n).unlink(missing_ok=True)
+
+
+def sweep_uploads(now=None):
+    """On start: deletes the uploads last used more than UPLOAD_RETENTION ago, unless a draft holds one, and drops
+    the sent marker's names of files that are gone. Returns the names it deleted. A page open across a restart
+    has not said its drafts yet, but an upload it holds is older than a week only when it was left in a box that
+    long, and the box's next change says it again."""
+    if not UPLOADS.is_dir():
+        return []
+    cutoff = (time.time() if now is None else now) - UPLOAD_RETENTION
+    keep = drafted_uploads()
+    gone = []
+    for f in UPLOADS.iterdir():
+        if re.fullmatch(UPLOAD_NAME, f.name) and f.name not in keep and f.is_file() and f.stat().st_mtime < cutoff:
+            f.unlink(missing_ok=True)
+            gone.append(f.name)
+    sent = sent_uploads()
+    if any(not (UPLOADS / n).is_file() for n in sent):
+        (UPLOADS / UPLOAD_SENT).write_text(json.dumps(sorted(n for n in sent if (UPLOADS / n).is_file())), encoding="utf-8")
+    return gone
 
 
 def upload_message(text, paths):
@@ -1477,6 +1549,8 @@ def message_text(body):
     names = body.get("images") if isinstance(body.get("images"), list) else []
     if any(not isinstance(n, str) or not re.fullmatch(UPLOAD_NAME, n) or not (UPLOADS / n).is_file() for n in names):
         raise ValueError("an attached image is not an upload: attach it again")
+    if names:
+        mark_sent(names)
     return upload_message(str(body.get("text") or ""), [(UPLOADS / n).as_posix() for n in names])
 
 
@@ -5767,6 +5841,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.send(415, {"error": str(e)})
             return self.send(200, {"ok": True, "id": name, "path": abspath, "url": f"/api/uploads/{name}"})
         body = json.loads(self.rfile.read(size) or b"{}") if size else {}
+        if self.path == "/api/uploads/drafts":
+            # A page's message boxes: every upload they hold, said again whenever one changes, so one taken out of
+            # a box without a send is found and deleted.
+            page, names = body.get("page"), body.get("names")
+            if not isinstance(page, str) or not re.fullmatch(r"[\w-]{1,64}", page) or not isinstance(names, list):
+                return self.send(400, {"error": "page and names are needed"})
+            set_drafts(page, names)
+            return self.send(200, {"ok": True})
         m = re.match(r"^/api/workers/([a-z0-9-]+)/(stop|say|budget)$", self.path)
         if m:
             w = load(m.group(1))
@@ -6025,6 +6107,8 @@ def cmd_dashboard(a):
         SUPERVISED = True
         watch_parent(a.child)
     STATE.mkdir(parents=True, exist_ok=True)
+    if not a.preview:                          # a preview may share the live state, whose uploads are not its to delete
+        sweep_uploads()
     if a.lan:
         Handler.lan = lan_key()
     if a.preview:
