@@ -139,6 +139,12 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
         {
             actions.Add(new FlightAction("Review again", Verbs.StartReview, target, []));
         }
+        // The next planned leg only: a button is named by its verb, so one a flight, and the others go by the command bar.
+        // It needs words (why), so it half-writes the bar rather than taking a leg out on one click.
+        if (next is not null)
+        {
+            actions.Add(new FlightAction($"Remove {next.Name}", Verbs.RemoveLeg, Verbs.LegTarget(code, next.Name), [], $"leg remove {code} {next.Name} "));
+        }
         actions.Add(new FlightAction("Plan a leg", Verbs.PlanLeg, target, [], $"leg plan {code} <name> --goal \"...\" --done-when \"...\" --item \"...\""));
         return actions;
     }

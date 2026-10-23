@@ -98,6 +98,12 @@ public static class Verbs
     public const string PlanLeg = "plan-leg";
 
     /// <summary>
+    /// <c>remove-leg flight/&lt;code&gt;/&lt;leg&gt; [why…]</c>: a planned leg taken out of the flight; the legs after it keep their
+    /// order. Refused for one flying, done or failed. A Handled card says it went and why.
+    /// </summary>
+    public const string RemoveLeg = "remove-leg";
+
+    /// <summary>
     /// <c>start-leg flight/&lt;code&gt;/&lt;leg&gt;</c>: a fresh background worker on the leg, in the flight's plane, briefed
     /// from it. The legs before it must be done.
     /// </summary>

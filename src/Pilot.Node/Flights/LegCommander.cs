@@ -36,7 +36,7 @@ public sealed partial class LegCommander(
     private static partial Regex LegName();
 
     public static bool Handles(string verb) =>
-        verb is Verbs.PlanLeg or Verbs.StartLeg or Verbs.Check or Verbs.FinishLeg or Verbs.GoAround or Verbs.Merge
+        verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.Check or Verbs.FinishLeg or Verbs.GoAround or Verbs.Merge
             or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review
             or Verbs.PlanFlight or Verbs.Planned;
 
@@ -50,6 +50,9 @@ public sealed partial class LegCommander(
             {
                 case Verbs.PlanLeg:
                     Plan(command);
+                    break;
+                case Verbs.RemoveLeg:
+                    Remove(command);
                     break;
                 case Verbs.StartLeg:
                     await StartAsync(command, cancellationToken);
@@ -103,6 +106,13 @@ public sealed partial class LegCommander(
         if (error is null && command.Verb == Verbs.FinishLeg && (command.Args ?? []).FirstOrDefault() is "done" or "accepted")
         {
             await AdvanceAsync(LegOf(command.Target).Flight, cancellationToken);
+        }
+
+        // A leg taken out: the flight goes on past it the same way, as the leg it was waiting on may have been the last
+        // one standing in the way of the next leg, or of its PR.
+        if (error is null && command.Verb == Verbs.RemoveLeg)
+        {
+            await AdvanceAsync(FlightOf(command.Target), cancellationToken);
         }
 
         // A merge lands its flight through the flight verbs' own lock, after this one's is let go.
@@ -311,6 +321,40 @@ public sealed partial class LegCommander(
             Model = model,
             Effort = effort,
         });
+    }
+
+    /// <summary>The card a removed leg leaves, a line saying it went and why.</summary>
+    public const string LegRemovedKind = "leg-removed";
+
+    private void Remove(CommandRequest command)
+    {
+        var (flight, leg) = LegOf(command.Target);
+        if (flight.State == FlightState.Landed)
+        {
+            throw new FlightException($"{flight.Code} has landed; its legs stay as they flew");
+        }
+        if (leg.State != LegState.Planned)
+        {
+            throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}; only a planned leg is taken out");
+        }
+
+        var why = string.Join(' ', command.Args ?? []).Trim();
+        state.RemoveLeg(flight.Code, leg.Name);
+        // The legs after it close up the order, so a plan's numbered list and the next order Plan takes stay contiguous.
+        var order = 0;
+        foreach (var kept in state.Legs(flight.Code))
+        {
+            order++;
+            if (kept.Order != order)
+            {
+                state.PutLeg(kept with { Order = order });
+            }
+        }
+        // What was offered or said about the leg is moot, and so is a plan card that offered its start.
+        state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} was removed");
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}/{leg.Name} was removed", PlannedKind);
+        state.RaiseCard(CardBin.Handled, LegRemovedKind, Verbs.FlightTarget(flight.Code),
+            $"{flight.Code}/{leg.Name} removed by {command.Who}", why.Length > 0 ? why : null);
     }
 
     private async Task StartAsync(CommandRequest command, CancellationToken cancellationToken)

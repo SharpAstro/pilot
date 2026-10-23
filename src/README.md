@@ -168,11 +168,21 @@ started in a row cost one fetch; the card closes when the leg is done or goes ar
 | Command | What it does |
 | --- | --- |
 | `plan-leg flight/<code> name=… goal=… done-when=… [check=…] [budget=…] [model=…] [effort=…] [item=…]…` | A leg at the end of the order, or a planned one replaced. |
+| `remove-leg flight/<code>/<leg> [why…]` | Takes a planned leg out of the flight; refused, with the leg's state, for one flying, done or failed. |
 | `start-leg flight/<code>/<leg>` | Its worker: `claude --bg -w <plane> -n <name> --permission-mode auto` from the repo's main checkout (a plane git made is not a trusted folder of its own; `-w` enters it under the repo's trust). |
 | `check flight/<code>/<leg> <n or text> [undo]` | Ticks a step. |
 | `finish-leg flight/<code>/<leg> done\|failed [report…]` | Done reruns the check; a failing one leaves the leg flying with the output in its report. |
 | `go-around flight/<code>/<leg> <why…>` | A fresh worker for a flying or failed leg. |
 | `merge flight/<code> <head> [squash\|rebase\|merge]` | With every leg done: `gh pr merge --match-head-commit`, by the node's `merge-method` (rebase unless set otherwise) when none is named; refused when the PR moved past the head you reviewed, or the plane holds commits past it; then the flight lands. |
+
+**A planned leg can be taken out** (`remove-leg`, `pilot leg remove <code> <leg> [why]`, **Remove** on the Flights page
+for the next planned leg, which half-writes the command bar for its why): a leg planned by mistake, or made redundant by
+an earlier one, no longer waits in the order for the node to fly it. Only a planned leg goes; a flying, done or failed
+one is refused, naming its state. The legs after it close up the order (so their numbering and the next `plan-leg`
+stay contiguous), a Handled card says the leg went, who took it out and why, and any card offering its start closes.
+The flight then goes on past it as it does after a leg is done: its next planned leg starts, or, with every leg done,
+its PR opens. The removal is journaled as a `legRemoved` event (the renumbered legs as `legChanged` ones), so a
+restarted node and a client resuming the stream both replay it.
 
 ### Reviews
 
@@ -266,6 +276,7 @@ pilot flight pr <code> [title…]                # pushes the plane, opens its P
 pilot flight merge <code> <head> [--method squash|rebase|merge]   # or --squash, --rebase, --merge
 pilot flight land <code>
 pilot leg plan <code> <name> --goal … --done-when … [--check …] [--budget …] [--model …] [--effort …] [--item …]…
+pilot leg remove <code> <leg> [why…]           # takes a planned leg out of the flight
 pilot leg start <code> <leg>
 pilot leg finish done|failed [report…]         # done: the node reruns the check
 pilot leg go-around <why…>
@@ -549,7 +560,7 @@ node, a slow one or a hook it cannot read prints nothing, which lets the stop th
 A session the API stopped (its transcript's `apiError`, `usage_limit_reached` with when the limit resets) shows as
 **stopped** with why and when it can go on, hooks or not.
 
-## The wire (`NodeWire.Version` 1)
+## The wire (`NodeWire.Version` 2)
 
 | Route | What it does |
 | --- | --- |

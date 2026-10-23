@@ -221,6 +221,18 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>Takes a leg out of its flight; nothing happens when there is none.</summary>
+    public void RemoveLeg(string flight, string name)
+    {
+        lock (_gate)
+        {
+            if (_legs.ContainsKey((flight, name)))
+            {
+                Publish(new LegRemovedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = flight, Name = name });
+            }
+        }
+    }
+
     /// <summary>The cards, newest first; open ones only when <paramref name="openOnly"/>.</summary>
     public CardRow[] Cards(bool openOnly = false)
     {
@@ -557,6 +569,9 @@ public sealed class NodeState
                 break;
             case LegChangedEvent changed:
                 _legs[(changed.Leg.Flight, changed.Leg.Name)] = changed.Leg;
+                break;
+            case LegRemovedEvent removed:
+                _legs.Remove((removed.Flight, removed.Name));
                 break;
             case CardAddedEvent added:
                 _cards[added.Card.Id] = added.Card;

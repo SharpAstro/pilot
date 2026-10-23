@@ -186,6 +186,10 @@ public static class PilotCommand
         var start = Action(new Command("start", "Start a fresh worker on the leg, in the flight's plane") { Arguments = { code, legName } },
             (p, client, ct) => SendAsync(client, Verbs.StartLeg, Verbs.LegTarget(p.GetValue(code)!, p.GetValue(legName)!), [], who, output, ct));
 
+        var removeWhy = Words("why", "Why it goes: said on the card the removal leaves", required: false);
+        var remove = Action(new Command("remove", "Take a planned leg out of the flight; the legs after it keep their order") { Arguments = { code, legName, removeWhy } },
+            (p, client, ct) => SendAsync(client, Verbs.RemoveLeg, Verbs.LegTarget(p.GetValue(code)!, p.GetValue(legName)!), p.GetValue(removeWhy) ?? [], who, output, ct));
+
         var outcome = Arg("outcome", "done, failed, or accepted (the controller's: a failed leg's read taken as it is, so the flight goes on)");
         outcome.AcceptOnlyFromAmong("done", "failed", "accepted");
         var report = Words("report", "A line on what was done, or why not", required: false);
@@ -200,7 +204,7 @@ public static class PilotCommand
         var extend = Action(new Command("extend", "Raise the leg's budget") { Arguments = { tokens }, Options = { leg } },
             (p, client, ct) => OnLeg(p, client, Verbs.ExtendBudget, _ => [p.GetValue(tokens)!], ct));
 
-        var legCommand = new Command("leg", "Legs: plan, start, finish, go around, extend") { Subcommands = { plan, start, finish, goAround, extend } };
+        var legCommand = new Command("leg", "Legs: plan, remove, start, finish, go around, extend") { Subcommands = { plan, remove, start, finish, goAround, extend } };
 
         // check, artifact
         var step = Words("step", "The step's number, or the start of its text");

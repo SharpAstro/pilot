@@ -23,6 +23,7 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(FlightChangedEvent), "flightChanged")]
 [JsonDerivedType(typeof(LegAddedEvent), "legAdded")]
 [JsonDerivedType(typeof(LegChangedEvent), "legChanged")]
+[JsonDerivedType(typeof(LegRemovedEvent), "legRemoved")]
 [JsonDerivedType(typeof(CardAddedEvent), "cardAdded")]
 [JsonDerivedType(typeof(CardChangedEvent), "cardChanged")]
 [JsonDerivedType(typeof(UsageChangedEvent), "usageChanged")]
@@ -166,6 +167,19 @@ public sealed record LegAddedEvent : NodeEvent
 public sealed record LegChangedEvent : NodeEvent
 {
     public required LegRow Leg { get; init; }
+}
+
+/// <summary>
+/// A planned leg was taken out of its flight (<c>remove-leg</c>). The legs after it come as changed rows when they were
+/// renumbered, so a client only drops the one named.
+/// </summary>
+public sealed record LegRemovedEvent : NodeEvent
+{
+    /// <summary>The flight's code.</summary>
+    public required string Flight { get; init; }
+
+    /// <summary>The leg's name.</summary>
+    public required string Name { get; init; }
 }
 
 /// <summary>A card was raised.</summary>
