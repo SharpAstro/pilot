@@ -294,6 +294,91 @@ public sealed class LegCommanderTests : IDisposable
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "oops")).Error.ShouldNotBeNull().ShouldContain("key=value");
     }
 
+    [Fact]
+    public async Task APlannedLegIsRemovedTheLegsAfterItKeepTheirOrderAndAHandledCardSaysWhy()
+    {
+        await FlightWithTwoLegs();
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=docs", "goal=Write it up", "done-when=It reads")).Ok.ShouldBeTrue();
+        await Leg(Verbs.Planned, "flight/TIA1", "three legs");
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.PlannedKind);
+
+        (await Leg(Verbs.RemoveLeg, "flight/TIA1/parser", "the", "render", "covers", "it")).Ok.ShouldBeTrue();
+
+        _state.Legs("TIA1").Select(l => (l.Name, l.Order)).ShouldBe([("render", 1), ("docs", 2)]);
+        var card = _state.Cards().Single(c => c.Kind == LegCommander.LegRemovedKind);
+        (card.Bin, card.Title, card.Detail).ShouldBe((CardBin.Handled, "TIA1/parser removed by tests", "the render covers it"));
+        // The plan's card offered to start the leg that went.
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.PlannedKind);
+
+        // A leg planned afterwards goes at the end of what is left.
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=polish", "goal=g", "done-when=d")).Ok.ShouldBeTrue();
+        L("polish").Order.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task OnlyAPlannedLegIsRemovedAFlyingDoneOrFailedOneIsRefusedWithWhy()
+    {
+        await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+
+        (await Leg(Verbs.RemoveLeg, "flight/TIA1/parser")).Error.ShouldBe("TIA1/parser is flying; only a planned leg is taken out");
+        _state.PutLeg(L("parser") with { State = LegState.Done });
+        (await Leg(Verbs.RemoveLeg, "flight/TIA1/parser")).Error.ShouldBe("TIA1/parser is done; only a planned leg is taken out");
+        _state.PutLeg(L("render") with { State = LegState.Failed });
+        (await Leg(Verbs.RemoveLeg, "flight/TIA1/render")).Error.ShouldBe("TIA1/render is failed; only a planned leg is taken out");
+        (await Leg(Verbs.RemoveLeg, "flight/TIA1/nothing")).Error.ShouldBe("TIA1 has no leg nothing");
+        (await Leg(Verbs.RemoveLeg, "flight/TIA1")).Error.ShouldNotBeNull().ShouldContain("takes a leg target");
+
+        _state.Legs("TIA1").Select(l => (l.Name, l.State)).ShouldBe([("parser", LegState.Done), ("render", LegState.Failed)]);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.LegRemovedKind);
+    }
+
+    [Fact]
+    public async Task TheFlightGoesOnPastARemovedLegToTheOneAfterIt()
+    {
+        await FlightWithTwoLegs();
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=docs", "goal=Write it up", "done-when=It reads")).Ok.ShouldBeTrue();
+        _state.PutLeg(L("parser") with { State = LegState.Done });
+
+        // Not advancing (the default): the removal alone starts nothing.
+        (await Leg(Verbs.RemoveLeg, "flight/TIA1/render")).Ok.ShouldBeTrue();
+        _workers.Started.ShouldBeEmpty();
+
+        _legs.Models = new RoleModels(null);
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=render", "goal=Draw the planets", "done-when=The capture shows them")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.RemoveLeg, "flight/TIA1/docs")).Ok.ShouldBeTrue();
+
+        // docs was in front of render and gone, so render, the next planned leg, is the one that starts.
+        L("render").State.ShouldBe(LegState.Flying);
+        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-tia1-render");
+        L("render").Order.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ARemovedLegStaysRemovedWhenTheJournalIsReplayed()
+    {
+        var folder = Path.Combine(_root, "journal");
+        using (var journal = new FileJournal(folder))
+        {
+            var state = new NodeState(journal, TimeProvider.System);
+            var git = new GitCli();
+            var flights = new FlightCommander(state, new Planes(git), TimeProvider.System);
+            var legs = new LegCommander(state, _workers, _checks, _github, git, new Planes(git), flights, new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1"), TimeProvider.System);
+            (await flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+            foreach (var name in new[] { "parser", "render", "docs" })
+            {
+                (await legs.RunAsync(new CommandRequest { Verb = Verbs.PlanLeg, Target = "flight/TIA1", Args = [$"name={name}", "goal=g", "done-when=d"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+            }
+
+            (await legs.RunAsync(new CommandRequest { Verb = Verbs.RemoveLeg, Target = "flight/TIA1/render", Args = ["not needed"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        }
+
+        using var again = new FileJournal(folder);
+        var restored = new NodeState(again, TimeProvider.System);
+        restored.Legs("TIA1").Select(l => (l.Name, l.Order)).ShouldBe([("parser", 1), ("docs", 2)]);
+        restored.Cards().Single(c => c.Kind == LegCommander.LegRemovedKind).Detail.ShouldBe("not needed");
+    }
+
     private const string UsesDirLib = """
         <Project>
           <PropertyGroup>

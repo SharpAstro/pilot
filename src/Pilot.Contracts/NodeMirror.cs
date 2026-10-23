@@ -116,6 +116,9 @@ public sealed class NodeMirror
             case LegChangedEvent changed:
                 _legs[(changed.Leg.Flight, changed.Leg.Name)] = changed.Leg;
                 break;
+            case LegRemovedEvent removed:
+                _legs.Remove((removed.Flight, removed.Name));
+                break;
             case CardAddedEvent added:
                 _cards[added.Card.Id] = added.Card;
                 break;

@@ -38,12 +38,12 @@ public sealed class FlyingTests
     public void AFlightOffersWhatItsStageAllows()
     {
         Labels(Line(Flight())).ShouldBe(["Plan a leg"]);
-        Labels(Line(Flight(), Leg("parser", 1, LegState.Planned), Leg("render", 2, LegState.Planned))).ShouldBe(["Start parser", "Plan a leg"]);
+        Labels(Line(Flight(), Leg("parser", 1, LegState.Planned), Leg("render", 2, LegState.Planned))).ShouldBe(["Start parser", "Remove parser", "Plan a leg"]);
         Labels(Line(Flight(), Leg("parser", 1, LegState.Done), Leg("render", 2, LegState.Flying))).ShouldBe(["Go around render", "Plan a leg"]);
         Labels(Line(Flight(), Leg("parser", 1, LegState.Done))).ShouldBe(["Open PR", "Plan a leg"]);
         Labels(Line(Flight(pr: 7, review: new ReviewRow { State = ReviewState.Changes, Reviewer = "r", StartedAt = Live.At }), Leg("parser", 1, LegState.Done)))
             .ShouldBe(["Review again", "Plan a leg"]);
-        Labels(Line(Flight(FlightState.Held), Leg("parser", 1, LegState.Planned))).ShouldBe(["Plan a leg"]);
+        Labels(Line(Flight(FlightState.Held), Leg("parser", 1, LegState.Planned))).ShouldBe(["Remove parser", "Plan a leg"]);
         Labels(Line(Flight(FlightState.Landed), Leg("parser", 1, LegState.Done))).ShouldBeEmpty();
 
         // What needs words goes to the command bar, half written; what does not is a verb at once.
@@ -51,6 +51,8 @@ public sealed class FlyingTests
         actions[0].Prefill.ShouldBe("leg go-around --leg TIA1611/parser ");
         FlightAction.For(Line(Flight(), Leg("parser", 1, LegState.Planned)))[0]
             .ShouldBe(new FlightAction("Start parser", Verbs.StartLeg, "flight/TIA1611/parser", []), new FlightActionComparer());
+        FlightAction.For(Line(Flight(), Leg("parser", 1, LegState.Planned)))[1].Prefill.ShouldBe("leg remove TIA1611 parser ");
+        Labels(Line(Flight(), Leg("parser", 1, LegState.Flying), Leg("render", 2, LegState.Planned))).ShouldBe(["Go around parser", "Remove render", "Plan a leg"]);
     }
 
     [Fact]

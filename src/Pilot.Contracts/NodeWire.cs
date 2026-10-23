@@ -11,8 +11,11 @@ namespace Pilot.Contracts;
 /// </remarks>
 public static class NodeWire
 {
-    /// <summary>1: the node skeleton (#41): node info, the event stream with the session rows, one command route.</summary>
-    public const int Version = 1;
+    /// <summary>
+    /// 1: the node skeleton (#41): node info, the event stream with the session rows, one command route. 2: the
+    /// <c>legRemoved</c> event (<c>remove-leg</c>), which a client that does not know it cannot read.
+    /// </summary>
+    public const int Version = 2;
 
     /// <summary>Which node this is.</summary>
     public const string NodeRoute = "/api/v1/node";
