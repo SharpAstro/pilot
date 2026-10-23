@@ -466,7 +466,7 @@ FleetScreen? fleet = null;
 ReposScreen? repos = null;
 FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
 // A card about a leg opens its worker's transcript from the moment the card was raised.
-chrome.LinkCardTranscripts(() => screen, () => flights ?? new FlightsScreen([], screen.Source, screen.AsOf));
+chrome.LinkCardTranscripts(() => screen, () => flights ?? new FlightsScreen([], screen.Source, screen.AsOf), jobs: () => jobs ?? new JobsScreen([], screen.Source, screen.AsOf));
 chrome.LinkRepos();
 chrome.Repos.OnOpen = location => DashboardCommands.Open(location);
 loop.OnResize = (w, h) =>
