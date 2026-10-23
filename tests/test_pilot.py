@@ -2495,6 +2495,38 @@ class PullRequestTests(Case):
         self.assertEqual((g["ahead"], g["prs"]), (1, []), "on no remote: no PR, and one commit past its base")
         self.assertEqual(pilot.collateral_now({**w, "final": {"commits": ""}}).get("ahead"), None, "no tip kept: nothing to read")
 
+    def test_a_removed_worktrees_leftover_folder_is_not_read_as_the_main_checkouts_files(self):
+        repo = ROOT / "wt-repo"
+        shutil.rmtree(repo, ignore_errors=True)
+        git = lambda *a, cwd=repo: subprocess.run(["git", "-C", str(cwd), "-c", "user.name=t", "-c", "user.email=t@t", *a],
+                                                  check=True, capture_output=True, text=True).stdout.strip()
+        repo.mkdir()
+        git("init", "-q", "-b", "main")
+        git("commit", "-q", "--allow-empty", "-m", "base")
+        wt = repo / ".claude" / "worktrees" / "w-build"
+        git("worktree", "add", "-q", "-b", "worktree-w-build", str(wt))
+        git("commit", "-q", "--allow-empty", "-m", "the fix", cwd=wt)
+        (repo / "other-session.txt").write_text("someone else's work", encoding="utf-8")   # uncommitted in the main checkout
+        (wt / "mine.txt").write_text("the leg's own", encoding="utf-8")
+        self.config(repos={"web-app": str(repo)})
+        w = {"repo": "web-app", "branch": "worktree-w-build", "base": "main", "worktree": str(wt), "started": 0}
+
+        g = pilot.collateral_now(w)
+        self.assertTrue(pilot.worktree_live(wt))
+        self.assertEqual((g["worktree"], g["dirtyFiles"]), (True, ["?? mine.txt"]), "a live worktree reads as before")
+
+        git("worktree", "remove", "--force", str(wt))
+        wt.mkdir(parents=True)                        # the folder survives with leftovers and no .git link
+        (wt / "TODO.md").write_text("left over", encoding="utf-8")
+        g = pilot.collateral_now(w)
+        self.assertFalse(pilot.worktree_live(wt))
+        self.assertEqual((g["worktree"], g["dirty"], g["dirtyFiles"]), (False, 0, []), "the main checkout's files are not the leg's")
+        self.assertEqual(g["ahead"], 1, "its branch is still read from the repo")
+
+        shutil.rmtree(wt)
+        g = pilot.collateral_now(w)
+        self.assertEqual((pilot.worktree_live(wt), g["worktree"], g["dirty"]), (False, False, 0))
+
 
     def test_checks_fold_to_one_word(self):
         pr = lambda **kw: pilot.pr_view({"number": 1, "state": "OPEN", **kw})
