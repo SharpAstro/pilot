@@ -263,6 +263,8 @@ internal sealed class PilotChrome<TSurface>
             // (Segoe UI Emoji, Noto Color Emoji), or none, and the rail falls back to the UI face.
             var emoji = FontResolver.ResolveEmojiFont();
             Rail.EmojiFontPath = emoji.Length > 0 ? emoji : null;
+            // A landed card's title starts with 🛬, which the UI face lacks as well.
+            Cards.EmojiFontPath = emoji.Length > 0 ? emoji : null;
         }
     }
 
