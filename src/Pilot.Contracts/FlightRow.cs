@@ -54,6 +54,47 @@ public sealed record FlightRow
 
     /// <summary>Its review: a fresh session reading the branch before the merge is offered; null before its PR opens.</summary>
     public ReviewRow? Review { get; init; }
+
+    /// <summary>
+    /// The other flights the planner found this one overlapping, each with the answer to it: a pair is asked once, so
+    /// a recorded answer is never asked about again.
+    /// </summary>
+    public OverlapRow[] Overlaps { get; init; } = [];
+}
+
+/// <summary>
+/// A flight found to overlap another (<c>overlap flight/&lt;this&gt; &lt;other&gt; &lt;why…&gt;</c>), and what became of
+/// it: pending while a card asks the controller, then <see cref="OverlapAnswer.Fold"/> or <see cref="OverlapAnswer.Separate"/>.
+/// </summary>
+public sealed record OverlapRow
+{
+    /// <summary>The code of the flight it overlaps.</summary>
+    public required string Other { get; init; }
+
+    /// <summary>Why it looks like part of the other, as the planner said it.</summary>
+    public required string Why { get; init; }
+
+    public required OverlapAnswer Answer { get; init; }
+
+    /// <summary>When it was asked, then when it was answered.</summary>
+    public required DateTimeOffset At { get; init; }
+}
+
+/// <summary>What the controller answered to an overlap.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<OverlapAnswer>))]
+public enum OverlapAnswer
+{
+    /// <summary>A card asks; the flight's leg planning waits.</summary>
+    [JsonStringEnumMemberName("pending")]
+    Pending,
+
+    /// <summary>The flight folds into the other.</summary>
+    [JsonStringEnumMemberName("fold")]
+    Fold,
+
+    /// <summary>The flight is planned on its own; it connects to the other if it still depends on it.</summary>
+    [JsonStringEnumMemberName("separate")]
+    Separate,
 }
 
 /// <summary>

@@ -191,8 +191,13 @@ public static class PilotCommand
         var plannedSummary = Words("summary", "The plan in a line or two", required: false);
         var planned = Action(new Command("planned", "The planner is done: a card shows the legs and starts the first") { Arguments = { code, plannedSummary } },
             (p, client, ct) => Send(client, Verbs.Planned, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(plannedSummary) ?? [], who, ct));
-        var flight = new Command("flight", "Flights: create, plan, connect, open a PR, review, merge, land")
-            { Subcommands = { create, planFlight, planned, connect, pr, reviewStart, merge, land } };
+        var overlapWhy = Words("why", "Why it looks like part of the other");
+        var overlap = Action(new Command("overlap", "The planner found the flight to look like part of another: asks the controller to fold it in or plan it separately") { Arguments = { code, other, overlapWhy } },
+            (p, client, ct) => Send(client, Verbs.Overlap, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!, .. p.GetValue(overlapWhy) ?? []], who, ct));
+        var separate = Action(new Command("separate", "Plan the flight on its own despite the overlap: a fresh planner is started, told the answer") { Arguments = { code, other } },
+            (p, client, ct) => Send(client, Verbs.Separate, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
+        var flight = new Command("flight", "Flights: create, plan, overlap, connect, open a PR, review, merge, land")
+            { Subcommands = { create, planFlight, planned, overlap, separate, connect, pr, reviewStart, merge, land } };
 
         // leg
         var name = Arg("name", "The leg's name: lower-case letters, digits and dashes");
@@ -739,6 +744,10 @@ public static class PilotCommand
             if (verb == Verbs.CreateIssue && result.Made is { Length: > 0 } issueNumber)
             {
                 await output.WriteLineAsync($"created issue #{issueNumber}");
+            }
+            if (verb is Verbs.Overlap or Verbs.Separate && result.Made is { Length: > 0 } told)
+            {
+                await output.WriteLineAsync(told);
             }
             if (verb is Verbs.CreateFlight or Verbs.OpenPr)
             {

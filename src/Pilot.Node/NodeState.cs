@@ -353,9 +353,10 @@ public sealed class NodeState
         }
     }
 
-    // Record equality compares the connections array by reference.
+    // Record equality compares the connections and overlaps arrays by reference.
     private static bool Same(FlightRow a, FlightRow b) =>
-        a with { Connections = [] } == b with { Connections = [] } && a.Connections.SequenceEqual(b.Connections, StringComparer.Ordinal);
+        a with { Connections = [], Overlaps = [] } == b with { Connections = [], Overlaps = [] }
+        && a.Connections.SequenceEqual(b.Connections, StringComparer.Ordinal) && a.Overlaps.SequenceEqual(b.Overlaps);
 
     /// <summary>The jobs, newest first.</summary>
     public JobRow[] Jobs()
