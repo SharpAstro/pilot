@@ -152,10 +152,11 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
 
 /// <summary>
 /// The Flights page: every flight as a row, its code and title, repo and issue, state, branch and sessions; the selected
-/// flight's legs, review, artifacts and actions beneath; and, live, a command bar that takes the CLI's own commands, so a
+/// flight's legs, review, artifacts and actions beneath; its page (Enter, a double click) with every leg's goal,
+/// Done-when, checklist and artifacts; and, live, a command bar that takes the CLI's own commands, so a
 /// flight is flown from this window alone. Generic over the surface, as the sessions view is.
 /// </summary>
-internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
 {
     public const string ListId = "flights";
 
@@ -202,6 +203,7 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
     private int _count;
+    private FlightsScreen _screen = new([], "", default);
 
     /// <summary>Whether there is a node to command: a snapshot file has none, and shows no actions or command bar.</summary>
     public bool CanCommand { get; set; }
@@ -264,6 +266,7 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
                 });
             }
         }
+        items.Add(new DropdownItem<string>("Open flight", "flight") { OnChoose = () => OpenDetail(flight.Code) });
         if (OnOpen is { } open)
         {
             if (flight.PullRequestUrl is { } url)
@@ -321,6 +324,7 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
             ListCursor.Open(ListId, Math.Clamp(ListCursor.Index, 0, screen.Lines.Count - 1), screen.Lines.Count);
         }
         _count = screen.Lines.Count;
+        _screen = screen;
         CommandInput.OnCommit = CommitAsync;
         CommandInput.Placeholder = "a pilot command: flight create 1611 --repo <checkout> · leg start TIA1611 gpu · cards";
         return Build(screen);
@@ -374,15 +378,28 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
                     return false;
             }
         }
-        return evt is InputEvent.KeyDown key && HandleListKey(key.Key, key.Modifiers);
+        // Enter opens the selected flight's page; Escape goes back to the table.
+        if (evt is InputEvent.KeyDown { Key: InputKey.Enter } && !IsDetailOpen && Selected >= 0 && Selected < _screen.Lines.Count)
+        {
+            OpenDetail(_screen.Lines[Selected].Code);
+            return true;
+        }
+        if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && IsDetailOpen)
+        {
+            CloseDetail();
+            return true;
+        }
+        return !IsDetailOpen && evt is InputEvent.KeyDown key && HandleListKey(key.Key, key.Modifiers);
     }
 
     internal Layout.Node Build(FlightsScreen screen)
     {
         var selected = Selected >= 0 && Selected < screen.Lines.Count ? screen.Lines[Selected] : null;
-        // The wizard takes the flights' place while it is open; the header and the command bar stay.
-        var parts = new List<Layout.Node> { Header(screen), (Wizard.IsOpen ? Wizard.Tree() : Main(screen)).HStar() };
-        if (selected is not null && !Wizard.IsOpen)
+        var open = OpenLine(screen);
+        // The wizard, or an open flight's page, takes the flights' place; the header and the command bar stay.
+        var body = Wizard.IsOpen ? Wizard.Tree() : open is not null ? DetailPage(FlightDetail.From(open, screen.AsOf)) : Main(screen);
+        var parts = new List<Layout.Node> { Header(screen), body.HStar() };
+        if (selected is not null && !Wizard.IsOpen && open is null)
         {
             parts.Add(Details(selected));
         }
@@ -443,7 +460,7 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
             artifacts.Add(Layout.Builder.Text("nothing to look at yet", 12f, Dim).RowH(20f));
         }
 
-        var buttons = new List<Layout.Node>();
+        var buttons = new List<Layout.Node> { Pill("Open flight", $"flight:{line.Code}:open", () => OpenDetail(line.Code)) };
         if (CanCommand)
         {
             foreach (var action in FlightAction.For(line))
@@ -620,7 +637,12 @@ internal sealed class FlightsView<TSurface>(Renderer<TSurface> renderer) : Pixel
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index))
-            .WithContextMenu(at => OpenMenu(line, index, at));
+            .WithContextMenu(at => OpenMenu(line, index, at))
+            .DoubleClickable(_ =>
+            {
+                ListCursor.MoveTo(index);
+                OpenDetail(line.Code);
+            });
         // The selection stated as a background too: a terminal paints no focus of its own, and on pixels it is the focus colour.
         return index == Selected ? row.Bg(RowFocusBg) : (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }

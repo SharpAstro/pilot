@@ -12,7 +12,7 @@ the [Pilot v2 design](https://claude.ai/code/artifact/0ebd8a10-0b5c-475b-a909-2e
 | `Pilot.Node.Tests` | xunit.v3 tests against a real node on a temp socket. |
 | `Pilot.Cli` | The CLI, `pilot`: the node's commands, for the controller, workers and scripts; native AOT. |
 | `Pilot.Gui` | The GUI, `pilot-gui`: every session on the machine as a row, live from the node, and a bar to say something to the selected one; on DIR.Lib and SdlVulkan.Renderer, native AOT. |
-| `Pilot.Gui.Tests` | xunit.v3 tests rendering the sessions view on the CPU from the sample snapshot, the live feed on a fake stream, and the say bar. |
+| `Pilot.Gui.Tests` | xunit.v3 tests rendering the sessions view on the CPU from the sample snapshot, the live feed on a fake stream, the say bar, and a flight's page (its legs, checklists and artifacts) as a view model, on pixels and in cells. |
 
 ## Build, test, run
 
@@ -33,6 +33,7 @@ does. Run the GUI:
 ```bash
 pilot-gui [--node-socket <path>] [--exit-after 5s]           # the window, live from the node
 pilot-gui [--node-socket <path>] --capture out.png [--size 1280x800]   # one CPU frame of the node's rows now, plus out.png.rows.txt
+pilot-gui [--node-socket <path>] --capture out.png --page flights --flight TIA1611   # the page of one flight (legs, checklists, artifacts)
 pilot-gui [--node-socket <path>] --say <session> <text...>   # say it through the node, print what became of it, exit
 pilot-gui --snapshot <file.json> [--capture out.png]         # a snapshot file instead of the node (the contract's sample: Pilot.Contracts/Fixtures)
 ```
@@ -338,6 +339,18 @@ artifacts (a click opens them), and what can be done with it now: **Start <leg>*
 at once; **Go around** and **Plan a leg** half-write the command bar for the words they need. The command bar (Ctrl+K)
 takes the CLI's own commands, run in-process through the same command tree (`Pilot.Commands`) the `pilot` binary and,
 later, an MCP server (#70) host: `flight create 1611 --repo C:\src\tianwen`, `leg plan …`, `cards`.
+
+**A flight's page** opens in place of the table: Enter on the selected flight, a double click, **Open flight** in its
+panel or right-click menu; Escape or **Back to the flights** goes back. Its header has the flight's state, its PR and
+review, and the same actions as the panel. Each leg follows in the flight's order as a block: its state, how many steps
+are ticked and its go-arounds, then its **Goal**, **Done when** (and the **Check** the node reruns, when it has one),
+every checklist step as `[x]` or `[ ]`, the worker's **Report** (**Why it failed** on a failed leg) and the artifacts
+its sessions recorded (`pilot artifact`), each at its latest (a title recorded again replaces the earlier one), newest
+first. An artifact's title opens it: a URL in the browser, a path in its viewer, and a path also has **folder**, which
+opens the folder it is in. All of it is the node's own leg rows (`LegRow.Checklist`, `.DoneWhen`, `.Artifacts`), so the
+page needs nothing the node does not already send, and pilot-tui shows the same page (the view model is
+`FlightDetail` in `Pilot.Ui`). `pilot-gui --capture out.png --page flights --flight <code>` renders one, with its text
+in `out.png.rows.txt`.
 
 The right panel is the watchtower's: its state and context, its Remote Control link, a box to tell it things, then the
 cards with their buttons (Merge is a card's) and what was handled.
