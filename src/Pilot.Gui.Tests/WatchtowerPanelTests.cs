@@ -91,9 +91,16 @@ public sealed class WatchtowerPanelTests
         view.NoteTold("still here", true, "told");
         var cards = Enumerable.Range(0, 40).Select(i => Card($"c{i}")).ToList();
 
-        var text = Describe(view, CardsScreen.From(cards, [Tower()]), rows: 30);
+        var arranged = Layout.Engine.Arrange(view.Tree(CardsScreen.From(cards, [Tower()])), new Rect<int>(0, 0, 38, 30), CellMeasureContext.PixelAuthored);
 
-        text.ShouldContain("told · still here");
+        // Arranged inside the 30-row viewport, so the box is pinned and not scrolled out with the cards.
+        var told = arranged.First(a => CellLayout.Describe([a]).Contains("told · still here", StringComparison.Ordinal));
+        (told.Bounds.Y + told.Bounds.Height).ShouldBeLessThanOrEqualTo(30);
+        // The text input is the row right under the told line, in view too.
+        var input = arranged.Where(a => a.Bounds.Y == told.Bounds.Bottom && a.Bounds.Width > 0).ToList();
+        input.ShouldNotBeEmpty();
+        input.ShouldAllBe(a => a.Bounds.Bottom <= 30);
+        arranged.Any(a => CellLayout.Describe([a]).Contains("card c39", StringComparison.Ordinal) && a.Bounds.Y + a.Bounds.Height <= 30).ShouldBeFalse();
     }
 
     [Fact]
@@ -111,6 +118,22 @@ public sealed class WatchtowerPanelTests
         chrome.ShowsCards.ShouldBeTrue();
     }
 
+    /// <summary>How many pixels in the panel's bottom rows are the card colour the foot is painted on.</summary>
+    private static int FootRows(RgbaImageRenderer renderer)
+    {
+        var px = renderer.Surface.Pixels;
+        var n = 0;
+        for (var y = 700; y < 800; y++)
+        {
+            for (var x = 1280 - 300; x < 1280; x++)
+            {
+                var i = (y * 1280 + x) * 4;
+                n += px[i] == 0x1f && px[i + 1] == 0x21 && px[i + 2] == 0x2b ? 1 : 0;
+            }
+        }
+        return n;
+    }
+
     [Fact]
     public void ACpuRenderPaintsTheBox()
     {
@@ -121,12 +144,22 @@ public sealed class WatchtowerPanelTests
 
         chrome.Render(new SessionsScreen([], "test", Live.At), null, CardsScreen.From([Card("c1")], [Tower()]), new RectF32(0, 0, 1280, 800));
 
-        // Something is painted in the panel's foot: its background is the card colour, not the panel's.
-        var x = 1280 - 20;
-        var pixels = Enumerable.Range(700, 90).Select(y => renderer.Surface.Pixels[(y * 1280 + x) * 4]).Distinct().Count();
-        pixels.ShouldBeGreaterThan(0);
+        // The foot is painted on the card colour; the panel's bottom rows hold it.
+        FootRows(renderer).ShouldBeGreaterThan(1000);
         var regions = new List<ClickableRegion>();
         chrome.Cards.CollectPaintedRegions(regions);
         regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).ShouldContain("watchtower:rc");
+    }
+
+    [Fact]
+    public void ASnapshotRenderPaintsNoBox()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Cards.CanTell = false;
+
+        chrome.Render(new SessionsScreen([], "test", Live.At), null, CardsScreen.From([Card("c1")], [Tower()]), new RectF32(0, 0, 1280, 800));
+
+        FootRows(renderer).ShouldBe(0);
     }
 }
