@@ -134,6 +134,9 @@ prefix, `--machine` or `PILOT_MACHINE`, else from its name).
 | `create-flight repo/<path> <issue> [title…]` | Codes the flight and makes its plane; `<path>` may be any checkout of the repo, a worktree included. Without a title it takes the issue's; the result names the code it made. |
 | `plan-flight flight/<code>` | A planner, `<machine>-<flight>-plan`, in the plane: it reads the issue and the code and plans the legs (`plan-leg`), writing no code, then says `planned`. |
 | `planned flight/<code> [summary…]` | The planner is done: a For-you card lists the legs, with **Start** on the first. No leg may be named `plan`. |
+| `overlap flight/<code> <other> <why…>` | The planner found the flight to look like part of another. A pair not asked before is recorded pending on the flight and rings one card (**Fold into <other>**, **Plan separately**); `plan-leg` and `planned` on the flight are refused while it waits, and the planner is told to end its turn (it is started again with the answer). A pair answered already returns the answer, with no card. Refused for an unknown, landed or the same flight. |
+| `fold flight/<code> <other>` | The answer that the flight is part of the other. Not built yet: refused, the card stays open. |
+| `separate flight/<code> <other>` | The answer to plan on its own: recorded on the flight (kept over a restart), the card closed, the waiting planner stopped and a fresh one started, whose brief lists the flight's overlap answers (so it connects to the other if it still depends on it). |
 | `connect flight/<code> <other>` | The flight holds until the other has landed (a cycle is refused). |
 | `sync-repos node` | `git fetch -p --all` in each tracked repo, then a fast-forward-only merge of `origin/<default>` into its main checkout. Never a merge commit or a pull, and a checkout that is dirty, on another branch, diverged from origin or without an origin default is left alone and the outcome says why; a failed fetch or fast-forward is that repo's `failed`. Each git call is cut off after 2 minutes. The result's `made` is one `name<TAB>updated\|current\|skipped\|failed<TAB>detail` line per repo, and the repo status is read afresh after it. The controller's: refused from the watchtower, and from the LAN without a grant. |
 | `create-issue repo/<path> <title> [body…]` | A new issue through `gh issue create`; the result's `made` is its number. The controller's, as `sync-repos` is. |
@@ -381,6 +384,8 @@ pilot issue create <title> [--body <text>] [--repo <path>]   # a new issue throu
 pilot flight create <issue> [title…] [--repo <path>]
 pilot flight plan <code>                       # a planner plans the legs from the issue
 pilot flight planned <code> [summary…]         # what the planner says when it is done
+pilot flight overlap <code> <other> <why…>     # the planner: this flight looks like part of <other>; rings a Fold / Plan separately card
+pilot flight separate <code> <other>           # plan it on its own: a fresh planner is started, told the answer
 pilot flight connect <code> <other>
 pilot flight pr <code> [title…]                # pushes the plane, opens its PR (body: the legs, Closes #<issue>)
 pilot flight merge <code> <head> [--method squash|rebase|merge]   # or --squash, --rebase, --merge

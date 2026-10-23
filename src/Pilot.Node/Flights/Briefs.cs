@@ -229,6 +229,17 @@ public static class Briefs
                 text.AppendLine($"- {leg.Name} ({leg.State.ToString().ToLowerInvariant()}): {leg.Goal}");
             }
         }
+        if (flight.Overlaps.Where(o => o.Answer != OverlapAnswer.Pending).ToList() is { Count: > 0 } answered)
+        {
+            text.AppendLine();
+            text.AppendLine("Overlaps the controller has answered (never ask about them again):");
+            foreach (var overlap in answered)
+            {
+                text.AppendLine(overlap.Answer == OverlapAnswer.Separate
+                    ? $"- {overlap.Other} ({overlap.Why}): the controller chose to plan {flight.Code} separately. If it still depends on {overlap.Other}'s work, connect it: `{run} flight connect {flight.Code} {overlap.Other}`."
+                    : $"- {overlap.Other} ({overlap.Why}): the controller chose to fold {flight.Code} into it.");
+            }
+        }
         text.AppendLine();
         text.AppendLine("## Plan each leg");
         text.AppendLine($"`{run} leg plan {flight.Code} <name> --goal \"…\" --done-when \"…\" --check \"<command>\" --item \"<step>\" --item \"<step>\"`");

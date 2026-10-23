@@ -248,6 +248,26 @@ public static class Verbs
     public const string Planned = "planned";
 
     /// <summary>
+    /// <c>overlap flight/&lt;code&gt; &lt;other&gt; &lt;why…&gt;</c>: the planner found the flight to look like part of another.
+    /// A pair not asked before is recorded pending and rings one card (<c>Fold</c> or <c>Plan separately</c>); the flight's
+    /// <c>plan-leg</c> and <c>planned</c> are refused while it waits, and the planner is told to end its turn, as it is
+    /// started again with the answer. A pair answered already returns the answer with no new card.
+    /// </summary>
+    public const string Overlap = "overlap";
+
+    /// <summary>
+    /// <c>fold flight/&lt;code&gt; &lt;other&gt;</c>: the answer that the flight is part of the other. Not built yet: it is
+    /// refused, and the card stays open.
+    /// </summary>
+    public const string Fold = "fold";
+
+    /// <summary>
+    /// <c>separate flight/&lt;code&gt; &lt;other&gt;</c>: the answer that the flight is planned on its own. Records it, closes the
+    /// card, stops the waiting planner and starts a fresh one told the answer.
+    /// </summary>
+    public const string Separate = "separate";
+
+    /// <summary>
     /// <c>stop session/&lt;id&gt;</c>: stops a running background session (<c>claude stop</c>); its row ends. An interactive
     /// one is refused: someone is at it.
     /// </summary>

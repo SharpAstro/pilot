@@ -41,16 +41,25 @@ public sealed partial class LegCommander(
     public static bool Handles(string verb) =>
         verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.ValidateLeg or Verbs.Check or Verbs.FinishLeg or Verbs.GoAround or Verbs.Merge
             or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review
-            or Verbs.PlanFlight or Verbs.Planned;
+            or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Fold or Verbs.Separate;
 
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         await _one.WaitAsync(cancellationToken);
         string? error = null;
+        string? made = null;
         try
         {
             switch (command.Verb)
             {
+                case Verbs.Overlap:
+                    made = AskOverlap(command);
+                    break;
+                case Verbs.Fold:
+                    throw new FlightException("folding a flight into another is not built yet: plan it separately, or dismiss the card");
+                case Verbs.Separate:
+                    made = await SeparateAsync(command, cancellationToken);
+                    break;
                 case Verbs.PlanLeg:
                     Plan(command);
                     break;
@@ -133,7 +142,7 @@ public sealed partial class LegCommander(
                 error = $"merged, but the flight did not land: {ex.Message}";
             }
         }
-        return state.Complete(command, error);
+        return state.Complete(command, error, made: made);
     }
 
     /// <summary>
@@ -220,6 +229,11 @@ public sealed partial class LegCommander(
         {
             return;
         }
+        // Its planner's question about an overlapping flight is not answered: no leg starts until it is.
+        if (current.Overlaps.Any(o => o.Answer == OverlapAnswer.Pending))
+        {
+            return;
+        }
         var legs = state.Legs(current.Code).OrderBy(l => l.Order).ToList();
         if (legs.Count == 0 || legs.Any(l => l.State is LegState.Flying or LegState.Failed))
         {
@@ -270,6 +284,7 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"{flight.Code} has landed; a further leg is a further flight");
         }
+        HoldForOverlap(flight);
 
         string? name = null, goal = null, doneWhen = null, check = null, model = null, effort = null;
         long? budget = null;
@@ -819,7 +834,8 @@ public sealed partial class LegCommander(
     /// A planner in the flight's plane: it reads the issue and the code, plans the legs, and says <c>planned</c>. It writes
     /// no code; a flight that has legs already gets more after them.
     /// </summary>
-    private async Task StartPlannerAsync(FlightRow flight, CancellationToken cancellationToken)
+    /// <param name="replacing">The planner on it was stopped by the caller: the one-planner refusal does not look at it.</param>
+    private async Task StartPlannerAsync(FlightRow flight, CancellationToken cancellationToken, bool replacing = false)
     {
         if (flight.State == FlightState.Landed)
         {
@@ -828,9 +844,9 @@ public sealed partial class LegCommander(
         var planner = $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{PlanLeg}";
         // One planner a flight: a second would plan the same legs over the first's. Live by its row, or started here so
         // lately that the tracker has not listed it yet (PIL118's plan-flight, sent twice two seconds apart, 2026-10-23).
-        if (state.Sessions().Any(s => string.Equals(s.Name, planner, StringComparison.OrdinalIgnoreCase)
+        if (!replacing && (state.Sessions().Any(s => string.Equals(s.Name, planner, StringComparison.OrdinalIgnoreCase)
                 && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle)
-            || (_plannersStarted.TryGetValue(flight.Code, out var at) && time.GetUtcNow() - at < PlannerListedWithin))
+            || (_plannersStarted.TryGetValue(flight.Code, out var at) && time.GetUtcNow() - at < PlannerListedWithin)))
         {
             throw new FlightException($"{planner} is planning {flight.Code} already; wait for its planned card, or stop it first");
         }
@@ -842,7 +858,7 @@ public sealed partial class LegCommander(
         }
         await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
         var brief = Briefs.Plan(flight, state.Legs(flight.Code), Briefs.Run(Cli, Socket));
-        await workers.StartAsync(new WorkerStart(planner, flight.RepoPath, PlaneOf(flight), brief, Models.Model(RoleModels.Planner), Models.Effort(RoleModels.Planner)), cancellationToken);
+        _plannerJobs[flight.Code] = await workers.StartAsync(new WorkerStart(planner, flight.RepoPath, PlaneOf(flight), brief, Models.Model(RoleModels.Planner), Models.Effort(RoleModels.Planner)), cancellationToken);
         _plannersStarted[flight.Code] = time.GetUtcNow();
         state.RaiseCard(CardBin.Handled, "planner-started", Verbs.FlightTarget(flight.Code), $"Started {planner} to plan {flight.Code}'s legs");
     }
@@ -853,12 +869,16 @@ public sealed partial class LegCommander(
 
     // When this node last started each flight's planner: the tracker lists a new session a poll later.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _plannersStarted = new(StringComparer.OrdinalIgnoreCase);
+
+    // The job of each flight's planner this node started, so an overlap answer can stop it; one of an earlier run is found by its session row.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _plannerJobs = new(StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan PlannerListedWithin = TimeSpan.FromMinutes(2);
 
     /// <summary><c>planned flight/&lt;code&gt; &lt;summary&gt;</c>: a card with the legs and the first one's start.</summary>
     private void Planned(CommandRequest command)
     {
         var flight = FlightOf(command.Target);
+        HoldForOverlap(flight);
         var legs = state.Legs(flight.Code).OrderBy(l => l.Order).ToList();
         if (legs.FirstOrDefault(l => l.State == LegState.Planned) is not { } first)
         {
