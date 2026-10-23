@@ -140,7 +140,9 @@ prefix, `--machine` or `PILOT_MACHINE`, else from its name).
 done only with every change committed (its worker's brief says so, and the node refuses a dirty plane); a merge is
 refused while the plane holds commits past the reviewed head, so a late commit cannot miss the PR; landing by hand is
 refused while the plane holds a commit on no remote and not in its base (compared by patch, so rebase-merged work
-counts as in); a flight whose PR was merged on GitHub with something left out does not land but rings with it. Once
+counts as in); a flight whose PR was merged on GitHub with something left out does not land but rings with it. Before
+any of that, a session ending its turn in a plane with files not committed is sent back to commit them (the Stop gate,
+under Hooks). Once
 landed, the plane's worktree is removed and its branch kept. PRs are merged by rebase unless the node's `merge-method`
 says otherwise, so every commit's subject, which a repo's docs may cite, reaches main.
 
@@ -504,8 +506,10 @@ node or the watchtower did itself: one line, born closed). A session going quiet
 how its row looks. A flying leg's worker stalling is: its flight is derailing (see Liveness). A card leaves when its
 thing is done: answered, dismissed, or closed by the node when its flight lands or its leg finishes. Raised so far: a
 PR opened with every leg done rings with **Merge** on that head; a failed leg rings with **Go around**; a landed flight
-is a For-you card; a leg started with a sibling clone behind its origin raises a For-you `sibling-behind` card; and the leg watch's cards (`worker-stopped`, `-idle`, `-waiting`, `-failed`, `-missing`, and the
-Handled `worker-resumed` and `worker-nudged`).
+is a For-you card; a leg started with a sibling clone behind its origin raises a For-you `sibling-behind` card; the leg
+watch's cards (`worker-stopped`, `-idle`, `-waiting`, `-failed`, `-missing`, and the Handled `worker-resumed` and
+`worker-nudged`); and a session that stopped twice in a turn with files not committed in its plane rings
+(`stopped-uncommitted`, see Hooks).
 
 Each choice is a command; `answer card/<id> <n or label>` runs it as the one answering, through the same route as any
 command, and closes the card (opening it again if the command is refused). `dismiss card/<id> [why]` closes it with
@@ -524,9 +528,22 @@ pilot-node hooks remove  [--settings <file>]
 ```
 
 `install` adds one handler per event (SessionStart, UserPromptSubmit, PreToolUse, PermissionRequest, Notification,
-Stop, StopFailure, SessionEnd), exec-form `pilot-node hook` and `async`, beside whatever hooks the file has, and a
-second install changes nothing; `remove` takes out only pilot's. `pilot-node hook` forwards the hook's stdin to the
-node and always exits 0 and prints nothing, so a missing or slow node costs a session nothing.
+Stop, StopFailure, SessionEnd), exec-form `pilot-node hook` and `async` but for Stop, beside whatever hooks the file
+has, and a second install changes nothing; `remove` takes out only pilot's. `pilot-node hook` forwards the hook's stdin
+to the node and always exits 0, printing nothing but the node's answer to a Stop it holds (below), so a missing or slow
+node costs a session nothing. An install from before the Stop gate shows in setup as not installed; installing again
+puts it right.
+
+**The Stop gate: nothing is left behind in a plane.** A session that ends its turn in a flight's plane (its cwd the
+plane's worktree or a folder in it, of a flight not landed) with files not committed there is sent back: the node
+answers `{"decision":"block","reason":"…"}`, the reason naming the files (`git status --porcelain`, the first three)
+and telling it to commit or drop them, and Claude Code carries on with that as the session's next instruction. Once
+per turn: a stop Claude Code marks `stop_hook_active` (one a Stop hook already sent back) is let through, and if the
+files are still there the node rings (`stopped-uncommitted`, about the flying leg, with **Tell it again**); a later
+stop with the plane clean closes the ring. Only a plane the node flies counts, not Claude Code's own worktrees beside
+it under `.claude/worktrees`; every other session, a subagent and any other event get no answer. This is why Stop's
+handler is not `async`: Claude Code never reads an async hook's output. It waits for the node at most 2 s, and no
+node, a slow one or a hook it cannot read prints nothing, which lets the stop through.
 
 A session the API stopped (its transcript's `apiError`, `usage_limit_reached` with when the limit resets) shows as
 **stopped** with why and when it can go on, hooks or not.
