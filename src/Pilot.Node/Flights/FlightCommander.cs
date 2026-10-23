@@ -118,12 +118,13 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
     /// Lands <paramref name="code"/> as <c>land</c> does, for a merge that has just put its work in: one at a time with
     /// the flight verbs. Throws <see cref="FlightException"/> with why it could not.
     /// </summary>
-    public async Task LandAfterMergeAsync(string code, CancellationToken cancellationToken)
+    /// <param name="mergedHead">The head the PR merged at: the plane may hold nothing past it.</param>
+    public async Task LandAfterMergeAsync(string code, string mergedHead, CancellationToken cancellationToken)
     {
         await _one.WaitAsync(cancellationToken);
         try
         {
-            await LandFlightAsync(Find(Verbs.FlightTarget(code)), cancellationToken);
+            await LandFlightAsync(Find(Verbs.FlightTarget(code)), cancellationToken, mergedHead);
         }
         finally
         {
@@ -133,7 +134,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
 
     private Task LandAsync(CommandRequest command, CancellationToken cancellationToken) => LandFlightAsync(Find(command.Target), cancellationToken);
 
-    private async Task LandFlightAsync(FlightRow flight, CancellationToken cancellationToken)
+    private async Task LandFlightAsync(FlightRow flight, CancellationToken cancellationToken, string? mergedHead = null)
     {
         if (flight.State == FlightState.Landed)
         {
@@ -155,6 +156,21 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
                     // Gone already.
                 }
             }
+        }
+        // Nothing of the flight's is left where nobody looks: no commit that is on no remote and not in main (TIA1658's
+        // last read was one, until it was landed by hand). Such a plane is not landed; it says which commits.
+        // After a merge, everything up to the merged head is in: only commits past it would be left behind.
+        var mainRef = flight.Base.Length > 0 ? flight.Base : "origin/main";
+        if (mergedHead is not null)
+        {
+            if (await planes.PastAsync(flight.Worktree, mergedHead, cancellationToken) is { Count: > 0 } past)
+            {
+                throw new FlightException($"{flight.Code} merged at {mergedHead[..Math.Min(8, mergedHead.Length)]}, but its plane holds {past.Count} commit{(past.Count == 1 ? "" : "s")} past it: {string.Join("; ", past)}. Land {(past.Count == 1 ? "it" : "them")} in a PR of {(past.Count == 1 ? "its" : "their")} own, then land the flight");
+            }
+        }
+        else if (await planes.UnlandedAsync(flight.Worktree, mainRef, cancellationToken) is { Count: > 0 } loose)
+        {
+            throw new FlightException($"{flight.Code}'s plane holds {loose.Count} commit{(loose.Count == 1 ? "" : "s")} on no remote and not in {mainRef}: {string.Join("; ", loose)}. Push {(loose.Count == 1 ? "it" : "them")} (flight pr) or drop {(loose.Count == 1 ? "it" : "them")}, then land");
         }
         var leftover = await planes.RemoveAsync(flight.RepoPath, flight.Worktree, cancellationToken);
         if (leftover is not null)

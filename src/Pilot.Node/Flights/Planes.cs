@@ -182,6 +182,59 @@ public sealed class Planes(IGit git)
     }
 
     /// <summary>
+    /// The plane's commits whose change is nowhere else: on no remote branch, and not in <paramref name="mainRef"/> by
+    /// patch (a rebase-merged commit is in main under another id; a squash-merged one is not, so it counts while its
+    /// branch is gone from the remote). Their subjects, oldest first; empty when every commit is pushed or merged, or the
+    /// plane cannot be read.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> UnlandedAsync(string worktree, string mainRef, CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(worktree))
+        {
+            return [];
+        }
+        await git.RunAsync(["fetch", "--quiet", "origin"], worktree, cancellationToken);
+        var unpushed = await git.RunAsync(["rev-list", "--reverse", "HEAD", "--not", "--remotes"], worktree, cancellationToken);
+        var cherry = await git.RunAsync(["cherry", mainRef, "HEAD"], worktree, cancellationToken);
+        if (!unpushed.Ok || !cherry.Ok)
+        {
+            return [];
+        }
+        var notInMain = cherry.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(l => l.StartsWith('+')).Select(l => l[1..].Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var loose = new List<string>();
+        foreach (var sha in unpushed.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(notInMain.Contains))
+        {
+            var subject = await git.RunAsync(["log", "-1", "--format=%h %s", sha], worktree, cancellationToken);
+            loose.Add(subject.Ok ? subject.Output.Trim() : sha[..Math.Min(9, sha.Length)]);
+        }
+        return loose;
+    }
+
+    /// <summary>The plane's commits past <paramref name="head"/> (subjects, oldest first): what a merge at that head left out.</summary>
+    public async Task<IReadOnlyList<string>> PastAsync(string worktree, string head, CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(worktree))
+        {
+            return [];
+        }
+        var past = await git.RunAsync(["log", "--reverse", "--format=%h %s", $"{head}..HEAD"], worktree, cancellationToken);
+        return past.Ok ? past.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+    }
+
+    /// <summary>Whether the plane holds changes not committed, in a line, or null when it is clean (or gone).</summary>
+    public async Task<string?> UncommittedAsync(string worktree, CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(worktree))
+        {
+            return null;
+        }
+        var status = await git.RunAsync(["status", "--porcelain"], worktree, cancellationToken);
+        var lines = status.Ok ? status.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries) : [];
+        return lines.Length == 0 ? null : $"{lines.Length} file{(lines.Length == 1 ? "" : "s")} not committed ({string.Join(", ", lines.Take(3).Select(l => l.Trim()))}{(lines.Length > 3 ? ", ..." : "")})";
+    }
+
+    /// <summary>
     /// Removes a landed plane's worktree, keeping its branch. Refuses one with changes not committed: its work would go
     /// with it. A worktree already gone, or torn down by Claude Code, is fine.
     /// </summary>

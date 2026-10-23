@@ -416,6 +416,31 @@ public sealed class LegCommanderTests : IDisposable
     }
 
     [Fact]
+    public async Task NoLegFinishesAndNoFlightLandsWithItsWorkLeftWhereNobodyLooks()
+    {
+        var flight = await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        foreach (var i in Enumerable.Range(1, L("parser").Checklist.Length))
+        {
+            await Leg(Verbs.Check, "flight/TIA1/parser", i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        // A file not committed: the leg is not done until it is committed or dropped.
+        File.WriteAllText(Path.Combine(flight.Worktree, "parser.cs"), "class Parser {}\n");
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done")).Error.ShouldBe("TIA1/parser's plane has 1 file not committed (?? parser.cs): commit them (or drop them), then finish");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "the parser");
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done")).Ok.ShouldBeTrue();
+
+        // That commit is on no remote and not in main: landing by hand would leave it on a branch nobody looks at.
+        var land = await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct);
+        land.Error.ShouldNotBeNull().ShouldContain("TIA1's plane holds 1 commit on no remote and not in");
+        land.Error.ShouldContain("the parser");
+        Directory.Exists(flight.Worktree).ShouldBeTrue();
+        _state.Flights().Single().State.ShouldBe(FlightState.Flying);
+    }
+
+    [Fact]
     public async Task APlaneAlreadyTornDownStillLands()
     {
         var flight = await FlightWithTwoLegs();

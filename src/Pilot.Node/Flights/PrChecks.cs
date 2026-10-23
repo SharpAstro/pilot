@@ -50,7 +50,15 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 state.CloseCard(card.Id, merged ? $"merged on GitHub as #{number}" : $"#{number} closed on GitHub without a merge", "github");
                 if (merged && flights is not null)
                 {
-                    await flights.LandAfterMergeAsync(flight.Code, cancellationToken);
+                    try
+                    {
+                        await flights.LandAfterMergeAsync(flight.Code, pr.Head, cancellationToken);
+                    }
+                    catch (FlightException ex)
+                    {
+                        // Merged, but something of the flight's would be left behind: said on a ring, never left in a log.
+                        state.RaiseCard(CardBin.Ring, "not-landed", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number} merged on GitHub, but the flight did not land", ex.Message);
+                    }
                 }
                 continue;
             }
