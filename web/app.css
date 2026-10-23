@@ -457,6 +457,7 @@ tr.click { cursor: pointer; } tr.click:hover td { background: color-mix(in srgb,
 .plan .amlist li.amend.classified { border-left-color: var(--fill); }
 .plan .amlist li.amend.done { border-left-color: var(--good); }
 .plan .amlist li.amend.to-the-controller { border-left-color: var(--warn); }
+.plan .amlist li.amend.launched { border-left-color: var(--good); }
 .plan .amhead { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
 .amclass { font-size: 12px; border: 1px solid var(--ring); border-radius: 999px; padding: 0 8px; white-space: nowrap; color: var(--ink-2); }
 .amclass.fold, .amclass.leg { border-color: var(--fill); color: var(--fill); }

@@ -691,9 +691,15 @@ def plan_notes(text):
 #   - **A2** · 2026-10-14 21:45 · classified · <request>
 #     - Class: fold · Leg: orrery · Why: <the pilot's reason, one line>
 #     - Budget: +3,000,000 to orrery
+# A new flight's line says the controller launched it: `Launched: <time>`, then ` · Session: <id>` once the launched
+# pilot's session is known, which the dashboard links.
+#   - **A3** · 2026-10-14 22:00 · classified · <request>
+#     - Class: flight · Why: <the pilot's reason, one line>
+#     - Launched: 2026-10-14 22:10 · Session: <session id>
 AMENDMENT_RE = re.compile(r"^- \*\*(A\d+)\*\* · (\d{4}-\d\d-\d\d \d\d:\d\d) · (open|classified) · (.*)$")
 AMEND_CLASS_RE = re.compile(r"^\s+- Class:\s*(\w*)(?: · Leg:\s*(.*?))?(?: · Why:\s*(.*?))?\s*$")
 AMEND_BUDGET_RE = re.compile(r"^\s+- Budget:\s*\+([\d,]+) to (\S+)\s*$")
+AMEND_LAUNCH_RE = re.compile(r"^\s+- Launched:\s*(\d{4}-\d\d-\d\d \d\d:\d\d)(?: · Session:\s*(\S+))?\s*$")
 AMEND_CLASSES = ("fold", "leg", "flight")
 
 AMENDED = ("(pilot.py) Amendment {id} to flight {flight} was filed by the controller: {text} -- Classify it as your "
@@ -714,15 +720,20 @@ def amendments_part(text):
 
 
 def plan_amendments(text):
-    """A plan's amendments in order: {id, at, text, status, class, leg, why, budget, budgetLeg}. An open one has
-    no class, leg or why; budget is a fold's, the tokens amend-budget added to budgetLeg so far, from a line of its
-    own, and empty without one."""
+    """A plan's amendments in order: {id, at, text, status, class, leg, why, budget, budgetLeg, launched,
+    launchedSession}. An open one has no class, leg or why; budget is a fold's, the tokens amend-budget added to
+    budgetLeg so far, from a line of its own, and empty without one; launched is when the controller launched a new
+    flight from it (empty until then), launchedSession that pilot's session once known."""
     part, out = amendments_part(text), []
     for ln in (text[part[0]:part[1]] if part else "").splitlines():
         m = AMENDMENT_RE.match(ln)
         if m:
             out.append({"id": m.group(1), "at": m.group(2), "status": m.group(3), "text": m.group(4).strip(),
-                        "class": "", "leg": "", "why": "", "budget": "", "budgetLeg": ""})
+                        "class": "", "leg": "", "why": "", "budget": "", "budgetLeg": "", "launched": "", "launchedSession": ""})
+            continue
+        la = AMEND_LAUNCH_RE.match(ln)
+        if la and out:
+            out[-1].update({"launched": la.group(1), "launchedSession": la.group(2) or ""})
             continue
         b = AMEND_BUDGET_RE.match(ln)
         if b and out:
@@ -743,7 +754,14 @@ def add_amendment(sid, request):
         raise ValueError("pilot: an amendment needs the request: what the controller wants changed")
     p = plan_path(sid)
     t = p.read_text(encoding="utf-8")
-    aid = f"A{max([int(a['id'][1:]) for a in plan_amendments(t)] + [0]) + 1}"
+    have = plan_amendments(t)
+    # The same request twice is one amendment: a second Ctrl+Enter during a slow filing, or a request sent again.
+    # Compared as the plan keeps it, one line, in any case.
+    twin = next((a for a in have if a["text"].casefold() == request.casefold()), None)
+    if twin:
+        raise ValueError(f"pilot: amendment {twin['id']} already files this request for this flight; it is not filed again "
+                         f"(a request that is new says so in its words)")
+    aid = f"A{max([int(a['id'][1:]) for a in have] + [0]) + 1}"
     line = f"- **{aid}** · {time.strftime('%Y-%m-%d %H:%M')} · open · {request}\n"
     part = amendments_part(t)
     if part:
@@ -821,9 +839,9 @@ def amendment_additions(amendments, leg):
     return sum(a["budget"] for a in amendments if a["class"] == "fold" and a["budgetLeg"] == leg and isinstance(a["budget"], int))
 
 
-def write_amendment_budget(sid, aid, total, leg):
-    """Writes an amendment's Budget line, `+<total> to <leg>`, in place of the one it had, else after the lines
-    under it, so each amendment keeps one, its additions added up."""
+def write_amendment_line(sid, aid, pattern, line):
+    """Writes the indented line an amendment keeps of one kind (`pattern` matches it) in place of the one it had,
+    else after the lines under it. The other lines under it stay."""
     t = plan_path(sid).read_text(encoding="utf-8")
     start, end = amendments_part(t)
     lines, out, i = t[start:end].splitlines(keepends=True), [], 0
@@ -834,20 +852,60 @@ def write_amendment_budget(sid, aid, total, leg):
         if not m or m.group(1) != aid:
             continue
         while i < len(lines) and lines[i][:1].isspace() and lines[i].strip():
-            if not AMEND_BUDGET_RE.match(lines[i].rstrip("\n")):
+            if not pattern.match(lines[i].rstrip("\n")):
                 out.append(lines[i])
             i += 1
-        out.append(f"  - Budget: +{total:,} to {leg}\n")
+        out.append(line + "\n")
     plan_path(sid).write_text(t[:start] + "".join(out) + t[end:], encoding="utf-8")
+
+
+def write_amendment_budget(sid, aid, total, leg):
+    """Writes an amendment's Budget line, `+<total> to <leg>`, in place of the one it had, else after the lines
+    under it, so each amendment keeps one, its additions added up."""
+    write_amendment_line(sid, aid, AMEND_BUDGET_RE, f"  - Budget: +{total:,} to {leg}")
+
+
+def launchable_amendment(sid, aid):
+    """The new-flight amendment `aid` of plan `sid` that the controller may launch from: classified flight and not
+    launched yet, else a ValueError says why. Returns the amendment."""
+    aid = str(aid or "").strip().upper()
+    a = next((a for a in plan_amendments(plan_path(sid).read_text(encoding="utf-8")) if a["id"] == aid), None)
+    if not a:
+        raise ValueError(f"pilot: this flight has no amendment {aid}")
+    if a["status"] != "classified" or a["class"] != "flight":
+        raise ValueError(f"pilot: amendment {aid} is not a new flight handed back to you, so there is nothing to launch from it")
+    if a["launched"]:
+        raise ValueError(f"pilot: amendment {aid} was already launched as a flight at {a['launched']}")
+    return a
+
+
+def launched_amendment(sid, aid, session=""):
+    """Records that the controller launched a new flight from amendment `aid`: a `Launched: <time>` line under it,
+    with the launched pilot's `session` once that is known (called again for it, which keeps the time). The first
+    record is logged. Returns the amendment's id."""
+    aid = str(aid or "").strip().upper()
+    a = next((a for a in plan_amendments(plan_path(sid).read_text(encoding="utf-8")) if a["id"] == aid), None)
+    if not a:
+        raise ValueError(f"pilot: this flight has no amendment {aid}")
+    if a["class"] != "flight":
+        raise ValueError(f"pilot: amendment {aid} is not a new flight handed back to you")
+    session = str(session or "").strip() or a["launchedSession"]
+    if session and not re.fullmatch(r"[0-9a-f-]{36}", session):
+        raise ValueError("pilot: a launched flight's session is a session id")
+    write_amendment_line(sid, aid, AMEND_LAUNCH_RE,
+                         f"  - Launched: {a['launched'] or time.strftime('%Y-%m-%d %H:%M')}" + (f" · Session: {session}" if session else ""))
+    if not a["launched"]:
+        plan_log(sid, f"Amendment {aid} launched by the controller as a new flight")
+    return aid
 
 
 def amendment_states(amendments, states):
     """Each amendment's `state` for the dashboard: open; classified; done once its leg is done (DONE, checklist
-    complete, as the plan card counts a leg done); or `to the controller` for a new flight, which it launches.
-    `states` is flight_legs' for the plan."""
+    complete, as the plan card counts a leg done); or for a new flight `to the controller`, which launches it, then
+    `launched` once it has. `states` is flight_legs' for the plan."""
     done = {s["leg"] for s in states if s.get("w") and leg_timing(s["w"])["state"] == "landed"}
     for a in amendments:
-        a["state"] = "open" if a["status"] != "classified" else "to the controller" if a["class"] == "flight" \
+        a["state"] = "open" if a["status"] != "classified" else ("launched" if a["launched"] else "to the controller") if a["class"] == "flight" \
             else "done" if a["leg"] in done else "classified"
     return amendments
 
@@ -5828,6 +5886,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.send(409, {"error": str(e)})
             HUB.poke()
             return self.send(200, {"ok": True, "sessionId": sid, "id": aid, "reached": reached})
+        # The launch form says which session its launch came up as, so the amendment can link that flight.
+        m = re.match(r"^/api/flights/([A-Za-z0-9-]{1,64})/launched$", self.path)
+        if m:
+            try:
+                sid = find_flight(m.group(1))
+                aid = launched_amendment(sid, body.get("id"), body.get("session"))
+            except ValueError as e:
+                return self.send(409, {"error": str(e)})
+            HUB.poke()
+            return self.send(200, {"ok": True, "sessionId": sid, "id": aid})
         m = re.match(r"^/api/flights/([A-Za-z0-9-]{1,64})/(archive|restore)$", self.path)
         if m:
             try:
@@ -5889,8 +5957,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send(200, {"ok": True, "added": added, "reached": reached})
         if self.path == "/api/launch":
             try:
+                # From a new-flight amendment: checked before the launch (a launched one is not launched twice) and
+                # recorded on the amendment once the launch went through.
+                am = body.get("amendment") if isinstance(body.get("amendment"), dict) else None
+                if am:
+                    asid = find_flight(am.get("plan"))
+                    am = (asid, launchable_amendment(asid, am.get("id"))["id"])
                 out = launch(str(body.get("path") or ""), body.get("resume") or None, "background" if body.get("where") == "background" else "terminal",
                              str(body.get("message") or ""), bool(body.get("asPilot", True)), bool(body.get("hold")))
+                if am:
+                    launched_amendment(*am)
             except (ValueError, SystemExit) as e:
                 return self.send(409, {"error": str(e)})
             HUB.poke()
