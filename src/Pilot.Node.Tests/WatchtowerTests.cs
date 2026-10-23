@@ -7,7 +7,7 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>The watchtower: kept running with Remote Control on, fed the cards, kept with its conversation, and rung for when it cannot run.</summary>
-public sealed class WatchtowerTests
+public sealed class WatchtowerTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -17,11 +17,14 @@ public sealed class WatchtowerTests
     private readonly NodeState _state;
     private readonly FakeWorkers _workers = new();
     private readonly List<CommandRequest> _said = [];
-    private readonly NodeOptions _options = new("/tmp/n.sock", "/tmp/pilot2", MachinePrefix: "DU1");
+    // A data folder of its own: the watchtower keeps the fingerprint of its brief there.
+    private readonly string _data = Path.Combine(Path.GetTempPath(), "pilot-watchtower-" + Guid.NewGuid().ToString("N"));
+    private readonly NodeOptions _options;
     private readonly Watchtower _tower;
 
     public WatchtowerTests()
     {
+        _options = new NodeOptions("/tmp/n.sock", _data, MachinePrefix: "DU1");
         _state = new NodeState(new InMemoryJournal(), _time);
         _tower = new Watchtower(_state, _workers, Run, _options, _time) { Pilot = "pilot" };
         // Something to watch: a flight in the air with a leg flying. Tests of a quiet node land it (Quiet).
@@ -32,6 +35,16 @@ public sealed class WatchtowerTests
         });
         _state.PutLeg(new LegRow { Flight = "TIA9", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying });
     }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_data))
+        {
+            Directory.Delete(_data, recursive: true);
+        }
+    }
+
+    private string CurrentBrief() => Briefs.WatchtowerFingerprint("du1-watchtower", "pilot", _tower.Models.Model(RoleModels.Watchtower));
 
     /// <summary>Nothing left to watch: the flight lands, its leg done.</summary>
     private void Quiet()
@@ -207,11 +220,73 @@ public sealed class WatchtowerTests
     {
         _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA1/parser", "TIA1/parser failed");
         Row("a1b2c3d4", SessionState.Idle);
+        Directory.CreateDirectory(_data);
+        File.WriteAllText(_tower.BriefFile, CurrentBrief());
 
         await _tower.LookAsync(Ct);
 
         (_workers.Started.Count, _said.Count).ShouldBe((0, 0));
         _tower.TellTarget().ShouldBe(("session/a1b2c3d4", (string?)null));
+
+        // Told as before: a card that opens later is said to it, on the brief it has.
+        _state.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1's PR #7 is ready to merge");
+        await _tower.LookAsync(Ct);
+        (_workers.Started.Count, _workers.Stopped.Count, _said.Count).ShouldBe((0, 0, 1));
+    }
+
+    [Fact]
+    public async Task OneBriefedByAnOlderNodeIsReplacedByAFreshOneBeforeAnythingIsSaidToIt()
+    {
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA1/parser", "TIA1/parser failed");
+        Row("a1b2c3d4", SessionState.Idle);
+        Directory.CreateDirectory(_data);
+        File.WriteAllText(_tower.BriefFile, "0123456789abcdef");
+
+        await _tower.LookAsync(Ct);
+
+        _workers.Stopped.ShouldBe(["a1b2c3d4"]);
+        var start = _workers.Started.ShouldHaveSingleItem();
+        start.Brief.ShouldContain("TIA1/parser failed");
+        _said.ShouldBeEmpty();
+        _state.Cards().ShouldContain(c => c.Bin == CardBin.Handled && c.Title == "Started a fresh watchtower: its brief changed since the node started it");
+        File.ReadAllText(_tower.BriefFile).ShouldBe(CurrentBrief());
+
+        // The fresh one carries the current brief: it is told what opens next, not started again.
+        Row("job00001", SessionState.Idle);
+        _state.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1's PR #7 is ready to merge");
+        await _tower.LookAsync(Ct);
+        (_workers.Started.Count, _said.Count).ShouldBe((1, 1));
+    }
+
+    [Fact]
+    public async Task OneWithNoRecordOfItsBriefIsTakenAsBriefedByAnOlderNode()
+    {
+        Row("a1b2c3d4", SessionState.Idle);
+
+        await _tower.LookAsync(Ct);
+
+        _workers.Stopped.ShouldBe(["a1b2c3d4"]);
+        _workers.Started.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task TheFingerprintOfAStartedWatchtowerSurvivesTheNodeRestarting()
+    {
+        await _tower.LookAsync(Ct);
+        Row("job00001", SessionState.Idle);
+        File.ReadAllText(_tower.BriefFile).ShouldBe(CurrentBrief());
+
+        // A node restarted over the same data folder finds the one it started, with its brief, and keeps it.
+        var restarted = new Watchtower(_state, _workers, Run, _options, _time) { Pilot = "pilot" };
+        _state.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1's PR #7 is ready to merge");
+        await restarted.LookAsync(Ct);
+        (_workers.Started.Count, _workers.Stopped.Count, _said.Count).ShouldBe((1, 0, 0));
+
+        // The node updated to a changed brief (here the command it names to the watchtower): the one left running is replaced.
+        var updated = new Watchtower(_state, _workers, Run, _options, _time) { Pilot = "pilot2" };
+        await updated.LookAsync(Ct);
+        _workers.Stopped.ShouldBe(["job00001"]);
+        _workers.Started.Count.ShouldBe(2);
     }
 }
 

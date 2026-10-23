@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using Pilot.Contracts;
 
@@ -230,6 +231,44 @@ public static class Briefs
     /// <param name="model">The model the watchtower runs on, when the node chose one (#114): said, so a lighter model rings for a judgement rather than makes it.</param>
     public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot, string? model = null)
     {
+        var text = new StringBuilder(WatchtowerTemplate(name, pilot, model));
+        text.AppendLine("## Where things stand");
+        var flying = flights.Where(f => f.State != FlightState.Landed).ToList();
+        if (flying.Count == 0)
+        {
+            text.AppendLine("No flight is flying.");
+        }
+        foreach (var flight in flying)
+        {
+            var state = flight.State == FlightState.Held ? $"held, waiting for {string.Join(", ", flight.Connections)}" : "flying";
+            text.AppendLine($"- {flight.Code}: {flight.Title ?? $"issue #{flight.Issue}"} ({flight.Repo} #{flight.Issue}, {state}){(flight.PullRequestUrl is { } url ? $", PR {url}" : "")}");
+            foreach (var leg in legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order))
+            {
+                var steps = leg.Checklist.Length == 0 ? "" : $", {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";
+                text.AppendLine($"  {leg.Order}. {leg.Name}: {leg.State.ToString().ToLowerInvariant()}{steps}{(leg.State == LegState.Flying && leg.Worker is { } w ? $", worker {w}" : "")}");
+            }
+        }
+        var open = cards.Where(c => c.State == CardState.Open).ToList();
+        text.AppendLine();
+        text.AppendLine(open.Count == 0 ? "No card is open." : "Open cards:");
+        foreach (var card in open)
+        {
+            text.AppendLine(CardLine(card));
+        }
+        return text.ToString();
+    }
+
+    /// <summary>
+    /// A fingerprint of the watchtower brief's fixed part, the template and rules without the flights and cards it lists
+    /// (those change every time). The node records it with the watchtower it starts: a say resumes the session and so
+    /// keeps its brief, and only a fresh start carries a changed one, so a watchtower whose recorded fingerprint differs
+    /// from this one is replaced (#22).
+    /// </summary>
+    public static string WatchtowerFingerprint(string name, string pilot, string? model = null) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(WatchtowerTemplate(name, pilot, model))))[..16];
+
+    private static string WatchtowerTemplate(string name, string pilot, string? model)
+    {
         var text = new StringBuilder();
         text.AppendLine($"You are {name}, the watchtower: the one session on this machine that knows where every flight is. Workers");
         text.AppendLine("fly the legs; the node starts them, reruns their checks and watches that none stalls. You are the door between");
@@ -276,29 +315,6 @@ public static class Briefs
         text.AppendLine($"- `{pilot} leg extend <tokens> --leg <code>/<leg>`: a leg's budget, raised once by the controller's rule (a Handled line says so).");
         text.AppendLine($"- `{pilot} --help` lists the rest.");
         text.AppendLine();
-        text.AppendLine("## Where things stand");
-        var flying = flights.Where(f => f.State != FlightState.Landed).ToList();
-        if (flying.Count == 0)
-        {
-            text.AppendLine("No flight is flying.");
-        }
-        foreach (var flight in flying)
-        {
-            var state = flight.State == FlightState.Held ? $"held, waiting for {string.Join(", ", flight.Connections)}" : "flying";
-            text.AppendLine($"- {flight.Code}: {flight.Title ?? $"issue #{flight.Issue}"} ({flight.Repo} #{flight.Issue}, {state}){(flight.PullRequestUrl is { } url ? $", PR {url}" : "")}");
-            foreach (var leg in legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order))
-            {
-                var steps = leg.Checklist.Length == 0 ? "" : $", {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";
-                text.AppendLine($"  {leg.Order}. {leg.Name}: {leg.State.ToString().ToLowerInvariant()}{steps}{(leg.State == LegState.Flying && leg.Worker is { } w ? $", worker {w}" : "")}");
-            }
-        }
-        var open = cards.Where(c => c.State == CardState.Open).ToList();
-        text.AppendLine();
-        text.AppendLine(open.Count == 0 ? "No card is open." : "Open cards:");
-        foreach (var card in open)
-        {
-            text.AppendLine(CardLine(card));
-        }
         return text.ToString();
     }
 
