@@ -149,7 +149,18 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         // Closed by the answer before the choice runs: a merge lands its flight, and landing closes the flight's cards,
         // this one included, as landed rather than as the answer it was. Refused, it opens again.
         state.CloseCard(card.Id, choice.Label, command.Who);
-        var result = await RunAsync(new CommandRequest { Verb = choice.Verb, Target = choice.Target, Args = choice.Args, Who = command.Who }, cancellationToken);
+        CommandResult result;
+        try
+        {
+            result = await RunAsync(new CommandRequest { Verb = choice.Verb, Target = choice.Target, Args = choice.Args, Who = command.Who }, cancellationToken);
+        }
+        catch
+        {
+            // Cut off rather than refused (the node stopping for an update mid-merge): the choice never ran, so the card
+            // is open again, never closed on a merge that did not happen (PIL32's #142, 2026-10-23).
+            state.ReopenCard(card.Id);
+            throw;
+        }
         if (!result.Ok)
         {
             state.ReopenCard(card.Id);
