@@ -199,8 +199,12 @@ public sealed class Watchtower(
             state.CloseCardsAbout(Verbs.WatchtowerTarget, "it is running", Down);
             if (Briefed() != BriefFingerprint())
             {
-                // A say would resume it on its old brief: a fresh one is told the new.
-                await StartAsync("its brief changed since the node started it", cancellationToken, row);
+                // A say would resume it on its old brief: a fresh one is told the new. A start that failed is tried again
+                // after the retry time, as any other start is, not stopped and started on every look.
+                if (now >= _nextTry)
+                {
+                    await StartAsync("its brief changed since the node started it", cancellationToken, row);
+                }
                 return;
             }
             await TellNewCardsAsync(row, cancellationToken);
