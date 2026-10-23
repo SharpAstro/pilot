@@ -419,6 +419,20 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Jobs.OnConnect = node => Connect(node.Where, node.Name);
     chrome.Flights.OnConnect = node => Connect(node.Where, node.Name);
     chrome.Cards.OnConnect = node => Connect(node.Where, node.Name);
+    // Forget, from the Settings page's held grant or an unreached Fleet row alike: the token is dropped and the fleet stops
+    // watching that endpoint (a node still heard on the LAN is known again at the next look). Its rows turn watch-only on
+    // the next draw: the steerable set is read again at once, not at the 5 s look.
+    void Forget(string endpoint)
+    {
+        Pilot.Commands.NodeTargets.Forget(endpoint);
+        fleetWatch.Forget(endpoint);
+        fleetKnownAt = DateTimeOffset.MinValue;
+        chrome.Fleet.Said = $"forgot {endpoint}";
+        view.SayStatus = chrome.Fleet.Said;
+        Console.WriteLine($"pilot-gui: forgot {endpoint}");
+        loop.RequestRedraw();
+    }
+    chrome.Fleet.OnForget = line => Forget(line.Where);
     // The Settings page: this machine's node only, as its route is (a node on the LAN keeps its settings to itself).
     if (remoteEndpoint is null)
     {
@@ -430,12 +444,7 @@ if (feed is not null && client is not null && clients is not null)
             ? given
             : throw new InvalidOperationException("the node did not send its grants");
         chrome.Settings.LoadHeld = () => Pilot.Commands.NodeTargets.Granted();
-        // A forgotten node's rows turn watch-only on the next draw: the steerable set is read again at once, not at the 5 s look.
-        chrome.Settings.Forget = endpoint =>
-        {
-            Pilot.Commands.NodeTargets.Forget(endpoint);
-            fleetKnownAt = DateTimeOffset.MinValue;
-        };
+        chrome.Settings.Forget = Forget;
         chrome.Settings.Changed = loop.RequestRedraw;
     }
     feed.Start();

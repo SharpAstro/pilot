@@ -171,6 +171,59 @@ public sealed class FleetTests
         visible.ShouldNotContain(screen.Lines.Count - 1);
     }
 
+    /// <summary>
+    /// A node held in the grants and never reached (not connected, no hello ever) offers Forget; a reached node, this
+    /// window's, or one never reached without a grant does not. Clicking it calls the host's forget with that row.
+    /// </summary>
+    [Fact]
+    public void ANeverReachedGrantedRowOffersForgetAndNoOtherRowDoes()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var fleet = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)).Fleet;
+        var forgotten = new List<string>();
+        fleet.OnForget = line => forgotten.Add(line.Where);
+        var never = Summary("quiet", connected: false) with { Node = null };
+        var screen = new FleetScreen(
+        [
+            FleetLine.From("node.sock", here: true, canCommand: true, null, never),
+            FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, Summary("desktop", "bo@example.org")),
+            FleetLine.From("10.0.0.7:47731", here: false, canCommand: true, null, never),
+            FleetLine.From("10.0.0.5:47731", here: false, canCommand: false, null, never),
+            // Reached once, quiet now: it said hello, so it is no stale grant.
+            FleetLine.From("10.0.0.3:47731", here: false, canCommand: true, null, Summary("gone", connected: false)),
+        ], Live.At);
+
+        var arranged = Layout.Engine.Arrange(fleet.Tree(screen), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored);
+        string[] forgets = [.. arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.EndsWith(":forget", StringComparison.Ordinal))];
+        var pill = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "fleet:10.0.0.7:47731:forget" });
+        CellLayout.HitTest(arranged, pill.Bounds.X + 1, pill.Bounds.Y);
+
+        forgets.ShouldBe(["fleet:10.0.0.7:47731:forget"]);
+        forgotten.ShouldBe(["10.0.0.7:47731"]);
+    }
+
+    /// <summary>Forgetting an endpoint removes its feed: the next screen has no row for it, and the others stay.</summary>
+    [Fact]
+    public async Task ForgettingAnEndpointDropsItsRowFromTheNextScreen()
+    {
+        var nodes = new Dictionary<string, FakeNode>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["10.0.0.9:47731"] = new() { Refuse = new IOException("no node listens") },
+            ["10.0.0.5:47731"] = new(),
+        };
+        await using var watch = new FleetWatch(endpoint => new NodeFeed(nodes[endpoint].Open, endpoint, TimeSpan.FromMilliseconds(20)));
+        watch.Know([("10.0.0.9:47731", null), ("10.0.0.5:47731", null)]);
+        FleetScreen Screen() => watch.Screen("node.sock", Summary("laptop", "ada@example.org"), e => true, Live.At);
+
+        Screen().Lines.Select(l => l.Where).ShouldBe(["node.sock", "10.0.0.5:47731", "10.0.0.9:47731"]);
+        Screen().Lines.Where(l => l.CanForget).Select(l => l.Where).ShouldBe(["10.0.0.5:47731", "10.0.0.9:47731"]);
+
+        watch.Forget("10.0.0.9:47731");
+        watch.Forget("10.0.0.1:47731");
+
+        Screen().Lines.Select(l => l.Where).ShouldBe(["node.sock", "10.0.0.5:47731"]);
+    }
+
     [Fact]
     public void AFleetRowWithNothingWaitingHasNoWaitingButton()
     {

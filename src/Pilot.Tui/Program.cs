@@ -225,6 +225,19 @@ sessions.OnConnect = node => Connect(node.Where, node.Name);
 jobs.OnConnect = node => Connect(node.Where, node.Name);
 flights.OnConnect = node => Connect(node.Where, node.Name);
 cards.OnConnect = node => Connect(node.Where, node.Name);
+// Forget, from the Settings page's held grant or an unreached Fleet row alike: the token is dropped and the fleet stops
+// watching that endpoint (a node still heard on the LAN is known again at the next look). Its rows turn watch-only on
+// the next draw: the steerable set is read again at once, not at the 5 s look.
+void Forget(string endpoint)
+{
+    NodeTargets.Forget(endpoint);
+    fleetWatch.Forget(endpoint);
+    fleetKnownAt = DateTimeOffset.MinValue;
+    fleet.Said = $"forgot {endpoint}";
+    sessions.SayStatus = fleet.Said;
+    Redraw();
+}
+fleet.OnForget = line => Forget(line.Where);
 // The Settings page: this machine's node only, as its route is.
 if (remote is null)
 {
@@ -236,12 +249,7 @@ if (remote is null)
         ? given
         : throw new InvalidOperationException("the node did not send its grants");
     settings.LoadHeld = () => NodeTargets.Granted();
-    // A forgotten node's rows turn watch-only on the next draw: the steerable set is read again at once, not at the 5 s look.
-    settings.Forget = endpoint =>
-    {
-        NodeTargets.Forget(endpoint);
-        fleetKnownAt = DateTimeOffset.MinValue;
-    };
+    settings.Forget = Forget;
     settings.Changed = Redraw;
 }
 feed.Start();
