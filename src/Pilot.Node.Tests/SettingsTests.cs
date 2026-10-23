@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Pilot.Contracts;
 using Pilot.Node.Updates;
 using Shouldly;
@@ -118,6 +119,13 @@ public sealed class SettingsTests : IDisposable
         channel.Choices.ShouldBe(["stable", "beta"]);
         page.Settings.Select(s => s.Key).ShouldBe(NodeSettings.Keys);
         page.Checks.Select(c => c.Key).ShouldContain(NodeSetup.AutostartKey);
+
+        // The job limits are in force at once, no restart: one waiting for the queue would wait on what it is meant to clear.
+        var jobs = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["max-jobs", "3"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        jobs.Way.ShouldBe("max-jobs saved as 3, and in force now");
+        node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().MaxRunning.ShouldBe(3);
+        (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == NodeSettings.MaxJobsKey).ShouldSatisfyAllConditions(
+            s => s.Value.ShouldBe("3"), s => s.Pending.ShouldBeFalse());
 
         var refused = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["max-jobs", "lots"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
         refused.Error.ShouldBe("max-jobs takes a number, 1 to 64");

@@ -9,7 +9,7 @@ namespace Pilot.Node;
 /// which saves a setting and restarts the node to run with it, and <c>setup node &lt;check&gt;</c>, which makes a setup
 /// check's fix. Both verbs are this machine's alone: a grant from the LAN never reaches them.
 /// </summary>
-public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, NodeRestarter restarter, NodeSetup setup, TimeProvider time)
+public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, NodeRestarter restarter, NodeSetup setup, TimeProvider time, Flights.JobRunner jobs)
 {
     // The checks run netsh and gh: a page looked at every few seconds runs them at most this often.
     private static readonly TimeSpan ChecksFor = TimeSpan.FromSeconds(10);
@@ -59,6 +59,14 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         if (Running(key) == (updated.Get(key) is { } now ? Join(key, now) : Default(key)))
         {
             return state.Complete(command, null, way: $"{key} saved as {value}; the node runs with it already");
+        }
+        // The job limits apply at once: a restart for them would wait for the very queue they are meant to clear.
+        if (key is NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey)
+        {
+            jobs.MaxRunning = updated.MaxJobs ?? options.MaxJobs;
+            jobs.MinFreeMemory = (long)((updated.JobMemoryGigabytes ?? options.JobMemoryGigabytes) * (1L << 30));
+            jobs.Pump();
+            return state.Complete(command, null, way: $"{key} saved as {value}, and in force now");
         }
         var restart = restarter.Request($"{key} = {value}");
         return state.Complete(command, null, way: restart ?? $"{key} saved as {value}; the node restarts to run with it");
@@ -127,8 +135,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.RepoRootsKey => Join(key, options.RepoRoots),
         NodeSettings.UpdatePolicyKey => options.UpdatePolicy.Name(),
         NodeSettings.UpdateChannelKey => options.UpdateChannel.Name(),
-        NodeSettings.MaxJobsKey => options.MaxJobs.ToString(CultureInfo.InvariantCulture),
-        NodeSettings.JobMemoryKey => options.JobMemoryGigabytes.ToString(CultureInfo.InvariantCulture),
+        NodeSettings.MaxJobsKey => jobs.MaxRunning.ToString(CultureInfo.InvariantCulture),
+        NodeSettings.JobMemoryKey => (jobs.MinFreeMemory / (double)(1L << 30)).ToString(CultureInfo.InvariantCulture),
         _ => "",
     };
 

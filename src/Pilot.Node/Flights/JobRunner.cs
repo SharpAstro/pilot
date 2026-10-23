@@ -41,11 +41,11 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>How often a running job's step (its last line) is put on the stream, so a long run shows it is alive without a delta per line.</summary>
     public TimeSpan StepEvery { get; init; } = TimeSpan.FromSeconds(10);
 
-    /// <summary>How many jobs run at once; the rest wait their turn.</summary>
-    public int MaxRunning { get; init; } = 1;
+    /// <summary>How many jobs run at once; the rest wait their turn. Set live by <c>set node max-jobs</c>, then <see cref="Pump"/>.</summary>
+    public int MaxRunning { get; set; } = 1;
 
-    /// <summary>The free memory a job needs before it starts: a suite started on a machine already short of it takes the machine down with it.</summary>
-    public long MinFreeMemory { get; init; } = 2L << 30;
+    /// <summary>The free memory a job needs before it starts: a suite started on a machine already short of it takes the machine down with it. Set live by <c>set node job-memory</c>.</summary>
+    public long MinFreeMemory { get; set; } = 2L << 30;
 
     /// <summary>The machine's free memory in bytes, or null when it cannot be read (then memory holds nothing back).</summary>
     public Func<long?> FreeMemory { get; init; } = MachineMemory.Available;
