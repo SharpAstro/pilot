@@ -390,6 +390,16 @@ if (feed is not null && client is not null && clients is not null)
             ? page
             : throw new InvalidOperationException("the node did not send its settings");
         chrome.Settings.Send = (verb, args, ct) => SettingsCommands.SendAsync(client, verb, args, GuiSay.Who, ct);
+        chrome.Settings.LoadGrants = async ct => (await client.GrantsAsync(ct)) is { Success: true, Response: { } given }
+            ? given
+            : throw new InvalidOperationException("the node did not send its grants");
+        chrome.Settings.LoadHeld = () => Pilot.Commands.NodeTargets.Granted();
+        // A forgotten node's rows turn watch-only on the next draw: the steerable set is read again at once, not at the 5 s look.
+        chrome.Settings.Forget = endpoint =>
+        {
+            Pilot.Commands.NodeTargets.Forget(endpoint);
+            fleetKnownAt = DateTimeOffset.MinValue;
+        };
         chrome.Settings.Changed = loop.RequestRedraw;
     }
     feed.Start();

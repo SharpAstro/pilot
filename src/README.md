@@ -673,6 +673,13 @@ makes no backup. With no clone the line says to get runaway-agent from `github.c
 button (a file that is there then passes, as there is nothing to compare it with); a clone too old to have the file says
 so, also with no button.
 
+Below the settings, a **Grants** section (#118) lists, from the same rows and pills, the grants this node has given
+(label, since when, from the node's grants route) each with **Revoke**, which sends `revoke-grant` for that id and cuts
+that machine back to watch-only at once (the list reads again after it, and on opening the page); and the nodes this
+user holds a token for (the token file `pilot connect` writes) each with **Forget**, which drops the token: that node's
+rows in the merged lists turn watch-only with Connect offered, from the next fleet tick (Forget asks for it at once).
+`pilot grants` and `pilot revoke` do as before.
+
 ## Cards
 
 An event that needs the controller is one card, with its choices on it (after Sam's campaigner): **Rings** (a gate
