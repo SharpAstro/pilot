@@ -16,8 +16,9 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         // The watchtower handles what it may; a merge or a landing is the controller's, by any route, a card's included,
-        // and so are the node's settings and setup, and a review posted to GitHub in the controller's name.
-        if (command.Verb is Verbs.Merge or Verbs.Land or Verbs.Review or Verbs.PostReview or Verbs.Set or Verbs.Setup or Verbs.SyncRepos or Verbs.CreateIssue && string.Equals(command.Who, Get<Watchtower>().Name, StringComparison.Ordinal))
+        // and so are the node's settings and setup, and a review posted to GitHub in the controller's name; so is the answer
+        // to an overlap (fold retires a flight the way a landing does, separate restarts a planner on the controller's answer).
+        if (command.Verb is Verbs.Merge or Verbs.Land or Verbs.Review or Verbs.PostReview or Verbs.Set or Verbs.Setup or Verbs.SyncRepos or Verbs.CreateIssue or Verbs.Fold or Verbs.Separate && string.Equals(command.Who, Get<Watchtower>().Name, StringComparison.Ordinal))
         {
             return state.Complete(command, $"{command.Verb} is the controller's, not the watchtower's: leave its card open for them");
         }
