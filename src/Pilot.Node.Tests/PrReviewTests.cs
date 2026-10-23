@@ -1,0 +1,388 @@
+using System.Diagnostics;
+using Pilot.Commands;
+using Pilot.Contracts;
+using Pilot.Node.Flights;
+using Shouldly;
+using Xunit;
+
+namespace Pilot.Node.Tests;
+
+/// <summary>
+/// Git for a PR review's tests: bare repos standing in for GitHub, each with a PR's head at <c>refs/pull/&lt;n&gt;/head</c>
+/// as GitHub keeps it, so the node's fetch of it is a real one.
+/// </summary>
+internal static class PrOrigins
+{
+    public static string Git(string cwd, params string[] args)
+    {
+        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var arg in args)
+        {
+            start.ArgumentList.Add(arg);
+        }
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
+    }
+
+    /// <summary>A bare origin for <paramref name="name"/> under <paramref name="root"/>, its main one commit, and PR <paramref name="number"/> one past it; returns the origin and the PR's head.</summary>
+    public static (string Origin, string Head) Make(string root, string name, int number)
+    {
+        var origin = Path.Combine(root, "github", name + ".git");
+        var work = Path.Combine(root, "work-" + name);
+        Directory.CreateDirectory(work);
+        Git(root, "init", "-q", "--bare", "-b", "main", origin);
+        Git(work, "init", "-q", "-b", "main");
+        File.WriteAllText(Path.Combine(work, "README.md"), "hello\n");
+        Commit(work, "first");
+        Git(work, "remote", "add", "origin", origin);
+        Git(work, "push", "-q", "origin", "HEAD:main");
+        return (origin, Push(work, number, "the change"));
+    }
+
+    /// <summary>One more commit on the PR, pushed to its head as GitHub keeps it; returns the new head.</summary>
+    public static string Push(string work, int number, string what)
+    {
+        File.WriteAllText(Path.Combine(work, $"{Guid.NewGuid():N}.txt"), what + "\n");
+        Commit(work, what);
+        Git(work, "push", "-q", "-f", "origin", $"HEAD:refs/pull/{number}/head");
+        return Git(work, "rev-parse", "HEAD");
+    }
+
+    private static void Commit(string work, string message)
+    {
+        Git(work, "add", ".");
+        Git(work, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", message);
+    }
+
+    /// <summary>Removes a test's folder, git's read-only objects and all.</summary>
+    public static void Delete(string root)
+    {
+        if (!Directory.Exists(root))
+        {
+            return;
+        }
+        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            File.SetAttributes(file, FileAttributes.Normal);
+        }
+        Directory.Delete(root, recursive: true);
+    }
+}
+
+/// <summary>
+/// A review of any PR (#113): pinned at the PR's head in a worktree of the node's own, made in the repo's clone under the
+/// repo roots or in the node's clone cache, its verdict on a card, and its worktree gone once that card closes. GitHub is
+/// a fake gh over bare repos; git is real.
+/// </summary>
+public sealed class PrReviewTests : IDisposable
+{
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2p-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private readonly FakeWorkers _workers = new();
+    private readonly FakeGitHub _github = new();
+    private readonly NodeOptions _options;
+    private readonly PrReviews _reviews;
+
+    /// <summary>acme/widget has a clone under the repo roots; acme/gadget has none.</summary>
+    private readonly string _widgetHead;
+    private readonly string _gadgetHead;
+
+    public PrReviewTests()
+    {
+        var (widget, widgetHead) = PrOrigins.Make(_root, "widget", 7);
+        var (gadget, gadgetHead) = PrOrigins.Make(_root, "gadget", 9);
+        (_widgetHead, _gadgetHead) = (widgetHead, gadgetHead);
+
+        // The clone under the roots names GitHub as its origin, as a real one does; git reads it from the bare repo.
+        Directory.CreateDirectory(Roots);
+        PrOrigins.Git(Roots, "clone", "-q", widget, "widget");
+        PrOrigins.Git(WidgetClone, "config", "remote.origin.url", "https://github.com/acme/widget.git");
+        PrOrigins.Git(WidgetClone, "config", $"url.{widget.Replace('\\', '/')}.insteadOf", "https://github.com/acme/widget.git");
+        _github.Origins["acme/gadget"] = gadget;
+        _github.Prs["acme/widget#7"] = Pr("acme/widget", 7, widgetHead, author: "ada");
+        _github.Prs["acme/gadget#9"] = Pr("acme/gadget", 9, gadgetHead, author: "bob");
+
+        var git = new GitCli();
+        _options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [Roots]);
+        _reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, _options), _options, TimeProvider.System)
+        {
+            SelfFinishGrace = TimeSpan.FromMilliseconds(1),
+        };
+    }
+
+    private string Roots => Path.Combine(_root, "repos");
+
+    private string WidgetClone => Path.Combine(Roots, "widget");
+
+    private string GadgetCache => Path.Combine(_root, "data", "clones", "acme", "gadget");
+
+    private static PullRequest Pr(string repo, int number, string head, string author, string state = "OPEN") =>
+        new(number, state, head, $"https://github.com/{repo}/pull/{number}", Title: $"PR {number} of {repo}", Author: author, Base: "main");
+
+    public void Dispose()
+    {
+        foreach (var clone in new[] { WidgetClone, GadgetCache }.Where(Directory.Exists))
+        {
+            try
+            {
+                PrOrigins.Git(clone, "worktree", "prune");
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+        PrOrigins.Delete(_root);
+    }
+
+    private Task<CommandResult> Run(string verb, string target, string who, params string[] args) =>
+        _reviews.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct);
+
+    private PrReviewRow Row(string repo, int number) => _reviews.Of(new PrRef(repo.Split('/')[0], repo.Split('/')[1], number)).ShouldNotBeNull();
+
+    [Fact]
+    public async Task APrInARepoWithACloneIsReviewedInThatClonePinnedAtItsHead()
+    {
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+
+        var row = Row("acme/widget", 7);
+        (row.State, row.ClonePath, row.Head, row.Reviewer).ShouldBe((PrReviewState.Reviewing, WidgetClone, _widgetHead, "du1-review-widget-7"));
+        row.Worktree.ShouldBe(Path.Combine(WidgetClone, ".claude", "worktrees", "review-widget-7"));
+        _github.Cloned.ShouldBeEmpty();
+
+        // Pinned: the worktree is at the PR's head, on no branch.
+        PrOrigins.Git(row.Worktree, "rev-parse", "HEAD").ShouldBe(_widgetHead);
+        Should.Throw<InvalidOperationException>(() => PrOrigins.Git(row.Worktree, "symbolic-ref", "-q", "HEAD"));
+
+        // A job of the node's, started from the clone into its review worktree, as a flight's reviewer is into its plane.
+        var start = _workers.Started.ShouldHaveSingleItem();
+        (start.Name, start.RepoPath, start.Plane).ShouldBe(("du1-review-widget-7", WidgetClone, "review-widget-7"));
+        row.ReviewerJob.ShouldBe("job00001");
+        start.Brief.ShouldContain("You review PR acme/widget#7: PR 7 of acme/widget, by ada");
+        start.Brief.ShouldContain("git diff origin/main...HEAD");
+        start.Brief.ShouldContain("against the tree");
+        start.Brief.ShouldContain("Never assert a defect you cannot prove");
+        start.Brief.ShouldContain("review <verdict>");
+        start.Brief.ShouldContain("the change");
+        start.Brief.ShouldNotContain("GitHub takes only a comment");
+        _state.Cards().ShouldHaveSingleItem().Kind.ShouldBe(PrReviews.StartedKind);
+    }
+
+    [Fact]
+    public async Task APrInARepoWithNoCloneIsClonedIntoTheCacheOnceAndAFreshReviewEndsTheLast()
+    {
+        (await Run(Verbs.ReviewPr, "pr/acme/gadget#9", "controller")).Error.ShouldBeNull();
+
+        var first = Row("acme/gadget", 9);
+        _github.Cloned.ShouldBe([("acme/gadget", GadgetCache)]);
+        first.ClonePath.ShouldBe(GadgetCache);
+        PrOrigins.Git(first.Worktree, "rev-parse", "HEAD").ShouldBe(_gadgetHead);
+
+        // The PR moves on: the review stays where it was pinned until it is asked for again.
+        var moved = PrOrigins.Push(Path.Combine(_root, "work-gadget"), 9, "a fix");
+        _github.Prs["acme/gadget#9"] = _github.Prs["acme/gadget#9"] with { Head = moved };
+        PrOrigins.Git(first.Worktree, "rev-parse", "HEAD").ShouldBe(_gadgetHead);
+
+        (await Run(Verbs.ReviewPr, "pr/acme/gadget#9", "controller")).Error.ShouldBeNull();
+        var second = Row("acme/gadget", 9);
+        _github.Cloned.Count.ShouldBe(1);
+        _workers.Stopped.ShouldBe([first.ReviewerJob!]);
+        (second.Head, second.ReviewerJob, second.State).ShouldBe((moved, "job00002", PrReviewState.Reviewing));
+        PrOrigins.Git(second.Worktree, "rev-parse", "HEAD").ShouldBe(moved);
+    }
+
+    [Fact]
+    public async Task OnlyTheReviewersVerdictRaisesTheCardAndTheWorktreeGoesWhenTheCardCloses()
+    {
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+        var reviewer = Row("acme/widget", 7).Reviewer;
+
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", "controller", "approve", "fine")).Error.ShouldBe("only du1-review-widget-7 gives acme/widget#7's verdict");
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", reviewer, "pass", "fine")).Error.ShouldNotBeNull().ShouldContain("approve, changes or comment");
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", reviewer, "changes")).Error.ShouldNotBeNull().ShouldContain("needs its report");
+        (await Run(Verbs.PrVerdict, "pr/acme/gadget#9", reviewer, "approve", "fine")).Error.ShouldBe("acme/gadget#9 has no review; review-pr starts one");
+
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", reviewer, "changes", "One defect.\nREADME.md:1 says hello to no one")).Error.ShouldBeNull();
+
+        var row = Row("acme/widget", 7);
+        (row.State, row.Verdict, row.Report).ShouldBe((PrReviewState.Reviewed, "changes", "One defect.\nREADME.md:1 says hello to no one"));
+        var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
+        (card.Id, card.Bin, card.Kind, card.Subject).ShouldBe((row.Card, CardBin.Ring, PrReviews.ReadyKind, "pr/acme/widget#7"));
+        card.Title.ShouldBe("acme/widget#7: review ready, changes (PR 7 of acme/widget)");
+        card.Detail.ShouldBe($"By ada, reviewed at {_widgetHead[..8]}.\nOne defect.\nREADME.md:1 says hello to no one");
+        card.Link.ShouldBe("https://github.com/acme/widget/pull/7");
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", reviewer, "approve", "again")).Error.ShouldBe("acme/widget#7's review is reviewed already");
+
+        // The reviewer is stopped once it has had its grace to end its turn.
+        await WaitFor(() => _workers.Stopped.Contains(row.ReviewerJob!));
+
+        // Still there while the card is open; gone, and the review over, once it closes.
+        await _reviews.SweepAsync(Ct);
+        Directory.Exists(row.Worktree).ShouldBeTrue();
+        _state.CloseCard(card.Id, "dismissed", "controller");
+        await _reviews.SweepAsync(Ct);
+        Directory.Exists(row.Worktree).ShouldBeFalse();
+        PrOrigins.Git(WidgetClone, "worktree", "list").ShouldNotContain("review-widget-7");
+        Row("acme/widget", 7).State.ShouldBe(PrReviewState.Closed);
+    }
+
+    [Fact]
+    public async Task OnTheControllersOwnPrOnlyACommentIsTaken()
+    {
+        _github.Login = "ada";
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+        _workers.Started.Single().Brief.ShouldContain("This PR is ada's own");
+        var reviewer = Row("acme/widget", 7).Reviewer;
+
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", reviewer, "approve", "fine")).Error.ShouldNotBeNull().ShouldContain("GitHub takes only a comment there");
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", reviewer, "comment", "A question on README.md:1")).Error.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task APrNotOpenOrNotOnGitHubIsRefusedAndNothingIsMade()
+    {
+        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { State = "MERGED" };
+
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBe("acme/widget#7 is merged, not open");
+        (await Run(Verbs.ReviewPr, "pr/acme/nothing#1", "controller")).Error.ShouldNotBeNull().ShouldContain("gh could not read acme/nothing#1");
+        (await Run(Verbs.ReviewPr, "flight/TIA1", "controller")).Error.ShouldNotBeNull().ShouldContain("takes a PR target");
+        _state.PrReviews().ShouldBeEmpty();
+        _workers.Started.ShouldBeEmpty();
+        Directory.Exists(Path.Combine(WidgetClone, ".claude")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task AReviewerThatCannotStartLeavesNoWorktree()
+    {
+        _workers.Fail = new FlightException("claude --bg did not start du1-review-widget-7 (1): folder not trusted");
+
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldNotBeNull().ShouldContain("not trusted");
+
+        _state.PrReviews().ShouldBeEmpty();
+        Directory.Exists(Path.Combine(WidgetClone, ".claude", "worktrees", "review-widget-7")).ShouldBeFalse();
+    }
+
+    private static async Task WaitFor(Func<bool> condition)
+    {
+        for (var i = 0; i < 200 && !condition(); i++)
+        {
+            await Task.Delay(10, Ct);
+        }
+        condition().ShouldBeTrue();
+    }
+}
+
+/// <summary>How a PR is named, and what its reviewer's session is: no git needed.</summary>
+public sealed class PrRefTests
+{
+    [Theory]
+    [InlineData("acme/widget#7", "acme", "widget", 7)]
+    [InlineData("pr/acme/widget#7", "acme", "widget", 7)]
+    [InlineData("https://github.com/DrawboardLtd/bullclip-backend/pull/2479", "DrawboardLtd", "bullclip-backend", 2479)]
+    [InlineData("https://github.com/SharpAstro/pilot/pull/113/files", "SharpAstro", "pilot", 113)]
+    [InlineData("SharpAstro/.github#4", "SharpAstro", ".github", 4)]
+    public void APrIsNamedByOwnerRepoAndNumberOrByItsUrl(string text, string owner, string name, int number) =>
+        PrRef.Parse(text).ShouldBe(new PrRef(owner, name, number));
+
+    [Theory]
+    [InlineData("acme/widget")]
+    [InlineData("widget#7")]
+    [InlineData("acme/widget#x")]
+    [InlineData("a/b/c#1")]
+    [InlineData("https://github.com/acme/widget/issues/7")]
+    [InlineData("https://example.com/acme/widget/pull/7")]
+    [InlineData("acme/../x#1")]
+    public void AnythingElseNamesNoPr(string text) => PrRef.Parse(text).ShouldBeNull();
+
+    [Fact]
+    public void APrsReviewerIsAReviewerOfNoFlight() =>
+        Pilot.Node.Sessions.SessionRoles.Resolve("du1-review-bullclip-backend-2479").ShouldBe(new Pilot.Node.Sessions.SessionRoleInfo(SessionRole.Reviewer, null, null, null));
+}
+
+/// <summary>
+/// The Done-when end to end, from the CLI against a real node: <c>pilot review pr</c> on a PR with no clone here, the
+/// reviewer's verdict from its worktree, the card, and the worktree gone once the card is dismissed.
+/// </summary>
+public sealed class PrReviewCliTests : IAsyncLifetime
+{
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2q-" + Guid.NewGuid().ToString("N")[..8]);
+    private NodeHarness _node = null!;
+    private string _head = "";
+
+    public async ValueTask InitializeAsync()
+    {
+        var (origin, head) = PrOrigins.Make(_root, "gadget", 9);
+        _head = head;
+        _node = await NodeHarness.StartAsync(Ct);
+        _node.GitHub.Origins["acme/gadget"] = origin;
+        _node.GitHub.Prs["acme/gadget#9"] = new PullRequest(9, "OPEN", head, "https://github.com/acme/gadget/pull/9", Title: "Gadgets", Author: "bob", Base: "main");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        // The cache first: git's read-only objects would keep the node's own folder from going.
+        await _node.App.StopAsync(Ct);
+        PrOrigins.Delete(Path.Combine(_node.Options.DataFolder, "clones"));
+        await _node.DisposeAsync();
+        PrOrigins.Delete(_root);
+    }
+
+    private async Task<(int Exit, string Output, string Error)> Pilot(string cwd, params string[] args)
+    {
+        var output = new StringWriter();
+        var error = new StringWriter();
+        var exit = await PilotCommand.RunAsync(["--node-socket", _node.SocketPath, .. args], cwd, output, error, Ct);
+        return (exit, output.ToString(), error.ToString());
+    }
+
+    [Fact]
+    public async Task APrIsReviewedFromItsLinkAndItsVerdictComesBackAsACard()
+    {
+        var started = await Pilot(_root, "review", "pr", "https://github.com/acme/gadget/pull/9");
+        started.Exit.ShouldBe(0, started.Output + started.Error);
+        var review = _node.State.PrReviews().ShouldHaveSingleItem();
+        review.ClonePath.ShouldBe(Path.Combine(_node.Options.DataFolder, "clones", "acme", "gadget"));
+        PrOrigins.Git(review.Worktree, "rev-parse", "HEAD").ShouldBe(_head);
+        (await Pilot(_root, "status")).Output.ShouldContain($"PR acme/gadget#9  Gadgets  (reviewing, {review.Reviewer}, at {_head[..8]})");
+
+        // The reviewer, from its worktree: the folder says which PR, and the verdict goes as the reviewer's.
+        var folder = Path.Combine(review.Worktree, "sub");
+        Directory.CreateDirectory(folder);
+        var verdict = await Pilot(folder, "review", "changes", "One defect, and the word pr in it.\nREADME.md:1 greets no one");
+        verdict.Exit.ShouldBe(0, verdict.Output + verdict.Error);
+        Directory.Delete(folder);
+
+        var (_, cards, _) = await Pilot(_root, "cards");
+        var card = _node.State.Cards(openOnly: true).ShouldHaveSingleItem();
+        cards.ShouldContain($"{card.Id}  RING  acme/gadget#9: review ready, changes (Gadgets)");
+        cards.ShouldContain("README.md:1 greets no one");
+
+        (await Pilot(_root, "dismiss", card.Id, "read it")).Exit.ShouldBe(0);
+        Directory.Exists(review.Worktree).ShouldBeFalse();
+        _node.State.PrReviews().Single().State.ShouldBe(PrReviewState.Closed);
+    }
+
+    [Fact]
+    public void AVerdictWhoseWordsSayPrIsStillAVerdict()
+    {
+        var parsed = PilotCommand.Build(_root, TextWriter.Null, TextWriter.Null).Parse(["review", "changes", "fix", "the", "pr", "title"]);
+
+        parsed.Errors.ShouldBeEmpty();
+        parsed.CommandResult.Command.Name.ShouldBe("changes");
+        parsed.GetValue<string[]>("report").ShouldBe(["fix", "the", "pr", "title"]);
+    }
+
+    [Fact]
+    public async Task ANameThatIsNoPrIsAUsageMistake()
+    {
+        var (exit, _, error) = await Pilot(_root, "review", "pr", "acme/gadget");
+        exit.ShouldBe(2);
+        error.ShouldContain("a PR is owner/repo#n or its URL");
+    }
+}

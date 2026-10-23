@@ -25,6 +25,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(UsageRow))]
 [JsonSerializable(typeof(AccountRow))]
 [JsonSerializable(typeof(JobRow))]
+[JsonSerializable(typeof(PrReviewRow))]
 [JsonSerializable(typeof(GrantRequest))]
 [JsonSerializable(typeof(ResponseEnvelope<GrantTicket>))]
 [JsonSerializable(typeof(ResponseEnvelope<GrantInfo[]>))]

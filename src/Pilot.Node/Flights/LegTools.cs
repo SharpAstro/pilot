@@ -167,7 +167,10 @@ public sealed class ShellCheckRunner : ICheckRunner
 
 /// <summary>A flight's PR on GitHub: its number, state and head.</summary>
 /// <param name="Mergeable">GitHub's word on whether it merges into its base: MERGEABLE, CONFLICTING, or UNKNOWN while it works it out.</param>
-public sealed record PullRequest(int Number, string State, string Head, string Url, string Mergeable = "");
+/// <param name="Title">Its title, as read by repo and number; empty otherwise.</param>
+/// <param name="Author">Its author's login, as read by repo and number; empty otherwise.</param>
+/// <param name="Base">The branch it goes into, as read by repo and number; empty otherwise.</param>
+public sealed record PullRequest(int Number, string State, string Head, string Url, string Mergeable = "", string Title = "", string Author = "", string Base = "");
 
 /// <summary>The GitHub calls a merge needs, so a test decides what GitHub says.</summary>
 public interface IGitHub
@@ -201,6 +204,17 @@ public interface IGitHub
 
     /// <summary>Issue <paramref name="number"/>'s title, or null when gh cannot say.</summary>
     Task<string?> IssueTitleAsync(string repoPath, int number, CancellationToken cancellationToken);
+
+    /// <summary>PR <paramref name="number"/> of <paramref name="repo"/> (<c>owner/name</c>), with its title, author and base: any repo, cloned here or not.</summary>
+    /// <exception cref="FlightException">gh could not read it.</exception>
+    Task<PullRequest> PullRequestOfAsync(string repo, int number, CancellationToken cancellationToken);
+
+    /// <summary>Clones <paramref name="repo"/> (<c>owner/name</c>) into <paramref name="path"/>, under gh's sign-in, so a private repo clones too.</summary>
+    /// <exception cref="FlightException">gh could not clone it.</exception>
+    Task CloneAsync(string repo, string path, CancellationToken cancellationToken);
+
+    /// <summary>The login gh is signed in as: the controller, in whose name a review goes on GitHub. Null when gh cannot say.</summary>
+    Task<string?> LoginAsync(CancellationToken cancellationToken);
 }
 
 /// <summary><see cref="IGitHub"/> by the gh CLI, as v1's dashboard merged (<c>gh pr merge --match-head-commit</c>).</summary>
@@ -312,7 +326,58 @@ public sealed class GhCli : IGitHub
         return doc.RootElement.TryGetProperty("title", out var title) ? title.GetString() : null;
     }
 
-    private static async Task<(int Exit, string Output, string Error)> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
+    public async Task<PullRequest> PullRequestOfAsync(string repo, int number, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(
+            ["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "-R", repo, "--json", "number,state,headRefOid,url,title,author,baseRefName"],
+            Path.GetTempPath(), cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not read {repo}#{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        using var doc = JsonDocument.Parse(output);
+        var root = doc.RootElement;
+        return new PullRequest(root.GetProperty("number").GetInt32(), root.GetProperty("state").GetString() ?? "",
+            root.GetProperty("headRefOid").GetString() ?? "", root.GetProperty("url").GetString() ?? "",
+            Title: root.TryGetProperty("title", out var title) ? title.GetString() ?? "" : "",
+            Author: root.TryGetProperty("author", out var author) && author.ValueKind == JsonValueKind.Object && author.TryGetProperty("login", out var login) ? login.GetString() ?? "" : "",
+            Base: root.TryGetProperty("baseRefName", out var baseRef) ? baseRef.GetString() ?? "" : "");
+    }
+
+    public async Task CloneAsync(string repo, string path, CancellationToken cancellationToken)
+    {
+        var parent = Path.GetDirectoryName(Path.GetFullPath(path))!;
+        Directory.CreateDirectory(parent);
+        // A clone takes longer than gh's other calls: a big repo is minutes of fetching.
+        var (exit, output, error) = await RunAsync(["repo", "clone", repo, path], parent, cancellationToken, TimeSpan.FromMinutes(20));
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not clone {repo}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        // Later fetches are git's own, run by the node with no one to answer a credential window: the clone asks gh for
+        // its credentials, as gh's own clone did, and nothing else (the empty value drops every helper set above it).
+        foreach (var value in new[] { "", "!gh auth git-credential" })
+        {
+            await RunGitAsync(["config", "--local", "--add", "credential.https://github.com.helper", value], path, cancellationToken);
+        }
+    }
+
+    public async Task<string?> LoginAsync(CancellationToken cancellationToken)
+    {
+        var (exit, output, _) = await RunAsync(["api", "user", "-q", ".login"], Path.GetTempPath(), cancellationToken);
+        return exit == 0 && output.Trim() is { Length: > 0 } login ? login : null;
+    }
+
+    private static async Task RunGitAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
+    {
+        var run = await new GitCli().RunAsync(args, cwd, cancellationToken);
+        if (!run.Ok)
+        {
+            throw new FlightException($"git {string.Join(' ', args)} failed in {cwd}: {run.Why}");
+        }
+    }
+
+    private static async Task<(int Exit, string Output, string Error)> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken, TimeSpan? timeout = null)
     {
         var start = new ProcessStartInfo("gh")
         {
@@ -331,7 +396,7 @@ public sealed class GhCli : IGitHub
         start.Environment["GH_PROMPT_DISABLED"] = "1";
         using var process = Process.Start(start) ?? throw new FlightException("gh did not start");
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(Timeout);
+        budget.CancelAfter(timeout ?? Timeout);
         var output = process.StandardOutput.ReadToEndAsync(budget.Token);
         var error = process.StandardError.ReadToEndAsync(budget.Token);
         await process.WaitForExitAsync(budget.Token);

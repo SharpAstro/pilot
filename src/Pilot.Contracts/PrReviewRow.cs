@@ -1,0 +1,138 @@
+using System.Text.Json.Serialization;
+
+namespace Pilot.Contracts;
+
+/// <summary>
+/// A review of any PR on GitHub, not only a flight's (#113): a fresh reviewer, <c>&lt;machine&gt;-review-&lt;repo&gt;-&lt;n&gt;</c>,
+/// reads the PR in a worktree of its own pinned at the PR's head, in a clone of the repo under the node's repo roots or in
+/// the node's clone cache, and gives a verdict, which a card carries to the controller. The worktree goes when that card
+/// closes.
+/// </summary>
+public sealed record PrReviewRow
+{
+    /// <summary>The repo on GitHub, <c>owner/name</c>, as GitHub spells it.</summary>
+    public required string Repo { get; init; }
+
+    public required int Number { get; init; }
+
+    /// <summary>The PR's title, as GitHub had it when the review started.</summary>
+    public string? Title { get; init; }
+
+    /// <summary>The PR's author's login: on one's own PR GitHub takes a comment, never an approval or a request for changes.</summary>
+    public string? Author { get; init; }
+
+    /// <summary>The PR's page.</summary>
+    public required string Url { get; init; }
+
+    /// <summary>The branch it goes into, as GitHub names it (<c>main</c>).</summary>
+    public required string Base { get; init; }
+
+    /// <summary>The head commit the review is pinned at: the PR's head when it started, whatever is pushed after.</summary>
+    public required string Head { get; init; }
+
+    /// <summary>The clone the worktree is made in: one under the repo roots, or the node's own in its clone cache.</summary>
+    public required string ClonePath { get; init; }
+
+    /// <summary>The review worktree, <c>&lt;clone&gt;/.claude/worktrees/review-&lt;repo&gt;-&lt;n&gt;</c>, detached at <see cref="Head"/>.</summary>
+    public required string Worktree { get; init; }
+
+    /// <summary>The reviewer's session name.</summary>
+    public required string Reviewer { get; init; }
+
+    /// <summary>Its background job, the first eight of its session id.</summary>
+    public string? ReviewerJob { get; init; }
+
+    public required PrReviewState State { get; init; }
+
+    /// <summary>The reviewer's verdict once given: <c>approve</c>, <c>changes</c> or <c>comment</c>.</summary>
+    public string? Verdict { get; init; }
+
+    /// <summary>What it found: a summary, then each finding.</summary>
+    public string? Report { get; init; }
+
+    /// <summary>The card that carries the verdict; the worktree goes when it closes.</summary>
+    public string? Card { get; init; }
+
+    public required DateTimeOffset StartedAt { get; init; }
+
+    public DateTimeOffset? FinishedAt { get; init; }
+
+    /// <summary>When its worktree went: the review is over.</summary>
+    public DateTimeOffset? ClosedAt { get; init; }
+}
+
+/// <summary>Where a PR review is.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<PrReviewState>))]
+public enum PrReviewState
+{
+    [JsonStringEnumMemberName("reviewing")]
+    Reviewing,
+
+    /// <summary>Its verdict is in, on a card for the controller.</summary>
+    [JsonStringEnumMemberName("reviewed")]
+    Reviewed,
+
+    /// <summary>Its card closed and its worktree went.</summary>
+    [JsonStringEnumMemberName("closed")]
+    Closed,
+}
+
+/// <summary>A PR review was started.</summary>
+public sealed record PrReviewAddedEvent : NodeEvent
+{
+    public required PrReviewRow Review { get; init; }
+}
+
+/// <summary>A PR review moved on: started afresh, its verdict in, closed. The whole row, as it is now.</summary>
+public sealed record PrReviewChangedEvent : NodeEvent
+{
+    public required PrReviewRow Review { get; init; }
+}
+
+/// <summary>
+/// A PR as a person names it: <c>owner/repo#n</c>, or its page's URL (<c>https://github.com/owner/repo/pull/n</c>, any
+/// tab of it). Its target is <c>pr/owner/repo#n</c>.
+/// </summary>
+public sealed record PrRef(string Owner, string Name, int Number)
+{
+    /// <summary>The repo, <c>owner/name</c>.</summary>
+    public string Repo => $"{Owner}/{Name}";
+
+    public override string ToString() => $"{Repo}#{Number}";
+
+    /// <summary><paramref name="text"/> as a PR, or null when it names none.</summary>
+    public static PrRef? Parse(string? text)
+    {
+        var value = (text ?? "").Trim();
+        if (value.StartsWith(Verbs.PrTargetPrefix, StringComparison.Ordinal))
+        {
+            value = value[Verbs.PrTargetPrefix.Length..];
+        }
+        string owner, name, number;
+        if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http")
+        {
+            if (!string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase)
+                || uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries) is not [var o, var n, "pull", var p, ..])
+            {
+                return null;
+            }
+            (owner, name, number) = (o, n, p);
+        }
+        else
+        {
+            var hash = value.IndexOf('#');
+            if (hash < 0 || value[..hash].Split('/') is not [var o, var n])
+            {
+                return null;
+            }
+            (owner, name, number) = (o, n, value[(hash + 1)..]);
+        }
+        return owner.Length > 0 && name.Length > 0 && Valid(owner) && Valid(name)
+               && int.TryParse(number, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var pr) && pr > 0
+            ? new PrRef(owner, name, pr)
+            : null;
+
+        // GitHub's names: letters, digits, dots, dashes and underscores; nothing a path or a command line would read otherwise.
+        static bool Valid(string part) => part.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.') && part is not ("." or "..");
+    }
+}

@@ -40,6 +40,11 @@ public sealed class NodeMirror
     /// <summary>The jobs, by id.</summary>
     public IReadOnlyDictionary<string, JobRow> Jobs => _jobs;
 
+    private readonly Dictionary<string, PrReviewRow> _prReviews = new Dictionary<string, PrReviewRow>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The PR reviews, by target (<c>pr/owner/repo#n</c>).</summary>
+    public IReadOnlyDictionary<string, PrReviewRow> PrReviews => _prReviews;
+
     /// <summary>
     /// Applies one event. A snapshot replaces everything; a delta must be numbered one past the last, or the mirror
     /// has missed something and throws rather than show a state the node never had.
@@ -75,6 +80,11 @@ public sealed class NodeMirror
             foreach (var job in snapshot.Jobs ?? [])
             {
                 _jobs[job.Id] = job;
+            }
+            _prReviews.Clear();
+            foreach (var review in snapshot.PrReviews ?? [])
+            {
+                _prReviews[Verbs.PrTarget(review.Repo, review.Number)] = review;
             }
             Stream = snapshot.Stream;
             Seq = snapshot.Seq;
@@ -130,6 +140,12 @@ public sealed class NodeMirror
                 break;
             case JobChangedEvent changed:
                 _jobs[changed.Job.Id] = changed.Job;
+                break;
+            case PrReviewAddedEvent added:
+                _prReviews[Verbs.PrTarget(added.Review.Repo, added.Review.Number)] = added.Review;
+                break;
+            case PrReviewChangedEvent changed:
+                _prReviews[Verbs.PrTarget(changed.Review.Repo, changed.Review.Number)] = changed.Review;
                 break;
             case UsageChangedEvent usage:
                 Usage = usage.Usage;

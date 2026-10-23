@@ -179,6 +179,19 @@ public static class Verbs
     /// </summary>
     public const string Review = "review";
 
+    /// <summary>
+    /// <c>review-pr pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>: a fresh reviewer on any PR on GitHub, in a worktree of its own pinned at
+    /// the PR's head, made in a clone under the repo roots or in the node's clone cache. Any earlier review of it is ended.
+    /// </summary>
+    public const string ReviewPr = "review-pr";
+
+    /// <summary>
+    /// <c>pr-verdict pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt; approve|changes|comment &lt;report…&gt;</c>: a PR reviewer's verdict, a
+    /// summary and then its findings; a card carries it to the controller, and the review's worktree goes when it closes.
+    /// On the controller's own PR only <c>comment</c> is taken, as GitHub takes nothing else there.
+    /// </summary>
+    public const string PrVerdict = "pr-verdict";
+
     /// <summary><c>extend-budget flight/&lt;code&gt;/&lt;leg&gt; &lt;tokens&gt;</c>: raises the leg's budget, in weighted tokens, to the new figure.</summary>
     public const string ExtendBudget = "extend-budget";
 
@@ -264,6 +277,12 @@ public static class Verbs
 
     /// <summary>The target naming leg <paramref name="leg"/> of flight <paramref name="code"/>.</summary>
     public static string LegTarget(string code, string leg) => $"{FlightTargetPrefix}{code}/{leg}";
+
+    /// <summary>What a PR target starts with: <c>pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>.</summary>
+    public const string PrTargetPrefix = "pr/";
+
+    /// <summary>The target naming PR <paramref name="number"/> of <paramref name="repo"/> (<c>owner/name</c>).</summary>
+    public static string PrTarget(string repo, int number) => $"{PrTargetPrefix}{repo}#{number}";
 
     /// <summary>What a session target starts with: <c>session/&lt;id&gt;</c>.</summary>
     public const string SessionTargetPrefix = "session/";

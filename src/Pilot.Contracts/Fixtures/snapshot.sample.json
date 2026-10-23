@@ -261,5 +261,27 @@
       "endedAt": "2026-10-18T08:40:44+00:00",
       "told": true
     }
+  ],
+  "prReviews": [
+    {
+      "repo": "DrawboardLtd/bullclip-backend",
+      "number": 2479,
+      "title": "Sync the sheet index on upload",
+      "author": "ada",
+      "url": "https://github.com/DrawboardLtd/bullclip-backend/pull/2479",
+      "base": "main",
+      "head": "4f2c9a01d6e8b3c7a5f0e2d4c6b8a0f1e3d5c7b9",
+      "clonePath": "/home/ada/.local/share/pilot2/clones/DrawboardLtd/bullclip-backend",
+      "worktree": "/home/ada/.local/share/pilot2/clones/DrawboardLtd/bullclip-backend/.claude/worktrees/review-bullclip-backend-2479",
+      "reviewer": "du1-review-bullclip-backend-2479",
+      "reviewerJob": "7c1e0b2a",
+      "state": "reviewed",
+      "verdict": "changes",
+      "report": "One defect, proved by its test: the index is rebuilt before the upload commits.",
+      "card": "c41",
+      "startedAt": "2026-10-18T09:02:10+00:00",
+      "finishedAt": "2026-10-18T09:31:55+00:00",
+      "closedAt": null
+    }
   ]
 }

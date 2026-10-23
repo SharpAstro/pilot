@@ -183,6 +183,25 @@ public sealed class Planes(IGit git)
         PlaneSettings.DisableRepoMcpServers(worktree);
     }
 
+    /// <summary>
+    /// A worktree at <paramref name="worktree"/> detached at <paramref name="commit"/>, made afresh: a PR review's, pinned at
+    /// the head it reviews, so nothing pushed after moves it. Whatever was there before goes first.
+    /// </summary>
+    public async Task PinAsync(string repoPath, string worktree, string commit, CancellationToken cancellationToken)
+    {
+        if (await RemoveAsync(repoPath, worktree, cancellationToken, force: true) is { } held)
+        {
+            throw new FlightException(held);
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(worktree)!);
+        var add = await git.RunAsync(["worktree", "add", "--detach", worktree, commit], repoPath, cancellationToken);
+        if (!add.Ok)
+        {
+            throw new FlightException($"git could not check out {commit[..Math.Min(8, commit.Length)]} at {worktree}: {add.Why}");
+        }
+        PlaneSettings.DisableRepoMcpServers(worktree);
+    }
+
     /// <summary>Removes the folder of a worktree git no longer has: what a torn-down worktree leaves when a file was held.</summary>
     private static void DeleteLeftover(string worktree)
     {
@@ -261,8 +280,9 @@ public sealed class Planes(IGit git)
     /// Removes a landed plane's worktree, keeping its branch. Refuses one with changes not committed: its work would go
     /// with it. A worktree already gone, or torn down by Claude Code, is fine.
     /// </summary>
+    /// <param name="force">Removes it whatever it holds: a review's worktree, where nothing is anyone's work.</param>
     /// <returns>Null when the plane is gone; else why its folder is still there (something holds it), which the caller says.</returns>
-    public async Task<string?> RemoveAsync(string repoPath, string worktree, CancellationToken cancellationToken)
+    public async Task<string?> RemoveAsync(string repoPath, string worktree, CancellationToken cancellationToken, bool force = false)
     {
         if (!Directory.Exists(worktree) || !await IsRegisteredAsync(repoPath, worktree, cancellationToken))
         {
@@ -279,20 +299,23 @@ public sealed class Planes(IGit git)
             }
             return null;
         }
-        var status = await git.RunAsync(["status", "--porcelain"], worktree, cancellationToken);
-        if (!status.Ok)
+        if (!force)
         {
-            throw new FlightException($"git could not read {worktree}: {status.Why}");
-        }
-        if (status.Output.Trim().Length > 0)
-        {
-            throw new FlightException($"{worktree} holds changes not committed; commit or drop them, then land it");
+            var status = await git.RunAsync(["status", "--porcelain"], worktree, cancellationToken);
+            if (!status.Ok)
+            {
+                throw new FlightException($"git could not read {worktree}: {status.Why}");
+            }
+            if (status.Output.Trim().Length > 0)
+            {
+                throw new FlightException($"{worktree} holds changes not committed; commit or drop them, then land it");
+            }
         }
         // A worker's claude -w locks the worktree it enters; a clean one is let go before it is removed.
         await git.RunAsync(["worktree", "unlock", worktree], repoPath, cancellationToken);
         GitRun remove;
         var tries = 0;
-        while (!(remove = await git.RunAsync(["worktree", "remove", worktree], repoPath, cancellationToken)).Ok)
+        while (!(remove = await git.RunAsync(force ? ["worktree", "remove", "--force", worktree] : ["worktree", "remove", worktree], repoPath, cancellationToken)).Ok)
         {
             // Torn down under us between the look and the remove: as gone as it gets.
             if (remove.Why.Contains("is not a working tree", StringComparison.OrdinalIgnoreCase))

@@ -222,23 +222,46 @@ public static class PilotCommand
                 return OnLeg(p, client, Verbs.AddArtifact, _ => [full, .. p.GetValue(artifactTitle) ?? []], ct);
             });
 
-        // review: the reviewer's verdict, from its plane; or the controller's "ready anyway" with --flight
-        var verdict = Arg("verdict", "pass or changes");
-        verdict.AcceptOnlyFromAmong("pass", "changes");
+        // review: the reviewer's verdict, from its plane (or a PR review's worktree); or the controller's "ready anyway" with --flight
+        // Each verdict is a command of its own, not a word review takes: the words after it are only ever the report, where
+        // a report saying "pr" would otherwise be read as review pr.
         var verdictReport = Words("report", "What was checked, or each change asked for");
         var reviewFlight = new Option<string?>("--flight") { Description = "The flight's code; inside its plane, that flight" };
-        var review = Action(new Command("review", "Give a flight's review verdict: pass offers the merge, changes rings for a go-around")
-            {
-                Arguments = { verdict, verdictReport },
-                Options = { reviewFlight },
-            },
+        var reviewPrOption = new Option<string?>("--pr") { Description = "The PR, owner/repo#n or its URL; inside its review's worktree, that PR" };
+        Command Verdict(string word, string description) => Action(new Command(word, description) { Arguments = { verdictReport }, Options = { reviewFlight, reviewPrOption } },
             async (p, client, ct) =>
             {
-                var (target, sender) = p.GetValue(reviewFlight) is { } named
-                    ? (Verbs.FlightTarget(named), who)
-                    : FlightHere(await SnapshotAsync(client, ct), cwd);
-                return await SendAsync(client, Verbs.Review, target, [p.GetValue(verdict)!, Join(p, verdictReport)], sender, output, ct);
+                var report = Join(p, verdictReport);
+                if (p.GetValue(reviewFlight) is { } named)
+                {
+                    return await SendAsync(client, Verbs.Review, Verbs.FlightTarget(named), [word, report], who, output, ct);
+                }
+                var snapshot = await SnapshotAsync(client, ct);
+                var (target, sender) = p.GetValue(reviewPrOption) is { } pr
+                    ? (Verbs.PrTarget(Pr(pr).Repo, Pr(pr).Number), who)
+                    : PrHere(snapshot, cwd) ?? FlightHere(snapshot, cwd);
+                return await SendAsync(client, target.StartsWith(Verbs.PrTargetPrefix, StringComparison.Ordinal) ? Verbs.PrVerdict : Verbs.Review,
+                    target, [word, report], sender, output, ct);
             });
+        // review pr: a fresh reviewer on any PR, pinned at its head in a worktree of the node's own
+        var prRef = Arg("pr", "The PR: owner/repo#n, or its URL");
+        var reviewPr = Action(new Command("pr", "Start a reviewer on any PR, pinned at its head; its verdict comes back as a card") { Arguments = { prRef } },
+            (p, client, ct) =>
+            {
+                var pr = Pr(p.GetValue(prRef)!);
+                return SendAsync(client, Verbs.ReviewPr, Verbs.PrTarget(pr.Repo, pr.Number), [], who, output, ct);
+            });
+        var review = new Command("review", "Review any PR (review pr), or give a review's verdict: a flight's pass offers the merge and changes rings for a go-around; a PR's rings with its findings")
+        {
+            Subcommands =
+            {
+                reviewPr,
+                Verdict("pass", "A flight's review: ready, the merge is offered"),
+                Verdict("changes", "A flight's or a PR's review: changes asked for, each one in the report"),
+                Verdict("approve", "A PR's review: it is right as it is"),
+                Verdict("comment", "A PR's review: questions, or findings that should not hold it up"),
+            },
+        };
 
         // cards
         var all = new Option<bool>("--all") { Description = "Closed cards and Handled lines too" };
@@ -569,6 +592,24 @@ public static class PilotCommand
     }
 
     /// <summary>
+    /// The PR whose review worktree holds <paramref name="cwd"/>, and who is asking: its reviewer while the review is on, as
+    /// a flight's reviewer is in <see cref="FlightHere"/>. Null outside every PR review's worktree.
+    /// </summary>
+    internal static (string Target, string Who)? PrHere(SnapshotEvent snapshot, string cwd)
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(cwd)) + Path.DirectorySeparatorChar;
+        return snapshot.PrReviews.FirstOrDefault(r => r.State != PrReviewState.Closed
+                && folder.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(r.Worktree)) + Path.DirectorySeparatorChar, comparison)) is { } review
+            ? (Verbs.PrTarget(review.Repo, review.Number), review.State == PrReviewState.Reviewing ? review.Reviewer : "cli")
+            : null;
+    }
+
+    /// <summary>A PR as the CLI was given it, or a usage error naming the two ways to give one.</summary>
+    private static PrRef Pr(string text) =>
+        PrRef.Parse(text) ?? throw new UsageException($"a PR is owner/repo#n or its URL (https://github.com/owner/repo/pull/n), not {text}");
+
+    /// <summary>
     /// Who a command is from when nothing nearer says: the Claude session running this CLI, by its name on the node
     /// (Claude Code gives a session's tools <c>CLAUDE_CODE_SESSION_ID</c>), so the watchtower's commands are the
     /// watchtower's; else the CLI, for a person at a terminal.
@@ -652,6 +693,11 @@ public static class PilotCommand
             if (flights.Count == 0)
             {
                 text.AppendLine("No flights.");
+            }
+            foreach (var review in snapshot.PrReviews.Where(r => r.State != PrReviewState.Closed).OrderBy(r => r.StartedAt))
+            {
+                var how = review.State == PrReviewState.Reviewing ? $"reviewing, {review.Reviewer}" : $"{review.Verdict}, on card {review.Card}";
+                text.AppendLine($"PR {review.Repo}#{review.Number}  {review.Title ?? review.Url}  ({how}, at {review.Head[..Math.Min(8, review.Head.Length)]})");
             }
             var open = snapshot.Cards.Where(c => c.State == CardState.Open).ToList();
             if (open.Count > 0)
