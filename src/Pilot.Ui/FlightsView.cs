@@ -187,6 +187,20 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     // The colours come from the palette of the view shown, so night repaints the same builders.
     private FlightsPalette P => Mode == FlightsViewMode.Night && CanvasAvailable ? FlightsPalette.Night : FlightsPalette.Standard;
+    private FlightsPalette? NightOrNull => ReferenceEquals(P, FlightsPalette.Night) ? P : null;
+
+    private static TextInputColors NightInput(FlightsPalette n) => new()
+    {
+        Background = n.RowAltBg,
+        BackgroundActive = n.HeaderBg,
+        Border = n.Faint,
+        BorderActive = n.Dim,
+        Text = n.Bright,
+        Placeholder = n.Dim,
+        Cursor = n.Held,
+        Selection = n.RowFocusBg,
+    };
+
     private RGBAColor32 Ground => P.Ground;
     private RGBAColor32 HeaderBg => P.HeaderBg;
     private RGBAColor32 RowAltBg => P.RowAltBg;
@@ -451,7 +465,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             parts.Add(CommandBar());
         }
         var page = Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch();
-        page = About?.Over(page) ?? page;
+        page = About?.Over(page, NightOrNull) ?? page;
         return _menu.IsOpen ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg)) : page;
     }
 
@@ -561,7 +575,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             Layout.Builder.HStack(
                     Layout.Builder.Text("pilot", 14f, Body).WAuto(),
-                    Layout.Builder.TextInput(CommandInput, 15f).WithShortcut(CommandShortcut).WStar())
+                    Layout.Builder.TextInput(CommandInput, 15f, NightOrNull is { } n ? NightInput(n) : null).WithShortcut(CommandShortcut).WStar())
                 .WithGap(12f)
                 .RowH(28f),
         };
@@ -586,14 +600,14 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             Layout.Builder.HStack([
                     Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
                     Layout.Builder.Text("flights", 20f, Dim).WAuto(),
-                    .. (Nodes?.Pills() ?? []),
+                    .. (Nodes?.Pills(NightOrNull) ?? []),
                     Layout.Builder.Spacer().WStar(),
                     Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
                     CanvasAvailable && screen.Lines.Count > 0 ? ViewSwitch() : Layout.Builder.Spacer().WFixed(0f),
                     CanCommand && !Wizard.IsOpen && Wizard.LoadRepos is not null
                         ? Pill("New flight", "flights:new", () => Wizard.Open())
                         : Layout.Builder.Spacer().WFixed(0f),
-                    About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f)])
+                    About is { } about ? about.Button(NightOrNull) : Layout.Builder.Spacer().WFixed(0f)])
                 .WithGap(12f)
                 .RowH(32f),
             Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC", 12f, Dim).RowH(20f),
