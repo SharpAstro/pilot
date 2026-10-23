@@ -180,6 +180,7 @@ jobs.OnCancel = job => _ = Task.Run(async () =>
         return;
     }
     var envelope = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = [], Who = Who }, stop.Token);
+    clients.NoteRefusal(jobs.FollowingNode, envelope);
     flights.Say(envelope.Success && envelope.Response is { Ok: true } ? $"cancelled {job.Id}" : $"cancel {job.Id}: {envelope.Response?.Error ?? envelope.Error}");
     Redraw();
 });
