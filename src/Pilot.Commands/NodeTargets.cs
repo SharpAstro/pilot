@@ -1,5 +1,3 @@
-using System.Text;
-using System.Text.Json;
 using LAN.Lib;
 using Pilot.Contracts;
 
@@ -30,84 +28,20 @@ public static class NodeTargets
         return new NodeClient(NodeSocket.Resolve(socket));
     }
 
+    /// <summary>This user's held tokens: LAN.Lib's one-file store, over <paramref name="tokenFile"/> or <see cref="TokenFile"/>.</summary>
+    private static LanHeldTokenFile Held(string? tokenFile) => new(tokenFile ?? TokenFile);
+
     /// <summary>The token saved for <paramref name="endpoint"/>, or null.</summary>
-    public static string? TokenFor(string endpoint, string? tokenFile = null)
-    {
-        var tokens = Load(tokenFile ?? TokenFile);
-        return tokens.TryGetValue(endpoint.ToLowerInvariant(), out var token) ? token : null;
-    }
+    public static string? TokenFor(string endpoint, string? tokenFile = null) => Held(tokenFile).TokenFor(endpoint);
 
     /// <summary>The nodes on the LAN this user holds a grant for, by <c>host:port</c>: the fleet beyond this machine.</summary>
-    public static IReadOnlyList<string> Granted(string? tokenFile = null) => [.. Load(tokenFile ?? TokenFile).Keys.Order(StringComparer.Ordinal)];
+    public static IReadOnlyList<string> Granted(string? tokenFile = null) => Held(tokenFile).Endpoints;
 
     /// <summary>Saves <paramref name="token"/> for <paramref name="endpoint"/>, over any earlier one.</summary>
-    public static void Save(string endpoint, string token, string? tokenFile = null)
-    {
-        var file = tokenFile ?? TokenFile;
-        var tokens = Load(file);
-        tokens[endpoint.ToLowerInvariant()] = token;
-        Write(file, tokens);
-    }
+    public static void Save(string endpoint, string token, string? tokenFile = null) => Held(tokenFile).Save(endpoint, token);
 
     /// <summary>Drops the token held for <paramref name="endpoint"/>: that node is watched, not commanded, until connected again. False when none was held.</summary>
-    public static bool Forget(string endpoint, string? tokenFile = null)
-    {
-        var file = tokenFile ?? TokenFile;
-        var tokens = Load(file);
-        if (!tokens.Remove(endpoint.ToLowerInvariant()))
-        {
-            return false;
-        }
-        Write(file, tokens);
-        return true;
-    }
-
-    private static void Write(string file, Dictionary<string, string> tokens)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-        using var buffer = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = true }))
-        {
-            writer.WriteStartObject();
-            foreach (var (key, value) in tokens.OrderBy(t => t.Key, StringComparer.Ordinal))
-            {
-                writer.WriteString(key, value);
-            }
-            writer.WriteEndObject();
-        }
-        var temp = file + ".tmp";
-        File.WriteAllText(temp, Encoding.UTF8.GetString(buffer.ToArray()));
-        File.Move(temp, file, overwrite: true);
-        if (!OperatingSystem.IsWindows())
-        {
-            File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-        }
-    }
-
-    private static Dictionary<string, string> Load(string file)
-    {
-        var tokens = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (!File.Exists(file))
-        {
-            return tokens;
-        }
-        try
-        {
-            using var doc = JsonDocument.Parse(File.ReadAllText(file));
-            foreach (var property in doc.RootElement.EnumerateObject())
-            {
-                if (property.Value.GetString() is { } token)
-                {
-                    tokens[property.Name] = token;
-                }
-            }
-        }
-        catch (JsonException)
-        {
-            // A broken file grants nothing; connect writes a good one again.
-        }
-        return tokens;
-    }
+    public static bool Forget(string endpoint, string? tokenFile = null) => Held(tokenFile).Forget(endpoint);
 
     /// <summary>The nodes announcing themselves on the LAN within <paramref name="listen"/>: LAN.Lib's beacon, listened to and never sent.</summary>
     public static async Task<IReadOnlyList<LanPeer>> DiscoverAsync(TimeSpan listen, CancellationToken cancellationToken)

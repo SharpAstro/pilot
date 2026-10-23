@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.Globalization;
+using LAN.Lib;
 using Pilot.Contracts;
 
 namespace Pilot.Commands;
@@ -466,34 +467,48 @@ public static class PilotCommand
                 }
                 using var remote = NodeClient.Remote(target);
                 var label = p.GetValue(askAs) ?? $"{Environment.UserName}@{Environment.MachineName}".ToLowerInvariant();
-                var asked = await remote.AskGrantAsync(label, ct);
-                if (asked is not { Success: true, Response: { } ticket })
-                {
-                    await output.WriteLineAsync($"refused: {asked.Error}");
-                    return 1;
-                }
-                await output.WriteLineAsync($"asked {target} as {label}: a card rings there for its person to Allow or Deny");
-                var until = DateTimeOffset.UtcNow + TimeSpan.FromMinutes(5);
-                while (DateTimeOffset.UtcNow < until)
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(2), ct);
-                    var read = await remote.GrantTicketAsync(ticket.Id, ct);
-                    switch (read.Response?.Outcome)
+                var result = await LanAsk.RunAsync(
+                    target,
+                    async token =>
                     {
-                        case "accepted" when read.Response.Token is { } token:
-                            NodeTargets.Save(target, token);
-                            await output.WriteLineAsync($"allowed: commands go to {target} with --node {target} (or PILOT_NODE={target})");
-                            return 0;
-                        case "declined":
-                            await output.WriteLineAsync($"denied by {target}'s person");
-                            return 1;
-                        case "withdrawn" or "unknown":
-                            await output.WriteLineAsync($"the ask lapsed on {target}; ask again");
-                            return 1;
-                    }
+                        var asked = await remote.AskGrantAsync(label, token);
+                        return asked is { Success: true, Response: { } ticket } ? new LanAskOffer(ticket.Id) : new LanAskOffer(null, asked.Error);
+                    },
+                    async (id, token) =>
+                    {
+                        var read = await remote.GrantTicketAsync(id, token);
+                        var outcome = read.Response?.Outcome switch
+                        {
+                            "accepted" => LanInviteOutcome.Accepted,
+                            "declined" => LanInviteOutcome.Declined,
+                            "withdrawn" => LanInviteOutcome.Withdrawn,
+                            "unknown" => LanInviteOutcome.Unknown,
+                            _ => LanInviteOutcome.Pending,
+                        };
+                        return new LanAskReading(outcome, read.Response?.Token);
+                    },
+                    new LanHeldTokenFile(NodeTargets.TokenFile),
+                    TimeProvider.System,
+                    asked: () => output.WriteLine($"asked {target} as {label}: a card rings there for its person to Allow or Deny"),
+                    cancellationToken: ct);
+                switch (result.Outcome)
+                {
+                    case LanAskOutcome.Accepted:
+                        await output.WriteLineAsync($"allowed: commands go to {target} with --node {target} (or PILOT_NODE={target})");
+                        return 0;
+                    case LanAskOutcome.Declined:
+                        await output.WriteLineAsync($"denied by {target}'s person");
+                        return 1;
+                    case LanAskOutcome.Lapsed:
+                        await output.WriteLineAsync($"the ask lapsed on {target}; ask again");
+                        return 1;
+                    case LanAskOutcome.Refused:
+                        await output.WriteLineAsync($"refused: {result.Error}");
+                        return 1;
+                    default:
+                        await output.WriteLineAsync($"no answer from {target} within 5 minutes; ask again when its person is there");
+                        return 1;
                 }
-                await output.WriteLineAsync($"no answer from {target} within 5 minutes; ask again when its person is there");
-                return 1;
             });
 
         var grants = Action(new Command("grants", "The control this node has granted to machines on the LAN"), async (_, client, ct) =>
