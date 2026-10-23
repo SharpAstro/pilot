@@ -30,7 +30,7 @@ public interface ISessionDelivery
     Task StopAsync(string sessionId, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Continues a background session whose process has gone, with the text as its next user turn
+    /// Continues a background session, with the text as its next user turn; a process of it still running is stopped first
     /// (<c>claude --bg --resume</c>). Claude Code continues it under its own session id, with the options it was started
     /// with; where it makes a copy instead, the copy's id comes back and the row follows it.
     /// </summary>
@@ -127,6 +127,15 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, string relay
 
     public async Task<string> ResumeAsync(ResumeRequest request, CancellationToken cancellationToken)
     {
+        // A resume starts a fresh process beside the old one, which runs on idle unless stopped. The caller stops a
+        // session it reads as idle, but a row can read ended while its process runs, and every say to the watchtower then
+        // left one more behind (sixteen alive at once on DE1, 2026-10-23). So whatever the row says, a process the
+        // listing still shows for this session is stopped first.
+        if (await FindAsync(r => r.SessionId == request.SessionId && r.Pid is not null, cancellationToken) is not null)
+        {
+            await StopAsync(request.SessionId, cancellationToken);
+        }
+
         var args = ResumeArguments(request);
         var run = await ClaudeCli.RunAsync(args, request.Text, request.Cwd, ResumeTimeout, cancellationToken);
         var job = Backgrounded().Match(run.Output);
