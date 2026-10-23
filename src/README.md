@@ -436,12 +436,17 @@ row, by its stream. In the TUI, Open says the `pilot-tui --node` to run in anoth
 ### Settings
 
 The node's settings live in `settings.json` in its data folder, read at every start: on the LAN, its machine prefix,
-repo roots, update channel and policy, jobs at once, job memory, and the LAN port. The command line wins over the
+repo roots, update channel and policy, jobs at once, job memory, the LAN port, and a model and an effort per kind of
+session it starts (#114). The watchtower and workers start on Sonnet and planners and reviewers on Opus unless set
+otherwise; a leg's own `--model` or `--effort` still wins for its worker; `none` passes no flag, leaving Claude Code's
+own default. The watchtower's brief says its model, so a lighter one rings for a judgement rather than makes it. The command line wins over the
 file (an autostart entry made before the file existed still pins what it names), and a key the file leaves out takes
 the default; a value it cannot read is passed over, never fatal. `pilot-node setup` writes it, and so does the
 **Settings** page (Ctrl+5 in the GUI, 5 in the TUI), or `pilot settings set <key> [value…]`.
 
-A change restarts the node to run with it, once no job runs or waits (a job is its child): the node starts its
+A role's model and effort, and the job limits, are in force at once (the next session of that kind starts with
+them; a waiting job starts as soon as the new limit allows). Any other change restarts the node to run with it, once no
+job runs or waits (a job is its child): the node starts its
 successor with its own arguments and `--after <its pid>`, and stops, as a self-update does, so flights, sessions and
 the watchtower carry on and clients resume their stream. A setting the command line gives is saved but says it does
 not count until the command line stops giving it.

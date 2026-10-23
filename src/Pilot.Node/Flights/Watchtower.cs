@@ -29,6 +29,9 @@ public sealed class Watchtower(
     NodeState state, IWorkerLauncher launcher, Func<CommandRequest, CancellationToken, Task<CommandResult>> run, NodeOptions options, TimeProvider time) : BackgroundService
 {
     public const string Down = "watchtower-down";
+
+    /// <summary>The model and effort the watchtower starts on; a test's watchtower passes none.</summary>
+    public RoleModels Models { get; set; } = RoleModels.Unset;
     public const string Stopped = "watchtower-stopped";
 
     /// <summary>What its own raises are: a card it raised is never said back to it.</summary>
@@ -274,8 +277,8 @@ public sealed class Watchtower(
         try
         {
             Directory.CreateDirectory(folder);
-            var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot);
-            _job = await launcher.StartAsync(new WorkerStart(Name, folder, null, brief, Model: null, Effort: null, RemoteControl: true), cancellationToken);
+            var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower));
+            _job = await launcher.StartAsync(new WorkerStart(Name, folder, null, brief, Model: Models.Model(RoleModels.Watchtower), Effort: Models.Effort(RoleModels.Watchtower), RemoteControl: true), cancellationToken);
         }
         catch (Exception ex) when (ex is FlightException or IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {

@@ -54,7 +54,13 @@ public static class NodeApp
         builder.Services.AddSingleton<IWorkerLauncher, ClaudeWorkerLauncher>();
         builder.Services.AddSingleton<ICheckRunner, ShellCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
-        builder.Services.AddSingleton<LegCommander>();
+        builder.Services.AddSingleton(_ => new RoleModels(options.Saved));
+        builder.Services.AddSingleton(services =>
+        {
+            var legs = ActivatorUtilities.CreateInstance<LegCommander>(services);
+            legs.Models = services.GetRequiredService<RoleModels>();
+            return legs;
+        });
         builder.Services.AddSingleton<NodeCommands>();
         builder.Services.AddSingleton<NodeLan>();
         if (options.Lan && options.LanAnnounce)
@@ -88,6 +94,7 @@ public static class NodeApp
             {
                 Pilot = Briefs.Run(legs.Cli, legs.Socket),
                 Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,
+                Models = services.GetRequiredService<RoleModels>(),
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());

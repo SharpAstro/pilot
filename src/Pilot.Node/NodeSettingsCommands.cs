@@ -9,7 +9,7 @@ namespace Pilot.Node;
 /// which saves a setting and restarts the node to run with it, and <c>setup node &lt;check&gt;</c>, which makes a setup
 /// check's fix. Both verbs are this machine's alone: a grant from the LAN never reaches them.
 /// </summary>
-public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, NodeRestarter restarter, NodeSetup setup, TimeProvider time, Flights.JobRunner jobs)
+public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, NodeRestarter restarter, NodeSetup setup, TimeProvider time, Flights.JobRunner jobs, RoleModels roles)
 {
     // The checks run netsh and gh: a page looked at every few seconds runs them at most this often.
     private static readonly TimeSpan ChecksFor = TimeSpan.FromSeconds(10);
@@ -59,6 +59,12 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         if (Running(key) == (updated.Get(key) is { } now ? Join(key, now) : Default(key)))
         {
             return state.Complete(command, null, way: $"{key} saved as {value}; the node runs with it already");
+        }
+        // A role's model and effort are read when a session of it starts: in force for the next one, no restart.
+        if (NodeSettings.IsRoleKey(key))
+        {
+            roles.Apply(updated);
+            return state.Complete(command, null, way: $"{key} saved as {value}; the next session of that kind starts with it");
         }
         // The job limits apply at once: a restart for them would wait for the very queue they are meant to clear.
         if (key is NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey)
@@ -137,8 +143,15 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.UpdateChannelKey => options.UpdateChannel.Name(),
         NodeSettings.MaxJobsKey => jobs.MaxRunning.ToString(CultureInfo.InvariantCulture),
         NodeSettings.JobMemoryKey => (jobs.MinFreeMemory / (double)(1L << 30)).ToString(CultureInfo.InvariantCulture),
+        _ when RoleOf(key) is ({ } role, var effort) => (effort ? roles.Effort(role) : roles.Model(role)) ?? RoleModels.NoneValue,
         _ => "",
     };
+
+    // The role a role key is for, and whether it is its effort rather than its model.
+    private static (string? Role, bool Effort) RoleOf(string key) =>
+        RoleModels.Roles.FirstOrDefault(r => key == RoleModels.ModelKey(r)) is { } model ? (model, false)
+        : RoleModels.Roles.FirstOrDefault(r => key == RoleModels.EffortKey(r)) is { } effort ? (effort, true)
+        : (null, false);
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
     private static string Join(string key, IReadOnlyList<string> values) => string.Join(key == NodeSettings.RepoRootsKey ? '\n' : ' ', values);
@@ -154,6 +167,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.UpdateChannelKey => UpdateChannel.Stable.Name(),
         NodeSettings.MaxJobsKey => "1",
         NodeSettings.JobMemoryKey => "2",
+        _ when RoleOf(key) is ({ } role, var effort) => effort ? RoleModels.NoneValue : RoleModels.DefaultModel(role),
         _ => "",
     };
 
@@ -167,6 +181,18 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.UpdateChannelKey => ("Update channel", "stable follows the tagged releases; beta follows main's every push (a Debug build, needs the .NET runtime)", [.. UpdateChannels.Names]),
         NodeSettings.MaxJobsKey => ("Jobs at once", "How many background tasks run at once; the rest wait their turn", ["1", "2", "3", "4"]),
         NodeSettings.JobMemoryKey => ("Job memory", "The free memory, in GB, a job waits for before it starts; 0 to not wait", ["0", "2", "4", "8"]),
+        _ when RoleOf(key) is ({ } role, false) => ($"{Title(role)} model", RoleDetail(role), ["sonnet", "opus", "haiku", RoleModels.NoneValue]),
+        _ when RoleOf(key) is ({ } role, true) => ($"{Title(role)} effort", $"The effort each {role} starts at; none leaves it to Claude Code", [.. RoleModels.Efforts, RoleModels.NoneValue]),
         _ => (key, "", []),
+    };
+
+    private static string Title(string role) => char.ToUpperInvariant(role[0]) + role[1..];
+
+    private static string RoleDetail(string role) => role switch
+    {
+        RoleModels.Watchtower => "The watchtower reads cards and runs pilot for hours: the longest-lived session, so the costliest per turn",
+        RoleModels.Worker => "A leg's worker, unless its plan names a model (leg plan --model), which wins",
+        RoleModels.Planner => "Plans a flight's legs from its issue: short-lived, and decides everything after it",
+        _ => "Reviews a flight's PR before its merge card",
     };
 }
