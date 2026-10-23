@@ -100,7 +100,7 @@ public static class PilotCommand
         async Task<int> OnLeg(ParseResult parseResult, NodeClient client, string verb, Func<string, string[]> args, CancellationToken ct)
         {
             var named = parseResult.GetValue(leg);
-            var (target, sender) = named is not null ? (Verbs.FlightTargetPrefix + named, who) : LegHere(await SnapshotAsync(client, ct), cwd, who);
+            var (target, sender) = named is not null ? (Verbs.FlightTargetPrefix + named, who) : LegHere(await SnapshotAsync(client, ct), cwd, who, verb == Verbs.ValidateLeg);
             return await Send(client, verb, target, args(target), sender, ct);
         }
 
@@ -236,6 +236,12 @@ public static class PilotCommand
         var finish = Action(new Command("finish", "Finish the leg: done reruns its check; failed rings for a go-around") { Arguments = { outcome, report }, Options = { leg } },
             (p, client, ct) => OnLeg(p, client, Verbs.FinishLeg, _ => [p.GetValue(outcome)!, .. p.GetValue(report) ?? []], ct));
 
+        var verdict = Arg("outcome", "go (the brief is still true of the tree) or no-go (a fact it rests on is stale)");
+        verdict.AcceptOnlyFromAmong("go", "no-go");
+        var validateReport = Words("report", "The facts checked (go), or each stale fact with the command that showed it (no-go)", required: false);
+        var validate = Action(new Command("validate", "Answer as a leg's validator: go starts its worker; no-go rings with the stale facts") { Arguments = { verdict, validateReport }, Options = { leg } },
+            (p, client, ct) => OnLeg(p, client, Verbs.ValidateLeg, _ => [p.GetValue(verdict)!, .. p.GetValue(validateReport) ?? []], ct));
+
         var why = Words("why", "Why: the fresh worker is told it");
         var goAround = Action(new Command("go-around", "Stop the leg's worker and start a fresh one, told why") { Arguments = { why }, Options = { leg } },
             (p, client, ct) => OnLeg(p, client, Verbs.GoAround, _ => [Join(p, why)], ct));
@@ -244,7 +250,7 @@ public static class PilotCommand
         var extend = Action(new Command("extend", "Raise the leg's budget") { Arguments = { tokens }, Options = { leg } },
             (p, client, ct) => OnLeg(p, client, Verbs.ExtendBudget, _ => [p.GetValue(tokens)!], ct));
 
-        var legCommand = new Command("leg", "Legs: plan, remove, start, finish, go around, extend") { Subcommands = { plan, remove, start, finish, goAround, extend } };
+        var legCommand = new Command("leg", "Legs: plan, remove, start, validate, finish, go around, extend") { Subcommands = { plan, remove, start, validate, finish, goAround, extend } };
 
         // check, artifact
         var step = Words("step", "The step's number, or the start of its text");
@@ -622,13 +628,19 @@ public static class PilotCommand
     /// The leg the folder <paramref name="cwd"/> works on: the flying leg of the flight whose plane holds it, and who is
     /// asking, its worker by name, so the black box says which worker ticked what.
     /// </summary>
-    internal static (string Target, string Who) LegHere(SnapshotEvent snapshot, string cwd, string fallback = "cli")
+    internal static (string Target, string Who) LegHere(SnapshotEvent snapshot, string cwd, string fallback = "cli", bool validating = false)
     {
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         var folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(cwd)) + Path.DirectorySeparatorChar;
         var flight = snapshot.Flights.FirstOrDefault(f => f.State != FlightState.Landed
             && folder.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(f.Worktree)) + Path.DirectorySeparatorChar, comparison))
             ?? throw new UsageException("this folder is in no flight's plane; name the leg with --leg <code>/<leg>");
+        if (validating)
+        {
+            var pending = snapshot.Legs.FirstOrDefault(l => l.Flight == flight.Code && l.State == LegState.Planned && l.Validation == LegValidation.Pending)
+                ?? throw new UsageException($"{flight.Code} has no leg waiting for a validation; name it with --leg {flight.Code}/<leg>");
+            return (Verbs.LegTarget(flight.Code, pending.Name), pending.Validator ?? fallback);
+        }
         var leg = snapshot.Legs.FirstOrDefault(l => l.Flight == flight.Code && l.State == LegState.Flying)
             ?? throw new UsageException($"{flight.Code} has no leg flying; name it with --leg {flight.Code}/<leg>");
         return (Verbs.LegTarget(flight.Code, leg.Name), leg.Worker ?? fallback);
