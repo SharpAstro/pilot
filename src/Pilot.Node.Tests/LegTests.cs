@@ -60,6 +60,23 @@ internal sealed class FakeGitHub : IGitHub
     public Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken) =>
         Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value })]);
 
+    /// <summary>Each repo's open PRs, by repo folder path; a repo with none listed has none.</summary>
+    public Dictionary<string, PullRequestStatus[]> OpenPrs { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Repo folder paths whose PR listing fails, as a gh that could not reach GitHub.</summary>
+    public HashSet<string> OpenPrsFail { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>How many PR listings were asked for.</summary>
+    public int OpenPrCalls;
+
+    public Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref OpenPrCalls);
+        return OpenPrsFail.Contains(repoPath)
+            ? Task.FromException<PullRequestStatus[]>(new FlightException("gh could not list the PRs: offline"))
+            : Task.FromResult(OpenPrs.TryGetValue(repoPath, out var prs) ? prs : []);
+    }
+
     public Task<string?> IssueTitleAsync(string repoPath, int number, CancellationToken cancellationToken) =>
         Task.FromResult(Issues.TryGetValue(number, out var title) ? title : null);
 

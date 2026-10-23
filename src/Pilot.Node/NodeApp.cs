@@ -53,6 +53,8 @@ public static class NodeApp
         builder.Services.AddSingleton<StopGate>();
         builder.Services.AddSingleton<FlightCommander>();
         builder.Services.AddSingleton<RepoCatalog>();
+        builder.Services.AddSingleton<RepoWatch>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<RepoWatch>());
         builder.Services.AddSingleton<IWorkerLauncher, ClaudeWorkerLauncher>();
         builder.Services.AddSingleton<ICheckRunner, ShellCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
@@ -201,7 +203,7 @@ public static class NodeApp
             var watching = get && (path is NodeWire.NodeRoute or NodeWire.SessionsRoute or NodeWire.EventsRoute || path.StartsWith(NodeWire.GrantsRoute + "/", StringComparison.Ordinal));
             // The repos and their issues name this machine's folders, and a transcript is a session's words: read for a
             // grant, as a command is made with one.
-            var granted = get && (path is NodeWire.ReposRoute or NodeWire.IssuesRoute
+            var granted = get && (path is NodeWire.ReposRoute or NodeWire.RepoStatusRoute or NodeWire.IssuesRoute
                 || path.StartsWith(NodeWire.SessionsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/transcript", StringComparison.Ordinal)
                 || path.StartsWith(NodeWire.JobsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/log", StringComparison.Ordinal));
             return watching || (post && path == NodeWire.GrantsRoute) ? NodeRouteAccess.Open
@@ -342,6 +344,8 @@ public static class NodeApp
             Results.Json(ResponseEnvelope<SettingsPage>.Ok(await settings.PageAsync(cancellationToken)), PilotJsonContext.Default.ResponseEnvelopeSettingsPage));
         app.MapGet(NodeWire.ReposRoute, (RepoCatalog repos) =>
             Results.Json(ResponseEnvelope<RepoInfo[]>.Ok(repos.Repos()), PilotJsonContext.Default.ResponseEnvelopeRepoInfoArray));
+        app.MapGet(NodeWire.RepoStatusRoute, async (RepoWatch watch, bool? refresh, CancellationToken cancellationToken) =>
+            Results.Json(ResponseEnvelope<RepoStatus[]>.Ok(await watch.StatusAsync(refresh ?? false, cancellationToken)), PilotJsonContext.Default.ResponseEnvelopeRepoStatusArray));
         app.MapGet(NodeWire.IssuesRoute, async (string? path, IGitHub github, CancellationToken cancellationToken) =>
         {
             if (path is not { Length: > 0 } || !Directory.Exists(path))

@@ -202,6 +202,10 @@ public interface IGitHub
     /// <exception cref="FlightException">gh could not list them.</exception>
     Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken);
 
+    /// <summary>The repo's open PRs with their draft state and checks, in one call, newest first.</summary>
+    /// <exception cref="FlightException">gh could not list them.</exception>
+    Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken);
+
     /// <summary>Issue <paramref name="number"/>'s title, or null when gh cannot say.</summary>
     Task<string?> IssueTitleAsync(string repoPath, int number, CancellationToken cancellationToken);
 
@@ -323,6 +327,62 @@ public sealed class GhCli : IGitHub
                 UpdatedAt = i.TryGetProperty("updatedAt", out var at) && at.TryGetDateTimeOffset(out var when) ? when : null,
             })
             .OrderByDescending(i => i.UpdatedAt)];
+    }
+
+    public async Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["pr", "list", "--state", "open", "--limit", "100", "--json", "number,title,isDraft,headRefName,url,statusCheckRollup"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not list the PRs: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        using var doc = JsonDocument.Parse(output);
+        return [.. doc.RootElement.EnumerateArray()
+            .Select(p => new PullRequestStatus
+            {
+                Number = p.GetProperty("number").GetInt32(),
+                Title = p.GetProperty("title").GetString() ?? "",
+                Head = p.GetProperty("headRefName").GetString() ?? "",
+                Url = p.TryGetProperty("url", out var url) ? url.GetString() : null,
+                Draft = p.TryGetProperty("isDraft", out var draft) && draft.ValueKind == JsonValueKind.True,
+                Checks = p.TryGetProperty("statusCheckRollup", out var rollup) ? RollupStatus(rollup) : null,
+            })
+            .OrderByDescending(p => p.Number)];
+    }
+
+    /// <summary>
+    /// Where a PR's <c>statusCheckRollup</c> stands: a check run carries a status and a conclusion, a commit status a
+    /// state. <see cref="ChoiceStatus.Failing"/> when any failed, <see cref="ChoiceStatus.Pending"/> while any runs,
+    /// <see cref="ChoiceStatus.Passing"/> when all passed (skipped ones aside), null with none.
+    /// </summary>
+    public static string? RollupStatus(JsonElement rollup)
+    {
+        if (rollup.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+        var failing = false;
+        var pending = false;
+        var passing = false;
+        foreach (var check in rollup.EnumerateArray())
+        {
+            string? Text(string name) => check.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()?.ToUpperInvariant() : null;
+            var conclusion = Text("conclusion") ?? Text("state");
+            var status = Text("status");
+            if (conclusion is "FAILURE" or "ERROR" or "CANCELLED" or "TIMED_OUT" or "ACTION_REQUIRED" or "STARTUP_FAILURE")
+            {
+                failing = true;
+            }
+            else if (conclusion is "PENDING" or "EXPECTED" || conclusion is null || status is not (null or "COMPLETED"))
+            {
+                pending = true;
+            }
+            else if (conclusion is "SUCCESS")
+            {
+                passing = true;
+            }
+        }
+        return failing ? ChoiceStatus.Failing : pending ? ChoiceStatus.Pending : passing ? ChoiceStatus.Passing : null;
     }
 
     public async Task<string?> IssueTitleAsync(string repoPath, int number, CancellationToken cancellationToken)
