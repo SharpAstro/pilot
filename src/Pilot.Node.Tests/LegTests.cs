@@ -225,6 +225,95 @@ public sealed class LegCommanderTests : IDisposable
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "oops")).Error.ShouldNotBeNull().ShouldContain("key=value");
     }
 
+    private const string UsesDirLib = """
+        <Project>
+          <PropertyGroup>
+            <UseLocalDirLib Condition="'$(UseLocalDirLib)' == '' AND Exists('$(MSBuildThisFileDirectory)..\DIR.Lib\src\DIR.Lib\DIR.Lib.csproj')">true</UseLocalDirLib>
+          </PropertyGroup>
+        </Project>
+        """;
+
+    private void Commit(string cwd, string message) =>
+        Git(cwd, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", message);
+
+    /// <summary>The repo declares DIR.Lib as a UseLocal sibling, and the clone beside it is <paramref name="behind"/> commits behind its origin.</summary>
+    private void SiblingDirLib(int behind)
+    {
+        File.WriteAllText(Path.Combine(Repo, "Directory.Build.props"), UsesDirLib);
+        Git(Repo, "add", ".");
+        Commit(Repo, "uses DIR.Lib");
+        var origin = Path.Combine(_root, "dir-lib-origin");
+        Directory.CreateDirectory(origin);
+        Git(origin, "init", "-q", "-b", "main");
+        Commit(origin, "first");
+        Git(_root, "clone", "-q", origin, "DIR.Lib");
+        for (var i = 0; i < behind; i++)
+        {
+            Commit(origin, $"newer {i}");
+        }
+    }
+
+    [Fact]
+    public async Task ALegStartedWithASiblingBehindItsOriginRaisesOneCardNamingItAndThePullAndStillStarts()
+    {
+        SiblingDirLib(behind: 3);
+        await FlightWithTwoLegs();
+
+        (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
+
+        _workers.Started.ShouldHaveSingleItem();
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.SiblingBehindKind);
+        (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "flight/TIA1/parser"));
+        card.Title.ShouldBe("TIA1/parser compiles against a sibling clone behind origin");
+        card.Detail.ShouldBe($"DIR.Lib is 3 commits behind its origin: git -C {Path.Combine(_root, "DIR.Lib")} pull --ff-only");
+
+        _state.Cards().Count(c => c.Kind == LegCommander.SiblingBehindKind).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ALegStartedWithItsSiblingsUpToDateRaisesNoCard()
+    {
+        SiblingDirLib(behind: 0);
+        await FlightWithTwoLegs();
+
+        (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
+
+        _state.Cards().Where(c => c.Kind == LegCommander.SiblingBehindKind).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ALegStartedInARepoWithoutUseLocalSiblingsRaisesNoCard()
+    {
+        await FlightWithTwoLegs();
+
+        (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
+
+        _state.Cards().Where(c => c.Kind == LegCommander.SiblingBehindKind).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ALegStartsWhenTheSiblingWatchCannotAsk()
+    {
+        await FlightWithTwoLegs();
+        var legs = new LegCommander(_state, _workers, _checks, _github, new GitCli(), new Planes(new GitCli()), _flights,
+            new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1"), TimeProvider.System)
+        {
+            Siblings = new SiblingWatch(new ThrowingGit(), TimeProvider.System),
+        };
+        File.WriteAllText(Path.Combine(_state.Flights().Single().Worktree, "Directory.Build.props"), UsesDirLib);
+        Directory.CreateDirectory(Path.Combine(_root, "DIR.Lib", ".git"));
+
+        (await legs.RunAsync(new CommandRequest { Verb = Verbs.StartLeg, Target = "flight/TIA1/parser", Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+
+        _state.Cards().Where(c => c.Kind == LegCommander.SiblingBehindKind).ShouldBeEmpty();
+    }
+
+    private sealed class ThrowingGit : IGit
+    {
+        public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("git did not start");
+    }
+
     [Fact]
     public async Task ALegStartsAFreshWorkerInThePlaneBriefedFromItAndOnlyInOrder()
     {
