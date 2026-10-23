@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using Pilot.Commands;
 using Pilot.Contracts;
@@ -32,10 +33,35 @@ public sealed class LanTests
         await using var node = await NodeHarness.StartAsync(Ct, lanPort: port, localOnly: true);
 
         // Nothing listens on the port: a free port can be taken by anyone, which is what the bind not happening means.
-        using var probe = new TcpListener(IPAddress.Any, port);
-        probe.Start();
-        probe.Stop();
+        // Probed on loopback, where the test node would bind: a listener on any address would itself ask the firewall.
+        foreach (var address in LoopbackAddresses())
+        {
+            using var probe = new TcpListener(address, port);
+            probe.Start();
+            probe.Stop();
+        }
     }
+
+    [Fact]
+    public async Task ATestNodeOnTheLanListensOnLoopbackOnlySoNoFirewallAsks()
+    {
+        var port = FreePort();
+        await using var node = await NodeHarness.StartAsync(Ct, lanPort: port);
+
+        node.Options.LanLoopbackOnly.ShouldBeTrue();
+        // The node's own listeners, read from the OS: none on the port may be on an address another machine reaches.
+        var listening = IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners().Where(e => e.Port == port).ToList();
+        listening.ShouldNotBeEmpty();
+        listening.ShouldAllBe(e => IPAddress.IsLoopback(e.Address));
+        // And a client on loopback still reaches it, as the remote-request tests rely on.
+        using var remote = NodeClient.Remote($"127.0.0.1:{port}");
+        (await remote.GetNodeAsync(Ct)).MachinePrefix.ShouldBe(node.Options.Machine);
+    }
+
+    [Fact]
+    public void ANodeListensOnTheNetworkUnlessToldItIsATest() => new NodeOptions("/s", "/d", Lan: true).LanLoopbackOnly.ShouldBeFalse();
+
+    private static IEnumerable<IPAddress> LoopbackAddresses() => Socket.OSSupportsIPv6 ? [IPAddress.Loopback, IPAddress.IPv6Loopback] : [IPAddress.Loopback];
 
     [Fact]
     public async Task AnyoneMayWatchButACommandNeedsAGrantAllowedOnACard()

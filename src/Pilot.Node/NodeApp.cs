@@ -30,7 +30,15 @@ public static class NodeApp
             {
                 // Every address, as a LAN client may come by any of this machine's: what it may do there is NodeLan's.
                 // Node.Lib.Hosting binds nothing when the node is local-only, so that holds where the bind happens.
-                kestrel.ListenOnNodeNetwork(options.LanPort, new LocalOnlyMode(options.LocalOnly));
+                if (!options.LanLoopbackOnly)
+                {
+                    kestrel.ListenOnNodeNetwork(options.LanPort, new LocalOnlyMode(options.LocalOnly));
+                }
+                else if (!options.LocalOnly)
+                {
+                    // A test node: loopback stands in for the LAN, and a loopback listener never asks the firewall.
+                    kestrel.ListenLocalhost(options.LanPort);
+                }
             }
         });
         // The host's own start and stop lines stay; a line per request does not, as every client polls and streams.
