@@ -66,12 +66,19 @@ document.addEventListener("click", e => {
 const UPLOAD_MAX = 10 * 1024 * 1024;
 const attached = new Map(), attachNote = new Map();
 const attachedIds = key => (attached.get(key) || []).map(a => a.id);
+// The server deletes an upload that no sent message and no box holds, so it is told after every change which
+// uploads this page's boxes hold. A page is a random id; a closed page's last word stays until the server restarts.
+const pageId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+function sayDrafts() {
+  const names = [...new Set([...attached.values()].flat().map(a => a.id))];
+  fetch("/api/uploads/drafts", {method: "POST", headers: {"X-Pilot": "1", "Content-Type": "application/json"}, body: JSON.stringify({page: pageId, names})}).catch(() => {});
+}
 const trayHtml = key => `${(attached.get(key) || []).map((a, i) => `<span class="att"><img class="thumb" src="${esc(a.url)}" alt="attached image" data-full="${esc(a.url)}">`
   + `<button class="att-rm" data-attach-rm="${esc(key)}" data-i="${i}" title="remove this image">×</button></span>`).join("")}`
   + `<label class="att-pick" title="attach images: or paste (Ctrl+V) or drop them on the box">+ image<input type="file" accept="${IMAGE_TYPES.join(",")}" multiple data-attach-pick="${esc(key)}" hidden></label>`
   + (attachNote.get(key) ? `<span class="sub att-note">${esc(attachNote.get(key))}</span>` : "");
 // `?attach=<upload name>,…`: every box starts with those uploads attached, fetched and uploaded again as a paste
-// is, for a screenshot of a box before it sends.
+// is, for a screenshot of a box before it sends. The server finds the same bytes already saved and reuses that upload.
 const seedAttach = (new URLSearchParams(location.search).get("attach") || "").split(",").filter(n => /^[0-9a-f]{32}\.(png|jpe?g|gif|webp)$/.test(n));
 const seeded = new Set();
 const tray = key => {
@@ -84,7 +91,7 @@ const tray = key => {
 };
 // The trays are redrawn in place, not by a render: a box being typed in is never redrawn under the cursor.
 function drawTrays(key) { for (const el of document.querySelectorAll(`[data-attach="${CSS.escape(key)}"]`)) el.innerHTML = trayHtml(key); }
-function clearAttached(key) { attached.delete(key); attachNote.delete(key); drawTrays(key); }
+function clearAttached(key) { attached.delete(key); attachNote.delete(key); drawTrays(key); sayDrafts(); }
 // A box with an upload still in flight refuses to send: the image would land after the box was cleared, and ride
 // with its next message, perhaps to another session.
 const uploading = new Map();
@@ -107,6 +114,7 @@ async function attachAll(key, files) {
     } catch (e) { attachNote.set(key, `not attached: ${e.message}`); }
   }
   drawTrays(key);
+  sayDrafts();
 }
 document.addEventListener("paste", e => {
   const key = e.target.closest?.("[data-attach-to]")?.dataset.attachTo;
@@ -134,7 +142,7 @@ document.addEventListener("click", e => {
   e.preventDefault();
   const key = b.dataset.attachRm, list = [...(attached.get(key) || [])];
   list.splice(+b.dataset.i, 1);
-  attached.set(key, list); drawTrays(key);
+  attached.set(key, list); drawTrays(key); sayDrafts();
 });
 // A plan log or black box line names its images as `[image uploads/<name>]`: drawn as thumbnails, not as words.
 const UPLOAD_TAG = /\s?\[image uploads\/([0-9a-f]{32}\.(?:png|jpe?g|gif|webp))\]/g;
