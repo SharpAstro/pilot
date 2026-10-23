@@ -42,6 +42,8 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private readonly Dictionary<string, TextInputState> _fields = new(StringComparer.Ordinal);
     private readonly Lock _lock = new();
     private SettingsPage? _page;
+    private GrantInfo[] _given = [];
+    private string[] _held = [];
     private string? _problem;
     private CancellationTokenSource? _reading;
     private DateTimeOffset _drawnAt;
@@ -51,6 +53,27 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     /// <summary>Sends one verb to the node (<c>set</c>, <c>setup</c>) with its words; returns what became of it.</summary>
     public Func<string, string[], CancellationToken, Task<string>>? Send { get; set; }
+
+    /// <summary>Reads the grants this node has given (its grants route); null where there is no node to read.</summary>
+    public Func<CancellationToken, Task<GrantInfo[]>>? LoadGrants { get; set; }
+
+    /// <summary>The nodes this user holds a token for, by <c>host:port</c>: read from the token file with each refresh.</summary>
+    public Func<IReadOnlyList<string>>? LoadHeld { get; set; }
+
+    /// <summary>Drops the token held for a node; the host also recomputes the steerable set so its rows turn watch-only on the next tick.</summary>
+    public Action<string>? Forget { get; set; }
+
+    /// <summary>The grants given, as last read.</summary>
+    public GrantInfo[] Given
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _given;
+            }
+        }
+    }
 
     /// <summary>Called when what the page shows changed, from whichever thread: the host redraws.</summary>
     public Action? Changed { get; set; }
@@ -150,6 +173,48 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                 _problem = ex.Message;
             }
         }
+        await RefreshGrantsAsync(cancellationToken).ConfigureAwait(false);
+        Changed?.Invoke();
+    }
+
+    private async Task RefreshGrantsAsync(CancellationToken cancellationToken)
+    {
+        GrantInfo[]? given = null;
+        if (LoadGrants is { } loadGrants)
+        {
+            try
+            {
+                given = await loadGrants(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+            {
+                // The list keeps what it had: the settings above it are still good.
+            }
+        }
+        var held = LoadHeld?.Invoke();
+        lock (_lock)
+        {
+            if (given is not null)
+            {
+                _given = given;
+            }
+            if (held is not null)
+            {
+                _held = [.. held];
+            }
+        }
+    }
+
+    /// <summary>Drops the token held for <paramref name="endpoint"/> and shows the list without it at once.</summary>
+    private void ForgetNode(string endpoint)
+    {
+        Forget?.Invoke(endpoint);
+        var held = LoadHeld?.Invoke();
+        lock (_lock)
+        {
+            _held = held is null ? [.. _held.Where(h => !string.Equals(h, endpoint, StringComparison.OrdinalIgnoreCase))] : [.. held];
+        }
+        Said = $"forgot {endpoint}: its rows are watch-only until you Connect again";
         Changed?.Invoke();
     }
 
@@ -211,6 +276,35 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         {
             rows.Add(SettingRowNode(page.Settings[i], i));
         }
+        GrantInfo[] given;
+        string[] held;
+        lock (_lock)
+        {
+            given = _given;
+            held = _held;
+        }
+        if (LoadGrants is not null || LoadHeld is not null)
+        {
+            rows.Add(Section("Grants", "who may command this node, and which nodes you may command"));
+            rows.Add(Subhead("Given by this node"));
+            if (given.Length == 0)
+            {
+                rows.Add(Layout.Builder.Text("no machine on the LAN holds a grant here", 12f, Dim).RowH(26f).Pad(Gutter, 2f));
+            }
+            for (var i = 0; i < given.Length; i++)
+            {
+                rows.Add(GrantRow(given[i], i));
+            }
+            rows.Add(Subhead("Held by you"));
+            if (held.Length == 0)
+            {
+                rows.Add(Layout.Builder.Text("no other node is commanded from here: Connect on its row asks for a grant", 12f, Dim).RowH(26f).Pad(Gutter, 2f));
+            }
+            for (var i = 0; i < held.Length; i++)
+            {
+                rows.Add(HeldRow(held[i], i));
+            }
+        }
         return Layout.Builder.VStack([.. rows]).WithScroll(_scroll).Pad(Gutter, 8f).Stretch();
     }
 
@@ -219,6 +313,43 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                 Layout.Builder.Text(title, 15f, Bright).WAuto(),
                 Layout.Builder.Text(hint, 12f, Faint).WStar())
             .WithGap(12f).Pad(8f, 10f).RowH(38f);
+
+    private static Layout.Node Subhead(string text) =>
+        Layout.Builder.Text(text, 12f, Dim).RowH(24f).Pad(Gutter, 2f);
+
+    private Layout.Node GrantRow(GrantInfo grant, int index)
+    {
+        var row = Layout.Builder.HStack(
+                Layout.Builder.Spacer().Bg(Ok).WFixed(StripeWidth).HStar(),
+                Layout.Builder.VStack(
+                        Layout.Builder.Text(grant.Label, 14f, Bright).RowH(22f),
+                        Layout.Builder.Text($"since {grant.GrantedAt.ToLocalTime():yyyy-MM-dd HH:mm}", 11f, Dim).RowH(18f))
+                    .WFixed(TitleWidth),
+                Layout.Builder.Text("may command this node; Revoke cuts it back to watching at once", 12f, Body).WStar(),
+                Layout.Builder.HStack(
+                        Send is null ? Layout.Builder.Spacer().WStar() : Pill("Revoke", $"settings:revoke:{grant.Id}", () => Act(Verbs.RevokeGrant, [grant.Id], $"revoking {grant.Label}…")),
+                        Layout.Builder.Spacer().WStar())
+                    .WFixed(FixWidth))
+            .WithGap(14f).Pad(8f, 6f).RowH(RowHeight);
+        return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
+    }
+
+    private Layout.Node HeldRow(string endpoint, int index)
+    {
+        var row = Layout.Builder.HStack(
+                Layout.Builder.Spacer().Bg(Ok).WFixed(StripeWidth).HStar(),
+                Layout.Builder.VStack(
+                        Layout.Builder.Text(endpoint, 14f, Bright).RowH(22f),
+                        Layout.Builder.Text("you may command it", 11f, Dim).RowH(18f))
+                    .WFixed(TitleWidth),
+                Layout.Builder.Text("Forget drops the token: its rows turn watch-only, with Connect offered", 12f, Body).WStar(),
+                Layout.Builder.HStack(
+                        Forget is null ? Layout.Builder.Spacer().WStar() : Pill("Forget", $"settings:forget:{endpoint}", () => ForgetNode(endpoint)),
+                        Layout.Builder.Spacer().WStar())
+                    .WFixed(FixWidth))
+            .WithGap(14f).Pad(8f, 6f).RowH(RowHeight);
+        return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
+    }
 
     private Layout.Node CheckRow(SetupCheck check, int index)
     {

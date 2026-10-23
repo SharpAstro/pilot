@@ -46,6 +46,24 @@ public static class NodeTargets
         var file = tokenFile ?? TokenFile;
         var tokens = Load(file);
         tokens[endpoint.ToLowerInvariant()] = token;
+        Write(file, tokens);
+    }
+
+    /// <summary>Drops the token held for <paramref name="endpoint"/>: that node is watched, not commanded, until connected again. False when none was held.</summary>
+    public static bool Forget(string endpoint, string? tokenFile = null)
+    {
+        var file = tokenFile ?? TokenFile;
+        var tokens = Load(file);
+        if (!tokens.Remove(endpoint.ToLowerInvariant()))
+        {
+            return false;
+        }
+        Write(file, tokens);
+        return true;
+    }
+
+    private static void Write(string file, Dictionary<string, string> tokens)
+    {
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
         using var buffer = new MemoryStream();
         using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = true }))

@@ -206,6 +206,16 @@ if (remote is null)
         ? page
         : throw new InvalidOperationException("the node did not send its settings");
     settings.Send = (verb, args, ct) => SettingsCommands.SendAsync(client, verb, args, Who, ct);
+    settings.LoadGrants = async ct => (await client.GrantsAsync(ct)) is { Success: true, Response: { } given }
+        ? given
+        : throw new InvalidOperationException("the node did not send its grants");
+    settings.LoadHeld = () => NodeTargets.Granted();
+    // A forgotten node's rows turn watch-only on the next draw: the steerable set is read again at once, not at the 5 s look.
+    settings.Forget = endpoint =>
+    {
+        NodeTargets.Forget(endpoint);
+        fleetKnownAt = DateTimeOffset.MinValue;
+    };
     settings.Changed = Redraw;
 }
 feed.Start();

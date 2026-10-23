@@ -86,6 +86,86 @@ public sealed class SettingsPageTests
         }
     }
 
+    [Fact]
+    public async Task TheGrantsSectionListsWhatThisNodeGaveWithRevokeAndWhatYouHoldWithForget()
+    {
+        var tokens = Path.Combine(Path.GetTempPath(), $"pilot-held-{Guid.NewGuid():N}.json");
+        try
+        {
+            Pilot.Commands.NodeTargets.Save("le1.local:47731", "tok-a", tokens);
+            Pilot.Commands.NodeTargets.Save("se2.local:47731", "tok-b", tokens);
+            var given = new List<GrantInfo> { new() { Id = "g1", Label = "se2-gui", GrantedAt = new DateTimeOffset(2026, 10, 1, 9, 0, 0, TimeSpan.Zero) } };
+            var forgotten = new List<string>();
+            using var renderer = new RgbaImageRenderer(1280, 2000);
+            var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+            var sent = new List<(string Verb, string[] Args)>();
+            chrome.Settings.Load = _ => Task.FromResult(Sample);
+            chrome.Settings.LoadGrants = _ =>
+            {
+                lock (given)
+                {
+                    return Task.FromResult(given.ToArray());
+                }
+            };
+            chrome.Settings.LoadHeld = () => Pilot.Commands.NodeTargets.Granted(tokens);
+            chrome.Settings.Forget = endpoint =>
+            {
+                forgotten.Add(endpoint);
+                Pilot.Commands.NodeTargets.Forget(endpoint, tokens);
+            };
+            chrome.Settings.Send = (verb, args, _) =>
+            {
+                lock (sent)
+                {
+                    sent.Add((verb, args));
+                }
+                if (verb == Verbs.RevokeGrant)
+                {
+                    lock (given)
+                    {
+                        given.RemoveAll(g => g.Id == args[0]);
+                    }
+                }
+                return Task.FromResult("done");
+            };
+            chrome.Show(PilotPage.Settings);
+
+            void Draw() => chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 1280, 2000));
+            Draw();
+            await WaitAsync(() => chrome.Settings.Page is not null && chrome.Settings.Given.Length == 1);
+            Draw();
+            var regions = new List<ClickableRegion>();
+            chrome.Settings.CollectPaintedRegions(regions);
+            var buttons = regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).ToList();
+            buttons.ShouldContain("settings:revoke:g1");
+            buttons.ShouldContain("settings:forget:le1.local:47731");
+            buttons.ShouldContain("settings:forget:se2.local:47731");
+
+            // Revoke is the node's revoke-grant for that id, and the list reads again without it.
+            Click(regions, "settings:revoke:g1");
+            await WaitAsync(() => { lock (sent) { return sent.Any(s => s.Verb == Verbs.RevokeGrant && s.Args.SequenceEqual(new[] { "g1" })); } });
+            await WaitAsync(() => chrome.Settings.Given.Length == 0);
+
+            // Forget drops the token from the file; the page lists one node fewer.
+            Click(regions, "settings:forget:le1.local:47731");
+            forgotten.ShouldBe(["le1.local:47731"]);
+            Pilot.Commands.NodeTargets.Granted(tokens).ShouldBe(["se2.local:47731"]);
+            Pilot.Commands.NodeTargets.TokenFor("le1.local:47731", tokens).ShouldBeNull();
+            Pilot.Commands.NodeTargets.Forget("le1.local:47731", tokens).ShouldBeFalse();
+
+            // The steerable set, read again from the file as the fleet tick does, turns that node's rows watch-only.
+            var held = new HashSet<string>(Pilot.Commands.NodeTargets.Granted(tokens), StringComparer.OrdinalIgnoreCase);
+            using var here = NodeClient.Remote("127.0.0.1:1");
+            using var clients = new FleetClients(here, held.Contains);
+            clients.CanSteer(new NodeMark("le1.local:47731", "le1.local:47731", "LE1", Here: false)).ShouldBeFalse();
+            clients.CanSteer(new NodeMark("se2.local:47731", "se2.local:47731", "SE2", Here: false)).ShouldBeTrue();
+        }
+        finally
+        {
+            File.Delete(tokens);
+        }
+    }
+
     private static void Click(List<ClickableRegion> regions, string action) =>
         regions.First(r => r.Result is HitResult.ButtonHit b && b.Action == action).OnClick!.Invoke(InputModifier.None);
 
