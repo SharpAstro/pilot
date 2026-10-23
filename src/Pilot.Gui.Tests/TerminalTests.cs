@@ -69,7 +69,7 @@ public sealed class TerminalTests
 
         flights.OpenMenu(screen.Lines[0], 0, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
 
-        flights.MenuItems.Select(i => i.Label).ShouldBe(["Start render", "Remove render…", "Plan a leg…", "Open its plane's folder", "Open its repo's folder", "Copy TIA1611", "Copy its branch"]);
+        flights.MenuItems.Select(i => i.Label).ShouldBe(["Start render", "Remove render…", "Plan a leg…", "Open flight", "Open its plane's folder", "Open its repo's folder", "Copy TIA1611", "Copy its branch"]);
         flights.MenuItems[0].OnChoose!();
         acted.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.StartLeg);
         flights.MenuItems[^1].OnChoose!();

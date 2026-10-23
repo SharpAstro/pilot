@@ -30,6 +30,9 @@ internal sealed record GuiOptions
     /// <summary>The page a capture shows: sessions, flights, or jobs.</summary>
     public PilotPage Page { get; init; } = PilotPage.Sessions;
 
+    /// <summary>With <c>--page flights</c>: the flight whose page the capture opens, by code, as Enter on its row does in the window.</summary>
+    public string? Flight { get; init; }
+
     public int Width { get; init; } = 1280;
 
     public int Height { get; init; } = 800;
@@ -50,6 +53,7 @@ internal sealed record GuiOptions
         var size = new Option<string?>("--size") { Description = "The capture's size, <W>x<H>; 1280x800 by default" };
         var page = new Option<string?>("--page") { Description = "The page a capture shows: sessions, flights or jobs" };
         page.AcceptOnlyFromAmong("sessions", "flights", "jobs");
+        var flight = new Option<string?>("--flight") { Description = "With --page flights: open this flight's page (its legs, checklists and artifacts) in the capture, by code" };
         var exitAfter = new Option<string?>("--exit-after") { Description = "Close the window by itself after this long: 5s, 500ms, 2m" };
         var say = new Option<string[]>("--say")
         {
@@ -60,7 +64,7 @@ internal sealed record GuiOptions
 
         var root = new RootCommand("pilot v2's GUI: every Claude session on the machine, live from the node")
         {
-            Options = { snapshot, socket, node, capture, size, page, exitAfter, say },
+            Options = { snapshot, socket, node, capture, size, page, flight, exitAfter, say },
         };
         var parsed = root.Parse([.. args]);
 
@@ -83,6 +87,7 @@ internal sealed record GuiOptions
             NodeSocket = parsed.GetValue(socket),
             Node = parsed.GetValue(node),
             Capture = parsed.GetValue(capture),
+            Flight = parsed.GetValue(flight),
             Page = parsed.GetValue(page) switch { "flights" => PilotPage.Flights, "jobs" => PilotPage.Jobs, _ => PilotPage.Sessions },
         };
         if (parsed.GetValue(size) is { } sizeText)
