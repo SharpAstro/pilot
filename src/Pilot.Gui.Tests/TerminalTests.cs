@@ -34,6 +34,7 @@ public sealed class TerminalTests
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
         var flights = chrome.Flights;
+        flights.CanvasAvailable = false; // as pilot-tui sets it: cells keep the list
         flights.CanCommand = true;
         var acted = new List<FlightAction>();
         flights.OnAction = acted.Add;
@@ -58,6 +59,7 @@ public sealed class TerminalTests
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
         var flights = chrome.Flights;
+        flights.CanvasAvailable = false;
         flights.CanCommand = true;
         var acted = new List<FlightAction>();
         var copied = new List<string>();
@@ -91,6 +93,7 @@ public sealed class TerminalTests
     {
         using var vessel = new RgbaImageRenderer(1, 1);
         var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)).Flights;
+        flights.CanvasAvailable = false;
 
         CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen()), new Rect<int>(0, 0, 100, 40), CellMeasureContext.PixelAuthored))
             .ShouldNotContain("flight/tia1611");

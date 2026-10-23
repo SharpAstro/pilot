@@ -44,6 +44,7 @@ using var vessel = new RgbaImageRenderer(1, 1);
 var sessions = new SessionsView<RgbaImage>(vessel) { CanSay = true };
 var chrome = new PilotChrome<RgbaImage>(vessel, sessions);
 var flights = chrome.Flights;
+flights.CanvasAvailable = false; // cells cannot draw an arrow: the terminal keeps the list
 var jobs = chrome.Jobs;
 var repos = chrome.Repos;
 var home = chrome.Home;
