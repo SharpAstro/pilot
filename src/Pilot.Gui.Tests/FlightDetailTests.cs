@@ -137,6 +137,49 @@ public sealed class FlightDetailTests
         flights.IsDetailOpen.ShouldBeFalse();
     }
 
+    [Theory]
+    [InlineData("/caps/planets.png", "/caps")]
+    [InlineData(@"C:\caps\planets.png", @"C:\caps")]
+    [InlineData(@"C:\caps\shots\", @"C:\caps")]
+    [InlineData("planets.png", null)]
+    public void AnArtifactsFolderIsFoundWhicheverSlashItsPathUses(string path, string? folder)
+    {
+        var leg = Legs()[0] with { Artifacts = [Shot("shot", path, 1)] };
+
+        LegDetail.From(leg, Now).Artifacts.Single().Folder.ShouldBe(folder);
+    }
+
+    [Fact]
+    public void TheArrowAndPageKeysScrollAnOpenPageAndHomeGoesBackToTheTop()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 260);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        var flights = chrome.Flights;
+        var screen = new FlightsScreen([Line()], "test", Now);
+        chrome.Show(PilotPage.Flights);
+        flights.OpenDetail("TIA1611");
+        // A page short enough that the second leg is below the fold.
+        chrome.Render(new SessionsScreen([], "test", Now), screen, new RectF32(0, 0, 1280, 260));
+        flights.DetailOffset.ShouldBe(0);
+
+        bool Press(InputKey key) => flights.HandleInput(new InputEvent.KeyDown(key, InputModifier.None));
+
+        Press(InputKey.Up).ShouldBeTrue();
+        flights.DetailOffset.ShouldBe(0);
+        Press(InputKey.Down).ShouldBeTrue();
+        var line = flights.DetailOffset;
+        line.ShouldBeGreaterThan(0);
+        Press(InputKey.PageDown).ShouldBeTrue();
+        flights.DetailOffset.ShouldBeGreaterThan(line);
+        Press(InputKey.PageUp).ShouldBeTrue();
+        Press(InputKey.Home).ShouldBeTrue();
+        flights.DetailOffset.ShouldBe(0);
+        Press(InputKey.End).ShouldBeTrue();
+        flights.DetailOffset.ShouldBeGreaterThan(line);
+        Press(InputKey.Escape).ShouldBeTrue();
+        flights.IsDetailOpen.ShouldBeFalse();
+    }
+
     [Fact]
     public void ThePageLandsInTerminalCellsWithEveryLegsWords()
     {

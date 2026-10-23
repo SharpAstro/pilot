@@ -25,6 +25,33 @@ internal sealed partial class FlightsView<TSurface>
 
     public void CloseDetail() => _openCode = null;
 
+    /// <summary>The open page's scroll position, in the layout's own units (a pixel in the window, a cell in the terminal).</summary>
+    internal int DetailOffset => _detailScroll.AtomOffset;
+
+    // The page's keys, so its lower legs are reachable without a mouse (pilot-tui has none): a line for the arrows, the
+    // viewport less a line for the page keys, the ends for Home and End. The controller clamps at both ends.
+    private bool ScrollDetail(InputKey key)
+    {
+        var line = MathF.Max(1f, _detailScroll.LineExtentPx);
+        var page = MathF.Max(line, _detailScroll.Viewport.Height - line);
+        var target = key switch
+        {
+            InputKey.Up => _detailScroll.Offset - line,
+            InputKey.Down => _detailScroll.Offset + line,
+            InputKey.PageUp => _detailScroll.Offset - page,
+            InputKey.PageDown => _detailScroll.Offset + page,
+            InputKey.Home => 0f,
+            InputKey.End => _detailScroll.MaxOffset,
+            _ => float.NaN,
+        };
+        if (float.IsNaN(target))
+        {
+            return false;
+        }
+        _detailScroll.AtomOffset = (int)MathF.Round(target);
+        return true;
+    }
+
     // The open flight's line, or null: a flight the node has forgotten closes its page.
     private FlightLine? OpenLine(FlightsScreen screen)
     {
