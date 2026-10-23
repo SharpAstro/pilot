@@ -223,6 +223,28 @@ public sealed class ReviewTests : IDisposable
         Open().ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task APassedPrWhoseChecksFailIsSentBackAsChangesOnceAHeadSoItsDoneLegGoesAround()
+    {
+        var flight = await NewFlight("7", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA7"), "controller");
+        (await Run(Verbs.Review, "flight/TIA7", Reviewer("TIA7"), "pass", "fine")).Ok.ShouldBeTrue();
+        _github.Checks = ChoiceStatus.Failing;
+        var checks = new PrChecks(_state, _github, TimeProvider.System, legs: _legs);
+
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        F("TIA7").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+        _github.DraftCalls.ShouldContain((_github.Pr!.Number, true));
+        var card = Open().ShouldHaveSingleItem();
+        (card.Kind, card.Title).ShouldBe((LegCommander.ReviewChanges, "TIA7's review asks for changes"));
+        card.Detail.ShouldNotBeNull().ShouldStartWith("the PR's checks failed on ");
+        // The ring's go-around is the way round for the done leg, as for a review's changes.
+        (await Run(Verbs.GoAround, "flight/TIA7/parser", "controller", "fix the checks")).Error.ShouldBeNull();
+    }
+
     private void Window(double used, TimeSpan resetsIn) =>
         _state.PutUsage(new UsageRow { ReadAt = DateTimeOffset.UtcNow, FiveHour = new UsageWindow { UsedPercent = used, ResetsAt = DateTimeOffset.UtcNow + resetsIn } });
 
