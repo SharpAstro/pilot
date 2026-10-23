@@ -135,6 +135,8 @@ prefix, `--machine` or `PILOT_MACHINE`, else from its name).
 | `plan-flight flight/<code>` | A planner, `<machine>-<flight>-plan`, in the plane: it reads the issue and the code and plans the legs (`plan-leg`), writing no code, then says `planned`. |
 | `planned flight/<code> [summary…]` | The planner is done: a For-you card lists the legs, with **Start** on the first. No leg may be named `plan`. |
 | `connect flight/<code> <other>` | The flight holds until the other has landed (a cycle is refused). |
+| `sync-repos node` | `git fetch -p --all` in each tracked repo, then a fast-forward-only merge of `origin/<default>` into its main checkout. Never a merge commit or a pull, and a checkout that is dirty, on another branch, diverged from origin or without an origin default is left alone and the outcome says why; a failed fetch or fast-forward is that repo's `failed`. Each git call is cut off after 2 minutes. The result's `made` is one `name<TAB>updated\|current\|skipped\|failed<TAB>detail` line per repo, and the repo status is read afresh after it. The controller's: refused from the watchtower, and from the LAN without a grant. |
+| `create-issue repo/<path> <title> [body…]` | A new issue through `gh issue create`; the result's `made` is its number. The controller's, as `sync-repos` is. |
 | `land flight/<code>` | Its work is in: the worktree goes when clean (never with changes not committed, nor with a commit on no remote and not in its base), the branch and code stay, and flights waiting for it are cleared. |
 
 **Nothing is left behind.** A flight's work reaches main or is said, never kept where nobody looks: a leg finishes as
@@ -356,6 +358,8 @@ The cache is read every three minutes once something has asked (a node nobody as
 pilot status                                   # flights, their legs and artifacts, and the live sessions
 pilot sessions
 pilot repos [--all] [--refresh]                # each tracked repo: branch, worktrees (flight, diff stat) and open PRs; --all adds untracked ones
+pilot repos sync                               # fetch -p --all, then fast-forward each tracked repo's default branch; prints each repo's outcome
+pilot issue create <title> [--body <text>] [--repo <path>]   # a new issue through gh; prints its number
 pilot flight create <issue> [title…] [--repo <path>]
 pilot flight plan <code>                       # a planner plans the legs from the issue
 pilot flight planned <code> [summary…]         # what the planner says when it is done
@@ -465,6 +469,13 @@ about its flight or one of its legs, `leg <name> flying`, or `nothing`. The rows
 other pages; the window asks each node for it every 15 s only while the page is shown and for a minute after, so a closed page
 costs nothing. Columns drop as the window narrows. `pilot-gui --snapshot <file> --capture out.png --page repos` renders it
 (from the bundled `Fixtures/repos.sample.json`, or from the live node's status without `--snapshot`), the worktrees listed.
+
+The page acts too. **Sync**, at the top, runs `sync-repos` on this window's node: the button reads *Syncing…* while it runs,
+then each repo's outcome is listed under the header (updated, current, skipped with why, failed with why) until the next
+sync or the ×, and the page's status is read again. Each repo row has **New flight**: it opens the Flights page's new-flight
+wizard on that repo, at its issue step. There **New issue** (the footer; Ctrl+Enter creates) takes a title and an optional
+text, makes the issue through gh (`create-issue`) and picks it, so the review and Create (which makes the flight and starts
+its planner) follow with no command typed; Escape closes the form first.
 
 The right panel is the watchtower's: its state and context, its Remote Control link, a box to tell it things, then the
 cards with their buttons (Merge is a card's) and what was handled.
