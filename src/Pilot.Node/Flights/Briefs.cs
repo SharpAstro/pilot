@@ -251,6 +251,26 @@ public static class Briefs
                     : $"- {overlap.Other} ({overlap.Why}): the controller chose to fold {flight.Code} into it.");
             }
         }
+        // Look first: a flight another is already doing is better folded in or connected than planned blind beside it.
+        text.AppendLine();
+        text.AppendLine("## Look first");
+        text.AppendLine("Before you plan any leg, look for a flight already doing this. List the flights not landed:");
+        text.AppendLine($"- `{run} status`: this node's flights, each with its issue, its legs and its plane (a folder and a branch).");
+        text.AppendLine($"- `{run} nodes` lists the other pilot nodes on the LAN; for each, `{run} --node <host:port> status` lists its flights.");
+        text.AppendLine($"For each flight not landed other than {flight.Code}: read its issue (`gh issue view <number> -R <repo>`), its legs' goals, and the");
+        text.AppendLine($"files its plane touches (`git -C <its plane> diff --stat {flight.Base}...`). Compare them with your own issue.");
+        text.AppendLine("A real overlap is the same area of the issue, or legs changing the same files, so that one of the two flights would");
+        text.AppendLine("redo or fight the other's work. Sharing a repo, or a word in a title, is not an overlap: when in doubt, there is none.");
+        text.AppendLine($"- Overlap with a flight on this node: `{run} flight overlap {flight.Code} <other> <why, naming the shared files or the issue area>`,");
+        text.AppendLine("  then end your turn at once: plan no leg and do not say planned. The controller is asked on a card to fold this");
+        text.AppendLine("  flight into the other or to plan it separately, and a fresh planner is started with the answer. When the pair has");
+        text.AppendLine("  been answered already the command returns the answer straight away, with no card: follow it.");
+        text.AppendLine("- Overlap with a flight on another node: it can be neither folded nor connected from here. Do not ask; plan as usual");
+        text.AppendLine("  and name that flight, its node and the overlap in your planned summary, for the controller to settle.");
+        text.AppendLine("- No overlap: plan as below, and ask nothing.");
+        text.AppendLine($"After an answer to plan separately, connect only on a real dependency: the two flights still change the same files, or this");
+        text.AppendLine($"one needs the other's change (`{run} flight connect {flight.Code} <other>` holds it until the other has landed; its legs can be");
+        text.AppendLine("planned meanwhile). Say which and why in the planned summary. Connect nothing otherwise.");
         text.AppendLine();
         text.AppendLine("## Plan each leg");
         text.AppendLine($"`{run} leg plan {flight.Code} <name> --goal \"…\" --done-when \"…\" --check \"<command>\" --item \"<step>\" --item \"<step>\"`");

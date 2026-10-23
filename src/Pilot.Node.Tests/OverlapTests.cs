@@ -380,4 +380,76 @@ public sealed class OverlapTests : IDisposable
         repeat.Made.ShouldNotBeNull().ShouldContain("answered before");
         restored.Cards().Count(c => c.Kind == LegCommander.OverlapKind).ShouldBe(1);
     }
+
+    [Fact]
+    public async Task ThePlannersBriefMakesItLookFirstBeforeItPlansAnyLeg()
+    {
+        await TwoFlights();
+
+        (await Leg(Verbs.PlanFlight, "flight/TIA2")).Ok.ShouldBeTrue();
+
+        var brief = _workers.Started.ShouldHaveSingleItem().Brief;
+        var look = brief.IndexOf("## Look first", StringComparison.Ordinal);
+        var plan = brief.IndexOf("## Plan each leg", StringComparison.Ordinal);
+        look.ShouldBeGreaterThan(-1);
+        look.ShouldBeLessThan(plan);
+        var section = brief[look..plan];
+        // The flights not landed, here and on every node the LAN shows, with their issues, legs and planes.
+        section.ShouldContain(" status`");
+        section.ShouldContain(" nodes`");
+        section.ShouldContain("--node <host:port> status");
+        section.ShouldContain("gh issue view");
+        section.ShouldContain("diff --stat main...");
+        // What counts as an overlap, and what to do about one on this node.
+        section.ShouldContain("the same area of the issue, or legs changing the same files");
+        section.ShouldContain("flight overlap TIA2 <other> <why");
+        section.ShouldContain("end your turn at once");
+        // Another node's flight is only named, and a connection follows a separate answer only on a real dependency.
+        section.ShouldContain("neither folded nor connected");
+        section.ShouldContain("in your planned summary");
+        section.ShouldContain("flight connect TIA2 <other>");
+        section.ShouldContain("Connect nothing otherwise");
+    }
+
+    [Fact]
+    public async Task SeparateWithASharedFileThenConnectHoldsTheFlightOnTheOtherAndItsLegsCanStillBePlannedAndPlannedSaid()
+    {
+        await TwoFlights();
+        (await Leg(Verbs.PlanFlight, "flight/TIA2")).Ok.ShouldBeTrue();
+        (await Ask("both edit src/Parser.cs")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.Separate, "flight/TIA2", "TIA1")).Ok.ShouldBeTrue();
+        _workers.Started[1].Brief.ShouldContain("both edit src/Parser.cs");
+
+        // The fresh planner finds the shared file still changes and connects.
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.Connect, Target = "flight/TIA2", Args = ["TIA1"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+
+        var held = F("TIA2");
+        held.State.ShouldBe(FlightState.Held);
+        held.Connections.ShouldBe(["TIA1"]);
+        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=parser", "goal=Rework the parser", "done-when=d")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=render", "goal=Render it", "done-when=d")).Ok.ShouldBeTrue();
+        var planned = await Leg(Verbs.Planned, "flight/TIA2", "connected to TIA1: both edit src/Parser.cs");
+        planned.Ok.ShouldBeTrue();
+        var card = _state.Cards().Single(c => c.Kind == LegCommander.PlannedKind && c.Subject == "flight/TIA2");
+        card.Detail.ShouldNotBeNull().ShouldContain("connected to TIA1");
+        _state.Legs("TIA2").Length.ShouldBe(2);
+        // It still waits: the legs are planned, not flying.
+        F("TIA2").State.ShouldBe(FlightState.Held);
+    }
+
+    [Fact]
+    public async Task AFlightWhosePlannerRaisesNoOverlapPlansAndSaysPlannedAsTodayWithNoOverlapCard()
+    {
+        await TwoFlights();
+        (await Leg(Verbs.PlanFlight, "flight/TIA2")).Ok.ShouldBeTrue();
+
+        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=docs", "goal=Write the docs", "done-when=d")).Ok.ShouldBeTrue();
+        var planned = await Leg(Verbs.Planned, "flight/TIA2", "one leg");
+
+        planned.Ok.ShouldBeTrue();
+        Cards().ShouldBeEmpty();
+        F("TIA2").Overlaps.ShouldBeEmpty();
+        F("TIA2").State.ShouldBe(FlightState.Flying);
+        _state.Cards().Single(c => c.Kind == LegCommander.PlannedKind && c.Subject == "flight/TIA2").Choices.Single().Label.ShouldBe("Start docs");
+    }
 }

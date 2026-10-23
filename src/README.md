@@ -142,6 +142,23 @@ prefix, `--machine` or `PILOT_MACHINE`, else from its name).
 | `create-issue repo/<path> <title> [body…]` | A new issue through `gh issue create`; the result's `made` is its number. The controller's, as `sync-repos` is. |
 | `land flight/<code>` | Its work is in: the worktree goes when clean (never with changes not committed, nor with a commit on no remote and not in its base), the branch and code stay, and flights waiting for it are cleared. |
 
+**The planner looks first.** Before it plans a leg, a planner's brief has it list the flights not landed (`pilot status`
+here, and `pilot nodes` then `pilot --node <host:port> status` for each node it sees), read their issues and legs'
+goals and the files their planes touch (`git -C <plane> diff --stat <base>...`), and compare them with its own issue.
+A real overlap is the same area of the issue, or legs changing the same files: one flight would redo or fight the other.
+- **Overlap with a flight on this node:** the planner runs `pilot flight overlap <code> <other> <why>` and ends its turn.
+  One card asks the controller to **Fold** or **Plan separately**, the answer is kept per pair (so it is never asked
+  twice), and the flight's leg planning waits meanwhile.
+- **Fold** puts the flight's issue into the other flight: the other's planner plans its points as more legs after its own,
+  its PR closes both issues, and the asking flight is retired with nothing of its own, marked as folded into the other.
+- **Plan separately** starts a fresh planner told the answer. It connects (`pilot flight connect`, which holds the
+  flight until the other has landed; its legs can still be planned and `planned` said while held) only on a real
+  dependency, the two still changing the same files or this one needing the other's change, and says which and why in its
+  planned summary. Otherwise it connects nothing.
+- **Overlap with a flight on another node** can be neither folded nor connected from here, so the planner plans as usual
+  and names that flight and the overlap in its planned summary.
+- **No overlap:** it plans and says `planned` as always, and no overlap card appears.
+
 **Nothing is left behind.** A flight's work reaches main or is said, never kept where nobody looks: a leg finishes as
 done only with every change committed (its worker's brief says so, and the node refuses a dirty plane); a merge is
 refused while the plane holds commits past the reviewed head, so a late commit cannot miss the PR; landing by hand is
