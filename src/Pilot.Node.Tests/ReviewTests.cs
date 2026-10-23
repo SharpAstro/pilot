@@ -146,6 +146,25 @@ public sealed class ReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task APrMergedOnGitHubItselfClosesItsCardAndLandsItsFlight()
+    {
+        var flight = await NewFlight("3", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA3"), "controller");
+        (await Run(Verbs.Review, "flight/TIA3", Reviewer("TIA3"), "pass", "fine")).Ok.ShouldBeTrue();
+        var card = Open().ShouldHaveSingleItem();
+
+        // Merged by a person on GitHub, not through the card: the next look sees it and lands the flight (TIA1658's #1780).
+        _github.Pr = _github.Pr! with { State = "MERGED" };
+        await new PrChecks(_state, _github, TimeProvider.System, _flights).LookAsync(Ct);
+
+        Open().ShouldHaveSingleItem().Title.ShouldBe("TIA3 landed");
+        _state.Cards().Single(c => c.Id == card.Id).Outcome.ShouldBe("merged on GitHub as #71");
+        F("TIA3").State.ShouldBe(FlightState.Landed);
+        _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task ChangesRingWithAGoAroundWhoseFinishIsReviewedAfreshOrReadyAnyway()
     {
         var flight = await NewFlight("2", "parser");

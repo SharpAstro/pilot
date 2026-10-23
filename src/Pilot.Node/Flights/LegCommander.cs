@@ -247,6 +247,23 @@ public sealed partial class LegCommander(
         var args = command.Args ?? [];
         var outcome = args.Length > 0 ? args[0] : "";
         var report = string.Join(' ', args.Skip(1)).Trim();
+        // A failed leg whose read the controller takes as it is: done, its failure kept in the report, so the flight goes on
+        // to its next leg with no go-around to stage (TIA1737's S2, 2026-10-23, closed by a go-around that only finished it).
+        if (outcome == "accepted")
+        {
+            if (leg.State != LegState.Failed)
+            {
+                throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}: only a failed leg is accepted as it is");
+            }
+            if (string.Equals(command.Who, $"{options.Machine.ToLowerInvariant()}-watchtower", StringComparison.Ordinal) || string.Equals(command.Who, leg.Worker, StringComparison.Ordinal))
+            {
+                throw new FlightException($"accepting {flight.Code}/{leg.Name}'s failed read is the controller's, not {command.Who}'s");
+            }
+            var accepted = $"failed, accepted by {command.Who}{(report.Length > 0 ? $": {report}" : "")}";
+            state.PutLeg(leg with { State = LegState.Done, Report = leg.Report is { Length: > 0 } was ? $"{accepted}\n{was}" : accepted });
+            state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} accepted as it is");
+            return;
+        }
         if (leg.State != LegState.Flying)
         {
             throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}, not flying");
@@ -282,7 +299,10 @@ public sealed partial class LegCommander(
                 state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "failed" });
                 state.RaiseCard(CardBin.Ring, "leg-failed", Verbs.LegTarget(flight.Code, leg.Name),
                     $"{flight.Code}/{leg.Name} failed", report.Length > 0 ? report : null,
-                    [new CardChoice { Label = "Go around", Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker gave up: {(report.Length > 0 ? report : "no reason given")}"] }]);
+                    [
+                        new CardChoice { Label = "Go around", Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker gave up: {(report.Length > 0 ? report : "no reason given")}"] },
+                        new CardChoice { Label = "Accept the read", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
+                    ]);
                 break;
             default:
                 throw new FlightException("finish-leg takes done or failed, then a report");
