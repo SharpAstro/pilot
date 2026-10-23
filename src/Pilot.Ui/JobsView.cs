@@ -165,6 +165,9 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>Asks a node for a grant, as the Fleet page's Connect does: the pill that stands where Cancel would on a watch-only row.</summary>
     public Action<NodeMark>? OnConnect { get; set; }
 
+    /// <summary>Whether <paramref name="line"/>'s job is on this window's node, the one whose files a path on it names.</summary>
+    private static bool IsHere(JobLine line) => line.Node is null or { Here: true };
+
     private NodeMark? WatchOnly(JobLine line) => line.Node is { Here: false } node && CanSteer?.Invoke(node) == false ? node : null;
 
     /// <summary>Cancels a job: the node's <c>cancel-job</c>.</summary>
@@ -305,13 +308,23 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             {
                 return;
             }
-            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+            catch (Exception ex)
             {
+                // Any failure, whatever its type, is shown and retried: an HttpClient timeout is a TaskCanceledException that is not
+                // this follow's own cancellation, and a read that ends the follow silently leaves the box at "reading…" for good.
+                bool changed;
                 lock (_lock)
                 {
-                    _logProblem = ex.Message;
+                    changed = _logFor == key && _logProblem != ex.Message;
+                    if (_logFor == key)
+                    {
+                        _logProblem = ex.Message;
+                    }
                 }
-                Changed?.Invoke();
+                if (changed)
+                {
+                    Changed?.Invoke();
+                }
             }
             try
             {
@@ -345,7 +358,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         {
             items.Add(new DropdownItem<string>("Its session", "session") { OnChoose = () => session(job) });
         }
-        if (OnOpen is { } open)
+        if (OnOpen is { } open && IsHere(line))
         {
             items.Add(new DropdownItem<string>("Open its log", "log") { OnChoose = () => open(job.LogPath) });
             items.Add(new DropdownItem<string>("Open its folder", "folder") { OnChoose = () => open(job.Cwd) });
@@ -507,7 +520,8 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         {
             buttons.Add(Pill("Its session", $"job:{job.Id}:session", () => session(job)));
         }
-        if (OnOpen is { } open)
+        // The log's path is on the job's own machine, so there is nothing to open for a job on another node.
+        if (OnOpen is { } open && IsHere(line))
         {
             buttons.Add(Pill("Open log", $"job:{job.Id}:log", () => open(job.LogPath)));
         }
@@ -533,14 +547,15 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         lock (_lock)
         {
             // The followed log is the line's key's (two nodes' jobs may share an id), as Follow stored it.
-            log = _logFor == line.Key ? _log : null;
-            problem = _logProblem;
+            var followed = _logFor == line.Key;
+            log = followed ? _log : null;
+            problem = followed ? _logProblem : null;
         }
         var head = log is null ? "output" : log.Clipped ? $"output · its end, of {Size(log.Length)}" : $"output · {Size(log.Length)}";
         var lines = new List<Layout.Node>();
         if (problem is not null)
         {
-            lines.Add(Layout.Builder.Text($"could not read it: {problem}", 11f, Failed).RowH(LogLineHeight));
+            lines.Add(Layout.Builder.Text($"could not read the log: {problem}", 11f, Failed).RowH(LogLineHeight));
         }
         else if (log is null)
         {
