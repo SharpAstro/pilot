@@ -159,6 +159,17 @@ sessions.OnSay = async (line, text) =>
     sessions.SayStatus = envelope.Success ? $"said to {line.Name}" : $"refused: {envelope.Response?.Error ?? envelope.Error}";
     Redraw();
 };
+sessions.OnSayAll = async (line, text) =>
+{
+    if (clients.For(line.Node) is not { } to)
+    {
+        return false;
+    }
+    var envelope = await to.SendAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(line.Row.Id), Args = [text], Who = Who }, stop.Token);
+    clients.NoteRefusal(line.Node, envelope);
+    Redraw();
+    return envelope.Success && envelope.Response is { Ok: true };
+};
 async Task CardAsync(string verb, CardRow card, string[] cardArgs)
 {
     // A card raised on another node is answered there.

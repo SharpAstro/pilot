@@ -221,6 +221,18 @@ if (feed is not null && client is not null && clients is not null)
         Console.WriteLine($"pilot-gui: say to {line.Name}: {result}");
         loop.RequestRedraw();
     };
+    // "Say to all shown": each picked row through its own node's say, one line per session in the console.
+    view.OnSayAll = async (line, text) =>
+    {
+        if (clients.For(line.Node) is not { } to)
+        {
+            return false;
+        }
+        var (delivered, result) = await GuiSay.SayAsync(to, line.Row.Id, text, cts.Token, envelope => clients.NoteRefusal(line.Node, envelope));
+        Console.WriteLine($"pilot-gui: say to {line.Name}: {result}");
+        loop.RequestRedraw();
+        return delivered;
+    };
     // The Sessions page's transcript pane reads the node's transcript route, and follows it while open.
     view.Transcript.Load = async (rowId, agent, after, ct) =>
     {
