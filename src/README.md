@@ -179,7 +179,9 @@ MCP server's `leg_validate`). **GO** starts the leg's worker as before, through 
 window holds the start and the sweep starts it once the window resets. **NO-GO** keeps the leg planned and rings with
 the stale facts, each with the command that showed it, offering three choices: **Go anyway** (starts the worker without
 a validation), **Remove leg**, and a **Re-plan** of the flight's legs. The sweep waits on a leg that is pending or
-no-go, and planning the leg again validates it afresh.
+no-go, and planning the leg again validates it afresh. A validator that never shows up, fails, or stops without its answer
+is watched as a reviewer is: it rings (`validation-stalled`) with **Go anyway** and **Remove leg**, so no leg waits on
+an answer that is not coming.
 
 | Command | What it does |
 | --- | --- |

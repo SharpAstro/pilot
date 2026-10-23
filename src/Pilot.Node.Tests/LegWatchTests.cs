@@ -210,6 +210,30 @@ public sealed class LegWatchTests
     }
 
     [Fact]
+    public async Task AValidatorThatStopsWithoutItsAnswerRingsWithGoAnywayAndRemove()
+    {
+        _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });
+        _state.PutLeg(new LegRow
+        {
+            Flight = "TIA1", Name = "render", Order = 2, Goal = "Render it", DoneWhen = "It renders", State = LegState.Planned,
+            Validation = LegValidation.Pending, Validator = "du1-tia1-render-validator", ValidatorJob = "a1b2c3d4",
+        });
+        _state.RaiseCard(CardBin.Handled, LegCommander.ValidatingKind, "flight/TIA1/render", "Validating TIA1/render");
+        Worker(SessionState.Working);
+        _time.Advance(TimeSpan.FromMinutes(10));
+        await _watch.LookAsync(Ct);
+        Open().ShouldBeEmpty();
+
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow());
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+
+        var card = Open().ShouldHaveSingleItem();
+        (card.Kind, card.Subject, card.Detail).ShouldBe((LegWatch.ValidationStalled, "flight/TIA1/render", "it stopped 4 min ago without its GO or NO-GO"));
+        card.Choices.Select(c => (c.Verb, c.Args.FirstOrDefault())).ShouldBe([(Verbs.StartLeg, "anyway"), (Verbs.RemoveLeg, "its validation stalled")]);
+    }
+
+    [Fact]
     public async Task AnyPrsReviewerIsWatchedAsAFlightsIs()
     {
         _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });

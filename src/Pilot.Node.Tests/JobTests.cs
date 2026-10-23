@@ -302,6 +302,11 @@ public sealed class JobTests : IDisposable
         _refuse = "the folder is gone";
 
         var job = await Ended(Run(Echo("done")).Made!);
+        // The ring follows the refused tell, a moment after the job ends: waited for, as the end is (flaky under load).
+        for (var i = 0; i < 100 && _state.Cards(openOnly: true).Length == 0; i++)
+        {
+            await Task.Delay(50, Ct);
+        }
 
         job.Told.ShouldBeFalse();
         var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();

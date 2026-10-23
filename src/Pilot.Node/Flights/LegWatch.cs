@@ -29,6 +29,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>A flight's reviewer that stopped, or never showed up, without its verdict.</summary>
     public const string ReviewStalled = "review-stalled";
 
+    /// <summary>The kind of ring for a leg's validator that stopped without its answer.</summary>
+    public const string ValidationStalled = "validation-stalled";
+
     /// <summary>Who the watch's commands are from, in the command log and on the cards it closes.</summary>
     public const string Who = "node";
 
@@ -81,6 +84,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         var now = time.GetUtcNow();
         var sessions = state.Sessions();
         LookAtReviews(sessions, now);
+        LookAtValidators(sessions, now);
         foreach (var leg in state.Legs().Where(l => l.State == LegState.Flying && l.WorkerJob is not null))
         {
             var subject = Verbs.LegTarget(leg.Flight, leg.Name);
@@ -212,6 +216,37 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             var subject = Verbs.PrTarget(review.Repo, review.Number);
             LookAtReviewer(sessions, now, review.ReviewerJob!, review.StartedAt, subject, $"{review.Repo}#{review.Number}", Verbs.ReviewPr);
+        }
+    }
+
+    /// <summary>
+    /// A leg's validator (#34) that never shows up, fails, or stops without its GO or NO-GO rings, with the leg's ways on:
+    /// started anyway, or taken out. Unwatched, its leg waited for an answer that was not coming (the review of #160).
+    /// </summary>
+    private void LookAtValidators(SessionRow[] sessions, DateTimeOffset now)
+    {
+        foreach (var leg in state.Legs().Where(l => l is { State: LegState.Planned, Validation: LegValidation.Pending, ValidatorJob: not null }))
+        {
+            var subject = Subject(leg);
+            var startedAt = state.Cards().Where(c => c.Kind == LegCommander.ValidatingKind && c.Subject == subject).Select(c => c.At).DefaultIfEmpty(now).Max();
+            var row = sessions.FirstOrDefault(s => s.Id == leg.ValidatorJob);
+            string? why = row switch
+            {
+                null when now - startedAt > ShowUpGrace => $"started {Ago(now, startedAt)} ago and never showed up",
+                null => null,
+                { State: SessionState.Working or SessionState.Waiting } => null,
+                { State: SessionState.Failed } => "it failed",
+                _ when now - (row.LastResponseAt ?? row.StartedAt) >= IdleGrace => $"it stopped {Ago(now, row.LastResponseAt ?? row.StartedAt)} ago without its GO or NO-GO",
+                _ => null,
+            };
+            if (why is not null)
+            {
+                state.RaiseCard(CardBin.Ring, ValidationStalled, subject, $"{Name(leg)}'s validation stalled", why,
+                [
+                    new CardChoice { Label = "Go anyway", Verb = Verbs.StartLeg, Target = subject, Args = ["anyway"] },
+                    new CardChoice { Label = "Remove leg", Verb = Verbs.RemoveLeg, Target = subject, Args = ["its validation stalled"] },
+                ]);
+            }
         }
     }
 
