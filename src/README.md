@@ -10,7 +10,7 @@ the [Pilot v2 design](https://claude.ai/code/artifact/0ebd8a10-0b5c-475b-a909-2e
 | `Pilot.Contracts` | The wire, shared by the node and every client: `SessionRow`, the snapshot and delta events, commands, `NodeSocket`, `NodeClient`, `NodeMirror`, and the source-generated `PilotJsonContext`. `Fixtures/snapshot.sample.json` is a sample snapshot to draw from without a node. |
 | `Pilot.Node` | The node, `pilot-node`: Kestrel on the socket only, native AOT. |
 | `Pilot.Node.Tests` | xunit.v3 tests against a real node on a temp socket. |
-| `Pilot.Cli` | The CLI, `pilot`: the node's commands, for the controller, workers and scripts; native AOT. |
+| `Pilot.Cli` | The CLI, `pilot`: the node's commands, for the controller, workers and scripts, and `pilot mcp`, the same as an MCP server; native AOT. |
 | `Pilot.Gui` | The GUI, `pilot-gui`: every session on the machine as a row, live from the node, and a bar to say something to the selected one; on DIR.Lib and SdlVulkan.Renderer, native AOT. |
 | `Pilot.Gui.Tests` | xunit.v3 tests rendering the sessions view on the CPU from the sample snapshot, the live feed on a fake stream, the say bar, and a flight's page (its legs, checklists and artifacts) as a view model, on pixels and in cells. |
 
@@ -362,6 +362,7 @@ pilot run [--timeout 90m] -- <command…>        # a long run handed to the node
 pilot jobs                                     # the node's jobs, running first
 pilot job <id>                                 # one job, and where its whole output is
 pilot job cancel <id>                          # stops it, running or waiting; its owner is told
+pilot mcp                                      # these commands as an MCP server over stdio (see The MCP server)
 ```
 
 Inside a plane a leg command names no leg: the flight is the one whose worktree holds the folder, the leg its one
@@ -383,6 +384,30 @@ A worker that finishes its own leg is stopped after 90 s, once it has said its r
 its `-w` session entered when that job ends by itself, keeping the branch; the node checks a plane out again from its
 branch before any worker goes in, and lands one that is already gone.
 
+### The MCP server
+
+`pilot mcp` serves the same commands to any MCP client (Claude Code, the desktop app) over stdio, from the same binary.
+To add it to Claude Code, for every project:
+
+```bash
+claude mcp add --scope user pilot -- pilot mcp                  # pilot on PATH; else its full path
+claude mcp add --scope user pilot-desk -- pilot mcp --node desk:7700   # a node on the LAN, after pilot connect
+```
+
+The **tools** are the command tree itself, so a new command is a tool with no change here: every command with an action
+is one, named by its path with `_` (`status`, `flight_create`, `flight_review`, `leg_plan`, `leg_go-around`,
+`job_cancel`), its arguments and options its input schema (by their long names, `done-when`; a `string[]` argument an
+array of words, a flag a boolean, a choice an enum). A call is spelled back into a command line and run by the CLI's
+own handler, from the folder the server was started in, so inside a plane the leg tools need no leg named. The result
+is what the command printed; a refusal (with the node's reason), a usage error and no node are results with
+`isError`, as exit codes 1, 2 and 3 are on the CLI. A call is from the Claude session running the server where the node
+knows it (`CLAUDE_CODE_SESSION_ID`), as a CLI command is, so the watchtower's own merge or land is still refused;
+else from the client by the name it gave in `initialize`; else `mcp`.
+
+The **resources** are the snapshot's pieces as JSON, each row as the node's wire writes it: `pilot://flights`,
+`pilot://legs`, `pilot://cards`, `pilot://sessions`. The server is a hand-written JSON-RPC 2.0 loop (`initialize`,
+`ping`, `tools/list`, `tools/call`, `resources/list`, `resources/read`) on source-generated JSON, AOT like the rest.
+
 ## The GUI
 
 `pilot-gui` flies a flight on its own. The rail has **Sessions** (every Claude session on the machine: model, effort,
@@ -390,8 +415,8 @@ context against its window, last response, state, spend, usage in the header; a 
 one) and **Flights**. On Flights the selected flight shows its legs (steps, go-arounds), its review, its PR and
 artifacts (a click opens them), and what can be done with it now: **Start <leg>**, **Open PR**, **Review again** run
 at once; **Go around** and **Plan a leg** half-write the command bar for the words they need. The command bar (Ctrl+K)
-takes the CLI's own commands, run in-process through the same command tree (`Pilot.Commands`) the `pilot` binary and,
-later, an MCP server (#70) host: `flight create 1611 --repo C:\src\tianwen`, `leg plan …`, `cards`.
+takes the CLI's own commands, run in-process through the same command tree (`Pilot.Commands`) the `pilot` binary and
+its MCP server (`pilot mcp`) host: `flight create 1611 --repo C:\src\tianwen`, `leg plan …`, `cards`.
 
 **A flight's page** opens in place of the table: Enter on the selected flight, a double click, **Open flight** in its
 panel or right-click menu; Escape or **Back to the flights** goes back. The wheel scrolls it, and so do Up and Down (a
