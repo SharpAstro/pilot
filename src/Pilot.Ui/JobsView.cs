@@ -179,8 +179,11 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>Puts text on the clipboard; the row menu's Copy entries. Null where the host has no clipboard.</summary>
     public Action<string>? CopyText { get; set; }
 
-    /// <summary>Reads the end of a job's log: the node's job log route.</summary>
-    public Func<string, CancellationToken, Task<JobLog>>? LoadLog { get; set; }
+    /// <summary>
+    /// Reads the end of a job's log: the node's job log route, given the node the job is on (null is this window's) and its id.
+    /// The node is the one the follow started on, so a later selection cannot redirect a read in flight.
+    /// </summary>
+    public Func<NodeMark?, string, CancellationToken, Task<JobLog>>? LoadLog { get; set; }
 
     /// <summary>Called when the log shown changed, from whichever thread: the host redraws.</summary>
     public Action? Changed { get; set; }
@@ -191,7 +194,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
 
-    /// <summary>The node of the job whose log is followed, whose route <see cref="LoadLog"/> reads; null is this window's.</summary>
+    /// <summary>The node of the selected job, the one a command on it (Cancel) goes to; null is this window's.</summary>
     public NodeMark? FollowingNode { get; private set; }
 
     /// <summary>The selected job's index, or -1.</summary>
@@ -272,17 +275,17 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         if (line is not null && LoadLog is { } load)
         {
             var following = _following = new CancellationTokenSource();
-            _ = FollowAsync(line.Key, line.Id, load, following.Token);
+            _ = FollowAsync(line.Key, line.Node, line.Id, load, following.Token);
         }
     }
 
-    private async Task FollowAsync(string key, string jobId, Func<string, CancellationToken, Task<JobLog>> load, CancellationToken cancellationToken)
+    private async Task FollowAsync(string key, NodeMark? node, string jobId, Func<NodeMark?, string, CancellationToken, Task<JobLog>> load, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                var log = await load(jobId, cancellationToken).ConfigureAwait(false);
+                var log = await load(node, jobId, cancellationToken).ConfigureAwait(false);
                 bool changed;
                 lock (_lock)
                 {
@@ -512,7 +515,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         return Layout.Builder.VStack(
                 Layout.Builder.HStack(
                         Layout.Builder.VStack([.. facts]).WFixed(FactsColumn),
-                        LogTail(job).WStar())
+                        LogTail(line).WStar())
                     .WithGap(24f)
                     .Stretch(),
                 Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f).RowH(28f))
@@ -522,13 +525,15 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     }
 
     /// <summary>The end of the job's output, read from the node and followed while it is selected; its last line at the bottom.</summary>
-    private Layout.Node LogTail(JobRow job)
+    private Layout.Node LogTail(JobLine line)
     {
+        var job = line.Row;
         JobLog? log;
         string? problem;
         lock (_lock)
         {
-            log = _logFor == job.Id ? _log : null;
+            // The followed log is the line's key's (two nodes' jobs may share an id), as Follow stored it.
+            log = _logFor == line.Key ? _log : null;
             problem = _logProblem;
         }
         var head = log is null ? "output" : log.Clipped ? $"output · its end, of {Size(log.Length)}" : $"output · {Size(log.Length)}";
