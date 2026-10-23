@@ -60,6 +60,28 @@ public sealed record FlightRow
     /// a recorded answer is never asked about again.
     /// </summary>
     public OverlapRow[] Overlaps { get; init; } = [];
+
+    /// <summary>
+    /// The issues of other flights folded into this one (<c>fold</c>): its planner plans their points as legs after its own,
+    /// and its PR closes each beside <see cref="Issue"/>.
+    /// </summary>
+    public FoldedIssue[] FoldedIn { get; init; } = [];
+
+    /// <summary>
+    /// The code of the flight this one was folded into, when it was retired that way: it is <see cref="FlightState.Landed"/>
+    /// with no work of its own, keeping its code and branch. Null for a flight that flew or is flying.
+    /// </summary>
+    public string? FoldedInto { get; init; }
+}
+
+/// <summary>An issue folded into a flight, and the flight it came from.</summary>
+public sealed record FoldedIssue
+{
+    /// <summary>The issue's number, in the repo of the flight it was folded into.</summary>
+    public required int Number { get; init; }
+
+    /// <summary>The code of the flight that carried it before it was folded (now landed, marked folded into this one).</summary>
+    public required string From { get; init; }
 }
 
 /// <summary>

@@ -102,6 +102,14 @@ public sealed partial class LegCommander
 
         // The planner that asked is waiting for its turn to end: stopped, so a fresh one is told the answer. Its start is not
         // refused for the stopped one, which the tracker may list for a poll yet.
+        await StopPlannerAsync(flight, cancellationToken);
+        await StartPlannerAsync(flight, cancellationToken, replacing: true);
+        return $"{flight.Code} is planned separately from {known.Other}; a fresh planner is started with the answer";
+    }
+
+    /// <summary>Stops the flight's planner, by its row or the job this node started, and forgets it was started.</summary>
+    private async Task StopPlannerAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
         var planner = $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{PlanLeg}";
         var jobs = state.Sessions().Where(s => string.Equals(s.Name, planner, StringComparison.OrdinalIgnoreCase)
                 && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle).Select(s => s.Id)
@@ -112,8 +120,65 @@ public sealed partial class LegCommander
         }
         _plannerJobs.TryRemove(flight.Code, out _);
         _plannersStarted.TryRemove(flight.Code, out _);
-        await StartPlannerAsync(flight, cancellationToken, replacing: true);
-        return $"{flight.Code} is planned separately from {known.Other}; a fresh planner is started with the answer";
+    }
+
+    /// <summary>
+    /// <c>fold flight/&lt;code&gt; &lt;other&gt;</c>: the flight's issue becomes the other flight's. The other carries the issue
+    /// (its planner plans the issue's points as legs after its own, its PR closes both), and this flight is retired as landed with
+    /// nothing of its own, marked folded into the other. Returns what the caller is told.
+    /// </summary>
+    private async Task<string> FoldAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var flight = FlightOf(command.Target);
+        var args = command.Args ?? [];
+        var known = args.Length > 0 ? flight.Overlaps.FirstOrDefault(o => string.Equals(o.Other, args[0], StringComparison.OrdinalIgnoreCase)) : null;
+        if (known is null)
+        {
+            throw new FlightException($"{flight.Code} has no overlap with {(args.Length > 0 ? args[0] : "another flight")} to answer: the planner asks with overlap first");
+        }
+        if (known.Answer == OverlapAnswer.Fold)
+        {
+            return $"{flight.Code} is folded into {known.Other} already";
+        }
+        if (known.Answer != OverlapAnswer.Pending)
+        {
+            throw new FlightException($"{flight.Code} and {known.Other} were answered {known.Answer.ToString().ToLowerInvariant()} already");
+        }
+        if (flight.State == FlightState.Landed)
+        {
+            throw new FlightException($"{flight.Code} has landed");
+        }
+        var other = FlightOf(Verbs.FlightTarget(known.Other));
+        if (other.State == FlightState.Landed)
+        {
+            throw new FlightException($"{other.Code} has landed: its work is in, so it cannot take {flight.Code}'s issue; plan {flight.Code} separately");
+        }
+        if (other.PullRequest is { } open)
+        {
+            throw new FlightException($"{other.Code}'s PR #{open} is open already and would not close #{flight.Issue}; plan {flight.Code} separately");
+        }
+        if (other.Repo != flight.Repo)
+        {
+            throw new FlightException($"{flight.Code} is in {flight.Repo} and {other.Code} in {other.Repo}: an issue folds only within one repo");
+        }
+
+        // Its planner first: it holds the plane open. The retirement can refuse (a plane with work on it), and then nothing
+        // is recorded and the card stays open; the planner, stopped, is started again by the controller's next answer.
+        await StopPlannerAsync(flight, cancellationToken);
+        var answered = flight with { Overlaps = [.. flight.Overlaps.Select(o => o.Other == known.Other ? o with { Answer = OverlapAnswer.Fold, At = time.GetUtcNow() } : o)] };
+        await flights.RetireFoldedAsync(answered, other.Code, cancellationToken);
+
+        other = FlightOf(Verbs.FlightTarget(other.Code));
+        if (!other.FoldedIn.Any(f => f.Number == flight.Issue))
+        {
+            other = other with { FoldedIn = [.. other.FoldedIn, new FoldedIssue { Number = flight.Issue, From = flight.Code }] };
+            state.PutFlight(other);
+        }
+
+        // One planner a flight: one planning the other already is stopped, and the fresh one is briefed with the folded issue.
+        await StopPlannerAsync(other, cancellationToken);
+        await StartPlannerAsync(other, cancellationToken, replacing: true);
+        return $"{flight.Code} is folded into {other.Code}: its issue #{flight.Issue} is {other.Code}'s now, and a planner is started on {other.Code} to plan its points";
     }
 
     /// <summary>Refuses what plans the flight's legs while a question about an overlap waits for its answer.</summary>

@@ -56,7 +56,8 @@ public sealed partial class LegCommander(
                     made = AskOverlap(command);
                     break;
                 case Verbs.Fold:
-                    throw new FlightException("folding a flight into another is not built yet: plan it separately, or dismiss the card");
+                    made = await FoldAsync(command, cancellationToken);
+                    break;
                 case Verbs.Separate:
                     made = await SeparateAsync(command, cancellationToken);
                     break;
@@ -1098,7 +1099,7 @@ public sealed partial class LegCommander(
     private static string BaseBranch(FlightRow flight) =>
         flight.Base.StartsWith("origin/", StringComparison.Ordinal) ? flight.Base["origin/".Length..] : flight.Base;
 
-    private static string PrBody(FlightRow flight, IReadOnlyList<LegRow> legs)
+    internal static string PrBody(FlightRow flight, IReadOnlyList<LegRow> legs)
     {
         var body = new System.Text.StringBuilder();
         body.AppendLine($"Flight {flight.Code}{(flight.Title is { Length: > 0 } t ? $": {t}" : "")}.");
@@ -1112,6 +1113,10 @@ public sealed partial class LegCommander(
         }
         body.AppendLine();
         body.AppendLine($"Closes #{flight.Issue}.");
+        foreach (var folded in flight.FoldedIn)
+        {
+            body.AppendLine($"Closes #{folded.Number} (folded in from {folded.From}).");
+        }
         return body.ToString();
     }
 
