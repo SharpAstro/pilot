@@ -26,6 +26,18 @@ public sealed class LanTests
     private static CommandRequest Note(string text) => new() { Verb = Verbs.Note, Target = Verbs.NodeTarget, Args = [text], Who = "tests" };
 
     [Fact]
+    public async Task ALocalOnlyNodeAskedForTheLanBindsNoTcpPort()
+    {
+        var port = FreePort();
+        await using var node = await NodeHarness.StartAsync(Ct, lanPort: port, localOnly: true);
+
+        // Nothing listens on the port: a free port can be taken by anyone, which is what the bind not happening means.
+        using var probe = new TcpListener(IPAddress.Any, port);
+        probe.Start();
+        probe.Stop();
+    }
+
+    [Fact]
     public async Task AnyoneMayWatchButACommandNeedsAGrantAllowedOnACard()
     {
         var port = FreePort();
