@@ -686,7 +686,12 @@ button, since the merged lists steer every node from this window (`FleetView.OnO
 one, and neither the GUI nor the TUI sets it). A node heard twice (on its socket and on the LAN) is one row, by its
 stream. A row's **N waiting on you** is a button (`fleet:<where>:waiting`, `PilotChrome.LinkFleet`, wired in both hosts):
 it opens the Sessions page filtered to that node alone (the window's node selection), the first session waiting on you
-selected and the list scrolled to its head, where the waiting rows sort, so they are on screen.
+selected and the list scrolled to its head, where the waiting rows sort, so they are on screen. A node held in
+`client-grants.json` but never reached (no hello ever: not connected and no node info received) offers **Forget**
+(`fleet:<where>:forget`, `FleetView.OnForget`, wired in both hosts), the Settings page's held-grant Forget: the token is
+dropped (`NodeTargets.Forget`) and `FleetWatch.Forget` removes and disposes the endpoint's feed, so the row is gone at
+once and the next 5 s look does not add it back from the grants. A node still heard on the LAN is known again by the
+next look, as a node without a grant; a reached node, or this window's, offers no Forget.
 
 ### Settings
 

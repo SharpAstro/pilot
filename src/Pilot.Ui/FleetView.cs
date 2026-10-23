@@ -59,6 +59,15 @@ internal sealed record FleetLine
 
     public required bool Connected { get; init; }
 
+    /// <summary>Whether it never said hello: not connected and no <see cref="NodeInfo"/> ever received.</summary>
+    public bool NeverReached { get; init; }
+
+    /// <summary>Whether a grant for it is held (client-grants.json): a node other than this window's that this user may command.</summary>
+    public bool Held { get; init; }
+
+    /// <summary>Whether the row offers Forget: a node held in the grants and never reached, which may be let go.</summary>
+    public bool CanForget => NeverReached && Held;
+
     /// <summary>Whose it is; <c>account unknown</c> when it knows none.</summary>
     public required string Account { get; init; }
 
@@ -94,6 +103,8 @@ internal sealed record FleetLine
             Machine = summary.Node is { } node ? (node.MachinePrefix.Length > 0 ? $"{node.MachinePrefix} · {node.MachineName}" : node.MachineName) : announcedAs ?? where,
             State = summary.Connected ? "live" : summary.Status,
             Connected = summary.Connected,
+            NeverReached = !summary.Connected && summary.Node is null,
+            Held = canCommand && !here,
             Account = summary.Account ?? (summary.Connected ? "account unknown" : "—"),
             Usage = summary.Usage ?? "",
             // A node not reached says nothing it last said: its counts would read as now.
@@ -165,6 +176,19 @@ internal sealed class FleetWatch : IAsyncDisposable
 
     /// <summary>Moves whenever any node's feed does, so the loop knows to draw again.</summary>
     public long Version => _feeds.Values.Sum(f => f.Feed.Version);
+
+    /// <summary>
+    /// Stops watching the node at <paramref name="endpoint"/>: its feed is removed and disposed, so the next screen has no
+    /// row for it. A node still heard on the LAN is known again by the next <see cref="Know"/>, which is right.
+    /// </summary>
+    public void Forget(string endpoint)
+    {
+        if (_feeds.TryRemove(endpoint, out var removed))
+        {
+            // Disposing a feed stops its stream; nothing here waits on it.
+            _ = removed.Feed.DisposeAsync().AsTask();
+        }
+    }
 
     /// <summary>Knows these nodes from now on: <c>host:port</c>, with the name a node announced when it did.</summary>
     public void Know(IEnumerable<(string Endpoint, string? Name)> nodes)
@@ -271,7 +295,13 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// </summary>
     public Action<FleetLine>? OnWaiting { get; set; }
 
-    /// <summary>What the last Open or Connect said, under the header.</summary>
+    /// <summary>
+    /// Lets go of a node held in the grants and never reached: the host drops its token and stops watching it, as the
+    /// Settings page's Forget does; null (the default) shows no such button.
+    /// </summary>
+    public Action<FleetLine>? OnForget { get; set; }
+
+    /// <summary>What the last Open, Connect or Forget said, under the header.</summary>
     public string? Said { get; set; }
 
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
@@ -365,6 +395,10 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         if (!line.CanCommand && OnConnect is { } connect)
         {
             buttons.Add(Pill("Connect", $"fleet:{line.Where}:connect", () => connect(line)));
+        }
+        if (line.CanForget && OnForget is { } forget)
+        {
+            buttons.Add(Pill("Forget", $"fleet:{line.Where}:forget", () => forget(line)));
         }
         var cells = new List<Layout.Node>
         {
