@@ -36,7 +36,7 @@ public sealed class RemoteJobLogTests
         var jobs = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Jobs;
         var changed = new SemaphoreSlim(0);
         // As pilot-gui's Program wires it.
-        jobs.LoadLog = async (node, id, ct) => (await clients.For(node, command: false)!.GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
+        jobs.LoadLog = async (node, id, ct) => (await (clients.For(node, command: false) ?? throw new InvalidOperationException($"no connection to {node?.Name ?? "this node"}")).GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
             ? log
             : throw new InvalidOperationException($"the node did not send {id}'s log");
         jobs.Changed = () => changed.Release();
@@ -56,6 +56,30 @@ public sealed class RemoteJobLogTests
         var later = Cells();
         later.ShouldContain("Restore complete");
         later.ShouldContain("Passed Parser.NestedGroups");
+    }
+
+    [Fact]
+    public async Task ANodeWithNoClientReadsAsAFailureToReadTheLogNotAnUnhandledNullReference()
+    {
+        var le1 = new NodeMark("127.0.0.1:1", "127.0.0.1:1", "LE1", Here: false);
+        using var here = NodeClient.Remote("127.0.0.1:1");
+        using var clients = new FleetClients(here, _ => false, e => NodeClient.Remote(e));
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var jobs = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Jobs;
+        var changed = new SemaphoreSlim(0);
+        // As pilot-gui's Program wires it, with a command client, which a node without a grant has none of.
+        jobs.LoadLog = async (node, id, ct) => (await (clients.For(node) ?? throw new InvalidOperationException($"no connection to {node?.Name ?? "this node"}")).GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
+            ? log
+            : throw new InvalidOperationException($"the node did not send {id}'s log");
+        jobs.Changed = () => changed.Release();
+        var screen = new JobsScreen([JobLine.Build([Job("j43")], Live.At).Single() with { Node = le1 }], "test", Live.At);
+
+        jobs.Tree(screen);
+        (await changed.WaitAsync(TimeSpan.FromSeconds(10), Ct)).ShouldBeTrue();
+
+        var cells = CellLayout.Describe(Layout.Engine.Arrange(jobs.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored));
+        cells.ShouldContain("could not read the log: no connection to LE1");
+        cells.ShouldNotContain("reading…");
     }
 
     /// <summary>A node on loopback that answers <c>GET /api/v1/jobs/{id}/log</c> with the lines it holds now.</summary>

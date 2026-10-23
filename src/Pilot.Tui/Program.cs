@@ -197,7 +197,7 @@ cards.OnTell = async text =>
 cards.OnOpen = url => DashboardCommands.Open(url);
 // The Background tasks page: a job's log followed while it is selected, Cancel a verb on the node.
 jobs.CanCommand = true;
-jobs.LoadLog = async (node, id, ct) => (await clients.For(node, command: false)!.GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
+jobs.LoadLog = async (node, id, ct) => (await (clients.For(node, command: false) ?? throw new InvalidOperationException($"no connection to {node?.Name ?? "this node"}")).GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
     ? log
     : throw new InvalidOperationException($"the node did not send {id}'s log");
 jobs.Changed = Redraw;

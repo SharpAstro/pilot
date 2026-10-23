@@ -135,6 +135,61 @@ public sealed class JobsTests
     }
 
     [Fact]
+    public async Task AFailedReadOfTheLogIsShownWhateverItsTypeAndTheFollowGoesOnToTheNextGoodRead()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var (_, jobs) = Chrome(vessel);
+        var reads = 0;
+        var changed = new SemaphoreSlim(0);
+        jobs.LoadLog = (_, id, _) => Interlocked.Increment(ref reads) switch
+        {
+            // Not a type the follow used to catch.
+            1 => throw new ArgumentException("the node sent nonsense"),
+            // What HttpClient throws when its timeout lapses: a cancellation that is not the follow's own.
+            2 => throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout of 100 seconds elapsing."),
+            _ => Task.FromResult(new JobLog { Lines = [$"{id}: Restore complete"], Length = 64 }),
+        };
+        jobs.Changed = () => changed.Release();
+
+        jobs.Tree(Screen());
+        (await changed.WaitAsync(TimeSpan.FromSeconds(10), Ct)).ShouldBeTrue();
+        var first = Cells(jobs, Screen());
+        first.ShouldContain("could not read the log: the node sent nonsense");
+        first.ShouldNotContain("reading…");
+
+        // The follow went on: the timeout is shown in its turn, then the log itself, and the problem is gone.
+        (await changed.WaitAsync(JobsView<RgbaImage>.Every + TimeSpan.FromSeconds(10), Ct)).ShouldBeTrue();
+        Cells(jobs, Screen()).ShouldContain("could not read the log: The request was canceled due to the configured HttpClient.Timeout");
+        (await changed.WaitAsync(JobsView<RgbaImage>.Every + TimeSpan.FromSeconds(10), Ct)).ShouldBeTrue();
+        var recovered = Cells(jobs, Screen());
+        recovered.ShouldContain("j14: Restore complete");
+        recovered.ShouldNotContain("could not read the log");
+    }
+
+    [Fact]
+    public void AJobOnAnotherNodeOffersNoOpenLogWhileThisNodesJobsKeepIt()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var (_, jobs) = Chrome(vessel);
+        jobs.OnOpen = _ => { };
+        var le1 = new NodeMark("le1.local:47731", "le1.local:47731", "LE1", Here: false);
+        var se1 = new NodeMark("node.sock", "node.sock", "SE1", Here: true);
+        var remote = JobLine.Build([Job("j14", JobState.Running, Live.At.AddMinutes(-11))], Live.At).Single() with { Node = le1 };
+        var local = JobLine.Build([Job("j15", JobState.Running, Live.At.AddMinutes(-11))], Live.At).Single() with { Node = se1 };
+
+        var onRemote = new JobsScreen([remote], "live", Live.At);
+        Cells(jobs, onRemote).ShouldNotContain("Open log");
+        jobs.OpenMenu(remote, 0, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
+        jobs.MenuItems.Select(i => i.Label).ShouldNotContain("Open its log");
+        jobs.MenuItems.Select(i => i.Label).ShouldNotContain("Open its folder");
+
+        var onHere = new JobsScreen([local], "live", Live.At);
+        Cells(jobs, onHere).ShouldContain("Open log");
+        jobs.OpenMenu(local, 0, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
+        jobs.MenuItems.Select(i => i.Label).ShouldContain("Open its log");
+    }
+
+    [Fact]
     public void AJobsMenuOffersCancelItsSessionItsLogAndCopies()
     {
         using var vessel = new RgbaImageRenderer(1, 1);
