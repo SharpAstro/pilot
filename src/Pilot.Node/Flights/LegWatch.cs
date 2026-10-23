@@ -168,8 +168,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     {
         var since = worker.LastResponseAt ?? worker.StartedAt;
         // A worker idle while a job of its own runs or waits its turn is waiting, as it was told to: the job wakes it, so it
-        // is not stalled.
-        if (now - since < IdleGrace || state.Jobs().Any(j => j.Owner == worker.Id && j.State is JobState.Running or JobState.Queued))
+        // is not stalled. Its own by row, or by name: a worker Claude Code continued as a copy is a row of its own, while
+        // the job it handed over is still the first row's (TIA1739's j13 rang c205 to c207 as stalls, 2026-10-23).
+        if (now - since < IdleGrace || state.Jobs().Any(j => j.State is JobState.Running or JobState.Queued
+                && (j.Owner == worker.Id || string.Equals(j.OwnerName, worker.Name, StringComparison.OrdinalIgnoreCase))))
         {
             return;
         }

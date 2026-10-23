@@ -353,3 +353,24 @@ public sealed class JobTests : IDisposable
         PilotCommand.TryDuration("2d", out _).ShouldBeFalse();
     }
 }
+
+/// <summary>A job's command line from <c>pilot run</c>'s words, quoted again for the node's shell.</summary>
+public sealed class ShellLineTests
+{
+    [Fact]
+    public void AWordHoldingAShellCharacterIsQuotedAgainAndAnOperatorIsLeftOne()
+    {
+        string[] words = ["dotnet", "test", "-c", "Release", "--filter", "FullyQualifiedName~A|FullyQualifiedName~B", "2>&1"];
+
+        Pilot.Node.Flights.ShellLine.Join(words, windows: true)
+            .ShouldBe("dotnet test -c Release --filter \"FullyQualifiedName~A|FullyQualifiedName~B\" 2>&1");
+        Pilot.Node.Flights.ShellLine.Join(words, windows: false)
+            .ShouldBe("dotnet test -c Release --filter 'FullyQualifiedName~A|FullyQualifiedName~B' 2>&1");
+        Pilot.Node.Flights.ShellLine.Join(["pwsh", "-File", "C:/temp/a b/run.ps1"], windows: true).ShouldBe("pwsh -File \"C:/temp/a b/run.ps1\"");
+        Pilot.Node.Flights.ShellLine.Join(["echo", "it's"], windows: false).ShouldBe(@"echo 'it'\''s'");
+    }
+
+    [Fact]
+    public void OneWordIsACommandLineAlready() =>
+        Pilot.Node.Flights.ShellLine.Join(["dotnet test --filter \"A|B\" && echo done"], windows: true).ShouldBe("dotnet test --filter \"A|B\" && echo done");
+}
