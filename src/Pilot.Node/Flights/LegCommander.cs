@@ -18,6 +18,9 @@ public sealed partial class LegCommander(
     /// <summary>How long a worker that finished its own leg has to end its turn and report before it is stopped.</summary>
     public TimeSpan SelfFinishGrace { get; init; } = TimeSpan.FromSeconds(90);
 
+    /// <summary>The model and effort each kind of session starts on; a test's commander passes none.</summary>
+    public RoleModels Models { get; set; } = RoleModels.Unset;
+
     /// <summary>The CLI workers are told to run, found once.</summary>
     public string Cli { get; init; } = Briefs.PilotCli();
 
@@ -202,7 +205,7 @@ public sealed partial class LegCommander(
 
         var worker = WorkerName(flight, leg);
         await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
-        var job = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), Briefs.For(flight, leg, legs, cli: Cli, socket: Socket), leg.Model, leg.Effort), cancellationToken);
+        var job = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), Briefs.For(flight, leg, legs, cli: Cli, socket: Socket), leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), cancellationToken);
         state.PutLeg(leg with { State = LegState.Flying, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), Report = null });
     }
 
@@ -333,7 +336,7 @@ public sealed partial class LegCommander(
         var next = leg with { GoArounds = leg.GoArounds + 1 };
         var worker = WorkerName(flight, leg);
         var brief = Briefs.For(flight, next, state.Legs(flight.Code), why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket);
-        var started = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, leg.Model, leg.Effort), cancellationToken);
+        var started = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), cancellationToken);
         state.PutLeg(next with { State = LegState.Flying, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), FinishedAt = null, Report = $"go-around: {why}" });
         // Every card about the leg was about its last worker: failed, stopped, idle, waiting.
         state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"went around: {why}");
@@ -457,7 +460,7 @@ public sealed partial class LegCommander(
         await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
         var planner = $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{PlanLeg}";
         var brief = Briefs.Plan(flight, state.Legs(flight.Code), Briefs.Run(Cli, Socket));
-        await workers.StartAsync(new WorkerStart(planner, flight.RepoPath, PlaneOf(flight), brief, null, null), cancellationToken);
+        await workers.StartAsync(new WorkerStart(planner, flight.RepoPath, PlaneOf(flight), brief, Models.Model(RoleModels.Planner), Models.Effort(RoleModels.Planner)), cancellationToken);
         state.RaiseCard(CardBin.Handled, "planner-started", Verbs.FlightTarget(flight.Code), $"Started {planner} to plan {flight.Code}'s legs");
     }
 
@@ -501,7 +504,7 @@ public sealed partial class LegCommander(
         var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, cancellationToken);
         var reviewer = ReviewerName(flight);
         var brief = Briefs.Review(flight, legs, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Briefs.Run(Cli, Socket));
-        var job = await workers.StartAsync(new WorkerStart(reviewer, flight.RepoPath, PlaneOf(flight), brief, null, null), cancellationToken);
+        var job = await workers.StartAsync(new WorkerStart(reviewer, flight.RepoPath, PlaneOf(flight), brief, Models.Model(RoleModels.Reviewer), Models.Effort(RoleModels.Reviewer)), cancellationToken);
         state.PutFlight(flight with { Review = new ReviewRow { State = ReviewState.Reviewing, Reviewer = reviewer, ReviewerJob = job, StartedAt = time.GetUtcNow() } });
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "a fresh review started", ReviewChanges, PrReady, LegWatch.ReviewStalled);
     }

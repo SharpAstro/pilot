@@ -26,9 +26,13 @@ public sealed record NodeSettings
     public const string MaxJobsKey = "max-jobs";
     public const string JobMemoryKey = "job-memory";
 
-    /// <summary>Every key, in the order the Settings page shows them.</summary>
+    /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey];
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey,
+         .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey)];
+
+    /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
+    public static bool IsRoleKey(string key) => RoleModels.Roles.Any(r => key == RoleModels.ModelKey(r) || key == RoleModels.EffortKey(r));
 
     public bool? Lan { get; init; }
 
@@ -45,6 +49,9 @@ public sealed record NodeSettings
     public int? MaxJobs { get; init; }
 
     public double? JobMemoryGigabytes { get; init; }
+
+    /// <summary>The roles' models and efforts by key (<c>worker-model</c>: <c>opus</c>); a key left out takes the role's default.</summary>
+    public IReadOnlyDictionary<string, string>? Roles { get; init; }
 
     public static string PathIn(string dataFolder) => Path.Combine(dataFolder, FileName);
 
@@ -117,6 +124,7 @@ public sealed record NodeSettings
         UpdateChannelKey => UpdateChannel is { } channel ? [channel.Name()] : null,
         MaxJobsKey => MaxJobs is { } jobs ? [jobs.ToString(CultureInfo.InvariantCulture)] : null,
         JobMemoryKey => JobMemoryGigabytes is { } memory ? [memory.ToString(CultureInfo.InvariantCulture)] : null,
+        _ when IsRoleKey(key) && Roles?.GetValueOrDefault(key) is { } role => [role],
         _ => null,
     };
 
@@ -199,6 +207,25 @@ public sealed record NodeSettings
                 return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var memory) && memory is >= 0 and <= 1024
                     ? (settings with { JobMemoryGigabytes = memory }, null)
                     : (null, "job-memory takes the free memory in GB a job waits for, 0 to not wait");
+            case var role when IsRoleKey(role):
+            {
+                var roles = new Dictionary<string, string>(settings.Roles ?? new Dictionary<string, string>(), StringComparer.Ordinal);
+                if (clear)
+                {
+                    roles.Remove(role);
+                    return (settings with { Roles = roles.Count == 0 ? null : roles }, null);
+                }
+                var value = One()?.ToLowerInvariant();
+                var effort = role.EndsWith("-effort", StringComparison.Ordinal);
+                if (value is null || (value != RoleModels.NoneValue && (effort ? !RoleModels.Efforts.Contains(value) : !RoleModels.IsModel(value))))
+                {
+                    return (null, effort
+                        ? $"{role} takes {string.Join(", ", RoleModels.Efforts)} or none"
+                        : $"{role} takes a model (sonnet, opus, haiku, or a full id as claude-opus-5-5) or none");
+                }
+                roles[role] = value;
+                return (settings with { Roles = roles }, null);
+            }
             default:
                 return (null, $"there is no setting {key}; there are {string.Join(", ", Keys)}");
         }

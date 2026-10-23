@@ -224,13 +224,21 @@ public static class Briefs
     /// and where every flight and open card stands now. Briefed from the node's state, never an earlier watchtower's
     /// conversation, so a fresh one picks up where the last left off (#36).
     /// </summary>
-    public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot)
+    /// <param name="model">The model the watchtower runs on, when the node chose one (#114): said, so a lighter model rings for a judgement rather than makes it.</param>
+    public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot, string? model = null)
     {
         var text = new StringBuilder();
         text.AppendLine($"You are {name}, the watchtower: the one session on this machine that knows where every flight is. Workers");
         text.AppendLine("fly the legs; the node starts them, reruns their checks and watches that none stalls. You are the door between");
         text.AppendLine("all of that and the controller (the person): handle what is yours, and hand on only what needs them.");
         text.AppendLine();
+        if (model is { Length: > 0 })
+        {
+            text.AppendLine($"You run on {model}, chosen to keep a long-lived session cheap. A judgement call (whether a review's concern");
+            text.AppendLine("blocks a merge, which way a design should go, whether a result is good enough) is the controller's: ring for it");
+            text.AppendLine("with what you know rather than decide it.");
+            text.AppendLine();
+        }
         text.AppendLine("## How you are woken");
         text.AppendLine("The node says new cards to you as they open (a card is one event with its choices), and the controller talks to");
         text.AppendLine("you here, from the GUI or by Remote Control. Act on each message, say in a line or two what you did, and end your");
