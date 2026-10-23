@@ -54,6 +54,7 @@ SnapshotEvent? snapshot = null;
 FlightsScreen? capturedFlights = null;
 CardsScreen? capturedCards = null;
 JobsScreen? capturedJobs = null;
+ReposScreen? capturedRepos = null;
 if (options.Snapshot is { } snapshotFile)
 {
     var snapshotPath = Path.GetFullPath(snapshotFile);
@@ -87,6 +88,10 @@ else if (options.Capture is not null)
                 capturedFlights = new FlightsScreen(FlightLine.Build(live.Flights, live.Sessions, now, live.Legs), screen.Source, now);
                 capturedCards = CardsScreen.From(live.Cards);
                 capturedJobs = new JobsScreen(JobLine.Build(live.Jobs, now), screen.Source, now);
+                if (await oneShot.GetRepoStatusAsync(CancellationToken.None) is { Success: true, Response: { } read })
+                {
+                    capturedRepos = new ReposScreen(RepoLine.Build(read,live.Flights, live.Sessions, live.Cards, live.Legs, now), screen.Source, now);
+                }
             }
         }
     }
@@ -106,8 +111,12 @@ if (options.Capture is { } capturePath)
     capturedFlights ??= snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
     capturedCards ??= snapshot is null ? null : CardsScreen.From(snapshot.Cards);
     capturedJobs ??= snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
+    if (capturedRepos is null && snapshot is not null && File.Exists(SessionsCapture.ReposSamplePath))
+    {
+        capturedRepos = SessionsCapture.ReposScreenFor(snapshot, SessionsCapture.LoadRepos(SessionsCapture.ReposSamplePath), screen.Source);
+    }
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
-        jobs: capturedJobs, openFlight: options.Flight);
+        jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;
@@ -440,9 +449,12 @@ var drawnAt = DateTimeOffset.MinValue;
 CardsScreen? cards = snapshot is null ? null : CardsScreen.From(snapshot.Cards);
 JobsScreen? jobs = snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
 FleetScreen? fleet = null;
+ReposScreen? repos = null;
 FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
 // A card about a leg opens its worker's transcript from the moment the card was raised.
 chrome.LinkCardTranscripts(() => screen, () => flights ?? new FlightsScreen([], screen.Source, screen.AsOf));
+chrome.LinkRepos();
+chrome.Repos.OnOpen = location => DashboardCommands.Open(location);
 loop.OnResize = (w, h) =>
 {
     width = (int)w;
@@ -469,17 +481,18 @@ loop.OnRender = () =>
             fleetWatch.Know(granted.Select(e => (e, (string?)null)).Concat((chrome.Flights.Lan?.Nodes ?? []).Select(n => (n.Endpoint, (string?)n.Name))));
         }
         // Every node's rows on every page, each marked with its node, as the header's node selection picks them.
-        var pages = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, drawnAt);
+        var pages = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, drawnAt, reposWanted: chrome.Page == PilotPage.Repos);
         screen = pages.Sessions;
         flights = pages.Flights;
         cards = pages.Cards;
         chrome.Flights.Jobs = pages.JobRows;
         jobs = pages.Jobs;
+        repos = pages.Repos;
         fleet = fleetWatch.Screen(nodeWhere, feed.Summary(drawnAt), CanCommand, drawnAt);
     }
 
     view.Ui.FrameId++;
-    chrome.Render(screen, flights, cards, jobs, fleet, new RectF32(0, 0, width, height));
+    chrome.Render(screen, flights, cards, jobs, fleet, repos, new RectF32(0, 0, width, height));
     router.AfterPaint();
 
     // Say which session is selected whenever it changes, so stdout follows what the window shows.

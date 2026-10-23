@@ -45,6 +45,7 @@ var sessions = new SessionsView<RgbaImage>(vessel) { CanSay = true };
 var chrome = new PilotChrome<RgbaImage>(vessel, sessions);
 var flights = chrome.Flights;
 var jobs = chrome.Jobs;
+var repos = chrome.Repos;
 var fleet = chrome.Fleet;
 var settings = chrome.Settings;
 var cards = chrome.Cards;
@@ -248,6 +249,8 @@ var page = PilotPage.Sessions;
 // A card about a leg opens its worker's transcript from the moment the card was raised.
 FleetPages? merged = null;
 chrome.LinkCardTranscripts(() => merged?.Sessions ?? feed.Screen(DateTimeOffset.UtcNow), () => merged?.Flights ?? feed.Flights(DateTimeOffset.UtcNow), shown => page = shown);
+chrome.LinkRepos(shown => page = shown);
+repos.OnOpen = location => DashboardCommands.Open(location);
 // The session menu's New flight in its repo: the Flights page, with the wizard open on it.
 sessions.OnNewFlight = repo =>
 {
@@ -283,10 +286,11 @@ while (!stop.IsCancellationRequested)
         // Design units per cell, as CellMeasureContext.PixelAuthored counts them: the trees are the GUI's.
         var width = columns * 8f;
         // Every node's rows on every page, each marked with its node, as the header's node selection picks them.
-        var pages = merged = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now);
+        var pages = merged = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now, reposWanted: page == PilotPage.Repos);
         var pageTree = page switch
         {
             PilotPage.Flights => flights.Tree(pages.Flights),
+            PilotPage.Repos => repos.Tree(pages.Repos ?? new ReposScreen([], pages.Sessions.Source, now)),
             PilotPage.Jobs => jobs.Tree(pages.Jobs),
             PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, now)),
             PilotPage.Settings => settings.Tree(now),
@@ -365,6 +369,9 @@ void Handle(ConsoleInputEvent raw)
             break;
         case InputEvent.KeyDown(InputKey.D5, _):
             page = PilotPage.Settings;
+            break;
+        case InputEvent.KeyDown(InputKey.D6, _):
+            page = PilotPage.Repos;
             break;
         case InputEvent.KeyDown(InputKey.K, InputModifier.Ctrl):
             page = PilotPage.Flights;

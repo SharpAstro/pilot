@@ -11,6 +11,9 @@ internal enum PilotPage
     Jobs,
     Fleet,
     Settings,
+
+    /// <summary>Last in the enum so every other page keeps its number key; the rail lists it after Flights.</summary>
+    Repos,
 }
 
 /// <summary>
@@ -43,6 +46,7 @@ internal sealed class PilotChrome<TSurface>
     [
         (PilotPage.Sessions, "\U0001F4AC", "Sessions", new KeyChord(InputKey.D1, InputModifier.Ctrl), null),
         (PilotPage.Flights, "✈", "Flights", new KeyChord(InputKey.D2, InputModifier.Ctrl), null),
+        (PilotPage.Repos, "📁", "Repos", new KeyChord(InputKey.D6, InputModifier.Ctrl), null),
         (PilotPage.Jobs, "⚒", "Background tasks", new KeyChord(InputKey.D3, InputModifier.Ctrl), null),
         (PilotPage.Fleet, "\U0001F310", "Fleet", new KeyChord(InputKey.D4, InputModifier.Ctrl), null),
         (PilotPage.Settings, "⚙", "Settings", new KeyChord(InputKey.D5, InputModifier.Ctrl), null),
@@ -61,15 +65,18 @@ internal sealed class PilotChrome<TSurface>
         Jobs = new JobsView<TSurface>(renderer);
         Fleet = new FleetView<TSurface>(renderer);
         Settings = new SettingsView<TSurface>(renderer);
+        Repos = new ReposView<TSurface>(renderer);
         Cards = new CardsView<TSurface>(renderer);
-        sessions.ShareWith(Flights, Jobs, Fleet, Settings, Cards);
+        sessions.ShareWith(Flights, Repos, Jobs, Fleet, Settings, Cards);
         sessions.About = About;
         Flights.About = About;
+        Repos.About = About;
         Jobs.About = About;
         Fleet.About = About;
         // One node selection for the window: every page shows the nodes it picks, and a page switch keeps it.
         sessions.Nodes = Nodes;
         Flights.Nodes = Nodes;
+        Repos.Nodes = Nodes;
         Jobs.Nodes = Nodes;
         Fleet.Nodes = Nodes;
         Settings.About = About;
@@ -94,6 +101,9 @@ internal sealed class PilotChrome<TSurface>
 
     public FlightsView<TSurface> Flights { get; }
 
+    /// <summary>The Repos page: every tracked repo with its worktrees and PRs.</summary>
+    public ReposView<TSurface> Repos { get; }
+
     /// <summary>The Background tasks page: the node's jobs.</summary>
     public JobsView<TSurface> Jobs { get; }
 
@@ -113,6 +123,7 @@ internal sealed class PilotChrome<TSurface>
     public IReadOnlyList<IPixelWidget> Widgets => Page switch
     {
         PilotPage.Flights => [Rail, Flights, Cards],
+        PilotPage.Repos => [Rail, Repos, Cards],
         PilotPage.Jobs => [Rail, Jobs, Cards],
         PilotPage.Fleet => [Rail, Fleet, Cards],
         PilotPage.Settings => [Rail, Settings, Cards],
@@ -120,7 +131,7 @@ internal sealed class PilotChrome<TSurface>
     };
 
     /// <summary>The page shown, as a widget: what takes the keys nothing else did.</summary>
-    public IPixelWidget PageWidget => Page switch { PilotPage.Flights => Flights, PilotPage.Jobs => Jobs, PilotPage.Fleet => Fleet, PilotPage.Settings => Settings, _ => Sessions };
+    public IPixelWidget PageWidget => Page switch { PilotPage.Flights => Flights, PilotPage.Repos => Repos, PilotPage.Jobs => Jobs, PilotPage.Fleet => Fleet, PilotPage.Settings => Settings, _ => Sessions };
 
     /// <summary>Whether the last frame drew the cards panel.</summary>
     public bool ShowsCards { get; private set; }
@@ -158,6 +169,27 @@ internal sealed class PilotChrome<TSurface>
         };
     }
 
+    /// <summary>
+    /// Gives the Repos page its links: a worktree's flight opens on the Flights page, its session's transcript on the Sessions
+    /// page. <paramref name="show"/> switches the page where the host keeps it itself.
+    /// </summary>
+    public void LinkRepos(Action<PilotPage>? show = null)
+    {
+        Repos.OnFlight = worktree =>
+        {
+            (show ?? Show)(PilotPage.Flights);
+            if (worktree.FlightCode is { } code)
+            {
+                Flights.OpenDetail(code);
+            }
+        };
+        Repos.OnSession = line =>
+        {
+            (show ?? Show)(PilotPage.Sessions);
+            Sessions.Transcript.Open(line);
+        };
+    }
+
     /// <summary>The session of the worker of the leg <paramref name="card"/> is about (its subject <c>flight/&lt;code&gt;/&lt;leg&gt;</c>), or null.</summary>
     internal static SessionLine? WorkerOf(CardRow card, FlightsScreen flights, SessionsScreen sessions)
     {
@@ -177,6 +209,7 @@ internal sealed class PilotChrome<TSurface>
         {
             Sessions.DpiScale = value;
             Flights.DpiScale = value;
+            Repos.DpiScale = value;
             Jobs.DpiScale = value;
             Fleet.DpiScale = value;
             Settings.DpiScale = value;
@@ -192,6 +225,7 @@ internal sealed class PilotChrome<TSurface>
         {
             Sessions.FontPath = value;
             Flights.FontPath = value;
+            Repos.FontPath = value;
             Jobs.FontPath = value;
             Fleet.FontPath = value;
             Settings.FontPath = value;
@@ -219,7 +253,11 @@ internal sealed class PilotChrome<TSurface>
 
     /// <param name="jobs">The Background tasks page's screen; null shows it empty, as a snapshot file without jobs is.</param>
     /// <param name="fleet">The Fleet page's screen; null shows it empty, as a snapshot file has no fleet.</param>
-    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, RectF32 bounds)
+    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, RectF32 bounds) =>
+        Render(screen, flights, cards, jobs, fleet, null, bounds);
+
+    /// <param name="repos">The Repos page's screen; null shows it empty, as a snapshot file has no repos.</param>
+    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, ReposScreen? repos, RectF32 bounds)
     {
         _items.Clear();
         foreach (var (page, icon, label, shortcut, locked) in Pages)
@@ -282,6 +320,9 @@ internal sealed class PilotChrome<TSurface>
                     break;
                 case PageKey when Page == PilotPage.Jobs:
                     Jobs.Render(jobs ?? new JobsScreen([], screen.Source, screen.AsOf), rect);
+                    break;
+                case PageKey when Page == PilotPage.Repos:
+                    Repos.Render(repos ?? new ReposScreen([], screen.Source, screen.AsOf), rect);
                     break;
                 case PageKey when Page == PilotPage.Flights:
                     Flights.Render(flights ?? new FlightsScreen([], screen.Source, screen.AsOf), rect);

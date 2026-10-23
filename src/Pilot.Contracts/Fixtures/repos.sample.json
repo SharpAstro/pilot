@@ -1,0 +1,97 @@
+[
+  {
+    "name": "orbit",
+    "path": "/home/ada/src/example-org/orbit",
+    "gitHub": "example-org/orbit",
+    "tracked": true,
+    "flights": 3,
+    "defaultBranch": "main",
+    "branch": "main",
+    "dirty": false,
+    "ahead": 0,
+    "behind": 2,
+    "worktrees": [
+      {
+        "path": "/home/ada/src/example-org/orbit/.claude/worktrees/orb204",
+        "branch": "flight/orb204",
+        "flight": "ORB204",
+        "dirty": true,
+        "files": 7,
+        "added": 412,
+        "removed": 38
+      },
+      {
+        "path": "/home/ada/src/example-org/orbit/.claude/worktrees/orb190",
+        "branch": "flight/orb190",
+        "flight": "ORB190",
+        "dirty": false,
+        "files": 2,
+        "added": 20,
+        "removed": 4
+      }
+    ],
+    "pullRequests": [
+      {
+        "number": 205,
+        "title": "Parser: nested groups",
+        "head": "flight/orb190",
+        "url": "https://github.com/example-org/orbit/pull/205",
+        "draft": false,
+        "checks": "passing",
+        "flight": "ORB190"
+      },
+      {
+        "number": 203,
+        "title": "Bump the lexer",
+        "head": "dependabot/lexer",
+        "url": "https://github.com/example-org/orbit/pull/203",
+        "draft": true,
+        "checks": "pending"
+      }
+    ],
+    "errors": [],
+    "updatedAt": "2026-10-19T00:59:30+00:00"
+  },
+  {
+    "name": "widgets",
+    "path": "/home/ada/src/example-org/widgets",
+    "gitHub": "example-org/widgets",
+    "tracked": true,
+    "flights": 1,
+    "defaultBranch": "main",
+    "branch": "feature/grid",
+    "dirty": true,
+    "ahead": 3,
+    "behind": 0,
+    "worktrees": [
+      {
+        "path": "/home/ada/src/example-org/widgets/.claude/worktrees/lib117",
+        "branch": "flight/lib117",
+        "flight": "LIB117",
+        "dirty": false,
+        "files": 0,
+        "added": 0,
+        "removed": 0
+      }
+    ],
+    "pullRequests": [],
+    "errors": ["gh: not logged in"],
+    "updatedAt": "2026-10-19T00:59:30+00:00"
+  },
+  {
+    "name": "stargazer",
+    "path": "/home/ada/src/example-org/stargazer",
+    "gitHub": "example-org/stargazer",
+    "tracked": false,
+    "flights": 0,
+    "defaultBranch": "main",
+    "branch": "main",
+    "dirty": false,
+    "ahead": 0,
+    "behind": 0,
+    "worktrees": [],
+    "pullRequests": [],
+    "errors": [],
+    "updatedAt": "2026-10-19T00:59:30+00:00"
+  }
+]

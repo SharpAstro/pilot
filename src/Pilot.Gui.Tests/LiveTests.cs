@@ -480,16 +480,16 @@ public sealed class RailTests
         var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = SessionsCapture.FontPath };
         chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 1280, 800));
 
-        PilotChrome<RgbaImage>.Pages.Select(p => p.Label).ShouldBe(["Sessions", "Flights", "Background tasks", "Fleet", "Settings"]);
-        PilotChrome<RgbaImage>.Pages.Where(p => p.Locked is null).Select(p => p.Page).ShouldBe([PilotPage.Sessions, PilotPage.Flights, PilotPage.Jobs, PilotPage.Fleet, PilotPage.Settings]);
+        PilotChrome<RgbaImage>.Pages.Select(p => p.Label).ShouldBe(["Sessions", "Flights", "Repos", "Background tasks", "Fleet", "Settings"]);
+        PilotChrome<RgbaImage>.Pages.Where(p => p.Locked is null).Select(p => p.Page).ShouldBe([PilotPage.Sessions, PilotPage.Flights, PilotPage.Repos, PilotPage.Jobs, PilotPage.Fleet, PilotPage.Settings]);
         chrome.Page.ShouldBe(PilotPage.Sessions);
 
         var regions = new List<ClickableRegion>();
         chrome.Rail.CollectPaintedRegions(regions);
         // One cell per page down the rail's 52 px, every one live.
         var cells = regions.Where(r => r.Result is HitResult.ListItemHit).ToList();
-        cells.Count.ShouldBe(5);
-        cells.Count(r => r.Result is HitResult.ListItemHit { ListId: TabBarRegions.Tabs }).ShouldBe(5);
+        cells.Count.ShouldBe(6);
+        cells.Count(r => r.Result is HitResult.ListItemHit { ListId: TabBarRegions.Tabs }).ShouldBe(6);
         cells.ShouldAllBe(r => r.X + r.Width <= 53f);
     }
 }

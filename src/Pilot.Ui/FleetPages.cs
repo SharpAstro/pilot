@@ -82,13 +82,13 @@ internal sealed class NodeFilter
 /// Every page's screen for the nodes a window shows: each node's rows merged, marked with their node when there is more
 /// than one, and filtered by the window's <see cref="NodeFilter"/>.
 /// </summary>
-internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights, JobsScreen Jobs, IReadOnlyList<JobRow> JobRows, CardsScreen Cards)
+internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights, JobsScreen Jobs, IReadOnlyList<JobRow> JobRows, CardsScreen Cards, ReposScreen? Repos = null)
 {
     /// <summary>
     /// Merges <paramref name="feeds"/> (this window's node first, then the others, each node once). A single node's rows
     /// stay unmarked, as they were before there was a fleet. The header's source is this window's node's.
     /// </summary>
-    public static FleetPages Merge(IReadOnlyList<(NodeMark Mark, NodeFeed Feed)> feeds, NodeFilter filter, DateTimeOffset now)
+    public static FleetPages Merge(IReadOnlyList<(NodeMark Mark, NodeFeed Feed)> feeds, NodeFilter filter, DateTimeOffset now, bool reposWanted = false)
     {
         filter.Choices = [.. feeds.Where(f => f.Mark.Here || f.Feed.Connected).Select(f => f.Mark)];
         var several = filter.Choices.Count > 1;
@@ -101,13 +101,15 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
         var flights = FlightLine.Order(shown.SelectMany(f => f.Feed.Flights(now).Lines.Select(l => l with { Node = Mark(f.Mark) })));
         var jobs = JobLine.Order(shown.SelectMany(f => f.Feed.JobsPage(now).Lines.Select(l => l with { Node = Mark(f.Mark) })));
         var cards = CardsScreen.Merge(shown.Select(f => (Mark(f.Mark), f.Feed.Cards())), feeds[0].Feed.Cards().Watchtower);
+        var repos = RepoLine.Order(shown.SelectMany(f => f.Feed.Repos(now, reposWanted).Lines.Select(l => l.Marked(Mark(f.Mark)))));
         var source = several ? $"{hereSessions.Source} · {filter.Choices.Count} nodes{(filter.All ? "" : $", showing {string.Join(", ", filter.Choices.Where(c => filter.Shows(c)).Select(c => c.Name))}")}" : hereSessions.Source;
         return new FleetPages(
             hereSessions with { Lines = sessions, Source = source },
             new FlightsScreen(flights, several ? source : here.Flights(now).Source, now),
             new JobsScreen(jobs, several ? source : here.JobsPage(now).Source, now),
             [.. shown.SelectMany(f => f.Feed.Jobs())],
-            cards);
+            cards,
+            new ReposScreen(repos, several ? source : hereSessions.Source, now));
     }
 }
 
