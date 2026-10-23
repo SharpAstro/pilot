@@ -103,6 +103,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return await Get<LegCommander>().RunAsync(command, cancellationToken);
         }
+        if (PrReviews.Handles(command.Verb))
+        {
+            return await Get<PrReviews>().RunAsync(command, cancellationToken);
+        }
         if (command.Verb is Verbs.Answer or Verbs.Dismiss)
         {
             return await AnswerAsync(command, cancellationToken);
@@ -132,6 +136,11 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             var why = string.Join(' ', args).Trim();
             state.CloseCard(card.Id, why.Length > 0 ? $"dismissed: {why}" : "dismissed", command.Who);
+            // A PR review's card closed: its worktree goes now, not at the next sweep.
+            if (card.Kind == PrReviews.ReadyKind)
+            {
+                await Get<PrReviews>().SweepAsync(cancellationToken);
+            }
             return state.Complete(command, null);
         }
 
@@ -154,6 +163,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             state.ReopenCard(card.Id);
             return state.Complete(command, $"{choice.Label} was refused: {result.Error}");
+        }
+        if (card.Kind == PrReviews.ReadyKind)
+        {
+            await Get<PrReviews>().SweepAsync(cancellationToken);
         }
         return state.Complete(command, null);
     }

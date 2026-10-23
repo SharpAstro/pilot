@@ -204,27 +204,37 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     {
         foreach (var flight in state.Flights().Where(f => f.State != FlightState.Landed && f.Review is { State: ReviewState.Reviewing, ReviewerJob: not null }))
         {
-            var review = flight.Review!;
             var subject = Verbs.FlightTarget(flight.Code);
-            var row = sessions.FirstOrDefault(s => s.Id == review.ReviewerJob);
-            string? why = row switch
-            {
-                null when now - review.StartedAt > ShowUpGrace => $"started {Ago(now, review.StartedAt)} ago and never showed up",
-                null => null,
-                { State: SessionState.Working or SessionState.Waiting } => null,
-                { State: SessionState.Failed } => "it failed",
-                _ when now - (row.LastResponseAt ?? row.StartedAt) >= IdleGrace => $"it stopped {Ago(now, row.LastResponseAt ?? row.StartedAt)} ago without its verdict",
-                _ => null,
-            };
-            if (row is { State: SessionState.Working })
-            {
-                state.CloseCardsAbout(subject, "reviewing again", ReviewStalled);
-            }
-            if (why is not null)
-            {
-                state.RaiseCard(CardBin.Ring, ReviewStalled, subject, $"{flight.Code}'s review stalled", why,
-                    [new CardChoice { Label = "Review again", Verb = Verbs.StartReview, Target = subject }]);
-            }
+            LookAtReviewer(sessions, now, flight.Review!.ReviewerJob!, flight.Review.StartedAt, subject, flight.Code, Verbs.StartReview);
+        }
+        // Any PR's reviewer (#113) is watched as a flight's is.
+        foreach (var review in state.PrReviews().Where(r => r is { State: PrReviewState.Reviewing, ReviewerJob: not null }))
+        {
+            var subject = Verbs.PrTarget(review.Repo, review.Number);
+            LookAtReviewer(sessions, now, review.ReviewerJob!, review.StartedAt, subject, $"{review.Repo}#{review.Number}", Verbs.ReviewPr);
+        }
+    }
+
+    private void LookAtReviewer(SessionRow[] sessions, DateTimeOffset now, string job, DateTimeOffset startedAt, string subject, string name, string again)
+    {
+        var row = sessions.FirstOrDefault(s => s.Id == job);
+        string? why = row switch
+        {
+            null when now - startedAt > ShowUpGrace => $"started {Ago(now, startedAt)} ago and never showed up",
+            null => null,
+            { State: SessionState.Working or SessionState.Waiting } => null,
+            { State: SessionState.Failed } => "it failed",
+            _ when now - (row.LastResponseAt ?? row.StartedAt) >= IdleGrace => $"it stopped {Ago(now, row.LastResponseAt ?? row.StartedAt)} ago without its verdict",
+            _ => null,
+        };
+        if (row is { State: SessionState.Working })
+        {
+            state.CloseCardsAbout(subject, "reviewing again", ReviewStalled);
+        }
+        if (why is not null)
+        {
+            state.RaiseCard(CardBin.Ring, ReviewStalled, subject, $"{name}'s review stalled", why,
+                [new CardChoice { Label = "Review again", Verb = again, Target = subject }]);
         }
     }
 

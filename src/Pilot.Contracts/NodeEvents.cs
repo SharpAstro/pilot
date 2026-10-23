@@ -28,6 +28,8 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(UsageChangedEvent), "usageChanged")]
 [JsonDerivedType(typeof(JobAddedEvent), "jobAdded")]
 [JsonDerivedType(typeof(JobChangedEvent), "jobChanged")]
+[JsonDerivedType(typeof(PrReviewAddedEvent), "prReviewAdded")]
+[JsonDerivedType(typeof(PrReviewChangedEvent), "prReviewChanged")]
 public abstract record NodeEvent
 {
     /// <summary>
@@ -100,6 +102,15 @@ public sealed record SnapshotEvent : NodeEvent
     }
 
     private readonly JobRow[]? _jobs;
+
+    /// <summary>Every PR review, closed ones included. Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public PrReviewRow[] PrReviews
+    {
+        get => _prReviews ?? [];
+        init => _prReviews = value;
+    }
+
+    private readonly PrReviewRow[]? _prReviews;
 }
 
 /// <summary>A session the node had not seen.</summary>

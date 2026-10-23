@@ -63,6 +63,10 @@ public static partial class SessionRoles
     [GeneratedRegex(@"^[a-z]{2}[0-9]+-([a-z]{2,}[0-9]+[a-z]?)-(\S.*)$", RegexOptions.CultureInvariant)]
     private static partial Regex MachineWorkerName();
 
+    /// <summary>A PR's reviewer as the node names it, <c>&lt;machine&gt;-review-&lt;repo&gt;-&lt;n&gt;</c> (<c>du1-review-bullclip-backend-2479</c>).</summary>
+    [GeneratedRegex(@"^[a-z]{2}[0-9]+-review-[a-z0-9-]+-[0-9]+$", RegexOptions.CultureInvariant)]
+    private static partial Regex PrReviewerName();
+
     /// <summary>A flight code as a name writes it in lower case, back in its own: TIA1611a of tia1611a.</summary>
     internal static string FlightCode(string lower)
     {
@@ -86,6 +90,12 @@ public static partial class SessionRoles
         if (background && name is { Length: > 0 } && (name.EndsWith("-watchtower", StringComparison.Ordinal) || name == "watchtower"))
         {
             return new SessionRoleInfo(SessionRole.Watchtower, null, null, null);
+        }
+
+        // <machine>-review-<repo>-<n> reviews a PR of any repo (#113), and flies no flight.
+        if (name is { Length: > 0 } && PrReviewerName().IsMatch(name))
+        {
+            return new SessionRoleInfo(SessionRole.Reviewer, null, null, null);
         }
 
         if (name is { Length: > 0 } && MachineWorkerName().Match(name) is { Success: true } named)

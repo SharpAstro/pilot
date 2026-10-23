@@ -48,6 +48,7 @@ public sealed class NodeState
     private readonly Dictionary<string, CardRow> _cards = new Dictionary<string, CardRow>(StringComparer.Ordinal);
     private UsageRow? _usage;
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
+    private readonly Dictionary<string, PrReviewRow> _prReviews = new Dictionary<string, PrReviewRow>(StringComparer.OrdinalIgnoreCase);
 
     // The latest deltas, oldest first, serialised once: what a resuming client is sent.
     private readonly Queue<(long Seq, byte[] Json)> _held = new Queue<(long Seq, byte[] Json)>();
@@ -366,6 +367,34 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>The PR reviews, newest start first.</summary>
+    public PrReviewRow[] PrReviews()
+    {
+        lock (_gate)
+        {
+            return [.. _prReviews.Values.OrderByDescending(r => r.StartedAt)];
+        }
+    }
+
+    /// <summary>Puts a PR review, by its repo and number: added when new, changed when it differs, nothing when it is the same.</summary>
+    public void PutPrReview(PrReviewRow review)
+    {
+        lock (_gate)
+        {
+            if (_prReviews.TryGetValue(Verbs.PrTarget(review.Repo, review.Number), out var held))
+            {
+                if (held != review)
+                {
+                    Publish(new PrReviewChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Review = review });
+                }
+            }
+            else
+            {
+                Publish(new PrReviewAddedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Review = review });
+            }
+        }
+    }
+
     /// <summary>The account's usage as last read; null before any.</summary>
     public UsageRow? Usage()
     {
@@ -573,6 +602,12 @@ public sealed class NodeState
             case JobChangedEvent changed:
                 _jobs[changed.Job.Id] = changed.Job;
                 break;
+            case PrReviewAddedEvent added:
+                _prReviews[Verbs.PrTarget(added.Review.Repo, added.Review.Number)] = added.Review;
+                break;
+            case PrReviewChangedEvent changed:
+                _prReviews[Verbs.PrTarget(changed.Review.Repo, changed.Review.Number)] = changed.Review;
+                break;
         }
     }
 
@@ -600,6 +635,10 @@ public sealed class NodeState
         {
             _jobs[job.Id] = job;
         }
+        foreach (var review in snapshot.PrReviews ?? [])
+        {
+            _prReviews[Verbs.PrTarget(review.Repo, review.Number)] = review;
+        }
         _seq = snapshot.Seq;
     }
 
@@ -615,6 +654,7 @@ public sealed class NodeState
         Cards = [.. _cards.Values],
         Usage = _usage,
         Jobs = [.. _jobs.Values],
+        PrReviews = [.. _prReviews.Values],
     };
 
     private static byte[] Serialize(NodeEvent nodeEvent) => JsonSerializer.SerializeToUtf8Bytes(nodeEvent, PilotJsonContext.Default.NodeEvent);

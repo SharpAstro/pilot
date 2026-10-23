@@ -210,6 +210,31 @@ public sealed class LegWatchTests
     }
 
     [Fact]
+    public async Task AnyPrsReviewerIsWatchedAsAFlightsIs()
+    {
+        _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });
+        _state.PutPrReview(new PrReviewRow
+        {
+            Repo = "acme/widget", Number = 7, Url = "https://github.com/acme/widget/pull/7", Base = "main", Head = "4f2c9a01d6e8",
+            ClonePath = "/r", Worktree = "/r/.claude/worktrees/review-widget-7", Reviewer = "du1-review-widget-7", ReviewerJob = "a1b2c3d4",
+            State = PrReviewState.Reviewing, StartedAt = Start,
+        });
+        Worker(SessionState.Working);
+        _time.Advance(TimeSpan.FromMinutes(10));
+        await _watch.LookAsync(Ct);
+        Open().ShouldBeEmpty();
+
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow());
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+
+        var card = Open().ShouldHaveSingleItem();
+        (card.Kind, card.Subject, card.Title).ShouldBe((LegWatch.ReviewStalled, "pr/acme/widget#7", "acme/widget#7's review stalled"));
+        var again = card.Choices.ShouldHaveSingleItem();
+        (again.Verb, again.Target).ShouldBe((Verbs.ReviewPr, "pr/acme/widget#7"));
+    }
+
+    [Fact]
     public async Task LegsNotFlyingAreNotWatched()
     {
         var leg = _state.Legs().Single();

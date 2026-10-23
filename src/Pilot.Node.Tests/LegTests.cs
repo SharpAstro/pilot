@@ -102,6 +102,38 @@ internal sealed class FakeGitHub : IGitHub
         Pr = new PullRequest(70 + Created.Count, "OPEN", "cafe0000cafe0000", $"https://github.com/x/tianwen/pull/{70 + Created.Count}");
         return Task.FromResult(Pr);
     }
+
+    /// <summary>Any repo's PRs, by <c>owner/repo#n</c>, as gh pr view -R reads them.</summary>
+    public Dictionary<string, PullRequest> Prs { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public Task<PullRequest> PullRequestOfAsync(string repo, int number, CancellationToken cancellationToken) =>
+        Prs.TryGetValue($"{repo}#{number}", out var pr) ? Task.FromResult(pr) : Task.FromException<PullRequest>(new FlightException($"gh could not read {repo}#{number}: not found"));
+
+    /// <summary>Where each repo, <c>owner/name</c>, clones from: a local bare repo standing in for GitHub.</summary>
+    public Dictionary<string, string> Origins { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Every clone made, by repo and path.</summary>
+    public List<(string Repo, string Path)> Cloned { get; } = [];
+
+    public async Task CloneAsync(string repo, string path, CancellationToken cancellationToken)
+    {
+        if (!Origins.TryGetValue(repo, out var origin))
+        {
+            throw new FlightException($"gh could not clone {repo}: not found");
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var run = await new GitCli().RunAsync(["clone", "-q", origin, path], Path.GetDirectoryName(path)!, cancellationToken);
+        if (!run.Ok)
+        {
+            throw new FlightException($"gh could not clone {repo}: {run.Why}");
+        }
+        Cloned.Add((repo, path));
+    }
+
+    /// <summary>The login gh says it is signed in as.</summary>
+    public string? Login { get; set; } = "controller";
+
+    public Task<string?> LoginAsync(CancellationToken cancellationToken) => Task.FromResult(Login);
 }
 
 /// <summary>Legs: planned in order, flown one at a time by fresh workers, done only on a passing rerun, and a flight merged guarded on its head.</summary>

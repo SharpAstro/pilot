@@ -62,6 +62,13 @@ public static class NodeApp
             legs.Models = services.GetRequiredService<RoleModels>();
             return legs;
         });
+        builder.Services.AddSingleton(services =>
+        {
+            var reviews = ActivatorUtilities.CreateInstance<PrReviews>(services);
+            reviews.Models = services.GetRequiredService<RoleModels>();
+            return reviews;
+        });
+        builder.Services.AddHostedService(services => services.GetRequiredService<PrReviews>());
         builder.Services.AddSingleton<NodeCommands>();
         builder.Services.AddSingleton<NodeLan>();
         if (options.Lan && options.LanAnnounce)
