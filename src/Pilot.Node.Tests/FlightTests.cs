@@ -331,3 +331,30 @@ public sealed class FlightStoreTests : IDisposable
         mirror.Flights["PIL63"].State.ShouldBe(FlightState.Landed);
     }
 }
+
+/// <summary>A plane's own Claude Code settings: the repo's MCP servers disabled, so no session there waits on their approval.</summary>
+public sealed class PlaneSettingsTests : IDisposable
+{
+    private readonly string _plane = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "p2p-" + Guid.NewGuid().ToString("N")[..8])).FullName;
+
+    public void Dispose() => Directory.Delete(_plane, recursive: true);
+
+    [Fact]
+    public void ThePlanesLocalSettingsDisableTheRepoMcpServersAndKeepTheRest()
+    {
+        PlaneSettings.DisableRepoMcpServers(_plane).ShouldBeEmpty();
+        File.Exists(Path.Combine(_plane, ".claude", PlaneSettings.FileName)).ShouldBeFalse();
+
+        File.WriteAllText(Path.Combine(_plane, ".mcp.json"), """{ "mcpServers": { "sdl-ui-inspector": { "type": "stdio" }, "console-inspector": { "type": "stdio" } } }""");
+        Directory.CreateDirectory(Path.Combine(_plane, ".claude"));
+        var file = Path.Combine(_plane, ".claude", PlaneSettings.FileName);
+        File.WriteAllText(file, """{ "permissions": { "allow": ["Bash(ls:*)"] }, "disabledMcpjsonServers": ["console-inspector"] }""");
+
+        PlaneSettings.DisableRepoMcpServers(_plane).ShouldBe(["sdl-ui-inspector", "console-inspector"]);
+        PlaneSettings.DisableRepoMcpServers(_plane);
+
+        var written = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(file))!.AsObject();
+        written["disabledMcpjsonServers"]!.AsArray().Select(n => n!.GetValue<string>()).ShouldBe(["console-inspector", "sdl-ui-inspector"]);
+        written["permissions"]!["allow"]![0]!.GetValue<string>().ShouldBe("Bash(ls:*)");
+    }
+}

@@ -110,6 +110,7 @@ public sealed class Planes(IGit git)
         {
             throw new FlightException($"git could not make {code}'s plane: {add.Why}");
         }
+        PlaneSettings.DisableRepoMcpServers(worktree);
         return new Plane(repoPath, branch, worktree, baseRef);
     }
 
@@ -156,6 +157,7 @@ public sealed class Planes(IGit git)
         {
             throw new FlightException($"git could not check out the plane {branch} at {worktree} again: {add.Why}");
         }
+        PlaneSettings.DisableRepoMcpServers(worktree);
     }
 
     /// <summary>Removes the folder of a worktree git no longer has: what a torn-down worktree leaves when a file was held.</summary>

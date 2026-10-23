@@ -31,9 +31,10 @@ public interface ISessionDelivery
 
     /// <summary>
     /// Continues a background session whose process has gone, with the text as its next user turn
-    /// (<c>claude --bg --resume</c>). Claude Code continues it under a new session id holding the whole conversation.
+    /// (<c>claude --bg --resume</c>). Claude Code continues it under its own session id, with the options it was started
+    /// with; where it makes a copy instead, the copy's id comes back and the row follows it.
     /// </summary>
-    /// <returns>The new session id.</returns>
+    /// <returns>The session id it continues under.</returns>
     Task<string> ResumeAsync(ResumeRequest request, CancellationToken cancellationToken);
 
     /// <summary>
@@ -48,7 +49,7 @@ public interface ISessionDelivery
 /// <see cref="ISessionDelivery"/> by the <c>claude</c> CLI. Port of v1's <c>say()</c> (stop, then
 /// <c>--bg --resume</c>) and its intercom (<c>RELAY</c>, <c>RELAY_PROMPT</c>).
 /// </summary>
-public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, ClaudeProfile profile, string relayFolder) : ISessionDelivery
+public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder) : ISessionDelivery
 {
     /// <summary>The name a message from the person who runs these sessions comes from, whichever client they typed it in.</summary>
     public const string ControllerName = "controller";
@@ -126,8 +127,7 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, ClaudeProfil
 
     public async Task<string> ResumeAsync(ResumeRequest request, CancellationToken cancellationToken)
     {
-        var settings = profile.FindTranscript(request.SessionId) is { } transcript ? ResumeSettings.Read(transcript) : ResumeSettings.None;
-        var args = ResumeArguments(request, settings);
+        var args = ResumeArguments(request);
         var run = await ClaudeCli.RunAsync(args, request.Text, request.Cwd, ResumeTimeout, cancellationToken);
         var job = Backgrounded().Match(run.Output);
         if (run.ExitCode != 0 || !job.Success)
@@ -152,34 +152,14 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, ClaudeProfil
     }
 
     /// <summary>
-    /// The resume's arguments: the session's name, and the permission mode, model and effort it last ran with, which a
-    /// resume does not carry over on its own (v1 passes its workers' every time).
+    /// The resume's arguments: the full session id and nothing else. A background session keeps the options it was started
+    /// with (its name, permission mode, model, effort, Remote Control, and a worker's --strict-mcp-config), and Claude
+    /// Code wakes it with them under its own id; any flag passed here makes it start a copy under a new id with those
+    /// flags alone. A worker's copy lost --strict-mcp-config and sat "blocked" on the repo's MCP approval, which a
+    /// background session has no one to ask (TIA1658's and TIA1774's workers, compacted, 2026-10-23). The session id
+    /// must be the full one: the short job id starts a copy too.
     /// </summary>
-    public static IReadOnlyList<string> ResumeArguments(ResumeRequest request, ResumeSettings settings)
-    {
-        var args = new List<string> { "--bg", "--resume", request.SessionId };
-        if (request.Name is { Length: > 0 } name)
-        {
-            args.AddRange(["-n", name]);
-        }
-        if (settings.PermissionMode is { Length: > 0 } mode)
-        {
-            args.AddRange(["--permission-mode", mode]);
-        }
-        if (settings.Model is { Length: > 0 } model)
-        {
-            args.AddRange(["--model", model]);
-        }
-        if (settings.Effort is { Length: > 0 } effort)
-        {
-            args.AddRange(["--effort", effort]);
-        }
-        if (request.RemoteControl)
-        {
-            args.Add("--remote-control");
-        }
-        return args;
-    }
+    public static IReadOnlyList<string> ResumeArguments(ResumeRequest request) => ["--bg", "--resume", request.SessionId];
 
     /// <summary>v1's relay arguments, with ListAgents added for a name that is not enough.</summary>
     public static IReadOnlyList<string> RelayArguments(string from) =>
@@ -287,72 +267,4 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, ClaudeProfil
     /// <summary>What <c>claude --bg</c> prints: <c>backgrounded · &lt;job id&gt;</c>. v1's <c>backgrounded()</c>.</summary>
     [GeneratedRegex(@"backgrounded\s*\S\s*([0-9a-f]{8})")]
     private static partial Regex Backgrounded();
-}
-
-/// <summary>What a session last ran with, from its transcript: what a resume has to pass again.</summary>
-/// <param name="PermissionMode">The last <c>permission-mode</c> line's mode.</param>
-/// <param name="Model">The last real response's <c>requestedModel</c>, else its <c>message.model</c>.</param>
-/// <param name="Effort">The last real response's <c>effort</c>.</param>
-public sealed record ResumeSettings(string? PermissionMode, string? Model, string? Effort)
-{
-    public static readonly ResumeSettings None = new(null, null, null);
-
-    /// <summary>Reads the transcript at <paramref name="path"/>; <see cref="None"/> when it cannot be read.</summary>
-    public static ResumeSettings Read(string path)
-    {
-        try
-        {
-            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using var reader = new StreamReader(file, Encoding.UTF8);
-            return Read(reader);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return None;
-        }
-    }
-
-    /// <summary>Reads transcript lines from <paramref name="reader"/>.</summary>
-    public static ResumeSettings Read(TextReader reader)
-    {
-        string? mode = null, model = null, effort = null;
-        while (reader.ReadLine() is { } line)
-        {
-            if (!line.Contains("\"permission-mode\"", StringComparison.Ordinal) && !line.Contains("\"assistant\"", StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            try
-            {
-                using var doc = JsonDocument.Parse(line);
-                var root = doc.RootElement;
-                if (root.ValueKind != JsonValueKind.Object)
-                {
-                    continue;
-                }
-                switch (ClaudeAgentsJson.Text(root, "type"))
-                {
-                    case "permission-mode":
-                        mode = ClaudeAgentsJson.Text(root, "permissionMode") ?? mode;
-                        break;
-                    case "assistant" when root.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.Object:
-                        var said = ClaudeAgentsJson.Text(message, "model");
-                        var sidechain = root.TryGetProperty("isSidechain", out var side) && side.ValueKind == JsonValueKind.True;
-                        if (said is null || said == "<synthetic>" || sidechain)
-                        {
-                            break;
-                        }
-                        model = ClaudeAgentsJson.Text(root, "requestedModel") ?? said;
-                        effort = ClaudeAgentsJson.Text(root, "effort") ?? effort;
-                        break;
-                }
-            }
-            catch (JsonException)
-            {
-                // Not a line of ours to read.
-            }
-        }
-        return new ResumeSettings(mode, model, effort);
-    }
 }
