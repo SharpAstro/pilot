@@ -389,7 +389,11 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             CloseDetail();
             return true;
         }
-        return !IsDetailOpen && evt is InputEvent.KeyDown key && HandleListKey(key.Key, key.Modifiers);
+        if (IsDetailOpen)
+        {
+            return evt is InputEvent.KeyDown { Key: var scrollKey } && ScrollDetail(scrollKey);
+        }
+        return evt is InputEvent.KeyDown key && HandleListKey(key.Key, key.Modifiers);
     }
 
     internal Layout.Node Build(FlightsScreen screen)

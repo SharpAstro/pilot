@@ -79,8 +79,11 @@ internal sealed record LegDetail
 
     private static string? FolderOf(string path)
     {
-        var folder = Path.GetDirectoryName(path.TrimEnd('/', '\\'));
-        return string.IsNullOrEmpty(folder) ? null : folder;
+        // Split on both slash kinds by hand: the path comes from the node's machine, and Path.GetDirectoryName only
+        // knows this OS's separators, so a Windows path would have no folder on Linux.
+        var trimmed = path.TrimEnd('/', '\\');
+        var cut = trimmed.LastIndexOfAny(['/', '\\']);
+        return cut <= 0 ? null : trimmed[..cut];
     }
 }
 

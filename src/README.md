@@ -326,7 +326,8 @@ takes the CLI's own commands, run in-process through the same command tree (`Pil
 later, an MCP server (#70) host: `flight create 1611 --repo C:\src\tianwen`, `leg plan …`, `cards`.
 
 **A flight's page** opens in place of the table: Enter on the selected flight, a double click, **Open flight** in its
-panel or right-click menu; Escape or **Back to the flights** goes back. Its header has the flight's state, its PR and
+panel or right-click menu; Escape or **Back to the flights** goes back. The wheel scrolls it, and so do Up and Down (a
+line), PageUp and PageDown, Home and End, which is how pilot-tui reaches the lower legs. Its header has the flight's state, its PR and
 review, and the same actions as the panel. Each leg follows in the flight's order as a block: its state, how many steps
 are ticked and its go-arounds, then its **Goal**, **Done when** (and the **Check** the node reruns, when it has one),
 every checklist step as `[x]` or `[ ]`, the worker's **Report** (**Why it failed** on a failed leg) and the artifacts
