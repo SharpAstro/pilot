@@ -216,6 +216,23 @@ internal sealed class PilotChrome<TSurface>
         };
     }
 
+    /// <summary>
+    /// Gives the Fleet page's "N waiting on you" its link: the Sessions page, filtered to that node alone, the first session
+    /// waiting on you selected and at the head of the list. <paramref name="show"/> switches the page where the host keeps it itself.
+    /// </summary>
+    public void LinkFleet(Action<PilotPage>? show = null)
+    {
+        Fleet.OnWaiting = line =>
+        {
+            (show ?? Show)(PilotPage.Sessions);
+            Nodes.ShowAll();
+            Nodes.Toggle(line.Where);
+            Sessions.Transcript.Close();
+            // A node's rows are unmarked while it is the only one there is; otherwise marked with the key the pick is.
+            Sessions.SelectFirst(l => l.Row.State == SessionState.Waiting && (l.Node is null ? line.Here : l.Node.Key == line.Where));
+        };
+    }
+
     /// <summary>The session of the worker of the leg <paramref name="card"/> is about (its subject <c>flight/&lt;code&gt;/&lt;leg&gt;</c>), or null.</summary>
     internal static SessionLine? WorkerOf(CardRow card, FlightsScreen flights, SessionsScreen sessions)
     {

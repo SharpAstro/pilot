@@ -262,6 +262,8 @@ FleetPages? merged = null;
 chrome.LinkCardTranscripts(() => merged?.Sessions ?? feed.Screen(DateTimeOffset.UtcNow), () => merged?.Flights ?? feed.Flights(DateTimeOffset.UtcNow), shown => page = shown,
     () => merged?.Jobs ?? feed.JobsPage(DateTimeOffset.UtcNow));
 chrome.LinkRepos(shown => page = shown);
+// The Fleet page's "N waiting on you" opens those sessions on the Sessions page.
+chrome.LinkFleet(shown => page = shown);
 repos.OnOpen = location => DashboardCommands.Open(location);
 // The session menu's New flight in its repo: the Flights page, with the wizard open on it.
 sessions.OnNewFlight = repo =>

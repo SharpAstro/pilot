@@ -68,6 +68,9 @@ internal sealed record FleetLine
     /// <summary><c>3 live · 1 waiting on you</c>.</summary>
     public required string Sessions { get; init; }
 
+    /// <summary>How many of its sessions wait on you, as <see cref="Sessions"/> says in words; 0 for a node not reached.</summary>
+    public int WaitingOnYou { get; init; }
+
     /// <summary><c>2 flying · 1 held</c>, or <c>none in the air</c>.</summary>
     public required string Flights { get; init; }
 
@@ -95,6 +98,7 @@ internal sealed record FleetLine
             Usage = summary.Usage ?? "",
             // A node not reached says nothing it last said: its counts would read as now.
             Sessions = !summary.Connected ? "—" : summary.WaitingOnYou > 0 ? $"{summary.LiveSessions} live · {summary.WaitingOnYou} waiting on you" : $"{summary.LiveSessions} live",
+            WaitingOnYou = summary.Connected ? summary.WaitingOnYou : 0,
             Flights = !summary.Connected ? "—" : Counted(summary.Flying, "flying", summary.Held, "held", "none in the air"),
             Jobs = !summary.Connected ? "—" : Counted(summary.JobsRunning, "running", summary.JobsQueued, "queued", "none"),
             Rings = summary.Connected ? summary.Rings : 0,
@@ -261,6 +265,12 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>Asks the node at that address for a grant to command it, as <c>pilot connect</c> does.</summary>
     public Action<FleetLine>? OnConnect { get; set; }
 
+    /// <summary>
+    /// Takes a row's "N waiting on you" to those sessions (the Sessions page, filtered to that node); null (the default)
+    /// leaves the count as plain text.
+    /// </summary>
+    public Action<FleetLine>? OnWaiting { get; set; }
+
     /// <summary>What the last Open or Connect said, under the header.</summary>
     public string? Said { get; set; }
 
@@ -367,7 +377,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                     Layout.Builder.Text(line.Account, 13f, Body).RowH(22f),
                     Layout.Builder.Text(line.Connected ? line.Usage : line.State, 11f, Dim).RowH(18f))
                 .WFixed(AccountWidth),
-            Layout.Builder.Text(line.Sessions, 13f, line.Sessions.Contains("waiting", StringComparison.Ordinal) ? Ringing : Body).WFixed(SessionsWidth),
+            SessionsCell(line),
             Optional(Layout.Builder.VStack(
                     Layout.Builder.Text(line.Flights, 13f, Body).RowH(22f),
                     Layout.Builder.Text(line.Jobs switch { "—" => "", "none" => "no jobs", var jobs => $"jobs: {jobs}" }, 11f, Dim).RowH(18f)), WorkWidth),
@@ -382,6 +392,23 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index));
         return index == Selected ? row.Bg(RowFocusBg) : (index & 1) == 1 ? row.Bg(RowAltBg) : row;
+    }
+
+    // The live count, and the waiting count after it as a button that opens those sessions (when the host says how).
+    private Layout.Node SessionsCell(FleetLine line)
+    {
+        var waiting = line.Sessions.Contains("waiting", StringComparison.Ordinal);
+        var split = line.Sessions.IndexOf(" · ", StringComparison.Ordinal);
+        if (line.WaitingOnYou <= 0 || OnWaiting is not { } onWaiting || split < 0)
+        {
+            return Layout.Builder.Text(line.Sessions, 13f, waiting ? Ringing : Body).WFixed(SessionsWidth);
+        }
+        return Layout.Builder.HStack(
+                Layout.Builder.Text(line.Sessions[..split] + " ·", 13f, Body).WAuto(),
+                Layout.Builder.Text(line.Sessions[(split + 3)..], 13f, Ringing).WAuto().BgHover(RowHoverBg)
+                    .Clickable(new HitResult.ButtonHit($"fleet:{line.Where}:waiting"), _ => onWaiting(line)))
+            .WithGap(4f)
+            .WFixed(SessionsWidth);
     }
 
     private static Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);

@@ -469,6 +469,8 @@ FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.
 // A card about a leg opens its worker's transcript from the moment the card was raised.
 chrome.LinkCardTranscripts(() => screen, () => flights ?? new FlightsScreen([], screen.Source, screen.AsOf), jobs: () => jobs ?? new JobsScreen([], screen.Source, screen.AsOf));
 chrome.LinkRepos();
+// The Fleet page's "N waiting on you" opens those sessions on the Sessions page.
+chrome.LinkFleet();
 chrome.Repos.OnOpen = location => DashboardCommands.Open(location);
 loop.OnResize = (w, h) =>
 {

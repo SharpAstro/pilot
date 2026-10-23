@@ -95,6 +95,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
     private IReadOnlyList<SessionLine> _lines = [];
+    private Func<SessionLine, bool>? _pendingFirst;
 
     /// <summary>The selected row's index into <see cref="SessionsScreen.Lines"/>, or -1 with none.</summary>
     public int Selected => ListCursor.ListId == ListId ? ListCursor.Index : -1;
@@ -201,6 +202,18 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         }
         _lines = screen.Lines;
         _marked = screen.Lines.Any(l => l.Node is not null);
+        if (_pendingFirst is { } wanted)
+        {
+            // Asked for from another page: on the screen as filtered now, not as it was when the page was asked for.
+            _pendingFirst = null;
+            if (screen.Lines.FirstOrDefault(wanted) is { } first)
+            {
+                SelectedId = first.Key;
+                // The rows come in order of state, waiting first: the first of them is at the head of the list, so the
+                // top of the list is where it, and the others waiting with it, are on screen.
+                _scroll.AtomOffset = 0;
+            }
+        }
         if (screen.Lines.Count == 0)
         {
             ListCursor.Close();
@@ -230,6 +243,13 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
         return Build(screen);
     }
+
+    /// <summary>
+    /// Selects the first row <paramref name="match"/> finds, and scrolls the list to its head, at the next frame: the
+    /// rows are those the page shows then (a node filter set in the meantime applies), and the selection is by key, so
+    /// it holds as they reorder. Nothing happens if no row matches.
+    /// </summary>
+    public void SelectFirst(Func<SessionLine, bool> match) => _pendingFirst = match;
 
     /// <summary>Moves the selection to the row <paramref name="index"/>, and the session it follows with it.</summary>
     public void Select(int index)

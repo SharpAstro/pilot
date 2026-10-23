@@ -684,7 +684,9 @@ doing instead. **Connect** asks a node for a grant, as `pilot connect` does, whe
 watched only says so. The page is the per-node summary (account, usage, connection state, Connect); it has no Open
 button, since the merged lists steer every node from this window (`FleetView.OnOpen` is there for a host that wants
 one, and neither the GUI nor the TUI sets it). A node heard twice (on its socket and on the LAN) is one row, by its
-stream.
+stream. A row's **N waiting on you** is a button (`fleet:<where>:waiting`, `PilotChrome.LinkFleet`, wired in both hosts):
+it opens the Sessions page filtered to that node alone (the window's node selection), the first session waiting on you
+selected and the list scrolled to its head, where the waiting rows sort, so they are on screen.
 
 ### Settings
 
