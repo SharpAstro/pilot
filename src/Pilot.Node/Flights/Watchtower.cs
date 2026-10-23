@@ -24,6 +24,12 @@ namespace Pilot.Node.Flights;
 /// <remarks>
 /// Which cards it was told is kept in memory: a node restarted finds its watchtower by name and takes the open cards
 /// as told, since that session saw them; a fresh one has them in its brief.
+/// <para>
+/// Which brief it was started with is kept in a file (<see cref="BriefFile"/>), as a fingerprint of the brief's fixed part
+/// (<see cref="Briefs.WatchtowerFingerprint"/>), because a say resumes the session and so keeps the brief it had: a node
+/// updated to a changed brief finds one still running on the old, and starts a fresh one in its place before telling it
+/// anything (#22). One whose start the node has no record of is taken as briefed by an older node.
+/// </para>
 /// </remarks>
 public sealed class Watchtower(
     NodeState state, IWorkerLauncher launcher, Func<CommandRequest, CancellationToken, Task<CommandResult>> run, NodeOptions options, TimeProvider time) : BackgroundService
@@ -61,7 +67,12 @@ public sealed class Watchtower(
     /// <summary>Its session name, <c>du1-watchtower</c>.</summary>
     public string Name => $"{options.Machine.ToLowerInvariant()}-watchtower";
 
+    /// <summary>Where the fingerprint of the brief the running watchtower was started with is kept, in the node's data folder.</summary>
+    public string BriefFile => Path.Combine(options.DataFolder, "watchtower-brief");
+
     private readonly SemaphoreSlim _one = new(1, 1);
+    private string? _briefed;
+    private bool _briefedRead;
     private readonly HashSet<string> _told = new HashSet<string>(StringComparer.Ordinal);
     private string? _job;
     private DateTimeOffset? _startedAt;
@@ -186,6 +197,12 @@ public sealed class Watchtower(
             }
 
             state.CloseCardsAbout(Verbs.WatchtowerTarget, "it is running", Down);
+            if (Briefed() != BriefFingerprint())
+            {
+                // A say would resume it on its old brief: a fresh one is told the new.
+                await StartAsync("its brief changed since the node started it", cancellationToken, row);
+                return;
+            }
             await TellNewCardsAsync(row, cancellationToken);
         }
         finally
@@ -274,10 +291,12 @@ public sealed class Watchtower(
         }
 
         var folder = options.WatchtowerFolder;
+        string fingerprint;
         try
         {
             Directory.CreateDirectory(folder);
             var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower));
+            fingerprint = BriefFingerprint();
             _job = await launcher.StartAsync(new WorkerStart(Name, folder, null, brief, Model: Models.Model(RoleModels.Watchtower), Effort: Models.Effort(RoleModels.Watchtower), RemoteControl: true), cancellationToken);
         }
         catch (Exception ex) when (ex is FlightException or IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
@@ -294,6 +313,7 @@ public sealed class Watchtower(
 
         _startedAt = time.GetUtcNow();
         _resumedAfter = null;
+        RecordBrief(fingerprint);
         TellAllOpen();
         state.CloseCardsAbout(Verbs.WatchtowerTarget, "a fresh one started", Down, Stopped);
         state.RaiseCard(CardBin.Handled, "watchtower-started", Verbs.WatchtowerTarget, $"Started a fresh watchtower: {why}");
@@ -315,6 +335,41 @@ public sealed class Watchtower(
         _startedAt = null;
         state.RaiseCard(CardBin.Handled, "watchtower-parked", Verbs.WatchtowerTarget,
             $"Stopped the watchtower: nothing to watch for {QuietFor.TotalMinutes:0} minutes; the next flight, job or ring starts a fresh one");
+    }
+
+    private string BriefFingerprint() => Briefs.WatchtowerFingerprint(Name, Pilot, Models.Model(RoleModels.Watchtower));
+
+    /// <summary>The fingerprint of the brief the running watchtower was started with, or null when the node has no record of it.</summary>
+    private string? Briefed()
+    {
+        if (!_briefedRead)
+        {
+            _briefedRead = true;
+            try
+            {
+                _briefed = File.Exists(BriefFile) ? File.ReadAllText(BriefFile).Trim() : null;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Unreadable counts as no record: one fresh watchtower, rather than one on a brief nobody can vouch for.
+            }
+        }
+        return _briefed;
+    }
+
+    private void RecordBrief(string fingerprint)
+    {
+        _briefed = fingerprint;
+        _briefedRead = true;
+        try
+        {
+            Directory.CreateDirectory(options.DataFolder);
+            File.WriteAllText(BriefFile, fingerprint);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Kept in memory all the same; a restarted node then finds no record and starts one afresh.
+        }
     }
 
     /// <summary>Takes every open card as told: a fresh watchtower has them in its brief.</summary>
