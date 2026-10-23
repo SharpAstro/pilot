@@ -147,7 +147,7 @@ public sealed class HookInstallerTests
     private static JsonObject Parsed(string text) => JsonNode.Parse(text)!.AsObject();
 
     [Fact]
-    public void InstallAddsAnAsyncExecFormHookPerEventAndKeepsEverythingElse()
+    public void InstallAddsAnExecFormHookPerEventAsyncButStopAndKeepsEverythingElse()
     {
         var installed = Parsed(HookCommands.Install(Theirs, Node, socket: null));
 
@@ -158,7 +158,15 @@ public sealed class HookInstallerTests
         {
             var ours = hooks[name]!.AsArray().Select(e => e!["hooks"]![0]!).Single(h => h["command"]!.GetValue<string>() == Node);
             ours["args"]!.AsArray().Select(a => a!.GetValue<string>()).ShouldBe(["hook"]);
-            ours["async"]!.GetValue<bool>().ShouldBeTrue();
+            // Stop waits for the node's answer, as an async hook's is never read; every other event runs async.
+            if (name == "Stop")
+            {
+                ours.AsObject().ContainsKey("async").ShouldBeFalse();
+            }
+            else
+            {
+                ours["async"]!.GetValue<bool>().ShouldBeTrue();
+            }
         }
         // Theirs stay, in their place.
         hooks["Stop"]![0]!["hooks"]![0]!["command"]!.GetValue<string>().ShouldBe("notify-send done");
@@ -234,7 +242,7 @@ public sealed class HookRouteTests
         // As `pilot-node hook` sends it: the hook's stdin, untouched.
         var stdin = new MemoryStream(Encoding.UTF8.GetBytes(
             $$"""{"session_id":"{{AgentRows.SessionB}}","hook_event_name":"Notification","notification_type":"permission_prompt","message":"Claude needs your permission to use Bash","cwd":"/work"}"""));
-        (await HookCommands.HookAsync(node.SocketPath, stdin)).ShouldBe(0);
+        (await HookCommands.HookAsync(node.SocketPath, stdin, TextWriter.Null)).ShouldBe(0);
 
         NodeEvent? next;
         do
@@ -252,7 +260,13 @@ public sealed class HookRouteTests
     {
         var socket = Path.Combine(Path.GetTempPath(), "p2h-" + Guid.NewGuid().ToString("N")[..8] + ".sock");
 
-        (await HookCommands.HookAsync(socket, new MemoryStream("{}"u8.ToArray()))).ShouldBe(0);
-        (await HookCommands.HookAsync(null, new MemoryStream("not json"u8.ToArray()))).ShouldBe(0);
+        var output = new StringWriter();
+
+        (await HookCommands.HookAsync(socket, new MemoryStream("{}"u8.ToArray()), output)).ShouldBe(0);
+        (await HookCommands.HookAsync(null, new MemoryStream("not json"u8.ToArray()), output)).ShouldBe(0);
+        // A Stop with no node to ask is let through: nothing printed, so nothing blocks it.
+        (await HookCommands.HookAsync(socket, new MemoryStream(Encoding.UTF8.GetBytes(
+            $$"""{"session_id":"{{AgentRows.SessionA}}","hook_event_name":"Stop","cwd":"/work","stop_hook_active":false}""")), output)).ShouldBe(0);
+        output.ToString().ShouldBeEmpty();
     }
 }
