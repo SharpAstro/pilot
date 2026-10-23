@@ -220,7 +220,7 @@ public interface IGitHub
     /// Posts the review in <paramref name="payload"/> (a file, its full path) to PR <paramref name="number"/> of
     /// <paramref name="repo"/>, as one call; returns the review GitHub made.
     /// </summary>
-    /// <exception cref="FlightException">gh said GitHub refused it, so nothing was posted.</exception>
+    /// <exception cref="FlightException">gh said GitHub refused it, so nothing was posted. Anything else may have been.</exception>
     Task<PostedReview> PostReviewAsync(string repo, int number, string payload, CancellationToken cancellationToken);
 }
 
@@ -389,10 +389,11 @@ public sealed class GhCli : IGitHub
         {
             throw new FlightException($"GitHub refused the review of {repo}#{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
+        // Not a FlightException: gh exited 0, so the review is on the PR, and a refusal would let it be posted again.
         var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         return lines is [var id, var state, var url, ..] && long.TryParse(id, System.Globalization.CultureInfo.InvariantCulture, out var review)
             ? new PostedReview(review, state, url)
-            : throw new FlightException($"gh posted the review of {repo}#{number} but did not say which: {output.Trim()}; look on the PR before anything else");
+            : throw new InvalidOperationException($"gh posted the review of {repo}#{number} but did not say which: {output.Trim()}");
     }
 
     private static async Task RunGitAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
