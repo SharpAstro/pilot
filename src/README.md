@@ -452,8 +452,13 @@ one node, or several (a click adds or takes one away). It filters every page and
 too, and is the window's own, kept in memory for as long as it is open, so switching pages keeps it. The selection on
 Sessions follows the session as rows of several nodes interleave (two nodes' rows may share an id, so another node's
 row is keyed by its node as well). A row's buttons, say bar, archive, card answers and Cancel go to the node the row came
-from, with the grant `pilot connect` saved for it; a node without one is watched, its transcripts and logs read, but a
-command on it says to **Connect** on the Fleet page first. The command bar and the new-flight wizard stay this window's
+from, with the grant `pilot connect` saved for it (`FleetClients`: this window's own socket client for its node's rows, one
+`NodeClient.Remote` per other endpoint, cached). Whether a node can be steered is this window's node, or a grant held
+and not since refused: the fleet tick (every 5 s) re-reads the grants, and a node that answers a command with 401 or 403
+(a revoked token) reads as watch-only until a different token is saved for it. A **watch-only** row (a node with no
+usable grant) keeps its transcript and log readable, but its say bar, Stop, Archive, Cancel and answers are disabled: the
+say bar and the row menu say *Connect to LE1 to steer*, and a **Connect** pill stands there (and in place of Cancel on
+Background tasks), running the same ask as the Fleet page's. There is no second window per node. The command bar and the new-flight wizard stay this window's
 node's. pilot-tui shows the same merged pages.
 
 ## The TUI
@@ -603,16 +608,18 @@ sessions, flights and jobs, and never speaks for another. To bring a second mach
    above it that is trusted already covers it), gh signed in, and usage figures (a status line that writes
    `rate-limits.json`; without it the node still says whose account it is, with no figures).
 4. **From the other machine:** its Fleet page hears the new node by itself; **Connect** on its row (or
-   `pilot connect <host>:47731`) rings an Allow/Deny card on it, to be allowed there; then **Open** flies it.
+   `pilot connect <host>:47731`) rings an Allow/Deny card on it, to be allowed there; its rows are then steered from the
+   merged lists.
 
 **The Fleet page** (Ctrl+4 in the GUI, 4 in the TUI) is every node at once: this window's first, then every node heard
 on the LAN or granted to this user, each on a feed of its own (its event stream, watched without a grant as anyone on
 the LAN may). A row says the node's machine and where it is reached, whose account it runs on and its usage, its live
 sessions and how many wait on you, its flights and jobs, and its rings; a node not reached says what its connection is
-doing instead. **Open** opens a window flying that node (a window per node: the one-window-per-user gate is per node,
-so a second Open of the same node raises its window); **Connect** asks a node for a grant, as `pilot connect` does,
-when this user has none, and the node watched only says so. A node heard twice (on its socket and on the LAN) is one
-row, by its stream. In the TUI, Open says the `pilot-tui --node` to run in another terminal.
+doing instead. **Connect** asks a node for a grant, as `pilot connect` does, when this user has none, and the node
+watched only says so. The page is the per-node summary (account, usage, connection state, Connect); it has no Open
+button, since the merged lists steer every node from this window (`FleetView.OnOpen` is there for a host that wants
+one, and neither the GUI nor the TUI sets it). A node heard twice (on its socket and on the LAN) is one row, by its
+stream.
 
 ### Settings
 

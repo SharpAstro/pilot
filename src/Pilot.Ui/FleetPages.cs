@@ -115,11 +115,59 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
 /// The client a row's command goes through: this window's own for its node's rows, and for another node's a client of
 /// its own, with the grant saved for it. A node without a grant is read (a transcript, a log) but never commanded.
 /// </summary>
-internal sealed class FleetClients(NodeClient here, Func<string, bool> granted, Func<string, NodeClient>? remote = null) : IDisposable
+internal sealed class FleetClients(NodeClient here, Func<string, bool> granted, Func<string, NodeClient>? remote = null, Func<string, string?>? tokenOf = null) : IDisposable
 {
     private readonly Dictionary<string, NodeClient> _remote = new(StringComparer.OrdinalIgnoreCase);
     private readonly Func<string, NodeClient> _connect = remote ?? (endpoint => NodeClient.Remote(endpoint, Pilot.Commands.NodeTargets.TokenFor(endpoint)));
     private readonly Lock _lock = new();
+    // Nodes that refused the grant as unauthorized, with the token that was refused.
+    private readonly Dictionary<string, string?> _revoked = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Func<string, string?> _tokenOf = tokenOf ?? (endpoint => Pilot.Commands.NodeTargets.TokenFor(endpoint));
+
+    /// <summary>
+    /// Whether this user may command <paramref name="node"/>: its own node always, another by a grant held and not since
+    /// refused as unauthorized (a revoked token), until a new grant is saved.
+    /// </summary>
+    public bool CanSteer(NodeMark? node)
+    {
+        if (node is null or { Here: true })
+        {
+            return true;
+        }
+        lock (_lock)
+        {
+            return granted(node.Where) && !_revoked.ContainsKey(node.Where);
+        }
+    }
+
+    /// <summary>Whether <paramref name="envelope"/> is a node refusing the grant; notes it so the node reads as watch-only.</summary>
+    public bool NoteRefusal<T>(NodeMark? node, ResponseEnvelope<T> envelope)
+    {
+        if (node is not { Here: false } || envelope is not { Success: false, StatusCode: 401 or 403 })
+        {
+            return false;
+        }
+        lock (_lock)
+        {
+            _revoked[node.Where] = _tokenOf(node.Where);
+        }
+        return true;
+    }
+
+    /// <summary>A new grant (a token other than the one refused) lifts a refusal; called with the fleet tick.</summary>
+    public void Refresh()
+    {
+        lock (_lock)
+        {
+            foreach (var (where, refused) in _revoked.ToArray())
+            {
+                if (_tokenOf(where) != refused)
+                {
+                    _revoked.Remove(where);
+                }
+            }
+        }
+    }
 
     /// <summary>
     /// The client for <paramref name="node"/>'s rows (null or this window's: its own); null when it is to be commanded
@@ -131,7 +179,7 @@ internal sealed class FleetClients(NodeClient here, Func<string, bool> granted, 
         {
             return here;
         }
-        if (command && !granted(node.Where))
+        if (command && !CanSteer(node))
         {
             return null;
         }
@@ -147,7 +195,7 @@ internal sealed class FleetClients(NodeClient here, Func<string, bool> granted, 
 
     /// <summary>What a command on a node without a grant says instead.</summary>
     public static string WatchOnly(NodeMark? node) =>
-        $"{node?.Name} ({node?.Where}) is watched, not commanded: Connect to it on the Fleet page first";
+        $"{node?.Name} ({node?.Where}) is watched, not commanded: Connect to {node?.Name} to steer";
 
     public void Dispose()
     {

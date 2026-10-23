@@ -42,11 +42,13 @@ internal static class DashboardCommands
     }
 
     /// <summary>Runs one action's verb on the node; returns what became of it.</summary>
-    public static async Task<string> ActAsync(NodeClient client, FlightAction action, string who, CancellationToken cancellationToken)
+    /// <param name="answered">Told each envelope the node answers with, so a host can see a refused grant.</param>
+    public static async Task<string> ActAsync(NodeClient client, FlightAction action, string who, CancellationToken cancellationToken, Action<ResponseEnvelope<Pilot.Contracts.CommandResult>>? answered = null)
     {
         try
         {
             var envelope = await client.SendAsync(new CommandRequest { Verb = action.Verb, Target = action.Target, Args = action.Args, Who = who }, cancellationToken);
+            answered?.Invoke(envelope);
             return envelope.Success && envelope.Response is { Ok: true }
                 ? $"ok: {action.Label}"
                 : $"refused: {action.Label}: {envelope.Response?.Error ?? envelope.Error}";

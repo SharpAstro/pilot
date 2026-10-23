@@ -41,13 +41,15 @@ internal static class GuiSay
     }
 
     /// <summary>Says <paramref name="text"/> to the row <paramref name="id"/>; returns what became of it, in words.</summary>
-    public static async Task<string> SendAsync(NodeClient client, string id, string text, CancellationToken cancellationToken)
+    /// <param name="answered">Told each envelope the node answers with, so a host can see a refused grant.</param>
+    public static async Task<string> SendAsync(NodeClient client, string id, string text, CancellationToken cancellationToken, Action<ResponseEnvelope<CommandResult>>? answered = null)
     {
         try
         {
             var envelope = await client.SendAsync(
                 new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = Who },
                 cancellationToken).ConfigureAwait(false);
+            answered?.Invoke(envelope);
             return Describe(envelope.Response, envelope.Error);
         }
         catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException or IOException or TaskCanceledException)

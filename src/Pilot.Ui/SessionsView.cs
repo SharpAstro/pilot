@@ -111,6 +111,18 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// <summary>What became of the last thing said, under the field: <c>resumed pil5-say-bg</c>, or the node's refusal.</summary>
     public string? SayStatus { get; set; }
 
+    /// <summary>Whether this user may command a node's rows (its own, or one it holds a grant for); null: every row.</summary>
+    public Func<NodeMark?, bool>? CanSteer { get; set; }
+
+    /// <summary>Asks a node for a grant, as the Fleet page's Connect does: the pill on a watch-only row.</summary>
+    public Action<NodeMark>? OnConnect { get; set; }
+
+    /// <summary>The node of <paramref name="line"/> when it is watched and not commanded, else null.</summary>
+    private NodeMark? WatchOnly(SessionLine? line) => line?.Node is { Here: false } node && CanSteer?.Invoke(node) == false ? node : null;
+
+    /// <summary>What a watch-only node's disabled actions say.</summary>
+    public static string SteerHint(NodeMark node) => $"Connect to {node.Name} to steer";
+
     /// <summary>The selected session's name, which the say bar names as its target.</summary>
     private string? SayTarget => Selected >= 0 && Selected < _lines.Count ? _lines[Selected].Name : null;
 
@@ -249,6 +261,11 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         {
             return;
         }
+        if (WatchOnly(line) is { } watched)
+        {
+            SayStatus = SteerHint(watched);
+            return;
+        }
 
         SayInput.Text = "";
         SayInput.CursorPos = 0;
@@ -317,11 +334,17 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         {
             items.Add(new DropdownItem<string>("Open transcript", "transcript") { OnChoose = () => Transcript.Open(line) });
         }
-        if (CanSay)
+        var watched = WatchOnly(line);
+        if (watched is not null)
+        {
+            // Disabled, and why: the one entry that can be chosen asks for the grant.
+            items.Add(new DropdownItem<string>(SteerHint(watched), "connect") { OnChoose = () => OnConnect?.Invoke(watched) });
+        }
+        else if (CanSay)
         {
             items.Add(new DropdownItem<string>($"Say to {line.Name}…", "say") { OnChoose = () => Ui.Focus.Focus(SayInput) });
         }
-        if (OnAction is { } stop && row.Kind == Pilot.Contracts.SessionKind.Background && !ended)
+        if (watched is null && OnAction is { } stop && row.Kind == Pilot.Contracts.SessionKind.Background && !ended)
         {
             items.Add(new DropdownItem<string>("Stop", "stop") { OnChoose = () => stop(new FlightAction($"stop {line.Name}", Pilot.Contracts.Verbs.Stop, target, []) { Node = line.Node }) });
         }
@@ -329,7 +352,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         {
             items.Add(new DropdownItem<string>($"New flight in {repo}…", "new-flight") { OnChoose = () => newFlight(repo) });
         }
-        if (OnAction is { } act && ended)
+        if (watched is null && OnAction is { } act && ended)
         {
             items.Add(row.Archived
                 ? new DropdownItem<string>("Restore", "restore") { OnChoose = () => act(new FlightAction($"restore {line.Name}", Pilot.Contracts.Verbs.Archive, target, ["undo"]) { Node = line.Node }) }
@@ -356,8 +379,21 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     // The target sits beside the field, not only in its placeholder: the field holds the keyboard from the first frame,
     // and a focused field hides its placeholder.
-    private Layout.Node SayBar() =>
-        Layout.Builder.VStack(
+    private Layout.Node SayBar() => Selected >= 0 && Selected < _lines.Count && WatchOnly(_lines[Selected]) is { } watched
+        ? Layout.Builder.VStack(
+                Layout.Builder.HStack([
+                        Layout.Builder.Text($"Say to {_lines[Selected].Name}", 14f, Dim).WAuto(),
+                        Layout.Builder.Text(SteerHint(watched), 14f, Dim).WStar(),
+                        .. (OnConnect is { } connect
+                            ? [CardsView<TSurface>.Pill("Connect", $"sessions:connect:{watched.Where}", () => connect(watched))]
+                            : Array.Empty<Layout.Node>())])
+                    .WithGap(12f)
+                    .RowH(28f),
+                Layout.Builder.Text(SayStatus ?? $"{watched.Name} is watched, not commanded", 11f, Dim).RowH(16f))
+            .Pad(Gutter, 4f)
+            .Bg(HeaderBg)
+            .RowH(SayBarHeight)
+        : Layout.Builder.VStack(
                 Layout.Builder.HStack(
                         Layout.Builder.Text(SayTarget is { } target ? $"Say to {target}" : "No session selected", 14f, Body).WAuto(),
                         Layout.Builder.TextInput(SayInput, 15f, focusOnOpen: true)

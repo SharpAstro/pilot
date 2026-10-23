@@ -159,6 +159,14 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>Whether there is a node to command: a snapshot file has none, and shows no Cancel.</summary>
     public bool CanCommand { get; set; }
 
+    /// <summary>Whether this user may command a node's rows (its own, or one it holds a grant for); null: every row.</summary>
+    public Func<NodeMark?, bool>? CanSteer { get; set; }
+
+    /// <summary>Asks a node for a grant, as the Fleet page's Connect does: the pill that stands where Cancel would on a watch-only row.</summary>
+    public Action<NodeMark>? OnConnect { get; set; }
+
+    private NodeMark? WatchOnly(JobLine line) => line.Node is { Here: false } node && CanSteer?.Invoke(node) == false ? node : null;
+
     /// <summary>Cancels a job: the node's <c>cancel-job</c>.</summary>
     public Action<JobRow>? OnCancel { get; set; }
 
@@ -311,7 +319,11 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         ListCursor.MoveTo(index);
         var job = line.Row;
         var items = new List<DropdownItem<string>>();
-        if (CanCommand && line.Live && OnCancel is { } cancel)
+        if (CanCommand && line.Live && WatchOnly(line) is { } watchedItem)
+        {
+            items.Add(new DropdownItem<string>(SessionsView<TSurface>.SteerHint(watchedItem), "connect") { OnChoose = () => OnConnect?.Invoke(watchedItem) });
+        }
+        else if (CanCommand && line.Live && OnCancel is { } cancel)
         {
             items.Add(new DropdownItem<string>("Cancel", "cancel") { OnChoose = () => cancel(job) });
         }
@@ -468,7 +480,12 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
 
         var buttons = new List<Layout.Node>();
-        if (CanCommand && line.Live && OnCancel is { } cancel)
+        if (CanCommand && line.Live && WatchOnly(line) is { } watched)
+        {
+            // Cancel is disabled on a node this user cannot steer; the pill asks for the grant, and says why.
+            buttons.Add(Pill("Connect", $"job:{job.Id}:connect", () => OnConnect?.Invoke(watched)));
+        }
+        else if (CanCommand && line.Live && OnCancel is { } cancel)
         {
             buttons.Add(Pill("Cancel", $"job:{job.Id}:cancel", () => cancel(job)));
         }

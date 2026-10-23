@@ -1,0 +1,207 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text.Json;
+using Console.Lib;
+using DIR.Lib;
+using Layout = DIR.Lib.Layout;
+using Pilot.Contracts;
+using Shouldly;
+using Xunit;
+
+namespace Pilot.Gui.Tests;
+
+/// <summary>
+/// A command from the merged lists goes to its row's own node, not the window's: a fake node per address records what it is
+/// sent. A node this user holds no grant for (or whose grant it refused) is watch-only: its actions are disabled with the
+/// Connect hint and a Connect pill, and nothing is sent.
+/// </summary>
+public sealed class SteerByNodeTests : IAsyncDisposable
+{
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private readonly RecordingNode _se1 = new(HttpStatusCode.OK);
+    private readonly RecordingNode _le1 = new(HttpStatusCode.OK);
+    private readonly List<RecordingNode> _others = [];
+
+    public ValueTask DisposeAsync()
+    {
+        _se1.Dispose();
+        _le1.Dispose();
+        foreach (var other in _others)
+        {
+            other.Dispose();
+        }
+        return ValueTask.CompletedTask;
+    }
+
+    private static NodeMark Se1 => new("node.sock", "node.sock", "SE1", Here: true);
+
+    private NodeMark Le1 => new(_le1.Endpoint, _le1.Endpoint, "LE1", Here: false);
+
+    private static SessionsScreen Screen(NodeMark se1, NodeMark le1) => new(
+        SessionLine.Order([
+            SessionLine.From(Live.Row("aaaa0001", "se1-watchtower", SessionState.Working), Live.At) with { Node = se1 },
+            SessionLine.From(Live.Row("aaaa0001", "le1-watchtower", SessionState.Working), Live.At) with { Node = le1 },
+        ]), "test", Live.At);
+
+    private static (System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> Arranged, string Text) Arrange(SessionsView<RgbaImage> view, SessionsScreen screen)
+    {
+        var arranged = Layout.Engine.Arrange(view.Tree(screen), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored);
+        return (arranged, CellLayout.Describe(arranged));
+    }
+
+    [Fact]
+    public async Task ASayToAnLe1RowFromSe1sWindowGoesToLe1sClientAndNotSe1s()
+    {
+        using var here = NodeClient.Remote(_se1.Endpoint);
+        using var clients = new FleetClients(here, where => where == _le1.Endpoint, e => NodeClient.Remote(e));
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var view = new SessionsView<RgbaImage>(vessel) { CanSay = true, CanSteer = clients.CanSteer };
+        view.OnSay = async (line, text) => view.SayStatus = await GuiSay.SendAsync(clients.For(line.Node)!, line.Row.Id, text, Ct);
+        var screen = Screen(Se1, Le1);
+        view.Tree(screen);
+        view.Select(screen.Lines.ToList().FindIndex(l => l.Node!.Name == "LE1"));
+
+        view.SayInput.Text = "hello le1";
+        await view.SayInput.OnCommit.ShouldNotBeNull()(view.SayInput.Text);
+
+        _le1.Commands.Count.ShouldBe(1);
+        _le1.Commands[0].ShouldContain("hello le1");
+        _le1.Commands[0].ShouldContain("aaaa0001");
+        _se1.Commands.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task WithoutAGrantTheSayBarAndRowActionsAreDisabledWithTheConnectHintAndAPill()
+    {
+        using var here = NodeClient.Remote(_se1.Endpoint);
+        using var clients = new FleetClients(here, _ => false, e => NodeClient.Remote(e));
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var asked = new List<string>();
+        var said = new List<string>();
+        var view = new SessionsView<RgbaImage>(vessel) { CanSay = true, CanSteer = clients.CanSteer, OnConnect = node => asked.Add(node.Where), OnSay = (_, text) => { said.Add(text); return Task.CompletedTask; } };
+        var screen = Screen(Se1, Le1);
+        view.Tree(screen);
+        view.Select(screen.Lines.ToList().FindIndex(l => l.Node!.Name == "LE1"));
+
+        var (arranged, text) = Arrange(view, screen);
+        text.ShouldContain("Connect to LE1 to steer");
+        var connect = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: var action } && action == $"sessions:connect:{_le1.Endpoint}");
+        view.SayInput.Text = "ignored";
+        await view.SayInput.OnCommit.ShouldNotBeNull()(view.SayInput.Text);
+        said.ShouldBeEmpty();
+        view.SayStatus.ShouldBe("Connect to LE1 to steer");
+        CellLayout.HitTest(arranged, connect.Bounds.X + 1, connect.Bounds.Y);
+        asked.ShouldBe([_le1.Endpoint]);
+        _le1.Commands.ShouldBeEmpty();
+
+        // SE1's own row says as ever.
+        view.Select(screen.Lines.ToList().FindIndex(l => l.Node!.Name == "SE1"));
+        view.SayStatus = null;
+        Arrange(view, screen).Text.ShouldNotContain("Connect to");
+    }
+
+    [Fact]
+    public async Task ANodeThatRefusesTheGrantAsUnauthorizedReadsAsWatchOnlyUntilANewGrant()
+    {
+        using var refusing = new RecordingNode(HttpStatusCode.Forbidden);
+        _others.Add(refusing);
+        var token = "old";
+        using var here = NodeClient.Remote(_se1.Endpoint);
+        using var clients = new FleetClients(here, where => where == refusing.Endpoint, e => NodeClient.Remote(e), _ => token);
+        var node = new NodeMark(refusing.Endpoint, refusing.Endpoint, "LE1", Here: false);
+
+        clients.CanSteer(node).ShouldBeTrue();
+        var said = await GuiSay.SendAsync(clients.For(node)!, "aaaa0001", "hi", Ct, envelope => clients.NoteRefusal(node, envelope));
+        said.ShouldContain("needs a grant");
+        clients.CanSteer(node).ShouldBeFalse();
+        clients.For(node).ShouldBeNull();
+
+        clients.Refresh();
+        clients.CanSteer(node).ShouldBeFalse();
+        token = "new";
+        clients.Refresh();
+        clients.CanSteer(node).ShouldBeTrue();
+        clients.CanSteer(Se1).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void TheFleetPageOffersNoOpenUnlessAHostSetsIt()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var fleet = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)).Fleet;
+        fleet.OnOpen.ShouldBeNull();
+        var screen = new FleetScreen(
+        [
+            FleetLine.From("node.sock", here: true, canCommand: true, null, Summary()),
+            FleetLine.From("10.0.0.9:47731", here: false, canCommand: false, null, Summary()),
+        ], Live.At);
+        fleet.OnConnect = _ => { };
+
+        var arranged = Layout.Engine.Arrange(fleet.Tree(screen), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored);
+        string[] buttons = [.. arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.StartsWith("fleet:", StringComparison.Ordinal))];
+
+        buttons.ShouldBe(["fleet:10.0.0.9:47731:connect"]);
+    }
+
+    private static NodeSummary Summary() => new()
+    {
+        Connected = true, Status = "live", Stream = "s", Account = null, LiveSessions = 1, WaitingOnYou = 0, Flying = 0, Rings = 0,
+        Node = new NodeInfo { WireVersion = 1, Version = "2.0.9", MachineName = "DESKTOP-7", MachinePrefix = "SE1", ProcessId = 1, StartedAt = Live.At, DataFolder = "/d", SocketPath = "/s", Stream = "s" },
+    };
+
+    /// <summary>A node on loopback that records the commands posted to it and answers each with <paramref name="status"/>.</summary>
+    private sealed class RecordingNode : IDisposable
+    {
+        private readonly HttpListener _listener = new();
+        private readonly CancellationTokenSource _stop = new();
+
+        public RecordingNode(HttpStatusCode status)
+        {
+            var probe = new TcpListener(IPAddress.Loopback, 0);
+            probe.Start();
+            var port = ((IPEndPoint)probe.LocalEndpoint).Port;
+            probe.Stop();
+            Endpoint = $"127.0.0.1:{port}";
+            _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            _listener.Start();
+            _ = Task.Run(async () =>
+            {
+                while (!_stop.IsCancellationRequested)
+                {
+                    HttpListenerContext context;
+                    try
+                    {
+                        context = await _listener.GetContextAsync();
+                    }
+                    catch (Exception ex) when (ex is HttpListenerException or ObjectDisposedException or InvalidOperationException)
+                    {
+                        return;
+                    }
+                    using var body = new StreamReader(context.Request.InputStream);
+                    var text = await body.ReadToEndAsync();
+                    lock (Commands)
+                    {
+                        Commands.Add(text);
+                    }
+                    context.Response.StatusCode = (int)status;
+                    var answer = status == HttpStatusCode.OK
+                        ? ResponseEnvelope<CommandResult>.Ok(new CommandResult { Verb = "say", Target = "", Who = "gui", Ok = true, Seq = 1 })
+                        : ResponseEnvelope<CommandResult>.Fail("a command from the LAN needs a grant", (int)status);
+                    await context.Response.OutputStream.WriteAsync(JsonSerializer.SerializeToUtf8Bytes(answer, PilotJsonContext.Default.ResponseEnvelopeCommandResult));
+                    context.Response.Close();
+                }
+            });
+        }
+
+        public string Endpoint { get; }
+
+        public List<string> Commands { get; } = [];
+
+        public void Dispose()
+        {
+            _stop.Cancel();
+            _listener.Close();
+        }
+    }
+}
