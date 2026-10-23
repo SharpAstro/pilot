@@ -131,6 +131,33 @@ internal sealed class FleetWatch : IAsyncDisposable
     public FleetWatch(Func<string, NodeFeed>? feedFor = null) =>
         _feedFor = feedFor ?? (endpoint => NodeFeed.For(NodeClient.Remote(endpoint, Pilot.Commands.NodeTargets.TokenFor(endpoint))));
 
+    /// <summary>
+    /// Every node's feed, each node once: <paramref name="here"/> (this window's) first, then the others by where they are,
+    /// a node heard again under another address, or this window's own heard on the LAN, left out by its stream.
+    /// </summary>
+    public IReadOnlyList<(NodeMark Mark, NodeFeed Feed)> Feeds(string hereWhere, NodeFeed here, DateTimeOffset now)
+    {
+        var feeds = new List<(NodeMark, NodeFeed)> { (NodeMark.For(hereWhere, here: true, here.Summary(now)), here) };
+        var streams = new HashSet<string>(StringComparer.Ordinal);
+        if (here.Summary(now).Stream is { } own)
+        {
+            streams.Add(own);
+        }
+        foreach (var (endpoint, (feed, name)) in _feeds.OrderBy(f => f.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            var summary = feed.Summary(now);
+            if (summary.Stream is { } stream && !streams.Add(stream))
+            {
+                continue;
+            }
+            feeds.Add((NodeMark.For(endpoint, here: false, summary, name), feed));
+        }
+        return feeds;
+    }
+
+    /// <summary>Every page's screen for the fleet: each node's rows merged and marked, filtered by <paramref name="filter"/>.</summary>
+    public FleetPages Pages(string hereWhere, NodeFeed here, NodeFilter filter, DateTimeOffset now) => FleetPages.Merge(Feeds(hereWhere, here, now), filter, now);
+
     /// <summary>Moves whenever any node's feed does, so the loop knows to draw again.</summary>
     public long Version => _feeds.Values.Sum(f => f.Feed.Version);
 
@@ -238,6 +265,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
     public AboutCard? About { get; set; }
 
+    /// <summary>The window's node selection: its pills in the header, and the nodes picked are the rows shown.</summary>
+    public NodeFilter? Nodes { get; set; }
+
     /// <summary>The selected node's index, or -1.</summary>
     public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
@@ -250,6 +280,11 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
     internal Layout.Node Tree(FleetScreen screen)
     {
+        // The node selection holds here as on every page; the pills above bring the others back.
+        if (Nodes is { All: false } nodes)
+        {
+            screen = screen with { Lines = [.. screen.Lines.Where(l => nodes.Picked.Contains(l.Where))] };
+        }
         if (screen.Lines.Count == 0)
         {
             ListCursor.Close();
@@ -269,12 +304,13 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     {
         var rows = new List<Layout.Node>
         {
-            Layout.Builder.HStack(
+            Layout.Builder.HStack([
                     Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
                     Layout.Builder.Text("fleet", 20f, Dim).WAuto(),
+                    .. (Nodes?.Pills() ?? []),
                     Layout.Builder.Spacer().WStar(),
                     Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
-                    About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f))
+                    About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f)])
                 .WithGap(12f)
                 .RowH(32f),
             Layout.Builder.Text(Said ?? "every node heard on the LAN or granted to you, each on its own account · watching needs no grant, commanding one does", 12f, Dim).RowH(20f),

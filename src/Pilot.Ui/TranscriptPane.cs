@@ -72,6 +72,12 @@ internal sealed class TranscriptPane
 
     public bool IsOpen => RowId is not null;
 
+    /// <summary>The open session's <see cref="SessionLine.Key"/>: its row id, with its node's stream for another node's.</summary>
+    public string? Key { get; private set; }
+
+    /// <summary>The node the open session runs on, whose transcript route <see cref="Load"/> reads; null is this window's.</summary>
+    public NodeMark? Node { get; private set; }
+
     /// <summary>
     /// Reads a session's transcript, or with an agent id its subagent's, after an entry (or its last entries, for -1):
     /// the node's transcript route.
@@ -110,6 +116,8 @@ internal sealed class TranscriptPane
     {
         Close();
         RowId = line.Row.Id;
+        Key = line.Key;
+        Node = line.Node;
         Agent = agent;
         Title = $"{line.Role} · {line.Name}";
         _line = line;
@@ -138,6 +146,8 @@ internal sealed class TranscriptPane
         _following?.Dispose();
         _following = null;
         RowId = null;
+        Key = null;
+        Node = null;
         Agent = null;
         Title = null;
     }

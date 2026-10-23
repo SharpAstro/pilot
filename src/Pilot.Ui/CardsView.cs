@@ -11,6 +11,36 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
 {
     public static readonly CardsScreen Empty = new([], []);
 
+    // Each card's node, by the card itself (two nodes' cards may share an id); none on a panel of one node.
+    private IReadOnlyDictionary<CardRow, NodeMark> _nodes = new Dictionary<CardRow, NodeMark>(ReferenceEqualityComparer.Instance);
+
+    /// <summary>The node <paramref name="card"/> was raised on, when the panel merges several; null for this window's alone.</summary>
+    public NodeMark? NodeOf(CardRow card) => _nodes.GetValueOrDefault(card);
+
+    /// <summary>
+    /// Several nodes' panels as one: every open card, rings first and newest first, each with its node; the five latest
+    /// handled lines of them all; and <paramref name="watchtower"/>, this window's node's, whose box tells it things.
+    /// </summary>
+    public static CardsScreen Merge(IEnumerable<(NodeMark? Node, CardsScreen Screen)> panels, SessionRow? watchtower)
+    {
+        var nodes = new Dictionary<CardRow, NodeMark>(ReferenceEqualityComparer.Instance);
+        var open = new List<CardRow>();
+        var handled = new List<CardRow>();
+        foreach (var (node, screen) in panels)
+        {
+            foreach (var card in screen.Open.Concat(screen.Handled))
+            {
+                if (node is not null)
+                {
+                    nodes[card] = node;
+                }
+            }
+            open.AddRange(screen.Open);
+            handled.AddRange(screen.Handled);
+        }
+        return new CardsScreen([.. open.OrderBy(c => c.Bin).ThenByDescending(c => c.At)], [.. handled.OrderByDescending(c => c.At).Take(5)], watchtower) { _nodes = nodes };
+    }
+
     /// <summary>The open cards rings first, newest first within each; the five latest handled lines; the watchtower's row, if any.</summary>
     public static CardsScreen From(IEnumerable<CardRow> cards, IEnumerable<SessionRow>? sessions = null)
     {
@@ -98,6 +128,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     private static readonly RGBAColor32 Live = new(0x4c, 0xc3, 0x8a, 0xff);
 
+    // The panel as last drawn, whose cards a button answers.
+    private CardsScreen _shown = CardsScreen.Empty;
+
+    /// <summary>The node a card shown was raised on, whom its buttons command; null is this window's.</summary>
+    public NodeMark? NodeOf(CardRow card) => _shown.NodeOf(card);
+
     public void Render(CardsScreen screen, RectF32 bounds)
     {
         BeginFrame();
@@ -107,6 +143,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>The panel as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
     internal Layout.Node Tree(CardsScreen screen)
     {
+        _shown = screen;
         TellInput.OnCommit = TellAsync;
         TellInput.Placeholder = "tell the watchtower · Enter sends";
         return Build(screen);
@@ -161,7 +198,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         foreach (var card in screen.Open)
         {
             blocks.Add(Layout.Builder.Spacer().RowH(8f));
-            blocks.Add(Card(card));
+            blocks.Add(Card(card, screen.NodeOf(card)));
         }
         if (screen.Handled.Count > 0)
         {
@@ -169,18 +206,18 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             blocks.Add(Layout.Builder.Text("Handled", 13f, Dim).RowH(22f));
             foreach (var card in screen.Handled)
             {
-                blocks.Add(Layout.Builder.Text(card.Title, 12f, Dim).RowH(20f));
+                blocks.Add(Layout.Builder.Text(screen.NodeOf(card) is { } node ? $"{node.Name} · {card.Title}" : card.Title, 12f, Dim).RowH(20f));
             }
         }
         return Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).Bg(PanelBg).Stretch();
     }
 
-    private Layout.Node Card(CardRow card)
+    private Layout.Node Card(CardRow card, NodeMark? node)
     {
         var accent = card.Bin == CardBin.Ring ? Ring : ForYou;
         var lines = new List<Layout.Node>
         {
-            Layout.Builder.Text(card.Bin == CardBin.Ring ? "RING" : "for you", 10f, accent).RowH(16f),
+            Layout.Builder.Text($"{(card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}", 10f, accent).RowH(16f),
             // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own.
             card.Link is { } titleLink

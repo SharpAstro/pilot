@@ -65,6 +65,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private const float StateWidth = 160f;
     private const float SpendWidth = 160f;
     private const float ActWidth = 84f;
+    private const float NodeWidth = 64f;
 
     // The room the Session column keeps for a role and a name ("worker · ORB204 / parser"): the optional columns drop
     // before it gives any of it up.
@@ -126,6 +127,12 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// <summary>The header's ? card: which pilot this is and where its things are; null shows no ? (a capture).</summary>
     public AboutCard? About { get; set; }
 
+    /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
+    public NodeFilter? Nodes { get; set; }
+
+    // Whether the rows come from more than one node, and so have a Node column; set by Tree.
+    private bool _marked;
+
     /// <summary>Opens a session's folder the platform's way (a file manager); the menu's Open its folder.</summary>
     public Action<string>? OnOpen { get; set; }
 
@@ -181,6 +188,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             screen = screen with { Lines = [.. screen.Lines.Where(l => !l.Row.Archived)] };
         }
         _lines = screen.Lines;
+        _marked = screen.Lines.Any(l => l.Node is not null);
         if (screen.Lines.Count == 0)
         {
             ListCursor.Close();
@@ -201,7 +209,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                 ListCursor.MoveTo(index);
             }
         }
-        SelectedId = Selected >= 0 && Selected < screen.Lines.Count ? screen.Lines[Selected].Row.Id : null;
+        SelectedId = Selected >= 0 && Selected < screen.Lines.Count ? screen.Lines[Selected].Key : null;
 
         SayInput.OnCommit = Commit;
         SayInput.Placeholder = SelectedId is null
@@ -217,7 +225,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         if (index >= 0 && index < _lines.Count)
         {
             ListCursor.MoveTo(index);
-            SelectedId = _lines[index].Row.Id;
+            SelectedId = _lines[index].Key;
         }
     }
 
@@ -225,7 +233,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     {
         for (var i = 0; i < lines.Count; i++)
         {
-            if (lines[i].Row.Id == id)
+            if (lines[i].Key == id)
             {
                 return i;
             }
@@ -264,7 +272,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         if (evt is InputEvent.KeyDown { Key: InputKey.Right or InputKey.Left } arrow && !Transcript.IsOpen && Selected >= 0 && Selected < _lines.Count
             && _lines[Selected].Row.Subagents is { Length: > 0 })
         {
-            var id = _lines[Selected].Row.Id;
+            var id = _lines[Selected].Key;
             return arrow.Key == InputKey.Right ? _subagentsOpen.Add(id) : _subagentsOpen.Remove(id);
         }
         if (evt is not InputEvent.KeyDown key || !HandleListKey(key.Key, key.Modifiers))
@@ -274,7 +282,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
         if (Selected >= 0 && Selected < _lines.Count)
         {
-            SelectedId = _lines[Selected].Row.Id;
+            SelectedId = _lines[Selected].Key;
         }
         return true;
     }
@@ -315,7 +323,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         }
         if (OnAction is { } stop && row.Kind == Pilot.Contracts.SessionKind.Background && !ended)
         {
-            items.Add(new DropdownItem<string>("Stop", "stop") { OnChoose = () => stop(new FlightAction($"stop {line.Name}", Pilot.Contracts.Verbs.Stop, target, [])) });
+            items.Add(new DropdownItem<string>("Stop", "stop") { OnChoose = () => stop(new FlightAction($"stop {line.Name}", Pilot.Contracts.Verbs.Stop, target, []) { Node = line.Node }) });
         }
         if (OnNewFlight is { } newFlight && row.Repo is { Length: > 0 } repo)
         {
@@ -324,8 +332,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         if (OnAction is { } act && ended)
         {
             items.Add(row.Archived
-                ? new DropdownItem<string>("Restore", "restore") { OnChoose = () => act(new FlightAction($"restore {line.Name}", Pilot.Contracts.Verbs.Archive, target, ["undo"])) }
-                : new DropdownItem<string>("Archive", "archive") { OnChoose = () => act(new FlightAction($"archive {line.Name}", Pilot.Contracts.Verbs.Archive, target, [])) });
+                ? new DropdownItem<string>("Restore", "restore") { OnChoose = () => act(new FlightAction($"restore {line.Name}", Pilot.Contracts.Verbs.Archive, target, ["undo"]) { Node = line.Node }) }
+                : new DropdownItem<string>("Archive", "archive") { OnChoose = () => act(new FlightAction($"archive {line.Name}", Pilot.Contracts.Verbs.Archive, target, []) { Node = line.Node }) });
         }
         if (OnOpen is { } open && row.Cwd.Length > 0)
         {
@@ -367,6 +375,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                 Layout.Builder.HStack([
                         Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
                         Layout.Builder.Text("sessions", 20f, Dim).WAuto(),
+                        .. (Nodes?.Pills() ?? []),
                         Layout.Builder.Spacer().WStar(),
                         Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
                         .. HeaderButtons()])
@@ -387,7 +396,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         }
         Transcript.CopyText = CopyText;
         Transcript.OpenLink = OnOpen;
-        var open = screen.Lines.FirstOrDefault(l => l.Row.Id == Transcript.RowId);
+        var open = screen.Lines.FirstOrDefault(l => l.Key == Transcript.Key);
         return Transcript.Tree(live: open?.Row.State is not (null or Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed), open?.Row.Subagents);
     }
 
@@ -430,7 +439,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             rows.Add(Row(line, i));
             // An opened session's subagents under it, one row each: not rows of the list the arrows step through, but
             // each a click from its transcript.
-            if (line.Row.Subagents is { Length: > 0 } subagents && _subagentsOpen.Contains(line.Row.Id))
+            if (line.Row.Subagents is { Length: > 0 } subagents && _subagentsOpen.Contains(line.Key))
             {
                 rows.AddRange(subagents.Select(s => SubagentRow(line, s)));
             }
@@ -456,6 +465,10 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             Optional(Label("Spend"), SpendWidth),
             Optional(Layout.Builder.Spacer(), ActWidth),
         };
+        if (_marked)
+        {
+            columns.Insert(1, Label("Node").WFixed(NodeWidth));
+        }
         return Layout.Builder.HStack([.. columns])
             .WithGap(ColumnGap)
             .PadX(8f)
@@ -489,6 +502,10 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             Optional(Metered(line.Spend, line.SpendFraction, body), SpendWidth),
             Optional(Act(line, index), ActWidth),
         };
+        if (_marked)
+        {
+            cells.Insert(1, Cell(Layout.Builder.Text(line.Node?.Name ?? "", 13f, body)).WFixed(NodeWidth));
+        }
         var row = Layout.Builder.HStack([.. cells])
             .WithGap(ColumnGap)
             .Pad(8f, 6f)
@@ -518,13 +535,13 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         {
             return name;
         }
-        var open = _subagentsOpen.Contains(line.Row.Id);
+        var open = _subagentsOpen.Contains(line.Key);
         var working = subagents.Count(s => s.Working);
         var label = $"{(open ? "▾" : "▸")} {subagents.Length} {(subagents.Length == 1 ? "subagent" : "subagents")}{(working > 0 ? $", {working} working" : "")}";
         return Layout.Builder.HStack(
             name.WAuto(),
             Layout.Builder.Text(label, 12f, working > 0 ? Working : Dim).WAuto().BgHover(RowHoverBg)
-                .Clickable(new HitResult.ButtonHit($"session:{line.Row.Id}:subagents"), _ => ToggleSubagents(line.Row.Id)),
+                .Clickable(new HitResult.ButtonHit($"session:{line.Key}:subagents"), _ => ToggleSubagents(line.Key)),
             Layout.Builder.Spacer().WStar()).WithGap(8f);
     }
 
@@ -567,8 +584,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         }
         var target = Pilot.Contracts.Verbs.SessionTarget(line.Row.Id);
         return Cell(line.Row.Archived
-            ? CardsView<TSurface>.Pill("Restore", $"session:{line.Row.Id}:restore", () => act(new FlightAction($"restore {line.Name}", Pilot.Contracts.Verbs.Archive, target, ["undo"])))
-            : CardsView<TSurface>.Pill("Archive", $"session:{line.Row.Id}:archive", () => act(new FlightAction($"archive {line.Name}", Pilot.Contracts.Verbs.Archive, target, []))));
+            ? CardsView<TSurface>.Pill("Restore", $"session:{line.Key}:restore", () => act(new FlightAction($"restore {line.Name}", Pilot.Contracts.Verbs.Archive, target, ["undo"]) { Node = line.Node }))
+            : CardsView<TSurface>.Pill("Archive", $"session:{line.Key}:archive", () => act(new FlightAction($"archive {line.Name}", Pilot.Contracts.Verbs.Archive, target, []) { Node = line.Node })));
     }
 
     /// <summary>

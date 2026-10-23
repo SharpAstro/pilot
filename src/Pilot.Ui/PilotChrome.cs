@@ -67,6 +67,11 @@ internal sealed class PilotChrome<TSurface>
         Flights.About = About;
         Jobs.About = About;
         Fleet.About = About;
+        // One node selection for the window: every page shows the nodes it picks, and a page switch keeps it.
+        sessions.Nodes = Nodes;
+        Flights.Nodes = Nodes;
+        Jobs.Nodes = Nodes;
+        Fleet.Nodes = Nodes;
         Settings.About = About;
         Rail = new TabBar<TSurface>(renderer)
         {
@@ -81,6 +86,9 @@ internal sealed class PilotChrome<TSurface>
 
     /// <summary>The header's ? card, the same on every page.</summary>
     public AboutCard About { get; } = new();
+
+    /// <summary>Which nodes the window shows (<see cref="FleetPages.Merge"/>): all by default, kept across pages for the window's life.</summary>
+    public NodeFilter Nodes { get; } = new();
 
     public SessionsView<TSurface> Sessions { get; }
 

@@ -46,6 +46,15 @@ internal sealed partial record SessionLine
     /// <summary>The share of its budget it has spent, 0 and up (past 1 when over); null without a budget.</summary>
     public float? SpendFraction { get; init; }
 
+    /// <summary>The node it runs on, when the page merges several; null on a page of one node, this window's.</summary>
+    public NodeMark? Node { get; init; }
+
+    /// <summary>
+    /// What the selection follows: its row id, which another node's session may share, so prefixed with that node's
+    /// key (where it is reached) for a row of any node but this window's.
+    /// </summary>
+    public string Key => Node is null or { Here: true } ? Row.Id : $"{Node.Key}/{Row.Id}";
+
     /// <summary>Whether the session still runs: working, waiting or idle.</summary>
     public bool IsLive => Row.State is SessionState.Working or SessionState.Waiting or SessionState.Idle;
 
@@ -53,7 +62,8 @@ internal sealed partial record SessionLine
     public string ToDumpLine()
     {
         var state = WaitingFor is null ? State : $"{State} ({WaitingFor})";
-        return string.Join(" | ", Role, Name, Model, Context, $"last response {LastResponse}", state, $"spend {Spend}");
+        var line = string.Join(" | ", Role, Name, Model, Context, $"last response {LastResponse}", state, $"spend {Spend}");
+        return Node is { } node ? $"{node.Name} | {line}" : line;
     }
 
     /// <summary>
@@ -61,13 +71,16 @@ internal sealed partial record SessionLine
     /// working, then idle; after them the failed, then the ended. Within a state by role (watchtower, pilot, worker,
     /// reviewer, ad hoc), then flight, leg and name, so a flight's sessions sit together.
     /// </summary>
-    public static IReadOnlyList<SessionLine> Build(IEnumerable<SessionRow> rows, DateTimeOffset now) =>
-        rows.OrderBy(r => StateOrder(r.State))
-            .ThenBy(r => (int)r.Role)
-            .ThenBy(r => r.Flight ?? "", StringComparer.Ordinal)
-            .ThenBy(r => r.Leg ?? "", StringComparer.Ordinal)
-            .ThenBy(r => r.Name, StringComparer.Ordinal)
-            .Select(r => From(r, now))
+    public static IReadOnlyList<SessionLine> Build(IEnumerable<SessionRow> rows, DateTimeOffset now) => Order(rows.Select(r => From(r, now)));
+
+    /// <summary>Lines in drawing order (<see cref="Build"/>'s), several nodes' merged; a tie between nodes goes by node.</summary>
+    public static IReadOnlyList<SessionLine> Order(IEnumerable<SessionLine> lines) =>
+        lines.OrderBy(l => StateOrder(l.Row.State))
+            .ThenBy(l => (int)l.Row.Role)
+            .ThenBy(l => l.Row.Flight ?? "", StringComparer.Ordinal)
+            .ThenBy(l => l.Row.Leg ?? "", StringComparer.Ordinal)
+            .ThenBy(l => l.Row.Name, StringComparer.Ordinal)
+            .ThenBy(l => l.Node?.Name ?? "", StringComparer.Ordinal)
             .ToList();
 
     public static SessionLine From(SessionRow row, DateTimeOffset now)
