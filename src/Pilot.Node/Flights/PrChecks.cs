@@ -8,8 +8,11 @@ namespace Pilot.Node.Flights;
 /// decides nothing. A PR merged on GitHub itself (a person, another tool) is noticed too: its card closes and its flight
 /// lands, as a merge through the card would; one closed without a merge closes its card.
 /// </summary>
-public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time, FlightCommander? flights = null) : BackgroundService
+public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time, FlightCommander? flights = null, LegCommander? legs = null) : BackgroundService
 {
+    // A PR head the node has tried to rebase: tried once, not every look.
+    private readonly HashSet<string> _rebased = new(StringComparer.Ordinal);
+
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(30);
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
@@ -43,8 +46,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 continue;
             }
-            if (await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken) is { } pr && pr.Number == number
-                && pr.State is "MERGED" or "CLOSED")
+            var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+            if (pr is not null && pr.Number == number && pr.State is "MERGED" or "CLOSED")
             {
                 var merged = pr.State == "MERGED";
                 state.CloseCard(card.Id, merged ? $"merged on GitHub as #{number}" : $"#{number} closed on GitHub without a merge", "github");
@@ -59,6 +62,16 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                         // Merged, but something of the flight's would be left behind: said on a ring, never left in a log.
                         state.RaiseCard(CardBin.Ring, "not-landed", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number} merged on GitHub, but the flight did not land", ex.Message);
                     }
+                }
+                continue;
+            }
+            // Reviewed and passed, but no longer merging into its base: main moved. Rebased by itself, once a head, and
+            // reviewed afresh; a rebase that conflicts rings with what to do.
+            if (legs is not null && pr is { Mergeable: "CONFLICTING" } && pr.Number == number && _rebased.Add($"{flight.Code} {pr.Head}"))
+            {
+                if (await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } why)
+                {
+                    state.RaiseCard(CardBin.Ring, "pr-conflicts", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number} conflicts with its base", why, link: pr.Url);
                 }
                 continue;
             }

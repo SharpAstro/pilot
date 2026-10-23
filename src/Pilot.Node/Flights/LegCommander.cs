@@ -117,6 +117,46 @@ public sealed partial class LegCommander(
         return state.Complete(command, error);
     }
 
+    /// <summary>
+    /// A flight whose PR conflicts with its base (main moved after the plane was cut: tianwen #1784 and #1795, 2026-10-23,
+    /// both reviewed and passed, neither mergeable): its clean plane is rebased onto the base, pushed, and reviewed afresh,
+    /// as the reviewed head is gone. Null when that is under way; else why not (a rebase that conflicts is undone).
+    /// </summary>
+    public async Task<string?> RebaseOntoBaseAsync(string code, CancellationToken cancellationToken)
+    {
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying } flight || !Directory.Exists(flight.Worktree))
+            {
+                return $"{code} is not a flying flight with a plane";
+            }
+            if ((await git.RunAsync(["status", "--porcelain"], flight.Worktree, cancellationToken)).Output.Trim().Length > 0)
+            {
+                return $"{code}'s plane holds changes not committed, so it is not rebased by itself";
+            }
+            await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
+            var rebase = await git.RunAsync(["rebase", flight.Base], flight.Worktree, cancellationToken);
+            if (!rebase.Ok)
+            {
+                await git.RunAsync(["rebase", "--abort"], flight.Worktree, cancellationToken);
+                return $"rebasing {code} onto {flight.Base} conflicts ({rebase.Why}): rebase its plane by hand, or go around its last leg to";
+            }
+            await PushAsync(flight, cancellationToken);
+            state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} rebased onto {flight.Base}; reviewed afresh", PrReady);
+            await StartReviewAsync(flight, cancellationToken);
+            return null;
+        }
+        catch (FlightException ex)
+        {
+            return ex.Message;
+        }
+        finally
+        {
+            _one.Release();
+        }
+    }
+
     /// <summary>The kind of card that says a flight's next step waits, or did not go.</summary>
     public const string NextStepKind = "next-step";
 

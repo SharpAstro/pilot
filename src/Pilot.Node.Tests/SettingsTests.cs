@@ -211,4 +211,17 @@ public sealed class SettingsTests : IDisposable
         node.App.Services.GetRequiredService<RoleModels>().MergeMethod.ShouldBe("squash");
         (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == "merge-method").Choices.ShouldBe(["rebase", "squash", "merge"]);
     }
+
+    [Fact]
+    public async Task APriorityRepoIsInForceTheMomentItIsSaved()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+
+        var result = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["priority-repos", "tianwen"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+
+        result.Way.ShouldBe("priority-repos saved as tianwen; the next start the node makes by itself weighs it");
+        node.App.Services.GetRequiredService<RoleModels>().StartLimitFor("tianwen").ShouldBe(98);
+        var row = (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == "priority-repos");
+        (row.Value, row.Source, row.Pending).ShouldBe(("tianwen", SettingSources.File, false));
+    }
 }
