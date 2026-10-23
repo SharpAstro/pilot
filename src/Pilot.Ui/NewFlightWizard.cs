@@ -395,7 +395,7 @@ internal sealed class NewFlightWizard
                 Layout.Builder.HStack(
                         Layout.Builder.Text(text, 18f, Bright).WStar(),
                         Layout.Builder.Text("×", 18f, Body, TextAlign.Center).Pad(10f, 0f).WAuto().BgHover(ButtonHover)
-                            .Clickable(new HitResult.ButtonHit("wizard:close"), _ => Close())
+                            .Follows(new HitResult.ButtonHit("wizard:close"), _ => Close())
                             .WithTooltip("Close the wizard (Escape on the repos)"))
                     .RowH(28f),
                 Layout.Builder.Text(hint, 12f, Dim).RowH(20f))
@@ -434,7 +434,7 @@ internal sealed class NewFlightWizard
                 .PadX(6f)
                 .RowH(RowHeight)
                 .BgHover(RowHoverBg)
-                .Clickable(new HitResult.ButtonHit($"wizard:repo:{repo.Name}"), _ => _repoSearch.CommitAt(at));
+                .Follows(new HitResult.ButtonHit($"wizard:repo:{repo.Name}"), _ => _repoSearch.CommitAt(at));
             list[i] = i == _repoSearch.SelectedIndex ? row.Bg(HighlightBg) : order >= 0 ? row.Bg(ChosenBg) : row;
         }
         _repoScroll.EnsureVisible(_repoSearch.SelectedIndex);
@@ -490,7 +490,7 @@ internal sealed class NewFlightWizard
                 .PadX(6f)
                 .RowH(RowHeight)
                 .BgHover(RowHoverBg)
-                .Clickable(new HitResult.ButtonHit($"wizard:issue:{issue.Number}"), _ => _issueSearch.CommitAt(at));
+                .Follows(new HitResult.ButtonHit($"wizard:issue:{issue.Number}"), _ => _issueSearch.CommitAt(at));
             list[i] = i == _issueSearch.SelectedIndex ? row.Bg(HighlightBg) : picked?.Number == issue.Number ? row.Bg(ChosenBg) : row;
         }
         _issueScroll.EnsureVisible(_issueSearch.SelectedIndex);
@@ -563,7 +563,7 @@ internal sealed class NewFlightWizard
             .WAuto()
             .Bg(go ? Go : Button)
             .BgHover(go ? GoHover : ButtonHover)
-            .Clickable(new HitResult.ButtonHit(action), _ => onClick());
+            .Follows(new HitResult.ButtonHit(action), _ => onClick());
 
     /// <summary>A search whose results are worked out again from its text: when its data arrives, or its text is cleared.</summary>
     private interface IRefreshable

@@ -581,5 +581,5 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             .WAuto()
             .Bg(Button)
             .BgHover(ButtonHover)
-            .Clickable(new HitResult.ButtonHit(action), _ => onClick());
+            .Follows(new HitResult.ButtonHit(action), _ => onClick());
 }

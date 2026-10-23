@@ -577,7 +577,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         return Layout.Builder.HStack(
             name.WAuto(),
             Layout.Builder.Text(label, 12f, working > 0 ? Working : Dim).WAuto().BgHover(RowHoverBg)
-                .Clickable(new HitResult.ButtonHit($"session:{line.Key}:subagents"), _ => ToggleSubagents(line.Key)),
+                .Follows(new HitResult.ButtonHit($"session:{line.Key}:subagents"), _ => ToggleSubagents(line.Key)),
             Layout.Builder.Spacer().WStar()).WithGap(8f);
     }
 
@@ -594,7 +594,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .Pad(8f, 2f)
             .RowH(SubagentRowHeight)
             .BgHover(RowHoverBg)
-            .Clickable(new HitResult.ButtonHit($"session:{line.Row.Id}:agent:{subagent.Id}"), _ =>
+            .Follows(new HitResult.ButtonHit($"session:{line.Row.Id}:agent:{subagent.Id}"), _ =>
             {
                 if (Transcript.Load is not null)
                 {

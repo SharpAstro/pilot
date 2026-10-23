@@ -395,5 +395,5 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             .WAuto()
             .Bg(Button)
             .BgHover(ButtonHover)
-            .Clickable(new HitResult.ButtonHit(action), _ => onClick());
+            .Follows(new HitResult.ButtonHit(action), _ => onClick());
 }

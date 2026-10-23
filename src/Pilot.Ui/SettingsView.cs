@@ -457,7 +457,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .WAuto()
             .Bg(chosen ? Chosen : Button)
             .BgHover(chosen ? Chosen : ButtonHover)
-            .Clickable(new HitResult.ButtonHit(action), _ => onClick());
+            .Follows(new HitResult.ButtonHit(action), _ => onClick());
 }
 
 /// <summary>The Settings page's verbs on the node, for either host: what became of each, in a line.</summary>
