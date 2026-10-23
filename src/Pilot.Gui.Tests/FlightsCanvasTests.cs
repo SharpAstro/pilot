@@ -105,6 +105,46 @@ public sealed class FlightsCanvasTests
         canvas.At(a.Right + 1f, a.Y + 5f).ShouldBeNull();
     }
 
+    [Fact]
+    public void TwoNodesWithTheSameCodeBothGetACardAndTheArrowStaysOnItsNode()
+    {
+        var desktop = new NodeMark("d", "d", "desktop", true);
+        var laptop = new NodeMark("l", "l", "laptop", false);
+        FlightLine Line(FlightRow row, NodeMark node) => FlightLine.Build([row], [], Live.At)[0] with { Node = node };
+        var lines = new[]
+        {
+            Line(Flight("PIL51"), desktop),
+            Line(Flight("PIL51"), laptop),
+            Line(Flight("PIL52", FlightState.Held, "PIL51"), laptop),
+        };
+
+        var canvas = FlightCanvas.Build(lines);
+
+        canvas.Cards.Count.ShouldBe(3);
+        canvas.Cards.Count(c => c.Code == "PIL51").ShouldBe(2);
+        var edge = canvas.Edges.Single();
+        var from = canvas.Cards.Single(c => c.Right == edge.X0 && c.Y + FlightCanvas.CardHeight / 2f == edge.Y0);
+        from.Line!.Node.ShouldBe(laptop);
+        canvas.Cards[edge.ToCard].Code.ShouldBe("PIL52");
+    }
+
+    [Fact]
+    public void TwoNodesWithTheSameCodeAndNoConnectionsBuild()
+    {
+        var a = new NodeMark("a", "a", "A", true);
+        var b = new NodeMark("b", "b", "B", false);
+        var lines = new[]
+        {
+            FlightLine.Build([Flight("X")], [], Live.At)[0] with { Node = a },
+            FlightLine.Build([Flight("X")], [], Live.At)[0] with { Node = b },
+        };
+
+        var canvas = FlightCanvas.Build(lines);
+
+        canvas.Cards.Count.ShouldBe(2);
+        canvas.Edges.ShouldBeEmpty();
+    }
+
     private static (RgbaImageRenderer Renderer, FlightsView<RgbaImage> View) Page(bool canvas, params FlightRow[] flights)
     {
         var renderer = new RgbaImageRenderer(1280, 800);
