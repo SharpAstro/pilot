@@ -56,7 +56,9 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         {
             return state.Complete(command, null, way: $"{key} saved as {value}, but this node's command line gives it, and wins: take it off the command line (pilot-node autostart install) for the setting to count");
         }
-        if (Running(key) == (updated.Get(key) is { } now ? Join(key, now) : Default(key)))
+        // A live setting is applied below whatever it read before: its running value may be read from the very file just
+        // written (priority-repos was, and was taken as in force while the node still ran without it).
+        if (!Live(key) && Running(key) == (updated.Get(key) is { } now ? Join(key, now) : Default(key)))
         {
             return state.Complete(command, null, way: $"{key} saved as {value}; the node runs with it already");
         }
@@ -127,10 +129,11 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             Detail = detail,
             Value = running,
             Saved = file,
-            Source = pinned ? SettingSources.CommandLine : started is not null ? SettingSources.File : SettingSources.Default,
+            // A live setting runs with what the file says now; any other with what it said at the start.
+            Source = pinned ? SettingSources.CommandLine : (Live(key) ? file : started) is not null ? SettingSources.File : SettingSources.Default,
             Choices = choices,
             Many = key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey,
-            Pending = !pinned && (file ?? Default(key)) != running,
+            Pending = !pinned && !Live(key) && (file ?? Default(key)) != running,
         };
     }
 
@@ -158,6 +161,12 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         RoleModels.Roles.FirstOrDefault(r => key == RoleModels.ModelKey(r)) is { } model ? (model, false)
         : RoleModels.Roles.FirstOrDefault(r => key == RoleModels.EffortKey(r)) is { } effort ? (effort, true)
         : (null, false);
+
+    /// <summary>Whether a setting is in force as soon as it is saved, with no restart: a role's model or effort, the merge
+    /// method, the start limits, the priority repos and the job limits.</summary>
+    private static bool Live(string key) => NodeSettings.IsRoleKey(key)
+        || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey
+            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey;
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
     private static string Join(string key, IReadOnlyList<string> values) => string.Join(key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey ? '\n' : ' ', values);

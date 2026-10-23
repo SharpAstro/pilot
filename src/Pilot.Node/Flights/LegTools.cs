@@ -166,7 +166,8 @@ public sealed class ShellCheckRunner : ICheckRunner
 }
 
 /// <summary>A flight's PR on GitHub: its number, state and head.</summary>
-public sealed record PullRequest(int Number, string State, string Head, string Url);
+/// <param name="Mergeable">GitHub's word on whether it merges into its base: MERGEABLE, CONFLICTING, or UNKNOWN while it works it out.</param>
+public sealed record PullRequest(int Number, string State, string Head, string Url, string Mergeable = "");
 
 /// <summary>The GitHub calls a merge needs, so a test decides what GitHub says.</summary>
 public interface IGitHub
@@ -209,7 +210,7 @@ public sealed class GhCli : IGitHub
 
     public async Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(["pr", "view", branch, "--json", "number,state,headRefOid,url"], repoPath, cancellationToken);
+        var (exit, output, error) = await RunAsync(["pr", "view", branch, "--json", "number,state,headRefOid,url,mergeable"], repoPath, cancellationToken);
         if (exit != 0)
         {
             return error.Contains("no pull requests found", StringComparison.OrdinalIgnoreCase)
@@ -219,7 +220,8 @@ public sealed class GhCli : IGitHub
         using var doc = JsonDocument.Parse(output);
         var root = doc.RootElement;
         return new PullRequest(root.GetProperty("number").GetInt32(), root.GetProperty("state").GetString() ?? "",
-            root.GetProperty("headRefOid").GetString() ?? "", root.GetProperty("url").GetString() ?? "");
+            root.GetProperty("headRefOid").GetString() ?? "", root.GetProperty("url").GetString() ?? "",
+            root.TryGetProperty("mergeable", out var mergeable) ? mergeable.GetString() ?? "" : "");
     }
 
     public async Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
