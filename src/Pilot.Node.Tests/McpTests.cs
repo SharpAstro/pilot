@@ -97,6 +97,7 @@ public sealed class McpTests : IAsyncLifetime
         tools.Keys.Order().ShouldBe(expected.Order());
         tools.Keys.ShouldContain("flight_review");
         tools.Keys.ShouldContain("leg_go-around");
+        tools.Keys.ShouldContain("leg_remove");
         tools.Keys.ShouldContain("job_cancel");
         tools.Keys.ShouldNotContain("mcp");
 

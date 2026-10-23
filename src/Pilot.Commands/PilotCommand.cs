@@ -199,7 +199,7 @@ public static class PilotCommand
 
         var removeWhy = Words("why", "Why it goes: said on the card the removal leaves", required: false);
         var remove = Action(new Command("remove", "Take a planned leg out of the flight; the legs after it keep their order") { Arguments = { code, legName, removeWhy } },
-            (p, client, ct) => SendAsync(client, Verbs.RemoveLeg, Verbs.LegTarget(p.GetValue(code)!, p.GetValue(legName)!), p.GetValue(removeWhy) ?? [], who, output, ct));
+            (p, client, ct) => Send(client, Verbs.RemoveLeg, Verbs.LegTarget(p.GetValue(code)!, p.GetValue(legName)!), p.GetValue(removeWhy) ?? [], who, ct));
 
         var outcome = Arg("outcome", "done, failed, or accepted (the controller's: a failed leg's read taken as it is, so the flight goes on)");
         outcome.AcceptOnlyFromAmong("done", "failed", "accepted");
