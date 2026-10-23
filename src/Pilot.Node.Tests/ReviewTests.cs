@@ -230,7 +230,7 @@ public sealed class ReviewTests : IDisposable
             var card = Open().Single(c => c.Kind == LegCommander.PrReady);
             var merge = card.Choices.Single();
             (await Run(merge.Verb, merge.Target, "controller", merge.Args)).Error.ShouldBeNull();
-            await _flights.LandAfterMergeAsync(flight.Code, Ct);
+            await _flights.LandAfterMergeAsync(flight.Code, merge.Args[0], Ct);
             F(flight.Code).State.ShouldBe(FlightState.Landed);
             // The landed card opens its PR, as the merge card did.
             _state.Cards().First(c => c.Kind == "landed" && c.Subject == Verbs.FlightTarget(flight.Code)).Link.ShouldNotBeNull().ShouldBe(F(flight.Code).PullRequestUrl);

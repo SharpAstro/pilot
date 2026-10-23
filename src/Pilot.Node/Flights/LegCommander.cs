@@ -100,7 +100,7 @@ public sealed partial class LegCommander(
         {
             try
             {
-                await flights.LandAfterMergeAsync(FlightOf(command.Target).Code, cancellationToken);
+                await flights.LandAfterMergeAsync(FlightOf(command.Target).Code, (command.Args ?? [""])[0].Trim(), cancellationToken);
             }
             catch (FlightException ex)
             {
@@ -272,6 +272,11 @@ public sealed partial class LegCommander(
         switch (outcome)
         {
             case "done":
+                // A leg's work is its commits: a worker that ends with files not committed would leave them to the plane.
+                if (await planes.UncommittedAsync(flight.Worktree, cancellationToken) is { } dirty)
+                {
+                    throw new FlightException($"{flight.Code}/{leg.Name}'s plane has {dirty}: commit them (or drop them), then finish");
+                }
                 if (leg.Checklist.Where(i => !i.Done).Select(i => i.Text).ToList() is { Count: > 0 } open)
                 {
                     throw new FlightException($"{flight.Code}/{leg.Name} has steps not ticked: {string.Join("; ", open)}");
