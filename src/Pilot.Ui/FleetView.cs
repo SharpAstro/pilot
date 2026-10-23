@@ -215,8 +215,9 @@ internal sealed class FleetWatch : IAsyncDisposable
 
 /// <summary>
 /// The Fleet page: every node at once, each on its own person's account, so the whole fleet is seen from any window:
-/// whose it is, its usage, its live sessions and who waits on you, its flights, jobs and rings. A node's row opens a
-/// window flying it (<see cref="OnOpen"/>), or asks it for a grant (<see cref="OnConnect"/>) when this user has none.
+/// whose it is, its usage, its live sessions and who waits on you, its flights, jobs and rings. A node's row asks it for
+/// a grant (<see cref="OnConnect"/>) when this user has none; the merged pages steer every node, so no host sets
+/// <see cref="OnOpen"/> (a window of its own on a node) by default.
 /// Generic over the surface, as the other pages are.
 /// </summary>
 internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
@@ -253,7 +254,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
     private int _count;
 
-    /// <summary>Opens a window flying the node at that address; null where the host opens none (a terminal).</summary>
+    /// <summary>Opens a window of its own flying the node at that address; null (the default) shows no such button.</summary>
     public Action<FleetLine>? OnOpen { get; set; }
 
     /// <summary>Asks the node at that address for a grant to command it, as <c>pilot connect</c> does.</summary>
@@ -347,7 +348,8 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         var buttons = new List<Layout.Node>();
         if (!line.Here && OnOpen is { } open)
         {
-            buttons.Add(Pill("Open", $"fleet:{line.Where}:open", () => open(line)));
+            // Off unless the host sets it: the merged lists steer every node from this window.
+            buttons.Add(Pill("Open in its own window", $"fleet:{line.Where}:open", () => open(line)));
         }
         if (!line.CanCommand && OnConnect is { } connect)
         {

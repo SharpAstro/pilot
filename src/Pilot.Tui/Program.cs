@@ -124,7 +124,7 @@ chrome.About.Opening = () => _ = Task.Run(async () =>
 });
 sessions.OnAction = action => _ = Task.Run(async () =>
 {
-    sessions.SayStatus = clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, Who, stop.Token) : FleetClients.WatchOnly(action.Node);
+    sessions.SayStatus = clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, Who, stop.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node);
     Redraw();
 });
 sessions.OnSay = async (line, text) =>
@@ -136,6 +136,7 @@ sessions.OnSay = async (line, text) =>
         return;
     }
     var envelope = await to.SendAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(line.Row.Id), Args = [text], Who = Who }, stop.Token);
+    clients.NoteRefusal(line.Node, envelope);
     sessions.SayStatus = envelope.Success ? $"said to {line.Name}" : $"refused: {envelope.Response?.Error ?? envelope.Error}";
     Redraw();
 };
@@ -182,19 +183,22 @@ jobs.OnCancel = job => _ = Task.Run(async () =>
     Redraw();
 });
 jobs.OnOpen = location => DashboardCommands.Open(location);
-// The Fleet page: a terminal opens no window, so Open says how to fly that node from another one; Connect asks it.
-fleet.OnOpen = line =>
+// The Fleet page: Connect asks a node for a grant; the merged lists then steer it.
+void Connect(string where, string machine) => _ = Task.Run(async () =>
 {
-    fleet.Said = $"in another terminal: pilot-tui --node {line.Where}";
+    fleet.Said = $"asking {machine} ({where}) for a grant: allow it on that machine";
+    sessions.SayStatus = fleet.Said;
     Redraw();
-};
-fleet.OnConnect = line => _ = Task.Run(async () =>
-{
-    fleet.Said = $"asking {line.Machine} ({line.Where}) for a grant: allow it on that machine";
-    Redraw();
-    fleet.Said = (await DashboardCommands.RunAsync($"connect {line.Where}", nodeArgs, Who, stop.Token)).ReplaceLineEndings(" ").Trim();
+    fleet.Said = (await DashboardCommands.RunAsync($"connect {where}", nodeArgs, Who, stop.Token)).ReplaceLineEndings(" ").Trim();
+    sessions.SayStatus = fleet.Said;
     Redraw();
 });
+fleet.OnConnect = line => Connect(line.Where, line.Machine);
+// Rows on a node this user cannot steer are watch-only, with a Connect in place of their actions.
+sessions.CanSteer = clients.CanSteer;
+jobs.CanSteer = clients.CanSteer;
+sessions.OnConnect = node => Connect(node.Where, node.Name);
+jobs.OnConnect = node => Connect(node.Where, node.Name);
 // The Settings page: this machine's node only, as its route is.
 if (remote is null)
 {
@@ -246,6 +250,7 @@ while (!stop.IsCancellationRequested)
         if (now - fleetKnownAt >= TimeSpan.FromSeconds(5))
         {
             fleetKnownAt = now;
+            clients.Refresh();
             granted = new HashSet<string>(NodeTargets.Granted(), StringComparer.OrdinalIgnoreCase);
             fleetWatch.Know(granted.Select(e => (e, (string?)null)).Concat((flights.Lan?.Nodes ?? []).Select(n => (n.Endpoint, (string?)n.Name))));
         }
