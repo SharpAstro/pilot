@@ -51,7 +51,7 @@ internal sealed class AboutCard
     /// <summary>The header's button.</summary>
     public Layout.Node Button(FlightsPalette? night = null) =>
         Layout.Builder.Text("?", 14f, night?.Bright ?? Bright, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(night?.Button ?? ButtonBg).BgHover(night?.ButtonHover ?? ButtonHover)
-            .Clickable(new HitResult.ButtonHit("about:toggle"), _ => Toggle())
+            .Follows(new HitResult.ButtonHit("about:toggle"), _ => Toggle())
             .WithTooltip("Which pilot this is, where its things are, and the keys");
 
     /// <summary><paramref name="page"/>, with the card over its top right while it is open.</summary>
@@ -69,7 +69,7 @@ internal sealed class AboutCard
             Layout.Builder.HStack(
                     Layout.Builder.Text("pilot", 16f, bright).WStar(),
                     Layout.Builder.Text("×", 16f, body, TextAlign.Center).Pad(8f, 0f).WAuto().BgHover(hover)
-                        .Clickable(new HitResult.ButtonHit("about:close"), _ => Close()))
+                        .Follows(new HitResult.ButtonHit("about:close"), _ => Close()))
                 .RowH(26f),
         };
         foreach (var (label, value) in Facts?.Invoke() ?? [])

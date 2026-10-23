@@ -184,8 +184,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         };
         if (row.RemoteControlUrl is { } url)
         {
-            blocks.Add(Layout.Builder.Text("Remote Control: open in the browser", 12f, ForYou)
-                .Clickable(new HitResult.ButtonHit("watchtower:rc"), _ => OnOpen?.Invoke(url))
+            blocks.Add(Layout.Builder.Text("Remote Control: open in the browser" + Followable.Away, 12f, ForYou).BgHover(CardHover)
+                .Follows(new HitResult.ButtonHit("watchtower:rc"), _ => OnOpen?.Invoke(url))
                 .RowH(20f));
         }
         blocks.Add(Layout.Builder.Spacer().RowH(10f));
@@ -264,7 +264,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             card.Link is { } titleLink
                 ? Layout.Builder.Text($"{card.Title} \u2197", 14f, Link)
                     .BgHover(CardHover)
-                    .Clickable(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => OnOpen?.Invoke(titleLink))
+                    .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => OnOpen?.Invoke(titleLink))
                     .RowH(22f)
                 : Layout.Builder.Text(card.Title, 14f, Bright).RowH(22f),
         };
@@ -316,7 +316,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             .WAuto()
             .Bg(tint?.Bg ?? Button)
             .BgHover(tint?.Hover ?? ButtonHover)
-            .Clickable(new HitResult.ButtonHit(action), _ => onClick());
+            .Follows(new HitResult.ButtonHit(action), _ => onClick());
 
     /// <summary>A choice's label with what its checks say: <c>Merge</c>, <c>Merge · checks running</c>, <c>Merge · checks failed</c>.</summary>
     internal static string StatusLabel(CardChoice choice) => choice.Status switch

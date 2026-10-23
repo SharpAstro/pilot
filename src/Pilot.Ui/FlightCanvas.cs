@@ -4,13 +4,16 @@ namespace Pilot.Ui;
 /// <param name="Code">The flight's code.</param>
 /// <param name="Line">The flight's line; null for a ghost.</param>
 /// <param name="Index">The line's index in the page's lines, or -1 for a ghost.</param>
-/// <param name="Column">Its depth: 0 waits for nothing on the page.</param>
-/// <param name="Row">Its place in its column, top down.</param>
-/// <param name="X">Left edge, in design units from the canvas's corner.</param>
+/// <param name="Column">Its depth: 0 waits for nothing on the page; -1 for a loose card, connected to nothing.</param>
+/// <param name="Row">Its place in its column, top down; a loose card's place among the loose ones.</param>
+/// <param name="X">Left edge, in design units from the canvas's corner (0 for a loose card, which the page wraps).</param>
 /// <param name="Y">Top edge.</param>
 internal readonly record struct CanvasCard(string Code, FlightLine? Line, int Index, int Column, int Row, float X, float Y)
 {
     public bool IsGhost => Line is null;
+
+    /// <summary>Connected to nothing: no arrow needs it anywhere, so it flows with the other loose cards below the graph.</summary>
+    public bool IsLoose => Column < 0;
 
     public float Right => X + FlightCanvas.CardWidth;
 
@@ -21,8 +24,10 @@ internal readonly record struct CanvasCard(string Code, FlightLine? Line, int In
 internal readonly record struct CanvasEdge(string From, string To, float X0, float Y0, float X1, float Y1, int ToCard);
 
 /// <summary>
-/// The Flights page's canvas as pure geometry: a card per flight in a column by connection depth, so every arrow points
-/// rightwards, and an arrow per connection. No renderer is needed to build or test it.
+/// The Flights page's canvas as pure geometry: a card per connected flight in a column by connection depth, so every
+/// arrow points rightwards, and an arrow per connection. A flight connected to nothing is loose: placing it in column 0
+/// stacked every such flight in one long column beside an empty canvas, so the page wraps the loose ones by its width
+/// instead. No renderer is needed to build or test it.
 /// </summary>
 internal sealed class FlightCanvas
 {
@@ -48,9 +53,9 @@ internal sealed class FlightCanvas
 
     public CanvasCard? Find(string code) => Cards.Cast<CanvasCard?>().FirstOrDefault(c => c!.Value.Code == code);
 
-    /// <summary>The card at a canvas point, or null.</summary>
+    /// <summary>The placed (not loose) card at a canvas point, or null.</summary>
     public CanvasCard? At(float x, float y) =>
-        Cards.Cast<CanvasCard?>().FirstOrDefault(c => x >= c!.Value.X && x < c.Value.Right && y >= c.Value.Y && y < c.Value.Bottom);
+        Cards.Cast<CanvasCard?>().FirstOrDefault(c => !c!.Value.IsLoose && x >= c.Value.X && x < c.Value.Right && y >= c.Value.Y && y < c.Value.Bottom);
 
     public static FlightCanvas Build(IReadOnlyList<FlightLine> lines)
     {
@@ -136,10 +141,13 @@ internal sealed class FlightCanvas
             Depth(i);
         }
 
+        // An arrow's either end is on the graph; a ghost is only ever there for an arrow.
+        var linked = kept.SelectMany(k => new[] { k.Item1, k.Item2 }).ToHashSet();
+
         // Stable within a column: the page's own order, then ghosts in the order they were met.
         var order = lines.Select((l, i) => (l.Code, Line: (FlightLine?)l, Index: i))
             .Concat(ghostCodes.Select(g => (Code: g, Line: (FlightLine?)null, Index: -1)))
-            .Select((x, id) => (x.Code, x.Line, x.Index, Column: depth.GetValueOrDefault(id)))
+            .Select((x, id) => (x.Code, x.Line, x.Index, Column: linked.Contains(id) ? depth.GetValueOrDefault(id) : -1))
             .ToList();
         var rows = new Dictionary<int, int>();
         var cards = new List<CanvasCard>();
@@ -147,8 +155,11 @@ internal sealed class FlightCanvas
         {
             var row = rows.GetValueOrDefault(column);
             rows[column] = row + 1;
-            cards.Add(new CanvasCard(code, line, i, column, row, Margin + column * (CardWidth + GapX), Margin + row * (CardHeight + GapY)));
+            cards.Add(column < 0
+                ? new CanvasCard(code, line, i, column, row, 0f, 0f)
+                : new CanvasCard(code, line, i, column, row, Margin + column * (CardWidth + GapX), Margin + row * (CardHeight + GapY)));
         }
+        rows.Remove(-1);
 
         var edges = new List<CanvasEdge>();
         foreach (var (from, to) in kept.OrderBy(k => k.Item2).ThenBy(k => k.Item1))

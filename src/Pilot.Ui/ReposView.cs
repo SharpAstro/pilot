@@ -211,7 +211,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         {
             rows.Add(Layout.Builder.HStack(
                     Layout.Builder.Text(SyncSummary(SyncOutcomes), 12f, Body).WStar(),
-                    Layout.Builder.Text("×", 14f, Dim).WAuto().BgHover(RowHoverBg).Clickable(new HitResult.ButtonHit("repos:sync-clear"), _ => ClearSync())
+                    Layout.Builder.Text("×", 14f, Dim).WAuto().BgHover(RowHoverBg).Follows(new HitResult.ButtonHit("repos:sync-clear"), _ => ClearSync())
                         .WithTooltip("Put the sync's outcome away"))
                 .RowH(20f));
             rows.AddRange(SyncOutcomes.Select(o => Layout.Builder.Text($"{o.Name}  {o.Status}  {o.Detail}", 12f, o.Status switch
@@ -288,7 +288,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             ? Layout.Builder.Text(line.Name, 15f, tracked ? Bright : Dim)
             : Layout.Builder.HStack(
                     Layout.Builder.Text(IsOpen(line) ? "▾" : "▸", 13f, Link).WAuto().BgHover(RowHoverBg)
-                        .Clickable(new HitResult.ButtonHit($"repo:{line.Key}:worktrees"), _ => Toggle(line)),
+                        .Follows(new HitResult.ButtonHit($"repo:{line.Key}:worktrees"), _ => Toggle(line)),
                     Layout.Builder.Text(line.Name, 15f, tracked ? Bright : Dim).WStar())
                 .WithGap(6f);
         var pulls = line.Pulls.Take(2).Select(PullText).ToList();
@@ -310,7 +310,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                             // The wizard flies this window's own node, so a row of another node offers no New flight.
                             OnNewFlight is null || line.Node is { Here: false } ? Layout.Builder.Spacer().WFixed(0f)
                                 : Layout.Builder.Text("New flight", 11f, Link, TextAlign.Center).Pad(6f, 0f).WAuto().BgHover(RowHoverBg)
-                                    .Clickable(new HitResult.ButtonHit($"repo:{line.Key}:new-flight"), _ => OnNewFlight?.Invoke(line))
+                                    .Follows(new HitResult.ButtonHit($"repo:{line.Key}:new-flight"), _ => OnNewFlight?.Invoke(line))
                                     .WithTooltip("Start a flight on one of this repo's issues"))
                         .WithGap(6f).RowH(18f))
                 .WStar(1f, NameMin),
@@ -341,8 +341,8 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private Layout.Node PullText(PullLine pull)
     {
         var text = Layout.Builder.HStack(
-            Layout.Builder.Text(pull.Text, 12f, Link).WStar().BgHover(RowHoverBg)
-                .Clickable(new HitResult.ButtonHit($"pr:{pull.Pr.Number}"), _ => OpenUrl(pull)),
+            Layout.Builder.Text(pull.Text + Followable.Away, 12f, Link).WStar().BgHover(RowHoverBg)
+                .Follows(new HitResult.ButtonHit($"pr:{pull.Pr.Number}"), _ => OpenUrl(pull)),
             Layout.Builder.Text(pull.Readiness, 11f, Dim).WAuto(),
             Layout.Builder.Text(pull.Checks, 11f, ChecksColor(pull.Checks)).WAuto()).WithGap(8f);
         return text.RowH(18f);
@@ -366,16 +366,16 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 Layout.Builder.HStack(
                     Layout.Builder.Text(worktree.Activity, 12f, activityColor).WAuto(),
                     Layout.Builder.Text(line.Name, 12f, Link).WStar().BgHover(RowHoverBg)
-                        .Clickable(new HitResult.ButtonHit($"repo:{repo.Key}:session:{line.Key}"), _ => OnSession?.Invoke(line))).WithGap(8f).RowH(20f),
+                        .Follows(new HitResult.ButtonHit($"repo:{repo.Key}:session:{line.Key}"), _ => OnSession?.Invoke(line))).WithGap(8f).RowH(20f),
                 Layout.Builder.Text(worktree.LastMessage, 11f, Dim).RowH(18f))
             : Layout.Builder.VStack(Layout.Builder.Text(worktree.Activity, 12f, activityColor).RowH(20f), Layout.Builder.Spacer().RowH(18f));
         var flight = worktree.FlightCode is { } code
             ? Layout.Builder.Text($"✈ {code}", 12f, Link).BgHover(RowHoverBg)
-                .Clickable(new HitResult.ButtonHit($"repo:{repo.Key}:flight:{code}"), _ => OnFlight?.Invoke(worktree))
+                .Follows(new HitResult.ButtonHit($"repo:{repo.Key}:flight:{code}"), _ => OnFlight?.Invoke(worktree))
             : Layout.Builder.Text("no flight", 12f, Dim);
         var pull = worktree.Pull is { } pr
-            ? Layout.Builder.Text($"PR #{pr.Pr.Number}", 12f, Link).BgHover(RowHoverBg)
-                .Clickable(new HitResult.ButtonHit($"repo:{repo.Key}:pr:{pr.Pr.Number}"), _ => OpenUrl(pr))
+            ? Layout.Builder.Text($"PR #{pr.Pr.Number}{Followable.Away}", 12f, Link).BgHover(RowHoverBg)
+                .Follows(new HitResult.ButtonHit($"repo:{repo.Key}:pr:{pr.Pr.Number}"), _ => OpenUrl(pr))
             : Layout.Builder.Text("no PR", 12f, Dim);
         var cells = new List<Layout.Node>
         {

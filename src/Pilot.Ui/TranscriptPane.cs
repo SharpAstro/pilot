@@ -230,7 +230,7 @@ internal sealed class TranscriptPane
         var head = new List<Layout.Node>
         {
             Layout.Builder.Text("Back to the sessions", 13f, Bright, TextAlign.Center).Pad(12f, 5f).WAuto().Bg(Button).BgHover(ButtonHover)
-                .Clickable(new HitResult.ButtonHit("transcript:back"), _ => Close()),
+                .Follows(new HitResult.ButtonHit("transcript:back"), _ => Close()),
             Layout.Builder.Text(Title ?? "", 16f, Bright).WAuto(),
             Layout.Builder.Text(live ? "● live" : "session ended", 12f, live ? Ok : Faint).WAuto(),
             Layout.Builder.Text(problem is null ? shown : $"{shown} · {problem}", 12f, problem is null ? Dim : Failed).WStar(),
@@ -239,7 +239,7 @@ internal sealed class TranscriptPane
         if (_at is not null || !_scroll.IsFollowingEnd)
         {
             head.Add(Layout.Builder.Text("Jump to end", 13f, Bright, TextAlign.Center).Pad(12f, 5f).WAuto().Bg(Button).BgHover(ButtonHover)
-                .Clickable(new HitResult.ButtonHit("transcript:end"), _ => JumpToEnd()));
+                .Follows(new HitResult.ButtonHit("transcript:end"), _ => JumpToEnd()));
         }
         // Each row the pane's width: a paragraph wraps at the width it is given, and an unstretched row gives it none.
         var rows = Rows(entries, live).Select(r => r.WStar()).ToList();
@@ -276,7 +276,7 @@ internal sealed class TranscriptPane
         chip = description is null ? chip : chip.WithTooltip(description);
         return open || _line is not { } line
             ? chip
-            : chip.BgHover(ButtonHover).Clickable(new HitResult.ButtonHit($"transcript:agent:{agent ?? "main"}"), _ => OpenAgent(line, agent));
+            : chip.BgHover(ButtonHover).Follows(new HitResult.ButtonHit($"transcript:agent:{agent ?? "main"}"), _ => OpenAgent(line, agent));
     }
 
     /// <summary>Opens the open session's subagent <paramref name="agent"/> (or, null, the session's own transcript).</summary>
@@ -361,7 +361,7 @@ internal sealed class TranscriptPane
                 {
                     body.Add(Layout.Builder.HStack(
                             Layout.Builder.Text("Copy the command", 12f, Bright, TextAlign.Center).Pad(10f, 3f).WAuto().Bg(Button).BgHover(ButtonHover)
-                                .Clickable(new HitResult.ButtonHit($"transcript:copy:{call.Index}"), _ => copy(command)),
+                                .Follows(new HitResult.ButtonHit($"transcript:copy:{call.Index}"), _ => copy(command)),
                             Layout.Builder.Spacer().WStar()));
                 }
             }
@@ -463,7 +463,7 @@ internal sealed class TranscriptPane
         _line is not { } line
             ? Layout.Builder.Text(label, 12f, Dim)
             : Layout.Builder.Text($"{label} ›", 12f, Tool).WAuto().BgHover(ButtonHover)
-                .Clickable(new HitResult.ButtonHit(action), _ => OpenAgent(line, subagent.Id));
+                .Follows(new HitResult.ButtonHit(action), _ => OpenAgent(line, subagent.Id));
 
     // A link in the transcript, opened only when it is a web page: the opener runs whatever it is handed, and a session's
     // words are no reason to run a file on this machine.
@@ -485,7 +485,7 @@ internal sealed class TranscriptPane
         var more = count - lines;
         var label = _expanded.Contains(entry.Index) ? "(click to collapse)" : $"… +{more} {(more == 1 ? "line" : "lines")} (click to expand)";
         return Layout.Builder.Text(label, 11f, Dim).WAuto().BgHover(ButtonHover)
-            .Clickable(new HitResult.ButtonHit($"transcript:fold:{entry.Index}"), _ => Toggle(entry.Index));
+            .Follows(new HitResult.ButtonHit($"transcript:fold:{entry.Index}"), _ => Toggle(entry.Index));
     }
 
     private void Toggle(int index)
