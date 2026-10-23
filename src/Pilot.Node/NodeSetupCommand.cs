@@ -67,8 +67,8 @@ public static class NodeSetupCommand
             left += check.Ok || check.Optional ? 0 : 1;
         }
         await output.WriteLineAsync(left == 0
-            ? "\nsetup: done. Ask another machine for control from its row on the Fleet page (Ctrl+4)."
-            : $"\nsetup: {left} left for you, above; the Settings page (Ctrl+5) has a button for those the node can fix.");
+            ? "\nsetup: done. Ask another machine for control from its row on the Fleet page (Ctrl+5)."
+            : $"\nsetup: {left} left for you, above; the Settings page (Ctrl+6) has a button for those the node can fix.");
         return 0;
 
         async Task Step(string key, string done)

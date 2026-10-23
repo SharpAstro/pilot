@@ -11,7 +11,7 @@ using Pilot.Contracts;
 // this machine's node or one on the LAN.
 var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN, host:port; else PILOT_NODE, else this machine's" };
 var socketOption = new Option<string?>("--node-socket") { Description = "This machine's node's socket; else PILOT_NODE_SOCKET, else this user's default" };
-var root = new RootCommand("pilot v2's dashboard in a terminal: 1 sessions, 2 flights, 3 jobs, 4 fleet, 5 settings, Ctrl+K the command bar, Ctrl+T the watchtower, q quits")
+var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 sessions, 3 flights, 4 jobs, 5 fleet, 6 settings, Ctrl+K the command bar, Ctrl+T the watchtower, q quits")
 {
     Options = { nodeOption, socketOption },
 };
