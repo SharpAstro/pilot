@@ -106,7 +106,10 @@ flights.Wizard.Create = async picks =>
     flights.Say(said);
     return said;
 };
+flights.Wizard.CreateIssue = (path, title, body) => RepoActions.CreateIssueAsync(client, path, title, body, Who, stop.Token);
 flights.Wizard.Changed = Redraw;
+repos.SyncRepos = ct => RepoActions.SyncAsync(client, Who, ct);
+repos.Changed = Redraw;
 flights.OnAction = action => _ = Task.Run(async () =>
 {
     flights.Say(clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, Who, stop.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node));
@@ -256,6 +259,12 @@ sessions.OnNewFlight = repo =>
 {
     page = PilotPage.Flights;
     flights.Wizard.Open(repo);
+};
+// The Repos page's New flight: the wizard on that repo's issues.
+repos.OnNewFlight = line =>
+{
+    page = PilotPage.Flights;
+    flights.Wizard.Open(line.Status.Path, atIssues: true);
 };
 var arranged = System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>>.Empty;
 var drawnVersion = -1L;

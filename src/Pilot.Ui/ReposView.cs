@@ -61,6 +61,63 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>Opens a URL (a PR) or a folder.</summary>
     public Action<string>? OnOpen { get; set; }
 
+    /// <summary>
+    /// Runs the node's <c>sync-repos</c>; null leaves the page without a Sync button (a snapshot file has no node to ask). Throws
+    /// <see cref="InvalidOperationException"/> with the node's words when it is refused.
+    /// </summary>
+    public Func<CancellationToken, Task<RepoSyncOutcome[]>>? SyncRepos { get; set; }
+
+    /// <summary>Opens the new-flight wizard on the repo's issues; the host switches to the Flights page.</summary>
+    public Action<RepoLine>? OnNewFlight { get; set; }
+
+    /// <summary>Called when a sync finishes, from whichever thread: the host redraws.</summary>
+    public Action? Changed { get; set; }
+
+    /// <summary>Whether a sync is running now.</summary>
+    public bool Syncing { get; private set; }
+
+    /// <summary>What the last sync did to each repo; empty before one has run.</summary>
+    public IReadOnlyList<RepoSyncOutcome> SyncOutcomes { get; private set; } = [];
+
+    /// <summary>Why the last sync could not run (the node refused it); null when it ran.</summary>
+    public string? SyncError { get; private set; }
+
+    /// <summary>
+    /// Syncs the repos through <see cref="SyncRepos"/>: one at a time, the button shows it running, and the outcome of each repo
+    /// stays under the header until the next sync or until it is put away.
+    /// </summary>
+    public async Task SyncAsync()
+    {
+        if (SyncRepos is not { } sync || Syncing)
+        {
+            return;
+        }
+        Syncing = true;
+        SyncError = null;
+        Changed?.Invoke();
+        try
+        {
+            SyncOutcomes = await sync(CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            SyncOutcomes = [];
+            SyncError = ex.Message;
+        }
+        finally
+        {
+            Syncing = false;
+        }
+        Changed?.Invoke();
+    }
+
+    /// <summary>Puts away the outcome list.</summary>
+    public void ClearSync()
+    {
+        SyncOutcomes = [];
+        SyncError = null;
+    }
+
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
     public AboutCard? About { get; set; }
 
@@ -138,6 +195,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                     Layout.Builder.Text("repos", 20f, Dim).WAuto(),
                     .. (Nodes?.Pills() ?? []),
                     Layout.Builder.Spacer().WStar(),
+                    .. (SyncRepos is null ? (IEnumerable<Layout.Node>)[] : [CardsView<TSurface>.Pill(Syncing ? "Syncing…" : "Sync", "repos:sync", () => _ = SyncAsync(), Syncing ? Lit : null)]),
                     CardsView<TSurface>.Pill("All repos", "repos:all", () => ShowAll = !ShowAll, ShowAll ? Lit : null),
                     Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
                     About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f)])
@@ -145,7 +203,33 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 .RowH(32f),
             Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC", 12f, Dim).RowH(20f),
         };
+        if (SyncError is { } error)
+        {
+            rows.Add(Layout.Builder.Text($"sync refused: {error}", 12f, Failing).RowH(20f));
+        }
+        else if (SyncOutcomes.Count > 0)
+        {
+            rows.Add(Layout.Builder.HStack(
+                    Layout.Builder.Text(SyncSummary(SyncOutcomes), 12f, Body).WStar(),
+                    Layout.Builder.Text("×", 14f, Dim).WAuto().BgHover(RowHoverBg).Clickable(new HitResult.ButtonHit("repos:sync-clear"), _ => ClearSync())
+                        .WithTooltip("Put the sync's outcome away"))
+                .RowH(20f));
+            rows.AddRange(SyncOutcomes.Select(o => Layout.Builder.Text($"{o.Name}  {o.Status}  {o.Detail}", 12f, o.Status switch
+            {
+                RepoSyncStatus.Updated => Working,
+                RepoSyncStatus.Failed => Failing,
+                RepoSyncStatus.Skipped => Waiting,
+                _ => Dim,
+            }).RowH(18f)));
+        }
         return Layout.Builder.VStack([.. rows]).Pad(Gutter, 6f).Bg(HeaderBg).WStar().HAuto();
+    }
+
+    /// <summary><c>sync: 2 updated, 1 skipped</c>: what the outcome list adds up to.</summary>
+    internal static string SyncSummary(IReadOnlyList<RepoSyncOutcome> outcomes)
+    {
+        var counts = outcomes.GroupBy(o => o.Status).OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => $"{g.Count()} {g.Key}");
+        return $"sync: {string.Join(", ", counts)}";
     }
 
     private Layout.Node Main(IReadOnlyList<RepoLine> lines)
@@ -221,7 +305,13 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             Layout.Builder.Spacer().Bg(line.Status.Dirty ? Waiting : tracked ? Link : Faint).WFixed(StripeWidth).HStar(),
             Layout.Builder.VStack(
                     toggle.RowH(22f),
-                    Layout.Builder.Text(line.Status.GitHub ?? line.Status.Path, 11f, Dim).RowH(18f))
+                    Layout.Builder.HStack(
+                            Layout.Builder.Text(line.Status.GitHub ?? line.Status.Path, 11f, Dim).WStar(),
+                            OnNewFlight is null ? Layout.Builder.Spacer().WFixed(0f)
+                                : Layout.Builder.Text("New flight", 11f, Link, TextAlign.Center).Pad(6f, 0f).WAuto().BgHover(RowHoverBg)
+                                    .Clickable(new HitResult.ButtonHit($"repo:{line.Key}:new-flight"), _ => OnNewFlight?.Invoke(line))
+                                    .WithTooltip("Start a flight on one of this repo's issues"))
+                        .WithGap(6f).RowH(18f))
                 .WStar(1f, NameMin),
             Layout.Builder.VStack(
                     Layout.Builder.Text(line.Main, 13f, line.Status.Dirty ? Waiting : Body).RowH(22f),
@@ -311,5 +401,30 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             .RowH(WorktreeRowHeight)
             .Bg(WorktreeBg)
             .BgHover(RowHoverBg);
+    }
+}
+
+/// <summary>What the Repos page and the wizard ask of the node besides reading: <c>sync-repos</c> and <c>create-issue</c>.</summary>
+internal static class RepoActions
+{
+    /// <returns>What the sync did to each tracked repo.</returns>
+    /// <exception cref="InvalidOperationException">The node refused it, with its words.</exception>
+    public static async Task<RepoSyncOutcome[]> SyncAsync(NodeClient client, string who, CancellationToken cancellationToken)
+    {
+        var result = (await client.SendAsync(new CommandRequest { Verb = Verbs.SyncRepos, Target = Verbs.NodeTarget, Who = who }, cancellationToken)).Response;
+        return result is { Ok: true } ? RepoSyncOutcome.Parse(result.Made) : throw new InvalidOperationException(result?.Error ?? "the node did not answer");
+    }
+
+    /// <returns>The issue made, as the wizard lists issues.</returns>
+    /// <exception cref="InvalidOperationException">The node refused it, with its words.</exception>
+    public static async Task<IssueInfo> CreateIssueAsync(NodeClient client, string repoPath, string title, string? body, string who, CancellationToken cancellationToken)
+    {
+        var result = (await client.SendAsync(new CommandRequest
+        {
+            Verb = Verbs.CreateIssue, Target = Verbs.RepoTarget(repoPath), Args = body is { Length: > 0 } ? [title, body] : [title], Who = who,
+        }, cancellationToken)).Response;
+        return result is { Ok: true, Made: { } made } && int.TryParse(made, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var number)
+            ? new IssueInfo { Number = number, Title = title }
+            : throw new InvalidOperationException(result?.Error ?? "the node did not answer");
     }
 }

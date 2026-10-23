@@ -60,6 +60,22 @@ internal sealed class NewFlightWizard
     private string? _reposError;
     private int _issueFor;
     private string? _startWith;
+    private bool _startAtIssues;
+
+    /// <summary>Whether the issue step shows the new-issue form in place of the issues.</summary>
+    public bool NewIssueOpen { get; private set; }
+
+    /// <summary>The new issue's title (the first field of the form).</summary>
+    public TextInputState IssueTitle { get; } = new();
+
+    /// <summary>The new issue's text, optional (the second field).</summary>
+    public TextInputState IssueBody { get; } = new();
+
+    /// <summary>What became of the last New issue, or why it could not run.</summary>
+    public string? IssueStatus { get; private set; }
+
+    /// <summary>Creates an issue in the repo at the path with a title and an optional body (gh, through the node); returns it. Null leaves the wizard without a New issue entry.</summary>
+    public Func<string, string, string?, Task<IssueInfo>>? CreateIssue { get; set; }
 
     public NewFlightWizard()
     {
@@ -82,7 +98,7 @@ internal sealed class NewFlightWizard
     public SearchInteraction? ActiveSearch => !IsOpen ? null : Current switch
     {
         Step.Repos => _repoSearch,
-        Step.Issues => _issueSearch,
+        Step.Issues when !NewIssueOpen => _issueSearch,
         _ => null,
     };
 
@@ -113,10 +129,14 @@ internal sealed class NewFlightWizard
     /// <summary>The flights it would make now, in order.</summary>
     public IReadOnlyList<NewFlightPick> Picks => [.. _chosen.Where(r => _picked.ContainsKey(r.Path)).Select(r => new NewFlightPick(r, _picked[r.Path]))];
 
-    /// <param name="repo">A repo to start with chosen, by its name (a session's): chosen once the repos are in.</param>
-    public void Open(string? repo = null)
+    /// <param name="repo">A repo to start with chosen, by its name or checkout path: chosen once the repos are in.</param>
+    /// <param name="atIssues">Goes on to that repo's issues by itself, as the Repos page's New flight does.</param>
+    public void Open(string? repo = null, bool atIssues = false)
     {
         _startWith = repo;
+        _startAtIssues = atIssues && repo is not null;
+        NewIssueOpen = false;
+        IssueStatus = null;
         IsOpen = true;
         Current = Step.Repos;
         _chosen.Clear();
@@ -134,6 +154,55 @@ internal sealed class NewFlightWizard
     }
 
     public void Close() => IsOpen = false;
+
+    /// <summary>Shows the new-issue form on the issue step, for the repo whose turn it is.</summary>
+    public void BeginNewIssue()
+    {
+        if (Current != Step.Issues || CreateIssue is null)
+        {
+            return;
+        }
+        NewIssueOpen = true;
+        IssueStatus = null;
+        IssueTitle.Text = IssueFilter.Text.Trim();
+        IssueTitle.CursorPos = IssueTitle.Text.Length;
+        IssueBody.Text = "";
+        IssueBody.CursorPos = 0;
+        Changed?.Invoke();
+    }
+
+    /// <summary>Creates the issue of the form through <see cref="CreateIssue"/>, then picks it for the repo as if it had been listed.</summary>
+    public async Task CreateIssueAsync()
+    {
+        var title = IssueTitle.Text.Trim();
+        if (!NewIssueOpen || CreateIssue is not { } create || _issueFor >= _chosen.Count)
+        {
+            return;
+        }
+        if (title.Length == 0)
+        {
+            IssueStatus = "failed: an issue needs a title";
+            Changed?.Invoke();
+            return;
+        }
+        var repo = _chosen[_issueFor];
+        var body = IssueBody.Text.Trim();
+        IssueStatus = "creating the issue…";
+        Changed?.Invoke();
+        try
+        {
+            var issue = await create(repo.Path, title, body.Length > 0 ? body : null);
+            _issues[repo.Path] = [issue, .. _issues.TryGetValue(repo.Path, out var known) ? known.Where(i => i.Number != issue.Number) : []];
+            NewIssueOpen = false;
+            IssueStatus = null;
+            Pick(issue);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            IssueStatus = $"failed: {ex.Message}";
+        }
+        Changed?.Invoke();
+    }
 
     /// <summary>Chooses <paramref name="repo"/>, or unchooses it: its place in the list is the order its flight lands in.</summary>
     public void Toggle(RepoInfo repo)
@@ -156,6 +225,7 @@ internal sealed class NewFlightWizard
             return;
         }
         Current = Step.Issues;
+        NewIssueOpen = false;
         _issueFor = 0;
         ShowIssuesFor(_chosen[0]);
     }
@@ -178,6 +248,12 @@ internal sealed class NewFlightWizard
     /// <summary>A step back: the issue before, the repos, or (from the repos) out of the wizard.</summary>
     public void Back()
     {
+        if (NewIssueOpen)
+        {
+            NewIssueOpen = false;
+            IssueStatus = null;
+            return;
+        }
         switch (Current)
         {
             case Step.Repos:
@@ -204,6 +280,10 @@ internal sealed class NewFlightWizard
         if (Current == Step.Repos)
         {
             ToIssues();
+        }
+        else if (Current == Step.Issues && NewIssueOpen)
+        {
+            _ = CreateIssueAsync();
         }
         else if (Current == Step.Review)
         {
@@ -252,6 +332,7 @@ internal sealed class NewFlightWizard
 
     private void ShowIssuesFor(RepoInfo repo)
     {
+        NewIssueOpen = false;
         Clear(IssueFilter, _issueSearch);
         if (_issues.ContainsKey(repo.Path) || LoadIssues is not { } load)
         {
@@ -272,12 +353,17 @@ internal sealed class NewFlightWizard
             failed(ex);
         }
         // Opened from a session: its repo comes chosen.
-        if (_startWith is { } name && _repos?.FirstOrDefault(r => string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase)) is { } repo
+        if (_startWith is { } name && _repos?.FirstOrDefault(r => string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase) || string.Equals(r.Path.TrimEnd('/', '\\'), name.TrimEnd('/', '\\'), StringComparison.OrdinalIgnoreCase)) is { } repo
             && !_chosen.Contains(repo))
         {
             _chosen.Add(repo);
         }
         _startWith = null;
+        if (_startAtIssues && Current == Step.Repos && _chosen.Count > 0)
+        {
+            ToIssues();
+        }
+        _startAtIssues = false;
         search.Refresh();
         Changed?.Invoke();
     }
@@ -365,6 +451,20 @@ internal sealed class NewFlightWizard
                 "The flight does this issue: its code comes from it, its planner reads it, and its PR closes it."),
             Layout.Builder.TextInput(IssueFilter, 14f, focusOnOpen: true).RowH(28f),
         };
+        if (NewIssueOpen)
+        {
+            rows.RemoveAt(1);
+            rows.Add(Layout.Builder.Text("Title", 12f, Dim).RowH(20f));
+            rows.Add(Layout.Builder.TextInput(IssueTitle, 14f, focusOnOpen: true).RowH(28f));
+            rows.Add(Layout.Builder.Text("Text (optional)", 12f, Dim).RowH(20f));
+            rows.Add(Layout.Builder.TextInput(IssueBody, 14f).RowH(28f));
+            if (IssueStatus is { } said)
+            {
+                rows.Add(Layout.Builder.Text(said, 13f, said.StartsWith("failed", StringComparison.Ordinal) ? Warn : Dim).RowH(RowHeight));
+            }
+            rows.Add(Layout.Builder.Spacer().HStar());
+            return Layout.Builder.VStack([.. rows]).HStar();
+        }
         if (!_issues.TryGetValue(repo.Path, out var issues))
         {
             rows.Add(Layout.Builder.Text(_issueErrors.TryGetValue(repo.Path, out var error) ? $"no issues: {error}" : "loading the open issues…", 13f,
@@ -373,7 +473,7 @@ internal sealed class NewFlightWizard
         }
         if (issues.Length == 0)
         {
-            rows.Add(Layout.Builder.Text($"{repo.Name} has no open issues: open one on GitHub, then pick it here", 13f, Dim).RowH(RowHeight));
+            rows.Add(Layout.Builder.Text($"{repo.Name} has no open issues: use New issue to open one, then pick it here", 13f, Dim).RowH(RowHeight));
         }
         _picked.TryGetValue(repo.Path, out var picked);
         var results = _issueSearch.Results;
@@ -432,6 +532,12 @@ internal sealed class NewFlightWizard
         if (Current is Step.Issues or Step.Review)
         {
             buttons.Add(Pill("Back", "wizard:back", Back));
+        }
+        if (Current == Step.Issues && CreateIssue is not null)
+        {
+            buttons.Add(NewIssueOpen
+                ? Pill("Create issue and pick it", "wizard:create-issue", () => _ = CreateIssueAsync(), go: true).WithShortcut(NextShortcut)
+                : Pill("New issue", "wizard:new-issue", BeginNewIssue));
         }
         if (Current == Step.Repos && _chosen.Count > 0)
         {
