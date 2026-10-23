@@ -464,21 +464,23 @@ LAN, the firewall rule for this binary (Windows), the watchtower's folder truste
 a folder above it counting), gh signed in, and usage figures. Each says how it stands; those the node can fix have a
 button (`setup node <check>`): the logon entry, the hooks, the LAN, the firewall rule (one elevation prompt, which
 replaces an earlier install's rule), the trust prompt (opened in a window titled for what it is). `pilot settings`
-prints both.
+prints both. The route and both verbs are this machine's only: a grant from the LAN never reaches them, and nor does
+the watchtower.
 
-One check is optional: **Runaway-agent guard hooks** (`setup node guard-hooks`) says whether three of runaway-agent's
-generic hooks are in `~/.claude/settings.json`: `big_read_guard.sh` (refuses a whole-file `Read` and a bare `cat`),
+One more optional check is **Runaway-agent guard hooks** (`setup node guard-hooks`): it says whether three of
+runaway-agent's generic hooks are in `~/.claude/settings.json`: `big_read_guard.sh` (refuses a whole-file `Read` and a bare `cat`),
 `fat_result_notice.sh` (says a tool result was unusually large) and `pgrep_self_match_guard.sh` (refuses an inline
 `pgrep -f`/`pkill -f`). It counts a guard wired by hand in any spelling (`bash path`, quoted, `$HOME/...`). Its button
 takes the scripts from a runaway-agent clone, the first `source/repos/*/runaway-agent` under the user's profile that
 has all three, copies them into `hooks/` beside the settings file as runaway-agent's own `install.sh` does, and adds a
 handler each under the event and matcher of its `settings-fragment.json` (PreToolUse for the first, PreToolUse on
 `Bash` for the third, PostToolUse for the second), leaving the rest of the file alone. A guard already wired is not
-added again, a script already there with the same content is not copied again, and a second run changes nothing. With
-no clone the line says to get it from `github.com/DrawboardLtd/runaway-agent` and clone it beside the others, and there
-is no button. Its token and call budgets and hand-back gates are not offered: those are for Sam's campaigner setup, and
-pilot budgets legs at the session level. The route and both verbs are this machine's only: a grant from the LAN never reaches them, and nor does
-the watchtower.
+added again, a script already there with the same content is not copied again, and a second run changes nothing. The
+copies would otherwise go stale, so while a clone is found, a script in `hooks/` that differs from the clone's fails the
+check too, its line naming the scripts older than the clone, and the button copies them afresh. With no clone the line
+says to get it from `github.com/DrawboardLtd/runaway-agent` and clone it beside the others, and there is no button. Its
+token and call budgets and hand-back gates are not offered: those are for Sam's campaigner setup, and pilot budgets
+legs at the session level.
 
 ## Cards
 

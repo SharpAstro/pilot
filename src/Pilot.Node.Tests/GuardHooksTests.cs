@@ -150,6 +150,39 @@ public sealed class GuardHooksTests : IDisposable
     }
 
     [Fact]
+    public async Task ACloneThatHasMovedOnFailsTheCheckUntilTheFixCopiesItAgain()
+    {
+        var clone = Clone();
+        var (setup, settings) = Setup(clone, Other);
+        (await setup.FixAsync(NodeSetup.GuardHooksKey, Ct)).ShouldBeNull();
+        GuardCheck(setup).Ok.ShouldBeTrue();
+
+        File.WriteAllText(Path.Combine(clone, "fat_result_notice.sh"), "#!/usr/bin/env bash\n# a newer one\n");
+
+        var stale = GuardCheck(setup);
+        (stale.Ok, stale.Optional, stale.Fix).ShouldBe((false, true, "Install guards"));
+        stale.Line.ShouldContain("fat_result_notice.sh");
+        stale.Line.ShouldNotContain("big_read_guard.sh");
+
+        (await setup.FixAsync(NodeSetup.GuardHooksKey, Ct)).ShouldBeNull();
+
+        var hooks = Path.Combine(_root, ".claude", "hooks");
+        File.ReadAllText(Path.Combine(hooks, "fat_result_notice.sh")).ShouldContain("a newer one");
+        var fresh = GuardCheck(setup);
+        (fresh.Ok, fresh.Fix).ShouldBe((true, null));
+
+        var installed = File.ReadAllText(settings);
+        var stamps = GuardHooks.Guards.Select(g => File.GetLastWriteTimeUtc(Path.Combine(hooks, g.Script))).ToList();
+        var settingsStamp = File.GetLastWriteTimeUtc(settings);
+
+        (await setup.FixAsync(NodeSetup.GuardHooksKey, Ct)).ShouldBeNull();
+
+        File.ReadAllText(settings).ShouldBe(installed);
+        File.GetLastWriteTimeUtc(settings).ShouldBe(settingsStamp);
+        GuardHooks.Guards.Select(g => File.GetLastWriteTimeUtc(Path.Combine(hooks, g.Script))).ShouldBe(stamps);
+    }
+
+    [Fact]
     public async Task WithNoCloneTheCheckSaysWhereToGetItAndTheFixRefuses()
     {
         var (setup, settings) = Setup(null, Other);
