@@ -355,9 +355,19 @@ public sealed class LegCommanderTests : IDisposable
         (await Leg(Verbs.Merge, "flight/TIA1", "abc1234")).Error.ShouldNotBeNull().ShouldContain("not the abc1234 you reviewed");
         (await Leg(Verbs.Merge, "flight/TIA1", "def56")).Error.ShouldNotBeNull().ShouldContain("7 characters");
 
-        (await Leg(Verbs.Merge, "flight/TIA1", "def5678", "rebase")).Ok.ShouldBeTrue();
+        // A commit in the plane past the PR's head would be left behind by the merge: refused until it is pushed.
+        var pushed = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
+        File.WriteAllText(Path.Combine(flight.Worktree, "late.md"), "a read written after the push\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "late read");
+        _github.Pr = new PullRequest(63, "OPEN", pushed, "https://github.com/x/tianwen/pull/63");
+        (await Leg(Verbs.Merge, "flight/TIA1", pushed[..8])).Error.ShouldBe("TIA1's plane holds 1 commit past #63's head: open the PR again (flight pr) to push it, and review what is new before it lands");
+        var tip = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
+        _github.Pr = new PullRequest(63, "OPEN", tip, "https://github.com/x/tianwen/pull/63");
 
-        _github.Merged.ShouldBe([(63, "def5678aaaabbbbccccdddd", "rebase")]);
+        (await Leg(Verbs.Merge, "flight/TIA1", tip[..8], "rebase")).Ok.ShouldBeTrue();
+
+        _github.Merged.ShouldBe([(63, tip, "rebase")]);
         _state.Flights().Single().State.ShouldBe(FlightState.Landed);
         Directory.Exists(flight.Worktree).ShouldBeFalse();
     }
