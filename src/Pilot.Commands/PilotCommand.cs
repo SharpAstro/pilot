@@ -572,7 +572,7 @@ public static class PilotCommand
             }
             foreach (var check in shown.Checks)
             {
-                await output.WriteLineAsync($"{(check.Ok ? "ok  " : check.Optional ? "--  " : "TODO")} {check.Title}: {check.Line}{(check.Fix is null ? "" : $"  (pilot setup {check.Key})")}");
+                await output.WriteLineAsync($"{(check.Ok ? "ok  " : check.Optional ? "--  " : "TODO")} {check.Title}: {check.Line}{(check.Fix is null ? "" : $"  (pilot settings setup {check.Key})")}");
             }
             await output.WriteLineAsync();
             foreach (var setting in shown.Settings)
