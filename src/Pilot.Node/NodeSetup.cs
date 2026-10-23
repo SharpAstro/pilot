@@ -181,7 +181,8 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     /// <summary>
     /// Whether runaway-agent's three guards (<see cref="GuardHooks"/>) are in Claude Code's settings. Optional: the fleet
     /// runs without them, and they are another project's. When one is missing the line says where the scripts come from:
-    /// a runaway-agent clone when there is one (the fix copies them, as its install.sh does), else where to get it.
+    /// a runaway-agent clone when there is one (the fix copies them, as its install.sh does), else where to get it. With a
+    /// clone found, a script beside the settings file that differs from the clone's also fails it, so the fix refreshes it.
     /// </summary>
     private SetupCheck GuardHooksCheck()
     {
@@ -190,13 +191,17 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         {
             var text = File.Exists(SettingsFile) ? File.ReadAllText(SettingsFile) : "";
             var missing = GuardHooks.Missing(text);
+            var clone = FindRunawayAgent();
             if (missing.Count == 0)
             {
-                return new SetupCheck { Key = GuardHooksKey, Title = Title, Ok = true, Line = $"{string.Join(", ", GuardHooks.Guards.Select(g => g.Script))} in {SettingsFile}", Optional = true };
+                // Wired, but the scripts are copies: a clone that has moved on is not picked up until the fix copies again.
+                var older = clone is null ? [] : StaleGuardScripts(clone, GuardHooks.HooksFolder(SettingsFile));
+                return older.Count == 0
+                    ? new SetupCheck { Key = GuardHooksKey, Title = Title, Ok = true, Line = $"{string.Join(", ", GuardHooks.Guards.Select(g => g.Script))} in {SettingsFile}", Optional = true }
+                    : new SetupCheck { Key = GuardHooksKey, Title = Title, Ok = false, Line = $"{string.Join(", ", older)} in {GuardHooks.HooksFolder(SettingsFile)} older than the copy in {clone}", Fix = "Install guards", Optional = true };
             }
 
             var names = string.Join(", ", missing.Select(g => g.Script));
-            var clone = FindRunawayAgent();
             return clone is null
                 ? new SetupCheck { Key = GuardHooksKey, Title = Title, Ok = false, Line = $"{names} not in {SettingsFile}, and no runaway-agent clone found under the repo folders: get it from {GuardHooks.Home} and clone it beside the others", Optional = true }
                 : new SetupCheck { Key = GuardHooksKey, Title = Title, Ok = false, Line = $"{names} not in {SettingsFile}: they refuse a whole-file read and an inline pgrep -f, and flag a fat tool result; taken from {clone}", Fix = "Install guards", Optional = true };
@@ -226,11 +231,10 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             Directory.CreateDirectory(folder);
             foreach (var guard in GuardHooks.Guards)
             {
-                var from = Path.Combine(clone, guard.Script);
                 var to = Path.Combine(folder, guard.Script);
-                if (!File.Exists(to) || !File.ReadAllBytes(from).AsSpan().SequenceEqual(File.ReadAllBytes(to)))
+                if (GuardScriptDiffers(clone, folder, guard.Script))
                 {
-                    File.Copy(from, to, overwrite: true);
+                    File.Copy(Path.Combine(clone, guard.Script), to, overwrite: true);
                 }
                 if (!OperatingSystem.IsWindows())
                 {
@@ -253,6 +257,16 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         {
             return $"{SettingsFile}: {ex.Message}";
         }
+    }
+
+    /// <summary>The guard scripts that are not in <paramref name="folder"/> or differ from the clone's copy, by name.</summary>
+    private static List<string> StaleGuardScripts(string clone, string folder) =>
+        GuardHooks.Guards.Where(g => GuardScriptDiffers(clone, folder, g.Script)).Select(g => g.Script).ToList();
+
+    private static bool GuardScriptDiffers(string clone, string folder, string script)
+    {
+        var to = Path.Combine(folder, script);
+        return !File.Exists(to) || !File.ReadAllBytes(Path.Combine(clone, script)).AsSpan().SequenceEqual(File.ReadAllBytes(to));
     }
 
     /// <summary>The first <c>runaway-agent</c> clone under the user's <c>source/repos/*</c> that has all three guard scripts, or null.</summary>
