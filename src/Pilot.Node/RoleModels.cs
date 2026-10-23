@@ -58,20 +58,22 @@ public sealed partial class RoleModels
     /// <summary>The effort a session of <paramref name="role"/> starts at, or null for Claude Code's own default.</summary>
     public string? Effort(string role) => Pick(EffortKey(role), null);
 
-    private string? Pick(string key, string? fallback)
+    private string? Pick(string key, string? fallback) => Raw(key) switch
     {
-        string? value;
+        null => fallback,
+        var value => Named(value),
+    };
+
+    // The setting as saved, none included: a deep review tells "not set, follow the reviewer" from "set to none, pass no flag".
+    private string? Raw(string key)
+    {
         lock (_lock)
         {
-            value = _settings.Roles?.GetValueOrDefault(key);
+            return _settings.Roles?.GetValueOrDefault(key);
         }
-        return value switch
-        {
-            null => fallback,
-            NoneValue => null,
-            _ => value,
-        };
     }
+
+    private static string? Named(string value) => value == NoneValue ? null : value;
 
     /// <summary>How a flight's PR is merged when the merge names no method (<see cref="NodeSettings.MergeMethodKey"/>):
     /// rebase unless the settings say otherwise; a test's commander keeps squash, as it always did.</summary>
@@ -112,19 +114,20 @@ public sealed partial class RoleModels
     }
 
     /// <summary>The model a reviewer of <paramref name="depth"/> starts on: the reviewer's own, and for a deep review the
-    /// stronger <c>reviewer-deep-model</c> when the settings name one.</summary>
+    /// stronger <c>reviewer-deep-model</c> when the settings name one (<c>none</c> there passes no flag).</summary>
     public string? ReviewerModel(ReviewDepth depth) =>
-        (depth == ReviewDepth.Deep ? Pick(ModelKey(ReviewerDeep), null) : null) ?? Model(Reviewer);
+        depth == ReviewDepth.Deep && Raw(ModelKey(ReviewerDeep)) is { } deep ? Named(deep) : Model(Reviewer);
 
     /// <summary>The effort a reviewer of <paramref name="depth"/> starts at: the reviewer's own for standard, a step below it for
-    /// light (low when none is set), and for deep <c>reviewer-deep-effort</c>, else a step above it (high when none is set).</summary>
+    /// light (low when none is set), and for deep <c>reviewer-deep-effort</c>, else a step above it (high when none is set).
+    /// A deep setting of <c>none</c> passes no flag, as it does for any role.</summary>
     public string? ReviewerEffort(ReviewDepth depth)
     {
         var own = Effort(Reviewer);
         return depth switch
         {
             ReviewDepth.Light => Step(own, -1, "low"),
-            ReviewDepth.Deep => Pick(EffortKey(ReviewerDeep), null) ?? Step(own, 1, "high"),
+            ReviewDepth.Deep => Raw(EffortKey(ReviewerDeep)) is { } deep ? Named(deep) : Step(own, 1, "high"),
             _ => own,
         };
     }

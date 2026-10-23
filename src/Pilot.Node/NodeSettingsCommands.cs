@@ -152,6 +152,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.StartLimitKey => roles.StartLimit.ToString(CultureInfo.InvariantCulture),
         NodeSettings.PriorityStartLimitKey => (NodeSettings.Read(options.SettingsFile).PriorityStartLimit ?? 98).ToString(CultureInfo.InvariantCulture),
         NodeSettings.PriorityReposKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).PriorityRepos ?? []),
+        // A deep review runs on the reviewer's model and a step above its effort until these are set, so say that, not the bare role's.
+        _ when RoleOf(key) is (RoleModels.ReviewerDeep, var effort) => (effort ? roles.ReviewerEffort(ReviewDepth.Deep) : roles.ReviewerModel(ReviewDepth.Deep)) ?? RoleModels.NoneValue,
         _ when RoleOf(key) is ({ } role, var effort) => (effort ? roles.Effort(role) : roles.Model(role)) ?? RoleModels.NoneValue,
         _ => "",
     };
@@ -187,6 +189,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.PriorityStartLimitKey => "98",
         NodeSettings.WeekLimitKey => "90",
         NodeSettings.PriorityReposKey => "",
+        _ when RoleOf(key) is (RoleModels.ReviewerDeep, var effort) => effort ? "high" : RoleModels.DefaultModel(RoleModels.Reviewer),
         _ when RoleOf(key) is ({ } role, var effort) => effort ? RoleModels.NoneValue : RoleModels.DefaultModel(role),
         _ => "",
     };
@@ -207,6 +210,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.WeekLimitKey => ("Week limit", "How far into the 7-day window the node rings, once per window, as it starts sessions; it rings and does not wait, in percent", ["80", "90", "95", "100"]),
         NodeSettings.MergeMethodKey => ("Merge method", "How a flight's PR is merged: rebase keeps every commit's subject (docs may cite them), squash makes one commit", [.. NodeSettings.MergeMethods]),
         _ when RoleOf(key) is ({ } role, false) => ($"{Title(role)} model", RoleDetail(role), ["sonnet", "opus", "haiku", RoleModels.NoneValue]),
+        _ when RoleOf(key) is (RoleModels.ReviewerDeep, true) => ("Reviewer-deep effort", "The effort a deep review starts at; unset, a step above the reviewer's (high when that is unset); none leaves it to Claude Code", [.. RoleModels.Efforts, RoleModels.NoneValue]),
         _ when RoleOf(key) is ({ } role, true) => ($"{Title(role)} effort", $"The effort each {role} starts at; none leaves it to Claude Code", [.. RoleModels.Efforts, RoleModels.NoneValue]),
         _ => (key, "", []),
     };
@@ -218,6 +222,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         RoleModels.Watchtower => "The watchtower reads cards and runs pilot for hours: the longest-lived session, so the costliest per turn",
         RoleModels.Worker => "A leg's worker, unless its plan names a model (leg plan --model), which wins",
         RoleModels.Planner => "Plans a flight's legs from its issue: short-lived, and decides everything after it",
+        RoleModels.ReviewerDeep => "A deep review's model; unset, it runs on the reviewer's; none leaves it to Claude Code",
         _ => "Reviews a flight's PR before its merge card",
     };
 }
