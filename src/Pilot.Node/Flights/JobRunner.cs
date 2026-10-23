@@ -161,7 +161,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             return state.Complete(command, $"a job may run {MaxTimeout.TotalHours:0} hours at most");
         }
-        var line = string.Join(' ', args.Skip(2)).Trim();
+        var line = ShellLine.Join([.. args.Skip(2)], OperatingSystem.IsWindows());
         if (line.Length == 0)
         {
             return state.Complete(command, "run needs the command to run");
@@ -433,7 +433,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         };
         var lines = last is { Length: > 0 } ? "\nIts last lines:\n" + string.Join('\n', last.TakeLast(12)) : "";
         var text = $"Your job {job.Id} (`{job.Command}`, in {job.Cwd}) {how}, after {Took(took)}.{lines}\nThe whole output is in {job.LogPath}. Carry on from here.";
-        var result = await Say(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(job.Owner), Args = [text], Who = LegWatch.Who }, cancellationToken);
+        var result = await Say(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(WakeTarget(job.Owner, job.OwnerName)), Args = [text], Who = LegWatch.Who }, cancellationToken);
         if (result.Ok)
         {
             state.PutJob(job with { Told = true });
@@ -470,4 +470,20 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         await base.StopAsync(cancellationToken);
     }
+    /// <summary>
+    /// The row to wake with a job's end: its owner's, or, once that has ended, the newest live session of the owner's name.
+    /// A worker Claude Code continued as a copy is a row of its own, and the first row's session has stopped, so waking it
+    /// would leave the copy, which holds the later conversation, waiting on a job it never hears of (TIA1774's j3).
+    /// </summary>
+    internal string WakeTarget(string owner, string? ownerName)
+    {
+        var sessions = state.Sessions();
+        if (sessions.FirstOrDefault(s => s.Id == owner) is { State: not SessionState.Ended } || ownerName is not { Length: > 0 } name)
+        {
+            return owner;
+        }
+        return sessions.Where(s => s.State != SessionState.Ended && string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(s => s.StartedAt).FirstOrDefault()?.Id ?? owner;
+    }
+
 }
