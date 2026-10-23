@@ -198,6 +198,30 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
+    public async Task ADeepReviewsSettingsShowWhatItRunsOnWhenNothingDeepIsSet()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["reviewer-model", "sonnet"], Who = "tests" }, Ct);
+
+        var page = (await node.Client.GetSettingsAsync(Ct)).Response.ShouldNotBeNull();
+
+        page.Settings.Single(s => s.Key == "reviewer-deep-model").Value.ShouldBe("sonnet");
+        page.Settings.Single(s => s.Key == "reviewer-deep-effort").Value.ShouldBe("high");
+    }
+
+    [Fact]
+    public void ADeepReviewsNoneSettingPassesNoFlagWhereUnsetFollowsTheReviewer()
+    {
+        var unset = new RoleModels(new NodeSettings { Roles = new Dictionary<string, string> { ["reviewer-model"] = "sonnet", ["reviewer-effort"] = "medium" } });
+        unset.ReviewerModel(ReviewDepth.Deep).ShouldBe("sonnet");
+        unset.ReviewerEffort(ReviewDepth.Deep).ShouldBe("high");
+
+        var none = new RoleModels(new NodeSettings { Roles = new Dictionary<string, string> { ["reviewer-model"] = "sonnet", ["reviewer-deep-model"] = "none", ["reviewer-deep-effort"] = "none" } });
+        none.ReviewerModel(ReviewDepth.Deep).ShouldBeNull();
+        none.ReviewerEffort(ReviewDepth.Deep).ShouldBeNull();
+    }
+
+    [Fact]
     public async Task AFlightsPrIsMergedByRebaseUnlessTheSettingsSayOtherwise()
     {
         new RoleModels(null).MergeMethod.ShouldBe("rebase");
