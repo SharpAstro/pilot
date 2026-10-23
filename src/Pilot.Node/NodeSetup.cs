@@ -36,8 +36,16 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     /// <summary>The response file that turns MSBuild node reuse off, as runaway-agent's <c>machine/</c> folder and install.sh name it.</summary>
     public const string BuildRsp = "Directory.Build.rsp";
 
-    /// <summary>The firewall rule's name, which the check looks for and the fix replaces.</summary>
+    /// <summary>The firewall rule's name, which the check looks for and the fix replaces: one rule of it per binary.</summary>
     public const string FirewallRule = "pilot-node";
+
+    /// <summary>
+    /// The binaries beside the node that listen for the LAN's beacons, each let in on the discovery port alone: the
+    /// Fleet page and <c>pilot nodes</c> hear other nodes through them. Without a rule of its own, a binary is let in on
+    /// whatever its first firewall prompt was answered for, often Public only, so on a Private network it heard this
+    /// machine's own beacons and no other node's (SE1 and DE1, 2026-10-24).
+    /// </summary>
+    public static readonly string[] LanListeners = ["pilot", "pilot-gui", "pilot-tui"];
 
     /// <summary>The Claude Code settings file the hook checks read and the fixes write; a test points it elsewhere.</summary>
     public string SettingsFile { get; init; } = HookCommands.DefaultSettings();
@@ -154,8 +162,13 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                 {
                     return "the node makes a firewall rule on Windows only";
                 }
-                // One elevated cmd for both, so one prompt: the old rule out (an earlier install's path) and this one in.
-                var netsh = $"netsh advfirewall firewall delete rule name={FirewallRule} >nul & netsh advfirewall firewall add rule name={FirewallRule} dir=in action=allow profile=private enable=yes program=\"{nodePath}\"";
+                // One elevated cmd for all, so one prompt: the old rules out (an earlier install's paths) and these in. The
+                // node takes anything in; a listener only the discovery port's beacons.
+                var add = $"netsh advfirewall firewall add rule name={FirewallRule} dir=in action=allow profile=private enable=yes";
+                var netsh = string.Join(" & ", FirewallPrograms().Select((program, i) => i == 0
+                        ? $"{add} program=\"{program}\""
+                        : $"{add} program=\"{program}\" protocol=udp localport={LAN.Lib.LanProtocol.DiscoveryPort}")
+                    .Prepend($"netsh advfirewall firewall delete rule name={FirewallRule} >nul"));
                 // A command line by hand: cmd reads its own quoting, which ArgumentList's escaped quotes would break.
                 if (!RunElevated(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe"), $"--headless cmd.exe /d /c \"{netsh}\""))
                 {
@@ -378,7 +391,22 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         }
     }
 
-    /// <summary>Whether a rule lets this node's binary in, and how it stands, in a line.</summary>
+    /// <summary>The node's binary, then each <see cref="LanListeners"/> binary that is installed beside it.</summary>
+    private IEnumerable<string> FirewallPrograms()
+    {
+        yield return nodePath;
+        var folder = Path.GetDirectoryName(Path.GetFullPath(nodePath)) ?? "";
+        foreach (var name in LanListeners)
+        {
+            var program = Path.Combine(folder, name + Path.GetExtension(nodePath));
+            if (File.Exists(program))
+            {
+                yield return program;
+            }
+        }
+    }
+
+    /// <summary>Whether a rule lets this node's binary in, and each LAN listener beside it, and how it stands, in a line.</summary>
     public (bool Allows, string Line) FirewallAllows()
     {
         var (exit, output) = Run("netsh", ["advfirewall", "firewall", "show", "rule", $"name={FirewallRule}", "verbose"], TimeSpan.FromSeconds(15));
@@ -386,20 +414,27 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         {
             return (false, $"no rule named {FirewallRule}: other machines' connections are dropped before they reach the node");
         }
-        // A rule is a block of "Name: value" lines; one for this binary, enabled and allowing, is the one that counts.
-        var rules = output.Replace("\r", "").Split("\n\n", StringSplitOptions.RemoveEmptyEntries);
-        foreach (var rule in rules)
+        // A rule is a block of "Name: value" lines; one for a binary, enabled and allowing, is the one that counts.
+        var allowed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rule in output.Replace("\r", "").Split("\n\n", StringSplitOptions.RemoveEmptyEntries))
         {
             var fields = rule.Split('\n').Select(l => l.Split(':', 2)).Where(p => p.Length == 2)
                 .GroupBy(p => p[0].Trim(), StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First()[1].Trim(), StringComparer.OrdinalIgnoreCase);
-            if (fields.TryGetValue("Program", out var program) && string.Equals(Path.GetFullPath(program), Path.GetFullPath(nodePath), StringComparison.OrdinalIgnoreCase)
+            if (fields.TryGetValue("Program", out var program)
                 && fields.TryGetValue("Enabled", out var enabled) && enabled.Equals("Yes", StringComparison.OrdinalIgnoreCase)
                 && fields.TryGetValue("Action", out var action) && action.Equals("Allow", StringComparison.OrdinalIgnoreCase))
             {
-                return (true, $"rule {FirewallRule} allows {Path.GetFileName(nodePath)} in, on {(fields.TryGetValue("Profiles", out var profiles) ? profiles : "its")} networks");
+                allowed.TryAdd(Path.GetFullPath(program), fields.TryGetValue("Profiles", out var profiles) ? profiles : "its");
             }
         }
-        return (false, $"rule {FirewallRule} is there but not for {nodePath}, or not enabled: an earlier install's");
+        if (!allowed.TryGetValue(Path.GetFullPath(nodePath), out var on))
+        {
+            return (false, $"rule {FirewallRule} is there but not for {nodePath}, or not enabled: an earlier install's");
+        }
+        var missing = FirewallPrograms().Skip(1).Where(p => !allowed.ContainsKey(Path.GetFullPath(p))).Select(Path.GetFileName).ToList();
+        return missing.Count > 0
+            ? (false, $"rule {FirewallRule} lets {Path.GetFileName(nodePath)} in, but not {string.Join(", ", missing)}: the Fleet page and pilot nodes hear no other node")
+            : (true, $"rule {FirewallRule} allows {Path.GetFileName(nodePath)} in, on {on} networks");
     }
 
     /// <summary>The folder whose trust covers <paramref name="folder"/> (itself or one above it), or null when none does.</summary>

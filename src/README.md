@@ -705,7 +705,8 @@ the watchtower carry on and clients resume their stream. A setting the command l
 not count until the command line stops giving it.
 
 Above the settings, the page has the setup checklist: started at logon, Claude Code's hooks for this binary, on the
-LAN, the firewall rule for this binary (Windows), the watchtower's folder trusted (read from Claude Code's own record,
+LAN, the firewall rule for this binary and for `pilot`, `pilot-gui` and `pilot-tui` beside it, which listen for other
+nodes' beacons and are let in on the discovery port alone (Windows), the watchtower's folder trusted (read from Claude Code's own record,
 a folder above it counting), gh signed in, and usage figures. Each says how it stands; those the node can fix have a
 button (`setup node <check>`): the logon entry, the hooks, the LAN, the firewall rule (one elevation prompt, which
 replaces an earlier install's rule), the trust prompt (opened in a window titled for what it is). `pilot settings`

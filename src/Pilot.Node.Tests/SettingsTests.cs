@@ -148,6 +148,33 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
+    public async Task TheFirewallLetsInTheLanListenersBesideTheNodeOnTheDiscoveryPortAlone()
+    {
+        var node = Path.Combine(_root, "pilot-node.exe");
+        var gui = Path.Combine(_root, "pilot-gui.exe");
+        File.WriteAllText(node, "");
+        File.WriteAllText(gui, "");
+        string Rule(string program) => $"Rule Name:                            pilot-node\r\nEnabled:                              Yes\r\nAction:                               Allow\r\nProfiles:                             Private\r\nProgram:                              {program}\r\n\r\n";
+        var netsh = Rule(node);
+        string? elevated = null;
+        var setup = new NodeSetup(new NodeOptions("/tmp/n.sock", _root), node, _root)
+        {
+            Run = (_, _, _) => (0, netsh),
+            RunElevated = (_, args) => { elevated = args; netsh += Rule(gui); return true; },
+        };
+
+        // pilot-gui.exe is beside the node with no rule of its own; pilot.exe and pilot-tui.exe are not installed here.
+        setup.FirewallAllows().ShouldBe((false, "rule pilot-node lets pilot-node.exe in, but not pilot-gui.exe: the Fleet page and pilot nodes hear no other node"));
+
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "the node makes a firewall rule on Windows only");
+        (await setup.FixAsync(NodeSetup.FirewallKey, Ct)).ShouldBeNull();
+        elevated.ShouldNotBeNull().ShouldContain($"program=\"{node}\" &");
+        elevated.ShouldContain($"program=\"{gui}\" protocol=udp localport={LAN.Lib.LanProtocol.DiscoveryPort}");
+        elevated.ShouldNotContain("pilot-tui.exe");
+        setup.FirewallAllows().Allows.ShouldBeTrue();
+    }
+
+    [Fact]
     public void TrustInAFolderAboveCoversTheWatchtowerFolder()
     {
         var profile = Directory.CreateDirectory(Path.Combine(_root, ".claude")).FullName;
