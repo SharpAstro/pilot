@@ -49,6 +49,7 @@ public static class NodeApp
         builder.Services.AddSingleton(services => new TranscriptBook(services.GetRequiredService<SessionTrackerOptions>().Profile));
         builder.Services.AddSingleton<IGit, GitCli>();
         builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>()));
+        builder.Services.AddSingleton<StopGate>();
         builder.Services.AddSingleton<FlightCommander>();
         builder.Services.AddSingleton<RepoCatalog>();
         builder.Services.AddSingleton<IWorkerLauncher, ClaudeWorkerLauncher>();
@@ -216,8 +217,9 @@ public static class NodeApp
     private static void MapRoutes(WebApplication app)
     {
         // A hook's stdin, forwarded by `pilot-node hook`: the session it names takes the hook's state, and the tracker
-        // looks again now. Always 204, so a hook never learns anything worth failing over.
-        app.MapPost(NodeWire.HooksRoute, async (HttpContext context, HookBook hooks, SessionTracker tracker, TimeProvider time, ILogger<HookBook> logger) =>
+        // looks again now. 204, so a hook never learns anything worth failing over; but a Stop in a plane with files
+        // not committed is answered with the decision that sends the session back to commit them (StopGate).
+        app.MapPost(NodeWire.HooksRoute, async (HttpContext context, HookBook hooks, StopGate gate, SessionTracker tracker, TimeProvider time, ILogger<HookBook> logger) =>
         {
             try
             {
@@ -227,6 +229,11 @@ public static class NodeApp
                     // Debug only: PreToolUse fires on every tool call. Logging__LogLevel__Pilot.Node=Debug shows them.
                     logger.LogDebug("hook {Event} for {Session}", ClaudeAgentsJson.Text(hook.RootElement, "hook_event_name"), session[..Math.Min(8, session.Length)]);
                     tracker.Kick();
+                }
+                if (await gate.DecideAsync(hook.RootElement, context.RequestAborted) is { } decision)
+                {
+                    logger.LogInformation("stop held for {Session} in {Cwd}: files not committed", ClaudeAgentsJson.Text(hook.RootElement, "session_id"), ClaudeAgentsJson.Text(hook.RootElement, "cwd"));
+                    return Results.Text(decision, "application/json");
                 }
             }
             catch (JsonException)

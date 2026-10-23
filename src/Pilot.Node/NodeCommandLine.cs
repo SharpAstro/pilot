@@ -95,8 +95,8 @@ public static class NodeCommandLine
         });
 
         // hook: fail-open by rule, so it reads no option it could refuse.
-        var hook = new Command(HookCommands.HookArgument, "Forward one Claude Code hook's stdin to the node; always exits 0 and prints nothing");
-        hook.SetAction((parseResult, ct) => HookCommands.HookAsync(parseResult.GetValue(socket), stdin));
+        var hook = new Command(HookCommands.HookArgument, "Forward one Claude Code hook's stdin to the node; always exits 0, and prints only the node's answer to a Stop it holds");
+        hook.SetAction((parseResult, ct) => HookCommands.HookAsync(parseResult.GetValue(socket), stdin, output));
 
         var settings = new Option<string?>("--settings") { Description = "The Claude Code settings file; else ~/.claude/settings.json (or under CLAUDE_CONFIG_DIR)" };
         Command HooksAction(string name, string description, bool install)
