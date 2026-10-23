@@ -382,6 +382,14 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"#{pr.Number}'s head is {pr.Head[..Math.Min(8, pr.Head.Length)]}, not the {head} you reviewed: look again before it lands");
         }
+        // A commit made in the plane after the PR's last push would be left behind by the merge, and the landing would
+        // then take the plane with it (TIA1658's plan read, 2026-10-23, landed by hand afterwards).
+        if (Directory.Exists(flight.Worktree)
+            && await git.RunAsync(["rev-list", "--count", $"{pr.Head}..HEAD"], flight.Worktree, cancellationToken) is { Ok: true } ahead
+            && int.TryParse(ahead.Output.Trim(), out var unpushed) && unpushed > 0)
+        {
+            throw new FlightException($"{flight.Code}'s plane holds {unpushed} commit{(unpushed == 1 ? "" : "s")} past #{pr.Number}'s head: open the PR again (flight pr) to push {(unpushed == 1 ? "it" : "them")}, and review what is new before it lands");
+        }
         await github.MergeAsync(flight.RepoPath, pr.Number, pr.Head, method, cancellationToken);
     }
 
