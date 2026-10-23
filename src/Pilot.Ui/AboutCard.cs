@@ -19,7 +19,7 @@ internal sealed class AboutCard
     /// <summary>The keys, as the card lists them.</summary>
     public static readonly IReadOnlyList<(string Keys, string What)> Keys =
     [
-        ("Ctrl+1 to Ctrl+6", "Home, Sessions, Flights, Background tasks, Fleet and Settings"),
+        ("Ctrl+1 to Ctrl+7", "Home, Sessions, Flights, Background tasks, Fleet, Settings and Repos"),
         ("Ctrl+S", "the say bar, to the selected session"),
         ("Ctrl+K", "the command bar (a pilot command)"),
         ("Enter, double-click", "a session's transcript"),
