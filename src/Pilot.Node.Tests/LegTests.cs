@@ -435,9 +435,11 @@ public sealed class LegCommanderTests : IDisposable
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=render", "goal=Draw the planets", "done-when=The capture shows them")).Ok.ShouldBeTrue();
         (await Leg(Verbs.RemoveLeg, "flight/TIA1/docs")).Ok.ShouldBeTrue();
 
-        // docs was in front of render and gone, so render, the next planned leg, is the one that starts.
+        // docs was in front of render and gone, so render, the next planned leg, is the one that starts: its validator first.
+        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-tia1-render-validator");
+        (await Leg(Verbs.ValidateLeg, "flight/TIA1/render", "go")).Ok.ShouldBeTrue();
         L("render").State.ShouldBe(LegState.Flying);
-        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-tia1-render");
+        _workers.Started.Select(w => w.Name).ShouldBe(["du1-tia1-render-validator", "du1-tia1-render"]);
         L("render").Order.ShouldBe(2);
     }
 
@@ -683,6 +685,11 @@ public sealed class LegCommanderTests : IDisposable
         foreach (var name in new[] { "parser", "render" })
         {
             await Leg(Verbs.StartLeg, $"flight/TIA1/{name}");
+            if (name == "render")
+            {
+                // A later leg's validator answers before its worker starts.
+                await Leg(Verbs.ValidateLeg, $"flight/TIA1/{name}", "go");
+            }
             foreach (var i in Enumerable.Range(1, L(name).Checklist.Length))
             {
                 await Leg(Verbs.Check, $"flight/TIA1/{name}", i.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -797,6 +804,8 @@ public sealed class LegCommanderTests : IDisposable
         _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), "priority-repos", [repo]).Settings);
         (_legs.Models.StartLimitFor(repo), _legs.Models.StartLimitFor("other")).ShouldBe((98.0, 90.0));
         await _legs.AdvanceAllAsync(Ct);
+        L("render").Validation.ShouldBe(LegValidation.Pending);
+        (await Leg(Verbs.ValidateLeg, "flight/TIA1/render", "go")).Ok.ShouldBeTrue();
         L("render").State.ShouldBe(LegState.Flying);
 
         // The last leg done: its PR is opened by itself. This repo has no origin to push to, so the step fails: it rings once,

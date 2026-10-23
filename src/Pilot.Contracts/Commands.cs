@@ -109,6 +109,13 @@ public static class Verbs
     /// </summary>
     public const string StartLeg = "start-leg";
 
+    /// <summary>
+    /// <c>validate-leg flight/&lt;code&gt;/&lt;leg&gt; go|no-go [report…]</c>: what a leg's validator answers after reading the leg against
+    /// the tree the earlier legs left. Go starts the leg's worker; no-go keeps the leg planned and rings with the report.
+    /// Accepted only from the leg's validator or a person, and only while the validation is pending.
+    /// </summary>
+    public const string ValidateLeg = "validate-leg";
+
     /// <summary><c>check flight/&lt;code&gt;/&lt;leg&gt; &lt;item number or its text&gt; [undo]</c>: ticks a step of its checklist.</summary>
     public const string Check = "check";
 

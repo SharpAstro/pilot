@@ -39,7 +39,7 @@ public sealed partial class LegCommander(
     private static partial Regex LegName();
 
     public static bool Handles(string verb) =>
-        verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.Check or Verbs.FinishLeg or Verbs.GoAround or Verbs.Merge
+        verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.ValidateLeg or Verbs.Check or Verbs.FinishLeg or Verbs.GoAround or Verbs.Merge
             or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review
             or Verbs.PlanFlight or Verbs.Planned;
 
@@ -59,6 +59,9 @@ public sealed partial class LegCommander(
                     break;
                 case Verbs.StartLeg:
                     await StartAsync(command, cancellationToken);
+                    break;
+                case Verbs.ValidateLeg:
+                    await ValidateAsync(command, cancellationToken);
                     break;
                 case Verbs.Check:
                     Tick(command);
@@ -222,6 +225,12 @@ public sealed partial class LegCommander(
         {
             return;
         }
+        // A next leg whose validator is reading it, or whose validator said no-go, waits for that answer or a person: the
+        // sweep starts neither a second validator nor the worker.
+        if (legs.FirstOrDefault(l => l.State == LegState.Planned) is { Validation: LegValidation.Pending or LegValidation.NoGo })
+        {
+            return;
+        }
         CommandRequest? step = legs.FirstOrDefault(l => l.State == LegState.Planned) is { } next
             ? new CommandRequest { Verb = Verbs.StartLeg, Target = Verbs.LegTarget(current.Code, next.Name), Who = "node" }
             : current.PullRequest is null
@@ -310,6 +319,11 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"{flight.Code}/{name} is {known.State.ToString().ToLowerInvariant()}; only a planned leg is planned again");
         }
+        // Planned again, the leg is validated afresh: its row is replaced, and a no-go that rang about it is moot.
+        if (known is not null)
+        {
+            state.CloseCardsAbout(Verbs.LegTarget(flight.Code, name), $"{flight.Code}/{name} was planned again", NoGoKind, ValidatingKind);
+        }
         state.PutLeg(new LegRow
         {
             Flight = flight.Code,
@@ -383,11 +397,119 @@ public sealed partial class LegCommander(
 
         // A person's start, or the sweep's once the 5-hour window allows it: the week only rings.
         Gate.RingWeek(Models.WeekLimit);
+        var anyway = (command.Args ?? []).Contains("anyway", StringComparer.OrdinalIgnoreCase);
+        var earlier = legs.Any(l => l.Order < leg.Order);
+        if (leg.Validation == LegValidation.Pending && !anyway)
+        {
+            throw new FlightException($"{flight.Code}/{leg.Name} is being validated by {leg.Validator}; wait for its answer, or start it anyway");
+        }
+        if (earlier && !anyway && leg.Validation != LegValidation.Go)
+        {
+            await StartValidatorAsync(flight, leg, legs, cancellationToken);
+            return;
+        }
+        if (leg.Validation == LegValidation.Pending && leg.ValidatorJob is { } validating)
+        {
+            await StopQuietly(validating, cancellationToken);
+        }
+        await StartWorkerAsync(flight, leg, legs, cancellationToken);
+    }
+
+    /// <summary>The card a leg's validator start raises, saying the leg is being read against the tree.</summary>
+    public const string ValidatingKind = "leg-validating";
+
+    /// <summary>The ring a no-go raises on the leg, with its report and the ways on.</summary>
+    public const string NoGoKind = "leg-no-go";
+
+    private async Task StartValidatorAsync(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, CancellationToken cancellationToken)
+    {
+        var validator = ValidatorName(flight, leg);
+        await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
+        var job = await workers.StartAsync(new WorkerStart(validator, flight.RepoPath, PlaneOf(flight), Briefs.Validate(flight, leg, legs, Briefs.Run(Cli, Socket)), Models.Model(RoleModels.Worker), "low"), cancellationToken);
+        state.PutLeg(leg with { Validation = LegValidation.Pending, Validator = validator, ValidatorJob = job, ValidationReport = null });
+        state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), "validated afresh", NoGoKind);
+        state.RaiseCard(CardBin.Handled, ValidatingKind, Verbs.LegTarget(flight.Code, leg.Name),
+            $"Started {validator} to check {flight.Code}/{leg.Name} against the tree before it starts");
+    }
+
+    private async Task StartWorkerAsync(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, CancellationToken cancellationToken)
+    {
         var worker = WorkerName(flight, leg);
         await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
         await WarnSiblingsBehindAsync(flight, leg, cancellationToken);
         var job = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), Briefs.For(flight, leg, legs, cli: Cli, socket: Socket), leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), cancellationToken);
         state.PutLeg(leg with { State = LegState.Flying, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), Report = null });
+        state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} started", NoGoKind, ValidatingKind);
+    }
+
+    /// <summary>
+    /// <c>validate-leg go|no-go [report…]</c>: go starts the leg's worker; no-go keeps the leg planned and rings with the
+    /// report, offering to go anyway, to take the leg out, or to plan it again.
+    /// </summary>
+    private async Task ValidateAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var (flight, leg) = LegOf(command.Target);
+        var args = command.Args ?? [];
+        var answer = args.Length > 0 ? args[0] : "";
+        var report = string.Join(' ', args.Skip(1)).Trim();
+        if (answer is not ("go" or "no-go"))
+        {
+            throw new FlightException("validate-leg takes go or no-go, then a report");
+        }
+        if (leg.State != LegState.Planned || leg.Validation != LegValidation.Pending)
+        {
+            throw new FlightException($"{flight.Code}/{leg.Name} is not waiting for a validation");
+        }
+        if (!string.Equals(command.Who, leg.Validator, StringComparison.Ordinal)
+            && (command.Who == "node" || string.Equals(command.Who, $"{options.Machine.ToLowerInvariant()}-watchtower", StringComparison.Ordinal)))
+        {
+            throw new FlightException($"only {leg.Validator} answers for {flight.Code}/{leg.Name}; a person may too");
+        }
+        if (answer == "no-go" && report.Length == 0)
+        {
+            throw new FlightException("a no-go needs its report: each stale fact, with the command that showed it");
+        }
+
+        var target = Verbs.LegTarget(flight.Code, leg.Name);
+        var done = leg with { Validation = answer == "go" ? LegValidation.Go : LegValidation.NoGo, ValidationReport = report.Length > 0 ? report : null };
+        state.PutLeg(done);
+        state.CloseCardsAbout(target, $"validated: {answer}", ValidatingKind);
+        if (answer == "go")
+        {
+            // Held by a spent 5-hour window, the leg stays planned and validated: the sweep starts its worker once it resets.
+            if (flight.State == FlightState.Flying
+                && !Gate.Hold($"{Verbs.StartLeg} {target}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start {leg.Name}")
+                && state.Legs(flight.Code).All(l => l.State != LegState.Flying))
+            {
+                await StartWorkerAsync(flight, done, state.Legs(flight.Code), cancellationToken);
+            }
+        }
+        else
+        {
+            state.RaiseCard(CardBin.Ring, NoGoKind, target, $"{flight.Code}/{leg.Name} is NO-GO: the tree is not as its brief assumes", report,
+                [
+                    new CardChoice { Label = "Go anyway", Verb = Verbs.StartLeg, Target = target, Args = ["anyway"] },
+                    new CardChoice { Label = "Remove leg", Verb = Verbs.RemoveLeg, Target = target, Args = ["failed validation"] },
+                    new CardChoice { Label = "Re-plan", Verb = Verbs.PlanFlight, Target = Verbs.FlightTarget(flight.Code) },
+                ]);
+        }
+
+        // The validator has answered: it is stopped after a grace to end its turn, as a worker that finished its own leg.
+        if (leg.ValidatorJob is { } job)
+        {
+            if (string.Equals(command.Who, leg.Validator, StringComparison.Ordinal))
+            {
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(SelfFinishGrace, time, CancellationToken.None);
+                    await StopQuietly(job, CancellationToken.None);
+                }, CancellationToken.None);
+            }
+            else
+            {
+                await StopQuietly(job, cancellationToken);
+            }
+        }
     }
 
     /// <summary>
@@ -1023,6 +1145,8 @@ public sealed partial class LegCommander(
     private static string PlaneOf(FlightRow flight) => Path.GetFileName(Path.TrimEndingDirectorySeparator(flight.Worktree));
 
     /// <summary>A leg's worker name, <c>&lt;machine&gt;-&lt;flight&gt;-&lt;leg&gt;</c> in lower case: <c>du1-tia1611-parser</c>.</summary>
+    private string ValidatorName(FlightRow flight, LegRow leg) => $"{WorkerName(flight, leg)}-validator";
+
     private string WorkerName(FlightRow flight, LegRow leg) => $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{leg.Name}";
 
     private FlightRow FlightOf(string target)
