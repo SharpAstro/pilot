@@ -359,26 +359,11 @@ public sealed class SayTests : IDisposable
     }
 
     [Fact]
-    public void TheResumeSettingsAreTheTranscriptsLast()
+    public void AResumePassesTheFullSessionIdAndNoFlag()
     {
-        var transcript = string.Join('\n',
-            "{\"type\":\"permission-mode\",\"permissionMode\":\"default\",\"sessionId\":\"s\"}",
-            Lines.Assistant("m1", model: "claude-sonnet-5-5", effort: "low"),
-            "{\"type\":\"permission-mode\",\"permissionMode\":\"auto\",\"sessionId\":\"s\"}",
-            Lines.Assistant("m2", requestedModel: "claude-opus-5-5[1m]", effort: "high"),
-            Lines.Assistant("m3", model: "<synthetic>", effort: null),
-            Lines.Assistant("m4", model: "claude-haiku-5-5", effort: "max", sidechain: true));
-
-        var settings = ResumeSettings.Read(new StringReader(transcript));
-
-        settings.ShouldBe(new ResumeSettings("auto", "claude-opus-5-5[1m]", "high"));
-        ClaudeCliDelivery.ResumeArguments(new ResumeRequest("sid", "pil5-say-bg", "C:\\work", "text"), settings)
-            .ShouldBe(["--bg", "--resume", "sid", "-n", "pil5-say-bg", "--permission-mode", "auto", "--model", "claude-opus-5-5[1m]", "--effort", "high"]);
-        ClaudeCliDelivery.ResumeArguments(new ResumeRequest("sid", null, "C:\\work", "text"), ResumeSettings.None).ShouldBe(["--bg", "--resume", "sid"]);
-
-        // A session with Remote Control on keeps it: a resume would drop the watchtower's phone link otherwise.
-        ClaudeCliDelivery.ResumeArguments(new ResumeRequest("sid", null, "C:\\work", "text", RemoteControl: true), ResumeSettings.None)
-            .ShouldBe(["--bg", "--resume", "sid", "--remote-control"]);
+        // Any flag makes Claude Code start a copy with those flags alone, which loses a worker's --strict-mcp-config.
+        ClaudeCliDelivery.ResumeArguments(new ResumeRequest("4dca1bea-1111-2222-3333-444455556666", "de1-tia1737-luminosity", "C:\\work", "text", RemoteControl: true))
+            .ShouldBe(["--bg", "--resume", "4dca1bea-1111-2222-3333-444455556666"]);
     }
 
     [Theory]

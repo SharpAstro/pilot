@@ -42,8 +42,8 @@ public sealed record CommandResult
     public string? Way { get; init; }
 
     /// <summary>
-    /// The session id the target has now, when the command gave it a new one: a <c>say</c> that resumed a background
-    /// session continues it under a new session id, and the session's row follows it there.
+    /// The session id the target has now, when the command gave it one: a <c>say</c> that resumed a background session
+    /// continues it under its own id, or under a copy's where Claude Code made one, and the session's row follows it.
     /// </summary>
     public string? SessionId { get; init; }
 
@@ -270,7 +270,8 @@ public static class SayWays
 {
     /// <summary>
     /// A background session not mid-turn was stopped and continued with the text as a user turn. Claude Code continues
-    /// it under a new session id (<see cref="CommandResult.SessionId"/>) holding the whole conversation.
+    /// it under its own session id with its own options (<see cref="CommandResult.SessionId"/> says which), holding the
+    /// whole conversation.
     /// </summary>
     public const string Resumed = "resumed";
 
