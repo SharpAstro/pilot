@@ -63,6 +63,9 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, string relay
     /// <summary>How long a resumed copy may take to be listed with its session id: a second or two.</summary>
     private static readonly TimeSpan ListedWait = TimeSpan.FromSeconds(10);
 
+    /// <summary>How long, once the printed job is listed, the session's own id may take to run again in place.</summary>
+    private static readonly TimeSpan InPlaceWait = TimeSpan.FromSeconds(5);
+
     private static readonly TimeSpan Step = TimeSpan.FromMilliseconds(500);
 
     /// <summary>v1's limits: 60 s for <c>claude stop</c>, 120 s for <c>--bg</c>, 180 s for the relay.</summary>
@@ -144,19 +147,49 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, string relay
             throw new SessionDeliveryException($"claude --bg --resume failed ({run.ExitCode}): {Clip(run.Output + run.Error)}");
         }
 
+        // The job it prints is not always the one that carries on: woken in place, the session runs again under its own id
+        // with a new process, and the job printed is a short-lived one of its own that ends with no turn (0 tokens). The
+        // row followed that job, took its own running session for a copy left behind, read ended, and the watchtower
+        // started another beside it (DE1, 2026-10-24). So the session's own id, running again, wins; the printed job only
+        // when it stays the one running.
         var id = job.Groups[1].Value;
         var until = DateTimeOffset.UtcNow + ListedWait;
+        DateTimeOffset? jobSeen = null;
+        string? jobSession = null;
         while (true)
         {
-            if (await FindAsync(r => r.Id == id, cancellationToken) is { } row)
+            var text = await ListOrEmptyAsync(cancellationToken);
+            var listed = ClaudeAgentsJson.Parse(text) ?? [];
+            if (listed.FirstOrDefault(r => r.SessionId == request.SessionId && r.Pid is not null) is not null)
             {
-                return row.SessionId;
+                return request.SessionId;
+            }
+            if (jobSession is null && listed.FirstOrDefault(r => r.Id == id) is { } row)
+            {
+                jobSession = row.SessionId;
+                jobSeen = DateTimeOffset.UtcNow;
+            }
+            if (jobSeen is { } seen && DateTimeOffset.UtcNow - seen > InPlaceWait)
+            {
+                return jobSession!;
             }
             if (DateTimeOffset.UtcNow > until)
             {
-                throw new SessionDeliveryException($"the session was continued as job {id}, but claude agents did not list it within {ListedWait.TotalSeconds:0} s");
+                return jobSession ?? throw new SessionDeliveryException($"the session was continued as job {id}, but claude agents did not list it within {ListedWait.TotalSeconds:0} s");
             }
             await Task.Delay(Step, cancellationToken);
+        }
+    }
+
+    private async Task<string> ListOrEmptyAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await agents.ListAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return "[]";
         }
     }
 
