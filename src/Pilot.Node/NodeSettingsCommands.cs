@@ -61,11 +61,11 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             return state.Complete(command, null, way: $"{key} saved as {value}; the node runs with it already");
         }
         // A role's model and effort are read when a session of it starts: in force for the next one, no restart.
-        if (NodeSettings.IsRoleKey(key) || key == NodeSettings.MergeMethodKey)
+        if (NodeSettings.IsRoleKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey)
         {
             roles.Apply(updated);
-            return state.Complete(command, null, way: key == NodeSettings.MergeMethodKey
-                ? $"{key} saved as {value}; the next merge uses it"
+            return state.Complete(command, null, way: key == NodeSettings.MergeMethodKey ? $"{key} saved as {value}; the next merge uses it"
+                : key is NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey ? $"{key} saved as {value}; the next start the node makes by itself weighs it"
                 : $"{key} saved as {value}; the next session of that kind starts with it");
         }
         // The job limits apply at once: a restart for them would wait for the very queue they are meant to clear.
@@ -129,7 +129,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             Saved = file,
             Source = pinned ? SettingSources.CommandLine : started is not null ? SettingSources.File : SettingSources.Default,
             Choices = choices,
-            Many = key == NodeSettings.RepoRootsKey,
+            Many = key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey,
             Pending = !pinned && (file ?? Default(key)) != running,
         };
     }
@@ -146,6 +146,9 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.MaxJobsKey => jobs.MaxRunning.ToString(CultureInfo.InvariantCulture),
         NodeSettings.JobMemoryKey => (jobs.MinFreeMemory / (double)(1L << 30)).ToString(CultureInfo.InvariantCulture),
         NodeSettings.MergeMethodKey => roles.MergeMethod,
+        NodeSettings.StartLimitKey => roles.StartLimit.ToString(CultureInfo.InvariantCulture),
+        NodeSettings.PriorityStartLimitKey => (NodeSettings.Read(options.SettingsFile).PriorityStartLimit ?? 98).ToString(CultureInfo.InvariantCulture),
+        NodeSettings.PriorityReposKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).PriorityRepos ?? []),
         _ when RoleOf(key) is ({ } role, var effort) => (effort ? roles.Effort(role) : roles.Model(role)) ?? RoleModels.NoneValue,
         _ => "",
     };
@@ -157,7 +160,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         : (null, false);
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
-    private static string Join(string key, IReadOnlyList<string> values) => string.Join(key == NodeSettings.RepoRootsKey ? '\n' : ' ', values);
+    private static string Join(string key, IReadOnlyList<string> values) => string.Join(key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey ? '\n' : ' ', values);
 
     // What a key is when neither the command line nor the file says.
     private static string Default(string key) => key switch
@@ -171,6 +174,9 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.MaxJobsKey => "1",
         NodeSettings.JobMemoryKey => "2",
         NodeSettings.MergeMethodKey => "rebase",
+        NodeSettings.StartLimitKey => "90",
+        NodeSettings.PriorityStartLimitKey => "98",
+        NodeSettings.PriorityReposKey => "",
         _ when RoleOf(key) is ({ } role, var effort) => effort ? RoleModels.NoneValue : RoleModels.DefaultModel(role),
         _ => "",
     };
@@ -185,6 +191,9 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.UpdateChannelKey => ("Update channel", "stable follows the tagged releases; beta follows main's every push (a Debug build, needs the .NET runtime)", [.. UpdateChannels.Names]),
         NodeSettings.MaxJobsKey => ("Jobs at once", "How many background tasks run at once; the rest wait their turn", ["1", "2", "3", "4"]),
         NodeSettings.JobMemoryKey => ("Job memory", "The free memory, in GB, a job waits for before it starts; 0 to not wait", ["0", "2", "4", "8"]),
+        NodeSettings.PriorityReposKey => ("Priority repos", "Repos whose flights have runway: they go on past the start limit, up to the priority limit", []),
+        NodeSettings.PriorityStartLimitKey => ("Priority start limit", "How far into the 5-hour window a priority repo's flight still goes on by itself, in percent", ["95", "98", "100"]),
+        NodeSettings.StartLimitKey => ("Start limit", "A flight goes on by itself (its next leg, its PR and review) until the account's 5-hour window is this spent, in percent; then it waits for the reset", ["80", "90", "95", "100"]),
         NodeSettings.MergeMethodKey => ("Merge method", "How a flight's PR is merged: rebase keeps every commit's subject (docs may cite them), squash makes one commit", [.. NodeSettings.MergeMethods]),
         _ when RoleOf(key) is ({ } role, false) => ($"{Title(role)} model", RoleDetail(role), ["sonnet", "opus", "haiku", RoleModels.NoneValue]),
         _ when RoleOf(key) is ({ } role, true) => ($"{Title(role)} effort", $"The effort each {role} starts at; none leaves it to Claude Code", [.. RoleModels.Efforts, RoleModels.NoneValue]),

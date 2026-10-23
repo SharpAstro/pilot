@@ -82,6 +82,35 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>Whether a flight goes on by itself once a leg is done (its next leg, or its PR and review): always on a
+    /// node; a test's commander does not, as it never did.</summary>
+    public bool Advances => _defaults;
+
+    /// <summary>The start limit for a flight of <paramref name="repo"/>: <see cref="NodeSettings.PriorityStartLimit"/> for a priority repo
+    /// (<see cref="NodeSettings.PriorityReposKey"/>), whose flights have runway as the window runs out, else <see cref="StartLimit"/>.</summary>
+    public double StartLimitFor(string repo)
+    {
+        lock (_lock)
+        {
+            return _settings.PriorityRepos?.Contains(repo, StringComparer.OrdinalIgnoreCase) == true
+                ? _settings.PriorityStartLimit ?? 98
+                : _settings.StartLimit ?? 90;
+        }
+    }
+
+    /// <summary>The share of the account's 5-hour window, in percent, past which the node starts nothing by itself
+    /// (<see cref="NodeSettings.StartLimitKey"/>); 90 unless the settings say otherwise.</summary>
+    public double StartLimit
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.StartLimit ?? 90;
+            }
+        }
+    }
+
     /// <summary>Whether <paramref name="value"/> names a model: an alias (sonnet, opus) or a full id (claude-opus-5-5[1m]).</summary>
     public static bool IsModel(string value) => ModelName().IsMatch(value);
 

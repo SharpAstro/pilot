@@ -442,6 +442,45 @@ public sealed class LegCommanderTests : IDisposable
     }
 
     [Fact]
+    public async Task ALegDoneStartsTheNextAndTheLastOpensThePrHeldOnlyByASpentWindow()
+    {
+        await FlightWithTwoLegs();
+        _legs.Models = new RoleModels(null);
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        foreach (var i in Enumerable.Range(1, L("parser").Checklist.Length))
+        {
+            await Leg(Verbs.Check, "flight/TIA1/parser", i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        // The 5-hour window spent past the start limit: the next leg waits, and says so once.
+        _state.PutUsage(new UsageRow { ReadAt = DateTimeOffset.UtcNow, FiveHour = new UsageWindow { UsedPercent = 95, ResetsAt = DateTimeOffset.UtcNow.AddHours(1) } });
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done")).Ok.ShouldBeTrue();
+        L("render").State.ShouldBe(LegState.Planned);
+        var waits = _state.Cards().Where(c => c.Kind == LegCommander.NextStepKind).ShouldHaveSingleItem();
+        (waits.Kind, waits.Bin).ShouldBe((LegCommander.NextStepKind, CardBin.Handled));
+        waits.Title.ShouldStartWith("TIA1 waits to start render: the 5-hour window is 95 % spent");
+        await _legs.AdvanceAllAsync(Ct);
+        _state.Cards().Count(c => c.Kind == LegCommander.NextStepKind).ShouldBe(1);
+
+        // A priority repo has runway: its flights go on to 98 %, so at the same 95 % the sweep starts this one.
+        var repo = _state.Flights().Single().Repo;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), "priority-repos", [repo]).Settings);
+        (_legs.Models.StartLimitFor(repo), _legs.Models.StartLimitFor("other")).ShouldBe((98.0, 90.0));
+        await _legs.AdvanceAllAsync(Ct);
+        L("render").State.ShouldBe(LegState.Flying);
+
+        // The last leg done: its PR is opened by itself. This repo has no origin to push to, so the step fails: it rings once,
+        // offering the step by hand, and the next sweep does not ring again. (ReviewTests opens one for real, on a bare origin.)
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/render", "done")).Ok.ShouldBeTrue();
+        var rung = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.NextStepKind);
+        (rung.Bin, rung.Title).ShouldBe((CardBin.Ring, "TIA1 could not open its PR by itself"));
+        rung.Choices.Single().Verb.ShouldBe(Verbs.OpenPr);
+        await _legs.AdvanceAllAsync(Ct);
+        _state.Cards(openOnly: true).Count(c => c.Kind == LegCommander.NextStepKind).ShouldBe(1);
+        _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task APlaneAlreadyTornDownStillLands()
     {
         var flight = await FlightWithTwoLegs();

@@ -26,6 +26,9 @@ public sealed record NodeSettings
     public const string MaxJobsKey = "max-jobs";
     public const string JobMemoryKey = "job-memory";
     public const string MergeMethodKey = "merge-method";
+    public const string StartLimitKey = "start-limit";
+    public const string PriorityStartLimitKey = "priority-start-limit";
+    public const string PriorityReposKey = "priority-repos";
 
     /// <summary>How a flight's PR is merged when the merge names no method: rebase keeps every commit's subject, which a
     /// repo's docs may cite (tianwen's rule); squash makes one commit of them; merge adds a merge commit.</summary>
@@ -33,7 +36,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, MergeMethodKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, MergeMethodKey,
          .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey)];
 
     /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
@@ -56,6 +59,13 @@ public sealed record NodeSettings
     public double? JobMemoryGigabytes { get; init; }
 
     public string? MergeMethod { get; init; }
+
+    public double? StartLimit { get; init; }
+
+    public double? PriorityStartLimit { get; init; }
+
+    /// <summary>The repos whose flights have runway: they go on past <see cref="StartLimit"/>, up to <see cref="PriorityStartLimit"/>.</summary>
+    public IReadOnlyList<string>? PriorityRepos { get; init; }
 
     /// <summary>The roles' models and efforts by key (<c>worker-model</c>: <c>opus</c>); a key left out takes the role's default.</summary>
     public IReadOnlyDictionary<string, string>? Roles { get; init; }
@@ -132,6 +142,9 @@ public sealed record NodeSettings
         MaxJobsKey => MaxJobs is { } jobs ? [jobs.ToString(CultureInfo.InvariantCulture)] : null,
         JobMemoryKey => JobMemoryGigabytes is { } memory ? [memory.ToString(CultureInfo.InvariantCulture)] : null,
         MergeMethodKey => MergeMethod is { } merge ? [merge] : null,
+        StartLimitKey => StartLimit is { } limit ? [limit.ToString(CultureInfo.InvariantCulture)] : null,
+        PriorityStartLimitKey => PriorityStartLimit is { } high ? [high.ToString(CultureInfo.InvariantCulture)] : null,
+        PriorityReposKey => PriorityRepos,
         _ when IsRoleKey(key) && Roles?.GetValueOrDefault(key) is { } role => [role],
         _ => null,
     };
@@ -215,6 +228,26 @@ public sealed record NodeSettings
                 return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var memory) && memory is >= 0 and <= 1024
                     ? (settings with { JobMemoryGigabytes = memory }, null)
                     : (null, "job-memory takes the free memory in GB a job waits for, 0 to not wait");
+            case PriorityStartLimitKey:
+                if (clear)
+                {
+                    return (settings with { PriorityStartLimit = null }, null);
+                }
+                return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var high) && high is > 0 and <= 100
+                    ? (settings with { PriorityStartLimit = high }, null)
+                    : (null, "priority-start-limit takes the 5-hour window's share in percent, above 0 and up to 100");
+            case PriorityReposKey:
+                return clear
+                    ? (settings with { PriorityRepos = null }, null)
+                    : (settings with { PriorityRepos = [.. given.Distinct(StringComparer.OrdinalIgnoreCase)] }, null);
+            case StartLimitKey:
+                if (clear)
+                {
+                    return (settings with { StartLimit = null }, null);
+                }
+                return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var limit) && limit is > 0 and <= 100
+                    ? (settings with { StartLimit = limit }, null)
+                    : (null, "start-limit takes the 5-hour window's share in percent, above 0 and up to 100");
             case MergeMethodKey:
                 if (clear)
                 {
