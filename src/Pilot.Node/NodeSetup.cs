@@ -30,9 +30,16 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     public const string TrustKey = "trust";
     public const string GhKey = "gh";
     public const string UsageKey = "usage";
+    public const string GuardHooksKey = "guard-hooks";
 
     /// <summary>The firewall rule's name, which the check looks for and the fix replaces.</summary>
     public const string FirewallRule = "pilot-node";
+
+    /// <summary>The Claude Code settings file the hook checks read and the fixes write; a test points it elsewhere.</summary>
+    public string SettingsFile { get; init; } = HookCommands.DefaultSettings();
+
+    /// <summary>A runaway-agent clone to take the guard scripts from, or null when there is none; a test replaces it.</summary>
+    public Func<string?> FindRunawayAgent { get; init; } = RunawayAgentClone;
 
     /// <summary>Runs a program and gives its exit code and output; a test replaces it.</summary>
     public Func<string, IReadOnlyList<string>, TimeSpan, (int Exit, string Output)> Run { get; init; } = RunProcess;
@@ -58,9 +65,10 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             Key = HooksKey,
             Title = "Claude Code hooks",
             Ok = hooks,
-            Line = hooks ? $"in {HookCommands.DefaultSettings()}" : $"pilot's hooks are not in {HookCommands.DefaultSettings()} for {nodePath}: sessions are seen late and without their state",
+            Line = hooks ? $"in {SettingsFile}" : $"pilot's hooks are not in {SettingsFile} for {nodePath}: sessions are seen late and without their state",
             Fix = hooks ? null : "Install hooks",
         });
+        checks.Add(GuardHooksCheck());
 
         var lanWanted = options.Saved?.Lan ?? options.Lan;
         checks.Add(options.Lan
@@ -127,8 +135,10 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             case HooksKey:
             {
                 var output = new StringWriter();
-                return HookCommands.Hooks(install: true, null, HookSocket(), nodePath, output, output) == 0 ? null : output.ToString().Trim();
+                return HookCommands.Hooks(install: true, SettingsFile, HookSocket(), nodePath, output, output) == 0 ? null : output.ToString().Trim();
             }
+            case GuardHooksKey:
+                return InstallGuardHooks();
             case FirewallKey:
                 if (!OperatingSystem.IsWindows())
                 {
@@ -148,7 +158,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                     ? null
                     : $"no window opened: run claude in {options.WatchtowerFolder} and accept its trust prompt";
             default:
-                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, HooksKey, LanKey, FirewallKey, TrustKey })}, not {key}";
+                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, HooksKey, GuardHooksKey, LanKey, FirewallKey, TrustKey })}, not {key}";
         }
     }
 
@@ -159,13 +169,106 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     {
         try
         {
-            var file = HookCommands.DefaultSettings();
-            var text = File.Exists(file) ? File.ReadAllText(file) : "";
+            var text = File.Exists(SettingsFile) ? File.ReadAllText(SettingsFile) : "";
             return text.Length > 0 && ReferenceEquals(HookCommands.Install(text, nodePath, HookSocket()), text);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Whether runaway-agent's three guards (<see cref="GuardHooks"/>) are in Claude Code's settings. Optional: the fleet
+    /// runs without them, and they are another project's. When one is missing the line says where the scripts come from:
+    /// a runaway-agent clone when there is one (the fix copies them, as its install.sh does), else where to get it.
+    /// </summary>
+    private SetupCheck GuardHooksCheck()
+    {
+        const string Title = "Runaway-agent guard hooks";
+        try
+        {
+            var text = File.Exists(SettingsFile) ? File.ReadAllText(SettingsFile) : "";
+            var missing = GuardHooks.Missing(text);
+            if (missing.Count == 0)
+            {
+                return new SetupCheck { Key = GuardHooksKey, Title = Title, Ok = true, Line = $"{string.Join(", ", GuardHooks.Guards.Select(g => g.Script))} in {SettingsFile}", Optional = true };
+            }
+
+            var names = string.Join(", ", missing.Select(g => g.Script));
+            var clone = FindRunawayAgent();
+            return clone is null
+                ? new SetupCheck { Key = GuardHooksKey, Title = Title, Ok = false, Line = $"{names} not in {SettingsFile}, and no runaway-agent clone found under the repo folders: get it from {GuardHooks.Home} and clone it beside the others", Optional = true }
+                : new SetupCheck { Key = GuardHooksKey, Title = Title, Ok = false, Line = $"{names} not in {SettingsFile}: they refuse a whole-file read and an inline pgrep -f, and flag a fat tool result; taken from {clone}", Fix = "Install guards", Optional = true };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return new SetupCheck { Key = GuardHooksKey, Title = Title, Ok = false, Line = $"{SettingsFile}: {ex.Message}", Optional = true };
+        }
+    }
+
+    /// <summary>
+    /// Copies the guard scripts from a runaway-agent clone to <c>hooks/</c> beside the settings file and wires them in it;
+    /// null when done, else why not. A script already there with the same content is left alone, and so is a settings file
+    /// that wires them all, so a second run changes nothing.
+    /// </summary>
+    private string? InstallGuardHooks()
+    {
+        try
+        {
+            var clone = FindRunawayAgent();
+            if (clone is null)
+            {
+                return $"no runaway-agent clone found under the repo folders: get it from {GuardHooks.Home} and clone it beside the others";
+            }
+
+            var folder = GuardHooks.HooksFolder(SettingsFile);
+            Directory.CreateDirectory(folder);
+            foreach (var guard in GuardHooks.Guards)
+            {
+                var from = Path.Combine(clone, guard.Script);
+                var to = Path.Combine(folder, guard.Script);
+                if (!File.Exists(to) || !File.ReadAllBytes(from).AsSpan().SequenceEqual(File.ReadAllBytes(to)))
+                {
+                    File.Copy(from, to, overwrite: true);
+                }
+                if (!OperatingSystem.IsWindows())
+                {
+                    File.SetUnixFileMode(to, File.GetUnixFileMode(to) | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+                }
+            }
+
+            var text = File.Exists(SettingsFile) ? File.ReadAllText(SettingsFile) : "";
+            var updated = GuardHooks.Install(text, folder);
+            if (updated != text)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
+                var temp = SettingsFile + ".pilot.tmp";
+                File.WriteAllText(temp, updated, new System.Text.UTF8Encoding(false));
+                File.Move(temp, SettingsFile, overwrite: true);
+            }
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return $"{SettingsFile}: {ex.Message}";
+        }
+    }
+
+    /// <summary>The first <c>runaway-agent</c> clone under the user's <c>source/repos/*</c> that has all three guard scripts, or null.</summary>
+    private static string? RunawayAgentClone()
+    {
+        try
+        {
+            var repos = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "source", "repos");
+            return Directory.Exists(repos)
+                ? Directory.EnumerateDirectories(repos).Select(org => Path.Combine(org, "runaway-agent"))
+                    .FirstOrDefault(dir => GuardHooks.Guards.All(g => File.Exists(Path.Combine(dir, g.Script))))
+                : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 

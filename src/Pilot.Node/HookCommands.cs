@@ -220,14 +220,14 @@ public static class HookCommands
         return name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? name[..^4] : name;
     }
 
-    private static JsonObject Parse(string settings) =>
+    internal static JsonObject Parse(string settings) =>
         settings.Trim().Length == 0
             ? new JsonObject()
             : JsonNode.Parse(settings, documentOptions: new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) as JsonObject
               ?? throw new JsonException("the settings file is not a JSON object");
 
     // Written through a Utf8JsonWriter, which needs no serializer metadata: the AOT binary has none for JsonNode.
-    private static string Write(JsonObject root)
+    internal static string Write(JsonObject root)
     {
         using var buffer = new MemoryStream();
         using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = true }))
