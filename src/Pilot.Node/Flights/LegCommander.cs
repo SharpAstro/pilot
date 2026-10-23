@@ -851,6 +851,37 @@ public sealed partial class LegCommander(
         }
     }
 
+    /// <summary>
+    /// A reviewed PR whose checks failed: taken as a review asking for changes, so its PR goes back to draft, its merge card
+    /// closes, and the ring offers the go-around a done leg otherwise refuses. PIL53's review passed while the Linux runner
+    /// failed two of its tests, and no verb could send it round (2026-10-23). Null when done; else why not.
+    /// </summary>
+    public async Task<string?> ChecksFailedAsync(string code, string head, CancellationToken cancellationToken)
+    {
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying, Review: { State: ReviewState.Passed } review, PullRequest: { } number } flight)
+            {
+                return $"{code} is not a flying flight with a passed review";
+            }
+            var changes = $"the PR's checks failed on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push";
+            await github.SetDraftAsync(flight.RepoPath, number, draft: true, cancellationToken);
+            state.PutFlight(flight with { Review = review with { State = ReviewState.Changes, Report = changes, FinishedAt = time.GetUtcNow() } });
+            state.CloseCardsAbout(Verbs.FlightTarget(code), "its checks failed", PrReady);
+            RaiseReviewChanges(FlightOf(Verbs.FlightTarget(code)), changes);
+            return null;
+        }
+        catch (FlightException ex)
+        {
+            return ex.Message;
+        }
+        finally
+        {
+            _one.Release();
+        }
+    }
+
     /// <summary>Every leg done, reviewed, the PR open: the merge is the controller's, a gate before an irreversible step.</summary>
     private async Task RaisePrReadyAsync(FlightRow flight, string review, CancellationToken cancellationToken)
     {
