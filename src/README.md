@@ -192,6 +192,38 @@ subagents or one at most; its depth is to follow usage headroom, priority and wh
   watchtower may do neither. A merge needs a passed review. A reviewer that stops without its verdict, or never shows
   up, rings with **Review again** (`pilot flight review <code>`). No leg may be named `review`.
 
+### Any PR's review
+
+A PR pilot did not make, in a repo it may not fly, is reviewed from its link (#113, after Sam's campaigner's review
+team): `pilot review pr <owner>/<repo>#<n>` or `pilot review pr <its URL>` (the node's `review-pr pr/<owner>/<repo>#<n>`).
+
+- **The clone.** The node reads the PR through gh (`gh pr view <n> -R <owner>/<repo>`: its head, base, title and author;
+  one not open is refused) and uses the repo's clone under its repo roots, found by its origin, as the new-flight wizard
+  lists them. With none there it clones the repo once into its clone cache, `<data>/clones/<owner>/<repo>` (`gh repo
+  clone`, so a private repo clones under gh's sign-in, and later fetches there ask gh for credentials and nothing else),
+  and fetches into it after.
+- **The worktree.** `git fetch origin pull/<n>/head`, then a worktree of the node's own,
+  `<clone>/.claude/worktrees/review-<repo>-<n>`, detached at the head gh named: pinned, so a push after it does not
+  move what is reviewed. A head that did not come with the fetch (it moved meanwhile) is refused, to be asked again.
+- **The reviewer.** `<machine>-review-<repo>-<n>`, a fresh background session started as a flight's reviewer is (from
+  the clone, `-w` into the worktree, on the reviewer's model), a job of the node: the leg watch rings when it stalls or
+  never shows up, with **Review again**, and a session idle on a job of its own is compacted (see Compaction). Its
+  brief is the flight reviewer's with no Done-when: read the PR's description and discussion and the whole diff against
+  `origin/<base>`, check each claim against the tree rather than the diff, never assert a defect it cannot prove (a
+  doubt is a question), name each finding's file and line, change and post nothing, and keep to one session.
+  Claude Code starts no background session in a folder never trusted, so the clone cache needs `claude` run in
+  `<data>/clones` once (which covers every clone made there); a start refused for it says so, and leaves no worktree.
+- **The verdict.** From its worktree the reviewer says `pilot review approve|changes|comment "<summary, then each
+  finding>"` (the node's `pr-verdict`), once: only it may, and on the gh login's own PR only `comment`, as GitHub takes
+  nothing else there (its brief says so too). It rings: a `pr-review-ready` card, *<repo>#<n>: review ready, <verdict>*,
+  with the author, the head it read and the findings, linked to the PR. The reviewer is stopped 90 s later.
+- **Nothing left behind.** Once that card closes (dismissed, or answered), the reviewer is stopped if it still runs and
+  the worktree is removed, whatever it holds (a build's output is nobody's work), at once and by a sweep every 30 s
+  that a node restart cannot skip. One held open is said on a For-you `pr-review-left` card and tried again. A fresh
+  `review pr` of the same PR ends the last review first. The clone, the cache's or the person's, stays.
+
+Posting the review to GitHub from its card is the next step of #113. `pilot status` lists the reviews not over.
+
 ### Liveness: no flight derails silently
 
 The node watches every flying leg's worker (`LegWatch`, every 30 s) and never leaves a stalled one unnoticed:
@@ -269,6 +301,9 @@ pilot leg plan <code> <name> --goal … --done-when … [--check …] [--budget 
 pilot leg start <code> <leg>
 pilot leg finish done|failed [report…]         # done: the node reruns the check
 pilot leg go-around <why…>
+pilot review pass|changes <report…>            # a flight's reviewer, from its plane (--flight <code> elsewhere)
+pilot review pr <owner>/<repo>#<n>|<url>       # a reviewer on any PR, pinned at its head (see Any PR's review)
+pilot review approve|changes|comment <report…> # a PR's reviewer, from its worktree (--pr <owner>/<repo>#<n> elsewhere)
 pilot check <step number or text> [--undo]
 pilot artifact <path or URL> [title…]
 pilot say <session> <text…>
@@ -509,8 +544,9 @@ thing is done: answered, dismissed, or closed by the node when its flight lands 
 PR opened with every leg done rings with **Merge** on that head; a failed leg rings with **Go around**; a landed flight
 is a For-you card; a leg started with a sibling clone behind its origin raises a For-you `sibling-behind` card; the leg
 watch's cards (`worker-stopped`, `-idle`, `-waiting`, `-failed`, `-missing`, and the Handled `worker-resumed` and
-`worker-nudged`); and a session that stopped twice in a turn with files not committed in its plane rings
-(`stopped-uncommitted`, see Hooks).
+`worker-nudged`); a session that stopped twice in a turn with files not committed in its plane rings
+(`stopped-uncommitted`, see Hooks); and a PR's review rings with its verdict (`pr-review-ready`, about
+`pr/<owner>/<repo>#<n>`), its worktree going when the card closes (see Any PR's review).
 
 Each choice is a command; `answer card/<id> <n or label>` runs it as the one answering, through the same route as any
 command, and closes the card (opening it again if the command is refused). `dismiss card/<id> [why]` closes it with
@@ -555,7 +591,7 @@ A session the API stopped (its transcript's `apiError`, `usage_limit_reached` wi
 | --- | --- |
 | `GET /api/v1/node` | Which node this is: wire version, build version, machine, pid, started at, data folder, socket, stream. |
 | `GET /api/v1/events` | The event stream, a WebSocket: a snapshot carrying the current number, then deltas each numbered one past the last. `?since=<n>&stream=<id>` resumes with the deltas after `n`, or a snapshot when the node no longer holds them or has another stream. |
-| `POST /api/v1/commands` | Every command, `{verb, target, args, who}`. The result is the response and a `commandResult` event on the stream. Verbs: `note node <text>`, `say session/<id> <text>`, `compact session/<id> [focus]`, and the flight verbs above. |
+| `POST /api/v1/commands` | Every command, `{verb, target, args, who}`. The result is the response and a `commandResult` event on the stream. Verbs: `note node <text>`, `say session/<id> <text>`, `compact session/<id> [focus]`, and the flight and review verbs above. |
 | (cards) | `answer card/<id> <choice>`, `dismiss card/<id> [why]`: verbs on `POST /api/v1/commands`. |
 | `GET /api/v1/sessions/<id>/transcript?after=<n>` | A session's transcript as entries after the n-th (its last 300 without one); a grant's on the LAN. |
 | `GET /api/v1/jobs/<id>/log` | The end of a job's output: its last 200 lines from its last 64 KiB, the log's length, and whether it was clipped; a grant's on the LAN. |
