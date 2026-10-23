@@ -368,7 +368,7 @@ public sealed partial class LegCommander(
         var flight = FlightOf(command.Target);
         var args = command.Args ?? [];
         var head = args.Length > 0 ? args[0].Trim() : "";
-        var method = args.Length > 1 ? args[1] : "squash";
+        var method = args.Length > 1 ? args[1] : Models.MergeMethod;
         if (head.Length < 7)
         {
             throw new FlightException("merge needs the head commit you reviewed (7 characters at least): the merge is refused if the PR has moved past it");

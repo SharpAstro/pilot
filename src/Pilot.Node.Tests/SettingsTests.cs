@@ -69,7 +69,7 @@ public sealed class SettingsTests : IDisposable
     [InlineData("machine", "DESKTOP", "machine takes two letters and a number, as in DE1")]
     [InlineData("update-channel", "nightly", "update-channel takes stable or beta")]
     [InlineData("max-jobs", "0", "max-jobs takes a number, 1 to 64")]
-    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, lan-port, watchtower-model, worker-model, planner-model, reviewer-model, watchtower-effort, worker-effort, planner-effort, reviewer-effort")]
+    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, lan-port, merge-method, watchtower-model, worker-model, planner-model, reviewer-model, watchtower-effort, worker-effort, planner-effort, reviewer-effort")]
     public void ASettingRefusesWhatItDoesNotTake(string key, string value, string error)
         => NodeSettings.With(new NodeSettings(), key, [value]).ShouldBe((null, error));
 
@@ -195,5 +195,20 @@ public sealed class SettingsTests : IDisposable
         page.Settings.Single(s => s.Key == "worker-model").ShouldSatisfyAllConditions(s => s.Value.ShouldBe("opus"), s => s.Pending.ShouldBeFalse());
         page.Settings.Single(s => s.Key == "planner-model").Value.ShouldBe("opus");
         page.Settings.Single(s => s.Key == "watchtower-model").Value.ShouldBe("sonnet");
+    }
+
+    [Fact]
+    public async Task AFlightsPrIsMergedByRebaseUnlessTheSettingsSayOtherwise()
+    {
+        new RoleModels(null).MergeMethod.ShouldBe("rebase");
+        RoleModels.Unset.MergeMethod.ShouldBe("squash");
+        NodeSettings.With(new NodeSettings(), "merge-method", ["octopus"]).Error.ShouldBe("merge-method takes rebase, squash, merge");
+        await using var node = await NodeHarness.StartAsync(Ct);
+
+        var result = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["merge-method", "squash"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+
+        result.Way.ShouldBe("merge-method saved as squash; the next merge uses it");
+        node.App.Services.GetRequiredService<RoleModels>().MergeMethod.ShouldBe("squash");
+        (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == "merge-method").Choices.ShouldBe(["rebase", "squash", "merge"]);
     }
 }

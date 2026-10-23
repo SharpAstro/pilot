@@ -61,10 +61,12 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             return state.Complete(command, null, way: $"{key} saved as {value}; the node runs with it already");
         }
         // A role's model and effort are read when a session of it starts: in force for the next one, no restart.
-        if (NodeSettings.IsRoleKey(key))
+        if (NodeSettings.IsRoleKey(key) || key == NodeSettings.MergeMethodKey)
         {
             roles.Apply(updated);
-            return state.Complete(command, null, way: $"{key} saved as {value}; the next session of that kind starts with it");
+            return state.Complete(command, null, way: key == NodeSettings.MergeMethodKey
+                ? $"{key} saved as {value}; the next merge uses it"
+                : $"{key} saved as {value}; the next session of that kind starts with it");
         }
         // The job limits apply at once: a restart for them would wait for the very queue they are meant to clear.
         if (key is NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey)
@@ -143,6 +145,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.UpdateChannelKey => options.UpdateChannel.Name(),
         NodeSettings.MaxJobsKey => jobs.MaxRunning.ToString(CultureInfo.InvariantCulture),
         NodeSettings.JobMemoryKey => (jobs.MinFreeMemory / (double)(1L << 30)).ToString(CultureInfo.InvariantCulture),
+        NodeSettings.MergeMethodKey => roles.MergeMethod,
         _ when RoleOf(key) is ({ } role, var effort) => (effort ? roles.Effort(role) : roles.Model(role)) ?? RoleModels.NoneValue,
         _ => "",
     };
@@ -167,6 +170,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.UpdateChannelKey => UpdateChannel.Stable.Name(),
         NodeSettings.MaxJobsKey => "1",
         NodeSettings.JobMemoryKey => "2",
+        NodeSettings.MergeMethodKey => "rebase",
         _ when RoleOf(key) is ({ } role, var effort) => effort ? RoleModels.NoneValue : RoleModels.DefaultModel(role),
         _ => "",
     };
@@ -181,6 +185,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.UpdateChannelKey => ("Update channel", "stable follows the tagged releases; beta follows main's every push (a Debug build, needs the .NET runtime)", [.. UpdateChannels.Names]),
         NodeSettings.MaxJobsKey => ("Jobs at once", "How many background tasks run at once; the rest wait their turn", ["1", "2", "3", "4"]),
         NodeSettings.JobMemoryKey => ("Job memory", "The free memory, in GB, a job waits for before it starts; 0 to not wait", ["0", "2", "4", "8"]),
+        NodeSettings.MergeMethodKey => ("Merge method", "How a flight's PR is merged: rebase keeps every commit's subject (docs may cite them), squash makes one commit", [.. NodeSettings.MergeMethods]),
         _ when RoleOf(key) is ({ } role, false) => ($"{Title(role)} model", RoleDetail(role), ["sonnet", "opus", "haiku", RoleModels.NoneValue]),
         _ when RoleOf(key) is ({ } role, true) => ($"{Title(role)} effort", $"The effort each {role} starts at; none leaves it to Claude Code", [.. RoleModels.Efforts, RoleModels.NoneValue]),
         _ => (key, "", []),
