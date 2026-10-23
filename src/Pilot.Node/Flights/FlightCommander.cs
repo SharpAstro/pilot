@@ -215,9 +215,21 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
                 $"{flight.Title ?? $"issue #{flight.Issue}"} (#{flight.Issue}) is now {foldedInto}'s: its PR closes it, and {foldedInto}'s planner plans its points");
         }
 
-        // Flights that waited for it may leave now.
-        foreach (var waiting in state.Flights().Where(f => f.State == FlightState.Held && f.Connections.Contains(flight.Code, StringComparer.Ordinal)))
+        // Flights that waited for it may leave now. A folded flight's issue is the other flight's work and has not landed, so
+        // those that waited for it wait for the other flight instead (not for themselves, not twice, not in a cycle).
+        foreach (var waitingRow in state.Flights().Where(f => f.State != FlightState.Landed && f.Connections.Contains(flight.Code, StringComparer.Ordinal)).ToList())
         {
+            var waiting = waitingRow;
+            if (foldedInto is not null)
+            {
+                var target = state.Flights().FirstOrDefault(f => string.Equals(f.Code, foldedInto, StringComparison.OrdinalIgnoreCase));
+                var connections = waiting.Connections.Where(c => c != flight.Code).ToList();
+                if (target is not null && target.Code != waiting.Code && !connections.Contains(target.Code, StringComparer.Ordinal) && !WaitsFor(target, waiting.Code))
+                {
+                    connections.Add(target.Code);
+                }
+                waiting = waiting with { Connections = [.. connections] };
+            }
             state.PutFlight(Settle(waiting));
         }
     }

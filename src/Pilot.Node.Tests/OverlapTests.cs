@@ -354,6 +354,56 @@ public sealed class OverlapTests : IDisposable
     }
 
     [Fact]
+    public async Task AFlightWaitingForTheFoldedOneNowWaitsForTheOtherAcrossAReplayAndFliesOnlyWhenTheOtherLands()
+    {
+        var folder = Path.Combine(_root, "journal-waiting");
+        using (var journal = new FileJournal(folder))
+        {
+            var state = new NodeState(journal, TimeProvider.System);
+            var (flights, legs) = Commanders(state);
+            foreach (var issue in new[] { "1", "2", "3" })
+            {
+                (await flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = [issue, $"Issue {issue}"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+            }
+            (await flights.RunAsync(new CommandRequest { Verb = Verbs.Connect, Target = "flight/TIA3", Args = ["TIA2"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+            state.Flights().Single(f => f.Code == "TIA3").State.ShouldBe(FlightState.Held);
+            (await Leg(legs, Verbs.Overlap, "flight/TIA2", "TIA1", "same parser")).Ok.ShouldBeTrue();
+
+            (await Leg(legs, Verbs.Fold, "flight/TIA2", "TIA1")).Ok.ShouldBeTrue();
+
+            // TIA2's issue is TIA1's work now and has not landed: TIA3 still waits, for TIA1.
+            var waiting = state.Flights().Single(f => f.Code == "TIA3");
+            waiting.State.ShouldBe(FlightState.Held);
+            waiting.Connections.ShouldBe(["TIA1"]);
+        }
+
+        using var again = new FileJournal(folder);
+        var restored = new NodeState(again, TimeProvider.System);
+        var replayed = restored.Flights().Single(f => f.Code == "TIA3");
+        replayed.State.ShouldBe(FlightState.Held);
+        replayed.Connections.ShouldBe(["TIA1"]);
+
+        var (restoredFlights, _) = Commanders(restored);
+        (await restoredFlights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = "flight/TIA1", Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        restored.Flights().Single(f => f.Code == "TIA3").State.ShouldBe(FlightState.Flying);
+    }
+
+    [Fact]
+    public async Task FoldingDropsAConnectionThatWouldWaitOnItselfOrCycle()
+    {
+        await TwoFlights();
+        // TIA1 waits for TIA2, and TIA2 is folded into TIA1: TIA1 cannot wait for itself.
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.Connect, Target = "flight/TIA1", Args = ["TIA2"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        await Ask();
+
+        (await Leg(Verbs.Fold, "flight/TIA2", "TIA1")).Ok.ShouldBeTrue();
+
+        var other = F("TIA1");
+        other.Connections.ShouldBeEmpty();
+        other.State.ShouldBe(FlightState.Flying);
+    }
+
+    [Fact]
     public async Task TheRecordedAnswerSurvivesAReplayOfTheJournal()
     {
         var folder = Path.Combine(_root, "journal");
