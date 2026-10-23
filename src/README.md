@@ -168,11 +168,25 @@ sibling, how far behind, and the `git -C <path> pull --ff-only` to run. The leg 
 cannot be asked (no upstream, no network) is left out. Each sibling is asked at most once in five minutes, so legs
 started in a row cost one fetch; the card closes when the leg is done or goes around.
 
+**A later leg is checked GO or NO-GO before it starts.** The route and Done-whens are planned up front, so by the time
+a leg's turn comes the earlier legs may have changed what its brief assumes. When a leg that has earlier legs is
+started (by the node itself, or by `start-leg`), the node first starts a short validator session in the plane, on the
+worker model at `low` effort, with a ceiling of a few minutes and about thirty tool calls. It reads only: it checks at
+most five facts the leg rests on (files, types, verbs, tests it names) against the tree the earlier legs left, and
+changes nothing. A first leg is never validated, and neither is one started with `anyway`. The validator answers with
+`pilot leg validate go|no-go "<report>"` from the plane, which knows the leg by its pending validation (the CLI, and the
+MCP server's `leg_validate`). **GO** starts the leg's worker as before, through the same `StartGate`, so a spent 5-hour
+window holds the start and the sweep starts it once the window resets. **NO-GO** keeps the leg planned and rings with
+the stale facts, each with the command that showed it, offering three choices: **Go anyway** (starts the worker without
+a validation), **Remove leg**, and a **Re-plan** of the flight's legs. The sweep waits on a leg that is pending or
+no-go, and planning the leg again validates it afresh.
+
 | Command | What it does |
 | --- | --- |
 | `plan-leg flight/<code> name=… goal=… done-when=… [check=…] [budget=…] [model=…] [effort=…] [item=…]…` | A leg at the end of the order, or a planned one replaced. |
 | `remove-leg flight/<code>/<leg> [why…]` | Takes a planned leg out of the flight; refused, with the leg's state, for one flying, done or failed. |
 | `start-leg flight/<code>/<leg>` | Its worker: `claude --bg -w <plane> -n <name> --permission-mode auto` from the repo's main checkout (a plane git made is not a trusted folder of its own; `-w` enters it under the repo's trust). |
+| `validate-leg flight/<code>/<leg> go\|no-go [report…]` | A validator's answer: go starts the leg's worker; no-go keeps the leg planned and rings. |
 | `check flight/<code>/<leg> <n or text> [undo]` | Ticks a step. |
 | `finish-leg flight/<code>/<leg> done\|failed [report…]` | Done reruns the check; a failing one leaves the leg flying with the output in its report. |
 | `go-around flight/<code>/<leg> <why…>` | A fresh worker for a flying or failed leg. |
@@ -372,6 +386,7 @@ pilot flight land <code>
 pilot leg plan <code> <name> --goal … --done-when … [--check …] [--budget …] [--model …] [--effort …] [--item …]…
 pilot leg remove <code> <leg> [why…]           # takes a planned leg out of the flight
 pilot leg start <code> <leg>
+pilot leg validate go|no-go [report…]          # a leg's validator, from its plane (--leg <code>/<leg> elsewhere)
 pilot leg finish done|failed [report…]         # done: the node reruns the check
 pilot leg go-around <why…>
 pilot review pass|changes <report…>            # a flight's reviewer, from its plane (--flight <code> elsewhere)

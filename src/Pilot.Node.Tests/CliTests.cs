@@ -169,6 +169,55 @@ public sealed class CliTests : IAsyncLifetime
         _node.State.Legs("TIA7").Single().Checklist.Single().Done.ShouldBeTrue();
     }
 
+    /// <summary>A flight whose first leg is done and whose second, render, has started: its validator is flying.</summary>
+    private async Task<string> FlightWithAValidatorFlying(string number)
+    {
+        await Ok(Repo, "flight", "create", number);
+        var flight = _node.State.Flights().Single();
+        await Ok(_root, "leg", "plan", flight.Code, "parser", "--goal", "Parse", "--done-when", "It parses");
+        await Ok(_root, "leg", "plan", flight.Code, "render", "--goal", "Draw", "--done-when", "It draws", "--item", "Draw it");
+        await Ok(_root, "leg", "start", flight.Code, "parser");
+        _node.Workers.Started.Clear();
+        // The node advances by itself: render has an earlier leg, so its validator starts, not its worker.
+        await Ok(flight.Worktree, "leg", "finish", "done", "parsed");
+        var validator = _node.Workers.Started.ShouldHaveSingleItem();
+        validator.Brief.ShouldContain("leg validate go");
+        validator.Brief.ShouldContain("leg validate no-go");
+        return flight.Worktree;
+    }
+
+    [Fact]
+    public async Task AValidatorAnsweringGoFromThePlaneStartsTheLegsWorker()
+    {
+        var plane = await FlightWithAValidatorFlying("8");
+
+        await Ok(plane, "leg", "validate", "go", "files", "and", "types", "all", "there");
+
+        var render = _node.State.Legs("TIA8").Single(l => l.Name == "render");
+        (render.State, render.Validation).ShouldBe((LegState.Flying, LegValidation.Go));
+        _node.Workers.Started.Count.ShouldBe(2);
+        _node.Workers.Started.Last().Name.ShouldEndWith("-tia8-render");
+        render.Worker.ShouldBe(_node.Workers.Started.Last().Name);
+    }
+
+    [Fact]
+    public async Task AValidatorAnsweringNoGoFromThePlaneRingsAndTheLegStaysPlanned()
+    {
+        var plane = await FlightWithAValidatorFlying("9");
+
+        await Ok(plane, "leg", "validate", "no-go", "Planet.cs is gone");
+
+        var render = _node.State.Legs("TIA9").Single(l => l.Name == "render");
+        (render.State, render.Validation).ShouldBe((LegState.Planned, LegValidation.NoGo));
+        _node.Workers.Started.Count.ShouldBe(1);
+        var card = _node.State.Cards(openOnly: true).Single(c => c.Kind == LegCommander.NoGoKind);
+        (card.Bin, card.Detail).ShouldBe((CardBin.Ring, "Planet.cs is gone"));
+
+        // Named, not by the folder, and refused when nothing is waiting.
+        var again = await Pilot(plane, "leg", "validate", "go", "--leg", "TIA9/render");
+        again.Exit.ShouldBe(1);
+    }
+
     [Fact]
     public async Task ARefusalSaysWhyAndUsageAndAMissingNodeHaveTheirOwnExitCodes()
     {
