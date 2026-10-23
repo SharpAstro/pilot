@@ -465,12 +465,25 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"{flight.Code} has landed");
         }
-        await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
         var planner = $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{PlanLeg}";
+        // One planner a flight: a second would plan the same legs over the first's. Live by its row, or started here so
+        // lately that the tracker has not listed it yet (PIL118's plan-flight, sent twice two seconds apart, 2026-10-23).
+        if (state.Sessions().Any(s => string.Equals(s.Name, planner, StringComparison.OrdinalIgnoreCase)
+                && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle)
+            || (_plannersStarted.TryGetValue(flight.Code, out var at) && time.GetUtcNow() - at < PlannerListedWithin))
+        {
+            throw new FlightException($"{planner} is planning {flight.Code} already; wait for its planned card, or stop it first");
+        }
+        await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
         var brief = Briefs.Plan(flight, state.Legs(flight.Code), Briefs.Run(Cli, Socket));
         await workers.StartAsync(new WorkerStart(planner, flight.RepoPath, PlaneOf(flight), brief, Models.Model(RoleModels.Planner), Models.Effort(RoleModels.Planner)), cancellationToken);
+        _plannersStarted[flight.Code] = time.GetUtcNow();
         state.RaiseCard(CardBin.Handled, "planner-started", Verbs.FlightTarget(flight.Code), $"Started {planner} to plan {flight.Code}'s legs");
     }
+
+    // When this node last started each flight's planner: the tracker lists a new session a poll later.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _plannersStarted = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan PlannerListedWithin = TimeSpan.FromMinutes(2);
 
     /// <summary><c>planned flight/&lt;code&gt; &lt;summary&gt;</c>: a card with the legs and the first one's start.</summary>
     private void Planned(CommandRequest command)
