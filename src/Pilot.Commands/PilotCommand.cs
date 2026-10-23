@@ -132,6 +132,18 @@ public static class PilotCommand
                 return 0;
             });
 
+        reposCommand.Subcommands.Add(Action(new Command("sync", "git fetch -p --all in each tracked repo, then fast-forward its default branch; a dirty, off-branch or diverged checkout is left alone and said so"),
+            (p, client, ct) => Send(client, Verbs.SyncRepos, Verbs.NodeTarget, [], who, ct)));
+
+        // issue
+        var issueTitle = Arg("title", "The issue's title");
+        var issueBody = new Option<string?>("--body") { Description = "The issue's text" };
+        var issueRepo = new Option<string?>("--repo") { Description = "The repo's checkout (any of its worktrees); else this folder" };
+        var issueCreate = Action(new Command("create", "A new issue in the repo, through gh; prints its number") { Arguments = { issueTitle }, Options = { issueRepo, issueBody } },
+            (p, client, ct) => Send(client, Verbs.CreateIssue, Verbs.RepoTarget(RepoPath(client, p.GetValue(issueRepo), cwd)),
+                p.GetValue(issueBody) is { Length: > 0 } text ? [p.GetValue(issueTitle)!, text] : [p.GetValue(issueTitle)!], who, ct));
+        var issueCommand = new Command("issue", "Issues: create") { Subcommands = { issueCreate } };
+
         // flight
         var issue = Arg("issue", "The issue the flight flies");
         var title = Words("title", "What it is for, in a line", required: false);
@@ -585,7 +597,7 @@ public static class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node },
-            Subcommands = { status, sessions, reposCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, archive, ring, flag, handled, nodes, connectNode, grants, settings },
+            Subcommands = { status, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, archive, ring, flag, handled, nodes, connectNode, grants, settings },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
@@ -705,6 +717,17 @@ public static class PilotCommand
         if (envelope.Success && envelope.Response is { Ok: true } result)
         {
             await output.WriteLineAsync($"ok: {verb} {target}{(result.Way is { } way ? $" ({way})" : "")}");
+            if (verb == Verbs.SyncRepos)
+            {
+                foreach (var outcome in RepoSyncOutcome.Parse(result.Made))
+                {
+                    await output.WriteLineAsync($"{outcome.Name}  {outcome.Status}  {outcome.Detail}");
+                }
+            }
+            if (verb == Verbs.CreateIssue && result.Made is { Length: > 0 } issueNumber)
+            {
+                await output.WriteLineAsync($"created issue #{issueNumber}");
+            }
             if (verb is Verbs.CreateFlight or Verbs.OpenPr)
             {
                 await output.WriteAsync(Status(await SnapshotAsync(client, cancellationToken), newestOnly: verb == Verbs.CreateFlight, code: verb == Verbs.OpenPr ? target[Verbs.FlightTargetPrefix.Length..] : null));
