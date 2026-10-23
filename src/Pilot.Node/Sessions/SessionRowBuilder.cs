@@ -56,7 +56,10 @@ public static class SessionRowBuilder
     {
         var state = SessionStates.Map(agent.Status ?? record?.Status, agent.State, agent.Pid is not null);
         string? hookWaiting = null;
-        if (hook?.State is { } hooked && (agent.Pid is not null || hooked == SessionState.Ended))
+        // A live process is never ended, whatever a hook said: a background session resumed in place sends its SessionEnd
+        // after the resumed process is up, and that once left every watchtower the node told something as ended while it
+        // ran on, so the node started another (eleven alive at once on DE1, 2026-10-23).
+        if (hook?.State is { } hooked && (agent.Pid is not null ? hooked != SessionState.Ended : hooked == SessionState.Ended))
         {
             state = hooked;
             hookWaiting = hook.WaitingFor;

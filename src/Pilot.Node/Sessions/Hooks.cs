@@ -47,8 +47,9 @@ public sealed class HookBook
         HookState? next = name switch
         {
             // Hooks run async, so they can arrive out of order: a background session's UserPromptSubmit reached the
-            // node before its SessionStart. A start says idle only of a session no hook has spoken for yet.
-            "SessionStart" => previous is null ? new HookState(name, at, SessionState.Idle, null, null) : null,
+            // node before its SessionStart. A start says idle only of a session no hook has spoken for yet, or of one a
+            // hook said ended: a session resumed in place starts again under the same id.
+            "SessionStart" => previous is null or { State: SessionState.Ended } ? new HookState(name, at, SessionState.Idle, null, null) : null,
             "UserPromptSubmit" or "PreToolUse" or "PostToolUse" or "PostToolUseFailure" or "SubagentStart"
                 => new HookState(name, at, SessionState.Working, null, null),
             "PermissionRequest" => new HookState(name, at, SessionState.Waiting,

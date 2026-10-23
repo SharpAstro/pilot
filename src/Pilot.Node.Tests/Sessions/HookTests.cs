@@ -43,6 +43,10 @@ public sealed class HookBookTests
     }
 
     [Fact]
+    public void ASessionResumedInPlaceStartsAgainAfterItsEnd() =>
+        After(Hook("SessionEnd"), Hook("SessionStart"))!.State.ShouldBe(SessionState.Idle);
+
+    [Fact]
     public void APermissionPromptIsWaitingWithItsWords()
     {
         var hook = After(Hook("Notification", ",\"notification_type\":\"permission_prompt\",\"message\":\"Claude needs your permission to use Bash\"")).ShouldNotBeNull();
@@ -93,6 +97,16 @@ public sealed class HookRowTests : IDisposable
         row.WaitingFor.ShouldBe("permission to use Bash");
         // A session whose process is gone is the listing's, whatever its last hook said.
         SessionRowBuilder.Build(Agent(null, status: null), TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc, hook).State.ShouldBe(SessionState.Ended);
+    }
+
+    [Fact]
+    public void AnEndHookDoesNotEndASessionWhoseProcessRuns()
+    {
+        // A watchtower resumed in place sent its SessionEnd while the resumed process ran on.
+        var ended = new HookState("SessionEnd", DateTimeOffset.UtcNow, SessionState.Ended, null, null);
+
+        SessionRowBuilder.Build(Agent(4343), TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc, ended).State.ShouldBe(SessionState.Idle);
+        SessionRowBuilder.Build(Agent(null, status: null), TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc, ended).State.ShouldBe(SessionState.Ended);
     }
 
     [Fact]
