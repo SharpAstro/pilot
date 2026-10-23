@@ -39,9 +39,45 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         }
     }
 
+    /// <summary>
+    /// A flight whose every leg is done and whose PR merged on GitHub with no PR-ready card open (merged after a rebase by
+    /// hand moved its head, its card dismissed): landed all the same. Four flights sat flying with their PRs merged and
+    /// their stale conflict cards ringing (PIL32, PIL70, PIL74, PIL118, 2026-10-24).
+    /// </summary>
+    private async Task LandMergedWithoutCardAsync(CancellationToken cancellationToken)
+    {
+        if (flights is null)
+        {
+            return;
+        }
+        var carded = state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady).Select(c => c.Subject).ToHashSet(StringComparer.Ordinal);
+        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null } && !carded.Contains(Verbs.FlightTarget(f.Code))))
+        {
+            var legs = state.Legs(flight.Code);
+            if (legs.Length == 0 || legs.Any(l => l.State != LegState.Done))
+            {
+                continue;
+            }
+            var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+            if (pr is not { State: "MERGED" } || pr.Number != flight.PullRequest)
+            {
+                continue;
+            }
+            try
+            {
+                await flights.LandAfterMergeAsync(flight.Code, pr.Head, cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                state.RaiseCard(CardBin.Ring, "not-landed", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{pr.Number} merged on GitHub, but the flight did not land", ex.Message);
+            }
+        }
+    }
+
     /// <summary>One look at every open PR-ready card's PR.</summary>
     public async Task LookAsync(CancellationToken cancellationToken)
     {
+        await LandMergedWithoutCardAsync(cancellationToken);
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady))
         {
             var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : null;

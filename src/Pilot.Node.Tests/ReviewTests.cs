@@ -286,6 +286,23 @@ public sealed class ReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task AFlightWhosePrMergedWithNoCardOpenLandsAllTheSame()
+    {
+        var flight = await NewFlight("5", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA5"), "controller");
+        (await Run(Verbs.Review, "flight/TIA5", Reviewer("TIA5"), "pass", "fine")).Ok.ShouldBeTrue();
+        // Its card dismissed after a rebase by hand moved its head, then merged on GitHub.
+        (await Run(Verbs.Dismiss, $"card/{Open().ShouldHaveSingleItem().Id}", "controller", "rebased by hand")).Ok.ShouldBeTrue();
+        _github.Pr = _github.Pr! with { State = "MERGED" };
+
+        await new PrChecks(_state, _github, TimeProvider.System, _flights).LookAsync(Ct);
+
+        F("TIA5").State.ShouldBe(FlightState.Landed);
+        Open().ShouldHaveSingleItem().Title.ShouldBe("TIA5 landed");
+    }
+
+    [Fact]
     public async Task APlaneIsCutFromTheRemotesDefaultEvenWithoutOriginHeadOrOnAFeatureBranch()
     {
         // The clone has no origin/HEAD and its checkout is on a feature branch: the plane still comes from origin/main.
