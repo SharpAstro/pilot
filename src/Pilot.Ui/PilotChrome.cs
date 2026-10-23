@@ -6,6 +6,7 @@ namespace Pilot.Ui;
 /// <summary>The pages the rail leads to, top to bottom.</summary>
 internal enum PilotPage
 {
+    Home,
     Sessions,
     Flights,
     Jobs,
@@ -22,7 +23,7 @@ internal enum PilotPage
 /// capture paint the same.
 /// </summary>
 /// <remarks>
-/// Sessions, Flights, Background tasks, Fleet and Settings are pages. A page can still be put on the rail locked, its
+/// Home, Sessions, Flights, Background tasks, Fleet and Settings are pages. A page can still be put on the rail locked, its
 /// tooltip saying why, until the leg that brings it.
 /// </remarks>
 internal sealed class PilotChrome<TSurface>
@@ -44,12 +45,13 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>What each page is on the rail: its glyph, its name, the chord that reaches it, and why it is locked, if it is.</summary>
     internal static readonly IReadOnlyList<(PilotPage Page, string Icon, string Label, KeyChord Shortcut, string? Locked)> Pages =
     [
-        (PilotPage.Sessions, "\U0001F4AC", "Sessions", new KeyChord(InputKey.D1, InputModifier.Ctrl), null),
-        (PilotPage.Flights, "✈", "Flights", new KeyChord(InputKey.D2, InputModifier.Ctrl), null),
-        (PilotPage.Repos, "📁", "Repos", new KeyChord(InputKey.D6, InputModifier.Ctrl), null),
-        (PilotPage.Jobs, "⚒", "Background tasks", new KeyChord(InputKey.D3, InputModifier.Ctrl), null),
-        (PilotPage.Fleet, "\U0001F310", "Fleet", new KeyChord(InputKey.D4, InputModifier.Ctrl), null),
-        (PilotPage.Settings, "⚙", "Settings", new KeyChord(InputKey.D5, InputModifier.Ctrl), null),
+        (PilotPage.Home, "\U0001F3E0", "Home", new KeyChord(InputKey.D1, InputModifier.Ctrl), null),
+        (PilotPage.Sessions, "\U0001F4AC", "Sessions", new KeyChord(InputKey.D2, InputModifier.Ctrl), null),
+        (PilotPage.Flights, "✈", "Flights", new KeyChord(InputKey.D3, InputModifier.Ctrl), null),
+        (PilotPage.Repos, "📁", "Repos", new KeyChord(InputKey.D7, InputModifier.Ctrl), null),
+        (PilotPage.Jobs, "⚒", "Background tasks", new KeyChord(InputKey.D4, InputModifier.Ctrl), null),
+        (PilotPage.Fleet, "\U0001F310", "Fleet", new KeyChord(InputKey.D5, InputModifier.Ctrl), null),
+        (PilotPage.Settings, "⚙", "Settings", new KeyChord(InputKey.D6, InputModifier.Ctrl), null),
     ];
 
     private readonly List<TabItem<PilotPage>> _items = [];
@@ -67,6 +69,7 @@ internal sealed class PilotChrome<TSurface>
         Settings = new SettingsView<TSurface>(renderer);
         Repos = new ReposView<TSurface>(renderer);
         Cards = new CardsView<TSurface>(renderer);
+        Home = new HomeView<TSurface>(renderer);
         sessions.ShareWith(Flights, Repos, Jobs, Fleet, Settings, Cards);
         sessions.About = About;
         Flights.About = About;
@@ -97,6 +100,9 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>Which nodes the window shows (<see cref="FleetPages.Merge"/>): all by default, kept across pages for the window's life.</summary>
     public NodeFilter Nodes { get; } = new();
 
+    /// <summary>The Home page: what flies, what waits on the controller, and a chip for each thing.</summary>
+    public HomeView<TSurface> Home { get; }
+
     public SessionsView<TSurface> Sessions { get; }
 
     public FlightsView<TSurface> Flights { get; }
@@ -117,21 +123,22 @@ internal sealed class PilotChrome<TSurface>
     public CardsView<TSurface> Cards { get; }
 
     /// <summary>The page shown beside the rail.</summary>
-    public PilotPage Page { get; private set; } = PilotPage.Sessions;
+    public PilotPage Page { get; private set; } = PilotPage.Home;
 
     /// <summary>The widgets this chrome paints, back to front: what the router asks about input.</summary>
     public IReadOnlyList<IPixelWidget> Widgets => Page switch
     {
+        PilotPage.Sessions => [Rail, Sessions, Cards],
         PilotPage.Flights => [Rail, Flights, Cards],
         PilotPage.Repos => [Rail, Repos, Cards],
         PilotPage.Jobs => [Rail, Jobs, Cards],
         PilotPage.Fleet => [Rail, Fleet, Cards],
         PilotPage.Settings => [Rail, Settings, Cards],
-        _ => [Rail, Sessions, Cards],
+        _ => [Rail, Home, Cards],
     };
 
     /// <summary>The page shown, as a widget: what takes the keys nothing else did.</summary>
-    public IPixelWidget PageWidget => Page switch { PilotPage.Flights => Flights, PilotPage.Repos => Repos, PilotPage.Jobs => Jobs, PilotPage.Fleet => Fleet, PilotPage.Settings => Settings, _ => Sessions };
+    public IPixelWidget PageWidget => Page switch { PilotPage.Sessions => Sessions, PilotPage.Flights => Flights, PilotPage.Repos => Repos, PilotPage.Jobs => Jobs, PilotPage.Fleet => Fleet, PilotPage.Settings => Settings, _ => Home };
 
     /// <summary>Whether the last frame drew the cards panel.</summary>
     public bool ShowsCards { get; private set; }
@@ -150,13 +157,32 @@ internal sealed class PilotChrome<TSurface>
     /// moment the card was raised. The host says what the node shows now (<paramref name="sessions"/>,
     /// <paramref name="flights"/>) and, where it keeps the page itself, how to show one (<paramref name="show"/>).
     /// </summary>
-    public void LinkCardTranscripts(Func<SessionsScreen> sessions, Func<FlightsScreen> flights, Action<PilotPage>? show = null)
+    public void LinkCardTranscripts(Func<SessionsScreen> sessions, Func<FlightsScreen> flights, Action<PilotPage>? show = null, Func<JobsScreen>? jobs = null)
     {
         Cards.TranscriptOf = card => WorkerOf(card, flights(), sessions());
         Cards.OnTranscript = (card, line) =>
         {
             (show ?? Show)(PilotPage.Sessions);
             Sessions.Transcript.Open(line, card.At);
+        };
+        // Home's chips open the thing's own page: a flight its page, a session its transcript, a job its row.
+        Home.OnFlight = flight =>
+        {
+            (show ?? Show)(PilotPage.Flights);
+            Flights.OpenDetail(flight.Code);
+        };
+        Home.OnSession = line =>
+        {
+            (show ?? Show)(PilotPage.Sessions);
+            Sessions.Transcript.Open(line, line.Row.StartedAt);
+        };
+        Home.OnJob = job =>
+        {
+            (show ?? Show)(PilotPage.Jobs);
+            if (jobs?.Invoke() is { } screen)
+            {
+                Jobs.Select(screen, job);
+            }
         };
         // A job's Its session: the transcript of the session it wakes, from the moment it was handed over.
         Jobs.OnSession = job =>
@@ -208,6 +234,7 @@ internal sealed class PilotChrome<TSurface>
         set
         {
             Sessions.DpiScale = value;
+            Home.DpiScale = value;
             Flights.DpiScale = value;
             Repos.DpiScale = value;
             Jobs.DpiScale = value;
@@ -224,6 +251,7 @@ internal sealed class PilotChrome<TSurface>
         set
         {
             Sessions.FontPath = value;
+            Home.FontPath = value;
             Flights.FontPath = value;
             Repos.FontPath = value;
             Jobs.FontPath = value;
@@ -327,8 +355,12 @@ internal sealed class PilotChrome<TSurface>
                 case PageKey when Page == PilotPage.Flights:
                     Flights.Render(flights ?? new FlightsScreen([], screen.Source, screen.AsOf), rect);
                     break;
-                case PageKey:
+                case PageKey when Page == PilotPage.Sessions:
                     Sessions.Render(screen, rect);
+                    break;
+                case PageKey:
+                    Home.Render(new HomeScreen(flights ?? new FlightsScreen([], screen.Source, screen.AsOf), screen,
+                        jobs ?? new JobsScreen([], screen.Source, screen.AsOf), cards ?? CardsScreen.Empty), rect);
                     break;
             }
         }

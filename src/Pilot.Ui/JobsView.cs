@@ -197,6 +197,17 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>The selected job's index, or -1.</summary>
     public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
+    /// <summary>Puts the selection on <paramref name="job"/>'s row of <paramref name="screen"/>, as a click on it does.</summary>
+    public void Select(JobsScreen screen, JobLine job)
+    {
+        var index = screen.Lines.ToList().FindIndex(l => l.Key == job.Key);
+        if (index >= 0)
+        {
+            ListCursor.Open(ListId, index, screen.Lines.Count);
+            _count = screen.Lines.Count;
+        }
+    }
+
     /// <summary>The open row menu's entries, in order; empty while it is shut.</summary>
     public IReadOnlyList<DropdownItem<string>> MenuItems => _menu.IsOpen ? _menu.Items : [];
 

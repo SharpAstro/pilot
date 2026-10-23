@@ -93,7 +93,9 @@ internal static class SessionsCapture
                 ? string.Concat(repos.Lines.Where(l => l.Status.Tracked).SelectMany(l => l.Worktrees.Select(w => w.ToDumpLine()).Prepend(l.ToDumpLine())).Select(t => t + "\n"))
             : page == PilotPage.Jobs && jobs is not null
                 ? string.Concat(jobs.Lines.Select(l => l.ToDumpLine() + "\n"))
-                : RowsText(screen), new UTF8Encoding(false));
+                : page == PilotPage.Home
+                    ? new HomeScreen(flights ?? new FlightsScreen([], screen.Source, screen.AsOf), screen, jobs ?? new JobsScreen([], screen.Source, screen.AsOf), cards ?? CardsScreen.Empty).ToDump() + "\n"
+                    : RowsText(screen), new UTF8Encoding(false));
         return rowsPath;
     }
 

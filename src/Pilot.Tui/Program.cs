@@ -46,6 +46,7 @@ var chrome = new PilotChrome<RgbaImage>(vessel, sessions);
 var flights = chrome.Flights;
 var jobs = chrome.Jobs;
 var repos = chrome.Repos;
+var home = chrome.Home;
 var fleet = chrome.Fleet;
 var settings = chrome.Settings;
 var cards = chrome.Cards;
@@ -253,10 +254,11 @@ await terminal.InitAsync();
 terminal.EnterAlternateScreen();
 terminal.EnableCellBuffer();
 
-var page = PilotPage.Sessions;
+var page = PilotPage.Home;
 // A card about a leg opens its worker's transcript from the moment the card was raised.
 FleetPages? merged = null;
-chrome.LinkCardTranscripts(() => merged?.Sessions ?? feed.Screen(DateTimeOffset.UtcNow), () => merged?.Flights ?? feed.Flights(DateTimeOffset.UtcNow), shown => page = shown);
+chrome.LinkCardTranscripts(() => merged?.Sessions ?? feed.Screen(DateTimeOffset.UtcNow), () => merged?.Flights ?? feed.Flights(DateTimeOffset.UtcNow), shown => page = shown,
+    () => merged?.Jobs ?? feed.JobsPage(DateTimeOffset.UtcNow));
 chrome.LinkRepos(shown => page = shown);
 repos.OnOpen = location => DashboardCommands.Open(location);
 // The session menu's New flight in its repo: the Flights page, with the wizard open on it.
@@ -303,12 +305,13 @@ while (!stop.IsCancellationRequested)
         var pages = merged = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now, reposWanted: page == PilotPage.Repos);
         var pageTree = page switch
         {
+            PilotPage.Sessions => sessions.Tree(pages.Sessions),
             PilotPage.Flights => flights.Tree(pages.Flights),
             PilotPage.Repos => repos.Tree(pages.Repos ?? new ReposScreen([], pages.Sessions.Source, now)),
             PilotPage.Jobs => jobs.Tree(pages.Jobs),
             PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, now)),
             PilotPage.Settings => settings.Tree(now),
-            _ => sessions.Tree(pages.Sessions),
+            _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards)),
         };
         var cardsScreen = pages.Cards;
         flights.Jobs = pages.JobRows;
@@ -370,21 +373,24 @@ void Handle(ConsoleInputEvent raw)
             stop.Cancel();
             break;
         case InputEvent.KeyDown(InputKey.D1, _):
-            page = PilotPage.Sessions;
+            page = PilotPage.Home;
             break;
         case InputEvent.KeyDown(InputKey.D2, _):
-            page = PilotPage.Flights;
+            page = PilotPage.Sessions;
             break;
         case InputEvent.KeyDown(InputKey.D3, _):
-            page = PilotPage.Jobs;
+            page = PilotPage.Flights;
             break;
         case InputEvent.KeyDown(InputKey.D4, _):
-            page = PilotPage.Fleet;
+            page = PilotPage.Jobs;
             break;
         case InputEvent.KeyDown(InputKey.D5, _):
-            page = PilotPage.Settings;
+            page = PilotPage.Fleet;
             break;
         case InputEvent.KeyDown(InputKey.D6, _):
+            page = PilotPage.Settings;
+            break;
+        case InputEvent.KeyDown(InputKey.D7, _):
             page = PilotPage.Repos;
             break;
         case InputEvent.KeyDown(InputKey.K, InputModifier.Ctrl):
