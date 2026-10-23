@@ -225,7 +225,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         }
         rows.Add(Layout.Builder.TextInput(TellInput, 13f).RowH(26f));
         rows.Add(Layout.Builder.Text(TellStatus ?? "", 10f, Dim).RowH(16f));
-        return Layout.Builder.VStack([.. rows]).Pad(Gutter, 4f).Bg(CardBg).HAuto();
+        return Layout.Builder.VStack([.. rows]).Pad(Gutter, 4f).Bg(CardBg).WStar().HAuto();
     }
 
     public override bool HandleInput(InputEvent evt) => false;
@@ -246,12 +246,18 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             blocks.Add(Layout.Builder.Text("Handled", 13f, Dim).RowH(22f));
             foreach (var card in screen.Handled)
             {
-                blocks.Add(Layout.Builder.Text(screen.NodeOf(card) is { } node ? $"{node.Name} · {card.Title}" : card.Title, 12f, Dim).RowH(20f));
+                blocks.Add(Layout.Builder.Text(screen.NodeOf(card) is { } node ? $"{node.Name} · {Titled(card)}" : Titled(card), 12f, Dim).RowH(20f));
             }
         }
-        var stack = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).HStar();
+        var stack = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).Stretch();
         return Layout.Builder.VStack(CanTell ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch();
     }
+
+    /// <summary>How many lines a card's detail may take before it is cut.</summary>
+    internal const int DetailLines = 3;
+
+    /// <summary>The card's title as shown: a landed flight's starts with 🛬. The node's title is left as it raised it.</summary>
+    internal static string Titled(CardRow card) => card.Kind == "landed" ? "🛬 " + card.Title : card.Title;
 
     private Layout.Node Card(CardRow card, NodeMark? node)
     {
@@ -262,18 +268,16 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own.
             card.Link is { } titleLink
-                ? Layout.Builder.Text(card.Title + Followable.Away, 14f, Link)
+                ? Layout.Builder.Text(Titled(card) + Followable.Away, 14f, Link)
                     .BgHover(CardHover)
                     .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => OnOpen?.Invoke(titleLink))
                     .RowH(22f)
-                : Layout.Builder.Text(card.Title, 14f, Bright).RowH(22f),
+                : Layout.Builder.Text(Titled(card), 14f, Bright).RowH(22f),
         };
         if (card.Detail is { Length: > 0 } detail)
         {
-            foreach (var line in detail.Split('\n').Take(3))
-            {
-                lines.Add(Layout.Builder.Text(line, 11f, Body).RowH(18f));
-            }
+            // Wraps within the panel, three lines at most; an explicit newline stays a break.
+            lines.Add(WrappedProse.Paragraphs(detail, 11f, Body, DetailLines));
         }
 
         var buttons = new List<Layout.Node>();
@@ -306,6 +310,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 Layout.Builder.Spacer().Bg(accent).WFixed(3f).HStar(),
                 Layout.Builder.VStack([.. lines]).Pad(10f, 8f).WStar())
             .Bg(CardBg)
+            .WStar()
             .HAuto();
     }
 

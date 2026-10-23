@@ -190,15 +190,5 @@ internal sealed partial class FlightsView<TSurface>
             .HAuto()
             .WStar();
 
-    /// <summary>
-    /// A sentence that wraps at the width it is given, each word a text leaf ending in its space as Markdown's paragraphs
-    /// are: a text leaf is one line, and wrapping the words is what lets it follow the window and the terminal alike.
-    /// </summary>
-    private static Layout.Node Prose(string text, float size, RGBAColor32 color)
-    {
-        var words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
-            .Select(w => Layout.Builder.Text(w + " ", size, color).WAuto())
-            .ToArray();
-        return Layout.Builder.WrapH(words).WithLineGap(size * 0.2f).WStar();
-    }
+    private static Layout.Node Prose(string text, float size, RGBAColor32 color) => WrappedProse.Of(text, size, color);
 }

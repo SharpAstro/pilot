@@ -106,7 +106,7 @@ public sealed class CursorAndLinksTests
         ShouldPointAtButtonsOnly(regions);
         var buttons = Buttons(chrome.Cards.Tree(screen), 38);
         TextOf(buttons, "watchtower:rc").ShouldEndWith(Followable.Away);
-        TextOf(buttons, "card:c5:title").ShouldBe("DIR112 landed" + Followable.Away);
+        TextOf(buttons, "card:c5:title").ShouldBe("🛬 DIR112 landed" + Followable.Away);
     }
 
     [Fact]

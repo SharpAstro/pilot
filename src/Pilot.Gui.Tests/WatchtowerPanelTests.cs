@@ -62,6 +62,96 @@ public sealed class WatchtowerPanelTests
     }
 
     [Fact]
+    public void ALongDetailWrapsWithinThePanelAndStopsAtThreeLines()
+    {
+        var view = NewView(out var renderer, canTell: false);
+        using var _ = renderer;
+        var detail = string.Join(' ', Enumerable.Range(0, 60).Select(i => $"word{i}"));
+        var screen = CardsScreen.From([Card("c1") with { Detail = detail }]);
+
+        var arranged = Layout.Engine.Arrange(view.Tree(screen), new Rect<int>(0, 0, 38, 60), CellMeasureContext.PixelAuthored);
+        var words = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.StartsWith("word", StringComparison.Ordinal)).ToList();
+
+        // Wrapped: more than one line, none past the panel's right edge, and the cap cut the rest.
+        words.Select(a => a.Bounds.Y).Distinct().Count().ShouldBeInRange(2, CardsView<RgbaImage>.DetailLines);
+        words.ShouldAllBe(a => a.Bounds.X + a.Bounds.Width <= 38);
+        words.Count.ShouldBeLessThan(60);
+    }
+
+    [Fact]
+    public void ANewlineInADetailStaysABreak()
+    {
+        var view = NewView(out var renderer, canTell: false);
+        using var _ = renderer;
+        var screen = CardsScreen.From([Card("c1") with { Detail = "first\nsecond" }]);
+
+        var arranged = Layout.Engine.Arrange(view.Tree(screen), new Rect<int>(0, 0, 38, 60), CellMeasureContext.PixelAuthored);
+
+        var first = arranged.First(a => CellLayout.Describe([a]).Contains("first", StringComparison.Ordinal));
+        var second = arranged.First(a => CellLayout.Describe([a]).Contains("second", StringComparison.Ordinal));
+        second.Bounds.Y.ShouldBeGreaterThan(first.Bounds.Y);
+    }
+
+    [Fact]
+    public void ALandedCardsTitleStartsWithTheGlyphInTheOpenCardAndTheHandledList()
+    {
+        var view = NewView(out var renderer, canTell: false);
+        using var _ = renderer;
+        var open = Card("c1") with { Title = "PIL20 landed" };
+        var handled = Card("c2", CardState.Closed, CardBin.Handled) with { Title = "PIL21 landed" };
+        var other = Card("c3") with { Kind = "pr", Title = "PR 4 is ready" };
+
+        var text = Describe(view, CardsScreen.From([open, handled, other]));
+
+        text.ShouldContain("🛬 PIL20 landed");
+        text.ShouldContain("🛬 PIL21 landed");
+        text.ShouldContain("PR 4 is ready");
+        text.ShouldNotContain("🛬 PR 4");
+        // The title stays as the node raised it.
+        open.Title.ShouldBe("PIL20 landed");
+    }
+
+    [Fact]
+    public void TheLandedGlyphRendersInACpuFrame()
+    {
+        // The UI face lacks 🛬; the platform's colour emoji face draws it. A machine without one draws a blank, so nothing to check.
+        if (FontResolver.ResolveEmojiFont().Length == 0)
+        {
+            return;
+        }
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Render(new SessionsScreen([], "test", Live.At), null, CardsScreen.From([Card("c1") with { Title = "PIL20 landed" }]), new RectF32(0, 0, 1280, 800));
+
+        // The glyph sits where the title starts, left of the "PIL20": card-coloured pixels there are all it would be if it did not draw.
+        var px = renderer.Surface.Pixels;
+        var drawn = 0;
+        for (var y = 94; y < 110; y++)
+        {
+            for (var x = 1008; x < 1026; x++)
+            {
+                var i = (y * 1280 + x) * 4;
+                drawn += px[i] == 0x1f && px[i + 1] == 0x21 && px[i + 2] == 0x2b ? 0 : 1;
+            }
+        }
+        drawn.ShouldBeGreaterThan(20);
+    }
+
+    [Fact]
+    public void TheTellBoxFillsThePanelsWidthLessItsPadding()
+    {
+        var view = NewView(out var renderer);
+        using var _ = renderer;
+
+        var arranged = Layout.Engine.Arrange(view.Tree(CardsScreen.From([Card("c1")], [Tower()])), new Rect<int>(0, 0, 38, 40), CellMeasureContext.PixelAuthored);
+        var input = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput });
+
+        // Padded the same on both sides, and the padding is not the whole panel: the box is the panel less it.
+        input.Bounds.X.ShouldBeGreaterThan(0);
+        (input.Bounds.X * 2 + input.Bounds.Width).ShouldBe(38);
+    }
+
+    [Fact]
     public void ASnapshotHasNoBox()
     {
         var view = NewView(out var renderer, canTell: false);
