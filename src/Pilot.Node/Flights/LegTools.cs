@@ -206,6 +206,10 @@ public interface IGitHub
     /// <exception cref="FlightException">gh could not list them.</exception>
     Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken);
 
+    /// <summary>Opens an issue in the repo at <paramref name="repoPath"/>; returns it as listed.</summary>
+    /// <exception cref="FlightException">gh could not create it.</exception>
+    Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken);
+
     /// <summary>Issue <paramref name="number"/>'s title, or null when gh cannot say.</summary>
     Task<string?> IssueTitleAsync(string repoPath, int number, CancellationToken cancellationToken);
 
@@ -383,6 +387,21 @@ public sealed class GhCli : IGitHub
             }
         }
         return failing ? ChoiceStatus.Failing : pending ? ChoiceStatus.Pending : passing ? ChoiceStatus.Passing : null;
+    }
+
+    public async Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken)
+    {
+        // An empty body is given explicitly: without one gh would ask for it, and the node has no terminal.
+        var (exit, output, error) = await RunAsync(["issue", "create", "--title", title, "--body", body ?? ""], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not create the issue: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        // gh prints the new issue's URL, .../issues/<n>, as its last line.
+        var url = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault() ?? "";
+        return int.TryParse(url[(url.LastIndexOf('/') + 1)..], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var number)
+            ? new IssueInfo { Number = number, Title = title, UpdatedAt = DateTimeOffset.UtcNow }
+            : throw new FlightException($"gh created the issue but did not say which: {output.Trim()}");
     }
 
     public async Task<string?> IssueTitleAsync(string repoPath, int number, CancellationToken cancellationToken)

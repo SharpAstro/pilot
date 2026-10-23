@@ -77,6 +77,24 @@ internal sealed class FakeGitHub : IGitHub
             : Task.FromResult(OpenPrs.TryGetValue(repoPath, out var prs) ? prs : []);
     }
 
+    /// <summary>Every issue created, as (repo path, title, body).</summary>
+    public List<(string Repo, string Title, string? Body)> IssuesCreated { get; } = [];
+
+    /// <summary>When set, CreateIssueAsync fails with it.</summary>
+    public string? CreateIssueFails { get; set; }
+
+    public Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken)
+    {
+        if (CreateIssueFails is { } why)
+        {
+            return Task.FromException<IssueInfo>(new FlightException(why));
+        }
+        IssuesCreated.Add((repoPath, title, body));
+        var number = Issues.Count == 0 ? 1 : Issues.Keys.Max() + 1;
+        Issues[number] = title;
+        return Task.FromResult(new IssueInfo { Number = number, Title = title });
+    }
+
     public Task<string?> IssueTitleAsync(string repoPath, int number, CancellationToken cancellationToken) =>
         Task.FromResult(Issues.TryGetValue(number, out var title) ? title : null);
 

@@ -223,6 +223,12 @@ public static class Verbs
     /// </summary>
     public const string Setup = "setup";
 
+    /// <summary><c>sync-repos node</c>: <c>git fetch -p --all</c> and a fast-forward-only pull of each tracked repo's default branch; the result's <see cref="CommandResult.Made"/> is one <see cref="RepoSyncOutcome"/> line per repo.</summary>
+    public const string SyncRepos = "sync-repos";
+
+    /// <summary><c>create-issue repo/&lt;path&gt; &lt;title&gt; [body]</c>: a new issue through gh; the result's <see cref="CommandResult.Made"/> is its number.</summary>
+    public const string CreateIssue = "create-issue";
+
     /// <summary>
     /// <c>plan-flight flight/&lt;code&gt;</c>: a planner worker, <c>&lt;machine&gt;-&lt;flight&gt;-plan</c>, in the flight's plane:
     /// it reads the issue and the code and plans the legs (<c>plan-leg</c>), then says <c>planned</c>.

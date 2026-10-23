@@ -55,6 +55,8 @@ public static class NodeApp
         builder.Services.AddSingleton<RepoCatalog>();
         builder.Services.AddSingleton<RepoWatch>();
         builder.Services.AddHostedService(services => services.GetRequiredService<RepoWatch>());
+        builder.Services.AddSingleton<RepoSync>();
+        builder.Services.AddSingleton<RepoCommander>();
         builder.Services.AddSingleton<IWorkerLauncher, ClaudeWorkerLauncher>();
         builder.Services.AddSingleton<ICheckRunner, ShellCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
