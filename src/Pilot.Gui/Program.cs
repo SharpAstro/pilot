@@ -344,7 +344,16 @@ if (feed is not null && client is not null && clients is not null)
         Console.WriteLine($"pilot-gui: new flight: {said}");
         return said;
     };
+    wizard.CreateIssue = (path, title, body) => RepoActions.CreateIssueAsync(client, path, title, body, GuiSay.Who, cts.Token);
     wizard.Changed = loop.RequestRedraw;
+    // The Repos page's Sync runs on this window's node; its New flight opens the wizard at that repo's issues.
+    chrome.Repos.SyncRepos = ct => RepoActions.SyncAsync(client, GuiSay.Who, ct);
+    chrome.Repos.Changed = loop.RequestRedraw;
+    chrome.Repos.OnNewFlight = line =>
+    {
+        chrome.Show(PilotPage.Flights);
+        wizard.Open(line.Status.Path, atIssues: true);
+    };
     chrome.Flights.OnAction = action => tracker.Run(async () =>
     {
         var said = clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, GuiSay.Who, cts.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node);
