@@ -28,6 +28,9 @@ public sealed class ReviewTests : IDisposable
         Directory.CreateDirectory(Repo);
         Git(_root, "init", "-q", "--bare", "-b", "main", origin);
         Git(Repo, "init", "-q", "-b", "main");
+        // The node's own rebases make commits, and a CI runner has no identity of its own to make them with.
+        Git(Repo, "config", "user.email", "t@example.com");
+        Git(Repo, "config", "user.name", "t");
         File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
         Git(Repo, "add", ".");
         Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
