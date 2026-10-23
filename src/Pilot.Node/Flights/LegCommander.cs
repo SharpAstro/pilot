@@ -517,6 +517,8 @@ public sealed partial class LegCommander(
             throw new FlightException($"{flight.Code} has legs not done: {string.Join(", ", open)}");
         }
 
+        // A base that is not a branch on the remote is repaired first: the rebase it takes must be what is pushed.
+        flight = await RepairBaseAsync(flight, cancellationToken);
         // Pushed every time, not only for a new PR: a go-around's commits must reach the PR before it is reviewed again.
         await PushAsync(flight, cancellationToken);
         var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
@@ -559,7 +561,9 @@ public sealed partial class LegCommander(
 
     private async Task PushAsync(FlightRow flight, CancellationToken cancellationToken)
     {
-        var push = await git.RunAsync(["push", "-u", "origin", flight.Branch], flight.Worktree, cancellationToken);
+        // With a lease: the flight's branch is the node's own, and a repaired base rebases it, which a plain push refuses;
+        // the lease still refuses to overwrite a push the node did not make.
+        var push = await git.RunAsync(["push", "-u", "--force-with-lease", "origin", flight.Branch], flight.Worktree, cancellationToken);
         if (!push.Ok)
         {
             throw new FlightException($"git could not push {flight.Branch}: {push.Why}");
@@ -717,6 +721,39 @@ public sealed partial class LegCommander(
         }
         choices.Add(new CardChoice { Label = "Ready anyway", Verb = Verbs.Review, Target = Verbs.FlightTarget(flight.Code), Args = ["pass", "ready anyway"] });
         state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review asks for changes", changes, choices, link: flight.PullRequestUrl);
+    }
+
+    /// <summary>
+    /// A flight whose base is not a branch on the remote (cut while the clone lacked <c>origin/HEAD</c>, from whatever was
+    /// checked out; PIL124 and PIL126 from a feature branch since merged and deleted): its base becomes the remote's
+    /// default, and its clean plane is rebased onto it, which drops the commits that branch already landed. A rebase that
+    /// conflicts is undone and said, never left half done.
+    /// </summary>
+    private async Task<FlightRow> RepairBaseAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        if (flight.Base.StartsWith("origin/", StringComparison.Ordinal)
+            && (await git.RunAsync(["rev-parse", "--verify", "--quiet", $"refs/remotes/{flight.Base}"], flight.Worktree, cancellationToken)).Ok)
+        {
+            return flight;
+        }
+        var remoteBase = await planes.RemoteBaseAsync(flight.RepoPath, cancellationToken);
+        if (!remoteBase.StartsWith("origin/", StringComparison.Ordinal) || remoteBase == flight.Base)
+        {
+            return flight;
+        }
+        if ((await git.RunAsync(["status", "--porcelain"], flight.Worktree, cancellationToken)).Output.Trim().Length > 0)
+        {
+            throw new FlightException($"{flight.Code}'s base {flight.Base} is not a branch on the remote, and its plane holds changes not committed: commit them, then open the PR, which rebases it onto {remoteBase}");
+        }
+        var rebase = await git.RunAsync(["rebase", remoteBase], flight.Worktree, cancellationToken);
+        if (!rebase.Ok)
+        {
+            await git.RunAsync(["rebase", "--abort"], flight.Worktree, cancellationToken);
+            throw new FlightException($"{flight.Code}'s base {flight.Base} is not a branch on the remote, and rebasing its plane onto {remoteBase} conflicts: {rebase.Why}. Rebase it by hand, then open the PR");
+        }
+        var repaired = flight with { Base = remoteBase };
+        state.PutFlight(repaired);
+        return repaired;
     }
 
     /// <summary>The branch a PR goes into: its base without the remote (<c>origin/main</c> is <c>main</c>).</summary>

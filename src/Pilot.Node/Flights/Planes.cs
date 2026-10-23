@@ -87,20 +87,43 @@ public sealed class Planes(IGit git)
         return Path.GetDirectoryName(gitDir);
     }
 
+    /// <summary>
+    /// What a plane is cut from and its PR goes into: the remote's default branch (<c>origin/main</c>), fresh from a fetch.
+    /// A clone with no <c>origin/HEAD</c> (one made by <c>git init</c> and <c>remote add</c>) has it set from the remote,
+    /// else <c>origin/main</c> is taken; never the branch the main checkout happens to be on, which once made two planes
+    /// from a feature branch whose PR base was then deleted (PIL124 and PIL126, 2026-10-23). With no origin at all, the
+    /// main checkout's branch by name (not HEAD, which inside the plane is the plane's own tip).
+    /// </summary>
+    public async Task<string> RemoteBaseAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        if (!(await git.RunAsync(["remote", "get-url", "origin"], repoPath, cancellationToken)).Ok)
+        {
+            var current = await git.RunAsync(["symbolic-ref", "--short", "HEAD"], repoPath, cancellationToken);
+            return current.Ok && current.Output.Trim().Length > 0 ? current.Output.Trim() : "HEAD";
+        }
+        await git.RunAsync(["fetch", "--quiet", "origin"], repoPath, cancellationToken);
+        if (await OriginHeadAsync() is { } head)
+        {
+            return head;
+        }
+        await git.RunAsync(["remote", "set-head", "origin", "--auto"], repoPath, cancellationToken);
+        if (await OriginHeadAsync() is { } set)
+        {
+            return set;
+        }
+        return (await git.RunAsync(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/main"], repoPath, cancellationToken)).Ok ? "origin/main" : "origin/master";
+
+        async Task<string?> OriginHeadAsync()
+        {
+            var head = await git.RunAsync(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repoPath, cancellationToken);
+            return head.Ok && head.Output.Trim().Length > 0 ? head.Output.Trim() : null;
+        }
+    }
+
     /// <summary>Makes the plane for <paramref name="code"/> in <paramref name="repoPath"/>, or throws with git's words.</summary>
     public async Task<Plane> MakeAsync(string repoPath, string code, CancellationToken cancellationToken)
     {
-        // Fresh from the remote when there is one; offline, the plane is made from what the checkout has.
-        await git.RunAsync(["fetch", "--quiet", "origin"], repoPath, cancellationToken);
-        var head = await git.RunAsync(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repoPath, cancellationToken);
-        var baseRef = head.Ok && head.Output.Trim().Length > 0 ? head.Output.Trim() : null;
-        if (baseRef is null)
-        {
-            // No remote: the main checkout's branch, by name. Not HEAD, which inside the plane is the plane's own tip,
-            // so a go-around's "commits past the base" would always read as none.
-            var current = await git.RunAsync(["symbolic-ref", "--short", "HEAD"], repoPath, cancellationToken);
-            baseRef = current.Ok && current.Output.Trim().Length > 0 ? current.Output.Trim() : "HEAD";
-        }
+        var baseRef = await RemoteBaseAsync(repoPath, cancellationToken);
 
         var name = code.ToLowerInvariant();
         var branch = $"flight/{name}";

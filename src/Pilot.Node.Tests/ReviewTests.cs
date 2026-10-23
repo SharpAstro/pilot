@@ -165,6 +165,42 @@ public sealed class ReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task APlaneIsCutFromTheRemotesDefaultEvenWithoutOriginHeadOrOnAFeatureBranch()
+    {
+        // The clone has no origin/HEAD and its checkout is on a feature branch: the plane still comes from origin/main.
+        Git(Repo, "remote", "set-head", "origin", "--delete");
+        Git(Repo, "switch", "-q", "-c", "feat/elsewhere");
+        var flight = await NewFlight("4", "parser");
+
+        flight.Base.ShouldBe("origin/main");
+        Git(Repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").Trim().ShouldBe("origin/main");
+    }
+
+    [Fact]
+    public async Task AFlightWhoseBaseIsNoBranchOnTheRemoteIsRebasedOntoItsDefaultWhenItsPrOpens()
+    {
+        // Cut, as PIL126 was, from a feature branch that has since landed on main and gone from the remote.
+        Git(Repo, "switch", "-q", "-c", "feat/landed");
+        File.WriteAllText(Path.Combine(Repo, "feature.txt"), "landed\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "the feature");
+        Git(Repo, "switch", "-q", "main");
+        Git(Repo, "cherry-pick", "feat/landed");
+        Git(Repo, "push", "-q", "origin", "main");
+        var flight = await NewFlight("5", "parser");
+        Git(flight.Worktree, "reset", "-q", "--hard", "feat/landed");
+        _state.PutFlight(F("TIA5") with { Base = "feat/landed" });
+        await Fly(F("TIA5"), "parser");
+
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA5"), "controller")).Error.ShouldBeNull();
+
+        F("TIA5").Base.ShouldBe("origin/main");
+        _github.Created.Last().Base.ShouldBe("main");
+        // The feature's commit is on main already, so only the leg's own commit is the PR's.
+        Git(F("TIA5").Worktree, "rev-list", "--count", "origin/main..HEAD").Trim().ShouldBe("1");
+    }
+
+    [Fact]
     public async Task ChangesRingWithAGoAroundWhoseFinishIsReviewedAfreshOrReadyAnyway()
     {
         var flight = await NewFlight("2", "parser");
