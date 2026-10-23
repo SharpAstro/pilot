@@ -101,6 +101,79 @@ public sealed class SteerByNodeTests : IAsyncDisposable
         Arrange(view, screen).Text.ShouldNotContain("Connect to");
     }
 
+    private static FlightLine FlightOn(string code, NodeMark node) => FlightLine.Build([new FlightRow
+    {
+        Code = code, Repo = "tianwen", RepoPath = "/r/tianwen", Issue = 1, Branch = "flight/" + code.ToLowerInvariant(), Worktree = "/w", Base = "origin/main",
+        State = FlightState.Flying, Connections = [], CreatedAt = Live.At,
+    }], [], Live.At).Single() with { Node = node };
+
+    private static CardRow CardRow(string id) => new()
+    {
+        Id = id, Bin = CardBin.ForYou, Kind = "landed", Subject = "flight/X", Title = "landed " + id, At = Live.At, State = CardState.Open,
+        Choices = [new CardChoice { Label = "Merge", Verb = "answer", Target = "card/x" }],
+    };
+
+    [Fact]
+    public void AFlightRowAndACardOnANodeWithNoGrantAreWatchOnlyWithTheHintAndAConnectPill()
+    {
+        using var here = NodeClient.Remote(_se1.Endpoint);
+        using var clients = new FleetClients(here, _ => false, e => NodeClient.Remote(e));
+        using var vessel = new RgbaImageRenderer(1280, 800);
+        var asked = new List<string>();
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath };
+        chrome.Flights.CanCommand = true;
+        chrome.Flights.CanSteer = clients.CanSteer;
+        chrome.Flights.OnConnect = node => asked.Add(node.Where);
+        chrome.Cards.CanSteer = clients.CanSteer;
+        chrome.Cards.OnConnect = node => asked.Add(node.Where);
+        var se1Flight = FlightOn("SE11", Se1);
+        var le1Flight = FlightOn("LE11", Le1);
+        var flights = new FlightsScreen([se1Flight, le1Flight], "test", Live.At);
+        var cardsScreen = CardsScreen.Merge([(Se1, CardsScreen.From([CardRow("cse")])), (Le1, CardsScreen.From([CardRow("cle")]))], null);
+
+        List<string> Buttons()
+        {
+            var regions = new List<ClickableRegion>();
+            chrome.Flights.CollectPaintedRegions(regions);
+            chrome.Cards.CollectPaintedRegions(regions);
+            return [.. regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action)];
+        }
+
+        chrome.Show(PilotPage.Flights);
+        chrome.Render(new SessionsScreen([], "test", Live.At), flights, cardsScreen, new RectF32(0, 0, 1280, 800));
+        var first = Buttons();
+
+        // Cards: SE1's keep Merge and Dismiss, LE1's have neither, and a Connect.
+        first.ShouldContain("card:cse:1");
+        first.ShouldContain("card:cse:dismiss");
+        first.ShouldNotContain("card:cle:1");
+        first.ShouldNotContain("card:cle:dismiss");
+        first.ShouldContain("card:cle:connect");
+        first.ShouldNotContain("card:cse:connect");
+
+        void Select(string code)
+        {
+            chrome.Flights.ListCursor.MoveTo(flights.Lines.ToList().FindIndex(l => l.Code == code));
+            chrome.Render(new SessionsScreen([], "test", Live.At), flights, cardsScreen, new RectF32(0, 0, 1280, 800));
+        }
+
+        Select("SE11");
+        var se1Buttons = Buttons();
+        se1Buttons.ShouldContain("flight:SE11:plan-leg");
+        se1Buttons.ShouldNotContain("flight:SE11:connect");
+
+        Select("LE11");
+        var le1Buttons = Buttons();
+        le1Buttons.ShouldNotContain("flight:LE11:plan-leg");
+        le1Buttons.ShouldContain("flight:LE11:connect");
+        var arranged = Layout.Engine.Arrange(chrome.Flights.Tree(flights), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored);
+        CellLayout.Describe(arranged).ShouldContain("Connect to LE1 to steer");
+        var regions2 = new List<ClickableRegion>();
+        chrome.Flights.CollectPaintedRegions(regions2);
+        regions2.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:LE11:connect" }).OnClick!.Invoke(InputModifier.None);
+        asked.ShouldBe([_le1.Endpoint]);
+    }
+
     [Fact]
     public async Task ANodeThatRefusesTheGrantAsUnauthorizedReadsAsWatchOnlyUntilANewGrant()
     {

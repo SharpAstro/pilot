@@ -367,6 +367,8 @@ if (feed is not null && client is not null && clients is not null)
     // pill (the Fleet page's, the same ask) stands in for them. There is no second window per node: the lists steer them all.
     view.CanSteer = CanSteer;
     chrome.Jobs.CanSteer = CanSteer;
+    chrome.Flights.CanSteer = CanSteer;
+    chrome.Cards.CanSteer = CanSteer;
     void Connect(string where, string machine) => tracker.Run(async () =>
     {
         chrome.Fleet.Said = $"asking {machine} ({where}) for a grant: allow it on that machine";
@@ -383,6 +385,8 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Fleet.OnConnect = line => Connect(line.Where, line.Machine);
     view.OnConnect = node => Connect(node.Where, node.Name);
     chrome.Jobs.OnConnect = node => Connect(node.Where, node.Name);
+    chrome.Flights.OnConnect = node => Connect(node.Where, node.Name);
+    chrome.Cards.OnConnect = node => Connect(node.Where, node.Name);
     // The Settings page: this machine's node only, as its route is (a node on the LAN keeps its settings to itself).
     if (remoteEndpoint is null)
     {

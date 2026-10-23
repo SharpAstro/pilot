@@ -100,7 +100,7 @@ flights.Wizard.Create = async picks =>
 flights.Wizard.Changed = Redraw;
 flights.OnAction = action => _ = Task.Run(async () =>
 {
-    flights.Say(clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, Who, stop.Token) : FleetClients.WatchOnly(action.Node));
+    flights.Say(clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, Who, stop.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node));
     Redraw();
 });
 flights.OnOpen = location => flights.Say(DashboardCommands.Open(location) ? $"opened {location}" : $"could not open {location}");
@@ -150,6 +150,7 @@ async Task CardAsync(string verb, CardRow card, string[] cardArgs)
         return;
     }
     var envelope = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.CardTarget(card.Id), Args = cardArgs, Who = Who }, stop.Token);
+    clients.NoteRefusal(cards.NodeOf(card), envelope);
     flights.Say(envelope.Success ? $"{verb} {card.Id}: done" : $"{verb} {card.Id}: {envelope.Response?.Error ?? envelope.Error}");
     Redraw();
 }
@@ -197,8 +198,12 @@ fleet.OnConnect = line => Connect(line.Where, line.Machine);
 // Rows on a node this user cannot steer are watch-only, with a Connect in place of their actions.
 sessions.CanSteer = clients.CanSteer;
 jobs.CanSteer = clients.CanSteer;
+flights.CanSteer = clients.CanSteer;
+cards.CanSteer = clients.CanSteer;
 sessions.OnConnect = node => Connect(node.Where, node.Name);
 jobs.OnConnect = node => Connect(node.Where, node.Name);
+flights.OnConnect = node => Connect(node.Where, node.Name);
+cards.OnConnect = node => Connect(node.Where, node.Name);
 // The Settings page: this machine's node only, as its route is.
 if (remote is null)
 {
