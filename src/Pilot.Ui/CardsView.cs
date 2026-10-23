@@ -73,6 +73,9 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
     }
 }
 
+/// <summary>One thing told the watchtower from the panel, and whether the node took it.</summary>
+internal sealed record ToldLine(string Text, DateTimeOffset At, bool Told);
+
 /// <summary>
 /// The cards panel down the window's right side, as the design's home screen has the watchtower's: what waits on the
 /// controller on top, each card with its buttons (its choices, and Dismiss), then what was handled, a line each. A
@@ -185,13 +188,44 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 .Clickable(new HitResult.ButtonHit("watchtower:rc"), _ => OnOpen?.Invoke(url))
                 .RowH(20f));
         }
-        if (CanTell)
-        {
-            blocks.Add(Layout.Builder.TextInput(TellInput, 13f).RowH(26f));
-            blocks.Add(Layout.Builder.Text(TellStatus ?? "", 10f, Dim).RowH(16f));
-        }
         blocks.Add(Layout.Builder.Spacer().RowH(10f));
         return blocks;
+    }
+
+    /// <summary>How many told lines the panel keeps above the box.</summary>
+    internal const int ToldKept = 4;
+
+    private readonly List<ToldLine> _told = [];
+
+    /// <summary>What was told the watchtower from here, oldest first: the last few, with how each went.</summary>
+    public IReadOnlyList<ToldLine> Told => _told;
+
+    /// <summary>Records a tell and its outcome; <paramref name="status"/> is the node's answer, shown under the box.</summary>
+    public void NoteTold(string text, bool told, string status, DateTimeOffset? at = null)
+    {
+        _told.Add(new ToldLine(text, at ?? DateTimeOffset.UtcNow, told));
+        if (_told.Count > ToldKept)
+        {
+            _told.RemoveAt(0);
+        }
+        TellStatus = status;
+    }
+
+    /// <summary>The box at the panel's foot, with what was told above it; it stays in view while the cards above scroll.</summary>
+    private Layout.Node Foot(CardsScreen screen)
+    {
+        var rows = new List<Layout.Node> { Layout.Builder.Spacer().RowH(6f) };
+        foreach (var line in _told)
+        {
+            rows.Add(Layout.Builder.Text($"{(line.Told ? "told" : "refused")} · {line.Text}", 10f, line.Told ? Dim : Ring).RowH(16f));
+        }
+        if (screen.Watchtower is null)
+        {
+            rows.Add(Layout.Builder.Text("no watchtower session is running; a tell is still sent", 10f, Ring).RowH(16f));
+        }
+        rows.Add(Layout.Builder.TextInput(TellInput, 13f).RowH(26f));
+        rows.Add(Layout.Builder.Text(TellStatus ?? "", 10f, Dim).RowH(16f));
+        return Layout.Builder.VStack([.. rows]).Pad(Gutter, 4f).Bg(CardBg).HAuto();
     }
 
     public override bool HandleInput(InputEvent evt) => false;
@@ -215,7 +249,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 blocks.Add(Layout.Builder.Text(screen.NodeOf(card) is { } node ? $"{node.Name} · {card.Title}" : card.Title, 12f, Dim).RowH(20f));
             }
         }
-        return Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).Bg(PanelBg).Stretch();
+        var stack = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).HStar();
+        return Layout.Builder.VStack(CanTell ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch();
     }
 
     private Layout.Node Card(CardRow card, NodeMark? node)
