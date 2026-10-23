@@ -457,7 +457,7 @@ page needs nothing the node does not already send, and pilot-tui shows the same 
 `FlightDetail` in `Pilot.Ui`). `pilot-gui --capture out.png --page flights --flight <code>` renders one, with its text
 in `out.png.rows.txt`.
 
-The **Repos** page (Ctrl+6) is every tracked repo as a row (a repo is tracked once it has flown, or holds a worktree or an
+The **Repos** page (Ctrl+7) is every tracked repo as a row (a repo is tracked once it has flown, or holds a worktree or an
 open PR of a flight; **All repos** in the header adds the rest under the node's roots). A repo row shows its main checkout
 (branch, clean or dirty, ahead and behind `origin/<default>`) and its open PRs (number and title, draft or ready, where the
 checks stand; a click opens the PR). Right, or a click on the triangle, lists its worktrees under it as the Sessions page
