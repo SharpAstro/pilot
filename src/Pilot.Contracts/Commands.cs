@@ -107,8 +107,9 @@ public static class Verbs
     public const string Check = "check";
 
     /// <summary>
-    /// <c>finish-leg flight/&lt;code&gt;/&lt;leg&gt; done|failed [report…]</c>. Done only with every step ticked and its check,
-    /// rerun by the node in the plane, passing.
+    /// <c>finish-leg flight/&lt;code&gt;/&lt;leg&gt; done|failed|accepted [report…]</c>. Done only with every step ticked and its
+    /// check, rerun by the node in the plane, passing. Accepted takes a failed leg's read as it is (the controller's, never
+    /// its worker's or the watchtower's): the leg is done, its failure kept in the report, and the flight goes on.
     /// </summary>
     public const string FinishLeg = "finish-leg";
 

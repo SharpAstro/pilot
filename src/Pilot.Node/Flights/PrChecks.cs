@@ -5,9 +5,10 @@ namespace Pilot.Node.Flights;
 /// <summary>
 /// Keeps each open PR-ready card's Merge choice saying where its PR's checks stand (green, amber, red on every client),
 /// read from GitHub every <see cref="Interval"/>. The merge stays the controller's gate: this says how ready it is, it
-/// decides nothing.
+/// decides nothing. A PR merged on GitHub itself (a person, another tool) is noticed too: its card closes and its flight
+/// lands, as a merge through the card would; one closed without a merge closes its card.
 /// </summary>
-public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time) : BackgroundService
+public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time, FlightCommander? flights = null) : BackgroundService
 {
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(30);
 
@@ -40,6 +41,17 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time)
             var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : null;
             if (state.Flights().FirstOrDefault(f => f.Code == code) is not { PullRequest: { } number } flight)
             {
+                continue;
+            }
+            if (await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken) is { } pr && pr.Number == number
+                && pr.State is "MERGED" or "CLOSED")
+            {
+                var merged = pr.State == "MERGED";
+                state.CloseCard(card.Id, merged ? $"merged on GitHub as #{number}" : $"#{number} closed on GitHub without a merge", "github");
+                if (merged && flights is not null)
+                {
+                    await flights.LandAfterMergeAsync(flight.Code, cancellationToken);
+                }
                 continue;
             }
             var status = await github.ChecksAsync(flight.RepoPath, number, cancellationToken);

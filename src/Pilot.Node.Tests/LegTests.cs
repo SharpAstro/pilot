@@ -299,7 +299,7 @@ public sealed class LegCommanderTests : IDisposable
         (await Run(Verbs.FinishLeg, "flight/TIA1/parser", "du1-tia1-parser", "failed", "no ephemeris here")).Ok.ShouldBeTrue();
         var failed = _state.Cards(openOnly: true).ShouldHaveSingleItem();
         (failed.Bin, failed.Kind, failed.Subject, failed.Detail).ShouldBe((CardBin.Ring, "leg-failed", "flight/TIA1/parser", "no ephemeris here"));
-        failed.Choices.Single().Verb.ShouldBe(Verbs.GoAround);
+        failed.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Go around", Verbs.GoAround), ("Accept the read", Verbs.FinishLeg)]);
 
         _workers.Stopped.ShouldBeEmpty();
         for (var i = 0; i < 100 && _workers.Stopped.Count == 0; i++)
@@ -307,6 +307,16 @@ public sealed class LegCommanderTests : IDisposable
             await Task.Delay(20, Ct);
         }
         _workers.Stopped.ShouldBe(["job00001"]);
+
+        // The controller takes the failed read as it is; its worker and the watchtower may not, and only a failed leg is.
+        (await Run(Verbs.FinishLeg, "flight/TIA1/parser", "du1-tia1-parser", "accepted")).Error.ShouldBe("accepting TIA1/parser's failed read is the controller's, not du1-tia1-parser's");
+        (await Run(Verbs.FinishLeg, "flight/TIA1/parser", "du1-watchtower", "accepted")).Error.ShouldBe("accepting TIA1/parser's failed read is the controller's, not du1-watchtower's");
+        (await Run(Verbs.FinishLeg, "flight/TIA1/render", "controller", "accepted")).Error.ShouldBe("TIA1/render is planned: only a failed leg is accepted as it is");
+        (await Run(Verbs.FinishLeg, "flight/TIA1/parser", "controller", "accepted", "the ephemeris is the issue")).Ok.ShouldBeTrue();
+        var parser = _state.Legs("TIA1").Single(l => l.Name == "parser");
+        (parser.State, parser.Report).ShouldBe((LegState.Done, "failed, accepted by controller: the ephemeris is the issue\nno ephemeris here"));
+        _state.Cards(openOnly: true).ShouldBeEmpty();
+        (await Run(Verbs.StartLeg, "flight/TIA1/render", "controller")).Ok.ShouldBeTrue();
     }
 
     [Fact]
