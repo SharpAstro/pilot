@@ -78,6 +78,22 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult(Checks);
 
+    /// <summary>Every draft (true) or ready (false) the node asked for, by PR number.</summary>
+    public List<(int Number, bool Draft)> DraftCalls { get; } = [];
+
+    /// <summary>When set, SetDraftAsync fails with it, as a gh that could not reach GitHub.</summary>
+    public string? DraftFails { get; set; }
+
+    public Task SetDraftAsync(string repoPath, int number, bool draft, CancellationToken cancellationToken)
+    {
+        if (DraftFails is { } why)
+        {
+            throw new FlightException(why);
+        }
+        DraftCalls.Add((number, draft));
+        return Task.CompletedTask;
+    }
+
     public List<(string Branch, string Base, string Title, string Body)> Created { get; } = [];
 
     public Task<PullRequest> CreateAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken)

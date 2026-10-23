@@ -241,6 +241,44 @@ public sealed class ReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task AReviewThatAsksForChangesLeavesItsPrADraftAndAPassMakesItReadyBeforeTheMergeCard()
+    {
+        var flight = await NewFlight("4", "parser");
+        await Fly(flight, "parser");
+
+        // The PR opens ready, as the review runs on it: nothing is marked until a verdict.
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA4"), "controller");
+        _github.DraftCalls.ShouldBeEmpty();
+
+        await Run(Verbs.Review, "flight/TIA4", Reviewer("TIA4"), "changes", "the parser drops the last line");
+        _github.DraftCalls.ShouldBe([(71, true)]);
+
+        // A pass of a later round, or the controller's "ready anyway", makes it ready, and only then is the merge offered.
+        await Run(Verbs.Review, "flight/TIA4", "controller", "pass", "ready anyway");
+        _github.DraftCalls.ShouldBe([(71, true), (71, false)]);
+        Open().ShouldHaveSingleItem().Kind.ShouldBe(LegCommander.PrReady);
+    }
+
+    [Fact]
+    public async Task APassIsKeptOnlyOnceItsPrIsReady()
+    {
+        var flight = await NewFlight("5", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA5"), "controller");
+
+        // gh could not say: the review stays on, no merge card is raised, and the reviewer may say it again.
+        _github.DraftFails = "gh could not mark #71 ready for review: no network";
+        (await Run(Verbs.Review, "flight/TIA5", Reviewer("TIA5"), "pass", "fine")).Error.ShouldNotBeNull().ShouldContain("no network");
+        F("TIA5").Review!.State.ShouldBe(ReviewState.Reviewing);
+        Open().ShouldBeEmpty();
+
+        _github.DraftFails = null;
+        (await Run(Verbs.Review, "flight/TIA5", Reviewer("TIA5"), "pass", "fine")).Ok.ShouldBeTrue();
+        _github.DraftCalls.ShouldBe([(71, false)]);
+        Open().ShouldHaveSingleItem().Kind.ShouldBe(LegCommander.PrReady);
+    }
+
+    [Fact]
     public async Task ALegCannotBeNamedReviewAndAReviewerIsNoWorker()
     {
         await NewFlight("3", "parser");

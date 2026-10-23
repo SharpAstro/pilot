@@ -674,6 +674,13 @@ public sealed partial class LegCommander(
             throw new FlightException("a verdict needs its report: what was checked, or the changes asked for");
         }
 
+        // On GitHub before the verdict is kept: a gh that fails leaves the review as it was, for the reviewer to say again,
+        // never a pass whose PR is still a draft, or changes whose PR can still be merged with the fixes pending.
+        if (flight.PullRequest is { } number)
+        {
+            await github.SetDraftAsync(flight.RepoPath, number, draft: verdict == "changes", cancellationToken);
+        }
+
         var now = time.GetUtcNow();
         var kept = fromReviewer ? report : $"{report} (passed by {command.Who} over: {review.Report})";
         state.PutFlight(flight with { Review = review with { State = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes, Report = kept, FinishedAt = now } });
