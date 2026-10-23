@@ -178,6 +178,8 @@ public sealed class LegCommanderTests : IDisposable
         var flight = await FlightWithTwoLegs();
 
         (await Leg(Verbs.PlanFlight, "flight/TIA1")).Ok.ShouldBeTrue();
+        // A second, before the tracker has listed the first, starts no second planner over the same legs.
+        (await Leg(Verbs.PlanFlight, "flight/TIA1")).Error.ShouldBe("du1-tia1-plan is planning TIA1 already; wait for its planned card, or stop it first");
 
         var planner = _workers.Started.ShouldHaveSingleItem();
         (planner.Name, planner.Plane).ShouldBe(("du1-tia1-plan", Path.GetFileName(flight.Worktree)));
