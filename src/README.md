@@ -134,7 +134,15 @@ prefix, `--machine` or `PILOT_MACHINE`, else from its name).
 | `plan-flight flight/<code>` | A planner, `<machine>-<flight>-plan`, in the plane: it reads the issue and the code and plans the legs (`plan-leg`), writing no code, then says `planned`. |
 | `planned flight/<code> [summary…]` | The planner is done: a For-you card lists the legs, with **Start** on the first. No leg may be named `plan`. |
 | `connect flight/<code> <other>` | The flight holds until the other has landed (a cycle is refused). |
-| `land flight/<code>` | Its work is in: the worktree goes when clean (never with changes not committed), the branch and code stay, and flights waiting for it are cleared. |
+| `land flight/<code>` | Its work is in: the worktree goes when clean (never with changes not committed, nor with a commit on no remote and not in its base), the branch and code stay, and flights waiting for it are cleared. |
+
+**Nothing is left behind.** A flight's work reaches main or is said, never kept where nobody looks: a leg finishes as
+done only with every change committed (its worker's brief says so, and the node refuses a dirty plane); a merge is
+refused while the plane holds commits past the reviewed head, so a late commit cannot miss the PR; landing by hand is
+refused while the plane holds a commit on no remote and not in its base (compared by patch, so rebase-merged work
+counts as in); a flight whose PR was merged on GitHub with something left out does not land but rings with it. Once
+landed, the plane's worktree is removed and its branch kept. PRs are merged by rebase unless the node's `merge-method`
+says otherwise, so every commit's subject, which a repo's docs may cite, reaches main.
 
 ### Legs
 
@@ -152,7 +160,7 @@ budget.
 | `check flight/<code>/<leg> <n or text> [undo]` | Ticks a step. |
 | `finish-leg flight/<code>/<leg> done\|failed [report…]` | Done reruns the check; a failing one leaves the leg flying with the output in its report. |
 | `go-around flight/<code>/<leg> <why…>` | A fresh worker for a flying or failed leg. |
-| `merge flight/<code> <head> [squash\|rebase\|merge]` | With every leg done: `gh pr merge --match-head-commit`, refused when the PR moved past the head you reviewed; then the flight lands. |
+| `merge flight/<code> <head> [squash\|rebase\|merge]` | With every leg done: `gh pr merge --match-head-commit`, by the node's `merge-method` (rebase unless set otherwise) when none is named; refused when the PR moved past the head you reviewed, or the plane holds commits past it; then the flight lands. |
 
 ### Reviews
 

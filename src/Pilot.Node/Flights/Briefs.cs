@@ -57,6 +57,9 @@ public static class Briefs
         text.AppendLine($"Work only in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`. Every leg of the");
         text.AppendLine("flight flies on this branch in order, so the work of the legs before yours is already here. Commit as you go,");
         text.AppendLine("with messages that say what changed and why. Do not push, open a PR or merge: the controller lands the flight.");
+        text.AppendLine("Leave nothing behind in the plane: every change is committed before you finish (the node refuses a done leg");
+        text.AppendLine("whose plane holds files not committed), and scratch output goes outside the plane, never into it. Once your");
+        text.AppendLine("leg is done, commit nothing more here: a late commit would miss the PR; a change after it is a go-around.");
 
         var before = legs.Where(l => l.Order < leg.Order).ToList();
         if (before.Count > 0)

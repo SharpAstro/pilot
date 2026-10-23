@@ -239,6 +239,7 @@ public sealed class LegCommanderTests : IDisposable
         start.Plane.ShouldBe("tia1");
         start.Model.ShouldBe("sonnet");
         start.Brief.ShouldContain("Parse the ephemeris");
+        start.Brief.ShouldContain("Leave nothing behind in the plane: every change is committed before you finish");
         start.Brief.ShouldContain("1. [ ] Write the parser");
         start.Brief.ShouldContain("The parser tests pass");
         start.Brief.ShouldContain("reruns `dotnet test`");
