@@ -555,9 +555,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     }
 
     private Layout.Node Link(string text, string location, string action) =>
-        Layout.Builder.Text(text, 12f, Landed)
+        Layout.Builder.Text(text + Followable.Away, 12f, Landed)
             .BgHover(RowHoverBg)
-            .Clickable(new HitResult.ButtonHit(action), _ => OnOpen?.Invoke(location))
+            .Follows(new HitResult.ButtonHit(action), _ => OnOpen?.Invoke(location))
             .RowH(20f);
 
     private Layout.Node Pill(string label, string action, Action onClick) =>
@@ -566,7 +566,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             .WAuto()
             .Bg(Button)
             .BgHover(ButtonHover)
-            .Clickable(new HitResult.ButtonHit(action), _ => onClick());
+            .Follows(new HitResult.ButtonHit(action), _ => onClick());
 
     private Layout.Node CommandBar()
     {

@@ -28,6 +28,9 @@ internal sealed class AboutCard
         ("Escape", "back: out of a transcript, a wizard step, a menu"),
     ];
 
+    /// <summary>What the mark after a link's text means, as the card says it beside the keys.</summary>
+    public static readonly (string Mark, string What) AwayMark = (Followable.Away.Trim(), "a link that opens elsewhere (the browser, a folder), not an action here");
+
     /// <summary>Whether the card shows, over the page.</summary>
     public bool IsOpen { get; private set; }
 
@@ -51,7 +54,7 @@ internal sealed class AboutCard
     /// <summary>The header's button.</summary>
     public Layout.Node Button(FlightsPalette? night = null) =>
         Layout.Builder.Text("?", 14f, night?.Bright ?? Bright, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(night?.Button ?? ButtonBg).BgHover(night?.ButtonHover ?? ButtonHover)
-            .Clickable(new HitResult.ButtonHit("about:toggle"), _ => Toggle())
+            .Follows(new HitResult.ButtonHit("about:toggle"), _ => Toggle())
             .WithTooltip("Which pilot this is, where its things are, and the keys");
 
     /// <summary><paramref name="page"/>, with the card over its top right while it is open.</summary>
@@ -69,7 +72,7 @@ internal sealed class AboutCard
             Layout.Builder.HStack(
                     Layout.Builder.Text("pilot", 16f, bright).WStar(),
                     Layout.Builder.Text("×", 16f, body, TextAlign.Center).Pad(8f, 0f).WAuto().BgHover(hover)
-                        .Clickable(new HitResult.ButtonHit("about:close"), _ => Close()))
+                        .Follows(new HitResult.ButtonHit("about:close"), _ => Close()))
                 .RowH(26f),
         };
         foreach (var (label, value) in Facts?.Invoke() ?? [])
@@ -81,6 +84,7 @@ internal sealed class AboutCard
         {
             rows.Add(Line(keys, what, night));
         }
+        rows.Add(Line(AwayMark.Mark, AwayMark.What, night));
         return Layout.Builder.VStack([.. rows]).WithGap(2f).Pad(14f, 10f).Bg(night?.MenuBg ?? CardBg).WAuto().HAuto();
     }
 

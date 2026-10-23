@@ -555,13 +555,26 @@ using var inspector = DebugInspector.Attach(loop, new DebugInspectorOptions
 
 loop.OnKeyDown = key => router.Handle(key);
 loop.OnTextInput = text => router.Handle(new InputEvent.TextInput(text));
+// The cursor is the regions' (a button or a link says the hand), asked on every move rather than after a paint: a move
+// over inert chrome draws no frame. Cached so a move within one region costs no SDL call. As FC.SDK.Viewer does.
+var shownCursor = CursorKind.Default;
 loop.OnPointerInput = evt =>
 {
     if (evt is InputEvent.MouseMove move)
     {
         chrome.Pointer = (move.X, move.Y);
     }
-    return router.Handle(evt);
+    var handled = router.Handle(evt);
+    if (evt is InputEvent.MouseMove moved)
+    {
+        var cursor = router.CursorAt(moved.X, moved.Y) ?? CursorKind.Default;
+        if (cursor != shownCursor)
+        {
+            shownCursor = cursor;
+            window.SetSystemCursor(cursor.ToSystemCursor);
+        }
+    }
+    return handled;
 };
 
 Console.WriteLine($"pilot-gui: window \"{Title}\" open (pid {Environment.ProcessId}), {width}x{height} px at scale {window.DisplayScale:0.##}");

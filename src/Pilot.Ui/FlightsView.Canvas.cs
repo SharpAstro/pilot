@@ -46,7 +46,7 @@ internal sealed partial class FlightsView<TSurface>
             .WAuto()
             .Bg(on ? RowFocusBg : Button)
             .BgHover(ButtonHover)
-            .Clickable(new HitResult.ButtonHit(action), _ => Mode = mode);
+            .Follows(new HitResult.ButtonHit(action), _ => Mode = mode);
     }
 
     // The cards as a wrapping grid, in the list's order: the engine wraps them by the width it is given.
