@@ -16,9 +16,14 @@ internal static class DashboardCommands
     /// <summary>Runs <paramref name="line"/> (<c>leg start TIA1 parser</c>, with or without a leading <c>pilot</c>); returns what it printed.</summary>
     /// <param name="node">Which node: <c>--node-socket &lt;path&gt;</c> for this machine's, <c>--node host:port</c> for one on the LAN.</param>
     /// <param name="who">The host, as the commands say who sent them.</param>
-    public static async Task<string> RunAsync(string line, string[] node, string who, CancellationToken cancellationToken)
+    /// <param name="overrideNode">The node is a row's: a <c>--node</c> or <c>--node-socket</c> typed in the line gives way to it.</param>
+    public static async Task<string> RunAsync(string line, string[] node, string who, CancellationToken cancellationToken, bool overrideNode = false)
     {
         var args = CommandLineParser.SplitCommandLine(line).ToList();
+        if (overrideNode)
+        {
+            StripNode(args);
+        }
         if (args.Count > 0 && args[0] is "pilot" or "pilot.exe")
         {
             args.RemoveAt(0);
@@ -28,6 +33,38 @@ internal static class DashboardCommands
         var exit = await PilotCommand.RunAsync([.. node, .. args], Environment.CurrentDirectory, output, error, cancellationToken, who);
         var said = (output.ToString() + error.ToString()).TrimEnd();
         return said.Length > 0 ? said : exit == 0 ? "ok" : $"exit {exit}";
+    }
+
+    /// <summary>
+    /// The node options for a command from <paramref name="row"/>'s node: <c>--node &lt;endpoint&gt;</c> for another machine's,
+    /// <paramref name="here"/> for this window's own (or no row); null when the row is watch-only, whose command stays unrun.
+    /// </summary>
+    public static string[]? NodeArgsFor(NodeMark? row, string[] here, Func<NodeMark?, bool>? canSteer)
+    {
+        if (row is not { Here: false })
+        {
+            return here;
+        }
+        return canSteer?.Invoke(row) == false ? null : ["--node", row.Where];
+    }
+
+    private static void StripNode(List<string> args)
+    {
+        for (var i = args.Count - 1; i >= 0; i--)
+        {
+            if (args[i] is "--node" or "--node-socket")
+            {
+                args.RemoveAt(i);
+                if (i < args.Count)
+                {
+                    args.RemoveAt(i);
+                }
+            }
+            else if (args[i].StartsWith("--node=", StringComparison.Ordinal) || args[i].StartsWith("--node-socket=", StringComparison.Ordinal))
+            {
+                args.RemoveAt(i);
+            }
+        }
     }
 
     /// <summary>The node a typed <c>connect host:port</c> asks for control, or null for any other line.</summary>

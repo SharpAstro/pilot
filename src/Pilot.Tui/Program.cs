@@ -56,16 +56,24 @@ void Redraw() => dirty = true;
 
 // The same wiring as the window's: a verb on the node for each button, the CLI's own tree for the command bar.
 flights.CanCommand = true;
-flights.OnCommand = async line =>
+flights.OnCommand = async (line, row) =>
 {
     flights.Say($"> {line}");
+    // A line an action on a flight row prefilled goes to that row's node, not this terminal's unless it is the same.
+    var target = DashboardCommands.NodeArgsFor(row, nodeArgs, clients.CanSteer);
+    if (target is null)
+    {
+        flights.Say(FleetClients.WatchOnly(row));
+        Redraw();
+        return;
+    }
     // A connect waits on the other machine's person; the LAN line says so while it does.
     var asking = DashboardCommands.ConnectTarget(line);
     if (asking is not null)
     {
         flights.Lan?.Asking(asking, DateTimeOffset.UtcNow);
     }
-    flights.Say(await DashboardCommands.RunAsync(line, nodeArgs, Who, stop.Token));
+    flights.Say(await DashboardCommands.RunAsync(line, target, Who, stop.Token, overrideNode: row is { Here: false }));
     if (asking is not null)
     {
         flights.Lan?.Answered(asking);

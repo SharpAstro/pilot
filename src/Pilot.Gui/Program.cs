@@ -293,17 +293,25 @@ if (feed is not null && client is not null && clients is not null)
             Console.Error.WriteLine($"pilot-gui: the LAN cannot be watched: {ex.Message}");
         }
     }, "watch the LAN");
-    chrome.Flights.OnCommand = async line =>
+    chrome.Flights.OnCommand = async (line, row) =>
     {
         chrome.Flights.Say($"> {line}");
         loop.RequestRedraw();
+        // A line an action on a flight row prefilled goes to that row's node, not this window's unless it is the same.
+        var target = DashboardCommands.NodeArgsFor(row, NodeArgs(), CanSteer);
+        if (target is null)
+        {
+            chrome.Flights.Say(FleetClients.WatchOnly(row));
+            loop.RequestRedraw();
+            return;
+        }
         // A connect waits on the other machine's person; the LAN line says so while it does.
         var asking = DashboardCommands.ConnectTarget(line);
         if (asking is not null)
         {
             chrome.Flights.Lan?.Asking(asking, DateTimeOffset.UtcNow);
         }
-        var said = await DashboardCommands.RunAsync(line, NodeArgs(), GuiSay.Who, cts.Token);
+        var said = await DashboardCommands.RunAsync(line, target, GuiSay.Who, cts.Token, overrideNode: row is { Here: false });
         if (asking is not null)
         {
             chrome.Flights.Lan?.Answered(asking);

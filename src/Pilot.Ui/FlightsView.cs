@@ -226,8 +226,11 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>What the last commands said, newest last.</summary>
     public List<string> CommandOutput { get; } = [];
 
-    /// <summary>Runs a command typed in the bar.</summary>
-    public Func<string, Task>? OnCommand { get; set; }
+    /// <summary>Runs a command typed in the bar, with the node of the row whose action prefilled it (null: this window's).</summary>
+    public Func<string, NodeMark?, Task>? OnCommand { get; set; }
+
+    // The node of the flight row a prefilled action came from, kept until the line is committed or the bar is prefilled again.
+    private NodeMark? _prefillNode;
 
     /// <summary>Runs an action's verb on the node.</summary>
     public Action<FlightAction>? OnAction { get; set; }
@@ -285,7 +288,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                     {
                         if (action.Prefill is { } prefill)
                         {
-                            Prefill(prefill);
+                            Prefill(prefill, action.Node);
                         }
                         else
                         {
@@ -367,12 +370,16 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         }
         CommandInput.Text = "";
         CommandInput.CursorPos = 0;
-        await run(text.Trim());
+        var node = _prefillNode;
+        _prefillNode = null;
+        await run(text.Trim(), node);
     }
 
     /// <summary>Puts <paramref name="text"/> in the command bar for the controller to finish, as an action that needs words does.</summary>
-    public void Prefill(string text)
+    /// <param name="node">The node the line is for when an action on a flight row prefilled it; null is this window's.</param>
+    public void Prefill(string text, NodeMark? node = null)
     {
+        _prefillNode = node;
         CommandInput.Text = text;
         CommandInput.CursorPos = text.Length;
     }
@@ -507,7 +514,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                 {
                     if (action.Prefill is { } prefill)
                     {
-                        Prefill(prefill);
+                        Prefill(prefill, action.Node);
                     }
                     else
                     {

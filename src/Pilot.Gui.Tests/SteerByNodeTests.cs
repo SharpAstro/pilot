@@ -193,6 +193,57 @@ public sealed class SteerByNodeTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task APrefilledPlanOnAnLe1FlightRowRunsAgainstLe1sEndpointNotThisWindowsNode()
+    {
+        using var here = NodeClient.Remote(_se1.Endpoint);
+        using var clients = new FleetClients(here, where => where == _le1.Endpoint, e => NodeClient.Remote(e));
+        using var vessel = new RgbaImageRenderer(1280, 800);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath };
+        chrome.Flights.CanCommand = true;
+        chrome.Flights.CanSteer = clients.CanSteer;
+        var ran = new List<(string Line, NodeMark? Row)>();
+        chrome.Flights.OnCommand = (line, row) =>
+        {
+            ran.Add((line, row));
+            return Task.CompletedTask;
+        };
+        var flights = new FlightsScreen([FlightOn("SE11", Se1), FlightOn("LE11", Le1)], "test", Live.At);
+        chrome.Show(PilotPage.Flights);
+        chrome.Flights.ListCursor.MoveTo(1);
+        chrome.Render(new SessionsScreen([], "test", Live.At), flights, CardsScreen.From([]), new RectF32(0, 0, 1280, 800));
+
+        var regions = new List<ClickableRegion>();
+        chrome.Flights.CollectPaintedRegions(regions);
+        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:LE11:plan-leg" }).OnClick!.Invoke(InputModifier.None);
+        chrome.Flights.CommandInput.Text = "leg plan LE11 docs --goal g --done-when d --item i";
+        chrome.Flights.Tree(flights);
+        await chrome.Flights.CommandInput.OnCommit.ShouldNotBeNull()(chrome.Flights.CommandInput.Text);
+
+        ran.Count.ShouldBe(1);
+        ran[0].Row.ShouldNotBeNull().Where.ShouldBe(_le1.Endpoint);
+        var args = DashboardCommands.NodeArgsFor(ran[0].Row, ["--node-socket", "node.sock"], clients.CanSteer).ShouldNotBeNull();
+        args.ShouldBe(["--node", _le1.Endpoint]);
+
+        // A line typed with no row prefill stays on this window's node.
+        await chrome.Flights.CommandInput.OnCommit.ShouldNotBeNull()("status");
+        ran[1].Row.ShouldBeNull();
+        DashboardCommands.NodeArgsFor(ran[1].Row, ["--node-socket", "node.sock"], clients.CanSteer).ShouldBe(["--node-socket", "node.sock"]);
+
+        // A --node typed in the prefilled line gives way to the row's, so the two never clash: the command reaches LE1.
+        var said = await DashboardCommands.RunAsync("status --node 10.9.9.9:1", args, "gui", Ct, overrideNode: true);
+        said.ShouldNotContain("10.9.9.9");
+        _se1.Commands.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ANodeWithNoGrantHasNoNodeArgsSoItsPrefilledLineStaysUnrun()
+    {
+        using var here = NodeClient.Remote(_se1.Endpoint);
+        using var clients = new FleetClients(here, _ => false, e => NodeClient.Remote(e));
+        DashboardCommands.NodeArgsFor(Le1, ["--node-socket", "node.sock"], clients.CanSteer).ShouldBeNull();
+    }
+
+    [Fact]
     public async Task ANodeThatRefusesTheGrantAsUnauthorizedReadsAsWatchOnlyUntilANewGrant()
     {
         using var refusing = new RecordingNode(HttpStatusCode.Forbidden);
