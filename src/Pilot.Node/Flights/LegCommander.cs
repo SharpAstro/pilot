@@ -858,7 +858,18 @@ public sealed partial class LegCommander(
     /// closes, and the ring offers the go-around a done leg otherwise refuses. PIL53's review passed while the Linux runner
     /// failed two of its tests, and no verb could send it round (2026-10-23). Null when done; else why not.
     /// </summary>
-    public async Task<string?> ChecksFailedAsync(string code, string head, CancellationToken cancellationToken)
+    public Task<string?> ChecksFailedAsync(string code, string head, CancellationToken cancellationToken) =>
+        SendBackAsync(code, number => $"the PR's checks failed on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push", "its checks failed", cancellationToken);
+
+    /// <summary>
+    /// A reviewed PR whose rebase onto its base conflicts: taken as changes, as failed checks are, so the ring's go-around
+    /// reaches the done leg and its worker resolves the conflicts. The conflict card said to go around, and the go-around
+    /// was refused for a done leg whose review had passed (PIL51 after #157, 2026-10-24). Null when done; else why not.
+    /// </summary>
+    public Task<string?> ConflictsAsync(string code, string why, CancellationToken cancellationToken) =>
+        SendBackAsync(code, _ => $"the PR conflicts with its base ({why}): rebase the plane onto its base, resolving every conflict so both sides' work stays, rerun the check, and push", "it conflicts with its base", cancellationToken);
+
+    private async Task<string?> SendBackAsync(string code, Func<int, string> changesFor, string closing, CancellationToken cancellationToken)
     {
         await _one.WaitAsync(cancellationToken);
         try
@@ -867,10 +878,10 @@ public sealed partial class LegCommander(
             {
                 return $"{code} is not a flying flight with a passed review";
             }
-            var changes = $"the PR's checks failed on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push";
+            var changes = changesFor(number);
             await github.SetDraftAsync(flight.RepoPath, number, draft: true, cancellationToken);
             state.PutFlight(flight with { Review = review with { State = ReviewState.Changes, Report = changes, FinishedAt = time.GetUtcNow() } });
-            state.CloseCardsAbout(Verbs.FlightTarget(code), "its checks failed", PrReady);
+            state.CloseCardsAbout(Verbs.FlightTarget(code), closing, PrReady);
             RaiseReviewChanges(FlightOf(Verbs.FlightTarget(code)), changes);
             return null;
         }

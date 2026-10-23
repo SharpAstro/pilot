@@ -218,6 +218,8 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   a review round starts ready, as the review runs on it; the merge card's merge still refuses a moved head.
 - A passed PR whose checks then fail is taken as changes, once a head: the PR goes back to draft, the merge card
   closes, and the review's ring offers **Go around**, told to read the failed checks and make them pass on every runner.
+- A passed PR that conflicts with its base and does not rebase cleanly is taken as changes too: the ring's **Go around**
+  sends the last leg's worker to rebase it, keeping both sides' work.
 - A flight whose legs are all done and whose PR merged on GitHub lands on the next look even with no merge card open
   (dismissed after a rebase by hand moved its head), as one merged through its card does.
 - Only the reviewer gives the verdict; the controller may pass one that asked for changes ("ready anyway"); the

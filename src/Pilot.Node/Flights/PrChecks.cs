@@ -108,9 +108,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             // reviewed afresh; a rebase that conflicts rings with what to do.
             if (legs is not null && pr is { Mergeable: "CONFLICTING" } && pr.Number == number && _rebased.Add($"{flight.Code} {pr.Head}"))
             {
-                if (await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } why)
+                if (await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } why
+                    && await legs.ConflictsAsync(flight.Code, why, cancellationToken) is { } notSent)
                 {
-                    state.RaiseCard(CardBin.Ring, "pr-conflicts", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number} conflicts with its base", why, link: pr.Url);
+                    // Not sent back (no passed review to turn): rung, with what to do.
+                    state.RaiseCard(CardBin.Ring, "pr-conflicts", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number} conflicts with its base", $"{why} ({notSent})", link: pr.Url);
                 }
                 continue;
             }
