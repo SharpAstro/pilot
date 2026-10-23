@@ -58,6 +58,18 @@ public sealed record LegRow
     /// <summary>What its workers produced to be looked at: screenshots, captures, published pages, at their latest.</summary>
     public Artifact[] Artifacts { get; init; } = [];
 
+    /// <summary>Where its validation is: none for a first leg or one not yet asked, else pending, go or no-go.</summary>
+    public LegValidation Validation { get; init; }
+
+    /// <summary>Its validator's session name, <c>&lt;machine&gt;-&lt;flight&gt;-&lt;leg&gt;-validator</c> in lower case; null before one starts.</summary>
+    public string? Validator { get; init; }
+
+    /// <summary>Its validator's background job; null before one starts.</summary>
+    public string? ValidatorJob { get; init; }
+
+    /// <summary>What its validator last reported: the stale facts of a no-go, or what a go checked.</summary>
+    public string? ValidationReport { get; init; }
+
     public DateTimeOffset? StartedAt { get; init; }
 
     public DateTimeOffset? FinishedAt { get; init; }
@@ -104,4 +116,25 @@ public enum LegState
     /// <summary>Given up on, with why in its report; a go-around starts it again.</summary>
     [JsonStringEnumMemberName("failed")]
     Failed,
+}
+
+/// <summary>Where a leg's validation against the tree the earlier legs left is.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<LegValidation>))]
+public enum LegValidation
+{
+    /// <summary>Not validated: a first leg, or one not yet started.</summary>
+    [JsonStringEnumMemberName("none")]
+    None,
+
+    /// <summary>A validator is reading it against the tree.</summary>
+    [JsonStringEnumMemberName("pending")]
+    Pending,
+
+    /// <summary>Its validator found the facts it rests on true.</summary>
+    [JsonStringEnumMemberName("go")]
+    Go,
+
+    /// <summary>Its validator found a fact it rests on false; the leg stays planned.</summary>
+    [JsonStringEnumMemberName("no-go")]
+    NoGo,
 }
