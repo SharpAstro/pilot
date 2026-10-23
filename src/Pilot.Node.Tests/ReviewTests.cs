@@ -223,6 +223,89 @@ public sealed class ReviewTests : IDisposable
         Open().ShouldBeEmpty();
     }
 
+    private void Window(double used, TimeSpan resetsIn) =>
+        _state.PutUsage(new UsageRow { ReadAt = DateTimeOffset.UtcNow, FiveHour = new UsageWindow { UsedPercent = used, ResetsAt = DateTimeOffset.UtcNow + resetsIn } });
+
+    [Fact]
+    public async Task AReviewerOverASpentWindowWaitsSaysUntilWhenAndStartsByItselfOnceItHasReset()
+    {
+        var flight = await NewFlight("8", "parser");
+        await Fly(flight, "parser");
+        // Set once the leg is done: with the node's own advance on, finishing it would open the PR before the window is spent.
+        _legs.Models = new RoleModels(null);
+        Window(95, TimeSpan.FromHours(1));
+
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA8"), "controller")).Error.ShouldBeNull();
+
+        // The PR is open, and no reviewer yet: the review is kept as none, so nothing reads as reviewed.
+        var startedBefore = _workers.Started.Count;
+        F("TIA8").PullRequest.ShouldNotBeNull();
+        F("TIA8").Review.ShouldBeNull();
+        var waits = _state.Cards().Where(c => c.Kind == LegCommander.NextStepKind).ShouldHaveSingleItem();
+        (waits.Bin, waits.Subject).ShouldBe((CardBin.Handled, "flight/TIA8"));
+        waits.Title.ShouldStartWith("TIA8 waits to start its reviewer: the 5-hour window is 95 % spent");
+        (await Run(Verbs.Merge, "flight/TIA8", "controller", "cafe0000")).Error.ShouldBe("TIA8 has not been reviewed; open its PR with the node (flight pr), which starts the review");
+
+        // The sweep says nothing more while it holds.
+        await _legs.AdvanceAllAsync(Ct);
+        _workers.Started.Count.ShouldBe(startedBefore);
+        _state.Cards().Count(c => c.Kind == LegCommander.NextStepKind).ShouldBe(1);
+
+        Window(4, TimeSpan.FromHours(6));
+        await _legs.AdvanceAllAsync(Ct);
+
+        var review = F("TIA8").Review.ShouldNotBeNull();
+        (review.State, review.Reviewer).ShouldBe((ReviewState.Reviewing, Reviewer("TIA8")));
+        _workers.Started.Last().Name.ShouldBe(Reviewer("TIA8"));
+        _workers.Started.Count.ShouldBe(startedBefore + 1);
+    }
+
+    [Fact]
+    public async Task AReviewerOfAPriorityReposFlightUsesItsOwnLimit()
+    {
+        var flight = await NewFlight("9", "parser");
+        await Fly(flight, "parser");
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), "priority-repos", [flight.Repo]).Settings);
+        Window(95, TimeSpan.FromHours(1));
+
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA9"), "controller")).Error.ShouldBeNull();
+
+        F("TIA9").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        Window(99, TimeSpan.FromHours(1));
+        (await Run(Verbs.StartReview, Verbs.FlightTarget("TIA9"), "controller")).Error.ShouldBeNull();
+        F("TIA9").Review.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task APassedPrRebasedOverASpentWindowIsReviewedAfreshOnlyOnceItHasReset()
+    {
+        var flight = await NewFlight("10", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA10"), "controller");
+        (await Run(Verbs.Review, "flight/TIA10", Reviewer("TIA10"), "pass", "fine")).Ok.ShouldBeTrue();
+        _legs.Models = new RoleModels(null);
+        File.WriteAllText(Path.Combine(Repo, "later.txt"), "later\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "commit", "-q", "-m", "later on main");
+        Git(Repo, "push", "-q", "origin", "main");
+        Window(95, TimeSpan.FromHours(1));
+        var startedBefore = _workers.Started.Count;
+
+        (await _legs.RebaseOntoBaseAsync("TIA10", Ct)).ShouldBeNull();
+
+        // Rebased and pushed, its old pass is of a head that is gone: no review stands, so no merge goes by it.
+        Git(F("TIA10").Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
+        F("TIA10").Review.ShouldBeNull();
+        _workers.Started.Count.ShouldBe(startedBefore);
+        Open().ShouldBeEmpty();
+        (await Run(Verbs.Merge, "flight/TIA10", "controller", "cafe0000")).Error.ShouldNotBeNull().ShouldContain("has not been reviewed");
+
+        Window(4, TimeSpan.FromHours(6));
+        await _legs.AdvanceAllAsync(Ct);
+
+        F("TIA10").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+    }
+
     [Fact]
     public async Task ARebaseThatConflictsIsUndoneAndSaysSo()
     {

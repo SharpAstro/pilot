@@ -403,6 +403,28 @@ window the higher share wins (v1's figures flipped between whoever repainted las
 header show it (`5h 42% (resets 14:00) · 7d 64% (resets Sat 10:00)`, with its age once it is old); past 90% of the
 5-hour window a For-you card says workers will stop, once per window.
 
+**The window holds every start the node makes by itself.** One gate (`StartGate`) serves a leg's start (the sweep's, after
+a leg is done), a planner (`flight plan`), a reviewer (the PR's, a rebase's, a go-around's fresh one), the watchtower the
+node keeps, and a compaction's resume (`compact`, sent by the compactor). While the 5-hour window is at or over the
+`start-limit` (90 % unless set), the start waits and one Handled card says what waits and until when
+(`TIA1 waits to start its reviewer: the 5-hour window is 95 % spent (the limit is 90 %); it goes on after 14:00`), once
+per window however often the sweep looks. The node's sweep (every minute; the watchtower's and compactor's looks too)
+takes the start once the window has reset, with no one asking again. A flight of a repo in `priority-repos` uses
+`priority-start-limit` (98 % unless set) for all of these, a session of no flight (the watchtower) the plain limit. The
+limits are read at each start, so a saved setting counts at once, with no restart.
+
+- **No figures, or ones older than 30 minutes, hold nothing:** a node that cannot see the window starts as before. So
+  does a window whose reset has passed.
+- **A held reviewer keeps no review.** The PR is open and its review is none, so no old pass lets the merge by a head
+  nobody read (a rebase or a go-around's fix is a new head); the sweep starts a review for such a flight by itself.
+- **A person's own say is theirs:** `leg start`, `restart-watchtower` (its card's Try now) and `compact` typed by hand
+  go ahead over a spent window. `flight plan` and `flight review` by hand are held like the node's own (the command
+  succeeds, the card says it waits). A held planner is kept in memory, so a node restarted while it waits asks again
+  (`flight plan`).
+- **The 7-day window rings and never holds:** at or past `week-limit` (90 % unless set), the first start of each 7-day
+  window raises a Ring card (`usage-week`, closed when the next window's opens), and the start goes ahead; only the
+  5-hour window decides whether a start waits.
+
 ## The LAN
 
 `pilot-node --lan` (port 47731, `--lan-port` for another) listens on the LAN beside its socket and announces itself

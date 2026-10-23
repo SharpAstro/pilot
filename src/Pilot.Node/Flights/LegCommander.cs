@@ -21,6 +21,9 @@ public sealed partial class LegCommander(
     /// <summary>The model and effort each kind of session starts on; a test's commander passes none.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
 
+    /// <summary>What holds a start while the 5-hour window is spent; one gate for every session the node starts by itself, shared with the watchtower and the compactor.</summary>
+    public StartGate Gate { get; set; } = new(state, time);
+
     /// <summary>Which sibling clones a plane's local build compiles against are behind their origin; a test passes its own.</summary>
     public SiblingWatch Siblings { get; init; } = new(git, time);
 
@@ -171,6 +174,19 @@ public sealed partial class LegCommander(
     /// <summary>Every flying flight's next step, where it has one: what the node's sweep runs every minute.</summary>
     public async Task AdvanceAllAsync(CancellationToken cancellationToken)
     {
+        // A planner held by the window goes by itself once it has reset: the same start, said again by the node.
+        foreach (var code in _plannersWaiting.Keys.ToList())
+        {
+            _plannersWaiting.TryRemove(code, out _);
+            if (Gate.Check(Models.StartLimitFor(state.Flights().FirstOrDefault(f => f.Code == code)?.Repo ?? "")) is null)
+            {
+                await RunAsync(new CommandRequest { Verb = Verbs.PlanFlight, Target = Verbs.FlightTarget(code), Who = LegWatch.Who }, cancellationToken);
+            }
+            else
+            {
+                _plannersWaiting[code] = true;
+            }
+        }
         foreach (var flight in state.Flights().Where(f => f.State == FlightState.Flying))
         {
             await AdvanceAsync(flight, cancellationToken);
@@ -179,9 +195,10 @@ public sealed partial class LegCommander(
 
     /// <summary>
     /// What a flight does once a leg of it is done: its next planned leg starts, or, every leg done and no PR open yet, its
-    /// PR opens and its review starts. The merge stays the controller's. The one thing that holds it is the account's
-    /// 5-hour window (<see cref="RoleModels.StartLimit"/>): while that is spent the step waits, says until when, and the
-    /// sweep takes it once the window resets. PIL118, TIA1737 and TIA1778 sat for hours with a leg done and no one told,
+    /// PR opens and its review starts (a review a spent window held, with its PR open and no review kept, starts here
+    /// too). The merge stays the controller's. The one thing that holds it is the account's 5-hour window
+    /// (<see cref="RoleModels.StartLimit"/>): while that is spent the step waits, says until when, and the sweep takes it
+    /// once the window resets. PIL118, TIA1737 and TIA1778 sat for hours with a leg done and no one told,
     /// 2026-10-23.
     /// </summary>
     private async Task AdvanceAsync(FlightRow flight, CancellationToken cancellationToken)
@@ -199,21 +216,17 @@ public sealed partial class LegCommander(
             ? new CommandRequest { Verb = Verbs.StartLeg, Target = Verbs.LegTarget(current.Code, next.Name), Who = "node" }
             : current.PullRequest is null
                 ? new CommandRequest { Verb = Verbs.OpenPr, Target = Verbs.FlightTarget(current.Code), Who = "node" }
-                : null;
+                : current.Review is null
+                    ? new CommandRequest { Verb = Verbs.StartReview, Target = Verbs.FlightTarget(current.Code), Who = "node" }
+                    : null;
         if (step is null)
         {
             _rung.TryRemove(current.Code, out _);
             return;
         }
-        var label = step.Verb == Verbs.StartLeg ? $"start {step.Target.Split('/')[^1]}" : "open its PR";
-        if (WindowSpent(Models.StartLimitFor(current.Repo)) is { } wait)
+        var label = step.Verb == Verbs.StartLeg ? $"start {step.Target.Split('/')[^1]}" : step.Verb == Verbs.StartReview ? "start its reviewer" : "open its PR";
+        if (Gate.Hold($"{step.Verb} {step.Target}", Models.StartLimitFor(current.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} waits to {label}"))
         {
-            if (_rung.TryGetValue(current.Code, out var said) && said == $"wait {step.Target}")
-            {
-                return;
-            }
-            _rung[current.Code] = $"wait {step.Target}";
-            state.RaiseCard(CardBin.Handled, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} waits to {label}: {wait}");
             return;
         }
         if (_rung.TryGetValue(current.Code, out var failed) && failed == $"failed {step.Target}")
@@ -229,16 +242,6 @@ public sealed partial class LegCommander(
         _rung[current.Code] = $"failed {step.Target}";
         state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not {label} by itself", result.Error,
             [new CardChoice { Label = char.ToUpperInvariant(label[0]) + label[1..], Verb = step.Verb, Target = step.Target, Args = step.Args }]);
-    }
-
-    /// <summary>Why the account's 5-hour window holds a start, and until when; null when it does not, or no fresh figures say.</summary>
-    private string? WindowSpent(double limit)
-    {
-        var now = time.GetUtcNow();
-        return state.Usage() is { FiveHour: { } window } usage && now - usage.ReadAt < TimeSpan.FromMinutes(30)
-               && window.UsedPercent >= limit && window.ResetsAt is { } resets && resets > now
-            ? $"the 5-hour window is {window.UsedPercent:0} % spent (the limit is {limit:0} %); it goes on after {resets.ToLocalTime():HH:mm}"
-            : null;
     }
 
     private void Plan(CommandRequest command)
@@ -334,6 +337,8 @@ public sealed partial class LegCommander(
             throw new FlightException($"{flight.Code}/{before.Name} comes first and is {before.State.ToString().ToLowerInvariant()}");
         }
 
+        // A person's start, or the sweep's once the 5-hour window allows it: the week only rings.
+        Gate.RingWeek(Models.WeekLimit);
         var worker = WorkerName(flight, leg);
         await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
         await WarnSiblingsBehindAsync(flight, leg, cancellationToken);
@@ -663,12 +668,22 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"{planner} is planning {flight.Code} already; wait for its planned card, or stop it first");
         }
+        // Asked for while the 5-hour window is spent: it waits, and the sweep starts it once the window has reset.
+        if (Gate.Hold($"{Verbs.PlanFlight} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its planner"))
+        {
+            _plannersWaiting[flight.Code] = true;
+            return;
+        }
         await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
         var brief = Briefs.Plan(flight, state.Legs(flight.Code), Briefs.Run(Cli, Socket));
         await workers.StartAsync(new WorkerStart(planner, flight.RepoPath, PlaneOf(flight), brief, Models.Model(RoleModels.Planner), Models.Effort(RoleModels.Planner)), cancellationToken);
         _plannersStarted[flight.Code] = time.GetUtcNow();
         state.RaiseCard(CardBin.Handled, "planner-started", Verbs.FlightTarget(flight.Code), $"Started {planner} to plan {flight.Code}'s legs");
     }
+
+    // The flights whose planner a spent window holds, until the sweep starts it; kept in memory, so a node restarted meanwhile
+    // asks again (flight plan), as it would for a planner that had not been asked for yet.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _plannersWaiting = new(StringComparer.OrdinalIgnoreCase);
 
     // When this node last started each flight's planner: the tracker lists a new session a poll later.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _plannersStarted = new(StringComparer.OrdinalIgnoreCase);
@@ -704,9 +719,21 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"{flight.Code} has legs not done: {string.Join(", ", open)}");
         }
+        // A spent 5-hour window holds the reviewer. The review is let go meanwhile, as a fresh one replaces it either way and an
+        // old pass must not let the merge by a head nobody read: with its PR open and no review kept, the sweep starts it afresh.
+        var held = Gate.Hold($"{Verbs.StartReview} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its reviewer");
         if (flight.Review?.ReviewerJob is { } last)
         {
             await StopQuietly(last, cancellationToken);
+        }
+        if (held)
+        {
+            if (flight.Review is not null)
+            {
+                state.PutFlight(flight with { Review = null });
+                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review waits for the 5-hour window", ReviewChanges, PrReady, LegWatch.ReviewStalled);
+            }
+            return;
         }
 
         await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);

@@ -38,7 +38,14 @@ public sealed class Watchtower(
 
     /// <summary>The model and effort the watchtower starts on; a test's watchtower passes none.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
+
+    /// <summary>What holds a start while the 5-hour window is spent: the node's one gate, shared with the leg sweep and the compactor.</summary>
+    public StartGate Gate { get; set; } = new(state, time);
+
     public const string Stopped = "watchtower-stopped";
+
+    /// <summary>The Handled card that says its start waits for the 5-hour window.</summary>
+    public const string Waits = "watchtower-waits";
 
     /// <summary>What its own raises are: a card it raised is never said back to it.</summary>
     public const string RaisedKind = "watchtower";
@@ -189,7 +196,9 @@ public sealed class Watchtower(
                 {
                     return;
                 }
-                if (now >= _nextTry)
+                // Kept by the node by itself, so held while the 5-hour window is spent, and started by the next look once it has reset;
+                // a restart asked for (restart-watchtower, or the card's Try now) is a person's, and goes ahead.
+                if (now >= _nextTry && !Gate.Hold("watchtower", Models.StartLimit, Models.WeekLimit, Waits, Verbs.WatchtowerTarget, "The watchtower waits to start"))
                 {
                     await StartAsync($"{watching}, and {(row is null ? "none was running" : $"the last one {row.State.ToString().ToLowerInvariant()}")}", cancellationToken);
                 }

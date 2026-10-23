@@ -29,6 +29,7 @@ public sealed record NodeSettings
     public const string StartLimitKey = "start-limit";
     public const string PriorityStartLimitKey = "priority-start-limit";
     public const string PriorityReposKey = "priority-repos";
+    public const string WeekLimitKey = "week-limit";
 
     /// <summary>How a flight's PR is merged when the merge names no method: rebase keeps every commit's subject, which a
     /// repo's docs may cite (tianwen's rule); squash makes one commit of them; merge adds a merge commit.</summary>
@@ -36,7 +37,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, MergeMethodKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey,
          .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey)];
 
     /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
@@ -63,6 +64,9 @@ public sealed record NodeSettings
     public double? StartLimit { get; init; }
 
     public double? PriorityStartLimit { get; init; }
+
+    /// <summary>The 7-day window's share past which a start rings, once per window, and goes ahead.</summary>
+    public double? WeekLimit { get; init; }
 
     /// <summary>The repos whose flights have runway: they go on past <see cref="StartLimit"/>, up to <see cref="PriorityStartLimit"/>.</summary>
     public IReadOnlyList<string>? PriorityRepos { get; init; }
@@ -144,6 +148,7 @@ public sealed record NodeSettings
         MergeMethodKey => MergeMethod is { } merge ? [merge] : null,
         StartLimitKey => StartLimit is { } limit ? [limit.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityStartLimitKey => PriorityStartLimit is { } high ? [high.ToString(CultureInfo.InvariantCulture)] : null,
+        WeekLimitKey => WeekLimit is { } week ? [week.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityReposKey => PriorityRepos,
         _ when IsRoleKey(key) && Roles?.GetValueOrDefault(key) is { } role => [role],
         _ => null,
@@ -236,6 +241,14 @@ public sealed record NodeSettings
                 return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var high) && high is > 0 and <= 100
                     ? (settings with { PriorityStartLimit = high }, null)
                     : (null, "priority-start-limit takes the 5-hour window's share in percent, above 0 and up to 100");
+            case WeekLimitKey:
+                if (clear)
+                {
+                    return (settings with { WeekLimit = null }, null);
+                }
+                return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var weekly) && weekly is > 0 and <= 100
+                    ? (settings with { WeekLimit = weekly }, null)
+                    : (null, "week-limit takes the 7-day window's share in percent, above 0 and up to 100");
             case PriorityReposKey:
                 return clear
                     ? (settings with { PriorityRepos = null }, null)
