@@ -160,3 +160,41 @@ public sealed class LanTests
     [InlineData("laptop", false)]
     public void ANodeOnTheLanIsNamedHostColonPort(string target, bool isEndpoint) => NodeClient.IsEndpoint(target, out _).ShouldBe(isEndpoint);
 }
+
+/// <summary>An ask's card lives as long as its ask: closed when its asker gives up, and never reused by a newer ask.</summary>
+public sealed class GrantAskCardTests : IDisposable
+{
+    private readonly string _data = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "p2g-" + Guid.NewGuid().ToString("N")[..8])).FullName;
+
+    public void Dispose() => Directory.Delete(_data, recursive: true);
+
+    [Fact]
+    public void AnAskThatLapsedClosesItsCardAndANewerAskGetsACardOfItsOwn()
+    {
+        var time = new Pilot.Node.Tests.Sessions.ManualTime(new DateTimeOffset(2026, 10, 23, 9, 25, 0, TimeSpan.Zero));
+        var state = new NodeState(new InMemoryJournal(), time);
+        using var lan = new NodeLan(state, new NodeOptions("/s", _data), time);
+        CardRow AskCard() => state.Cards(openOnly: true).ShouldHaveSingleItem();
+
+        var first = lan.Ask("se1-gui").ShouldNotBeNull();
+        AskCard().Choices.First().Args[0].ShouldBe(first.Id);
+
+        // Its asker reads the ticket, so it waits; then it gives up (pilot connect stopped), and the sweep closes its card.
+        time.Advance(TimeSpan.FromSeconds(20));
+        lan.Ticket(first.Id);
+        lan.Sweep();
+        AskCard();
+        time.Advance(NodeLan.PresenceLapse + TimeSpan.FromSeconds(1));
+        lan.Sweep();
+        state.Cards(openOnly: true).ShouldBeEmpty();
+        state.Cards().Single().Outcome.ShouldBe("the asker went away");
+
+        // A newer ask, the earlier card's sweep not yet run: the earlier card closes, and the new one names the new ask.
+        var second = lan.Ask("se1-gui").ShouldNotBeNull();
+        time.Advance(NodeLan.PresenceLapse + TimeSpan.FromSeconds(1));
+        var third = lan.Ask("se1-gui").ShouldNotBeNull();
+        third.Id.ShouldNotBe(second.Id);
+        AskCard().Choices.Select(c => c.Args[0]).ShouldAllBe(id => id == third.Id);
+        state.Cards().Count(c => c.Kind == NodeLan.AskedKind).ShouldBe(3);
+    }
+}
