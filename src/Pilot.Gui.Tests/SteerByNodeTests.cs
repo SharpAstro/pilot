@@ -108,7 +108,7 @@ public sealed class SteerByNodeTests : IAsyncDisposable
         _others.Add(refusing);
         var token = "old";
         using var here = NodeClient.Remote(_se1.Endpoint);
-        using var clients = new FleetClients(here, where => where == refusing.Endpoint, e => NodeClient.Remote(e), _ => token);
+        using var clients = new FleetClients(here, where => where == refusing.Endpoint, e => NodeClient.Remote(e, token), _ => token);
         var node = new NodeMark(refusing.Endpoint, refusing.Endpoint, "LE1", Here: false);
 
         clients.CanSteer(node).ShouldBeTrue();
@@ -123,6 +123,45 @@ public sealed class SteerByNodeTests : IAsyncDisposable
         clients.Refresh();
         clients.CanSteer(node).ShouldBeTrue();
         clients.CanSteer(Se1).ShouldBeTrue();
+
+        // The node now accepts, and the say goes out carrying the new token, not the refused one.
+        refusing.Status = HttpStatusCode.OK;
+        var sent = await GuiSay.SendAsync(clients.For(node)!, "aaaa0001", "again", Ct, envelope => clients.NoteRefusal(node, envelope));
+        sent.ShouldNotContain("needs a grant");
+        refusing.Auths.Last().ShouldBe("Bearer new");
+        clients.CanSteer(node).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ATokenSavedAfterATranscriptWasReadIsCarriedByTheNextSay()
+    {
+        string? token = null;
+        var held = false;
+        using var here = NodeClient.Remote(_se1.Endpoint);
+        using var clients = new FleetClients(here, _ => held, e => NodeClient.Remote(e, token), _ => token);
+        var node = new NodeMark(_le1.Endpoint, _le1.Endpoint, "LE1", Here: false);
+
+        // Reading with no grant caches a client built without a token.
+        clients.For(node, command: false).ShouldNotBeNull();
+        clients.For(node).ShouldBeNull();
+
+        // Connect saves a token; the next say must not reuse the tokenless client.
+        token = "fresh";
+        held = true;
+        clients.Refresh();
+        var said = await GuiSay.SendAsync(clients.For(node)!, "aaaa0001", "hello", Ct, envelope => clients.NoteRefusal(node, envelope));
+        said.ShouldNotContain("needs a grant");
+        _le1.Auths.Last().ShouldBe("Bearer fresh");
+        clients.CanSteer(node).ShouldBeTrue();
+
+        // Forget then Connect again with another token: the old token is not sent.
+        token = null;
+        held = false;
+        clients.Refresh();
+        token = "second";
+        held = true;
+        await GuiSay.SendAsync(clients.For(node)!, "aaaa0001", "once more", Ct, envelope => clients.NoteRefusal(node, envelope));
+        _le1.Auths.Last().ShouldBe("Bearer second");
     }
 
     [Fact]
@@ -158,6 +197,7 @@ public sealed class SteerByNodeTests : IAsyncDisposable
 
         public RecordingNode(HttpStatusCode status)
         {
+            Status = status;
             var probe = new TcpListener(IPAddress.Loopback, 0);
             probe.Start();
             var port = ((IPEndPoint)probe.LocalEndpoint).Port;
@@ -180,9 +220,11 @@ public sealed class SteerByNodeTests : IAsyncDisposable
                     }
                     using var body = new StreamReader(context.Request.InputStream);
                     var text = await body.ReadToEndAsync();
+                    var status = Status;
                     lock (Commands)
                     {
                         Commands.Add(text);
+                        Auths.Add(context.Request.Headers["Authorization"]);
                     }
                     context.Response.StatusCode = (int)status;
                     var answer = status == HttpStatusCode.OK
@@ -197,6 +239,11 @@ public sealed class SteerByNodeTests : IAsyncDisposable
         public string Endpoint { get; }
 
         public List<string> Commands { get; } = [];
+
+        /// <summary>The Authorization header of each request, null when none was sent.</summary>
+        public List<string?> Auths { get; } = [];
+
+        public HttpStatusCode Status { get; set; }
 
         public void Dispose()
         {

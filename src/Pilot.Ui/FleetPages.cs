@@ -117,7 +117,7 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
 /// </summary>
 internal sealed class FleetClients(NodeClient here, Func<string, bool> granted, Func<string, NodeClient>? remote = null, Func<string, string?>? tokenOf = null) : IDisposable
 {
-    private readonly Dictionary<string, NodeClient> _remote = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (NodeClient Client, string? Token)> _remote = new(StringComparer.OrdinalIgnoreCase);
     private readonly Func<string, NodeClient> _connect = remote ?? (endpoint => NodeClient.Remote(endpoint, Pilot.Commands.NodeTargets.TokenFor(endpoint)));
     private readonly Lock _lock = new();
     // Nodes that refused the grant as unauthorized, with the token that was refused.
@@ -185,11 +185,19 @@ internal sealed class FleetClients(NodeClient here, Func<string, bool> granted, 
         }
         lock (_lock)
         {
-            if (!_remote.TryGetValue(node.Where, out var client))
+            // A remote client fixes its token for life, so one built under another token (none before Connect, the old
+            // one after Forget or over a refusal) is dropped and rebuilt with the token held now.
+            var token = _tokenOf(node.Where);
+            if (_remote.TryGetValue(node.Where, out var held) && held.Token != token)
             {
-                _remote[node.Where] = client = _connect(node.Where);
+                held.Client.Dispose();
+                _remote.Remove(node.Where);
             }
-            return client;
+            if (!_remote.TryGetValue(node.Where, out held))
+            {
+                _remote[node.Where] = held = (_connect(node.Where), token);
+            }
+            return held.Client;
         }
     }
 
@@ -201,7 +209,7 @@ internal sealed class FleetClients(NodeClient here, Func<string, bool> granted, 
     {
         lock (_lock)
         {
-            foreach (var client in _remote.Values)
+            foreach (var (client, _) in _remote.Values)
             {
                 client.Dispose();
             }
