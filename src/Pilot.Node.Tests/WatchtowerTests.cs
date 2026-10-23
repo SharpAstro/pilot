@@ -270,6 +270,24 @@ public sealed class WatchtowerTests : IDisposable
     }
 
     [Fact]
+    public async Task AFreshStartForAChangedBriefThatFailsWaitsTheRetryTimeBeforeTryingAgain()
+    {
+        Row("a1b2c3d4", SessionState.Idle);
+        _workers.Fail = new InvalidOperationException("claude refused it");
+
+        await _tower.LookAsync(Ct);
+        await _tower.LookAsync(Ct);
+
+        _workers.Stopped.ShouldBe(["a1b2c3d4"]);
+        _said.ShouldBeEmpty();
+
+        _workers.Fail = null;
+        _time.Advance(TimeSpan.FromMinutes(30));
+        await _tower.LookAsync(Ct);
+        _workers.Started.ShouldHaveSingleItem();
+    }
+
+    [Fact]
     public async Task TheFingerprintOfAStartedWatchtowerSurvivesTheNodeRestarting()
     {
         await _tower.LookAsync(Ct);
