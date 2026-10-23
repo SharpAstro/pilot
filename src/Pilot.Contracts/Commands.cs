@@ -256,8 +256,10 @@ public static class Verbs
     public const string Overlap = "overlap";
 
     /// <summary>
-    /// <c>fold flight/&lt;code&gt; &lt;other&gt;</c>: the answer that the flight is part of the other. Not built yet: it is
-    /// refused, and the card stays open.
+    /// <c>fold flight/&lt;code&gt; &lt;other&gt;</c>: the answer that the flight is part of the other. Records it, closes the
+    /// card, adds the flight's issue to the other flight (its PR closes it too), retires the asking flight (landed, marked folded
+    /// into the other, its planner stopped and its plane removed) and starts the other flight's planner to plan the issue's points
+    /// as legs after its own. Refused into a landed flight, or one whose PR is open (it would not close the issue).
     /// </summary>
     public const string Fold = "fold";
 

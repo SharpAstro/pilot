@@ -206,17 +206,151 @@ public sealed class OverlapTests : IDisposable
         _workers.Started.Count.ShouldBe(1);
     }
 
+    private FlightRow F(string code) => _state.Flights().Single(f => f.Code == code);
+
     [Fact]
-    public async Task FoldIsNotBuiltYetSoItIsRefusedAndNothingIsRecordedOrStopped()
+    public async Task FoldRecordsItOnThePairClosesTheCardAndAddsTheIssueToTheOtherFlightWhosePlannerIsToldToPlanLegsAfterItsOwn()
+    {
+        await TwoFlights();
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Rework the parser", "done-when=d")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanFlight, "flight/TIA2")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanFlight, "flight/TIA1")).Ok.ShouldBeTrue();
+        _workers.Started.Select(w => w.Name).ShouldBe(["du1-tia2-plan", "du1-tia1-plan"]);
+        await Ask();
+        var fold = Cards().Single().Choices.Single(c => c.Verb == Verbs.Fold);
+
+        var answered = await Leg(fold.Verb, fold.Target, fold.Args);
+
+        answered.Ok.ShouldBeTrue();
+        answered.Made.ShouldNotBeNull().ShouldContain("TIA1");
+        F("TIA2").Overlaps.ShouldHaveSingleItem().Answer.ShouldBe(OverlapAnswer.Fold);
+        var closed = Cards().Single();
+        (closed.State, closed.Outcome).ShouldBe((CardState.Closed, "TIA2 folded into TIA1"));
+        var folded = F("TIA1").FoldedIn.ShouldHaveSingleItem();
+        (folded.Number, folded.From).ShouldBe((2, "TIA2"));
+
+        // Both planners are stopped (the asker's, and the other's, so one planner is one flight's), and one is started on TIA1.
+        _workers.Stopped.ShouldBe(["job00001", "job00002"]);
+        _workers.Started.Count.ShouldBe(3);
+        var fresh = _workers.Started[2];
+        fresh.Name.ShouldBe("du1-tia1-plan");
+        fresh.Brief.ShouldContain("Issues folded into this flight");
+        fresh.Brief.ShouldContain("#2, from flight TIA2");
+        fresh.Brief.ShouldContain("gh issue view 2 --comments");
+        fresh.Brief.ShouldContain("plan its points as legs after the ones this flight has");
+        fresh.Brief.ShouldContain("- parser (planned): Rework the parser");
+    }
+
+    [Fact]
+    public async Task FoldRetiresTheAskingFlightLandedAndMarkedFoldedWithNoLegsAndItsPlaneGoneButItsBranchKept()
+    {
+        await TwoFlights();
+        var before = F("TIA2");
+        Directory.Exists(before.Worktree).ShouldBeTrue();
+        await Ask();
+
+        (await Leg(Verbs.Fold, "flight/TIA2", "TIA1")).Ok.ShouldBeTrue();
+
+        var retired = F("TIA2");
+        (retired.State, retired.FoldedInto).ShouldBe((FlightState.Landed, "TIA1"));
+        retired.LandedAt.ShouldNotBeNull();
+        _state.Legs("TIA2").ShouldBeEmpty();
+        Directory.Exists(retired.Worktree).ShouldBeFalse();
+        Git(Repo, "branch", "--list", before.Branch).ShouldNotBeEmpty();
+        // A Handled card says it was folded, and no plain landed card rings.
+        var card = _state.Cards().Single(c => c.Kind == FlightCommander.FoldedKind);
+        (card.Bin, card.Subject, card.Title).ShouldBe((CardBin.Handled, "flight/TIA2", "TIA2 folded into TIA1"));
+        _state.Cards().ShouldNotContain(c => c.Kind == "landed");
+        F("TIA1").FoldedInto.ShouldBeNull();
+        F("TIA1").State.ShouldNotBe(FlightState.Landed);
+    }
+
+    [Fact]
+    public async Task TheOtherFlightsPrBodyClosesBothIssues()
     {
         await TwoFlights();
         await Ask();
+        (await Leg(Verbs.Fold, "flight/TIA2", "TIA1")).Ok.ShouldBeTrue();
 
-        (await Leg(Verbs.Fold, "flight/TIA2", "TIA1")).Error.ShouldNotBeNull().ShouldContain("not built yet");
+        var body = LegCommander.PrBody(F("TIA1"), _state.Legs("TIA1"));
 
-        _state.Flights().Single(f => f.Code == "TIA2").Overlaps.ShouldHaveSingleItem().Answer.ShouldBe(OverlapAnswer.Pending);
+        body.ShouldContain("Closes #1.");
+        body.ShouldContain("Closes #2 (folded in from TIA2).");
+        LegCommander.PrBody(F("TIA2"), []).ShouldNotContain("#1");
+    }
+
+    [Fact]
+    public async Task FoldingIntoALandedFlightIsRefusedAndNothingChanges()
+    {
+        await TwoFlights();
+        await Ask();
+        _state.PutFlight(F("TIA1") with { State = FlightState.Landed });
+
+        var refused = await Leg(Verbs.Fold, "flight/TIA2", "TIA1");
+
+        refused.Error.ShouldNotBeNull().ShouldStartWith("TIA1 has landed");
+        F("TIA2").Overlaps.ShouldHaveSingleItem().Answer.ShouldBe(OverlapAnswer.Pending);
+        F("TIA2").State.ShouldNotBe(FlightState.Landed);
+        F("TIA1").FoldedIn.ShouldBeEmpty();
         Cards().ShouldHaveSingleItem().State.ShouldBe(CardState.Open);
-        (await Leg(Verbs.Separate, "flight/TIA2", "TIA9")).Error.ShouldNotBeNull().ShouldContain("no overlap");
+        _workers.Started.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task FoldingIntoAFlightWhosePrIsOpenIsRefusedForThePrWouldNotCloseTheIssue()
+    {
+        await TwoFlights();
+        await Ask();
+        _state.PutFlight(F("TIA1") with { PullRequest = 70, PullRequestUrl = "https://github.com/x/tianwen/pull/70" });
+
+        (await Leg(Verbs.Fold, "flight/TIA2", "TIA1")).Error.ShouldNotBeNull().ShouldContain("PR #70");
+
+        F("TIA2").Overlaps.ShouldHaveSingleItem().Answer.ShouldBe(OverlapAnswer.Pending);
+        F("TIA1").FoldedIn.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task FoldNeedsAnAskedPairAndAnsweringItAgainStartsNoFurtherPlanner()
+    {
+        await TwoFlights();
+        (await Leg(Verbs.Fold, "flight/TIA2", "TIA1")).Error.ShouldNotBeNull().ShouldContain("no overlap");
+        await Ask();
+        (await Leg(Verbs.Fold, "flight/TIA2", "TIA1")).Ok.ShouldBeTrue();
+        var started = _workers.Started.Count;
+
+        var again = await Leg(Verbs.Fold, "flight/TIA2", "TIA1");
+
+        again.Ok.ShouldBeTrue();
+        _workers.Started.Count.ShouldBe(started);
+        F("TIA1").FoldedIn.ShouldHaveSingleItem();
+        // A folded pair is not separated afterwards.
+        (await Leg(Verbs.Separate, "flight/TIA2", "TIA1")).Error.ShouldNotBeNull().ShouldContain("answered fold already");
+    }
+
+    [Fact]
+    public async Task TheFoldedIssueAndTheRetirementSurviveAReplayOfTheJournal()
+    {
+        var folder = Path.Combine(_root, "journal-fold");
+        using (var journal = new FileJournal(folder))
+        {
+            var state = new NodeState(journal, TimeProvider.System);
+            var (flights, legs) = Commanders(state);
+            foreach (var issue in new[] { "1", "2" })
+            {
+                (await flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = [issue, $"Issue {issue}"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+            }
+            (await Leg(legs, Verbs.Overlap, "flight/TIA2", "TIA1", "same parser")).Ok.ShouldBeTrue();
+            (await Leg(legs, Verbs.Fold, "flight/TIA2", "TIA1")).Ok.ShouldBeTrue();
+        }
+
+        using var again = new FileJournal(folder);
+        var restored = new NodeState(again, TimeProvider.System);
+        var other = restored.Flights().Single(f => f.Code == "TIA1");
+        var folded = other.FoldedIn.ShouldHaveSingleItem();
+        (folded.Number, folded.From).ShouldBe((2, "TIA2"));
+        var asker = restored.Flights().Single(f => f.Code == "TIA2");
+        (asker.State, asker.FoldedInto, asker.Overlaps.Single().Answer).ShouldBe((FlightState.Landed, "TIA1", OverlapAnswer.Fold));
+        LegCommander.PrBody(other, []).ShouldContain("Closes #2");
     }
 
     [Fact]

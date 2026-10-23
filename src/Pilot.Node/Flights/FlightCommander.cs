@@ -13,6 +13,9 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
 {
     private readonly SemaphoreSlim _one = new(1, 1);
 
+    /// <summary>The quiet card a flight folded into another leaves in place of a landed one.</summary>
+    public const string FoldedKind = "folded";
+
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
     public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.Connect or Verbs.Land;
 
@@ -132,9 +135,28 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         }
     }
 
+    /// <summary>
+    /// Retires <paramref name="flight"/> as folded into <paramref name="other"/>: landed with nothing of its own, as <c>land</c>
+    /// does (its sessions stopped, its clean plane removed, its code and branch kept), marked with the flight it went into, and a
+    /// quiet card saying so instead of a landed one. One at a time with the flight verbs. Throws <see cref="FlightException"/>
+    /// with why it could not, and then changes nothing.
+    /// </summary>
+    public async Task RetireFoldedAsync(FlightRow flight, string other, CancellationToken cancellationToken)
+    {
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            await LandFlightAsync(flight, cancellationToken, foldedInto: other);
+        }
+        finally
+        {
+            _one.Release();
+        }
+    }
+
     private Task LandAsync(CommandRequest command, CancellationToken cancellationToken) => LandFlightAsync(Find(command.Target), cancellationToken);
 
-    private async Task LandFlightAsync(FlightRow flight, CancellationToken cancellationToken, string? mergedHead = null)
+    private async Task LandFlightAsync(FlightRow flight, CancellationToken cancellationToken, string? mergedHead = null, string? foldedInto = null)
     {
         if (flight.State == FlightState.Landed)
         {
@@ -178,12 +200,20 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             state.RaiseCard(CardBin.ForYou, "plane-left", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed, but its plane folder is still there",
                 $"{leftover}; nothing of git's is in it, so delete it by hand once whatever holds it lets go");
         }
-        state.PutFlight(flight with { State = FlightState.Landed, LandedAt = time.GetUtcNow() });
+        state.PutFlight(flight with { State = FlightState.Landed, LandedAt = time.GetUtcNow(), FoldedInto = foldedInto ?? flight.FoldedInto });
 
-        // Its cards leave with it, and a quiet one says it is in.
-        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code} landed");
-        state.RaiseCard(CardBin.ForYou, "landed", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed",
-            $"{flight.Title ?? $"issue #{flight.Issue}"}{(flight.PullRequest is { } number ? $", PR #{number}" : "")}", link: flight.PullRequestUrl);
+        // Its cards leave with it, and a quiet one says it is in; a folded one says where its work went.
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), foldedInto is null ? $"{flight.Code} landed" : $"{flight.Code} folded into {foldedInto}");
+        if (foldedInto is null)
+        {
+            state.RaiseCard(CardBin.ForYou, "landed", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed",
+                $"{flight.Title ?? $"issue #{flight.Issue}"}{(flight.PullRequest is { } number ? $", PR #{number}" : "")}", link: flight.PullRequestUrl);
+        }
+        else
+        {
+            state.RaiseCard(CardBin.Handled, FoldedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} folded into {foldedInto}",
+                $"{flight.Title ?? $"issue #{flight.Issue}"} (#{flight.Issue}) is now {foldedInto}'s: its PR closes it, and {foldedInto}'s planner plans its points");
+        }
 
         // Flights that waited for it may leave now.
         foreach (var waiting in state.Flights().Where(f => f.State == FlightState.Held && f.Connections.Contains(flight.Code, StringComparer.Ordinal)))

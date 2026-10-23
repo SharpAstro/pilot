@@ -229,6 +229,17 @@ public static class Briefs
                 text.AppendLine($"- {leg.Name} ({leg.State.ToString().ToLowerInvariant()}): {leg.Goal}");
             }
         }
+        if (flight.FoldedIn.Length > 0)
+        {
+            text.AppendLine();
+            text.AppendLine("Issues folded into this flight (the controller chose to plan them here, not as flights of their own):");
+            foreach (var folded in flight.FoldedIn)
+            {
+                text.AppendLine($"- #{folded.Number}, from flight {folded.From}: read it (`gh issue view {folded.Number} --comments`) and plan its points as legs after the ones this flight has" +
+                    (legs.Count > 0 ? "; do not repeat them." : ", after the legs for #" + flight.Issue + "."));
+            }
+            text.AppendLine($"The PR closes each of them; every point of each must be done by some leg, so name the issue a leg serves in its goal.");
+        }
         if (flight.Overlaps.Where(o => o.Answer != OverlapAnswer.Pending).ToList() is { Count: > 0 } answered)
         {
             text.AppendLine();
