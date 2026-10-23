@@ -41,8 +41,8 @@ pilot-gui --snapshot <file.json> [--capture out.png]         # a snapshot file i
 - **Node:** with no node on the default socket, the GUI starts one (`pilot-node` beside it, or the source tree's
   build of the same configuration), detached so it outlives the window; a socket named with `--node-socket` or
   `PILOT_NODE_SOCKET` is only connected to.
-- **Rail:** the left rail, as tianwen's: Sessions (Ctrl+1), Flights (Ctrl+2), Background tasks (Ctrl+3), Fleet
-  (Ctrl+4) and Settings (Ctrl+5).
+- **Rail:** the left rail, as tianwen's: Sessions (Ctrl+1), Flights (Ctrl+2), Repos (Ctrl+6, listed after
+  Flights so the other chords keep their keys), Background tasks (Ctrl+3), Fleet (Ctrl+4) and Settings (Ctrl+5).
 - **Live:** the window follows the node's event stream, resumes with `since` after a drop, and says so in its header
   while no node answers, trying again every 2 s. The selection follows its session as the rows reorder.
 - **Say:** type in the bar at the foot (Ctrl+S takes the keyboard there from anywhere) and Enter says it to the selected session (the node's `say`: an idle background
@@ -451,6 +451,21 @@ page needs nothing the node does not already send, and pilot-tui shows the same 
 `FlightDetail` in `Pilot.Ui`). `pilot-gui --capture out.png --page flights --flight <code>` renders one, with its text
 in `out.png.rows.txt`.
 
+The **Repos** page (Ctrl+6) is every tracked repo as a row (a repo is tracked once it has flown, or holds a worktree or an
+open PR of a flight; **All repos** in the header adds the rest under the node's roots). A repo row shows its main checkout
+(branch, clean or dirty, ahead and behind `origin/<default>`) and its open PRs (number and title, draft or ready, where the
+checks stand; a click opens the PR). Right, or a click on the triangle, lists its worktrees under it as the Sessions page
+lists subagents (Left puts them away). A worktree row shows its branch, its diff against the default branch (files, `+`
+added, `-` removed), its flight (a click opens it on the Flights page), its PR, and three things derived from the feed the
+window already has, not from calls of their own: **the session** working in it (its folder, or any live session of its
+flight): `working`, `waiting` (on you), `idle` or `none`, with what it last said (what it waits on, its API error, or when it
+last responded), the session's name opening its transcript; and **the action**: `card waiting: <title>` when an open card is
+about its flight or one of its legs, `leg <name> flying`, or `nothing`. The rows are the node's `RepoStatus`
+(`GET /api/v1/repos/status`, cached by the node), merged across the fleet and filtered by the header's node pills like the
+other pages; the window asks each node for it every 15 s only while the page is shown and for a minute after, so a closed page
+costs nothing. Columns drop as the window narrows. `pilot-gui --snapshot <file> --capture out.png --page repos` renders it
+(from the bundled `Fixtures/repos.sample.json`, or from the live node's status without `--snapshot`), the worktrees listed.
+
 The right panel is the watchtower's: its state and context, its Remote Control link, a box to tell it things, then the
 cards with their buttons (Merge is a card's) and what was handled.
 
@@ -486,7 +501,7 @@ node's. pilot-tui shows the same merged pages.
 `pilot-tui` is the same dashboard in a terminal, over SSH as well as locally: the GUI's own pages and panels
 (`Pilot.Ui`), their DIR.Lib trees arranged in terminal cells by Console.Lib (`CellMeasureContext.PixelAuthored`)
 instead of painted on pixels, so a row, a button or the command bar is the same node on both. **1** Sessions, **2**
-Flights, **3** Background tasks, **4** Fleet, **5** Settings, **Ctrl+K** the command bar, **Ctrl+S** the say bar, **Ctrl+T** the watchtower's box, Up/Down to select, a
+Flights, **3** Background tasks, **4** Fleet, **5** Settings, **6** Repos, **Ctrl+K** the command bar, **Ctrl+S** the say bar, **Ctrl+T** the watchtower's box, Up/Down to select, a
 click on a cell runs what a click on the pixels would, **q** quits. The watchtower and cards panel shows beside the page
 from 120 columns. `--node host:port` flies a node on the LAN, as everywhere.
 

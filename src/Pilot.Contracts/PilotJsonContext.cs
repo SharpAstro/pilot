@@ -37,6 +37,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(ResponseEnvelope<CommandResult>))]
 [JsonSerializable(typeof(ResponseEnvelope<SessionRow[]>))]
 [JsonSerializable(typeof(ResponseEnvelope<RepoInfo[]>))]
+[JsonSerializable(typeof(RepoStatus[]))]
 [JsonSerializable(typeof(ResponseEnvelope<RepoStatus[]>))]
 [JsonSerializable(typeof(ResponseEnvelope<IssueInfo[]>))]
 [JsonSerializable(typeof(ResponseEnvelope<TranscriptPage>))]

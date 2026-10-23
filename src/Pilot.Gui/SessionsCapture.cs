@@ -15,6 +15,20 @@ internal static class SessionsCapture
     /// <summary>The contract's sample snapshot, shipped beside the binary: what the GUI shows until it reads a node.</summary>
     public static string SamplePath => Path.Combine(AppContext.BaseDirectory, "Fixtures", "snapshot.sample.json");
 
+    /// <summary>The contract's sample repo status, shipped beside the binary: what a snapshot capture of the Repos page shows.</summary>
+    public static string ReposSamplePath => Path.Combine(AppContext.BaseDirectory, "Fixtures", "repos.sample.json");
+
+    /// <summary>Reads a repo status file: the array <c>GET /api/v1/repos/status</c> answers.</summary>
+    public static RepoStatus[] LoadRepos(string path) =>
+        JsonSerializer.Deserialize(File.ReadAllText(path), PilotJsonContext.Default.RepoStatusArray) ?? [];
+
+    /// <summary>
+    /// The Repos page's screen for a snapshot file: its flights, sessions, legs and cards joined with <paramref name="repos"/>,
+    /// as of the moment the node made it.
+    /// </summary>
+    public static ReposScreen ReposScreenFor(SnapshotEvent snapshot, RepoStatus[] repos, string source) =>
+        new(RepoLine.Build(repos, snapshot.Flights, snapshot.Sessions, snapshot.Cards, snapshot.Legs, snapshot.At), source, snapshot.At);
+
     /// <summary>Reads a snapshot file: a node's <see cref="SnapshotEvent"/> as the event stream sends it.</summary>
     public static SnapshotEvent LoadSnapshot(string path) =>
         JsonSerializer.Deserialize(File.ReadAllText(path), PilotJsonContext.Default.NodeEvent) switch
@@ -36,7 +50,7 @@ internal static class SessionsCapture
     /// <param name="jobs">The Background tasks page's screen, drawn when <paramref name="page"/> is Jobs.</param>
     /// <param name="openFlight">The code of the flight whose page the Flights page shows in place of its table.</param>
     public static SessionsView<RgbaImage> Render(RgbaImageRenderer renderer, SessionsScreen screen, float dpiScale = 1f, bool canSay = false,
-        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null)
+        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null)
     {
         var view = new SessionsView<RgbaImage>(renderer) { CanSay = canSay };
         var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = FontPath, DpiScale = dpiScale };
@@ -45,20 +59,24 @@ internal static class SessionsCapture
         chrome.Jobs.CanCommand = canSay;
         chrome.Cards.CanTell = canSay;
         chrome.Show(page);
+        if (repos is not null)
+        {
+            chrome.Repos.ExpandAll(repos);
+        }
         if (openFlight is not null)
         {
             chrome.Flights.OpenDetail(openFlight);
         }
-        chrome.Render(screen, flights, cards, jobs, new RectF32(0, 0, renderer.Width, renderer.Height));
+        chrome.Render(screen, flights, cards, jobs, null, repos, new RectF32(0, 0, renderer.Width, renderer.Height));
         return view;
     }
 
     /// <summary>Renders one frame to <paramref name="pngPath"/> and its rows to <c>&lt;pngPath&gt;.rows.txt</c>; returns the dump's path.</summary>
     public static string Write(SessionsScreen screen, string pngPath, int width, int height, bool canSay = false,
-        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null)
+        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null)
     {
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
-        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight);
+        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight, repos: repos);
         if (Path.GetDirectoryName(Path.GetFullPath(pngPath)) is { } folder)
         {
             Directory.CreateDirectory(folder);
@@ -71,6 +89,8 @@ internal static class SessionsCapture
             ? FlightDetail.From(open, flights!.AsOf).ToDump() + "\n"
             : page == PilotPage.Flights && flights is not null
             ? string.Concat(flights.Lines.Select(l => l.ToDumpLine() + "\n"))
+            : page == PilotPage.Repos && repos is not null
+                ? string.Concat(repos.Lines.Where(l => l.Status.Tracked).SelectMany(l => l.Worktrees.Select(w => w.ToDumpLine()).Prepend(l.ToDumpLine())).Select(t => t + "\n"))
             : page == PilotPage.Jobs && jobs is not null
                 ? string.Concat(jobs.Lines.Select(l => l.ToDumpLine() + "\n"))
                 : RowsText(screen), new UTF8Encoding(false));

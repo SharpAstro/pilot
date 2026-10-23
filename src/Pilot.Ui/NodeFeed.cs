@@ -34,19 +34,33 @@ internal sealed class NodeFeed : IAsyncDisposable
     private string? _nodeVersionNow;
     // What the node said it is, as of the last connection: its machine and its account, for the fleet.
     private NodeInfo? _node;
+    // The repos the node last read (GET /api/v1/repos/status), fetched only while the Repos page is shown or recently was.
+    private readonly Func<CancellationToken, Task<RepoStatus[]?>>? _repoLoader;
+    private RepoStatus[] _repos = [];
+    private DateTimeOffset _reposAt = DateTimeOffset.MinValue;
+    private DateTimeOffset _reposWantedUntil = DateTimeOffset.MinValue;
+    private bool _reposLoading;
 
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(
         typeof(NodeFeed).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
             is [System.Reflection.AssemblyInformationalVersionAttribute info, ..] ? info.InformationalVersion : "0.0.0");
 
+    /// <summary>How often the repos are read again while the Repos page is wanted: the node caches them and refreshes by itself, so slow.</summary>
+    public static readonly TimeSpan RepoRefresh = TimeSpan.FromSeconds(15);
+
+    /// <summary>How long after the Repos page was last shown the repos are still kept fresh.</summary>
+    public static readonly TimeSpan RepoLinger = TimeSpan.FromSeconds(60);
+
     /// <param name="open">Opens the event stream, resuming after <c>since</c> on <c>stream</c> when given.</param>
     /// <param name="socketPath">The node's socket, as the header names the source.</param>
     /// <param name="nodeVersion">Asks the node its version, on each connection (null: never asked).</param>
     /// <param name="nodeInfo">Asks the node what it is, on each connection, its version included (null: never asked).</param>
     public NodeFeed(Func<long?, string?, CancellationToken, Task<INodeEvents>> open, string socketPath, TimeSpan? retry = null,
-        Func<CancellationToken, Task<string?>>? nodeVersion = null, Func<CancellationToken, Task<NodeInfo>>? nodeInfo = null)
+        Func<CancellationToken, Task<string?>>? nodeVersion = null, Func<CancellationToken, Task<NodeInfo>>? nodeInfo = null,
+        Func<CancellationToken, Task<RepoStatus[]?>>? repoLoader = null)
     {
+        _repoLoader = repoLoader;
         _open = open;
         _nodeVersion = nodeVersion;
         _nodeInfo = nodeInfo;
@@ -58,7 +72,8 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// <summary>A feed on the node's own client.</summary>
     public static NodeFeed For(NodeClient client) =>
         new(async (since, stream, ct) => new ClientEvents(await client.OpenEventsAsync(since, stream, ct).ConfigureAwait(false)), client.SocketPath,
-            nodeInfo: client.GetNodeAsync);
+            nodeInfo: client.GetNodeAsync,
+            repoLoader: async ct => await client.GetRepoStatusAsync(ct).ConfigureAwait(false) is { Success: true, Response: { } repos } ? repos : null);
 
     /// <summary>What the node said it is, as of its last connection; null until it has.</summary>
     public NodeInfo? Node
@@ -166,6 +181,62 @@ internal sealed class NodeFeed : IAsyncDisposable
         lock (_lock)
         {
             return new FlightsScreen(FlightLine.Build(_mirror.Flights.Values, _mirror.Sessions.Values, now, _mirror.Legs.Values), _status + UpdateNoteLocked(), now);
+        }
+    }
+
+    /// <summary>
+    /// The Repos page as of <paramref name="now"/>: the repos the node last read, joined with the flights, sessions, legs and
+    /// cards this feed holds. With <paramref name="wanted"/> (the page is shown) the repos are read again when they are older
+    /// than <see cref="RepoRefresh"/>, and for <see cref="RepoLinger"/> after it stops being; never otherwise.
+    /// </summary>
+    public ReposScreen Repos(DateTimeOffset now, bool wanted)
+    {
+        bool fetch;
+        lock (_lock)
+        {
+            if (wanted)
+            {
+                _reposWantedUntil = now + RepoLinger;
+            }
+            fetch = _repoLoader is not null && _connected && !_reposLoading && now <= _reposWantedUntil && now - _reposAt >= RepoRefresh;
+            if (fetch)
+            {
+                _reposLoading = true;
+                _reposAt = now;
+            }
+        }
+        if (fetch)
+        {
+            _ = Task.Run(() => LoadReposAsync(_stop.Token));
+        }
+        lock (_lock)
+        {
+            return new ReposScreen(RepoLine.Build(_repos, _mirror.Flights.Values, _mirror.Sessions.Values, _mirror.Cards.Values, _mirror.Legs.Values, now),
+                _status + UpdateNoteLocked(), now);
+        }
+    }
+
+    private async Task LoadReposAsync(CancellationToken cancellationToken)
+    {
+        RepoStatus[]? read = null;
+        try
+        {
+            read = await _repoLoader!(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or System.Net.Sockets.SocketException or System.Text.Json.JsonException or OperationCanceledException)
+        {
+        }
+        lock (_lock)
+        {
+            _reposLoading = false;
+            if (read is not null)
+            {
+                _repos = read;
+            }
+        }
+        if (read is not null)
+        {
+            Interlocked.Increment(ref _version);
         }
     }
 
