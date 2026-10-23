@@ -179,7 +179,8 @@ cards.CanTell = true;
 cards.OnTell = async text =>
 {
     var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = [text], Who = Who }, stop.Token);
-    cards.TellStatus = envelope.Success ? "told" : $"refused: {envelope.Response?.Error ?? envelope.Error}";
+    var told = envelope.Success && envelope.Response is { Ok: true };
+    cards.NoteTold(text, told, told ? "told" : $"refused: {envelope.Response?.Error ?? envelope.Error}");
     Redraw();
 };
 cards.OnOpen = url => DashboardCommands.Open(url);
@@ -317,7 +318,7 @@ while (!stop.IsCancellationRequested)
         var cardsScreen = pages.Cards;
         flights.Jobs = pages.JobRows;
         // The panel takes 38 columns (the GUI's 300 units) when there is room beside a usable page, and something to show.
-        var tree = columns >= 120 && cardsScreen.HasAny
+        var tree = columns >= 120 && (cardsScreen.HasAny || cards.CanTell)
             ? Layout.Builder.HStack(pageTree.WStar(), cards.Tree(cardsScreen).WFixed(CardsView<RgbaImage>.Width)).Stretch()
             : pageTree;
         arranged = Layout.Engine.Arrange(tree, new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);

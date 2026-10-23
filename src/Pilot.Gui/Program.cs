@@ -280,7 +280,8 @@ if (feed is not null && client is not null && clients is not null)
         chrome.Cards.TellStatus = "telling the watchtower…";
         loop.RequestRedraw();
         var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = [text], Who = GuiSay.Who }, cts.Token);
-        chrome.Cards.TellStatus = envelope.Success && envelope.Response is { Ok: true } ? "told" : $"refused: {envelope.Response?.Error ?? envelope.Error}";
+        var told = envelope.Success && envelope.Response is { Ok: true };
+        chrome.Cards.NoteTold(text, told, told ? "told" : $"refused: {envelope.Response?.Error ?? envelope.Error}");
         Console.WriteLine($"pilot-gui: tell watchtower: {chrome.Cards.TellStatus}");
         loop.RequestRedraw();
     };

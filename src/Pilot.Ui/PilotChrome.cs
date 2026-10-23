@@ -318,7 +318,7 @@ internal sealed class PilotChrome<TSurface>
         // The window as a tree: the rail, the page, and the cards panel, which takes room only when it has something
         // (the sessions table needs the width more than an empty "nothing waits on you"). The engine places them at the
         // window's scale; each is painted into its own leaf.
-        ShowsCards = cards is { HasAny: true };
+        ShowsCards = cards is { HasAny: true } || (cards is not null && Cards.CanTell);
         var tree = ShowsCards
             ? Layout.Builder.HStack(Layout.Builder.Fill(key: RailKey).ColW(RailWidth), Layout.Builder.Fill(key: PageKey).Stretch(),
                 Layout.Builder.Fill(key: CardsKey).ColW(CardsView<TSurface>.Width))
