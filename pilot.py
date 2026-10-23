@@ -1754,6 +1754,20 @@ def doing_now(ev):
 _git, _git_busy, _git_slots = {}, set(), threading.Semaphore(3)
 
 
+def worktree_live(path):
+    """Whether a folder is a worktree git still knows: its own top level, not the main checkout's that git finds by
+    walking up from a folder whose worktree was removed (its leftovers stay on disk, with no .git link). Run in
+    such a folder, git reports the main checkout's uncommitted files and commits as the leg's (#40)."""
+    if not path or not Path(path).is_dir():
+        return False
+    r = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=60)
+    if r.returncode != 0 or not r.stdout.strip():
+        return False
+    same = lambda p: os.path.normcase(os.path.realpath(p))
+    return same(r.stdout.strip()) == same(path)
+
+
 def collateral_now(w):
     """What a leg leaves in its repo: its branch's tip, its commits past its base, how many of them are on no
     remote branch under any name (a pilot may push a leg as feat/<topic>, not as its worktree branch), the
@@ -1768,7 +1782,7 @@ def collateral_now(w):
                            errors="replace", timeout=60)
         return r.stdout.strip() if r.returncode == 0 else None
     out = {"repo": w.get("repo"), "branch": br, "base": w.get("base"), "at": time.time(),
-           "worktree": bool(w.get("worktree")) and Path(w["worktree"]).is_dir()}
+           "worktree": worktree_live(w.get("worktree"))}
     sha = git("rev-parse", "--verify", "--quiet", f"refs/heads/{br}")
     # A removed leg's branch may have gone with its worktree; the tip its record kept (`rm` logs its commits)
     # still reads its commits past its base and the PRs that hold them, for a flight connecting from it.
@@ -2820,7 +2834,7 @@ def worker_records(w, events=50):
     brief = (BRIEFS / f"{w['name']}.md")
     if brief.exists():
         lines += ["", "Brief:", brief.read_text(encoding="utf-8").split("# Brief\n", 1)[-1].strip()[:2500]]
-    if Path(w["worktree"]).exists():
+    if worktree_live(w["worktree"]):
         r = subprocess.run(["git", "-C", w["worktree"], "log", "--oneline", "-15", f"{w.get('base') or 'origin/HEAD'}..HEAD"],
                            capture_output=True, text=True)
         lines += ["", "Commits on its branch:", r.stdout.strip() or "(none)"]
@@ -4681,7 +4695,7 @@ def cmd_rm(a):
     # Its commits past its base, from its worktree, or once that is gone from its branch in the repo. None when
     # neither can be read: "" would say it had none, and flight_landed would land it on that.
     base, root = w.get("base") or "origin/HEAD", config()["repos"].get(w.get("repo"))
-    where = ([w["worktree"], f"{base}..HEAD"] if Path(w["worktree"]).exists() else
+    where = ([w["worktree"], f"{base}..HEAD"] if worktree_live(w["worktree"]) else
              [root, f"{base}..refs/heads/{w['branch']}"] if root and w.get("branch") else None)
     commits = None
     if where:
