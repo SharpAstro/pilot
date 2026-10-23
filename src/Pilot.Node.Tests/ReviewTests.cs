@@ -481,6 +481,28 @@ public sealed class ReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task APassedPrWhoseRebaseConflictsIsSentBackAsChangesSoItsDoneLegGoesAround()
+    {
+        var flight = await NewFlight("8", "parser");
+        File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA8"), "controller");
+        (await Run(Verbs.Review, "flight/TIA8", Reviewer("TIA8"), "pass", "fine")).Ok.ShouldBeTrue();
+        File.WriteAllText(Path.Combine(Repo, "README.md"), "ours\n");
+        Git(Repo, "commit", "-qam", "README on main");
+        Git(Repo, "push", "-q", "origin", "main");
+        _github.Pr = _github.Pr! with { Mergeable = "CONFLICTING" };
+
+        await new PrChecks(_state, _github, TimeProvider.System, legs: _legs).LookAsync(Ct);
+
+        F("TIA8").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+        var card = Open().ShouldHaveSingleItem();
+        card.Kind.ShouldBe(LegCommander.ReviewChanges);
+        card.Detail.ShouldNotBeNull().ShouldStartWith("the PR conflicts with its base");
+        (await Run(Verbs.GoAround, "flight/TIA8/parser", "controller", "resolve the conflicts")).Error.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task ChangesRingWithAGoAroundWhoseFinishIsReviewedAfreshOrReadyAnyway()
     {
         var flight = await NewFlight("2", "parser");
