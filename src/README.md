@@ -397,6 +397,8 @@ pilot review approve|changes|comment <report…> [--finding "<path:line> <body>"
 pilot check <step number or text> [--undo]
 pilot artifact <path or URL> [title…]
 pilot say <session> <text…>
+pilot say-all <text…> [--all] [--role worker|planner|reviewer|pilot|adHoc|watchtower|validator]… [--flight <code>]… [--repo <name or checkout>]… [--dry-run]
+                                               # the same say to each session the filters pick (see Say to all)
 pilot compact <session> [focus…]               # an idle background session's /compact, as its next turn (see Compaction)
 pilot note <text…>
 pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
@@ -412,6 +414,20 @@ Inside a plane a leg command names no leg: the flight is the one whose worktree 
 flying, and the command is sent as that leg's worker, so the black box says which worker ticked what. A worker's brief
 gives it these commands by the CLI's full path (beside the node, else the source tree's build), with `--node-socket`
 when its node is not on the default socket. Exit codes: 0 done, 1 refused by the node (it says why), 2 usage, 3 no node.
+
+### Say to all
+
+`pilot say-all <text…>` says the text to every session its filters pick, one `say` each (resumed when idle, relayed when
+mid-turn), and prints a line per session: `ok session/7734b775 (relayed)  <name>  <role>  <state>`, or `refused
+session/<id> …` and why. It exits 1 if any say failed, else 0; no session picked says so. By default it picks the
+active sessions, working or waiting; `--all` adds idle ones; ended, failed and archived sessions are never picked.
+`--role` (once per role: `worker`, `planner`, `reviewer`, `pilot`, `adHoc`, `watchtower`, `validator`), `--flight` (a
+code, once per flight) and `--repo` (a repo's folder name, or a checkout's path, which takes the sessions in or under it)
+combine, each narrowing the others; within one, any value matches. Two kinds are kept safe: a validator (a session named
+`…-validator`: it checks a commit as it stands) is picked only when `--role validator` names it, and the watchtower only
+when `--role watchtower` does. The session running the command is skipped. `--dry-run` lists who would be told and sends
+nothing. Only the node `--node` names is used, else this machine's. The picking is `SayAllFilter.Pick` in
+`Pilot.Commands`, and `pilot mcp` offers the command as the `say-all` tool.
 
 ### Jobs
 

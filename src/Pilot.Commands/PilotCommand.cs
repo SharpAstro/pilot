@@ -422,6 +422,75 @@ public static class PilotCommand
         var text = Words("text", "What to say");
         var say = Action(new Command("say", "Say something to a session through the node") { Arguments = { session, text } },
             (p, client, ct) => Send(client, Verbs.Say, Verbs.SessionTarget(p.GetValue(session)!), [Join(p, text)], who, ct));
+
+        // say-all: the same say to each session the filters pick, one Send each; the picking is SayAllFilter's, shared with the Sessions page.
+        var sayAllText = Words("text", "What to say to each");
+        var sayAllActive = new Option<bool>("--active") { Description = "Working or waiting sessions only: the default" };
+        var sayAllAll = new Option<bool>("--all") { Description = "Idle sessions too; never ended, failed or archived ones" };
+        var sayAllRole = new Option<string[]>("--role")
+        {
+            Description = "worker, planner, reviewer, pilot, adHoc, watchtower or validator; once per role. The watchtower and validators are told only when named",
+            AllowMultipleArgumentsPerToken = false,
+        };
+        var sayAllFlight = new Option<string[]>("--flight") { Description = "A flight's code; once per flight", AllowMultipleArgumentsPerToken = false };
+        var sayAllRepo = new Option<string[]>("--repo") { Description = "A repo's folder name, or a checkout's path (sessions in or under it); once per repo", AllowMultipleArgumentsPerToken = false };
+        var sayAllDry = new Option<bool>("--dry-run") { Description = "List who would be told, and send nothing" };
+        var sayAll = Action(new Command("say-all", "Say something to every session the filters pick (the active ones by default), each through say")
+            { Arguments = { sayAllText }, Options = { sayAllActive, sayAllAll, sayAllRole, sayAllFlight, sayAllRepo, sayAllDry } },
+            async (p, client, ct) =>
+            {
+                if (p.GetValue(sayAllActive) && p.GetValue(sayAllAll))
+                {
+                    throw new UsageException("--active and --all pick different sessions; give one");
+                }
+                var roles = (p.GetValue(sayAllRole) ?? []).Select(r => SayAllFilter.NormalizeRole(r)
+                    ?? throw new UsageException($"--role takes {string.Join(", ", SayAllFilter.RoleNames)}; not '{r}'")).ToList();
+                var filter = new SayAllFilter(p.GetValue(sayAllAll), roles, p.GetValue(sayAllFlight) ?? [], p.GetValue(sayAllRepo) ?? []);
+                var picked = SayAllFilter.Pick(await client.GetSessionsAsync(ct), filter);
+                var words = Join(p, sayAllText);
+                var dry = p.GetValue(sayAllDry);
+                if (picked.Count == 0)
+                {
+                    await output.WriteLineAsync("No session matches; nothing said.");
+                    return 0;
+                }
+
+                // Never to itself: a relayed say to the session running this would come back as a message to act on.
+                var self = bySession ? Environment.GetEnvironmentVariable("CLAUDE_CODE_SESSION_ID") : null;
+                var sender = await SenderAsync(client, who, bySession, ct);
+                var failed = 0;
+                foreach (var row in picked)
+                {
+                    var target = Verbs.SessionTarget(row.Id);
+                    var label = $"{row.Name}  {SayAllFilter.RoleOf(row)}  {row.State.ToString().ToLowerInvariant()}";
+                    if (self is { Length: > 0 } && string.Equals(row.SessionId, self, StringComparison.OrdinalIgnoreCase))
+                    {
+                        await output.WriteLineAsync($"skipped {target}  {label}: this is the session saying it");
+                    }
+                    else if (dry)
+                    {
+                        await output.WriteLineAsync($"would say {target}  {label}");
+                    }
+                    else
+                    {
+                        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Say, Target = target, Args = [words], Who = sender }, ct);
+                        if (envelope.Success && envelope.Response is { Ok: true } result)
+                        {
+                            await output.WriteLineAsync($"ok {target}{(result.Way is { } way ? $" ({way})" : "")}  {label}");
+                        }
+                        else
+                        {
+                            failed++;
+                            await output.WriteLineAsync($"refused {target}  {label}: {envelope.Response?.Error ?? envelope.Error}");
+                        }
+                    }
+                }
+                if (!dry)
+                {
+                    await output.WriteLineAsync(failed == 0 ? $"said to {picked.Count} {(picked.Count == 1 ? "session" : "sessions")}" : $"{failed} of {picked.Count} said failed");
+                }
+                return failed == 0 ? 0 : 1;
+            });
         var focus = Words("focus", "What its summary keeps, as /compact takes it", required: false);
         var compact = Action(new Command("compact", "Compact an idle background session's conversation (/compact): its next turn, a summary") { Arguments = { session, focus } },
             (p, client, ct) => Send(client, Verbs.Compact, Verbs.SessionTarget(p.GetValue(session)!), p.GetValue(focus) ?? [], who, ct));
@@ -603,7 +672,7 @@ public static class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node },
-            Subcommands = { status, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, archive, ring, flag, handled, nodes, connectNode, grants, settings },
+            Subcommands = { status, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, archive, ring, flag, handled, nodes, connectNode, grants, settings },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
@@ -719,12 +788,15 @@ public static class PilotCommand
             ? row.Name
             : fallback;
 
+    /// <summary>Who a command is from: the Claude session running this host by its name on the node, where there is one, else <paramref name="who"/>.</summary>
+    private static async Task<string> SenderAsync(NodeClient client, string who, bool bySession, CancellationToken cancellationToken) =>
+        bySession && Environment.GetEnvironmentVariable("CLAUDE_CODE_SESSION_ID") is { Length: > 0 } sessionId
+            ? Caller(await SnapshotAsync(client, cancellationToken), sessionId, who)
+            : who;
+
     private static async Task<int> SendAsync(NodeClient client, string verb, string target, string[] args, string who, bool bySession, TextWriter output, CancellationToken cancellationToken)
     {
-        if (bySession && Environment.GetEnvironmentVariable("CLAUDE_CODE_SESSION_ID") is { Length: > 0 } sessionId)
-        {
-            who = Caller(await SnapshotAsync(client, cancellationToken), sessionId, who);
-        }
+        who = await SenderAsync(client, who, bySession, cancellationToken);
         var envelope = await client.SendAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, cancellationToken);
         if (envelope.Success && envelope.Response is { Ok: true } result)
         {
