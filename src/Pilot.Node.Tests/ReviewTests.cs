@@ -96,12 +96,12 @@ public sealed class ReviewTests : IDisposable
     }
 
     /// <summary>A leg flown as a worker flies it: started by the node, a commit in the plane, its step ticked, finished by the worker.</summary>
-    private async Task Fly(FlightRow flight, string leg)
+    private async Task Fly(FlightRow flight, string leg, int lines = 1)
     {
         var start = await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, leg), "controller");
         start.Error.ShouldBeNull();
         var worker = _state.Legs(flight.Code).Single(l => l.Name == leg).Worker!;
-        File.WriteAllText(Path.Combine(flight.Worktree, $"{leg}-{Guid.NewGuid():N}.txt"), "work\n");
+        File.WriteAllText(Path.Combine(flight.Worktree, $"{leg}-{Guid.NewGuid():N}.txt"), string.Concat(Enumerable.Repeat("work\n", lines)));
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", $"{leg} work");
         (await Run(Verbs.Check, Verbs.LegTarget(flight.Code, leg), worker, "1")).Ok.ShouldBeTrue();
@@ -109,6 +109,124 @@ public sealed class ReviewTests : IDisposable
     }
 
     private string Reviewer(string code) => $"du1-{code.ToLowerInvariant()}-review";
+
+    private void Usage(double fiveHour, double sevenDay = 10) =>
+        _state.PutUsage(new UsageRow
+        {
+            ReadAt = DateTimeOffset.UtcNow,
+            FiveHour = new UsageWindow { UsedPercent = fiveHour, ResetsAt = DateTimeOffset.UtcNow.AddHours(2) },
+            SevenDay = new UsageWindow { UsedPercent = sevenDay, ResetsAt = DateTimeOffset.UtcNow.AddDays(3) },
+        });
+
+    private async Task<WorkerStart> Review(string issue, int lines, double fiveHour, bool priority = false, Dictionary<string, string>? roles = null)
+    {
+        Usage(fiveHour);
+        var flight = await NewFlight(issue, "parser");
+        _legs.Models = new RoleModels(new NodeSettings { PriorityRepos = priority ? [flight.Repo] : null, Roles = roles });
+        await Fly(flight, "parser", lines);
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        return _workers.Started.Last();
+    }
+
+    [Fact]
+    public async Task HighUsageMakesALightReviewSaidInItsBriefAndOnThePrReadyCard()
+    {
+        var start = await Review("1", lines: 600, fiveHour: 88, roles: new() { ["reviewer-model"] = "opus", ["reviewer-effort"] = "high" });
+
+        start.Brief.ShouldContain("Depth: light (usage at 88%).");
+        start.Brief.ShouldContain("Review lightly: one pass, no subagents.");
+        start.Brief.ShouldNotContain("no subagents, or one at most");
+        (start.Model, start.Effort).ShouldBe(("opus", "medium"));
+        F("TIA1").Review.ShouldNotBeNull().Depth.ShouldBe(ReviewDepth.Light);
+
+        (await Run(Verbs.Review, "flight/TIA1", Reviewer("TIA1"), "pass", "read it")).Ok.ShouldBeTrue();
+        Open().Single(c => c.Kind == LegCommander.PrReady).Detail.ShouldNotBeNull().ShouldContain("Reviewed lightly, usage at 88%: read it.");
+    }
+
+    [Fact]
+    public async Task APriorityRepoIsNeverReviewedLightly()
+    {
+        var start = await Review("1", lines: 1, fiveHour: 88, priority: true);
+
+        start.Brief.ShouldContain("Depth: standard (priority repo, usage at 88%).");
+        start.Brief.ShouldContain("no subagents, or one at most");
+        F("TIA1").Review!.Depth.ShouldBe(ReviewDepth.Standard);
+    }
+
+    [Fact]
+    public async Task HeadroomAndALargeDiffMakeADeepReviewOnTheStrongerModelWithUpToThreeSubagents()
+    {
+        var start = await Review("1", lines: 500, fiveHour: 20, roles: new() { ["reviewer-model"] = "sonnet", ["reviewer-effort"] = "medium", ["reviewer-deep-model"] = "opus" });
+
+        start.Brief.ShouldContain("Depth: deep (usage at 20%, 500 lines in 1 file).");
+        start.Brief.ShouldContain("up to 3");
+        (start.Model, start.Effort).ShouldBe(("opus", "high"));
+        (await Run(Verbs.Review, "flight/TIA1", Reviewer("TIA1"), "pass", "checked the claims")).Ok.ShouldBeTrue();
+        Open().Single(c => c.Kind == LegCommander.PrReady).Detail.ShouldNotBeNull().ShouldContain("Reviewed deeply, usage at 20%, 500 lines in 1 file: checked the claims.");
+    }
+
+    [Fact]
+    public async Task ASmallDiffOrLittleHeadroomIsAStandardReviewOnTheReviewersOwnModel()
+    {
+        var small = await Review("1", lines: 5, fiveHour: 20, roles: new() { ["reviewer-model"] = "opus", ["reviewer-deep-model"] = "fable" });
+        small.Brief.ShouldContain("Depth: standard (usage at 20%).");
+        (small.Model, small.Effort).ShouldBe(("opus", null));
+
+        var tight = await Review("2", lines: 500, fiveHour: 60);
+        tight.Brief.ShouldContain("Depth: standard (usage at 60%).");
+    }
+
+    [Theory]
+    [InlineData(88, 10, false, 1, 1, ReviewDepth.Light, "usage at 88%")]
+    [InlineData(79, 95, false, 1, 1, ReviewDepth.Light, "7-day usage at 95%")]
+    [InlineData(95, 10, true, 1, 1, ReviewDepth.Standard, "priority repo, usage at 95%")]
+    [InlineData(20, 95, true, 900, 30, ReviewDepth.Standard, "priority repo, 7-day usage at 95%")]
+    [InlineData(20, 10, false, 399, 14, ReviewDepth.Standard, "usage at 20%")]
+    [InlineData(20, 10, false, 400, 3, ReviewDepth.Deep, "usage at 20%, 400 lines in 3 files")]
+    [InlineData(20, 10, false, 30, 15, ReviewDepth.Deep, "usage at 20%, 30 lines in 15 files")]
+    [InlineData(20, 10, false, 200, 3, ReviewDepth.Standard, "usage at 20%")]
+    [InlineData(20, 10, true, 200, 3, ReviewDepth.Deep, "usage at 20%, 200 lines in 3 files")]
+    [InlineData(50, 10, false, 900, 30, ReviewDepth.Standard, "usage at 50%")]
+    [InlineData(20, 70, false, 900, 30, ReviewDepth.Standard, "usage at 20%")]
+    public void TheDepthFollowsUsagePriorityAndTheDiff(double five, double seven, bool priority, int lines, int files, ReviewDepth depth, string why)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var usage = new UsageRow { ReadAt = now, FiveHour = new UsageWindow { UsedPercent = five }, SevenDay = new UsageWindow { UsedPercent = seven } };
+
+        ReviewPlan.Choose(usage, priority, (lines, files), now).ShouldBe(new ReviewPlan(depth, why));
+    }
+
+    [Fact]
+    public void StaleFiguresASpentWindowOrNoDiffMeasureNeverMakeAReviewLightOrDeep()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var stale = new UsageRow { ReadAt = now - ReviewPlan.FreshFor - TimeSpan.FromMinutes(1), FiveHour = new UsageWindow { UsedPercent = 95 } };
+        var reset = new UsageRow { ReadAt = now, FiveHour = new UsageWindow { UsedPercent = 95, ResetsAt = now.AddMinutes(-1) } };
+        var low = new UsageRow { ReadAt = now, FiveHour = new UsageWindow { UsedPercent = 10 } };
+
+        ReviewPlan.Choose(stale, false, (900, 30), now).ShouldBe(new ReviewPlan(ReviewDepth.Standard, "no fresh usage figures"));
+        ReviewPlan.Choose(null, false, (900, 30), now).Depth.ShouldBe(ReviewDepth.Standard);
+        ReviewPlan.Choose(reset, false, (1, 1), now).Depth.ShouldBe(ReviewDepth.Standard);
+        ReviewPlan.Choose(low, false, null, now).ShouldBe(new ReviewPlan(ReviewDepth.Standard, "usage at 10%"));
+    }
+
+    [Fact]
+    public void NumstatCountsLinesAndFilesAndABinaryFileIsAFileOnly()
+    {
+        ReviewPlan.ParseNumstat("10\t2\ta.cs\n-\t-\timg.png\n3\t0\tb with space.cs\n").ShouldBe((15, 3));
+        ReviewPlan.ParseNumstat("").ShouldBeNull();
+    }
+
+    [Fact]
+    public void AReviewerRunsOneEffortStepBelowOrAboveItsOwnAndTheDeepSettingsWin()
+    {
+        var own = new RoleModels(new NodeSettings { Roles = new Dictionary<string, string> { ["reviewer-effort"] = "low", ["reviewer-model"] = "opus" } });
+        (own.ReviewerEffort(ReviewDepth.Light), own.ReviewerEffort(ReviewDepth.Standard), own.ReviewerEffort(ReviewDepth.Deep)).ShouldBe(("low", "low", "medium"));
+
+        var deep = new RoleModels(new NodeSettings { Roles = new Dictionary<string, string> { ["reviewer-deep-effort"] = "max", ["reviewer-deep-model"] = "fable" } });
+        (deep.ReviewerModel(ReviewDepth.Deep), deep.ReviewerModel(ReviewDepth.Light), deep.ReviewerEffort(ReviewDepth.Deep), deep.ReviewerEffort(ReviewDepth.Light)).ShouldBe(("fable", "opus", "max", "low"));
+        (RoleModels.Unset.ReviewerModel(ReviewDepth.Deep), RoleModels.Unset.ReviewerEffort(ReviewDepth.Standard), RoleModels.Unset.ReviewerEffort(ReviewDepth.Deep)).ShouldBe((null, null, "high"));
+    }
 
     [Fact]
     public async Task APrOpensAFreshReviewerAndOnlyItsPassOffersTheMerge()
@@ -134,7 +252,7 @@ public sealed class ReviewTests : IDisposable
 
         var card = Open().ShouldHaveSingleItem();
         (card.Kind, card.Title).ShouldBe((LegCommander.PrReady, "TIA1's PR #71 is ready to merge"));
-        card.Detail.ShouldNotBeNull().ShouldContain("Reviewed: the step is in; it is done.");
+        card.Detail.ShouldNotBeNull().ShouldContain("Reviewed at standard depth, no fresh usage figures: the step is in; it is done.");
         card.Link.ShouldBe("https://github.com/x/tianwen/pull/71");
 
         // The Merge choice says where the PR's checks stand, as they change, and nothing else about the card does.

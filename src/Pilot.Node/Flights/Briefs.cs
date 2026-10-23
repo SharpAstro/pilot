@@ -181,8 +181,10 @@ public static class Briefs
         return text.ToString();
     }
 
-    public static string Review(FlightRow flight, IReadOnlyList<LegRow> legs, PlaneState plane, string run)
+    /// <param name="plan">The depth the node chose (#74); null reviews at standard depth, said no more than that.</param>
+    public static string Review(FlightRow flight, IReadOnlyList<LegRow> legs, PlaneState plane, string run, ReviewPlan? plan = null)
     {
+        var depth = plan?.Depth ?? ReviewDepth.Standard;
         var text = new StringBuilder();
         var title = flight.Title is { Length: > 0 } t ? $": {t}" : "";
         text.AppendLine($"You review flight {flight.Code} ({flight.Repo} #{flight.Issue}{title}) before it is offered for merging.");
@@ -190,10 +192,30 @@ public static class Briefs
         text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`, against `{flight.Base}`.");
         text.AppendLine("Read the whole diff (`git diff " + flight.Base + "...HEAD`), and rerun what proves each leg's Done-when. Do not edit,");
         text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a go-around makes any change.");
-        // The controller's rule for now (20 Oct): a review is one session's reading, very light on subagents, if any. Its
-        // depth is to follow usage headroom and priority later (#74).
-        text.AppendLine("Do the review yourself, in this session: no subagents, or one at most for a single narrow question. Fanning");
-        text.AppendLine("out reviewers costs many times the tokens and is not what this review is for.");
+        // The controller's rule of 20 Oct is the standard depth: one session's reading, very light on subagents. The node
+        // picks a lighter or deeper one from usage headroom, priority and the diff (#74), and says which, and why.
+        if (plan is not null)
+        {
+            text.AppendLine();
+            text.AppendLine($"Depth: {depth.ToString().ToLowerInvariant()} ({plan.Why}).");
+        }
+        switch (depth)
+        {
+            case ReviewDepth.Light:
+                text.AppendLine("Review lightly: one pass, no subagents. Read the diff, rerun only the checks that prove each Done-when, and");
+                text.AppendLine("go no further; the account's usage is high and this review must not spend what is left.");
+                break;
+            case ReviewDepth.Deep:
+                text.AppendLine($"Review deeply: this diff is large and there is headroom. Read it all yourself first, then you may start up to {ReviewPlan.MaxSubagents}");
+                text.AppendLine("subagents, each on one focused question (a claim a leg's report makes, or a risky part of the diff) to check");
+                text.AppendLine("against the tree. Give each its question and the files to read, not the whole review; you weigh what they find");
+                text.AppendLine("and give the verdict yourself.");
+                break;
+            default:
+                text.AppendLine("Do the review yourself, in this session: no subagents, or one at most for a single narrow question. Fanning");
+                text.AppendLine("out reviewers costs many times the tokens and is not what this review is for.");
+                break;
+        }
         text.AppendLine();
         text.AppendLine("Legs, each done:");
         foreach (var leg in legs.OrderBy(l => l.Order))

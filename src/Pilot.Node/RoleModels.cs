@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Pilot.Contracts;
 
 namespace Pilot.Node;
 
@@ -14,9 +15,12 @@ public sealed partial class RoleModels
     public const string Worker = "worker";
     public const string Planner = "planner";
     public const string Reviewer = "reviewer";
+    /// <summary>A deep review's own model and effort (#74), unset by default: it then runs on the reviewer's, a step higher in effort.</summary>
+    public const string ReviewerDeep = "reviewer-deep";
+
     public const string NoneValue = "none";
 
-    public static IReadOnlyList<string> Roles { get; } = [Watchtower, Worker, Planner, Reviewer];
+    public static IReadOnlyList<string> Roles { get; } = [Watchtower, Worker, Planner, Reviewer, ReviewerDeep];
 
     public static IReadOnlyList<string> Efforts { get; } = ["low", "medium", "high", "xhigh", "max"];
 
@@ -38,7 +42,7 @@ public sealed partial class RoleModels
     public static string EffortKey(string role) => role + "-effort";
 
     /// <summary>A role's model when the settings name none: Opus where judgement decides what follows, Sonnet elsewhere.</summary>
-    public static string DefaultModel(string role) => role is Planner or Reviewer ? "opus" : "sonnet";
+    public static string DefaultModel(string role) => role is Planner or Reviewer or ReviewerDeep ? "opus" : "sonnet";
 
     public void Apply(NodeSettings settings)
     {
@@ -92,11 +96,41 @@ public sealed partial class RoleModels
     {
         lock (_lock)
         {
-            return _settings.PriorityRepos?.Contains(repo, StringComparer.OrdinalIgnoreCase) == true
+            return IsPriority(repo)
                 ? _settings.PriorityStartLimit ?? 98
                 : _settings.StartLimit ?? 90;
         }
     }
+
+    /// <summary>Whether <paramref name="repo"/> is a priority repo (<see cref="NodeSettings.PriorityReposKey"/>): its reviews are never lightened below standard.</summary>
+    public bool IsPriority(string repo)
+    {
+        lock (_lock)
+        {
+            return _settings.PriorityRepos?.Contains(repo, StringComparer.OrdinalIgnoreCase) == true;
+        }
+    }
+
+    /// <summary>The model a reviewer of <paramref name="depth"/> starts on: the reviewer's own, and for a deep review the
+    /// stronger <c>reviewer-deep-model</c> when the settings name one.</summary>
+    public string? ReviewerModel(ReviewDepth depth) =>
+        (depth == ReviewDepth.Deep ? Pick(ModelKey(ReviewerDeep), null) : null) ?? Model(Reviewer);
+
+    /// <summary>The effort a reviewer of <paramref name="depth"/> starts at: the reviewer's own for standard, a step below it for
+    /// light (low when none is set), and for deep <c>reviewer-deep-effort</c>, else a step above it (high when none is set).</summary>
+    public string? ReviewerEffort(ReviewDepth depth)
+    {
+        var own = Effort(Reviewer);
+        return depth switch
+        {
+            ReviewDepth.Light => Step(own, -1, "low"),
+            ReviewDepth.Deep => Pick(EffortKey(ReviewerDeep), null) ?? Step(own, 1, "high"),
+            _ => own,
+        };
+    }
+
+    private static string Step(string? effort, int by, string whenUnset) =>
+        Array.IndexOf(Efforts.ToArray(), effort) is var at and >= 0 ? Efforts[Math.Clamp(at + by, 0, Efforts.Count - 1)] : whenUnset;
 
     /// <summary>The share of the account's 5-hour window, in percent, past which the node starts nothing by itself
     /// (<see cref="NodeSettings.StartLimitKey"/>); 90 unless the settings say otherwise.</summary>
