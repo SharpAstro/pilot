@@ -76,6 +76,26 @@ public sealed record ReviewRow
     public required DateTimeOffset StartedAt { get; init; }
 
     public DateTimeOffset? FinishedAt { get; init; }
+
+    /// <summary>How deep the node chose to review (#74); null on a review started before it chose.</summary>
+    public ReviewDepth? Depth { get; init; }
+
+    /// <summary>Why that depth, in a few words ("usage at 88%"); said in the reviewer's brief and on the PR-ready card.</summary>
+    public string? DepthWhy { get; init; }
+}
+
+/// <summary>How much reading a review gets: one light pass, today's standard, or a deep one with subagents checking claims.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ReviewDepth>))]
+public enum ReviewDepth
+{
+    [JsonStringEnumMemberName("light")]
+    Light,
+
+    [JsonStringEnumMemberName("standard")]
+    Standard,
+
+    [JsonStringEnumMemberName("deep")]
+    Deep,
 }
 
 /// <summary>Where a review is.</summary>

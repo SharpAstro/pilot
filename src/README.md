@@ -188,8 +188,23 @@ restarted node and a client resuming the stream both replay it.
 
 `flight pr` pushes the plane (every time, so a go-around's commits reach the PR) and starts a fresh reviewer,
 `<machine>-<flight>-review`, in the plane: briefed with every leg's goal and Done-when, the commits and the files, told
-to read the diff and rerun what proves each Done-when, and to change nothing. For now it reviews on its own, with no
-subagents or one at most; its depth is to follow usage headroom, priority and what the diff is later (#74).
+to read the diff and rerun what proves each Done-when, and to change nothing.
+
+The node picks the review's **depth** when it starts it (`ReviewPlan.Choose`), from the usage figures (fresh ones only,
+under 30 minutes old, of a window that has not reset), whether the repo is in `priority-repos`, and the diff's size
+(`git diff --numstat` against the base: lines changed and files touched). The thresholds are named constants, not settings.
+
+- **light**: the 5-hour share is at 80% or more, or the 7-day at 90% or more. One pass, no subagents, an effort one
+  step below the reviewer's (low when none is set).
+- **deep**: both windows below 50% and 70%, and a large diff (400 lines or 15 files; 200 or 8 for a priority repo).
+  An effort one step above the reviewer's (high when none is set), the model from `reviewer-deep-model` when set, and up
+  to three focused subagents, each checking one claim against the tree; `reviewer-deep-effort` replaces the step.
+- **standard**: anything else, and any case where no fresh figures or no diff measure say otherwise: the reviewer's own
+  model and effort, on its own, with no subagents or one at most.
+- A **priority repo is never lighter than standard**, however high the usage; its deep threshold is halved.
+
+The brief says the depth and why (`Depth: light (usage at 88%).`), the review row keeps both, and the PR-ready card
+carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
 
 - `pilot review pass <report>` from the plane offers the merge: the PR-ready card, with the review's words.
 - `pilot review changes <changes>` rings with **Go around** (the last leg, told the changes; a done leg may go around
