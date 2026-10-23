@@ -28,6 +28,9 @@ internal sealed class FlightCanvas
 {
     public const float CardWidth = 232f;
     public const float CardHeight = 112f;
+    /// <summary>The grid's card: one line taller, for what a held flight waits for.</summary>
+    public const float GridCardHeight = 130f;
+    public const float GridGap = 36f;
     public const float GapX = 72f;
     public const float GapY = 20f;
     public const float Margin = 16f;

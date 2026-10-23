@@ -184,7 +184,7 @@ internal sealed partial class FlightsView<TSurface>
 
     private const float DetailLabelWidth = 76f;
 
-    private static Layout.Node Field(string label, string text, RGBAColor32? color = null) =>
+    private Layout.Node Field(string label, string text, RGBAColor32? color = null) =>
         Layout.Builder.HStack(Layout.Builder.Text(label, 11f, Faint).WFixed(DetailLabelWidth), Prose(text, 13f, color ?? Body))
             .WithGap(10f)
             .HAuto()
