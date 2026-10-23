@@ -117,6 +117,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>What the last tell came to.</summary>
     public string? TellStatus { get; set; }
 
+    /// <summary>Whether this user may command a node's cards (its own, or one it holds a grant for); null: every card.</summary>
+    public Func<NodeMark?, bool>? CanSteer { get; set; }
+
+    /// <summary>Asks a node for a grant, as the Fleet page's Connect does: the pill on a watch-only card.</summary>
+    public Action<NodeMark>? OnConnect { get; set; }
+
     /// <summary>Opens the watchtower's Remote Control link.</summary>
     public Action<string>? OnOpen { get; set; }
 
@@ -236,7 +242,14 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         }
 
         var buttons = new List<Layout.Node>();
-        for (var i = 0; i < card.Choices.Length; i++)
+        var watched = node is { Here: false } && CanSteer?.Invoke(node) == false ? node : null;
+        if (watched is not null)
+        {
+            // Answering and dismissing are commands: replaced by why not, and the ask for the grant.
+            lines.Add(Layout.Builder.Text(SessionsView<TSurface>.SteerHint(watched), 11f, Dim).RowH(18f));
+            buttons.Add(Pill("Connect", $"card:{card.Id}:connect", () => OnConnect?.Invoke(watched)));
+        }
+        for (var i = 0; watched is null && i < card.Choices.Length; i++)
         {
             var number = i + 1;
             var choice = card.Choices[i];
@@ -247,7 +260,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         {
             buttons.Add(Pill("Its transcript", $"card:{card.Id}:transcript", () => open(card, session)));
         }
-        buttons.Add(Pill("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
+        if (watched is null)
+        {
+            buttons.Add(Pill("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
+        }
         lines.Add(Layout.Builder.Spacer().RowH(6f));
         lines.Add(Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f).RowH(26f));
 

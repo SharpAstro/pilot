@@ -232,6 +232,15 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>Runs an action's verb on the node.</summary>
     public Action<FlightAction>? OnAction { get; set; }
 
+    /// <summary>Whether this user may command a node's flights (its own, or one it holds a grant for); null: every row.</summary>
+    public Func<NodeMark?, bool>? CanSteer { get; set; }
+
+    /// <summary>Asks a node for a grant, as the Fleet page's Connect does: the pill on a watch-only row.</summary>
+    public Action<NodeMark>? OnConnect { get; set; }
+
+    /// <summary>The node of <paramref name="line"/> when it is watched and not commanded, else null.</summary>
+    private NodeMark? WatchOnly(FlightLine line) => line.Node is { Here: false } node && CanSteer?.Invoke(node) == false ? node : null;
+
     /// <summary>Opens an artifact: a file on the machine, or a URL.</summary>
     public Action<string>? OnOpen { get; set; }
 
@@ -261,7 +270,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         ListCursor.MoveTo(index);
         var flight = line.Row;
         var items = new List<DropdownItem<string>>();
-        if (CanCommand)
+        if (CanCommand && WatchOnly(line) is { } watched)
+        {
+            // Disabled, and why: the one entry that can be chosen asks for the grant.
+            items.Add(new DropdownItem<string>(SessionsView<TSurface>.SteerHint(watched), "connect") { OnChoose = () => OnConnect?.Invoke(watched) });
+        }
+        else if (CanCommand)
         {
             foreach (var action in FlightAction.For(line))
             {
@@ -480,7 +494,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         }
 
         var buttons = new List<Layout.Node> { Pill("Open flight", $"flight:{line.Code}:open", () => OpenDetail(line.Code)) };
-        if (CanCommand)
+        if (CanCommand && WatchOnly(line) is { } watchedNode)
+        {
+            buttons.Add(Layout.Builder.Text(SessionsView<TSurface>.SteerHint(watchedNode), 12f, Dim).WAuto());
+            buttons.Add(Pill("Connect", $"flight:{line.Code}:connect", () => OnConnect?.Invoke(watchedNode)));
+        }
+        else if (CanCommand)
         {
             foreach (var action in FlightAction.For(line))
             {
