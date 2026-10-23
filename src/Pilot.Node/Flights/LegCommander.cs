@@ -21,6 +21,9 @@ public sealed partial class LegCommander(
     /// <summary>The model and effort each kind of session starts on; a test's commander passes none.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
 
+    /// <summary>Which sibling clones a plane's local build compiles against are behind their origin; a test passes its own.</summary>
+    public SiblingWatch Siblings { get; init; } = new(git, time);
+
     /// <summary>The CLI workers are told to run, found once.</summary>
     public string Cli { get; init; } = Briefs.PilotCli();
 
@@ -291,8 +294,34 @@ public sealed partial class LegCommander(
 
         var worker = WorkerName(flight, leg);
         await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
+        await WarnSiblingsBehindAsync(flight, leg, cancellationToken);
         var job = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), Briefs.For(flight, leg, legs, cli: Cli, socket: Socket), leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), cancellationToken);
         state.PutLeg(leg with { State = LegState.Flying, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), Report = null });
+    }
+
+    /// <summary>
+    /// A For-you card naming each sibling clone the plane's build compiles against that is behind its origin, with the pull
+    /// to run; the leg starts regardless. It is about the leg, so it closes when the leg is done or goes around.
+    /// </summary>
+    private async Task WarnSiblingsBehindAsync(FlightRow flight, LegRow leg, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<SiblingBehind> behind;
+        try
+        {
+            behind = await Siblings.BehindAsync(flight.Worktree, flight.RepoPath, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return;
+        }
+        if (behind.Count == 0)
+        {
+            return;
+        }
+        var lines = behind.Select(s => $"{s.Name} is {s.Behind} {(s.Behind == 1 ? "commit" : "commits")} behind its origin: git -C {s.Path} pull --ff-only");
+        state.RaiseCard(CardBin.ForYou, SiblingBehindKind, Verbs.LegTarget(flight.Code, leg.Name),
+            $"{flight.Code}/{leg.Name} compiles against {(behind.Count == 1 ? "a sibling clone" : $"{behind.Count} sibling clones")} behind origin",
+            string.Join('\n', lines));
     }
 
     private void Tick(CommandRequest command)
@@ -556,6 +585,9 @@ public sealed partial class LegCommander(
     public const string ReviewChanges = "review-changes";
 
     public const string PrReady = "pr-ready";
+
+    /// <summary>The card a leg's start raises when a sibling clone its build compiles against is behind its origin.</summary>
+    public const string SiblingBehindKind = "sibling-behind";
 
     private string ReviewerName(FlightRow flight) => $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{ReviewLeg}";
 

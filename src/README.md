@@ -153,6 +153,16 @@ by the node in the plane, passing. A go-around stops the worker and starts a fre
 holds (its commits and diff), never the last worker's conversation. A worker's row is measured against its leg's
 budget.
 
+**A stale sibling is said before the leg starts.** A repo's `UseLocal*` properties compile against the sibling clones
+beside it (`../DIR.Lib`) whatever state they are in, so a clone behind its origin fails a leg's check with errors that
+look like the leg's own. Before `start-leg` the node reads the plane's `Directory.Build.props`, `.targets` and `.csproj`
+files for `UseLocal*` properties and the siblings their `Exists()` probes name (a probe of the repo's own files or a
+package folder names none), fetches each clone that is there (quietly, 20 seconds at most, the siblings at once) and
+counts its commits behind its upstream. Any behind raise one For-you card, `sibling-behind`, about the leg: each
+sibling, how far behind, and the `git -C <path> pull --ff-only` to run. The leg starts regardless, and a sibling that
+cannot be asked (no upstream, no network) is left out. Each sibling is asked at most once in five minutes, so legs
+started in a row cost one fetch; the card closes when the leg is done or goes around.
+
 | Command | What it does |
 | --- | --- |
 | `plan-leg flight/<code> name=… goal=… done-when=… [check=…] [budget=…] [model=…] [effort=…] [item=…]…` | A leg at the end of the order, or a planned one replaced. |
@@ -494,7 +504,7 @@ node or the watchtower did itself: one line, born closed). A session going quiet
 how its row looks. A flying leg's worker stalling is: its flight is derailing (see Liveness). A card leaves when its
 thing is done: answered, dismissed, or closed by the node when its flight lands or its leg finishes. Raised so far: a
 PR opened with every leg done rings with **Merge** on that head; a failed leg rings with **Go around**; a landed flight
-is a For-you card; and the leg watch's cards (`worker-stopped`, `-idle`, `-waiting`, `-failed`, `-missing`, and the
+is a For-you card; a leg started with a sibling clone behind its origin raises a For-you `sibling-behind` card; and the leg watch's cards (`worker-stopped`, `-idle`, `-waiting`, `-failed`, `-missing`, and the
 Handled `worker-resumed` and `worker-nudged`).
 
 Each choice is a command; `answer card/<id> <n or label>` runs it as the one answering, through the same route as any
