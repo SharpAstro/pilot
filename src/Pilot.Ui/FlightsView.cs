@@ -338,7 +338,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     public void Render(FlightsScreen screen, RectF32 bounds)
     {
         BeginFrame();
-        RenderLayout(Tree(screen), bounds);
+        RenderLayout(Tree(screen), bounds, drawFill: DrawCanvas);
     }
 
     /// <summary>
@@ -586,6 +586,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                     .. (Nodes?.Pills() ?? []),
                     Layout.Builder.Spacer().WStar(),
                     Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
+                    CanvasAvailable && screen.Lines.Count > 0 ? ViewSwitch() : Layout.Builder.Spacer().WFixed(0f),
                     CanCommand && !Wizard.IsOpen && Wizard.LoadRepos is not null
                         ? Pill("New flight", "flights:new", () => Wizard.Open())
                         : Layout.Builder.Spacer().WFixed(0f),
@@ -620,6 +621,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         if (screen.Lines.Count == 0)
         {
             return Layout.Builder.Text("No flights yet: New flight, above, makes one", 16f, Dim, TextAlign.Center).Stretch();
+        }
+        if (CanvasShown)
+        {
+            return CanvasBody(screen);
         }
 
         var rows = new Layout.Node[screen.Lines.Count];
