@@ -354,6 +354,12 @@ public sealed class ReposPageTests
         // The terminal shows the Node column, and the header's pill picks one node's repos.
         var arranged = Layout.Engine.Arrange(repos.Tree(pages.Repos), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored);
         CellLayout.Describe(arranged).ShouldContain("Node");
+
+        // New flight flies this window's own node: only the local row has it, a remote row offers none.
+        repos.OnNewFlight = _ => { };
+        var hits = Arrange(repos, pages.Repos).Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action).ToList();
+        hits.ShouldContain($"repo:{pages.Repos.Lines[0].Key}:new-flight");
+        hits.ShouldNotContain($"repo:{pages.Repos.Lines[1].Key}:new-flight");
         filter.Line().ShouldBe("[All nodes] SE1 LE1");
         filter.Toggle(filter.Choices.Single(c => c.Name == "LE1").Key);
         watch.Pages("node.sock", here, filter, now, reposWanted: true).Repos!.Lines.ShouldHaveSingleItem().Name.ShouldBe("orbit-laptop");
