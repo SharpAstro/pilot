@@ -307,7 +307,8 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                     toggle.RowH(22f),
                     Layout.Builder.HStack(
                             Layout.Builder.Text(line.Status.GitHub ?? line.Status.Path, 11f, Dim).WStar(),
-                            OnNewFlight is null ? Layout.Builder.Spacer().WFixed(0f)
+                            // The wizard flies this window's own node, so a row of another node offers no New flight.
+                            OnNewFlight is null || line.Node is { Here: false } ? Layout.Builder.Spacer().WFixed(0f)
                                 : Layout.Builder.Text("New flight", 11f, Link, TextAlign.Center).Pad(6f, 0f).WAuto().BgHover(RowHoverBg)
                                     .Clickable(new HitResult.ButtonHit($"repo:{line.Key}:new-flight"), _ => OnNewFlight?.Invoke(line))
                                     .WithTooltip("Start a flight on one of this repo's issues"))
