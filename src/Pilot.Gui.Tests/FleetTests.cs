@@ -89,4 +89,102 @@ public sealed class FleetTests
         CellLayout.HitTest(arranged, connect.Bounds.X + 1, connect.Bounds.Y);
         asked.ShouldBe(["10.0.0.9:47731"]);
     }
+
+    /// <summary>
+    /// A node row's "N waiting on you" is a button that lands on the Sessions page filtered to that node, the first session
+    /// waiting on you selected and in the list's visible window: also when the list had been scrolled away from it, and
+    /// when other nodes have sessions waiting too.
+    /// </summary>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public void WaitingOnYouOpensThoseSessionsOnTheSessionsPage(int waiting)
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.LinkFleet();
+        var here = new NodeMark("node.sock", "node.sock", "SE1", Here: true);
+        var remote = new NodeMark("10.0.0.9:47731", "10.0.0.9:47731", "SE2", Here: false);
+        chrome.Nodes.Choices = [here, remote];
+
+        // The remote node has more rows than the window holds, and this window's has one waiting on you too, which the
+        // pick must leave out.
+        var lines = new List<SessionLine>();
+        for (var i = 0; i < 25; i++)
+        {
+            lines.Add(SessionLine.From(Live.Row($"bbbb{i:0000}", $"r-work-{i:00}", SessionState.Working), Live.At) with { Node = remote });
+        }
+        for (var i = 0; i < waiting; i++)
+        {
+            lines.Add(SessionLine.From(Live.Row($"cccc{i:0000}", $"r-wait-{i:00}", SessionState.Waiting), Live.At) with { Node = remote });
+        }
+        lines.Add(SessionLine.From(Live.Row("aaaa0000", "h-wait", SessionState.Waiting), Live.At) with { Node = here });
+        lines.Add(SessionLine.From(Live.Row("aaaa0001", "h-work", SessionState.Working), Live.At) with { Node = here });
+        var fleet = new FleetScreen(
+        [
+            FleetLine.From(here.Where, here: true, canCommand: true, null, Summary("laptop", "ada@example.org", waiting: 1)),
+            FleetLine.From(remote.Where, here: false, canCommand: true, null, Summary("desktop", "bo@example.org", waiting: waiting)),
+        ], Live.At);
+
+        // As the host does each frame: the sessions the window's node selection shows, in order.
+        SessionsScreen Screen() => new(SessionLine.Order(lines.Where(l => chrome.Nodes.Shows(l.Node))), "test", Live.At);
+        List<ClickableRegion> Painted(IPixelWidget page)
+        {
+            var regions = new List<ClickableRegion>();
+            page.CollectPaintedRegions(regions);
+            return regions;
+        }
+        HashSet<int> Visible() => [.. Painted(chrome.Sessions).Select(r => r.Result).OfType<HitResult.ListItemHit>().Where(h => h.ListId == SessionsView<RgbaImage>.ListId).Select(h => h.Index)];
+        void Draw() => chrome.Render(Screen(), null, null, null, fleet, new RectF32(0, 0, 1280, 800));
+
+        // The sessions page, every node: walk the selection down the list until the waiting rows, at its head, are scrolled out.
+        chrome.Show(PilotPage.Sessions);
+        for (var i = 0; i < 20; i++)
+        {
+            Draw();
+            chrome.Sessions.HandleInput(new InputEvent.KeyDown(InputKey.Down)).ShouldBeTrue();
+        }
+        Draw();
+        Visible().ShouldNotContain(0);
+
+        chrome.Show(PilotPage.Fleet);
+        Draw();
+        var regions = Painted(chrome.Fleet);
+        regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).ShouldContain($"fleet:{remote.Where}:waiting");
+        regions.First(r => r.Result is HitResult.ButtonHit b && b.Action == $"fleet:{remote.Where}:waiting").OnClick!.Invoke(InputModifier.None);
+        Draw();
+
+        chrome.Page.ShouldBe(PilotPage.Sessions);
+        chrome.Nodes.Picked.ShouldBe([remote.Key]);
+        var screen = Screen();
+        screen.Lines.ShouldAllBe(l => l.Node == remote);
+        var firstWaiting = screen.Lines.First(l => l.Row.State == SessionState.Waiting);
+        chrome.Sessions.SelectedId.ShouldBe(firstWaiting.Key);
+        firstWaiting.Row.Name.ShouldBe("r-wait-00");
+        screen.Lines[chrome.Sessions.Selected].Key.ShouldBe(firstWaiting.Key);
+        var visible = Visible();
+        for (var i = 0; i < waiting; i++)
+        {
+            visible.ShouldContain(i);
+        }
+        visible.ShouldContain(chrome.Sessions.Selected);
+        visible.ShouldNotContain(screen.Lines.Count - 1);
+    }
+
+    [Fact]
+    public void AFleetRowWithNothingWaitingHasNoWaitingButton()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.LinkFleet();
+        chrome.Show(PilotPage.Fleet);
+        var fleet = new FleetScreen([FleetLine.From("node.sock", here: true, canCommand: true, null, Summary("laptop", "ada@example.org"))], Live.At);
+
+        chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, fleet, new RectF32(0, 0, 1280, 800));
+
+        var regions = new List<ClickableRegion>();
+        chrome.Fleet.CollectPaintedRegions(regions);
+        regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().ShouldNotContain(b => b.Action.EndsWith(":waiting", StringComparison.Ordinal));
+        fleet.Lines[0].Sessions.ShouldBe("3 live");
+    }
 }
