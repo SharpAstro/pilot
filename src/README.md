@@ -499,6 +499,17 @@ says to get it from `github.com/DrawboardLtd/runaway-agent` and clone it beside 
 token and call budgets and hand-back gates are not offered: those are for Sam's campaigner setup, and pilot budgets
 legs at the session level.
 
+A third optional check, **MSBuild node reuse off** (`setup node build-rsp`), says whether runaway-agent's
+`machine/Directory.Build.rsp` is in the user's home folder, as its `install.sh` installs it. MSBuild reads one found by
+walking up from the project, so every build under home, a flight's included, runs with `-nodeReuse:false` and its worker
+nodes exit with the build; idle nodes had held worktree folders (a removal refused on 15 Oct) and about 40 GB. The
+checklist shows it installed, missing, or differing from the clone's copy. Its button copies the file from the same
+runaway-agent clone the guard hooks use; a file that differs is first copied to `Directory.Build.rsp.bak-<UTC
+timestamp>` beside it, as `install.sh` does, one that is the same is left alone, and so a second run changes nothing and
+makes no backup. With no clone the line says to get runaway-agent from `github.com/DrawboardLtd/runaway-agent`, with no
+button (a file that is there then passes, as there is nothing to compare it with); a clone too old to have the file says
+so, also with no button.
+
 ## Cards
 
 An event that needs the controller is one card, with its choices on it (after Sam's campaigner): **Rings** (a gate
