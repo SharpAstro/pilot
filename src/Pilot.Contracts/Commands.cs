@@ -180,11 +180,18 @@ public static class Verbs
     public const string ReviewPr = "review-pr";
 
     /// <summary>
-    /// <c>pr-verdict pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt; approve|changes|comment &lt;report…&gt;</c>: a PR reviewer's verdict, a
-    /// summary and then its findings; a card carries it to the controller, and the review's worktree goes when it closes.
+    /// <c>pr-verdict pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt; approve|changes|comment &lt;report&gt; [&lt;path:line finding&gt;…]</c>: a PR
+    /// reviewer's verdict, its report and then each finding on a line; a card carries it to the controller, and the
+    /// review's worktree goes when it closes.
     /// On the controller's own PR only <c>comment</c> is taken, as GitHub takes nothing else there.
     /// </summary>
     public const string PrVerdict = "pr-verdict";
+
+    /// <summary>
+    /// <c>post-review pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>: a PR review's verdict posted to GitHub as one review under gh's
+    /// login, an inline comment on each finding whose line is in the diff; the controller's, as a merge is, and only once.
+    /// </summary>
+    public const string PostReview = "post-review";
 
     /// <summary><c>extend-budget flight/&lt;code&gt;/&lt;leg&gt; &lt;tokens&gt;</c>: raises the leg's budget, in weighted tokens, to the new figure.</summary>
     public const string ExtendBudget = "extend-budget";

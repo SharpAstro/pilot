@@ -47,11 +47,29 @@ public sealed record PrReviewRow
     /// <summary>The reviewer's verdict once given: <c>approve</c>, <c>changes</c> or <c>comment</c>.</summary>
     public string? Verdict { get; init; }
 
-    /// <summary>What it found: a summary, then each finding.</summary>
+    /// <summary>What it found: a summary, and any finding on no line.</summary>
     public string? Report { get; init; }
+
+    /// <summary>Its findings on a line, each an inline comment when its line is in the PR's diff.</summary>
+    public PrFinding[] Findings { get; init; } = [];
 
     /// <summary>The card that carries the verdict; the worktree goes when it closes.</summary>
     public string? Card { get; init; }
+
+    /// <summary>The review as GitHub will take it, written out when the verdict came in and again just before it is posted.</summary>
+    public string? Draft { get; init; }
+
+    /// <summary>When the post went to GitHub; set before the call, so a post that never came back is not made again.</summary>
+    public DateTimeOffset? PostingAt { get; init; }
+
+    /// <summary>The review GitHub made of it, by its id: posted, and never again.</summary>
+    public long? PostedId { get; init; }
+
+    /// <summary>The posted review's state as GitHub gives it: <c>APPROVED</c>, <c>CHANGES_REQUESTED</c>, <c>COMMENTED</c>.</summary>
+    public string? PostedState { get; init; }
+
+    /// <summary>The posted review's page.</summary>
+    public string? PostedUrl { get; init; }
 
     public required DateTimeOffset StartedAt { get; init; }
 
@@ -59,6 +77,56 @@ public sealed record PrReviewRow
 
     /// <summary>When its worktree went: the review is over.</summary>
     public DateTimeOffset? ClosedAt { get; init; }
+}
+
+/// <summary>
+/// A finding on a line of the PR's head: <c>path:line</c>, then what is wrong. <see cref="Inline"/> when the line is in the
+/// PR's diff, as GitHub takes an inline comment nowhere else; one that is not goes in the review's body.
+/// </summary>
+public sealed record PrFinding
+{
+    /// <summary>The file, from the repo's root, with forward slashes.</summary>
+    public required string Path { get; init; }
+
+    /// <summary>The line in the head's file, from 1.</summary>
+    public required int Line { get; init; }
+
+    public required string Body { get; init; }
+
+    public bool Inline { get; init; }
+
+    public override string ToString() => $"{Path}:{Line} {Body}";
+
+    /// <summary>
+    /// <paramref name="text"/> as a finding, <c>path:line what is wrong</c> (a colon after the line is taken too), or null
+    /// when it is not one.
+    /// </summary>
+    public static PrFinding? Parse(string? text)
+    {
+        var value = (text ?? "").Trim();
+        var space = value.IndexOfAny([' ', '\t', '\n', '\r']);
+        if (space < 0)
+        {
+            return null;
+        }
+        var at = value[..space].TrimEnd(':');
+        var body = value[space..].Trim();
+        var colon = at.LastIndexOf(':');
+        if (colon <= 0 || body.Length == 0
+            || !int.TryParse(at.AsSpan(colon + 1), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var line) || line < 1)
+        {
+            return null;
+        }
+        var path = at[..colon].Replace('\\', '/');
+        while (path.StartsWith("./", StringComparison.Ordinal))
+        {
+            path = path[2..];
+        }
+        // A path from the repo's root, inside it: GitHub names files no other way.
+        return path.Length == 0 || path.StartsWith('/') || path.Contains(':') || path.Split('/').Any(part => part is "" or "." or "..")
+            ? null
+            : new PrFinding { Path = path, Line = line, Body = body };
+    }
 }
 
 /// <summary>Where a PR review is.</summary>

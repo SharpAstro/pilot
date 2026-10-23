@@ -167,6 +167,7 @@ public sealed class PrReviewTests : IDisposable
         start.Brief.ShouldContain("against the tree");
         start.Brief.ShouldContain("Never assert a defect you cannot prove");
         start.Brief.ShouldContain("review <verdict>");
+        start.Brief.ShouldContain("--finding \"<path:line> <what is wrong>\"");
         start.Brief.ShouldContain("the change");
         start.Brief.ShouldNotContain("GitHub takes only a comment");
         _state.Cards().ShouldHaveSingleItem().Kind.ShouldBe(PrReviews.StartedKind);
@@ -213,7 +214,10 @@ public sealed class PrReviewTests : IDisposable
         var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
         (card.Id, card.Bin, card.Kind, card.Subject).ShouldBe((row.Card, CardBin.Ring, PrReviews.ReadyKind, "pr/acme/widget#7"));
         card.Title.ShouldBe("acme/widget#7: review ready, changes (PR 7 of acme/widget)");
-        card.Detail.ShouldBe($"By ada, reviewed at {_widgetHead[..8]}.\nOne defect.\nREADME.md:1 says hello to no one");
+        card.Detail.ShouldBe($"By ada, reviewed at {_widgetHead[..8]}.\nPosts as REQUEST_CHANGES under controller, 0 inline comments.\n"
+            + $"The draft: {_reviews.DraftOf(new PrRef("acme", "widget", 7))}\nOne defect.\nREADME.md:1 says hello to no one");
+        var post = card.Choices.ShouldHaveSingleItem();
+        (post.Label, post.Verb, post.Target).ShouldBe(("Post", Verbs.PostReview, "pr/acme/widget#7"));
         card.Link.ShouldBe("https://github.com/acme/widget/pull/7");
         (await Run(Verbs.PrVerdict, "pr/acme/widget#7", reviewer, "approve", "again")).Error.ShouldBe("acme/widget#7's review is reviewed already");
 
@@ -240,6 +244,152 @@ public sealed class PrReviewTests : IDisposable
 
         (await Run(Verbs.PrVerdict, "pr/acme/widget#7", reviewer, "approve", "fine")).Error.ShouldNotBeNull().ShouldContain("GitHub takes only a comment there");
         (await Run(Verbs.PrVerdict, "pr/acme/widget#7", reviewer, "comment", "A question on README.md:1")).Error.ShouldBeNull();
+    }
+
+    /// <summary>The file the widget PR adds, the one file in its diff, one line long.</summary>
+    private string Added() => PrOrigins.Git(WidgetClone, "show", "--name-only", "--format=", _widgetHead);
+
+    [Fact]
+    public async Task PostIsOneReviewWithAnInlineCommentOnEachFindingInTheDiffAndIsNeverPostedTwice()
+    {
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+        var reviewer = Row("acme/widget", 7).Reviewer;
+        var added = Added();
+
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", reviewer, "changes", "One defect.", "README.md")).Error.ShouldNotBeNull().ShouldContain("a finding is the file and line");
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", reviewer, "changes", "One defect, and a question.",
+            $"./{added}:1: the change says nothing", "README.md:1 is this greeting still wanted?")).Error.ShouldBeNull();
+
+        // The finding on the PR's line goes inline; the one on a line it does not touch goes in the body.
+        var row = Row("acme/widget", 7);
+        row.Findings.ShouldBe([
+            new PrFinding { Path = added, Line = 1, Body = "the change says nothing", Inline = true },
+            new PrFinding { Path = "README.md", Line = 1, Body = "is this greeting still wanted?", Inline = false },
+        ]);
+        var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
+        card.Detail.ShouldNotBeNull().ShouldContain("Posts as REQUEST_CHANGES under controller, 1 inline comment and 1 in its body, their lines not in the diff.");
+        File.Exists(row.Draft.ShouldNotBeNull()).ShouldBeTrue();
+        Path.IsPathFullyQualified(row.Draft).ShouldBeTrue();
+
+        (await Run(Verbs.PostReview, "pr/acme/widget#7", reviewer)).Error.ShouldBe("the controller posts acme/widget#7's review, not its reviewer");
+        (await Run(Verbs.PostReview, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+
+        var (repo, number, path, payload) = _github.Posted.ShouldHaveSingleItem();
+        (repo, number, path).ShouldBe(("acme/widget", 7, row.Draft));
+        using (var doc = System.Text.Json.JsonDocument.Parse(payload))
+        {
+            var root = doc.RootElement;
+            root.GetProperty("commit_id").GetString().ShouldBe(_widgetHead);
+            root.GetProperty("event").GetString().ShouldBe("REQUEST_CHANGES");
+            root.GetProperty("body").GetString().ShouldBe("One defect, and a question.\n\nOn lines outside the diff:\n\n- `README.md:1`: is this greeting still wanted?");
+            var comment = root.GetProperty("comments").EnumerateArray().ShouldHaveSingleItem();
+            (comment.GetProperty("path").GetString(), comment.GetProperty("line").GetInt32(), comment.GetProperty("side").GetString(), comment.GetProperty("body").GetString())
+                .ShouldBe((added, 1, "RIGHT", "the change says nothing"));
+        }
+
+        // The post is kept, and on its card, which links to it now.
+        var posted = Row("acme/widget", 7);
+        (posted.PostedId, posted.PostedState, posted.PostedUrl).ShouldBe((9001L, "CHANGES_REQUESTED", "https://github.com/acme/widget/pull/7#pullrequestreview-9001"));
+        var closed = _state.Cards().Single(c => c.Id == card.Id);
+        (closed.State, closed.Outcome, closed.Link).ShouldBe((CardState.Closed, "Post: review 9001, CHANGES_REQUESTED, under controller", posted.PostedUrl));
+
+        (await Run(Verbs.PostReview, "pr/acme/widget#7", "controller")).Error.ShouldBe(
+            "acme/widget#7's review is posted already, as review 9001 (https://github.com/acme/widget/pull/7#pullrequestreview-9001); GitHub has it once");
+        _github.Posted.Count.ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData("approve", "bob", "APPROVE")]
+    [InlineData("changes", "bob", "REQUEST_CHANGES")]
+    [InlineData("comment", "bob", "COMMENT")]
+    [InlineData("approve", "ada", "COMMENT")]
+    [InlineData("changes", "ADA", "COMMENT")]
+    public void TheEventFollowsTheVerdictAndWhosePrItIs(string verdict, string login, string expected) =>
+        PrReviews.Event(verdict, "ada", login).ShouldBe(expected);
+
+    [Fact]
+    public async Task TheEventIsTheLoginsThatPostsNotTheOneThatGaveTheVerdict()
+    {
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", Row("acme/widget", 7).Reviewer, "approve", "Right as it is.")).Error.ShouldBeNull();
+        File.ReadAllText(Row("acme/widget", 7).Draft!).ShouldContain("\"event\": \"APPROVE\"");
+
+        // gh is signed in as the PR's author by the time it is posted: GitHub would refuse an approval there.
+        _github.Login = "ada";
+        (await Run(Verbs.PostReview, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+
+        _github.Posted.ShouldHaveSingleItem().Payload.ShouldContain("\"event\": \"COMMENT\"");
+        Row("acme/widget", 7).PostedState.ShouldBe("COMMENTED");
+    }
+
+    [Fact]
+    public async Task APostGitHubRefusedMayGoAgainButOneThatNeverSaidBackDoesNot()
+    {
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", Row("acme/widget", 7).Reviewer, "comment", "A question.")).Error.ShouldBeNull();
+
+        _github.PostFails = new FlightException("GitHub refused the review of acme/widget#7: HTTP 422");
+        (await Run(Verbs.PostReview, "pr/acme/widget#7", "controller")).Error.ShouldBe("GitHub refused the review of acme/widget#7: HTTP 422");
+        Row("acme/widget", 7).PostingAt.ShouldBeNull();
+
+        _github.PostFails = new IOException("the pipe broke");
+        (await Run(Verbs.PostReview, "pr/acme/widget#7", "controller")).Error.ShouldNotBeNull().ShouldContain("did not come back (the pipe broke)");
+        Row("acme/widget", 7).PostingAt.ShouldNotBeNull();
+
+        _github.PostFails = null;
+        (await Run(Verbs.PostReview, "pr/acme/widget#7", "controller")).Error.ShouldNotBeNull().ShouldContain("never said back, so it may be there");
+        _github.Posted.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("src/A.cs:42 the null check is gone", "src/A.cs", 42, "the null check is gone")]
+    [InlineData("src\\A.cs:42: gone", "src/A.cs", 42, "gone")]
+    [InlineData("./docs/a.md:3\nfirst\n\nsecond", "docs/a.md", 3, "first\n\nsecond")]
+    public void AFindingIsAPathAndALineThenItsBody(string text, string path, int line, string body) =>
+        PrFinding.Parse(text).ShouldBe(new PrFinding { Path = path, Line = line, Body = body });
+
+    [Theory]
+    [InlineData("README.md the line is missing")]
+    [InlineData("README.md:0 zero")]
+    [InlineData("README.md:1")]
+    [InlineData("/etc/passwd:1 rooted")]
+    [InlineData("C:/x.cs:1 a drive")]
+    [InlineData("../x.cs:1 outside")]
+    public void AnythingElseIsNoFinding(string text) => PrFinding.Parse(text).ShouldBeNull();
+
+    [Fact]
+    public void TheDiffsLinesAreReadHunkByHunkByTheirCounts()
+    {
+        var diff = string.Join('\n',
+            "diff --git a/a.cs b/a.cs",
+            "--- a/a.cs",
+            "+++ b/a.cs",
+            "@@ -1,3 +1,4 @@",
+            " one",
+            "-two",
+            "+++ not a header, a line that starts with two pluses",
+            "+2b",
+            " three",
+            "@@ -10 +11,0 @@",
+            "-gone",
+            "diff --git a/gone.cs b/gone.cs",
+            "--- a/gone.cs",
+            "+++ /dev/null",
+            "@@ -1 +0,0 @@",
+            "-x",
+            "diff --git a/b c.md b/b c.md",
+            "--- /dev/null",
+            "+++ b/b c.md\t",
+            "@@ -0,0 +1 @@",
+            "+new",
+            "\\ No newline at end of file",
+            "");
+
+        var lines = PrReviews.DiffLines(diff);
+
+        lines.Keys.Order().ShouldBe(["a.cs", "b c.md"]);
+        lines["a.cs"].ShouldBe([(1, 4)]);
+        lines["b c.md"].ShouldBe([(1, 1)]);
     }
 
     [Fact]
@@ -366,6 +516,42 @@ public sealed class PrReviewCliTests : IAsyncLifetime
         (await Pilot(_root, "dismiss", card.Id, "read it")).Exit.ShouldBe(0);
         Directory.Exists(review.Worktree).ShouldBeFalse();
         _node.State.PrReviews().Single().State.ShouldBe(PrReviewState.Closed);
+    }
+
+    [Fact]
+    public async Task ThePostChoicePostsOneReviewWithItsInlineCommentsAndNotFromTheWatchtower()
+    {
+        (await Pilot(_root, "review", "pr", "acme/gadget#9")).Exit.ShouldBe(0);
+        var review = _node.State.PrReviews().ShouldHaveSingleItem();
+        var added = PrOrigins.Git(review.Worktree, "show", "--name-only", "--format=", "HEAD");
+
+        // A finding that is no path and line is the reviewer's mistake, caught before it reaches the node.
+        var wrong = await Pilot(review.Worktree, "review", "changes", "One defect.", "--finding", "the change is wrong");
+        (wrong.Exit, wrong.Error.Contains("a finding is path:line")).ShouldBe((2, true));
+        var verdict = await Pilot(review.Worktree, "review", "changes", "One defect.", "--finding", $"{added}:1 says only the change", "--finding", "README.md:1 greets no one");
+        verdict.Exit.ShouldBe(0, verdict.Output + verdict.Error);
+        var card = _node.State.Cards(openOnly: true).ShouldHaveSingleItem();
+
+        // Posting is the controller's: the watchtower's answer is refused and the card stays.
+        var watchtower = $"{_node.Options.Machine.ToLowerInvariant()}-watchtower";
+        var refused = await _node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = $"card/{card.Id}", Args = ["Post"], Who = watchtower }, Ct);
+        refused.Response.ShouldNotBeNull().Error.ShouldBe("Post was refused: post-review is the controller's, not the watchtower's: leave its card open for them");
+        _node.GitHub.Posted.ShouldBeEmpty();
+
+        var post = await Pilot(_root, "answer", card.Id, "Post");
+        post.Exit.ShouldBe(0, post.Output + post.Error);
+
+        var (repo, number, path, payload) = _node.GitHub.Posted.ShouldHaveSingleItem();
+        (repo, number, path).ShouldBe(("acme/gadget", 9, Path.Combine(Path.GetFullPath(_node.Options.DataFolder), "reviews", "acme", "gadget-9.json")));
+        payload.ShouldContain("\"event\": \"REQUEST_CHANGES\"");
+        payload.ShouldContain($"\"path\": \"{added}\"");
+        payload.ShouldContain("- `README.md:1`: greets no one");
+        _node.State.Cards().Single(c => c.Id == card.Id).Outcome.ShouldBe("Post: review 9001, CHANGES_REQUESTED, under controller");
+
+        // Posted, its card closed, so the review is over and its worktree gone; a second answer finds the card closed.
+        Directory.Exists(review.Worktree).ShouldBeFalse();
+        (await Pilot(_root, "answer", card.Id, "Post")).Exit.ShouldBe(1);
+        _node.GitHub.Posted.Count.ShouldBe(1);
     }
 
     [Fact]

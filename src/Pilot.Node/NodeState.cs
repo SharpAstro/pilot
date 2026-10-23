@@ -296,6 +296,21 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>
+    /// Says what the choice a card closed with came to (a review posted, by its id), and where to see it; nothing when the
+    /// card is not closed.
+    /// </summary>
+    public void NoteOutcome(string id, string outcome, string? link = null)
+    {
+        lock (_gate)
+        {
+            if (_cards.TryGetValue(id, out var card) && card.State == CardState.Closed)
+            {
+                Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { Outcome = outcome, Link = link ?? card.Link } });
+            }
+        }
+    }
+
     /// <summary>Opens a closed card again, as it was before: an answer whose choice was refused.</summary>
     public void ReopenCard(string id)
     {

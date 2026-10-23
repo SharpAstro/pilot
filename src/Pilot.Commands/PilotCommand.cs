@@ -224,20 +224,37 @@ public static class PilotCommand
         var verdictReport = Words("report", "What was checked, or each change asked for");
         var reviewFlight = new Option<string?>("--flight") { Description = "The flight's code; inside its plane, that flight" };
         var reviewPrOption = new Option<string?>("--pr") { Description = "The PR, owner/repo#n or its URL; inside its review's worktree, that PR" };
-        Command Verdict(string word, string description) => Action(new Command(word, description) { Arguments = { verdictReport }, Options = { reviewFlight, reviewPrOption } },
+        var finding = new Option<string[]>("--finding")
+        {
+            Description = "A PR review's finding on a line: path:line from the repo's root, then what is wrong; once per finding",
+            AllowMultipleArgumentsPerToken = false,
+        };
+        Command Verdict(string word, string description) => Action(new Command(word, description) { Arguments = { verdictReport }, Options = { reviewFlight, reviewPrOption, finding } },
             async (p, client, ct) =>
             {
                 var report = Join(p, verdictReport);
+                var findings = p.GetValue(finding) ?? [];
+                foreach (var text in findings)
+                {
+                    _ = PrFinding.Parse(text) ?? throw new UsageException($"a finding is path:line from the repo's root, then what is wrong (src/A.cs:42 the null check is gone); not '{text}'");
+                }
                 if (p.GetValue(reviewFlight) is { } named)
                 {
-                    return await SendAsync(client, Verbs.Review, Verbs.FlightTarget(named), [word, report], who, output, ct);
+                    return findings.Length > 0
+                        ? throw new UsageException("--finding is for a PR's review; a flight's review says its findings in the report")
+                        : await SendAsync(client, Verbs.Review, Verbs.FlightTarget(named), [word, report], who, output, ct);
                 }
                 var snapshot = await SnapshotAsync(client, ct);
                 var (target, sender) = p.GetValue(reviewPrOption) is { } pr
                     ? (Verbs.PrTarget(Pr(pr).Repo, Pr(pr).Number), who)
                     : PrHere(snapshot, cwd) ?? FlightHere(snapshot, cwd);
-                return await SendAsync(client, target.StartsWith(Verbs.PrTargetPrefix, StringComparison.Ordinal) ? Verbs.PrVerdict : Verbs.Review,
-                    target, [word, report], sender, output, ct);
+                if (!target.StartsWith(Verbs.PrTargetPrefix, StringComparison.Ordinal))
+                {
+                    return findings.Length > 0
+                        ? throw new UsageException("--finding is for a PR's review; a flight's review says its findings in the report")
+                        : await SendAsync(client, Verbs.Review, target, [word, report], sender, output, ct);
+                }
+                return await SendAsync(client, Verbs.PrVerdict, target, [word, report, .. findings], sender, output, ct);
             });
         // review pr: a fresh reviewer on any PR, pinned at its head in a worktree of the node's own
         var prRef = Arg("pr", "The PR: owner/repo#n, or its URL");

@@ -215,7 +215,17 @@ public interface IGitHub
 
     /// <summary>The login gh is signed in as: the controller, in whose name a review goes on GitHub. Null when gh cannot say.</summary>
     Task<string?> LoginAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Posts the review in <paramref name="payload"/> (a file, its full path) to PR <paramref name="number"/> of
+    /// <paramref name="repo"/>, as one call; returns the review GitHub made.
+    /// </summary>
+    /// <exception cref="FlightException">gh said GitHub refused it, so nothing was posted.</exception>
+    Task<PostedReview> PostReviewAsync(string repo, int number, string payload, CancellationToken cancellationToken);
 }
+
+/// <summary>A review GitHub made: its id, its state (<c>APPROVED</c>, <c>CHANGES_REQUESTED</c>, <c>COMMENTED</c>) and its page.</summary>
+public sealed record PostedReview(long Id, string State, string Url);
 
 /// <summary><see cref="IGitHub"/> by the gh CLI, as v1's dashboard merged (<c>gh pr merge --match-head-commit</c>).</summary>
 public sealed class GhCli : IGitHub
@@ -366,6 +376,23 @@ public sealed class GhCli : IGitHub
     {
         var (exit, output, _) = await RunAsync(["api", "user", "-q", ".login"], Path.GetTempPath(), cancellationToken);
         return exit == 0 && output.Trim() is { Length: > 0 } login ? login : null;
+    }
+
+    public async Task<PostedReview> PostReviewAsync(string repo, int number, string payload, CancellationToken cancellationToken)
+    {
+        // The one shape every profile's grant answers (Sam's shared/review-post.md): the path written out, the payload in a
+        // file, nothing else in the call. The node runs it with no shell, so nothing here is quoted either.
+        var (exit, output, error) = await RunAsync(
+            ["api", "-X", "POST", $"repos/{repo}/pulls/{number.ToString(System.Globalization.CultureInfo.InvariantCulture)}/reviews", "--input", payload, "-q", ".id, .state, .html_url"],
+            Path.GetTempPath(), cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"GitHub refused the review of {repo}#{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return lines is [var id, var state, var url, ..] && long.TryParse(id, System.Globalization.CultureInfo.InvariantCulture, out var review)
+            ? new PostedReview(review, state, url)
+            : throw new FlightException($"gh posted the review of {repo}#{number} but did not say which: {output.Trim()}; look on the PR before anything else");
     }
 
     private static async Task RunGitAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)

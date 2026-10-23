@@ -263,11 +263,14 @@ public static class Briefs
         text.AppendLine("Look for: bugs and regressions, a claim the code does not bear out, tests that do not test what they say, and");
         text.AppendLine("anything the PR says it does that is missing. Style alone is no finding.");
         text.AppendLine("Never assert a defect you cannot prove from the tree: one you suspect and cannot show becomes a question for the");
-        text.AppendLine("author, said as one. Each finding names its file and line (`path/to/File.cs:42`), what is wrong and how you know.");
+        text.AppendLine("author, said as one. Each finding names its file and line in the PR's head (`path/to/File.cs:42`), what is wrong");
+        text.AppendLine("and how you know.");
         text.AppendLine();
         text.AppendLine("## Your verdict");
-        text.AppendLine($"`{run} review <verdict> \"<a summary in a line or two, then each finding on its own line>\"`, from this folder, where");
-        text.AppendLine("the verdict is one of:");
+        text.AppendLine($"`{run} review <verdict> \"<a summary in a line or two, and any finding on no line>\" --finding \"<path:line> <what is wrong>\"`");
+        text.AppendLine("from this folder, with one `--finding` for each finding on a line (its path from the repo's root). The controller");
+        text.AppendLine("posts it as one review: each finding whose line is in the diff an inline comment there, the rest in its body, so");
+        text.AppendLine("write each as the comment the author will read. The verdict is one of:");
         text.AppendLine("- `approve`: it is right as it is (questions and nits may still go with it).");
         text.AppendLine("- `changes`: a finding you can prove must be fixed before it merges.");
         text.AppendLine("- `comment`: neither: questions, or findings that should not hold it up.");
