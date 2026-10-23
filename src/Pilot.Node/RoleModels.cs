@@ -69,6 +69,19 @@ public sealed partial class RoleModels
         };
     }
 
+    /// <summary>How a flight's PR is merged when the merge names no method (<see cref="NodeSettings.MergeMethodKey"/>):
+    /// rebase unless the settings say otherwise; a test's commander keeps squash, as it always did.</summary>
+    public string MergeMethod
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.MergeMethod ?? (_defaults ? "rebase" : "squash");
+            }
+        }
+    }
+
     /// <summary>Whether <paramref name="value"/> names a model: an alias (sonnet, opus) or a full id (claude-opus-5-5[1m]).</summary>
     public static bool IsModel(string value) => ModelName().IsMatch(value);
 

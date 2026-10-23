@@ -139,7 +139,8 @@ public sealed class CliTests : IAsyncLifetime
         cards.ShouldContain("c1  RING  TIA1611's PR #71 is ready to merge");
         cards.ShouldContain("1. Merge: pilot answer c1 1");
         await Ok(_root, "answer", "c1", "1");
-        _node.GitHub.Merged.ShouldBe([(71, "cafe0000cafe0000", "squash")]);
+        // By rebase, the node's default merge method, so every commit's subject reaches main (tianwen#1783 was squashed).
+        _node.GitHub.Merged.ShouldBe([(71, "cafe0000cafe0000", "rebase")]);
         _node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
         var after = _node.State.Cards();
         after.Single(c => c.Id == "c1").Outcome.ShouldBe("Merge");

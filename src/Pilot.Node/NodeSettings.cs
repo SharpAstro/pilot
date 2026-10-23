@@ -25,10 +25,15 @@ public sealed record NodeSettings
     public const string UpdateChannelKey = "update-channel";
     public const string MaxJobsKey = "max-jobs";
     public const string JobMemoryKey = "job-memory";
+    public const string MergeMethodKey = "merge-method";
+
+    /// <summary>How a flight's PR is merged when the merge names no method: rebase keeps every commit's subject, which a
+    /// repo's docs may cite (tianwen's rule); squash makes one commit of them; merge adds a merge commit.</summary>
+    public static IReadOnlyList<string> MergeMethods { get; } = ["rebase", "squash", "merge"];
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, MergeMethodKey,
          .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey)];
 
     /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
@@ -49,6 +54,8 @@ public sealed record NodeSettings
     public int? MaxJobs { get; init; }
 
     public double? JobMemoryGigabytes { get; init; }
+
+    public string? MergeMethod { get; init; }
 
     /// <summary>The roles' models and efforts by key (<c>worker-model</c>: <c>opus</c>); a key left out takes the role's default.</summary>
     public IReadOnlyDictionary<string, string>? Roles { get; init; }
@@ -124,6 +131,7 @@ public sealed record NodeSettings
         UpdateChannelKey => UpdateChannel is { } channel ? [channel.Name()] : null,
         MaxJobsKey => MaxJobs is { } jobs ? [jobs.ToString(CultureInfo.InvariantCulture)] : null,
         JobMemoryKey => JobMemoryGigabytes is { } memory ? [memory.ToString(CultureInfo.InvariantCulture)] : null,
+        MergeMethodKey => MergeMethod is { } merge ? [merge] : null,
         _ when IsRoleKey(key) && Roles?.GetValueOrDefault(key) is { } role => [role],
         _ => null,
     };
@@ -207,6 +215,14 @@ public sealed record NodeSettings
                 return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var memory) && memory is >= 0 and <= 1024
                     ? (settings with { JobMemoryGigabytes = memory }, null)
                     : (null, "job-memory takes the free memory in GB a job waits for, 0 to not wait");
+            case MergeMethodKey:
+                if (clear)
+                {
+                    return (settings with { MergeMethod = null }, null);
+                }
+                return One()?.ToLowerInvariant() is { } merge && MergeMethods.Contains(merge)
+                    ? (settings with { MergeMethod = merge }, null)
+                    : (null, $"merge-method takes {string.Join(", ", MergeMethods)}");
             case var role when IsRoleKey(role):
             {
                 var roles = new Dictionary<string, string>(settings.Roles ?? new Dictionary<string, string>(), StringComparer.Ordinal);
