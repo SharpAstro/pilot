@@ -285,19 +285,21 @@ internal sealed class TranscriptPane
             : Layout.Builder.VStack(Layout.Builder.HStack([.. head]).WithGap(12f).WStar(), Agents(), list).WithGap(8f).Pad(16f, 8f).Stretch();
     }
 
-    /// <summary>How much of a row of the pane the chips may take before the rest go into a dropdown: an estimate in design units, as the tree is built before it is laid out.</summary>
-    internal float ChipRowWidth { get; set; } = 960f;
+    /// <summary>
+    /// How many characters of chip text a row of the pane holds before the rest go into a dropdown. The tree is built before it
+    /// is laid out, so this counts text, not pixels: the engine has no overflow-to-dropdown for a row of chips to declare.
+    /// </summary>
+    internal int ChipRowChars { get; set; } = 135;
 
     // What a chip's label says of what the subagent is about: its description, else its prompt's first line, clipped.
     private const int AboutChars = 28;
 
-    // The chips are sized from their text: roughly this much a character, plus their padding and the gap between them.
-    private const float ChipCharWidth = 7f;
-    private const float ChipPadding = 20f;
+    // A chip takes its text plus its padding and the gap to the next, in characters.
+    private const int ChipExtraChars = 4;
     private const float ChipGap = 6f;
 
     // The "+N more" chip's room, kept free in a row that overflows.
-    private const float MoreWidth = 96f;
+    private const int MoreChars = 14;
 
     // Where the row of chips sits in the pane, so a dropdown opened without a pointer (the keyboard) hangs under it.
     private const float ChipRowTop = 46f;
@@ -350,16 +352,16 @@ internal sealed class TranscriptPane
         var labels = Labels();
         var all = new List<(string Text, string? Id, bool Open)> { ("main", null, Agent is null) };
         all.AddRange(_subagents.Select((s, i) => ($"{(s.Working ? "●" : "○")} {labels[i]}", (string?)s.Id, Agent == s.Id)));
-        static float Width(string text) => text.Length * ChipCharWidth + ChipPadding + ChipGap;
+        static int Chars(string text) => text.Length + ChipExtraChars;
         var fit = all.Count;
-        if (all.Sum(a => Width(a.Text)) > ChipRowWidth)
+        if (all.Sum(a => Chars(a.Text)) > ChipRowChars)
         {
             // Main is always on the row, then as many as leave room for the "+N more" chip.
             fit = 1;
-            var used = Width(all[0].Text) + MoreWidth;
-            while (fit < all.Count && used + Width(all[fit].Text) <= ChipRowWidth)
+            var used = Chars(all[0].Text) + MoreChars;
+            while (fit < all.Count && used + Chars(all[fit].Text) <= ChipRowChars)
             {
-                used += Width(all[fit++].Text);
+                used += Chars(all[fit++].Text);
             }
         }
         var chips = all.Take(fit).Select(a => Chip(a.Text, a.Id, a.Open)).ToList();

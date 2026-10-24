@@ -209,7 +209,7 @@ public sealed class TranscriptPaneTests
         var (view, screen, renderer) = await Open(Reviewers(13));
         using var _ = renderer;
         // Room for every chip: only the labels are looked at.
-        view.Transcript.ChipRowWidth = 100_000f;
+        view.Transcript.ChipRowChars = 100_000;
 
         var described = Described(view, screen);
         for (var i = 1; i <= 13; i++)
@@ -232,7 +232,7 @@ public sealed class TranscriptPaneTests
             new() { Id = "d4" },
         ]);
         using var _ = renderer;
-        view.Transcript.ChipRowWidth = 100_000f;
+        view.Transcript.ChipRowChars = 100_000;
 
         var described = Described(view, screen);
         described.ShouldContain("Explore: Find the clock in the tree");
@@ -249,7 +249,7 @@ public sealed class TranscriptPaneTests
     {
         var (view, screen, renderer) = await Open(Reviewers(13));
         using var _ = renderer;
-        view.Transcript.ChipRowWidth = 600f;
+        view.Transcript.ChipRowChars = 85;
 
         var described = Described(view, screen);
         var chips = RowOf(described, "main");
