@@ -106,9 +106,12 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             // Reviewed and passed, but no longer merging into its base: main moved. Rebased by itself, once a head, and
             // reviewed afresh; a rebase that conflicts rings with what to do.
-            if (legs is not null && pr is { Mergeable: "CONFLICTING" } && pr.Number == number && _rebased.Add($"{flight.Code} {pr.Head}"))
+            if (pr is { Mergeable: "CONFLICTING" } && pr.Number == number)
             {
-                if (await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } why
+                // Said on the card while it lasts: its Merge would only be refused.
+                state.UpdateChoices(card.Id, [.. card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = ChoiceStatus.Conflicting } : c)]);
+                if (legs is not null && _rebased.Add($"{flight.Code} {pr.Head}")
+                    && await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } why
                     && await legs.ConflictsAsync(flight.Code, why, cancellationToken) is { } notSent)
                 {
                     // Not sent back (no passed review to turn): rung, with what to do.

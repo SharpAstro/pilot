@@ -201,27 +201,36 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>How many told lines the panel keeps above the box.</summary>
     internal const int ToldKept = 4;
 
-    private readonly List<ToldLine> _told = [];
+    // Noted from the pool (a tell's or a button's answer) while the render thread draws them: swapped whole, never waited on.
+    private System.Collections.Immutable.ImmutableList<ToldLine> _told = [];
+    private System.Collections.Immutable.ImmutableDictionary<string, string> _refused = System.Collections.Immutable.ImmutableDictionary<string, string>.Empty;
 
     /// <summary>What was told the watchtower from here, oldest first: the last few, with how each went.</summary>
-    public IReadOnlyList<ToldLine> Told => _told;
+    public IReadOnlyList<ToldLine> Told => Volatile.Read(ref _told);
 
     /// <summary>Records a tell and its outcome; <paramref name="status"/> is the node's answer, shown under the box.</summary>
     public void NoteTold(string text, bool told, string status, DateTimeOffset? at = null)
     {
-        _told.Add(new ToldLine(text, at ?? DateTimeOffset.UtcNow, told));
-        if (_told.Count > ToldKept)
-        {
-            _told.RemoveAt(0);
-        }
+        var line = new ToldLine(text, at ?? DateTimeOffset.UtcNow, told);
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _told, lines => lines.Add(line) is var more && more.Count > ToldKept ? more.RemoveAt(0) : more);
         TellStatus = status;
     }
+
+    /// <summary>
+    /// What the node said when it refused a button on card <paramref name="cardId"/>, shown on the card in red until the
+    /// card changes or closes; null clears it (the next press that went through).
+    /// </summary>
+    public void NoteRefused(string cardId, string? why) =>
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _refused, refused => why is null ? refused.Remove(cardId) : refused.SetItem(cardId, why));
+
+    /// <summary>The card's refusal as it stands, for a test or a dump; null when none.</summary>
+    public string? RefusedOn(string cardId) => Volatile.Read(ref _refused).GetValueOrDefault(cardId);
 
     /// <summary>The box at the panel's foot, with what was told above it; it stays in view while the cards above scroll.</summary>
     private Layout.Node Foot(CardsScreen screen)
     {
         var rows = new List<Layout.Node> { Layout.Builder.Spacer().RowH(6f) };
-        foreach (var line in _told)
+        foreach (var line in Told)
         {
             rows.Add(Layout.Builder.Text($"{(line.Told ? "told" : "refused")} · {line.Text}", 10f, line.Told ? Dim : Ring).RowH(16f));
         }
@@ -297,6 +306,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             // Wraps within the panel, three lines at most; an explicit newline stays a break.
             lines.Add(WrappedProse.Paragraphs(detail, 11f, Body, DetailLines));
         }
+        // What the node said to the last button pressed here, when it refused: on the card, never only in a log.
+        if (Volatile.Read(ref _refused).TryGetValue(card.Id, out var refused))
+        {
+            lines.Add(WrappedProse.Paragraphs(refused, 11f, Ring, DetailLines));
+        }
 
         var buttons = new List<Layout.Node>();
         var watched = node is { Here: false } && CanSteer?.Invoke(node) == false ? node : null;
@@ -346,6 +360,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     {
         ChoiceStatus.Pending => $"{choice.Label} · checks running",
         ChoiceStatus.Failing => $"{choice.Label} · checks failed",
+        ChoiceStatus.Conflicting => $"{choice.Label} · conflicts with main",
         _ => choice.Label,
     };
 
@@ -354,7 +369,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     {
         ChoiceStatus.Passing => (new RGBAColor32(0x1f, 0x6b, 0x45, 0xff), new RGBAColor32(0x27, 0x85, 0x56, 0xff)),
         ChoiceStatus.Pending => (new RGBAColor32(0x6b, 0x52, 0x1c, 0xff), new RGBAColor32(0x85, 0x66, 0x23, 0xff)),
-        ChoiceStatus.Failing => (new RGBAColor32(0x7a, 0x28, 0x28, 0xff), new RGBAColor32(0x96, 0x32, 0x32, 0xff)),
+        ChoiceStatus.Failing or ChoiceStatus.Conflicting => (new RGBAColor32(0x7a, 0x28, 0x28, 0xff), new RGBAColor32(0x96, 0x32, 0x32, 0xff)),
         _ => null,
     };
 }

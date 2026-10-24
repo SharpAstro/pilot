@@ -286,12 +286,18 @@ if (feed is not null && client is not null && clients is not null)
         // A card raised on another node is answered there.
         if (clients.For(chrome.Cards.NodeOf(card)) is not { } to)
         {
+            chrome.Cards.NoteRefused(card.Id, FleetClients.WatchOnly(chrome.Cards.NodeOf(card)));
             Console.WriteLine($"pilot-gui: {verb} {card.Id}: {FleetClients.WatchOnly(chrome.Cards.NodeOf(card))}");
+            loop.RequestRedraw();
             return;
         }
         var result = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.CardTarget(card.Id), Args = args, Who = GuiSay.Who }, cts.Token);
         clients.NoteRefusal(chrome.Cards.NodeOf(card), result);
-        Console.WriteLine($"pilot-gui: {verb} {card.Id} ({card.Title}): {(result.Success ? "done" : result.Response?.Error ?? result.Error)}");
+        // A refusal is said on the card the button is on, never only here: a Merge pressed again and again on a PR GitHub
+        // would not merge showed nothing (SE1, 2026-10-24).
+        var refused = !result.Success ? result.Error : result.Response is { Ok: false } answer ? answer.Error : null;
+        chrome.Cards.NoteRefused(card.Id, refused);
+        Console.WriteLine($"pilot-gui: {verb} {card.Id} ({card.Title}): {refused ?? "done"}");
         loop.RequestRedraw();
     }
     // Every task a click starts goes through the tracker, never `_ =`: it is drained at shutdown and a fault it did not

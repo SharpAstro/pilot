@@ -70,6 +70,9 @@ public static class ChoiceStatus
     public const string Passing = "passing";
     public const string Pending = "pending";
     public const string Failing = "failing";
+
+    /// <summary>The PR conflicts with its base: GitHub cannot merge it until it is rebased, which the node does by itself.</summary>
+    public const string Conflicting = "conflicting";
 }
 
 /// <summary>Which of the bins a card is in, and so how it reaches the controller.</summary>
