@@ -489,7 +489,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         }
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && IsDetailOpen)
         {
-            CloseDetail();
+            GoBack();
             return true;
         }
         if (IsDetailOpen)

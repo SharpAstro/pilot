@@ -227,6 +227,188 @@ public sealed class NavigationTests
         host.ShouldBe(PilotPage.Fleet);
     }
 
+    private static readonly InputEvent AltLeft = new InputEvent.KeyDown(InputKey.Left, InputModifier.Alt);
+    private static readonly InputEvent AltRight = new InputEvent.KeyDown(InputKey.Right, InputModifier.Alt);
+
+    // Two moves made and one undone: the window is on Sessions, with Flights to go forward to and Home to go back to.
+    private static PilotChrome<RgbaImage> OnSessionsBetweenHomeAndFlights(Window window)
+    {
+        var chrome = window.Chrome;
+        chrome.Show(PilotPage.Sessions);
+        chrome.Show(PilotPage.Flights);
+        chrome.Back().ShouldBeTrue();
+        chrome.Page.ShouldBe(PilotPage.Sessions);
+        return chrome;
+    }
+
+    [Fact]
+    public void AltLeftAndAltRightGoBackAndForward()
+    {
+        using var window = new Window();
+        var chrome = OnSessionsBetweenHomeAndFlights(window);
+
+        chrome.HandleInput(AltRight).ShouldBeTrue();
+        chrome.Page.ShouldBe(PilotPage.Flights);
+        chrome.HandleInput(AltLeft).ShouldBeTrue();
+        chrome.Page.ShouldBe(PilotPage.Sessions);
+        chrome.HandleInput(AltLeft).ShouldBeTrue();
+        chrome.Page.ShouldBe(PilotPage.Home);
+
+        // Nothing to go back to: the key is still the window's, and does nothing.
+        chrome.HandleInput(AltLeft).ShouldBeTrue();
+        chrome.Page.ShouldBe(PilotPage.Home);
+
+        // Left alone, or with another modifier, it is not Back.
+        chrome.HandleInput(new InputEvent.KeyDown(InputKey.Left)).ShouldBeFalse();
+        chrome.HandleInput(new InputEvent.KeyDown(InputKey.Left, InputModifier.Ctrl)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TheMouseBackAndForwardButtonsGoBackAndForward()
+    {
+        using var window = new Window();
+        var chrome = OnSessionsBetweenHomeAndFlights(window);
+
+        chrome.HandleInput(new InputEvent.MouseDown(10, 10, MouseButton.Forward)).ShouldBeTrue();
+        chrome.HandleInput(new InputEvent.MouseUp(10, 10, MouseButton.Forward)).ShouldBeTrue();
+        chrome.Page.ShouldBe(PilotPage.Flights);
+
+        // One press is one step: the release goes with it.
+        chrome.HandleInput(new InputEvent.MouseDown(10, 10, MouseButton.Back)).ShouldBeTrue();
+        chrome.HandleInput(new InputEvent.MouseUp(10, 10, MouseButton.Back)).ShouldBeTrue();
+        chrome.Page.ShouldBe(PilotPage.Sessions);
+
+        chrome.HandleInput(new InputEvent.MouseDown(10, 10, MouseButton.Left)).ShouldBeFalse();
+        chrome.HandleInput(new InputEvent.MouseUp(10, 10, MouseButton.Left)).ShouldBeFalse();
+        chrome.Page.ShouldBe(PilotPage.Sessions);
+    }
+
+    [Fact]
+    public void EscapeOnAnOpenTranscriptGoesBack()
+    {
+        using var window = new Window();
+        var chrome = window.Chrome;
+        chrome.Show(PilotPage.Fleet);
+        chrome.Show(PilotPage.Sessions);
+        window.Draw();
+        chrome.Sessions.HandleInput(new InputEvent.KeyDown(InputKey.Enter)).ShouldBeTrue();
+        chrome.Sessions.Transcript.IsOpen.ShouldBeTrue();
+
+        chrome.Sessions.HandleInput(new InputEvent.KeyDown(InputKey.Escape)).ShouldBeTrue();
+
+        // Back, not a bare close: the place the transcript was opened from, with the move to it still there to come forward to.
+        chrome.Sessions.Transcript.IsOpen.ShouldBeFalse();
+        chrome.Page.ShouldBe(PilotPage.Sessions);
+        chrome.CanGoForward.ShouldBeTrue();
+        chrome.Forward().ShouldBeTrue();
+        chrome.Sessions.Transcript.IsOpen.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void EscapeOnAnOpenFlightPageGoesBack()
+    {
+        using var window = new Window();
+        var chrome = window.Chrome;
+        chrome.Show(PilotPage.Flights);
+        window.Draw();
+        chrome.Flights.HandleInput(new InputEvent.KeyDown(InputKey.Enter)).ShouldBeTrue();
+        chrome.Flights.IsDetailOpen.ShouldBeTrue();
+
+        chrome.Flights.HandleInput(new InputEvent.KeyDown(InputKey.Escape)).ShouldBeTrue();
+
+        chrome.Flights.IsDetailOpen.ShouldBeFalse();
+        chrome.Page.ShouldBe(PilotPage.Flights);
+        chrome.CanGoForward.ShouldBeTrue();
+        chrome.Forward().ShouldBeTrue();
+        chrome.Flights.IsDetailOpen.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void TheBackPillsOnATranscriptAndAFlightsPageAreTheWindowsBack()
+    {
+        using var window = new Window();
+        var chrome = window.Chrome;
+        chrome.Show(PilotPage.Fleet);
+        chrome.Show(PilotPage.Flights);
+        chrome.Flights.OpenDetail("TIA1");
+        window.Draw();
+
+        Press(window, chrome.Flights, "flight:back");
+
+        // The window's Back: the flights table the page was opened from, the page still there to come forward to.
+        chrome.Page.ShouldBe(PilotPage.Flights);
+        chrome.Flights.IsDetailOpen.ShouldBeFalse();
+        chrome.CanGoForward.ShouldBeTrue();
+
+        chrome.Show(PilotPage.Sessions);
+        chrome.Sessions.Transcript.Open(window.Sessions().Lines[0]);
+        window.Draw();
+        Press(window, chrome.Sessions, "transcript:back");
+        chrome.Sessions.Transcript.IsOpen.ShouldBeFalse();
+        chrome.Page.ShouldBe(PilotPage.Sessions);
+        chrome.CanGoForward.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ABackPillWithNoHistoryStillClosesWhatItLeaves()
+    {
+        using var vessel = new RgbaImageRenderer(1280, 800);
+        var sessions = new SessionsView<RgbaImage>(vessel);
+        sessions.Transcript.Load = (_, _, _, _) => Task.FromResult(new TranscriptPage { Total = 0, Entries = [] });
+        sessions.Transcript.Open(SessionLine.From(Live.Row("aaaa0000", "h-work", SessionState.Working), Live.At));
+
+        sessions.Transcript.GoBack();
+
+        sessions.Transcript.IsOpen.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TheBackControlIsDisabledWithNoHistoryAndGoesBackWhenClicked()
+    {
+        using var window = new Window();
+        var chrome = window.Chrome;
+        window.Draw();
+        chrome.CanGoBack.ShouldBeFalse();
+        var back = NavRegion(window, "nav:back");
+        back.Tooltip.ShouldBe("Back (Alt+Left)");
+        // Disabled: it is there and says so, and a press does nothing.
+        back.IsDisabled.ShouldBeTrue();
+        back.OnClick?.Invoke(InputModifier.None);
+        chrome.Page.ShouldBe(PilotPage.Home);
+
+        chrome.Show(PilotPage.Sessions);
+        window.Draw();
+        chrome.CanGoBack.ShouldBeTrue();
+        NavRegion(window, "nav:forward").IsDisabled.ShouldBeTrue();
+        var enabled = NavRegion(window, "nav:back");
+        enabled.IsDisabled.ShouldBeFalse();
+        enabled.OnClick!.Invoke(InputModifier.None);
+        chrome.Page.ShouldBe(PilotPage.Home);
+
+        window.Draw();
+        var forward = NavRegion(window, "nav:forward");
+        forward.Tooltip.ShouldBe("Forward (Alt+Right)");
+        forward.IsDisabled.ShouldBeFalse();
+        forward.OnClick!.Invoke(InputModifier.None);
+        chrome.Page.ShouldBe(PilotPage.Sessions);
+    }
+
+    // Presses the button a view painted with this action.
+    private static void Press(Window window, IPixelWidget view, string action)
+    {
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        regions.First(r => r.Result is HitResult.ButtonHit b && b.Action == action).OnClick!.Invoke(InputModifier.None);
+        window.Draw();
+    }
+
+    private static ClickableRegion NavRegion(Window window, string action)
+    {
+        var regions = new List<ClickableRegion>();
+        window.Chrome.Nav.CollectPaintedRegions(regions);
+        return regions.First(r => r.Result is HitResult.ButtonHit b && b.Action == action);
+    }
+
     [Fact]
     public void TheHistoryIsBounded()
     {

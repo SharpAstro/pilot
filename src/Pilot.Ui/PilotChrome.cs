@@ -100,6 +100,16 @@ internal sealed class PilotChrome<TSurface>
         // A transcript or a flight's page opened from inside a page (Enter, a click on a row) is a move too.
         sessions.Transcript.Opening = RecordOpening;
         Flights.Opening = RecordOpening;
+        // The per-view Back pills and Escape are the window's Back: where there is no place to go back to, the view closes itself.
+        sessions.Transcript.OnBack = BackOrClose(sessions.Transcript.Close);
+        Flights.OnBack = BackOrClose(Flights.CloseDetail);
+        Nav = new NavControls<TSurface>(renderer)
+        {
+            CanGoBack = () => CanGoBack,
+            CanGoForward = () => CanGoForward,
+            OnBack = () => Back(),
+            OnForward = () => Forward(),
+        };
         Rail = new TabBar<TSurface>(renderer)
         {
             Side = TabStripSide.Left,
@@ -110,6 +120,9 @@ internal sealed class PilotChrome<TSurface>
     }
 
     public TabBar<TSurface> Rail { get; }
+
+    /// <summary>The Back and Forward at the top of the rail.</summary>
+    internal NavControls<TSurface> Nav { get; }
 
     /// <summary>The header's ? card, the same on every page.</summary>
     public AboutCard About { get; } = new();
@@ -148,13 +161,13 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>The widgets this chrome paints, back to front: what the router asks about input.</summary>
     public IReadOnlyList<IPixelWidget> Widgets => Page switch
     {
-        PilotPage.Sessions => [Rail, Sessions, Cards],
-        PilotPage.Flights => [Rail, Flights, Cards],
-        PilotPage.Repos => [Rail, Repos, Cards],
-        PilotPage.Jobs => [Rail, Jobs, Cards],
-        PilotPage.Fleet => [Rail, Fleet, Cards],
-        PilotPage.Settings => [Rail, Settings, Cards],
-        _ => [Rail, Home, Cards],
+        PilotPage.Sessions => [Nav, Rail, Sessions, Cards],
+        PilotPage.Flights => [Nav, Rail, Flights, Cards],
+        PilotPage.Repos => [Nav, Rail, Repos, Cards],
+        PilotPage.Jobs => [Nav, Rail, Jobs, Cards],
+        PilotPage.Fleet => [Nav, Rail, Fleet, Cards],
+        PilotPage.Settings => [Nav, Rail, Settings, Cards],
+        _ => [Nav, Rail, Home, Cards],
     };
 
     /// <summary>The page shown, as a widget: what takes the keys nothing else did.</summary>
@@ -206,6 +219,38 @@ internal sealed class PilotChrome<TSurface>
         }
         Restore(place);
         return true;
+    }
+
+    private Action BackOrClose(Action close) => () =>
+    {
+        if (!Back())
+        {
+            close();
+        }
+    };
+
+    /// <summary>
+    /// The window's own keys and buttons, ahead of what is painted and of a focused field: Alt+Left and the mouse's back
+    /// button go <see cref="Back"/>, Alt+Right and its forward button go <see cref="Forward"/>. The button acts as it goes down;
+    /// its release is taken with it. False for anything else.
+    /// </summary>
+    public bool HandleInput(InputEvent evt)
+    {
+        switch (evt)
+        {
+            case InputEvent.KeyDown { Key: InputKey.Left, Modifiers: var mods } when mods == InputModifier.Alt:
+            case InputEvent.MouseDown { Button: MouseButton.Back }:
+                Back();
+                return true;
+            case InputEvent.KeyDown { Key: InputKey.Right, Modifiers: var mods } when mods == InputModifier.Alt:
+            case InputEvent.MouseDown { Button: MouseButton.Forward }:
+                Forward();
+                return true;
+            case InputEvent.MouseUp { Button: MouseButton.Back or MouseButton.Forward }:
+                return true;
+            default:
+                return false;
+        }
     }
 
     // Runs a move and records the place it left, unless it led nowhere new. Moves nest (a link's page switch is one too): the outer one records.
@@ -444,6 +489,7 @@ internal sealed class PilotChrome<TSurface>
             Settings.DpiScale = value;
             Cards.DpiScale = value;
             Rail.DpiScale = value;
+            Nav.DpiScale = value;
         }
     }
 
@@ -461,6 +507,7 @@ internal sealed class PilotChrome<TSurface>
             Settings.FontPath = value;
             Cards.FontPath = value;
             Rail.FontPath = value;
+            Nav.FontPath = value;
             // The rail's glyphs are emoji, which the UI face lacks: the platform's colour emoji face draws them
             // (Segoe UI Emoji, Noto Color Emoji), or none, and the rail falls back to the UI face.
             var emoji = FontResolver.ResolveEmojiFont();
@@ -508,6 +555,7 @@ internal sealed class PilotChrome<TSurface>
         if (Pointer is { } pointer)
         {
             Rail.Pointer = pointer;
+            Nav.Pointer = pointer;
         }
         Rail.Colors = new TabBarColors
         {
@@ -539,7 +587,10 @@ internal sealed class PilotChrome<TSurface>
             switch (key)
             {
                 case RailKey:
-                    Rail.Render(rect, _items, Page);
+                    // Back and Forward over the tabs, the tabs in what is left of the rail.
+                    var navHeight = Nav.Scale.ToSurface(NavControls<TSurface>.Height);
+                    Nav.Render(new RectF32(rect.X, rect.Y, rect.Width, navHeight));
+                    Rail.Render(new RectF32(rect.X, rect.Y + navHeight, rect.Width, rect.Height - navHeight), _items, Page);
                     break;
                 case CardsKey:
                     Cards.Render(cards!, rect);
