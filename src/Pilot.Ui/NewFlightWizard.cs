@@ -635,6 +635,7 @@ internal static class NewFlights
     public static async Task<string> CreateAsync(NodeClient client, IReadOnlyList<NewFlightPick> picks, string who, CancellationToken cancellationToken)
     {
         var codes = new List<string>();
+        var routed = new List<string>();
         foreach (var (repo, issue) in picks)
         {
             var made = await SendAsync(client, Verbs.CreateFlight, Verbs.RepoTarget(repo.Path),
@@ -644,7 +645,17 @@ internal static class NewFlights
                 return $"failed: {repo.Name} #{issue.Number}: {made?.Error ?? "the node did not answer"}"
                     + (codes.Count > 0 ? $" (made {string.Join(", ", codes)} before it)" : "");
             }
+            // Made on another node of the fleet (this one is in maintenance): this node has no flight of that code to connect or plan.
+            if (made.Way is { Length: > 0 } way)
+            {
+                routed.Add(way);
+                continue;
+            }
             codes.Add(code);
+        }
+        if (codes.Count == 0)
+        {
+            return string.Join("; ", routed);
         }
         var problems = new List<string>();
         for (var i = 1; i < codes.Count; i++)
@@ -664,6 +675,10 @@ internal static class NewFlights
             }
         }
         var line = $"made {string.Join(", ", codes)}; {(codes.Count == 1 ? "its planner is" : "their planners are")} planning the legs";
+        if (routed.Count > 0)
+        {
+            line += $"; {string.Join("; ", routed)}";
+        }
         return problems.Count == 0 ? line : $"{line}; but {string.Join("; ", problems)}";
     }
 

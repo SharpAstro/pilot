@@ -768,7 +768,21 @@ reviews, landings and jobs carry on as they were. `accept-fleet-flights` (off un
 take a flight another node of the fleet routes to it. Both are in `GET /api/v1/node` (`Maintenance`,
 `AcceptsFleetFlights`), and `pilot status` prints a `maintenance` line while it is on. `set node maintenance on|off` is
 the one setting a LAN grant may change (the Fleet row menu's way); every other `set` and `setup` stays this machine's.
-Any other change restarts the node to run with it, once no
+
+A `create-flight` that reaches a node in maintenance goes to a willing node instead (#177). The candidates are the
+nodes this node holds a grant for (`client-grants.json` beside its data, the tokens `pilot connect` saved; the
+`PILOT_CLIENT_GRANTS` file in a test). A node qualifies when it is reachable, accepts the grant, is not in maintenance,
+has `accept-fleet-flights` on, and has a checkout of the same GitHub remote under its repo roots (its `repos` route;
+paths are each machine's own, so the repo is found by its `owner/name`). Among those the one with more 5-hour
+headroom wins (a window that has reset counts as all of it, a node with no figures comes last), then the one with
+fewer flights in the air. The node sends `create-flight repo/<the peer's checkout> <issue> [title]` to it, returns the
+code the peer made, raises a Handled card, and says where it went in the result's way (`PIL180 is flying on DE1: SE1 is in
+maintenance`), which `pilot flight create`, the MCP tool and the new-flight wizard show; the flight lives on the peer
+(its code is not in this node's flights). A peer that refuses the flight leaves it to the next. With none willing the
+command is refused, naming each node and why it did not qualify (`in maintenance`, `not willing`, `unreachable`,
+`no grant`, `no checkout of <owner/name>`); with no other node known, it is refused with the maintenance reason alone.
+
+Any other setting's change restarts the node to run with it, once no
 job runs or waits (a job is its child): the node starts its
 successor with its own arguments and `--after <its pid>`, and stops, as a self-update does, so flights, sessions and
 the watchtower carry on and clients resume their stream. A setting the command line gives is saved but says it does

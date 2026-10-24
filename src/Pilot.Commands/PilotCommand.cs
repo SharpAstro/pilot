@@ -831,7 +831,13 @@ public static class PilotCommand
             {
                 await output.WriteLineAsync(told);
             }
-            if (verb is Verbs.CreateFlight or Verbs.OpenPr)
+            if (verb == Verbs.CreateFlight && result.Way is { Length: > 0 } routed)
+            {
+                // Made on another node of the fleet, as this one is in maintenance: its code is not in this node's flights, so there is
+                // no row to show here, only where it went.
+                await output.WriteLineAsync(routed);
+            }
+            else if (verb is Verbs.CreateFlight or Verbs.OpenPr)
             {
                 await output.WriteAsync(Status(await SnapshotAsync(client, cancellationToken), newestOnly: verb == Verbs.CreateFlight, code: verb == Verbs.OpenPr ? target[Verbs.FlightTargetPrefix.Length..] : null));
             }
