@@ -45,6 +45,12 @@ public sealed record NodeInfo
     /// <summary>The event stream's id (<see cref="SnapshotEvent.Stream"/>).</summary>
     public required string Stream { get; init; }
 
+    /// <summary>Whether the node is in maintenance (<c>pilot settings set maintenance on</c>): it takes no new flight, and says so to a create-flight; what is already flying carries on.</summary>
+    public bool Maintenance { get; init; }
+
+    /// <summary>Whether the node is willing to take a flight another node of the fleet routes to it (<c>accept-fleet-flights</c>); off unless set.</summary>
+    public bool AcceptsFleetFlights { get; init; }
+
     /// <summary>The Claude account its sessions run under; null when Claude Code has no login on record.</summary>
     public AccountRow? Account { get; init; }
 }

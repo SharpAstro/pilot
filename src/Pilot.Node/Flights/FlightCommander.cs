@@ -13,6 +13,12 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
 {
     private readonly SemaphoreSlim _one = new(1, 1);
 
+    /// <summary>The settings in force: whether the node is in maintenance. A test's commander takes every flight.</summary>
+    public RoleModels Models { get; set; } = RoleModels.Unset;
+
+    /// <summary>The machine's prefix, as a refusal names it.</summary>
+    public string Machine { get; set; } = "this node";
+
     /// <summary>The quiet card a flight folded into another leaves in place of a landed one.</summary>
     public const string FoldedKind = "folded";
 
@@ -64,6 +70,13 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         if (args.Length == 0 || !int.TryParse(args[0].TrimStart('#'), NumberStyles.None, CultureInfo.InvariantCulture, out var issue) || issue <= 0)
         {
             throw new FlightException("create-flight needs the issue number first, as in create-flight repo/<path> 1611 [title]");
+        }
+
+        // Only a new flight is refused: flying and held flights, legs, reviews and landings never come through here. The next
+        // leg of this flight routes a flight to a node that takes it, instead of refusing, at this seam.
+        if (Models.Maintenance)
+        {
+            throw new FlightException($"{Machine} is in maintenance: it takes no new flights");
         }
 
         var path = command.Target[Verbs.RepoTargetPrefix.Length..];

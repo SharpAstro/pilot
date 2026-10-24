@@ -7,7 +7,8 @@ namespace Pilot.Node;
 /// <summary>
 /// The Settings page's side of the node: the page itself (<see cref="PageAsync"/>), <c>set node &lt;key&gt; [value…]</c>,
 /// which saves a setting and restarts the node to run with it, and <c>setup node &lt;check&gt;</c>, which makes a setup
-/// check's fix. Both verbs are this machine's alone: a grant from the LAN never reaches them.
+/// check's fix. Both verbs are this machine's alone: a grant from the LAN never reaches them, but for <c>set node maintenance
+/// on|off</c> (<see cref="NodeApp.MaintenanceSwitch"/>).
 /// </summary>
 public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, NodeRestarter restarter, NodeSetup setup, TimeProvider time, Flights.JobRunner jobs, RoleModels roles)
 {
@@ -63,10 +64,12 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             return state.Complete(command, null, way: $"{key} saved as {value}; the node runs with it already");
         }
         // A role's model and effort are read when a session of it starts: in force for the next one, no restart.
-        if (NodeSettings.IsRoleKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey)
+        if (NodeSettings.IsRoleKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey
+            or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey)
         {
             roles.Apply(updated);
             return state.Complete(command, null, way: key == NodeSettings.MergeMethodKey ? $"{key} saved as {value}; the next merge uses it"
+                : key is NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey ? $"{key} saved as {value}, and in force now"
                 : key is NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey ? $"{key} saved as {value}; the next start the node makes by itself weighs it"
                 : $"{key} saved as {value}; the next session of that kind starts with it");
         }
@@ -141,6 +144,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     private string Running(string key) => key switch
     {
         NodeSettings.LanKey => options.Lan ? "on" : "off",
+        NodeSettings.MaintenanceKey => roles.Maintenance ? "on" : "off",
+        NodeSettings.AcceptFleetFlightsKey => roles.AcceptsFleetFlights ? "on" : "off",
         NodeSettings.LanPortKey => options.LanPort.ToString(CultureInfo.InvariantCulture),
         NodeSettings.MachineKey => options.Machine,
         NodeSettings.RepoRootsKey => Join(key, options.RepoRoots),
@@ -165,10 +170,10 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         : (null, false);
 
     /// <summary>Whether a setting is in force as soon as it is saved, with no restart: a role's model or effort, the merge
-    /// method, the start limits, the priority repos and the job limits.</summary>
+    /// method, the start limits, the priority repos, the job limits, maintenance and whether fleet flights are accepted.</summary>
     private static bool Live(string key) => NodeSettings.IsRoleKey(key)
         || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey
-            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey;
+            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey;
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
     private static string Join(string key, IReadOnlyList<string> values) => string.Join(key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey ? '\n' : ' ', values);
@@ -177,6 +182,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     private static string Default(string key) => key switch
     {
         NodeSettings.LanKey => "off",
+        NodeSettings.MaintenanceKey => "off",
+        NodeSettings.AcceptFleetFlightsKey => "off",
         NodeSettings.LanPortKey => NodeWire.DefaultLanPort.ToString(CultureInfo.InvariantCulture),
         NodeSettings.MachineKey => (MachinePrefixes.Normalise(Environment.GetEnvironmentVariable("PILOT_MACHINE")) ?? MachinePrefixes.FromName(Environment.MachineName)),
         NodeSettings.RepoRootsKey => "",
@@ -197,6 +204,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     private static (string Label, string Detail, string[] Choices) Describe(string key) => key switch
     {
         NodeSettings.LanKey => ("On the LAN", "Listen on the LAN and announce it: anyone there may watch, a command needs a grant you allow", ["on", "off"]),
+        NodeSettings.MaintenanceKey => ("Maintenance", "While on, this node takes no new flight: a create-flight is refused with the reason; flights in the air, held ones, legs, reviews, landings and jobs carry on", ["on", "off"]),
+        NodeSettings.AcceptFleetFlightsKey => ("Accept fleet flights", "Whether this node is willing to take a flight another node of the fleet routes to it, when a new flight is made", ["on", "off"]),
         NodeSettings.LanPortKey => ("LAN port", "The TCP port other machines reach this node on", []),
         NodeSettings.MachineKey => ("Machine prefix", "Two letters and a number, at the front of this machine's session names (DE1-watchtower)", []),
         NodeSettings.RepoRootsKey => ("Repo roots", "Folders of git clones the new-flight wizard offers, beside the flights' own repos", []),

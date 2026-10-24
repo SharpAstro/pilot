@@ -761,7 +761,14 @@ the default; a value it cannot read is passed over, never fatal. `pilot-node set
 **Settings** page (Ctrl+6 in the GUI, 6 in the TUI), or `pilot settings set <key> [value…]`.
 
 A role's model and effort, and the job limits, are in force at once (the next session of that kind starts with
-them; a waiting job starts as soon as the new limit allows). Any other change restarts the node to run with it, once no
+them; a waiting job starts as soon as the new limit allows). So are `maintenance` and `accept-fleet-flights` (#177),
+two switches, `on` or `off`. While `maintenance` is on the node takes no new flight: a `create-flight` is refused with
+`<machine> is in maintenance: it takes no new flights`, and flights already in the air, held flights, legs, go-arounds,
+reviews, landings and jobs carry on as they were. `accept-fleet-flights` (off unless set) says the node is willing to
+take a flight another node of the fleet routes to it. Both are in `GET /api/v1/node` (`Maintenance`,
+`AcceptsFleetFlights`), and `pilot status` prints a `maintenance` line while it is on. `set node maintenance on|off` is
+the one setting a LAN grant may change (the Fleet row menu's way); every other `set` and `setup` stays this machine's.
+Any other change restarts the node to run with it, once no
 job runs or waits (a job is its child): the node starts its
 successor with its own arguments and `--after <its pid>`, and stops, as a self-update does, so flights, sessions and
 the watchtower carry on and clients resume their stream. A setting the command line gives is saved but says it does

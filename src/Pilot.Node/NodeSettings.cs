@@ -30,6 +30,8 @@ public sealed record NodeSettings
     public const string PriorityStartLimitKey = "priority-start-limit";
     public const string PriorityReposKey = "priority-repos";
     public const string WeekLimitKey = "week-limit";
+    public const string MaintenanceKey = "maintenance";
+    public const string AcceptFleetFlightsKey = "accept-fleet-flights";
 
     /// <summary>How a flight's PR is merged when the merge names no method: rebase keeps every commit's subject, which a
     /// repo's docs may cite (tianwen's rule); squash makes one commit of them; merge adds a merge commit.</summary>
@@ -37,13 +39,19 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey,
          .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey)];
 
     /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
     public static bool IsRoleKey(string key) => RoleModels.Roles.Any(r => key == RoleModels.ModelKey(r) || key == RoleModels.EffortKey(r));
 
     public bool? Lan { get; init; }
+
+    /// <summary>Whether the node takes no new flight (<see cref="MaintenanceKey"/>): flights already made carry on, a create-flight is refused.</summary>
+    public bool? Maintenance { get; init; }
+
+    /// <summary>Whether the node is willing to take a flight another node of the fleet routes to it (<see cref="AcceptFleetFlightsKey"/>); off unless set.</summary>
+    public bool? AcceptFleetFlights { get; init; }
 
     public int? LanPort { get; init; }
 
@@ -116,6 +124,8 @@ public sealed record NodeSettings
                 root[key] = key switch
                 {
                     LanKey => JsonValue.Create(Lan),
+                    MaintenanceKey => JsonValue.Create(Maintenance),
+                    AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
                     LanPortKey => JsonValue.Create(LanPort),
                     MaxJobsKey => JsonValue.Create(MaxJobs),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
@@ -138,6 +148,8 @@ public sealed record NodeSettings
     public IReadOnlyList<string>? Get(string key) => key switch
     {
         LanKey => Lan is { } lan ? [lan ? "on" : "off"] : null,
+        MaintenanceKey => Maintenance is { } maintenance ? [maintenance ? "on" : "off"] : null,
+        AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
         LanPortKey => LanPort is { } port ? [port.ToString(CultureInfo.InvariantCulture)] : null,
         MachineKey => Machine is { } machine ? [machine] : null,
         RepoRootsKey => RepoRoots,
@@ -176,6 +188,22 @@ public sealed record NodeSettings
                     "off" or "false" or "no" => (settings with { Lan = false }, null),
                     _ => (null, "lan takes on or off"),
                 };
+            case MaintenanceKey:
+                if (clear)
+                {
+                    return (settings with { Maintenance = null }, null);
+                }
+                return OnOff(One()) is { } maintenance
+                    ? (settings with { Maintenance = maintenance }, null)
+                    : (null, "maintenance takes on or off");
+            case AcceptFleetFlightsKey:
+                if (clear)
+                {
+                    return (settings with { AcceptFleetFlights = null }, null);
+                }
+                return OnOff(One()) is { } accept
+                    ? (settings with { AcceptFleetFlights = accept }, null)
+                    : (null, "accept-fleet-flights takes on or off");
             case LanPortKey:
                 if (clear)
                 {
@@ -292,6 +320,14 @@ public sealed record NodeSettings
                 return (null, $"there is no setting {key}; there are {string.Join(", ", Keys)}");
         }
     }
+
+    // The on/off words set node takes for a switch; null for anything else.
+    private static bool? OnOff(string? value) => value?.ToLowerInvariant() switch
+    {
+        "on" or "true" or "yes" => true,
+        "off" or "false" or "no" => false,
+        _ => null,
+    };
 
     // A file's value as set node's words: a list's items, or the one value as text.
     private static string[]? Values(JsonNode value) => value switch
