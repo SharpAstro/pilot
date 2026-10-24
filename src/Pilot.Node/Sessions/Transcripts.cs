@@ -371,7 +371,7 @@ internal sealed class SessionTranscripts(ClaudeProfile profile, string sessionId
         {
             if (!_records.TryGetValue(file, out var known) || known.Working)
             {
-                var record = SubagentRecord.Read(file, known?.Started);
+                var record = SubagentRecord.Read(file, known?.Started, known?.Row.Prompt);
                 _records[file] = record with { Working = record.Working && !tail.HandedBack };
             }
         }
@@ -382,7 +382,10 @@ internal sealed class SessionTranscripts(ClaudeProfile profile, string sessionId
 
     private sealed record SubagentRecord(SubagentRow Row, DateTime Started, bool Working)
     {
-        public static SubagentRecord Read(string file, DateTime? started)
+        // How much of a prompt's first line the row carries: the GUI clips it again to the chip.
+        private const int PromptChars = 120;
+
+        public static SubagentRecord Read(string file, DateTime? started, string? prompt)
         {
             var name = System.IO.Path.GetFileNameWithoutExtension(file);
             var id = name.StartsWith("agent-", StringComparison.Ordinal) ? name["agent-".Length..] : name;
@@ -401,11 +404,44 @@ internal sealed class SessionTranscripts(ClaudeProfile profile, string sessionId
                     finished = root.TryGetProperty("finished", out var f) && f.ValueKind == JsonValueKind.True;
                 }
                 started ??= File.GetCreationTimeUtc(file);
+                // The prompt never changes once it is written: read once, while its transcript has none yet.
+                prompt ??= FirstPromptLine(file);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
             {
             }
-            return new SubagentRecord(new SubagentRow { Id = id, Type = type, Description = description, ToolUseId = toolUseId }, started ?? DateTime.MinValue, !finished);
+            return new SubagentRecord(new SubagentRow { Id = id, Type = type, Description = description, Prompt = prompt, ToolUseId = toolUseId }, started ?? DateTime.MinValue, !finished);
+        }
+
+        // The first non-blank line of the first user message of a subagent's transcript, which is the prompt it was started
+        // with (its content is a string, or blocks of which the text ones count); null while the transcript has none.
+        private static string? FirstPromptLine(string file)
+        {
+            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            for (var read = 0; read < 20 && reader.ReadLine() is { } line; read++)
+            {
+                if (!line.Contains("\"type\":\"user\"", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                using var doc = JsonDocument.Parse(line);
+                if (!doc.RootElement.TryGetProperty("message", out var message) || !message.TryGetProperty("content", out var content))
+                {
+                    continue;
+                }
+                var text = content.ValueKind == JsonValueKind.String
+                    ? content.GetString()
+                    : content.ValueKind == JsonValueKind.Array
+                        ? string.Join('\n', content.EnumerateArray().Where(b => b.ValueKind == JsonValueKind.Object).Select(b => ClaudeAgentsJson.Text(b, "text")).Where(t => t is { Length: > 0 }))
+                        : null;
+                var first = text?.ReplaceLineEndings("\n").Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0);
+                if (first is not null)
+                {
+                    return first.Length <= PromptChars ? first : first[..PromptChars];
+                }
+            }
+            return null;
         }
     }
 }

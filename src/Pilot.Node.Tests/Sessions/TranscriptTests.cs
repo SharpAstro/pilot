@@ -198,19 +198,27 @@ public sealed class TranscriptTests : IDisposable
     {
         _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Lines.Assistant("m1", input: 1));
         var explore = _profile.SubagentPath(AgentRows.SessionA, "a1");
-        _profile.Append(explore, Lines.Assistant("s1", input: 1));
+        // Its prompt is a string, or blocks of text; the first line that says something is what the row carries.
+        _profile.Append(explore, """{"type":"user","isSidechain":true,"message":{"role":"user","content":"Find the clock\nand say where it ticks"}}""", Lines.Assistant("s1", input: 1));
         File.WriteAllText(Path.ChangeExtension(explore, ".meta.json"),
             """{"agentType":"Explore","description":"Find the clock","toolUseId":"toolu_1","finished":true}""");
         var review = _profile.SubagentPath(AgentRows.SessionA, "b2");
-        _profile.Append(review, Lines.Assistant("s2", input: 1));
+        _profile.Append(review, """{"type":"user","isSidechain":true,"message":{"role":"user","content":[{"type":"text","text":"\n  Review the diff\nthen the tests"}]}}""", Lines.Assistant("s2", input: 1));
         File.WriteAllText(Path.ChangeExtension(review, ".meta.json"), """{"agentType":"general-purpose","description":"Review it","toolUseId":"toolu_2"}""");
+        // One with no record and a long prompt line: clipped; one with no prompt yet has none.
+        var wide = _profile.SubagentPath(AgentRows.SessionA, "c3");
+        _profile.Append(wide, $$$"""{"type":"user","isSidechain":true,"message":{"role":"user","content":"{{{new string('x', 300)}}}"}}""");
+        var quiet = _profile.SubagentPath(AgentRows.SessionA, "d4");
+        _profile.Append(quiet, Lines.Assistant("s4", input: 1));
         var transcripts = new SessionTranscripts(_profile.Profile, AgentRows.SessionA);
 
         var subagents = transcripts.Refresh().Subagents.ShouldNotBeNull();
-        subagents.Select(s => (s.Id, s.Type, s.Description, s.ToolUseId, s.Working)).ShouldBe([
-            ("a1", "Explore", "Find the clock", "toolu_1", false),
-            ("b2", "general-purpose", "Review it", "toolu_2", true),
+        subagents.Where(s => s.Id is "a1" or "b2").Select(s => (s.Id, s.Type, s.Description, s.Prompt, s.ToolUseId, s.Working)).ShouldBe([
+            ("a1", "Explore", "Find the clock", "Find the clock", "toolu_1", false),
+            ("b2", "general-purpose", "Review it", "Review the diff", "toolu_2", true),
         ], ignoreOrder: true);
+        subagents.Single(s => s.Id == "c3").Prompt.ShouldBe(new string('x', 120));
+        subagents.Single(s => s.Id == "d4").Prompt.ShouldBeNull();
 
         // Its hand-back is in its transcript before its record says so.
         _profile.Append(review, """{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"tool_use","id":"t9","name":"SubagentHandback","input":{"report":"done"}}]}}""");
