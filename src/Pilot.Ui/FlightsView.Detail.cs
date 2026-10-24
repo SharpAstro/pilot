@@ -20,10 +20,20 @@ internal sealed partial class FlightsView<TSurface>
     public void OpenDetail(string code)
     {
         _openCode = code;
+        // Its row is shown whatever In play says while its page is open, and selected once the page is shut.
+        _pinned = code;
         _detailScroll.AtomOffset = 0;
     }
 
-    public void CloseDetail() => _openCode = null;
+    public void CloseDetail()
+    {
+        _selectPinned = _pinned is not null && _pinned == _openCode;
+        _openCode = null;
+    }
+
+    // The flight a jump opened: its row stays on the page whatever In play says, until the selection moves off it.
+    private string? _pinned;
+    private bool _selectPinned;
 
     /// <summary>The open page's scroll position, in the layout's own units (a pixel in the window, a cell in the terminal).</summary>
     internal int DetailOffset => _detailScroll.AtomOffset;

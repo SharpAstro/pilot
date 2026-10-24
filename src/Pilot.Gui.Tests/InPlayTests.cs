@@ -14,7 +14,7 @@ namespace Pilot.Gui.Tests;
 /// queued and what finished in the last 10 minutes, the cards panel folds Handled to one line; each count names what is
 /// hidden and that clause switches to Everything; Home and Repos are unchanged.
 /// </summary>
-public sealed class InPlayTests
+public sealed partial class InPlayTests
 {
     private static FlightRow Flight(string code, FlightState state, int minutes = 0, params string[] waitsFor) => new()
     {

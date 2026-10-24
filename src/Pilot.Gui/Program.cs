@@ -150,7 +150,8 @@ window.GetSizeInPixels(out var width, out var height);
 using var context = VulkanContext.Create(window.Instance, window.Surface, (uint)width, (uint)height);
 using var renderer = new VkRenderer(context, (uint)width, (uint)height);
 var view = new SessionsView<VulkanContext>(renderer);
-var chrome = new PilotChrome<VulkanContext>(renderer, view) { FontPath = SessionsCapture.FontPath, DpiScale = window.DisplayScale };
+// The In play / Everything choice is kept in the user's GUI file, so a restart opens as the window was left.
+var chrome = new PilotChrome<VulkanContext>(renderer, view, PlayFilter.DefaultFile) { FontPath = SessionsCapture.FontPath, DpiScale = window.DisplayScale };
 
 using var cts = new CancellationTokenSource();
 // Logging as tianwen's GUI does it: a logger of its own, and the renderer's pointed at the same factory, so its lines get

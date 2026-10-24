@@ -83,8 +83,9 @@ internal sealed class NodeFilter
 /// <summary>
 /// What the pages show of what is done: <b>In play</b> (the default) keeps what still moves and lets the rest get out of the
 /// way, <b>Everything</b> shows all. One per window, shared by the Sessions, Flights and Jobs pages and the cards panel, so it
-/// holds across a page switch; kept in memory, as the node selection is. Each view filters its own tree with it, so the
-/// screens stay whole for Home and the jumps between pages, which need the rows that are done.
+/// holds across a page switch. Each view filters its own tree with it, so the screens stay whole for Home and the jumps
+/// between pages, which need the rows that are done. The choice is kept in memory, as the node selection is, and also in a
+/// small per-user file when one is given (<see cref="DefaultFile"/>): read when the window starts, written when it flips.
 /// </summary>
 internal sealed class PlayFilter
 {
@@ -93,14 +94,80 @@ internal sealed class PlayFilter
     /// <summary>How long a finished job stays in play, counted back from the screen's moment.</summary>
     public static readonly TimeSpan JobsFinished = TimeSpan.FromMinutes(10);
 
+    /// <summary>The GUI's per-user file beside the node's data, <c>%LOCALAPPDATA%\pilot2\gui.json</c>.</summary>
+    public static string DefaultFile => Path.Combine(NodeSocket.DefaultDataFolder, "gui.json");
+
+    private readonly string? _file;
+
+    /// <param name="file">
+    /// The file the choice is kept in, or null to keep it in memory only. A missing, unreadable or malformed file is In play,
+    /// the default; a file that cannot be written leaves the choice standing for this window.
+    /// </param>
+    public PlayFilter(string? file = null)
+    {
+        _file = file;
+        InPlay = Load(file);
+    }
+
     /// <summary>Whether only what is in play is shown; true until a click on Everything or on a page's hidden clause.</summary>
-    public bool InPlay { get; private set; } = true;
+    public bool InPlay { get; private set; }
 
     /// <summary>Shows everything, as the pill and the hidden clause do.</summary>
-    public void ShowEverything() => InPlay = false;
+    public void ShowEverything() => Set(false);
 
     /// <summary>Shows only what is in play again.</summary>
-    public void ShowInPlay() => InPlay = true;
+    public void ShowInPlay() => Set(true);
+
+    private void Set(bool inPlay)
+    {
+        if (InPlay == inPlay)
+        {
+            return;
+        }
+        InPlay = inPlay;
+        Save(_file, inPlay);
+    }
+
+    private static bool Load(string? file)
+    {
+        if (file is null)
+        {
+            return true;
+        }
+        try
+        {
+            using var stream = File.OpenRead(file);
+            using var document = System.Text.Json.JsonDocument.Parse(stream);
+            return document.RootElement is { ValueKind: System.Text.Json.JsonValueKind.Object } root
+                && root.TryGetProperty("inPlay", out var value) && value.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False
+                ? value.GetBoolean()
+                : true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            return true;
+        }
+    }
+
+    private static void Save(string? file, bool inPlay)
+    {
+        if (file is null)
+        {
+            return;
+        }
+        try
+        {
+            if (Path.GetDirectoryName(Path.GetFullPath(file)) is { } folder)
+            {
+                Directory.CreateDirectory(folder);
+            }
+            File.WriteAllText(file, $"{{ \"inPlay\": {(inPlay ? "true" : "false")} }}\n");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A choice that cannot be kept still holds for this window.
+        }
+    }
 
     /// <summary>The header's pills, beside the node pills: In play, Everything, the shown one lit.</summary>
     public IEnumerable<Layout.Node> Pills(FlightsPalette? night = null)
