@@ -72,7 +72,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     // before it gives any of it up.
     private const float SessionMin = 200f;
 
-    private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
+    private static readonly RGBAColor32 Ground = TranscriptPane.Ground;
     private static readonly RGBAColor32 HeaderBg = new(0x1b, 0x1c, 0x24, 0xff);
     private static readonly RGBAColor32 RowAltBg = new(0x16, 0x17, 0x1e, 0xff);
     private static readonly RGBAColor32 RowHoverBg = new(0x22, 0x24, 0x2e, 0xff);

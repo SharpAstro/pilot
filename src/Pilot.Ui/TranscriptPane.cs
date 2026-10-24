@@ -15,6 +15,9 @@ internal sealed class TranscriptPane
     /// <summary>How often an open pane asks for what came after.</summary>
     public static readonly TimeSpan Every = TimeSpan.FromSeconds(2);
 
+    /// <summary>The pane's background: the Sessions page's ground, which the transcript is drawn on.</summary>
+    internal static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
+
     private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
     private static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
     private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
@@ -26,8 +29,18 @@ internal sealed class TranscriptPane
     private static readonly RGBAColor32 Running = new(0xe8, 0xb0, 0x4a, 0xff);
     private static readonly RGBAColor32 Marked = new(0x2a, 0x24, 0x18, 0xff);
 
-    // The assistant's words and a subagent's report as Markdown, on the pane's colours; its thinking the same, dimmed.
-    private static readonly Layout.MarkdownStyle Prose = new() { Text = Body, Strong = Bright, Link = Tool, Muted = Dim };
+    // Unfolded command and output sit in a shaded block, on colours whose contrast against both the block and the pane's
+    // ground stays above WCAG's 4.5:1 floor (the tests check it).
+    internal static readonly RGBAColor32 OutputShade = new(0x1e, 0x20, 0x2a, 0xff);
+    internal static readonly RGBAColor32 OutputText = new(0xd0, 0xd3, 0xde, 0xff);
+    internal static readonly RGBAColor32 OutputFailed = new(0xf0, 0x7a, 0x7a, 0xff);
+
+    // The assistant's words and a subagent's report as Markdown at full contrast: they are the body of the page, the tool
+    // lines around them are the furniture. Its thinking the same, dimmed.
+    internal static readonly Layout.MarkdownStyle Prose = new()
+    {
+        Text = Bright, Strong = new(0xff, 0xff, 0xff, 0xff), Link = new(0x8f, 0xb8, 0xf0, 0xff), Muted = Body, Code = OutputText, CodeBackground = OutputShade,
+    };
     private static readonly Layout.MarkdownStyle Thought = new()
     {
         Text = Faint, Strong = Dim, Emphasis = Faint, Code = Dim, Link = Dim, Muted = Faint, CodeBackground = new(0x18, 0x19, 0x20, 0xff),
@@ -43,6 +56,12 @@ internal sealed class TranscriptPane
     private const float ToolWidth = 84f;
     private const float CaretWidth = 16f;
     private const int FailedLines = 3;
+
+    /// <summary>The gap between consecutive rows: tool lines sit close together.</summary>
+    internal const float ToolGap = 2f;
+
+    /// <summary>The space above and below Claude's words and a prompt, more than <see cref="ToolGap"/> so they stand apart from the tool lines.</summary>
+    internal const float ProseSpace = 10f;
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive, Anchor = ScrollAnchor.Bottom };
     private readonly List<TranscriptEntry> _entries = [];
@@ -260,7 +279,7 @@ internal sealed class TranscriptPane
         }
         var list = rows.Count == 0
             ? Layout.Builder.Text(problem ?? "reading the transcript…", 13f, Dim).Stretch()
-            : Layout.Builder.VStack([.. rows]).WithGap(6f).WithScroll(from >= 0 ? _atScroll : _scroll).Stretch();
+            : Layout.Builder.VStack([.. rows]).WithGap(ToolGap).WithScroll(from >= 0 ? _atScroll : _scroll).Stretch();
         return _subagents.Count == 0
             ? Layout.Builder.VStack(Layout.Builder.HStack([.. head]).WithGap(12f).WStar(), list).WithGap(8f).Pad(16f, 8f).Stretch()
             : Layout.Builder.VStack(Layout.Builder.HStack([.. head]).WithGap(12f).WStar(), Agents(), list).WithGap(8f).Pad(16f, 8f).Stretch();
@@ -362,10 +381,12 @@ internal sealed class TranscriptPane
         {
             body.Add(AgentLink(started, $"open {started.Type ?? "its"} transcript", $"transcript:spawn:{call.Index}"));
         }
+        // The command and its output as one shaded block, in the monospace face.
+        var block = new List<Layout.Node>();
         var command = call.Full ?? call.Text;
         if (open && command.Length > 0 && command != said)
         {
-            body.AddRange(command.ReplaceLineEndings("\n").Split('\n').Select(l => Layout.Builder.Text(l, 13f, Bright)));
+            block.AddRange(command.ReplaceLineEndings("\n").Split('\n').Select(l => Mono(l, Bright)));
         }
         if (result?.Denied is { } denied)
         {
@@ -391,14 +412,27 @@ internal sealed class TranscriptPane
                 // Unfolded, all of it; folded, a failure's last lines.
                 var all = result.Text.Length == 0 ? ["(no output)"] : result.Text.ReplaceLineEndings("\n").Split('\n');
                 var shown = open ? all : all[Math.Max(0, all.Length - FailedLines)..];
-                body.AddRange(shown.Select((l, i) => Layout.Builder.Text(i == 0 ? "└ " + l : "  " + l, 13f, failed ? Failed : Dim)));
+                if (block.Count > 0)
+                {
+                    block.Add(Layout.Builder.Spacer().WFixed(1f).HFixed(4f));
+                }
+                block.AddRange(shown.Select(l => Mono(l, failed ? OutputFailed : OutputText)));
             }
+        }
+        if (block.Count > 0)
+        {
+            body.Add(Layout.Builder.VStack([.. block]).Pad(8f, 6f).Bg(OutputShade).WStar());
         }
         var row = Layout.Builder.TreeRow(0, hasChildren: true, open, () => Toggle(call.Index), line, new Layout.TreeRowStyle(Dim));
         return body.Count == 0
             ? row
             : Layout.Builder.VStack(row, Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(CaretWidth), Layout.Builder.VStack([.. body]).WStar())).WithGap(2f);
     }
+
+    // A line of a command or its output. One helper for all of it, so a monospace face for a text leaf lands here once:
+    // DIR.Lib has none yet (SharpAstro/DIR.Lib#152). An empty line keeps its height as a space.
+    private static Layout.Node Mono(string line, RGBAColor32 color) =>
+        Layout.Builder.Text(line.Length == 0 ? " " : line, 13f, color);
 
     private Layout.Node Row(TranscriptEntry entry)
     {
@@ -407,7 +441,7 @@ internal sealed class TranscriptPane
             { Kind: TranscriptKind.User, From: { } from } => (from, Tool, Body, 12),
             { Kind: TranscriptKind.User, Note: true } => ("", Faint, Faint, 2),
             { Kind: TranscriptKind.User } => ("prompt", Prompt, Bright, 12),
-            { Kind: TranscriptKind.Assistant } => ("claude", Body, Body, 40),
+            { Kind: TranscriptKind.Assistant } => ("claude", Bright, Bright, 40),
             { Kind: TranscriptKind.Thinking } => ("thinking", Faint, Faint, 2),
             { Kind: TranscriptKind.ToolUse } => (entry.Tool ?? "tool", Tool, Dim, 1),
             { Kind: TranscriptKind.ToolResult } => ("└", Faint, Faint, 3),
@@ -428,10 +462,12 @@ internal sealed class TranscriptPane
         body.AddRange(entry is { Kind: TranscriptKind.Assistant or TranscriptKind.Thinking } or { From: not null }
             ? FoldedMarkdown(entry, entry.Kind == TranscriptKind.Thinking ? Thought : Prose, lines)
             : Folded(entry, entry.Text, textColor, lines, ""));
-        return Layout.Builder.HStack(
+        var row = Layout.Builder.HStack(
                 Layout.Builder.Text(label, 12f, labelColor).WFixed(LabelWidth),
                 Layout.Builder.VStack([.. body]).WStar())
             .WithGap(10f);
+        // Claude's words and a prompt stand apart from the tool lines around them.
+        return entry.Kind is TranscriptKind.Assistant or TranscriptKind.User ? row.Pad(0f, ProseSpace) : row;
     }
 
     // An entry's text, its first lines only until it is opened: the line saying how many more is what opens it, and
