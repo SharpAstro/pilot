@@ -341,6 +341,26 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             .BgHover(tint?.Hover ?? ButtonHover)
             .Follows(new HitResult.ButtonHit(action), _ => onClick());
 
+    /// <summary>
+    /// A button that is only a drawn mark, as the FITS viewer's toolbar draws its buttons: the icon says it better than the
+    /// word, and the <paramref name="tooltip"/> is the word, so nothing is lost to a reader who does not know the mark. Shares
+    /// <see cref="Pill"/>'s plumbing (the id, the click, the hand cursor, the lit background under the pointer). A
+    /// <paramref name="bare"/> one, a fold toggle in a row, has no fill of its own and takes <paramref name="hover"/> under the pointer.
+    /// </summary>
+    internal static Layout.Node IconPill(Layout.IconKind icon, string tooltip, string action, Action onClick, bool bare = false, RGBAColor32? color = null, RGBAColor32? hover = null)
+    {
+        var mark = Layout.Builder.Icon(icon, IconSize, color ?? Bright)
+            .Pad(bare ? 4f : 10f, 4f)
+            .WAuto();
+        return (bare ? mark : mark.Bg(Button))
+            .BgHover(hover ?? ButtonHover)
+            .Follows(new HitResult.ButtonHit(action), _ => onClick())
+            .WithTooltip(tooltip);
+    }
+
+    /// <summary>The side of an icon button's mark, design units: the font size of the pill beside it.</summary>
+    internal const float IconSize = 12f;
+
     /// <summary>A choice's label with what its checks say: <c>Merge</c>, <c>Merge · checks running</c>, <c>Merge · checks failed</c>.</summary>
     internal static string StatusLabel(CardChoice choice) => choice.Status switch
     {

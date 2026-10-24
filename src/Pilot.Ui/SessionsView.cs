@@ -711,10 +711,14 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         }
         var open = _subagentsOpen.Contains(line.Key);
         var working = subagents.Count(s => s.Working);
-        var label = $"{(open ? "▾" : "▸")} {subagents.Length} {(subagents.Length == 1 ? "subagent" : "subagents")}{(working > 0 ? $", {working} working" : "")}";
+        var label = $"{subagents.Length} {(subagents.Length == 1 ? "subagent" : "subagents")}{(working > 0 ? $", {working} working" : "")}";
+        var colour = working > 0 ? Working : Dim;
         return Layout.Builder.HStack(
             name.WAuto(),
-            Layout.Builder.Text(label, 12f, working > 0 ? Working : Dim).WAuto().BgHover(RowHoverBg)
+            Layout.Builder.HStack(
+                    Layout.Builder.Icon(open ? Layout.IconKind.CaretDown : Layout.IconKind.CaretRight, color: colour),
+                    Layout.Builder.Text(label, 12f, colour).WAuto())
+                .WithGap(4f).WAuto().BgHover(RowHoverBg)
                 .Follows(new HitResult.ButtonHit($"session:{line.Key}:subagents"), _ => ToggleSubagents(line.Key)),
             Layout.Builder.Spacer().WStar()).WithGap(8f);
     }
