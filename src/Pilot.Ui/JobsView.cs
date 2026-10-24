@@ -453,11 +453,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         return columns;
     }
 
-    /// <summary>
-    /// A cell's content at the top of the cell: a table row's cells are as tall as the row, and a line of text would
-    /// otherwise sit in the middle of it.
-    /// </summary>
-    private static Layout.Node Top(Layout.Node content) => Layout.Builder.VStack(content, Layout.Builder.Spacer().HStar());
+    private static Layout.Node Top(Layout.Node content) => ListTable.Top(content);
 
     private static RGBAColor32 ColorOf(JobState state) =>
         state switch { JobState.Running => Running, JobState.Queued => Queued, JobState.Succeeded => Succeeded, JobState.Failed => Failed, _ => Dim };

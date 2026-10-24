@@ -251,7 +251,8 @@ internal sealed class PilotChrome<TSurface>
     /// </summary>
     public void KeepColumnWidths(GuiSettingsFile file, Action redraw)
     {
-        foreach (var table in new[] { Sessions.Table, Jobs.Table })
+        // Each under its own page's name: that is the key the file keeps its widths by.
+        foreach (var table in new[] { Sessions.Table, Jobs.Table, Flights.Table, Fleet.Table, Repos.Table })
         {
             file.Attach(table);
             table.Changed += redraw;

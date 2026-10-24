@@ -13,14 +13,13 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 {
     public const string ListId = "repos";
 
-    private const float ColumnHeaderHeight = 28f;
     private const float RowHeight = 54f;
     private const float WorktreeRowHeight = 46f;
     private const float Gutter = 16f;
-    private const float ColumnGap = 14f;
-    private const float StripeWidth = 4f;
     private const float IndentWidth = 16f;
     private const float NameMin = 190f;
+
+    // Column widths, as they are before a reader drags a divider.
     private const float NodeWidth = 64f;
     private const float MainWidth = 220f;
     private const float PullsWidth = 280f;
@@ -44,6 +43,9 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private static readonly (RGBAColor32 Bg, RGBAColor32 Hover) Lit = (new RGBAColor32(0x2f, 0x5a, 0x8c, 0xff), new RGBAColor32(0x3a, 0x6c, 0xa6, 0xff));
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
+
+    /// <summary>The page's table: its columns' widths, which a drag on a title's divider changes and the GUI keeps.</summary>
+    public ListTable Table { get; } = new("repos");
     private readonly HashSet<string> _open = new(StringComparer.Ordinal);
     private IReadOnlyList<RepoLine> _lines = [];
     private bool _marked;
@@ -239,39 +241,43 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             return Layout.Builder.Text(ShowAll ? "No repos under the node's roots" : "No tracked repos yet: a repo with a flight, a worktree or a flight's PR shows here; All repos lists the rest",
                 16f, Dim, TextAlign.Center).Stretch();
         }
+        var columns = Columns();
         var rows = new List<Layout.Node>(lines.Count);
         for (var i = 0; i < lines.Count; i++)
         {
-            rows.Add(Row(lines[i], i));
+            rows.Add(Row(lines[i], i, columns));
             if (IsOpen(lines[i]))
             {
-                rows.AddRange(lines[i].Worktrees.Select(w => WorktreeRow(lines[i], w)));
+                rows.AddRange(lines[i].Worktrees.Select(w => WorktreeRow(lines[i], w, columns)));
             }
         }
-        var columns = new List<Layout.Node>
-        {
-            Layout.Builder.Spacer().WFixed(StripeWidth),
-            Label("Repo · worktree").WStar(1f, NameMin),
-            Label("Checkout · diff").WFixed(MainWidth),
-            Optional(Label("Open PRs · session"), PullsWidth),
-            Optional(Label("Worktrees · action"), WorkWidth),
-            Optional(Label("Flight · PR"), LinkWidth),
-        };
-        if (_marked)
-        {
-            columns.Insert(2, Label("Node").WFixed(NodeWidth));
-        }
         return Layout.Builder.VStack(
-                Layout.Builder.HStack([.. columns]).WithGap(ColumnGap).PadX(8f).RowH(ColumnHeaderHeight),
+                Table.Header(columns, Scale),
                 Layout.Builder.VStack([.. rows]).WithScroll(_scroll).Stretch())
             .Pad(Gutter, 8f)
             .Stretch();
     }
 
-    private static Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);
-
-    /// <summary>A column a narrow window drops, header and rows together (see the flights view).</summary>
-    private static Layout.Node Optional(Layout.Node cell, float width) => cell.WStar(1f, 0f, width).CollapseBelow(width);
+    /// <summary>
+    /// The page's columns, which the repos' rows and the worktree sub-rows under them are both laid over, so a sub-row's
+    /// cells sit under the same resized columns: Node only while the page merges several nodes.
+    /// </summary>
+    private IReadOnlyList<ListColumn> Columns()
+    {
+        var columns = new List<ListColumn>
+        {
+            ListColumn.Star("Repo · worktree", NameMin),
+            ListColumn.Fixed("Checkout · diff", MainWidth),
+            ListColumn.Optional("Open PRs · session", PullsWidth),
+            ListColumn.Optional("Worktrees · action", WorkWidth),
+            ListColumn.Optional("Flight · PR", LinkWidth),
+        };
+        if (_marked)
+        {
+            columns.Insert(1, ListColumn.Fixed("Node", NodeWidth));
+        }
+        return columns;
+    }
 
     private static RGBAColor32 ChecksColor(string checks) => checks switch
     {
@@ -281,7 +287,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         _ => Dim,
     };
 
-    private Layout.Node Row(RepoLine line, int index)
+    private Layout.Node Row(RepoLine line, int index, IReadOnlyList<ListColumn> columns)
     {
         var tracked = line.Status.Tracked;
         var toggle = line.Worktrees.Count == 0
@@ -302,33 +308,28 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         }
         var cells = new List<Layout.Node>
         {
-            Layout.Builder.Spacer().Bg(line.Status.Dirty ? Waiting : tracked ? Link : Faint).WFixed(StripeWidth).HStar(),
             Layout.Builder.VStack(
-                    toggle.RowH(22f),
-                    Layout.Builder.HStack(
-                            Layout.Builder.Text(line.Status.GitHub ?? line.Status.Path, 11f, Dim).WStar(),
-                            // The wizard flies this window's own node, so a row of another node offers no New flight.
-                            OnNewFlight is null || line.Node is { Here: false } ? Layout.Builder.Spacer().WFixed(0f)
-                                : Layout.Builder.Text("New flight", 11f, Link, TextAlign.Center).Pad(6f, 0f).WAuto().BgHover(RowHoverBg)
-                                    .Follows(new HitResult.ButtonHit($"repo:{line.Key}:new-flight"), _ => OnNewFlight?.Invoke(line))
-                                    .WithTooltip("Start a flight on one of this repo's issues"))
-                        .WithGap(6f).RowH(18f))
-                .WStar(1f, NameMin),
+                toggle.RowH(22f),
+                Layout.Builder.HStack(
+                        Layout.Builder.Text(line.Status.GitHub ?? line.Status.Path, 11f, Dim).WStar(),
+                        // The wizard flies this window's own node, so a row of another node offers no New flight.
+                        OnNewFlight is null || line.Node is { Here: false } ? Layout.Builder.Spacer().WFixed(0f)
+                            : Layout.Builder.Text("New flight", 11f, Link, TextAlign.Center).Pad(6f, 0f).WAuto().BgHover(RowHoverBg)
+                                .Follows(new HitResult.ButtonHit($"repo:{line.Key}:new-flight"), _ => OnNewFlight?.Invoke(line))
+                                .WithTooltip("Start a flight on one of this repo's issues"))
+                    .WithGap(6f).RowH(18f)),
             Layout.Builder.VStack(
-                    Layout.Builder.Text(line.Main, 13f, line.Status.Dirty ? Waiting : Body).RowH(22f),
-                    Layout.Builder.Text(line.Status.Errors.FirstOrDefault() ?? "", 11f, Failing).RowH(18f))
-                .WFixed(MainWidth),
-            Optional(Layout.Builder.VStack([.. pulls]), PullsWidth),
-            Optional(Layout.Builder.Text(line.WorktreesText, 13f, Body), WorkWidth),
-            Optional(Layout.Builder.Text(line.Status.Flights == 0 ? "" : $"{line.Status.Flights} {(line.Status.Flights == 1 ? "flight" : "flights")}", 12f, Dim), LinkWidth),
+                Layout.Builder.Text(line.Main, 13f, line.Status.Dirty ? Waiting : Body).RowH(22f),
+                Layout.Builder.Text(line.Status.Errors.FirstOrDefault() ?? "", 11f, Failing).RowH(18f)),
+            Layout.Builder.VStack([.. pulls]),
+            ListTable.Top(Layout.Builder.Text(line.WorktreesText, 13f, Body)),
+            ListTable.Top(Layout.Builder.Text(line.Status.Flights == 0 ? "" : $"{line.Status.Flights} {(line.Status.Flights == 1 ? "flight" : "flights")}", 12f, Dim)),
         };
         if (_marked)
         {
-            cells.Insert(2, Layout.Builder.Text(line.Node?.Name ?? "", 13f, Body).WFixed(NodeWidth));
+            cells.Insert(1, ListTable.Top(Layout.Builder.Text(line.Node?.Name ?? "", 13f, Body)));
         }
-        var row = Layout.Builder.HStack([.. cells])
-            .WithGap(ColumnGap)
-            .Pad(8f, 6f)
+        var row = Table.Row(columns, Layout.Builder.Spacer().Bg(line.Status.Dirty ? Waiting : tracked ? Link : Faint), cells)
             .RowH(RowHeight)
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
@@ -358,7 +359,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     // One worktree of a repo, under it: its branch with its flight, the diff against the default branch, its session and what
     // it last said, what waits on the controller, and its PR. Not a row the arrows step through, but every link is a click.
-    private Layout.Node WorktreeRow(RepoLine repo, WorktreeLine worktree)
+    private Layout.Node WorktreeRow(RepoLine repo, WorktreeLine worktree, IReadOnlyList<ListColumn> columns)
     {
         var activityColor = worktree.Activity switch { "working" => Working, "waiting" => Waiting, "idle" => Body, _ => Dim };
         var session = worktree.Session is { } line
@@ -379,26 +380,22 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             : Layout.Builder.Text("no PR", 12f, Dim);
         var cells = new List<Layout.Node>
         {
-            Layout.Builder.Spacer().WFixed(StripeWidth),
             Layout.Builder.HStack(
-                    Layout.Builder.Spacer().WFixed(IndentWidth),
-                    Layout.Builder.VStack(
-                            Layout.Builder.Text($"↳ {worktree.Branch}", 13f, Body).RowH(22f),
-                            Layout.Builder.Text(worktree.Name, 11f, Dim).RowH(18f))
-                        .WStar())
-                .WStar(1f, NameMin),
-            Layout.Builder.Text(worktree.DiffStat, 13f, worktree.Status.Dirty ? Waiting : Body).WFixed(MainWidth),
-            Optional(session, PullsWidth),
-            Optional(Layout.Builder.Text(worktree.Action, 12f, worktree.CardWaiting ? Waiting : Dim), WorkWidth),
-            Optional(Layout.Builder.VStack(flight.RowH(20f), pull.RowH(18f)), LinkWidth),
+                Layout.Builder.Spacer().WFixed(IndentWidth),
+                Layout.Builder.VStack(
+                        Layout.Builder.Text($"↳ {worktree.Branch}", 13f, Body).RowH(22f),
+                        Layout.Builder.Text(worktree.Name, 11f, Dim).RowH(18f))
+                    .WStar()),
+            ListTable.Top(Layout.Builder.Text(worktree.DiffStat, 13f, worktree.Status.Dirty ? Waiting : Body)),
+            session,
+            ListTable.Top(Layout.Builder.Text(worktree.Action, 12f, worktree.CardWaiting ? Waiting : Dim)),
+            Layout.Builder.VStack(flight.RowH(20f), pull.RowH(18f)),
         };
         if (_marked)
         {
-            cells.Insert(2, Layout.Builder.Text("", 12f, Dim).WFixed(NodeWidth));
+            cells.Insert(1, ListTable.Top(Layout.Builder.Text("", 12f, Dim)));
         }
-        return Layout.Builder.HStack([.. cells])
-            .WithGap(ColumnGap)
-            .Pad(8f, 4f)
+        return Table.Row(columns, Layout.Builder.Spacer(), cells, padY: 4f)
             .RowH(WorktreeRowHeight)
             .Bg(WorktreeBg)
             .BgHover(RowHoverBg);

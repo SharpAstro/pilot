@@ -119,7 +119,7 @@ internal sealed partial class FlightsView<TSurface>
         var body = Layout.Builder.VStack([.. rows])
             .Pad(10f, 8f)
             .Stretch();
-        return Layout.Builder.HStack(Layout.Builder.Spacer().Bg(color).WFixed(StripeWidth).HStar(), body)
+        return Layout.Builder.HStack(Layout.Builder.Spacer().Bg(color).WFixed(ListTable.StripeWidth).HStar(), body)
             .Bg(index == Selected ? RowFocusBg : PanelBg)
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)

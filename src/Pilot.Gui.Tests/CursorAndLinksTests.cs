@@ -37,10 +37,13 @@ public sealed class CursorAndLinksTests
     private static PilotChrome<RgbaImage> NewChrome(RgbaImageRenderer renderer) =>
         new(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
 
+    // A table's column dividers are buttons too, which the pointer marks as a resize and not as a link.
+    private static bool IsLink(ClickableRegion r) => r.Result is HitResult.ButtonHit b && !b.Action.Contains(":table:divider:", StringComparison.Ordinal);
+
     private static void ShouldPointAtButtonsOnly(List<ClickableRegion> regions)
     {
-        regions.ShouldContain(r => r.Result is HitResult.ButtonHit);
-        regions.Where(r => r.Result is HitResult.ButtonHit).ShouldAllBe(r => r.Cursor == CursorKind.Pointer);
+        regions.ShouldContain(r => IsLink(r));
+        regions.Where(IsLink).ShouldAllBe(r => r.Cursor == CursorKind.Pointer);
         regions.Where(r => r.Result is HitResult.ListItemHit).ShouldAllBe(r => r.Cursor == null);
     }
 
