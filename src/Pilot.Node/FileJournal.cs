@@ -14,18 +14,26 @@ namespace Pilot.Node;
 /// <item><description><c>snapshot.json</c>: the state as of a sequence number, replaced whole and atomically (written
 /// beside, then moved over), so a crash leaves the old one or the new one, never half of either.</description></item>
 /// <item><description><c>journal.jsonl</c>: the deltas after that snapshot, one per line, appended and flushed as each
-/// is made. A line a crash cut short is the last one, and is dropped on load.</description></item>
+/// is made. A line a crash cut short is the last one, without its newline, and is dropped on load (the journal as it
+/// was is kept beside it first, as <c>.cut-&lt;seq&gt;</c>). Any other line this build cannot read is a record written
+/// by another build, never a cut: the load refuses and leaves the file as it is.</description></item>
 /// <item><description><c>blackbox.jsonl</c>: one line per command result, kept whole, never compacted: when, who, the
 /// verb and target, and what became of it.</description></item>
 /// </list>
-/// <para>Compaction folds the journal into a new snapshot once it holds <c>maxDeltas</c>: the snapshot is written
-/// first, then the journal emptied, so a crash between the two leaves deltas the load skips as already in the
-/// snapshot.</para>
+/// <para>Compaction folds the journal into a new snapshot once it holds <c>maxDeltas</c>. It first keeps
+/// <c>journal.jsonl</c> and <c>snapshot.json</c> as <c>.bak-&lt;seq&gt;</c> (the last <see cref="KeptBackups"/> of each),
+/// then writes the snapshot beside, fsyncs it and moves it into place, and only then empties the journal: a failure
+/// before the move leaves the journal whole, and a crash between the move and the emptying leaves deltas the load skips
+/// as already in the snapshot. A compaction that fails is not the append's failure (its delta is already journaled):
+/// it is tried again after another <c>maxDeltas</c>, and <see cref="CompactionError"/> says why it failed.</para>
 /// </remarks>
 public sealed class FileJournal : INodeJournal, IDisposable
 {
     /// <summary>How many deltas the journal holds after its snapshot before compacting them into a new one.</summary>
     public const int DefaultMaxDeltas = 4096;
+
+    /// <summary>How many <c>.bak-&lt;seq&gt;</c> copies of the journal, and of the snapshot, a compaction keeps.</summary>
+    public const int KeptBackups = 3;
 
     public const string SnapshotFile = "snapshot.json";
     public const string JournalFile = "journal.jsonl";
@@ -39,12 +47,14 @@ public sealed class FileJournal : INodeJournal, IDisposable
     private FileStream? _journal;
     private FileStream? _blackBox;
     private int _deltas;
+    private int _compactAt;
 
     public FileJournal(string folder, int maxDeltas = DefaultMaxDeltas)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(maxDeltas, 1);
         _folder = folder;
         _maxDeltas = maxDeltas;
+        _compactAt = maxDeltas;
         Directory.CreateDirectory(folder);
     }
 
@@ -53,6 +63,12 @@ public sealed class FileJournal : INodeJournal, IDisposable
     public string JournalPath => Path.Combine(_folder, JournalFile);
 
     public string BlackBoxPath => Path.Combine(_folder, BlackBoxFile);
+
+    /// <summary>Test seam: run once a compaction's snapshot is written beside and fsynced, before it is moved into place.</summary>
+    internal Action? BeforeSnapshotMove { get; set; }
+
+    /// <summary>Why the last compaction failed, or null when it did not; the journal is whole either way.</summary>
+    public Exception? CompactionError { get; private set; }
 
     public NodeHistory Load()
     {
@@ -64,28 +80,51 @@ public sealed class FileJournal : INodeJournal, IDisposable
         }
 
         var deltas = new List<NodeEvent>();
+        string? journalText = null;
+        string? cutTail = null;
         if (File.Exists(JournalPath))
         {
-            foreach (var line in File.ReadLines(JournalPath))
+            journalText = File.ReadAllText(JournalPath);
+            // Split on newlines, so the last piece is what follows the last one: empty for a journal that ends whole, else
+            // a line that was never ended, which is the only kind a crash cuts short.
+            var lines = journalText.Split('\n');
+            for (var i = 0; i < lines.Length; i++)
             {
+                var line = lines[i].TrimEnd('\r');
                 if (line.Length == 0)
                 {
                     continue;
                 }
 
-                NodeEvent? delta;
+                NodeEvent? delta = null;
+                var readable = true;
                 try
                 {
                     delta = JsonSerializer.Deserialize(line, PilotJsonContext.Default.NodeEvent);
                 }
                 catch (JsonException)
                 {
-                    // The line a crash cut short: only ever the last, since each is flushed whole before the next.
-                    break;
+                    readable = false;
+                }
+
+                if (!readable || delta is null)
+                {
+                    if (i == lines.Length - 1)
+                    {
+                        // The line a crash cut short: only ever the last, since each is flushed whole before the next.
+                        cutTail = lines[i];
+                        break;
+                    }
+
+                    // Not a cut: more follows it, or it was ended whole. Most likely a kind or a field of a newer build, and
+                    // dropping it would drop every record after it, so this build stops and the file stays as it is.
+                    throw new InvalidDataException(
+                        $"{JournalPath} line {i + 1} (after seq {(deltas.Count > 0 ? deltas[^1].Seq : snapshot?.Seq ?? 0)}) cannot be read by this build " +
+                        "and is not a line cut short by a crash; it may be from a newer build, so the journal is left as it is");
                 }
 
                 // Deltas the snapshot already holds: the journal was not emptied after a compaction that wrote it.
-                if (delta is null || delta is SnapshotEvent || (snapshot is not null && delta.Seq <= snapshot.Seq))
+                if (delta is SnapshotEvent || (snapshot is not null && delta.Seq <= snapshot.Seq))
                 {
                     continue;
                 }
@@ -107,8 +146,17 @@ public sealed class FileJournal : INodeJournal, IDisposable
         }
         _deltas = deltas.Count;
 
-        // A journal that ended in a cut line is rewritten clean, so the next append starts on a line of its own.
-        RewriteJournal(deltas);
+        if (cutTail is not null)
+        {
+            // Keep the journal as it was, then drop only the cut line: every whole line stays byte for byte as written.
+            File.WriteAllText($"{JournalPath}.cut-{_mirror.Seq}", journalText!);
+            Replace(JournalPath, journalText![..^cutTail.Length]);
+        }
+        else if (journalText is { Length: > 0 } && journalText[^1] != '\n')
+        {
+            // A whole last line that was never ended: end it, so the next append starts on a line of its own.
+            File.AppendAllText(JournalPath, "\n");
+        }
         return new NodeHistory(snapshot?.Stream, snapshot, deltas);
     }
 
@@ -118,6 +166,8 @@ public sealed class FileJournal : INodeJournal, IDisposable
         if (nodeEvent is SnapshotEvent snapshot)
         {
             _mirror.Apply(snapshot);
+            // A journal that holds lines the snapshot does not (a store whose snapshot was lost): keep them before they are emptied.
+            Backup(snapshot.Seq);
             WriteSnapshot(json.Span);
             RewriteJournal([]);
             return;
@@ -135,9 +185,21 @@ public sealed class FileJournal : INodeJournal, IDisposable
             Record(result);
         }
 
-        if (_deltas >= _maxDeltas)
+        if (_deltas >= _compactAt)
         {
-            Compact(nodeEvent.At);
+            // The delta is journaled, so the append has succeeded whatever becomes of the compaction: failing it here
+            // would have the state number the next event again, and the journal would hold two of one seq.
+            try
+            {
+                Compact(nodeEvent.At);
+                CompactionError = null;
+                _compactAt = _maxDeltas;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                CompactionError = e;
+                _compactAt = _deltas + _maxDeltas;
+            }
         }
     }
 
@@ -154,8 +216,42 @@ public sealed class FileJournal : INodeJournal, IDisposable
             Legs = [.. _mirror.Legs.Values],
             Cards = [.. _mirror.Cards.Values],
         };
+        Backup(snapshot.Seq);
         WriteSnapshot(JsonSerializer.SerializeToUtf8Bytes<NodeEvent>(snapshot, PilotJsonContext.Default.NodeEvent));
+        // Only now, with the snapshot in place, does it hold what the journal does, and the journal may be emptied.
         RewriteJournal([]);
+    }
+
+    /// <summary>Keeps the journal and the snapshot as they are as <c>.bak-&lt;seq&gt;</c>, and only the last <see cref="KeptBackups"/> of each.</summary>
+    private void Backup(long seq)
+    {
+        _journal?.Flush(flushToDisk: true);
+        foreach (var path in (string[])[JournalPath, SnapshotPath])
+        {
+            if (!File.Exists(path) || (path == JournalPath && new FileInfo(path).Length == 0))
+            {
+                continue;
+            }
+
+            // Opened to share with the journal's own writer, which is still open on it.
+            using (var source = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (var copy = new FileStream($"{path}.bak-{seq}", FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                source.CopyTo(copy);
+                copy.Flush(flushToDisk: true);
+            }
+
+            var prefix = path + ".bak-";
+            var surplus = Directory.EnumerateFiles(_folder, Path.GetFileName(prefix) + "*")
+                .Select(f => (File: f, Seq: long.TryParse(f[prefix.Length..], out var n) ? n : -1))
+                .Where(b => b.Seq >= 0)
+                .OrderByDescending(b => b.Seq)
+                .Skip(KeptBackups);
+            foreach (var (file, _) in surplus.ToList())
+            {
+                File.Delete(file);
+            }
+        }
     }
 
     /// <summary>One black-box line: the command's result as the stream sent it, with when it was.</summary>
@@ -186,7 +282,22 @@ public sealed class FileJournal : INodeJournal, IDisposable
             file.Write(json);
             file.Flush(flushToDisk: true);
         }
+        BeforeSnapshotMove?.Invoke();
         File.Move(temp, SnapshotPath, overwrite: true);
+    }
+
+    /// <summary>Replaces <paramref name="path"/> with <paramref name="text"/> atomically: written beside and fsynced, then moved over.</summary>
+    private void Replace(string path, string text)
+    {
+        _journal?.Dispose();
+        _journal = null;
+        var temp = path + ".tmp";
+        using (var file = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            file.Write(new UTF8Encoding(false).GetBytes(text));
+            file.Flush(flushToDisk: true);
+        }
+        File.Move(temp, path, overwrite: true);
     }
 
     private void RewriteJournal(IReadOnlyList<NodeEvent> deltas)
