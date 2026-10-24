@@ -19,8 +19,14 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
     /// <summary>The machine's prefix, as a refusal names it.</summary>
     public string Machine { get; set; } = "this node";
 
+    /// <summary>The other nodes of the fleet, which a create-flight in maintenance is routed to; null where there are none (a test's commander).</summary>
+    public IFleet? Fleet { get; set; }
+
     /// <summary>The quiet card a flight folded into another leaves in place of a landed one.</summary>
     public const string FoldedKind = "folded";
+
+    /// <summary>The Handled card that says a flight went to another node, as this one is in maintenance.</summary>
+    public const string RoutedKind = "routed";
 
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
     public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.Connect or Verbs.Land;
@@ -32,12 +38,13 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         {
             string? error = null;
             string? made = null;
+            string? way = null;
             try
             {
                 switch (command.Verb)
                 {
                     case Verbs.CreateFlight:
-                        made = await CreateAsync(command, cancellationToken);
+                        (made, way) = await CreateAsync(command, cancellationToken);
                         break;
                     case Verbs.Connect:
                         Connect(command);
@@ -51,7 +58,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             {
                 error = ex.Message;
             }
-            return state.Complete(command, error, made: made);
+            return state.Complete(command, error, way: way, made: made);
         }
         finally
         {
@@ -59,8 +66,11 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         }
     }
 
-    /// <summary>Makes the flight; returns its code, which the result carries as what it made.</summary>
-    private async Task<string> CreateAsync(CommandRequest command, CancellationToken cancellationToken)
+    /// <summary>
+    /// Makes the flight; returns its code, which the result carries as what it made, and where it went when it was made
+    /// on another node (<see cref="CommandResult.Way"/>), else null.
+    /// </summary>
+    private async Task<(string Code, string? Way)> CreateAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         if (!command.Target.StartsWith(Verbs.RepoTargetPrefix, StringComparison.Ordinal) || command.Target.Length == Verbs.RepoTargetPrefix.Length)
         {
@@ -72,11 +82,11 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             throw new FlightException("create-flight needs the issue number first, as in create-flight repo/<path> 1611 [title]");
         }
 
-        // Only a new flight is refused: flying and held flights, legs, reviews and landings never come through here. The next
-        // leg of this flight routes a flight to a node that takes it, instead of refusing, at this seam.
+        // Only a new flight is refused here: flying and held flights, legs, reviews and landings never come through here. In
+        // maintenance a node takes none of its own, and sends this one to a node of the fleet that takes it.
         if (Models.Maintenance)
         {
-            throw new FlightException($"{Machine} is in maintenance: it takes no new flights");
+            return await RouteAsync(command, issue, cancellationToken);
         }
 
         var path = command.Target[Verbs.RepoTargetPrefix.Length..];
@@ -108,7 +118,85 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             State = FlightState.Flying,
             CreatedAt = time.GetUtcNow(),
         });
-        return code;
+        return (code, null);
+    }
+
+    /// <summary>
+    /// A create-flight this node, in maintenance, does not take itself: made on the best willing node of the fleet instead
+    /// (<see cref="FleetChoice"/>), through that node's own create-flight with its own checkout of the repo. Says where it went
+    /// on a Handled card and in the result's way; with none willing, refuses naming each node and why it did not qualify.
+    /// </summary>
+    private async Task<(string Code, string? Way)> RouteAsync(CommandRequest command, int issue, CancellationToken cancellationToken)
+    {
+        var refusal = $"{Machine} is in maintenance: it takes no new flights";
+        var peers = Fleet?.Peers() ?? [];
+        if (peers.Count == 0)
+        {
+            throw new FlightException(refusal);
+        }
+
+        // The repo is found on another node by its GitHub remote: the paths are each machine's own.
+        var path = command.Target[Verbs.RepoTargetPrefix.Length..];
+        var repoPath = await planes.MainCheckoutAsync(path, cancellationToken);
+        var gitHub = repoPath is null ? null : RepoCatalog.GitHubOf(Path.Combine(repoPath, ".git"));
+        var now = time.GetUtcNow();
+        var facts = await Task.WhenAll(peers.Select(p => ReadPeerAsync(p, gitHub, now, cancellationToken)));
+        var verdicts = FleetChoice.Judge(facts.Select(f => f.Facts), gitHub);
+        var refused = new List<string>();
+        foreach (var verdict in verdicts.Where(v => v.Reason is null))
+        {
+            var peer = facts.Single(f => ReferenceEquals(f.Facts, verdict.Facts)).Peer;
+            var checkout = verdict.Facts.Checkout!;
+            CommandResult result;
+            try
+            {
+                result = await peer.SendAsync(command with { Target = Verbs.RepoTarget(checkout) }, cancellationToken);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or System.Net.WebSockets.WebSocketException)
+            {
+                refused.Add($"{verdict.Name}: unreachable ({ex.Message})");
+                continue;
+            }
+            if (result is not { Ok: true, Made: { Length: > 0 } code })
+            {
+                refused.Add($"{verdict.Name}: refused it ({result.Error ?? "it made no flight"})");
+                continue;
+            }
+            var way = $"{code} is flying on {verdict.Name}: {Machine} is in maintenance";
+            state.RaiseCard(CardBin.Handled, RoutedKind, Verbs.NodeTarget, way,
+                $"{Machine} is in maintenance, so issue #{issue} of {gitHub ?? path} went to {verdict.Name}, which has {checkout}");
+            return (code, way);
+        }
+
+        var why = verdicts.Where(v => v.Reason is not null).Select(v => $"{v.Name}: {v.Reason}").Concat(refused);
+        throw new FlightException($"{refusal}, and no node of the fleet takes it either: {string.Join("; ", why)}");
+    }
+
+    /// <summary>The peer's facts as far as they can be read: a peer that cannot be reached, or refuses the grant held for it, is judged for that.</summary>
+    private static async Task<(IFleetPeer Peer, FleetPeerFacts Facts)> ReadPeerAsync(IFleetPeer peer, string? gitHub, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (!peer.HasGrant)
+        {
+            return (peer, new FleetPeerFacts(peer.Endpoint, Reached: false, Granted: false, false, false, null, null, 0));
+        }
+        var name = peer.Endpoint;
+        try
+        {
+            var info = await peer.NodeAsync(cancellationToken);
+            name = info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Endpoint;
+            if (await peer.ReposAsync(cancellationToken) is not { } repos)
+            {
+                return (peer, new FleetPeerFacts(name, Reached: true, Granted: false, info.Maintenance, info.AcceptsFleetFlights, null, null, 0));
+            }
+            var load = await peer.LoadAsync(cancellationToken);
+            var checkout = gitHub is null ? null : repos.FirstOrDefault(r => string.Equals(r.GitHub, gitHub, StringComparison.OrdinalIgnoreCase))?.Path;
+            return (peer, new FleetPeerFacts(name, Reached: true, Granted: true, info.Maintenance, info.AcceptsFleetFlights, checkout,
+                FleetChoice.HeadroomOf(load.Usage, now), load.Flights.Count(f => f.State == FlightState.Flying)));
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or System.Net.WebSockets.WebSocketException)
+        {
+            return (peer, new FleetPeerFacts(name, Reached: false, Granted: true, false, false, null, null, 0));
+        }
     }
 
     private void Connect(CommandRequest command)

@@ -64,6 +64,10 @@ public static class NodeApp
             var flights = ActivatorUtilities.CreateInstance<FlightCommander>(services);
             flights.Models = services.GetRequiredService<RoleModels>();
             flights.Machine = options.Machine;
+            // The nodes this user's own grants reach (pilot connect): the file beside the node's data, as the clients keep it.
+            flights.Fleet = new HeldTokenFleet(Environment.GetEnvironmentVariable("PILOT_CLIENT_GRANTS") is { Length: > 0 } grants
+                ? grants
+                : Path.Combine(options.DataFolder, "client-grants.json"));
             return flights;
         });
         builder.Services.AddSingleton<RepoCatalog>();
