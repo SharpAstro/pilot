@@ -59,9 +59,11 @@ internal sealed class PilotChrome<TSurface>
 
     private readonly Renderer<TSurface> _renderer;
 
-    public PilotChrome(Renderer<TSurface> renderer, SessionsView<TSurface> sessions)
+    /// <param name="playFile">Where the In play / Everything choice is kept across a restart (<see cref="PlayFilter.DefaultFile"/>); null keeps it in memory.</param>
+    public PilotChrome(Renderer<TSurface> renderer, SessionsView<TSurface> sessions, string? playFile = null)
     {
         _renderer = renderer;
+        Play = new PlayFilter(playFile);
         Sessions = sessions;
         Flights = new FlightsView<TSurface>(renderer);
         Jobs = new JobsView<TSurface>(renderer);
@@ -105,8 +107,8 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>Which nodes the window shows (<see cref="FleetPages.Merge"/>): all by default, kept across pages for the window's life.</summary>
     public NodeFilter Nodes { get; } = new();
 
-    /// <summary>Whether the pages show only what is in play (the default) or everything: kept across pages for the window's life.</summary>
-    public PlayFilter Play { get; } = new();
+    /// <summary>Whether the pages show only what is in play (the default) or everything: kept across pages for the window's life, and across a restart when the chrome was given a file.</summary>
+    public PlayFilter Play { get; }
 
     /// <summary>The Home page: what flies, what waits on the controller, and a chip for each thing.</summary>
     public HomeView<TSurface> Home { get; }
@@ -171,7 +173,7 @@ internal sealed class PilotChrome<TSurface>
         Cards.OnTranscript = (card, line) =>
         {
             (show ?? Show)(PilotPage.Sessions);
-            Sessions.Transcript.Open(line, card.At);
+            OpenTranscript(line, card.At);
         };
         // Home's chips open the thing's own page: a flight its page, a session its transcript, a job its row.
         Home.OnFlight = flight =>
@@ -182,7 +184,7 @@ internal sealed class PilotChrome<TSurface>
         Home.OnSession = line =>
         {
             (show ?? Show)(PilotPage.Sessions);
-            Sessions.Transcript.Open(line, line.Row.StartedAt);
+            OpenTranscript(line, line.Row.StartedAt);
         };
         Home.OnJob = job =>
         {
@@ -198,7 +200,7 @@ internal sealed class PilotChrome<TSurface>
             if (sessions().Lines.FirstOrDefault(l => l.Row.Id == job.Owner) is { } line)
             {
                 (show ?? Show)(PilotPage.Sessions);
-                Sessions.Transcript.Open(line, job.QueuedAt ?? job.StartedAt);
+                OpenTranscript(line, job.QueuedAt ?? job.StartedAt);
             }
         };
     }
@@ -220,8 +222,15 @@ internal sealed class PilotChrome<TSurface>
         Repos.OnSession = line =>
         {
             (show ?? Show)(PilotPage.Sessions);
-            Sessions.Transcript.Open(line);
+            OpenTranscript(line, null);
         };
+    }
+
+    // A jump to a session shows its row whatever In play says, the page naming it as outside In play, until the user moves off it.
+    private void OpenTranscript(SessionLine line, DateTimeOffset? at)
+    {
+        Sessions.Pin(line);
+        Sessions.Transcript.Open(line, at);
     }
 
     /// <summary>

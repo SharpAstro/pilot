@@ -85,6 +85,9 @@ internal sealed record JobsScreen(IReadOnlyList<JobLine> Lines, string Source, D
     /// <summary>What In play left out, named (<c>12 finished hidden</c>); null while nothing is hidden.</summary>
     public string? Hidden { get; init; }
 
+    /// <summary>The job a jump opened that In play would have left out, named; null while there is none.</summary>
+    public string? Outside { get; init; }
+
     /// <summary>The count without what is hidden: <c>3 jobs · 1 running · 1 queued</c>.</summary>
     public string Counts
     {
@@ -104,12 +107,15 @@ internal sealed record JobsScreen(IReadOnlyList<JobLine> Lines, string Source, D
     /// The jobs in play: running and queued, and what finished in the last <see cref="PlayFilter.JobsFinished"/> before
     /// <see cref="AsOf"/>, so a result just in is still seen.
     /// </summary>
-    public JobsScreen InPlay()
+    /// <param name="keep">The key of a row to show whatever its state (a jump to it), which the page says is outside In play.</param>
+    public JobsScreen InPlay(string? keep = null)
     {
         var since = AsOf - PlayFilter.JobsFinished;
-        var kept = Lines.Where(l => l.Live || (l.Row.EndedAt ?? l.Row.StartedAt) >= since).ToList();
+        bool Moves(JobLine l) => l.Live || (l.Row.EndedAt ?? l.Row.StartedAt) >= since;
+        var kept = Lines.Where(l => Moves(l) || l.Key == keep).ToList();
         var hidden = Lines.Count - kept.Count;
-        return this with { Lines = kept, Hidden = hidden > 0 ? $"{hidden} finished hidden" : null };
+        var outside = keep is null ? null : Lines.FirstOrDefault(l => l.Key == keep && !Moves(l));
+        return this with { Lines = kept, Hidden = hidden > 0 ? $"{hidden} finished hidden" : null, Outside = outside is null ? null : $"{outside.Id} is outside In play" };
     }
 }
 
@@ -224,17 +230,24 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>The node of the selected job, the one a command on it (Cancel) goes to; null is this window's.</summary>
     public NodeMark? FollowingNode { get; private set; }
 
+    // The job a jump selected, shown whatever In play says until the selection moves off it; and the keys the last frame showed, in order.
+    private string? _pinned;
+    private IReadOnlyList<string> _shown = [];
+
     /// <summary>The selected job's index, or -1.</summary>
     public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
     /// <summary>Puts the selection on <paramref name="job"/>'s row of <paramref name="screen"/>, as a click on it does.</summary>
     public void Select(JobsScreen screen, JobLine job)
     {
+        // A job that is done is shown too, whatever In play says, until the selection moves off it.
+        _pinned = job.Key;
         // The index is into the rows the page shows, so into the jobs in play while it shows only those.
         if (Play is { InPlay: true })
         {
-            screen = screen.InPlay();
+            screen = screen.InPlay(_pinned);
         }
+        _shown = [.. screen.Lines.Select(l => l.Key)];
         var index = screen.Lines.ToList().FindIndex(l => l.Key == job.Key);
         if (index >= 0)
         {
@@ -270,9 +283,13 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// </summary>
     internal Layout.Node Tree(JobsScreen screen)
     {
+        if (_pinned is not null && !(Selected >= 0 && Selected < _shown.Count && _shown[Selected] == _pinned))
+        {
+            _pinned = null;
+        }
         if (Play is { InPlay: true })
         {
-            screen = screen.InPlay();
+            screen = screen.InPlay(_pinned);
         }
         if (screen.Lines.Count == 0)
         {
@@ -284,6 +301,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
         _count = screen.Lines.Count;
         var selected = Selected >= 0 && Selected < screen.Lines.Count ? screen.Lines[Selected] : null;
+        _shown = [.. screen.Lines.Select(l => l.Key)];
         Follow(selected);
         return Build(screen, selected);
     }
@@ -438,7 +456,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                         About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f)])
                     .WithGap(12f)
                     .RowH(32f),
-                Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC", 12f, Dim).RowH(20f))
+                Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC{(screen.Outside is { } outside ? $" · {outside}" : "")}", 12f, Dim).RowH(20f))
             .Pad(Gutter, 6f)
             .Bg(HeaderBg)
             .WStar()

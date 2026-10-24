@@ -100,6 +100,9 @@ internal sealed record FlightsScreen(IReadOnlyList<FlightLine> Lines, string Sou
     /// <summary>What In play left out, named (<c>29 landed hidden</c>); null while nothing is hidden.</summary>
     public string? Hidden { get; init; }
 
+    /// <summary>The flight a jump opened that In play would have left out, named; null while there is none.</summary>
+    public string? Outside { get; init; }
+
     /// <summary>The count without what is hidden: <c>10 flights · 6 flying · 4 held</c>.</summary>
     public string Counts
     {
@@ -119,11 +122,14 @@ internal sealed record FlightsScreen(IReadOnlyList<FlightLine> Lines, string Sou
     /// The flights in play: flying and held. The landed go; one a flight shown waits for stands as its ghost on the canvas,
     /// which is drawn for any connected code the page does not have.
     /// </summary>
-    public FlightsScreen InPlay()
+    /// <param name="keep">The code of a flight to show whatever its state (a jump to it), which the page says is outside In play.</param>
+    public FlightsScreen InPlay(string? keep = null)
     {
-        var kept = Lines.Where(l => l.Row.State is FlightState.Flying or FlightState.Held).ToList();
+        static bool Moves(FlightLine l) => l.Row.State is FlightState.Flying or FlightState.Held;
+        var kept = Lines.Where(l => Moves(l) || l.Code == keep).ToList();
         var hidden = Lines.Count - kept.Count;
-        return this with { Lines = kept, Hidden = hidden > 0 ? $"{hidden} landed hidden" : null };
+        var outside = keep is null ? null : Lines.FirstOrDefault(l => l.Code == keep && !Moves(l));
+        return this with { Lines = kept, Hidden = hidden > 0 ? $"{hidden} landed hidden" : null, Outside = outside is null ? null : $"{outside.Code} is outside In play" };
     }
 }
 
@@ -389,13 +395,25 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     {
         // In play, the landed are left out of the table; an open flight's page still finds its flight among them.
         var whole = screen;
+        // A flight a jump opened is shown too, until its page is shut and the selection has moved off it.
+        if (_pinned is not null && _openCode != _pinned && !_selectPinned
+            && !(Selected >= 0 && Selected < _screen.Lines.Count && _screen.Lines[Selected].Code == _pinned))
+        {
+            _pinned = null;
+        }
         if (Play is { InPlay: true })
         {
-            screen = screen.InPlay();
+            screen = screen.InPlay(_pinned);
         }
         if (screen.Lines.Count == 0)
         {
             ListCursor.Close();
+        }
+        else if (_selectPinned && screen.Lines.ToList().FindIndex(l => l.Code == _pinned) is >= 0 and var pinnedAt)
+        {
+            // Back from its page, the list has it selected.
+            _selectPinned = false;
+            ListCursor.Open(ListId, pinnedAt, screen.Lines.Count);
         }
         else if (!ListCursor.IsOpen || _count != screen.Lines.Count)
         {
@@ -640,7 +658,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                     About is { } about ? about.Button(NightOrNull) : Layout.Builder.Spacer().WFixed(0f)])
                 .WithGap(12f)
                 .RowH(32f),
-            Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC", 12f, Dim).RowH(20f),
+            Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC{(screen.Outside is { } outside ? $" · {outside}" : "")}", 12f, Dim).RowH(20f),
         };
         if (Lan is { } lan)
         {

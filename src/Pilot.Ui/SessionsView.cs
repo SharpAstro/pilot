@@ -16,6 +16,9 @@ internal sealed record SessionsScreen(IReadOnlyList<SessionLine> Lines, string S
     /// <summary>What In play left out, named (<c>5 ended hidden</c>); null while nothing is hidden.</summary>
     public string? Hidden { get; init; }
 
+    /// <summary>The session a jump opened that In play would have left out, named; null while there is none.</summary>
+    public string? Outside { get; init; }
+
     /// <summary>The count without what is hidden: <c>6 sessions · 4 live · 1 waiting on you</c>.</summary>
     public string Counts
     {
@@ -35,11 +38,14 @@ internal sealed record SessionsScreen(IReadOnlyList<SessionLine> Lines, string S
     /// The sessions in play: working, waiting and idle. The ended and failed go; an archived row is the archive toggle's to
     /// show or hide, so it is neither kept nor counted here.
     /// </summary>
-    public SessionsScreen InPlay()
+    /// <param name="keep">The key of a row to show whatever its state (a jump to it), which the page says is outside In play.</param>
+    public SessionsScreen InPlay(string? keep = null)
     {
-        var kept = Lines.Where(l => l.Row.Archived || l.Row.State is Pilot.Contracts.SessionState.Working or Pilot.Contracts.SessionState.Waiting or Pilot.Contracts.SessionState.Idle).ToList();
+        static bool Moves(SessionLine l) => l.Row.Archived || l.Row.State is Pilot.Contracts.SessionState.Working or Pilot.Contracts.SessionState.Waiting or Pilot.Contracts.SessionState.Idle;
+        var kept = Lines.Where(l => Moves(l) || l.Key == keep).ToList();
         var hidden = Lines.Count - kept.Count;
-        return this with { Lines = kept, Hidden = hidden > 0 ? $"{hidden} ended hidden" : null };
+        var outside = keep is null ? null : Lines.FirstOrDefault(l => l.Key == keep && !Moves(l));
+        return this with { Lines = kept, Hidden = hidden > 0 ? $"{hidden} ended hidden" : null, Outside = outside is null ? null : $"{outside.Name} is outside In play" };
     }
 }
 
@@ -164,6 +170,9 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     /// <summary>The window's In play / Everything choice, whose pills sit beside the node pills; null shows everything, as a capture does.</summary>
     public PlayFilter? Play { get; set; }
+
+    // The session a jump opened, shown whatever In play says until the selection moves off it.
+    private string? _pinned;
 
     // The rows before In play and the archive toggle left any out: an open transcript still finds its session among them.
     private IReadOnlyList<SessionLine> _whole = [];
@@ -294,9 +303,13 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         {
             screen = screen with { Lines = [.. screen.Lines.Where(l => !l.Row.Archived)] };
         }
+        if (_pinned is not null && SelectedId != _pinned)
+        {
+            _pinned = null;
+        }
         if (Play is { InPlay: true })
         {
-            screen = screen.InPlay();
+            screen = screen.InPlay(_pinned);
         }
         _lines = screen.Lines;
         _marked = screen.Lines.Any(l => l.Node is not null);
@@ -340,6 +353,16 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             : $"Say to {screen.Lines[Selected].Name} · Enter sends";
 
         return Build(screen);
+    }
+
+    /// <summary>
+    /// Selects <paramref name="line"/> and keeps its row on the page whatever In play says (the page names it as outside In
+    /// play), until the selection moves off it: a jump to a session that has ended.
+    /// </summary>
+    public void Pin(SessionLine line)
+    {
+        _pinned = line.Key;
+        SelectedId = line.Key;
     }
 
     /// <summary>
@@ -538,7 +561,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                         .. HeaderButtons()])
                     .WithGap(12f)
                     .RowH(32f),
-                Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC{(screen.Account is { } account ? $" · {account}" : "")}{(screen.Usage is { } usage ? $" · usage {usage}" : "")}", 12f, Dim)
+                Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC{(screen.Account is { } account ? $" · {account}" : "")}{(screen.Usage is { } usage ? $" · usage {usage}" : "")}{(screen.Outside is { } outside ? $" · {outside}" : "")}", 12f, Dim)
                     .RowH(20f))
             .Pad(Gutter, 6f)
             .Bg(HeaderBg)
