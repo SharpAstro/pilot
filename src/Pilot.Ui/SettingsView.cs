@@ -40,11 +40,11 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
     private readonly Dictionary<string, TextInputState> _fields = new(StringComparer.Ordinal);
-    private readonly Lock _lock = new();
-    private SettingsPage? _page;
-    private GrantInfo[] _given = [];
-    private string[] _held = [];
-    private string? _problem;
+    // What the page has read, as one immutable record swapped whole: reads land on the pool, the render thread draws what
+    // it finds, and neither waits on the other.
+    private sealed record Seen(SettingsPage? Page, GrantInfo[] Given, string[] Held, string? Problem);
+
+    private Seen _read = new(null, [], [], null);
     private CancellationTokenSource? _reading;
     private DateTimeOffset _drawnAt;
 
@@ -64,16 +64,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     public Action<string>? Forget { get; set; }
 
     /// <summary>The grants given, as last read.</summary>
-    public GrantInfo[] Given
-    {
-        get
-        {
-            lock (_lock)
-            {
-                return _given;
-            }
-        }
-    }
+    public GrantInfo[] Given => Volatile.Read(ref _read).Given;
 
     /// <summary>Called when what the page shows changed, from whichever thread: the host redraws.</summary>
     public Action? Changed { get; set; }
@@ -85,16 +76,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     public AboutCard? About { get; set; }
 
     /// <summary>The page as last read, or null before the first read.</summary>
-    public SettingsPage? Page
-    {
-        get
-        {
-            lock (_lock)
-            {
-                return _page;
-            }
-        }
-    }
+    public SettingsPage? Page => Volatile.Read(ref _read).Page;
 
     public void Render(DateTimeOffset now, RectF32 bounds)
     {
@@ -107,13 +89,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     {
         _drawnAt = now;
         Read();
-        SettingsPage? page;
-        string? problem;
-        lock (_lock)
-        {
-            page = _page;
-            problem = _problem;
-        }
+        var read = Volatile.Read(ref _read);
+        var page = read.Page;
+        var problem = read.Problem;
         var body = page is null
             ? Layout.Builder.Text(problem is null ? (Load is null ? "settings are the node's: open pilot on a node" : "reading the node's settings…") : $"the node did not send its settings: {problem}", 13f, Dim).RowH(28f).Pad(Gutter, 8f)
             : Main(page);
@@ -160,18 +138,11 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         try
         {
             var page = await load(cancellationToken).ConfigureAwait(false);
-            lock (_lock)
-            {
-                _page = page;
-                _problem = null;
-            }
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { Page = page, Problem = null });
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
         {
-            lock (_lock)
-            {
-                _problem = ex.Message;
-            }
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { Problem = ex.Message });
         }
         await RefreshGrantsAsync(cancellationToken).ConfigureAwait(false);
         Changed?.Invoke();
@@ -192,30 +163,25 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             }
         }
         var held = LoadHeld?.Invoke();
-        lock (_lock)
-        {
-            if (given is not null)
-            {
-                _given = given;
-            }
-            if (held is not null)
-            {
-                _held = [.. held];
-            }
-        }
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { Given = given ?? read.Given, Held = held is null ? read.Held : [.. held] });
     }
 
     /// <summary>Drops the token held for <paramref name="endpoint"/> and shows the list without it at once.</summary>
     private void ForgetNode(string endpoint)
     {
-        Forget?.Invoke(endpoint);
-        var held = LoadHeld?.Invoke();
-        lock (_lock)
-        {
-            _held = held is null ? [.. _held.Where(h => !string.Equals(h, endpoint, StringComparison.OrdinalIgnoreCase))] : [.. held];
-        }
+        // At once in the list; the token file (Forget's write, and the list read back) on the pool.
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { Held = [.. read.Held.Where(h => !string.Equals(h, endpoint, StringComparison.OrdinalIgnoreCase))] });
         Said = $"forgot {endpoint}: its rows are watch-only until you Connect again";
         Changed?.Invoke();
+        _ = Task.Run(() =>
+        {
+            Forget?.Invoke(endpoint);
+            if (LoadHeld?.Invoke() is { } held)
+            {
+                System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { Held = [.. held] });
+            }
+            Changed?.Invoke();
+        });
     }
 
     /// <summary>Sends <paramref name="verb"/> and says what became of it, then reads the page again.</summary>
@@ -276,13 +242,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         {
             rows.Add(SettingRowNode(page.Settings[i], i));
         }
-        GrantInfo[] given;
-        string[] held;
-        lock (_lock)
-        {
-            given = _given;
-            held = _held;
-        }
+        var grants = Volatile.Read(ref _read);
+        var given = grants.Given;
+        var held = grants.Held;
         if (LoadGrants is not null || LoadHeld is not null)
         {
             rows.Add(Section("Grants", "who may command this node, and which nodes you may command"));

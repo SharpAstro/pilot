@@ -146,8 +146,10 @@ public sealed class SettingsPageTests
             await WaitAsync(() => { lock (sent) { return sent.Any(s => s.Verb == Verbs.RevokeGrant && s.Args.SequenceEqual(new[] { "g1" })); } });
             await WaitAsync(() => chrome.Settings.Given.Length == 0);
 
-            // Forget drops the token from the file; the page lists one node fewer.
+            // Forget drops the token from the file; the page lists one node fewer. The file is written off the render thread,
+            // so it is waited for.
             Click(regions, "settings:forget:le1.local:47731");
+            await WaitAsync(() => Pilot.Commands.NodeTargets.TokenFor("le1.local:47731", tokens) is null);
             forgotten.ShouldBe(["le1.local:47731"]);
             Pilot.Commands.NodeTargets.Granted(tokens).ShouldBe(["se2.local:47731"]);
             Pilot.Commands.NodeTargets.TokenFor("le1.local:47731", tokens).ShouldBeNull();

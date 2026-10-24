@@ -43,10 +43,10 @@ internal static class GuiSay
     /// <summary>Says <paramref name="text"/> to the row <paramref name="id"/>; returns what became of it, in words.</summary>
     /// <param name="answered">Told each envelope the node answers with, so a host can see a refused grant.</param>
     public static async Task<string> SendAsync(NodeClient client, string id, string text, CancellationToken cancellationToken, Action<ResponseEnvelope<CommandResult>>? answered = null) =>
-        (await SayAsync(client, id, text, cancellationToken, answered).ConfigureAwait(false)).Result;
+        (await SayAsync(client, id, text, cancellationToken, answered).ConfigureAwait(false)).Said;
 
     /// <summary>As <see cref="SendAsync"/>, and whether the node took it: what "Say to all shown" counts.</summary>
-    public static async Task<(bool Delivered, string Result)> SayAsync(NodeClient client, string id, string text, CancellationToken cancellationToken, Action<ResponseEnvelope<CommandResult>>? answered = null)
+    public static async Task<(bool Delivered, string Said)> SayAsync(NodeClient client, string id, string text, CancellationToken cancellationToken, Action<ResponseEnvelope<CommandResult>>? answered = null)
     {
         try
         {

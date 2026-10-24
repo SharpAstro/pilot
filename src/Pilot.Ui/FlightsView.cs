@@ -267,8 +267,13 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>The command bar's text: the CLI's commands without <c>pilot</c> (<c>leg start TIA1 parser</c>).</summary>
     public TextInputState CommandInput { get; } = new();
 
-    /// <summary>What the last commands said, newest last.</summary>
-    public List<string> CommandOutput { get; } = [];
+    /// <summary>
+    /// What the last commands said, newest last. Swapped whole, never changed in place: a command's answer is said from the
+    /// pool while the render thread reads the last lines, and the render thread never waits on anyone.
+    /// </summary>
+    public IReadOnlyList<string> CommandOutput => Volatile.Read(ref _commandOutput);
+
+    private System.Collections.Immutable.ImmutableList<string> _commandOutput = [];
 
     /// <summary>Runs a command typed in the bar, with the node of the row whose action prefilled it (null: this window's).</summary>
     public Func<string, NodeMark?, Task>? OnCommand { get; set; }
@@ -451,14 +456,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>Keeps the lines a command printed, for the bar to show its last few.</summary>
     public void Say(string text)
     {
-        foreach (var line in text.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        var lines = text.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _commandOutput, output =>
         {
-            CommandOutput.Add(line);
-        }
-        if (CommandOutput.Count > 200)
-        {
-            CommandOutput.RemoveRange(0, CommandOutput.Count - 200);
-        }
+            output = output.AddRange(lines);
+            return output.Count > 200 ? output.RemoveRange(0, output.Count - 200) : output;
+        });
     }
 
     public override bool HandleInput(InputEvent evt)
