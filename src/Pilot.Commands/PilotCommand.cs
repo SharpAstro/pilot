@@ -107,7 +107,17 @@ public static class PilotCommand
         // status, sessions
         var status = Action(new Command("status", "Flights, their legs and artifacts, open cards, and live sessions"), async (_, client, ct) =>
         {
-            await output.WriteAsync(Status(await SnapshotAsync(client, ct)));
+            var snapshot = await SnapshotAsync(client, ct);
+            var maintenance = false;
+            try
+            {
+                maintenance = (await client.GetNodeAsync(ct)).Maintenance;
+            }
+            catch (HttpRequestException)
+            {
+                // The node's own word on itself is a line more: the flights and sessions are what status is for.
+            }
+            await output.WriteAsync(Status(snapshot, maintenance: maintenance));
             return 0;
         });
         var sessions = Action(new Command("sessions", "Every Claude session on the machine"), async (_, client, ct) =>
@@ -839,9 +849,13 @@ public static class PilotCommand
     }
 
     /// <summary>The flights and their legs, a line each, and the live sessions.</summary>
-    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null)
+    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false)
     {
         var text = new System.Text.StringBuilder();
+        if (!newestOnly && code is null && maintenance)
+        {
+            text.AppendLine("maintenance  on: this node takes no new flights (pilot settings set maintenance off)");
+        }
         if (!newestOnly && code is null && snapshot.Usage?.Account is { } account)
         {
             text.AppendLine($"account  {account.Line()}");

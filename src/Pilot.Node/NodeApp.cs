@@ -59,7 +59,13 @@ public static class NodeApp
         builder.Services.AddSingleton<IGit, GitCli>();
         builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>()));
         builder.Services.AddSingleton<StopGate>();
-        builder.Services.AddSingleton<FlightCommander>();
+        builder.Services.AddSingleton(services =>
+        {
+            var flights = ActivatorUtilities.CreateInstance<FlightCommander>(services);
+            flights.Models = services.GetRequiredService<RoleModels>();
+            flights.Machine = options.Machine;
+            return flights;
+        });
         builder.Services.AddSingleton<RepoCatalog>();
         builder.Services.AddSingleton<RepoWatch>();
         builder.Services.AddHostedService(services => services.GetRequiredService<RepoWatch>());
@@ -273,7 +279,7 @@ public static class NodeApp
         var startedAt = DateTimeOffset.UtcNow;
         var version = typeof(NodeApp).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
-        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state) => Results.Json(
+        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models) => Results.Json(
             ResponseEnvelope<NodeInfo>.Ok(new NodeInfo
             {
                 WireVersion = NodeWire.Version,
@@ -285,6 +291,8 @@ public static class NodeApp
                 DataFolder = options.DataFolder,
                 SocketPath = options.SocketPath,
                 Stream = state.Stream,
+                Maintenance = models.Maintenance,
+                AcceptsFleetFlights = models.AcceptsFleetFlights,
                 Account = state.Usage()?.Account,
             }),
             PilotJsonContext.Default.ResponseEnvelopeNodeInfo));
@@ -392,10 +400,11 @@ public static class NodeApp
             }
 
             // From the LAN, under its grant: named by it, so it can pass for nobody here (the watchtower least), and never
-            // handing out or taking away grants, nor changing the node's settings or setup, which this machine's person does.
+            // handing out or taking away grants, nor changing the node's settings or setup, which this machine's person does:
+            // but for maintenance, which the Fleet row menu puts a node in or out of from anywhere.
             if (context.Items[NodeLan.GrantLabelKey] is string grant)
             {
-                if (command.Verb is Verbs.AnswerGrant or Verbs.RevokeGrant or Verbs.Set or Verbs.Setup)
+                if (command.Verb is Verbs.AnswerGrant or Verbs.RevokeGrant or Verbs.Set or Verbs.Setup && !MaintenanceSwitch(command))
                 {
                     return Refuse($"{command.Verb} is for this machine only");
                 }
@@ -411,6 +420,11 @@ public static class NodeApp
                 : Results.Json(ResponseEnvelope<CommandResult>.Fail(result.Error ?? "refused", 400, result), PilotJsonContext.Default.ResponseEnvelopeCommandResult, statusCode: 400);
         });
     }
+
+    /// <summary>Whether <paramref name="command"/> is <c>set node maintenance on|off</c>, the one setting a LAN grant may change.</summary>
+    internal static bool MaintenanceSwitch(CommandRequest command) =>
+        command.Verb == Verbs.Set && command.Args is [{ } key, { } value] && key.Trim().Equals(NodeSettings.MaintenanceKey, StringComparison.OrdinalIgnoreCase)
+        && value.Trim().ToLowerInvariant() is "on" or "off";
 
     private static void MapGrantRoutes(WebApplication app)
     {

@@ -148,6 +148,30 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>Whether the node takes no new flight (<see cref="NodeSettings.MaintenanceKey"/>): on while the setting says so, at once.</summary>
+    public bool Maintenance
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.Maintenance ?? false;
+            }
+        }
+    }
+
+    /// <summary>Whether the node is willing to take a flight another node routes to it (<see cref="NodeSettings.AcceptFleetFlightsKey"/>); off unless set.</summary>
+    public bool AcceptsFleetFlights
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.AcceptFleetFlights ?? false;
+            }
+        }
+    }
+
     /// <summary>The share of the account's 7-day window, in percent, past which a start rings once per window
     /// (<see cref="NodeSettings.WeekLimitKey"/>); 90 unless the settings say otherwise. It rings and holds nothing.</summary>
     public double WeekLimit
