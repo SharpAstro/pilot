@@ -131,6 +131,18 @@ public sealed partial class LegCommander(
             await AdvanceAsync(FlightOf(command.Target), cancellationToken);
         }
 
+        // A merge refused as not mergeable is never left as a Merge button that refuses again: the card says it conflicts,
+        // and the plane is rebased onto its base and reviewed afresh, which offers the merge again (SE1, 2026-10-24: a
+        // Merge pressed over and over on #195 and #197, each refusal seen nowhere but a log).
+        if (error is not null && command.Verb == Verbs.Merge && Conflicts(error))
+        {
+            var code = FlightOf(command.Target).Code;
+            MarkMerge(command.Target, ChoiceStatus.Conflicting);
+            error = await RebaseOntoBaseAsync(code, cancellationToken) is { } why
+                ? $"{error}; {why}{(await ConflictsAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : ": its last leg goes around to resolve it")}"
+                : $"{error}: it is being rebased onto its base and reviewed afresh, and the merge is offered again once that passes";
+        }
+
         // A merge lands its flight through the flight verbs' own lock, after this one's is let go.
         if (error is null && command.Verb == Verbs.Merge)
         {
@@ -759,7 +771,24 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"{flight.Code}'s plane holds {unpushed} commit{(unpushed == 1 ? "" : "s")} past #{pr.Number}'s head: open the PR again (flight pr) to push {(unpushed == 1 ? "it" : "them")}, and review what is new before it lands");
         }
+        if (string.Equals(pr.Mergeable, "CONFLICTING", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException($"#{pr.Number} conflicts with its base, so GitHub cannot merge it");
+        }
         await github.MergeAsync(flight.RepoPath, pr.Number, pr.Head, method, cancellationToken);
+    }
+
+    // A merge refused because the PR no longer merges into its base (main moved under it).
+    private static bool Conflicts(string error) =>
+        error.Contains("conflicts with its base", StringComparison.OrdinalIgnoreCase) || error.Contains("not mergeable", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Marks the Merge choice of every open card about <paramref name="target"/> with <paramref name="status"/>, for every client to show.</summary>
+    public void MarkMerge(string target, string? status)
+    {
+        foreach (var card in state.Cards(openOnly: true).Where(c => c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Target == target)))
+        {
+            state.UpdateChoices(card.Id, [.. card.Choices.Select(c => c.Verb == Verbs.Merge && c.Target == target ? c with { Status = status } : c)]);
+        }
     }
 
     private async Task OpenPrAsync(CommandRequest command, CancellationToken cancellationToken)

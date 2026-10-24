@@ -145,9 +145,34 @@ public sealed class FlyingTests
     [InlineData(ChoiceStatus.Passing, "Merge")]
     [InlineData(ChoiceStatus.Pending, "Merge · checks running")]
     [InlineData(ChoiceStatus.Failing, "Merge · checks failed")]
+    [InlineData(ChoiceStatus.Conflicting, "Merge · conflicts with main")]
     public void AMergeSaysWhereItsChecksStand(string? status, string label)
     {
         CardsView<RgbaImage>.StatusLabel(new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/X", Status = status }).ShouldBe(label);
+    }
+
+    /// <summary>
+    /// A button the node refused says why on its card, until a press goes through: a Merge on a PR GitHub would not merge
+    /// was pressed over and over with the refusal seen only in a log (SE1, 2026-10-24).
+    /// </summary>
+    [Fact]
+    public void ARefusedButtonSaysWhyOnItsCard()
+    {
+        using var renderer = new RgbaImageRenderer(460, 800);
+        var cards = new CardsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        var card = new CardRow
+        {
+            Id = "c144", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/PIL173", Title = "PIL173's PR #195 is ready to merge",
+            Choices = [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/PIL173", Status = ChoiceStatus.Conflicting }],
+            At = Live.At, State = CardState.Open,
+        };
+
+        cards.NoteRefused("c144", "#195 conflicts with its base, so GitHub cannot merge it: it is being rebased onto its base and reviewed afresh");
+        cards.Render(CardsScreen.From([card], []), new RectF32(0, 0, 460, 800));
+
+        cards.RefusedOn("c144").ShouldNotBeNull().ShouldContain("conflicts with its base");
+        cards.NoteRefused("c144", null);
+        cards.RefusedOn("c144").ShouldBeNull();
     }
 
     [Fact]
