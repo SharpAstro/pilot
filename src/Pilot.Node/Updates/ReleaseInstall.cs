@@ -26,12 +26,14 @@ public sealed record ReleaseLayout(string Product, IReadOnlyList<string> Require
 /// <list type="number">
 /// <item><see cref="StageAsync"/> downloads the zip for the install's runtime into <c>update/</c> beside it, checks it
 /// against the SHA-256 GitHub lists, and unpacks it there.</item>
-/// <item><see cref="Swap"/> renames each file it replaces to <c>&lt;name&gt;~old</c> (a running executable may be
-/// renamed, never overwritten, on Windows; on Linux a rename leaves the running one its inode) and copies the new one
-/// in, the marker last, so a swap that stops halfway is put back and never claims the new version. The old release's
-/// files the new one lacks are renamed aside too.</item>
-/// <item>The caller restarts what it runs. <see cref="CleanAside"/>, at the next start, deletes the aside files no
-/// process holds any more, and leaves the rest for the start after.</item>
+/// <item><see cref="Swap"/> renames each file it replaces to <c>&lt;name&gt;~old-&lt;n&gt;</c>, a name nothing has (a
+/// running executable may be renamed, never overwritten, on Windows; on Linux a rename leaves the running one its inode;
+/// an aside is never deleted to be reused, as a process may hold it) and copies the new one in, the marker last. The old
+/// release's files the new one lacks are renamed aside too. It is all or nothing: a file that cannot be replaced puts every
+/// rename back, and the message says which process holds it.</item>
+/// <item>The caller restarts what it runs. <see cref="CleanAside"/>, at the next start, deletes every aside file
+/// (<c>~old</c>, <c>~old&lt;n&gt;</c> of older installs, <c>~old-&lt;n&gt;</c>) no process holds any more, and leaves the
+/// rest for the start after.</item>
 /// </list>
 /// </summary>
 public static class ReleaseInstall
@@ -169,37 +171,43 @@ public static class ReleaseInstall
     }
 
     /// <summary>Step 2: puts the staged release's files in place of <paramref name="old"/>'s (null for an install that
-    /// was never a release: then nothing is removed). Each replaced file is renamed aside first; if any step fails,
-    /// those done are put back and the install is as it was. Returns why it was not swapped, or null.</summary>
+    /// was never a release: then nothing is removed). Each replaced file, and each of the old release's the new one lacks,
+    /// is renamed aside first, to a name nothing has; if any step fails, every rename done is put back, the folders made
+    /// are removed and the install is as it was. Returns why it was not swapped (naming the process that holds the file,
+    /// where the OS can tell), or null.</summary>
     public static string? Swap(string staging, ReleaseBuild staged, string install, ReleaseBuild? old)
     {
         var done = new List<(string Target, string? Aside)>();
+        var made = new List<string>();
+        var current = install;
         // The marker last: an install is the new release only once all of it is there.
         var files = staged.Files.Where(f => f != MarkerName).Append(MarkerName).ToList();
         try
         {
             foreach (var file in files)
             {
-                var target = Path.Combine(install, file);
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                var target = current = Path.Combine(install, file);
+                MakeDirectories(Path.GetDirectoryName(target)!, made);
                 var aside = File.Exists(target) ? MoveAside(target) : null;
                 done.Add((target, aside));
                 File.Copy(Path.Combine(staging, file), target, overwrite: false);
             }
             // The old release's files the new one lacks (a dependency removed or renamed); never one it did not list.
+            // Recorded like the rest: one that is held fails the install, and the others go back.
             var kept = files.ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var file in old?.Files.Where(f => !kept.Contains(f)) ?? [])
             {
-                var path = Path.Combine(install, file);
+                var path = current = Path.Combine(install, file);
                 if (File.Exists(path))
                 {
-                    MoveAside(path);
+                    done.Add((path, MoveAside(path)));
                 }
             }
             return null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            var why = Describe(ex, current);
             for (var i = done.Count - 1; i >= 0; i--)
             {
                 var (target, aside) = done[i];
@@ -217,10 +225,21 @@ public static class ReleaseInstall
                 }
                 catch (Exception undo) when (undo is IOException or UnauthorizedAccessException)
                 {
-                    return $"{ex.Message}; and putting {Path.GetFileName(target)} back failed too: {undo.Message}";
+                    return $"{why}; and putting {Path.GetFileName(target)} back failed too: {Describe(undo, target)}";
                 }
             }
-            return ex.Message;
+            for (var i = made.Count - 1; i >= 0; i--)
+            {
+                try
+                {
+                    Directory.Delete(made[i]); // only when empty
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    // a folder somebody put a file in meanwhile stays
+                }
+            }
+            return why;
         }
     }
 
@@ -265,33 +284,59 @@ public static class ReleaseInstall
         return Convert.ToHexStringLower(SHA256.HashData(stream));
     }
 
-    // Renames path to path~old, or ~old2, ~old3… when an earlier one is still held by a process running from it.
+    // Renames path to a name nothing has: path~old-1, path~old-2… counting up past every one that exists, held or not. An
+    // aside is never deleted to be reused: a process may hold it open or run from it, and deleting what is held fails.
     private static string MoveAside(string path)
     {
         for (var n = 1; ; n++)
         {
-            var aside = path + AsideSuffix + (n == 1 ? "" : n.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            if (File.Exists(aside))
+            var aside = $"{path}{AsideSuffix}-{n.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+            if (File.Exists(aside) || Directory.Exists(aside))
             {
-                try
-                {
-                    File.Delete(aside);
-                }
-                catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && n < 100)
-                {
-                    continue;
-                }
+                continue;
             }
-            File.Move(path, aside);
-            return aside;
+            try
+            {
+                File.Move(path, aside); // never over an existing file
+                return aside;
+            }
+            catch (IOException) when (File.Exists(aside) && File.Exists(path))
+            {
+                // taken since the look: the next number
+            }
         }
     }
 
+    // Creates folder and the folders above it that are missing, noting those it made, top first.
+    private static void MakeDirectories(string folder, List<string> made)
+    {
+        var missing = new Stack<string>();
+        for (var at = folder; !string.IsNullOrEmpty(at) && !Directory.Exists(at); at = Path.GetDirectoryName(at))
+        {
+            missing.Push(at);
+        }
+        foreach (var dir in missing)
+        {
+            Directory.CreateDirectory(dir);
+            made.Add(dir);
+        }
+    }
+
+    // The OS's message, and who holds the file where Windows can say.
+    private static string Describe(Exception ex, string path)
+        => FileHolders.Of(path) is { Count: > 0 } holders ? $"{ex.Message} (held by {string.Join(", ", holders)})" : ex.Message;
+
+    // The names a swap leaves: ~old (the first form), ~old<n> (older installs), ~old-<n> (now).
     private static bool IsAside(string file)
     {
         var name = Path.GetFileName(file);
         var at = name.LastIndexOf(AsideSuffix, StringComparison.Ordinal);
-        return at > 0 && name[(at + AsideSuffix.Length)..].All(char.IsAsciiDigit);
+        if (at <= 0)
+        {
+            return false;
+        }
+        var tail = name[(at + AsideSuffix.Length)..];
+        return tail.All(char.IsAsciiDigit) || (tail.Length > 1 && tail[0] == '-' && tail.Skip(1).All(char.IsAsciiDigit));
     }
 
     private static bool IsStaging(string folder)
