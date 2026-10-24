@@ -184,7 +184,11 @@ public interface IGitHub
     /// <summary>The PR whose head is <paramref name="branch"/> in the repo at <paramref name="repoPath"/>, or null without one.</summary>
     Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken);
 
-    /// <summary>Merges PR <paramref name="number"/> by <paramref name="method"/>, refused by GitHub unless its head is still <paramref name="head"/>.</summary>
+    /// <summary>
+    /// Merges PR <paramref name="number"/> by <paramref name="method"/>, refused by GitHub unless its head is still
+    /// <paramref name="head"/>. Where its base has a merge queue it joins the queue instead, by the queue's own method, and
+    /// lands once the queue's checks pass: the PR's MERGED, as ever, says it landed.
+    /// </summary>
     Task MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken);
 
     /// <summary>
@@ -284,11 +288,63 @@ public sealed class GhCli : IGitHub
 
     public async Task MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
+        // gh pr merge reaches a merge queue only through auto-merge, which the repos keep off: "Auto merge is not allowed for
+        // this repository" (pilot#212, 2026-10-24). The queue is joined by the API itself, as its web page's button does.
+        if (await QueuedPullRequestAsync(repoPath, number, cancellationToken) is { } id)
+        {
+            await EnqueueAsync(repoPath, number, id, head, cancellationToken);
+            return;
+        }
         var (exit, output, error) = await RunAsync(
             ["pr", "merge", number.ToString(System.Globalization.CultureInfo.InvariantCulture), $"--{method}", "--match-head-commit", head], repoPath, cancellationToken);
         if (exit != 0)
         {
             throw new FlightException($"gh could not merge #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+    }
+
+    private const string QueueQuery = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id isMergeQueueEnabled}}}";
+
+    private const string EnqueueMutation = "mutation($id:ID!,$head:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$head}){mergeQueueEntry{position}}}";
+
+    // The PR's node id when its base has a merge queue, else null; a GitHub that will not say is no queue, and gh pr merge
+    // then says what is wrong.
+    private static async Task<string?> QueuedPullRequestAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (exit, output, _) = await RunAsync(
+            ["api", "graphql", "-F", "owner={owner}", "-F", "name={repo}", "-F", $"number={number.ToString(System.Globalization.CultureInfo.InvariantCulture)}", "-f", $"query={QueueQuery}"],
+            repoPath, cancellationToken);
+        return exit == 0 ? QueuedPullRequest(output) : null;
+    }
+
+    /// <summary>The PR's node id from <see cref="QueueQuery"/>'s answer when its base has a merge queue, else null.</summary>
+    internal static string? QueuedPullRequest(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("data", out var data)
+                && data.TryGetProperty("repository", out var repo) && repo.ValueKind == JsonValueKind.Object
+                && repo.TryGetProperty("pullRequest", out var pr) && pr.ValueKind == JsonValueKind.Object
+                && pr.TryGetProperty("isMergeQueueEnabled", out var queue) && queue.ValueKind == JsonValueKind.True
+                && pr.TryGetProperty("id", out var id) && id.GetString() is { Length: > 0 } nodeId
+                ? nodeId
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    // Joins the queue, refused by GitHub unless the PR's head is still the one reviewed (expectedHeadOid, as
+    // --match-head-commit is for gh pr merge).
+    private static async Task EnqueueAsync(string repoPath, int number, string id, string head, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["api", "graphql", "-f", $"id={id}", "-f", $"head={head}", "-f", $"query={EnqueueMutation}"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not queue #{number} to merge: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
     }
 
