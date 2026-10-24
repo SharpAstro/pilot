@@ -216,6 +216,29 @@ public sealed class FlightDetailTests
         opened.ShouldBe(["wwww0001"]);
     }
 
+    /// <summary>
+    /// A goal that wraps over several lines pushes its Done when down: the label and its text are measured at the width the
+    /// text really gets. Laid out as a stack, the text was measured with the label's room too, came out a line short, and
+    /// its last line ran over the row under it (PIL189's page, SE1 2026-10-24).
+    /// </summary>
+    [Fact]
+    public void AWrappedGoalPushesItsDoneWhenDownRatherThanRunningOverIt()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)).Flights;
+        var goal = string.Join(" ", Enumerable.Repeat("the goal goes on", 30)) + " LASTWORD";
+        var legs = new[] { Legs()[1] with { Goal = goal } };
+        var screen = new FlightsScreen([FlightLine.Build([Flight()], [], Now, legs).Single()], "live", Now);
+        flights.Tree(screen);
+        flights.OpenDetail("TIA1611");
+
+        var arranged = Layout.Engine.Arrange(flights.Tree(screen), new Rect<int>(0, 0, 90, 200), CellMeasureContext.PixelAuthored);
+        Rect<int> Of(Func<string, bool> text) => arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && text(v)).Bounds;
+
+        var last = Of(v => v.StartsWith("LASTWORD", StringComparison.Ordinal));
+        Of(v => v == "Done when").Y.ShouldBeGreaterThanOrEqualTo(last.Y + last.Height, "Done when starts under the goal's last line");
+    }
+
     [Fact]
     public void ThePageLandsInTerminalCellsWithEveryLegsWords()
     {
