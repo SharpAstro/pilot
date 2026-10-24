@@ -231,6 +231,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                     yield return new TranscriptEntry
                     {
                         Index = 0, Kind = TranscriptKind.ToolUse, Text = asked, Full = full, Tool = Str(part, "name") ?? "tool", ToolUseId = Str(part, "id"),
+                        Description = input.ValueKind == JsonValueKind.Object && Str(input, "description") is { Length: > 0 } description ? description.ReplaceLineEndings(" ").Trim() : null,
                     };
                     break;
                 case "tool_result":

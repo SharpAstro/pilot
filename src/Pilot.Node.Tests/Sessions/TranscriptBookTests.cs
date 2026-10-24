@@ -41,6 +41,8 @@ public sealed class TranscriptBookTests : IDisposable
         ]);
         page.Total.ShouldBe(7);
         page.Entries[0].At.ShouldBe(new DateTimeOffset(2026, 10, 21, 8, 0, 0, TimeSpan.Zero));
+        // A call says what it does in its own words beside the command; one without a description has none.
+        page.Entries.Where(e => e.Kind == TranscriptKind.ToolUse).Select(e => e.Description).ShouldBe(["Run the clock tests", null]);
     }
 
     [Fact]
