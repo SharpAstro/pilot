@@ -25,7 +25,9 @@ namespace Pilot.Node;
 /// then writes the snapshot beside, fsyncs it and moves it into place, and only then empties the journal: a failure
 /// before the move leaves the journal whole, and a crash between the move and the emptying leaves deltas the load skips
 /// as already in the snapshot. A compaction that fails is not the append's failure (its delta is already journaled):
-/// it is tried again after another <c>maxDeltas</c>, and <see cref="CompactionError"/> says why it failed.</para>
+/// it is tried again after another <c>maxDeltas</c>, and <see cref="CompactionError"/> says why it failed. Each attempt
+/// is told to <see cref="SnapshotOutcome"/> too, which is how <see cref="NodeState"/> rings a card. A starting snapshot
+/// that cannot be written goes into the journal as its first line instead, which a load takes as the snapshot.</para>
 /// </remarks>
 public sealed class FileJournal : INodeJournal, IDisposable
 {
@@ -69,6 +71,9 @@ public sealed class FileJournal : INodeJournal, IDisposable
 
     /// <summary>Why the last compaction failed, or null when it did not; the journal is whole either way.</summary>
     public Exception? CompactionError { get; private set; }
+
+    /// <inheritdoc />
+    public event Action<Exception?>? SnapshotOutcome;
 
     public NodeHistory Load()
     {
@@ -123,8 +128,15 @@ public sealed class FileJournal : INodeJournal, IDisposable
                         "and is not a line cut short by a crash; it may be from a newer build, so the journal is left as it is");
                 }
 
+                // A starting snapshot that could not be written to its file stands in for it, as the journal's first line.
+                if (delta is SnapshotEvent first && snapshot is null && deltas.Count == 0)
+                {
+                    snapshot = first;
+                    continue;
+                }
+
                 // Deltas the snapshot already holds: the journal was not emptied after a compaction that wrote it.
-                if (delta is SnapshotEvent || (snapshot is not null && delta.Seq <= snapshot.Seq))
+                if (delta is SnapshotEvent ||(snapshot is not null && delta.Seq <= snapshot.Seq))
                 {
                     continue;
                 }
@@ -166,10 +178,27 @@ public sealed class FileJournal : INodeJournal, IDisposable
         if (nodeEvent is SnapshotEvent snapshot)
         {
             _mirror.Apply(snapshot);
-            // A journal that holds lines the snapshot does not (a store whose snapshot was lost): keep them before they are emptied.
-            Backup(snapshot.Seq);
-            WriteSnapshot(json.Span);
-            RewriteJournal([]);
+            try
+            {
+                // A journal that holds lines the snapshot does not (a store whose snapshot was lost): keep them before they are emptied.
+                Backup(snapshot.Seq);
+                WriteSnapshot(json.Span);
+                RewriteJournal([]);
+                CompactionError = null;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // The journal is the store until a snapshot is written, and a restart needs a snapshot to start from:
+                // the starting one goes in as the journal's first line, which Load takes as the snapshot when the file has none.
+                var kept = _journal ??= Open(JournalPath);
+                kept.Write(json.Span);
+                kept.Write(NewLine);
+                kept.Flush(flushToDisk: true);
+                CompactionError = e;
+                SnapshotOutcome?.Invoke(e);
+                return;
+            }
+            SnapshotOutcome?.Invoke(null);
             return;
         }
 
@@ -189,17 +218,22 @@ public sealed class FileJournal : INodeJournal, IDisposable
         {
             // The delta is journaled, so the append has succeeded whatever becomes of the compaction: failing it here
             // would have the state number the next event again, and the journal would hold two of one seq.
+            // Any failure counts, a snapshot that cannot be serialized as much as one that cannot be written: the journal is
+            // still whole, and a restart reads it.
             try
             {
                 Compact(nodeEvent.At);
-                CompactionError = null;
-                _compactAt = _maxDeltas;
             }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            catch (Exception e)
             {
                 CompactionError = e;
                 _compactAt = _deltas + _maxDeltas;
+                SnapshotOutcome?.Invoke(e);
+                return;
             }
+            CompactionError = null;
+            _compactAt = _maxDeltas;
+            SnapshotOutcome?.Invoke(null);
         }
     }
 

@@ -75,10 +75,65 @@ public sealed class NodeState
             Hold(delta.Seq, Serialize(delta));
         }
 
+        journal.SnapshotOutcome += OnSnapshotOutcome;
         if (history.Stream is null)
         {
-            var started = SnapshotLocked();
-            _journal.Append(started, Serialize(started));
+            // A starting snapshot that cannot be made or kept is no reason to stay down: the journal holds every delta
+            // that follows, and the card says why there is no snapshot yet.
+            try
+            {
+                var started = SnapshotLocked();
+                _journal.Append(started, Serialize(started));
+            }
+            catch (Exception e)
+            {
+                OnSnapshotOutcome(e);
+            }
+        }
+        ReportSnapshotOutcome();
+    }
+
+    /// <summary>The kind and subject of the card that says the store could not write its snapshot.</summary>
+    public const string StoreCardKind = "store";
+    public const string StoreCardSubject = "snapshot";
+
+    // What the journal said of its last snapshot, held until the delta being published is done: the card it calls for is
+    // itself a delta, and publishing it from inside the journal's own append would re-enter Publish.
+    private bool _snapshotReported;
+    private Exception? _snapshotError;
+
+    private void OnSnapshotOutcome(Exception? error)
+    {
+        _snapshotReported = true;
+        _snapshotError = error;
+    }
+
+    private void ReportSnapshotOutcome()
+    {
+        if (!_snapshotReported)
+        {
+            return;
+        }
+
+        var error = _snapshotError;
+        _snapshotReported = false;
+        _snapshotError = null;
+        try
+        {
+            if (error is null)
+            {
+                CloseCardsAbout(StoreCardSubject, "written", StoreCardKind);
+                return;
+            }
+
+            Console.Error.WriteLine($"store: a snapshot could not be written, the journal is kept whole: {error.GetType().Name}: {error.Message}");
+            RaiseCard(CardBin.ForYou, StoreCardKind, StoreCardSubject, "The store could not write its snapshot",
+                $"{error.GetType().Name}: {error.Message}. Every change is still journaled and a restart loses nothing; the node tries again later.");
+        }
+        catch (Exception e)
+        {
+            // A store that cannot record the card either has nothing more to say here: the log line stands.
+            Console.Error.WriteLine($"store: the card for a snapshot outcome could not be kept: {e.Message}");
         }
     }
 
@@ -576,6 +631,8 @@ public sealed class NodeState
                 sink.Overflowed();
             }
         }
+
+        ReportSnapshotOutcome();
     }
 
     private void Hold(long seq, byte[] json)

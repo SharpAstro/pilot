@@ -18,6 +18,17 @@ public interface INodeJournal
 
     /// <summary>Keeps one event the node has just made. <paramref name="json"/> is the event as the stream sends it.</summary>
     void Append(NodeEvent nodeEvent, ReadOnlyMemory<byte> json);
+
+    /// <summary>
+    /// Raised, inside <see cref="Append"/>, each time the journal tried to write a snapshot: with why it could not, or with
+    /// null once it did. A snapshot that cannot be written is not the append's failure (the delta is journaled and the
+    /// journal left whole), so this is how <see cref="NodeState"/> hears of it. A journal with no snapshot to write never raises it.
+    /// </summary>
+    event Action<Exception?> SnapshotOutcome
+    {
+        add { }
+        remove { }
+    }
 }
 
 /// <summary>What a journal hands back on start. <see cref="Empty"/> for a node that has never run.</summary>
