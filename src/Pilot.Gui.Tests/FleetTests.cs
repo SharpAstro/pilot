@@ -224,6 +224,67 @@ public sealed class FleetTests
         Screen().Lines.Select(l => l.Where).ShouldBe(["node.sock", "10.0.0.5:47731"]);
     }
 
+    private static NodeSummary InMaintenance(string stream, bool connected = true) =>
+        Summary(stream, "bo@example.org", connected) with { Node = Summary(stream).Node! with { Maintenance = true } };
+
+    /// <summary>A node whose NodeInfo says maintenance wears 🔧 maintenance on its row; one not reached says nothing it last said.</summary>
+    [Fact]
+    public void ANodeInMaintenanceIsMarkedOnItsRow()
+    {
+        var marked = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, InMaintenance("s2"));
+
+        marked.Maintenance.ShouldBeTrue();
+        marked.ToDumpLine().ShouldEndWith(" | 🔧 maintenance");
+        FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, Summary("s2")).Maintenance.ShouldBeFalse();
+        FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, InMaintenance("s2", connected: false)).Maintenance.ShouldBeFalse();
+
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var fleet = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)).Fleet;
+        var screen = new FleetScreen([FleetLine.From("node.sock", here: true, canCommand: true, null, Summary("laptop", "ada@example.org")), marked], Live.At);
+        var described = CellLayout.Describe(Layout.Engine.Arrange(fleet.Tree(screen), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored));
+
+        described.Split('\n').Count(l => l.Contains("🔧 maintenance", StringComparison.Ordinal)).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// Maintenance on / off is on the row of this window's node and of a node this user holds a grant for, and only while it
+    /// answers; its label says what it does, and it hands the host the row and the way round to switch.
+    /// </summary>
+    [Fact]
+    public void TheMaintenanceToggleIsOfferedForThisNodeAndGrantedNodesOnly()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var fleet = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)).Fleet;
+        var sent = new List<(string Where, bool On)>();
+        fleet.OnMaintenance = (line, on) => sent.Add((line.Where, on));
+        var screen = new FleetScreen(
+        [
+            FleetLine.From("node.sock", here: true, canCommand: true, null, Summary("laptop", "ada@example.org")),
+            FleetLine.From("10.0.0.9:47731", here: false, canCommand: false, null, Summary("desktop", "bo@example.org")),
+            FleetLine.From("10.0.0.7:47731", here: false, canCommand: true, null, InMaintenance("nas")),
+            FleetLine.From("10.0.0.5:47731", here: false, canCommand: true, null, Summary("quiet", connected: false)),
+        ], Live.At);
+
+        var arranged = Layout.Engine.Arrange(fleet.Tree(screen), new Rect<int>(0, 0, 220, 40), CellMeasureContext.PixelAuthored);
+        string[] toggles = [.. arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.EndsWith(":maintenance", StringComparison.Ordinal))];
+        var described = CellLayout.Describe(arranged);
+
+        toggles.ShouldBe(["fleet:node.sock:maintenance", "fleet:10.0.0.7:47731:maintenance"]);
+        described.ShouldContain("Maintenance on");
+        described.ShouldContain("Maintenance off");
+        foreach (var where in new[] { "node.sock", "10.0.0.7:47731" })
+        {
+            var pill = arranged.First(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == $"fleet:{where}:maintenance");
+            CellLayout.HitTest(arranged, pill.Bounds.X + 1, pill.Bounds.Y);
+        }
+        sent.ShouldBe([("node.sock", true), ("10.0.0.7:47731", false)]);
+
+        // No host to send it: no button.
+        fleet.OnMaintenance = null;
+        Layout.Engine.Arrange(fleet.Tree(screen), new Rect<int>(0, 0, 220, 40), CellMeasureContext.PixelAuthored)
+            .Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().ShouldNotContain(b => b.Action.EndsWith(":maintenance", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void AFleetRowWithNothingWaitingHasNoWaitingButton()
     {

@@ -1,3 +1,4 @@
+using Console.Lib;
 using DIR.Lib;
 using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
@@ -56,6 +57,20 @@ public sealed class FlightsViewsTests
         var cards = Cards(view);
         var top = cards.Min(c => c.Y);
         return cards.Count(c => c.Y == top);
+    }
+
+    [Fact]
+    public void FlightsSaysThisNodeIsInMaintenanceOnlyWhenItIs()
+    {
+        using var renderer = new RgbaImageRenderer(100, 100);
+        var view = new FlightsView<RgbaImage>(renderer);
+        var screen = new FlightsScreen(FlightLine.Build([Flight("A")], [], Live.At), "test", Live.At);
+        string Described() => CellLayout.Describe(Layout.Engine.Arrange(view.Build(screen), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored));
+
+        Described().ShouldNotContain("maintenance");
+
+        view.Maintenance = true;
+        Described().ShouldContain("🔧 This node is in maintenance: it takes no new flights");
     }
 
     [Fact]

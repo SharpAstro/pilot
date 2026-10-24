@@ -56,6 +56,9 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// <summary>How often the repos are read again while the Repos page is wanted: the node caches them and refreshes by itself, so slow.</summary>
     public static readonly TimeSpan RepoRefresh = TimeSpan.FromSeconds(15);
 
+    /// <summary>How often what the node says it is (maintenance included) is read again while its stream is open.</summary>
+    public static readonly TimeSpan NodeRefresh = TimeSpan.FromSeconds(3);
+
     /// <summary>How long after the Repos page was last shown the repos are still kept fresh.</summary>
     public static readonly TimeSpan RepoLinger = TimeSpan.FromSeconds(60);
 
@@ -221,9 +224,19 @@ internal sealed class NodeFeed : IAsyncDisposable
             {
                 await using var events = await _open(since, stream, cancellationToken).ConfigureAwait(false);
                 await AskVersionAsync(cancellationToken).ConfigureAwait(false);
-                while (await events.ReadAsync(cancellationToken).ConfigureAwait(false) is { } next)
+                // What the node says it is can change while the stream stays open (maintenance), so it is read again meanwhile.
+                using var polling = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                _ = PollNodeAsync(polling.Token);
+                try
                 {
-                    Apply(next);
+                    while (await events.ReadAsync(cancellationToken).ConfigureAwait(false) is { } next)
+                    {
+                        Apply(next);
+                    }
+                }
+                finally
+                {
+                    await polling.CancelAsync().ConfigureAwait(false);
                 }
 
                 SetStatus($"the node on {_socketPath} closed the stream; reconnecting", connected: false);
@@ -256,6 +269,39 @@ internal sealed class NodeFeed : IAsyncDisposable
             {
                 return;
             }
+        }
+    }
+
+    // Asks the node what it is again every NodeRefresh while the stream is open, and draws again when it went into or out of
+    // maintenance, or began or stopped taking fleet flights.
+    private async Task PollNodeAsync(CancellationToken cancellationToken)
+    {
+        if (_nodeInfo is null)
+        {
+            return;
+        }
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(NodeRefresh, cancellationToken).ConfigureAwait(false);
+                (bool, bool) Seen()
+                {
+                    lock (_lock)
+                    {
+                        return (_node?.Maintenance ?? false, _node?.AcceptsFleetFlights ?? false);
+                    }
+                }
+                var before = Seen();
+                await AskVersionAsync(cancellationToken).ConfigureAwait(false);
+                if (Seen() != before)
+                {
+                    Interlocked.Increment(ref _version);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
         }
     }
 

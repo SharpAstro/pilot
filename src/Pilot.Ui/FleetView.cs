@@ -68,6 +68,15 @@ internal sealed record FleetLine
     /// <summary>Whether the row offers Forget: a node held in the grants and never reached, which may be let go.</summary>
     public bool CanForget => NeverReached && Held;
 
+    /// <summary>Whether the node says it is in maintenance (its <see cref="NodeInfo.Maintenance"/>): it takes no new flights. False for a node not reached, whose last word would read as now.</summary>
+    public bool Maintenance { get; init; }
+
+    /// <summary>Whether the row offers Maintenance on / off: a node this user may command (this window's, or a granted one) and that answers now.</summary>
+    public bool CanSetMaintenance => CanCommand && Connected;
+
+    /// <summary>The mark a node in maintenance wears on its row.</summary>
+    public const string MaintenanceMark = "🔧 maintenance";
+
     /// <summary>Whose it is; <c>account unknown</c> when it knows none.</summary>
     public required string Account { get; init; }
 
@@ -89,7 +98,7 @@ internal sealed record FleetLine
     public required int Rings { get; init; }
 
     public string ToDumpLine() => string.Join(" | ", Machine, Where + (Here ? " (this window)" : ""), State, Account, Usage.Length == 0 ? "-" : Usage, Sessions, Flights, Jobs,
-        Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : "watch only");
+        Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : "watch only") + (Maintenance ? " | " + MaintenanceMark : "");
 
     public static FleetLine From(string where, bool here, bool canCommand, string? announcedAs, NodeSummary summary)
     {
@@ -105,6 +114,7 @@ internal sealed record FleetLine
             Connected = summary.Connected,
             NeverReached = !summary.Connected && summary.Node is null,
             Held = canCommand && !here,
+            Maintenance = summary.Connected && summary.Node is { Maintenance: true },
             Account = summary.Account ?? (summary.Connected ? "account unknown" : "—"),
             Usage = summary.Usage ?? "",
             // A node not reached says nothing it last said: its counts would read as now.
@@ -262,7 +272,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private const float SessionsWidth = 170f;
     private const float WorkWidth = 170f;
     private const float RingsWidth = 80f;
-    private const float ButtonsWidth = 150f;
+    private const float ButtonsWidth = 230f;
 
     private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
     private static readonly RGBAColor32 HeaderBg = new(0x1b, 0x1c, 0x24, 0xff);
@@ -302,7 +312,13 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// </summary>
     public Action<FleetLine>? OnForget { get; set; }
 
-    /// <summary>What the last Open, Connect or Forget said, under the header.</summary>
+    /// <summary>
+    /// Turns maintenance on (true) or off (false) on that row's node, as <c>set node maintenance on|off</c> does: offered on
+    /// this window's node and on a node this user holds a grant for, and only while it answers. Null (the default) shows no such button.
+    /// </summary>
+    public Action<FleetLine, bool>? OnMaintenance { get; set; }
+
+    /// <summary>What the last Open, Connect, Forget or Maintenance said, under the header.</summary>
     public string? Said { get; set; }
 
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
@@ -405,6 +421,11 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         {
             buttons.Add(Pill("Forget", $"fleet:{line.Where}:forget", () => forget(line)));
         }
+        if (line.CanSetMaintenance && OnMaintenance is { } maintenance)
+        {
+            // The row's menu item: it names what it does, so a node in maintenance offers to end it.
+            buttons.Add(Pill(line.Maintenance ? "Maintenance off" : "Maintenance on", $"fleet:{line.Where}:maintenance", () => maintenance(line, !line.Maintenance)));
+        }
         var cells = new List<Layout.Node>
         {
             Layout.Builder.VStack(
@@ -412,7 +433,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 Layout.Builder.Text(line.Here ? $"{line.Where} · this window" : line.CanCommand ? line.Where : $"{line.Where} · watch only", 11f, Dim).RowH(18f)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.Account, 13f, Body).RowH(22f),
-                Layout.Builder.Text(line.Connected ? line.Usage : line.State, 11f, Dim).RowH(18f)),
+                line.Maintenance
+                    ? Layout.Builder.HStack(Layout.Builder.Text(FleetLine.MaintenanceMark, 11f, Ringing).WAuto(), Layout.Builder.Text(line.Usage, 11f, Dim).WStar()).WithGap(8f).RowH(18f)
+                    : Layout.Builder.Text(line.Connected ? line.Usage : line.State, 11f, Dim).RowH(18f)),
             SessionsCell(line),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.Flights, 13f, Body).RowH(22f),
@@ -451,4 +474,26 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             .Bg(Button)
             .BgHover(ButtonHover)
             .Follows(new HitResult.ButtonHit(action), _ => onClick());
+}
+
+/// <summary>What the Home and Flights pages say when this window's node is in maintenance.</summary>
+internal static class MaintenanceNotice
+{
+    public const string Line = "🔧 This node is in maintenance: it takes no new flights (a new flight goes to a willing node of the fleet); flights in the air carry on";
+}
+
+/// <summary>The Fleet page's verbs on a row's node, for either host.</summary>
+internal static class FleetCommands
+{
+    /// <summary>
+    /// <c>set node maintenance on|off</c> on <paramref name="line"/>'s node, through the client its grant gives (this window's
+    /// own for its node); what became of it in a line, or the watch-only hint for a node this user holds no grant for.
+    /// </summary>
+    public static async Task<string> SetMaintenanceAsync(FleetClients clients, FleetLine line, bool on, string who, CancellationToken cancellationToken)
+    {
+        var node = new NodeMark(line.Where, line.Where, line.Machine, line.Here);
+        return clients.For(node) is { } client
+            ? $"{line.Machine}: {await SettingsCommands.SendAsync(client, Verbs.Set, ["maintenance", on ? "on" : "off"], who, cancellationToken)}"
+            : FleetClients.WatchOnly(node);
+    }
 }

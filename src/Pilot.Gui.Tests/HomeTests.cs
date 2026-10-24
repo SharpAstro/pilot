@@ -185,6 +185,20 @@ public sealed class HomeTests
     }
 
     [Fact]
+    public void HomeSaysThisNodeIsInMaintenanceOnlyWhenItIs()
+    {
+        using var renderer = new RgbaImageRenderer(100, 100);
+        var home = new HomeView<RgbaImage>(renderer);
+        var screen = new HomeScreen(NoFlights, NoSessions, NoJobs, CardsScreen.Empty);
+        string Described() => CellLayout.Describe(Layout.Engine.Arrange(home.Tree(screen), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored));
+
+        Described().ShouldNotContain("maintenance");
+
+        home.Maintenance = true;
+        Described().ShouldContain("🔧 This node is in maintenance: it takes no new flights");
+    }
+
+    [Fact]
     public void TheCaptureDumpsTheVerdictsAndChips()
     {
         var sessions = Sessions();

@@ -306,6 +306,29 @@ public sealed class SteerByNodeTests : IAsyncDisposable
         _le1.Auths.Last().ShouldBe("Bearer second");
     }
 
+    /// <summary>The Fleet row's Maintenance on / off is <c>set node maintenance on|off</c> to that row's own node, under its grant; a node without a grant is sent nothing.</summary>
+    [Fact]
+    public async Task AFleetRowsMaintenanceToggleIsSetNodeMaintenanceOnThatNodeUnderItsGrant()
+    {
+        using var here = NodeClient.Remote(_se1.Endpoint);
+        using var clients = new FleetClients(here, where => where == _le1.Endpoint, e => NodeClient.Remote(e, "tok-le1"), _ => "tok-le1");
+        var le1 = FleetLine.From(_le1.Endpoint, here: false, canCommand: true, null, Summary());
+        var se2 = FleetLine.From("10.0.0.9:47731", here: false, canCommand: false, null, Summary());
+
+        var said = await FleetCommands.SetMaintenanceAsync(clients, le1, on: true, "gui", Ct);
+        await FleetCommands.SetMaintenanceAsync(clients, le1, on: false, "gui", Ct);
+        var watchOnly = await FleetCommands.SetMaintenanceAsync(clients, se2, on: true, "gui", Ct);
+
+        said.ShouldBe("SE1 · DESKTOP-7: done");
+        _le1.Commands.Count.ShouldBe(2);
+        _le1.Commands.ShouldAllBe(c => c.Contains("\"set\"", StringComparison.Ordinal) && c.Contains("maintenance", StringComparison.Ordinal));
+        _le1.Commands[0].ShouldContain("\"on\"");
+        _le1.Commands[1].ShouldContain("\"off\"");
+        _le1.Auths.ShouldAllBe(a => a == "Bearer tok-le1");
+        _se1.Commands.ShouldBeEmpty();
+        watchOnly.ShouldContain("Connect to");
+    }
+
     [Fact]
     public void TheFleetPageOffersNoOpenUnlessAHostSetsIt()
     {

@@ -463,6 +463,14 @@ if (feed is not null && client is not null && clients is not null)
         loop.RequestRedraw();
     }), $"forget {endpoint}");
     chrome.Fleet.OnForget = line => Forget(line.Where);
+    // Maintenance on / off on a row's node: this window's, or a granted one, through the client its grant gives.
+    chrome.Fleet.OnMaintenance = (line, on) => tracker.Run(async () =>
+    {
+        chrome.Fleet.Said = (await FleetCommands.SetMaintenanceAsync(clients, line, on, GuiSay.Who, cts.Token)).ReplaceLineEndings(" ").Trim();
+        view.SayStatus = chrome.Fleet.Said;
+        Console.WriteLine($"pilot-gui: maintenance {(on ? "on" : "off")} on {line.Where}: {chrome.Fleet.Said}");
+        loop.RequestRedraw();
+    }, $"maintenance {(on ? "on" : "off")} on {line.Where}");
     // The Settings page: this machine's node only, as its route is (a node on the LAN keeps its settings to itself).
     if (remoteEndpoint is null)
     {
@@ -566,7 +574,10 @@ if (feed is not null)
                 }
                 // Every node's rows on every page, each marked with its node, as the header's node selection picks them.
                 var pages = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now, reposWanted: (PilotPage)Volatile.Read(ref pagesWanted) == PilotPage.Repos);
-                var fleetScreen = fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, now);
+                var hereSummary = feed.Summary(now);
+                var fleetScreen = fleetWatch.Screen(nodeWhere, hereSummary, CanCommand, now);
+                // This window's node in maintenance: Home and Flights say so (a plain flag, read by the render thread).
+                chrome.Home.Maintenance = chrome.Flights.Maintenance = hereSummary is { Connected: true, Node.Maintenance: true };
                 Volatile.Write(ref built, Tuple.Create(pages, fleetScreen));
                 loop.RequestRedraw();
             }
