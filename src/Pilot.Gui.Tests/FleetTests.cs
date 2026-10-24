@@ -2,6 +2,7 @@ using Console.Lib;
 using DIR.Lib;
 using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
+using SharpAstro.Png;
 using Shouldly;
 using Xunit;
 
@@ -278,6 +279,20 @@ public sealed class FleetTests
             CellLayout.HitTest(arranged, pill.Bounds.X + 1, pill.Bounds.Y);
         }
         sent.ShouldBe([("node.sock", true), ("10.0.0.7:47731", false)]);
+
+        // The window paints the same pills; PILOT_TEST_CAPTURE keeps the frame as a PNG.
+        using var renderer = new RgbaImageRenderer(1280, 400);
+        var painted = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath }.Fleet;
+        painted.OnMaintenance = (_, _) => { };
+        painted.Render(screen, new RectF32(0, 0, 1280, 400));
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 } capture)
+        {
+            File.WriteAllBytes(capture, PngWriter.Encode(renderer.Surface.Pixels, 1280, 400));
+        }
+        var regions = new List<ClickableRegion>();
+        painted.CollectPaintedRegions(regions);
+        regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.EndsWith(":maintenance", StringComparison.Ordinal))
+            .ShouldBe(["fleet:node.sock:maintenance", "fleet:10.0.0.7:47731:maintenance"]);
 
         // No host to send it: no button.
         fleet.OnMaintenance = null;
