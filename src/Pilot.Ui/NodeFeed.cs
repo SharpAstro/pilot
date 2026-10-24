@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Pilot.Contracts;
 
 namespace Pilot.Ui;
@@ -21,25 +22,31 @@ internal sealed class NodeFeed : IAsyncDisposable
     private readonly Func<long?, string?, CancellationToken, Task<INodeEvents>> _open;
     private readonly string _socketPath;
     private readonly TimeSpan _retry;
-    private readonly Lock _lock = new();
+    // The mirror is the feed thread's alone (RunAsync applies every event to it). What everyone else reads is the View it
+    // last published: one immutable record swapped whole, so a reader (the page builder, a test, the TUI's loop) never waits
+    // on the feed and the feed never waits on a reader. They used to share one lock, and a page built under it held up every
+    // event behind it (a burst of 181 archived sessions, SE1 2026-10-24).
     private NodeMirror _mirror = new();
+    private View _view;
     private readonly CancellationTokenSource _stop = new();
     private Task? _run;
     private long _version;
-    private string _status;
-    private bool _connected;
     private readonly Func<CancellationToken, Task<string?>>? _nodeVersion;
     private readonly Func<CancellationToken, Task<NodeInfo>>? _nodeInfo;
-    // The node's version as of the last connection, when it said; an update restarts the node under this window.
-    private string? _nodeVersionNow;
-    // What the node said it is, as of the last connection: its machine and its account, for the fleet.
-    private NodeInfo? _node;
     // The repos the node last read (GET /api/v1/repos/status), fetched only while the Repos page is shown or recently was.
     private readonly Func<CancellationToken, Task<RepoStatus[]?>>? _repoLoader;
-    private RepoStatus[] _repos = [];
-    private DateTimeOffset _reposAt = DateTimeOffset.MinValue;
-    private DateTimeOffset _reposWantedUntil = DateTimeOffset.MinValue;
-    private bool _reposLoading;
+    private long _reposAtTicks = DateTimeOffset.MinValue.UtcTicks;
+    private long _reposWantedUntilTicks = DateTimeOffset.MinValue.UtcTicks;
+    private int _reposLoading;
+
+    /// <summary>
+    /// The node as this feed last saw it: its rows, its usage, how the connection stands, what the node said it is
+    /// (<paramref name="Node"/>, its machine and account, for the fleet; <paramref name="NodeVersion"/>, as of the last
+    /// connection: an update restarts the node under this window) and its repos.
+    /// </summary>
+    private sealed record View(
+        SessionRow[] Sessions, FlightRow[] Flights, LegRow[] Legs, CardRow[] Cards, JobRow[] Jobs, UsageRow? Usage, string? Stream,
+        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos);
 
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(
@@ -66,7 +73,7 @@ internal sealed class NodeFeed : IAsyncDisposable
         _nodeInfo = nodeInfo;
         _socketPath = socketPath;
         _retry = retry ?? RetryDelay;
-        _status = $"connecting to the node on {socketPath}";
+        _view = new View([], [], [], [], [], null, null, $"connecting to the node on {socketPath}", false, null, null, []);
     }
 
     /// <summary>A feed on the node's own client.</summary>
@@ -76,72 +83,42 @@ internal sealed class NodeFeed : IAsyncDisposable
             repoLoader: async ct => await client.GetRepoStatusAsync(ct).ConfigureAwait(false) is { Success: true, Response: { } repos } ? repos : null);
 
     /// <summary>What the node said it is, as of its last connection; null until it has.</summary>
-    public NodeInfo? Node
-    {
-        get
-        {
-            lock (_lock)
-            {
-                return _node;
-            }
-        }
-    }
+    public NodeInfo? Node => Volatile.Read(ref _view).Node;
 
     /// <summary>The node in a few counts, as the Fleet page shows each one.</summary>
     public NodeSummary Summary(DateTimeOffset now)
     {
-        lock (_lock)
+        var view = Volatile.Read(ref _view);
+        var usage = view.Usage;
+        return new NodeSummary
         {
-            var usage = _mirror.Usage;
-            var sessions = _mirror.Sessions.Values;
-            return new NodeSummary
-            {
-                Connected = _connected,
-                Status = _status,
-                Node = _node,
-                Stream = _mirror.Stream,
-                Account = usage?.Account?.Line(),
-                Usage = usage is { HasFigures: true } ? usage.Line(now, TimeZoneInfo.Local) : null,
-                LiveSessions = sessions.Count(s => s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle),
-                WaitingOnYou = sessions.Count(s => s.State == SessionState.Waiting),
-                Flying = _mirror.Flights.Values.Count(f => f.State == FlightState.Flying),
-                Held = _mirror.Flights.Values.Count(f => f.State == FlightState.Held),
-                JobsRunning = _mirror.Jobs.Values.Count(j => j.State == JobState.Running),
-                JobsQueued = _mirror.Jobs.Values.Count(j => j.State == JobState.Queued),
-                Rings = _mirror.Cards.Values.Count(c => c.State == CardState.Open && c.Bin == CardBin.Ring),
-            };
-        }
+            Connected = view.Connected,
+            Status = view.Status,
+            Node = view.Node,
+            Stream = view.Stream,
+            Account = usage?.Account?.Line(),
+            Usage = usage is { HasFigures: true } ? usage.Line(now, TimeZoneInfo.Local) : null,
+            LiveSessions = view.Sessions.Count(s => s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle),
+            WaitingOnYou = view.Sessions.Count(s => s.State == SessionState.Waiting),
+            Flying = view.Flights.Count(f => f.State == FlightState.Flying),
+            Held = view.Flights.Count(f => f.State == FlightState.Held),
+            JobsRunning = view.Jobs.Count(j => j.State == JobState.Running),
+            JobsQueued = view.Jobs.Count(j => j.State == JobState.Queued),
+            Rings = view.Cards.Count(c => c.State == CardState.Open && c.Bin == CardBin.Ring),
+        };
     }
 
     /// <summary>
     /// What the header adds when the node runs a newer release than this window (it updated itself, and this window
     /// runs on from its old binary): reopen to take it. Empty otherwise.
     /// </summary>
-    public string UpdateNote
-    {
-        get
-        {
-            lock (_lock)
-            {
-                return UpdateNoteLocked();
-            }
-        }
-    }
+    public string UpdateNote => UpdateNoteOf(Volatile.Read(ref _view));
 
     /// <summary>Moves on every applied event and every change of connection, so the loop knows to draw again.</summary>
     public long Version => Interlocked.Read(ref _version);
 
     /// <summary>Whether a stream is open and has delivered its snapshot.</summary>
-    public bool Connected
-    {
-        get
-        {
-            lock (_lock)
-            {
-                return _connected;
-            }
-        }
-    }
+    public bool Connected => Volatile.Read(ref _view).Connected;
 
     /// <summary>Why there is no node, when the GUI could not start one: the header says it while it retries.</summary>
     public string? Problem { get; set; }
@@ -149,39 +126,27 @@ internal sealed class NodeFeed : IAsyncDisposable
     public void Start() => _run ??= Task.Run(() => RunAsync(_stop.Token));
 
     /// <summary>The node's jobs.</summary>
-    public IReadOnlyList<JobRow> Jobs()
-    {
-        lock (_lock)
-        {
-            return [.. _mirror.Jobs.Values];
-        }
-    }
+    public IReadOnlyList<JobRow> Jobs() => Volatile.Read(ref _view).Jobs;
 
     /// <summary>The Background tasks page: the node's jobs as of <paramref name="now"/>.</summary>
     public JobsScreen JobsPage(DateTimeOffset now)
     {
-        lock (_lock)
-        {
-            return new JobsScreen(JobLine.Build(_mirror.Jobs.Values, now), _status + UpdateNoteLocked(), now);
-        }
+        var view = Volatile.Read(ref _view);
+        return new JobsScreen(JobLine.Build(view.Jobs, now), view.Status + UpdateNoteOf(view), now);
     }
 
     /// <summary>The cards panel: the open cards and the latest handled lines.</summary>
     public CardsScreen Cards()
     {
-        lock (_lock)
-        {
-            return CardsScreen.From(_mirror.Cards.Values, _mirror.Sessions.Values);
-        }
+        var view = Volatile.Read(ref _view);
+        return CardsScreen.From(view.Cards, view.Sessions);
     }
 
     /// <summary>The flights as of <paramref name="now"/>, with how many sessions each has.</summary>
     public FlightsScreen Flights(DateTimeOffset now)
     {
-        lock (_lock)
-        {
-            return new FlightsScreen(FlightLine.Build(_mirror.Flights.Values, _mirror.Sessions.Values, now, _mirror.Legs.Values), _status + UpdateNoteLocked(), now);
-        }
+        var view = Volatile.Read(ref _view);
+        return new FlightsScreen(FlightLine.Build(view.Flights, view.Sessions, now, view.Legs), view.Status + UpdateNoteOf(view), now);
     }
 
     /// <summary>
@@ -191,38 +156,26 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// </summary>
     public ReposScreen Repos(DateTimeOffset now, bool wanted)
     {
-        bool fetch;
-        lock (_lock)
+        var view = Volatile.Read(ref _view);
+        if (wanted)
         {
-            if (wanted)
-            {
-                _reposWantedUntil = now + RepoLinger;
-            }
-            fetch = _repoLoader is not null && _connected && !_reposLoading && now <= _reposWantedUntil && now - _reposAt >= RepoRefresh;
-            if (fetch)
-            {
-                _reposLoading = true;
-                _reposAt = now;
-            }
+            Interlocked.Exchange(ref _reposWantedUntilTicks, (now + RepoLinger).UtcTicks);
         }
-        if (fetch)
+        var due = _repoLoader is not null && view.Connected && now.UtcTicks <= Interlocked.Read(ref _reposWantedUntilTicks)
+            && now.UtcTicks - Interlocked.Read(ref _reposAtTicks) >= RepoRefresh.Ticks;
+        // One read at a time: the flag is taken by whoever turns it on.
+        if (due && Interlocked.CompareExchange(ref _reposLoading, 1, 0) == 0)
         {
+            Interlocked.Exchange(ref _reposAtTicks, now.UtcTicks);
             _ = Task.Run(() => LoadReposAsync(_stop.Token));
         }
-        lock (_lock)
-        {
-            return new ReposScreen(RepoLine.Build(_repos, _mirror.Flights.Values, _mirror.Sessions.Values, _mirror.Cards.Values, _mirror.Legs.Values, now),
-                _status + UpdateNoteLocked(), now);
-        }
+        return new ReposScreen(RepoLine.Build(view.Repos, view.Flights, view.Sessions, view.Cards, view.Legs, now), view.Status + UpdateNoteOf(view), now);
     }
 
     /// <summary>Makes the next <see cref="Repos"/> read the repos again at once, without waiting for <see cref="RepoRefresh"/>: a sync just changed them.</summary>
     public void RefreshRepos()
     {
-        lock (_lock)
-        {
-            _reposAt = DateTimeOffset.MinValue;
-        }
+        Interlocked.Exchange(ref _reposAtTicks, DateTimeOffset.MinValue.UtcTicks);
         Interlocked.Increment(ref _version);
     }
 
@@ -236,14 +189,11 @@ internal sealed class NodeFeed : IAsyncDisposable
         catch (Exception ex) when (ex is HttpRequestException or IOException or System.Net.Sockets.SocketException or System.Text.Json.JsonException or OperationCanceledException)
         {
         }
-        lock (_lock)
+        if (read is not null)
         {
-            _reposLoading = false;
-            if (read is not null)
-            {
-                _repos = read;
-            }
+            ImmutableInterlocked.Update(ref _view, view => view with { Repos = read });
         }
+        Interlocked.Exchange(ref _reposLoading, 0);
         if (read is not null)
         {
             Interlocked.Increment(ref _version);
@@ -253,25 +203,19 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// <summary>The rows as of <paramref name="now"/>, and where they come from, for the header.</summary>
     public SessionsScreen Screen(DateTimeOffset now)
     {
-        lock (_lock)
-        {
-            var usage = _mirror.Usage;
-            return new SessionsScreen(SessionLine.Build(_mirror.Sessions.Values, now), _status + UpdateNoteLocked(), now,
-                usage is { HasFigures: true } ? usage.Line(now, TimeZoneInfo.Local) : null, usage?.Account?.Line());
-        }
+        var view = Volatile.Read(ref _view);
+        var usage = view.Usage;
+        return new SessionsScreen(SessionLine.Build(view.Sessions, now), view.Status + UpdateNoteOf(view), now,
+            usage is { HasFigures: true } ? usage.Line(now, TimeZoneInfo.Local) : null, usage?.Account?.Line());
     }
 
     private async Task RunAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            long? since;
-            string? stream;
-            lock (_lock)
-            {
-                since = _mirror.Stream is null ? null : _mirror.Seq;
-                stream = _mirror.Stream;
-            }
+            // The mirror is this thread's: no one else reads it.
+            long? since = _mirror.Stream is null ? null : _mirror.Seq;
+            var stream = _mirror.Stream;
 
             try
             {
@@ -292,10 +236,7 @@ internal sealed class NodeFeed : IAsyncDisposable
             {
                 // The mirror refused a delta out of order: start again from a snapshot rather than show a state the
                 // node never had.
-                lock (_lock)
-                {
-                    _mirror = new NodeMirror();
-                }
+                _mirror = new NodeMirror();
                 Console.Error.WriteLine($"pilot-gui: resyncing with the node: {ex.Message}");
                 SetStatus($"resyncing with the node on {_socketPath}: {ex.Message}", connected: false);
                 continue;
@@ -329,19 +270,15 @@ internal sealed class NodeFeed : IAsyncDisposable
         {
             var info = _nodeInfo is null ? null : await _nodeInfo(cancellationToken).ConfigureAwait(false);
             var version = info?.Version ?? (_nodeVersion is null ? null : await _nodeVersion(cancellationToken).ConfigureAwait(false));
-            lock (_lock)
-            {
-                _nodeVersionNow = version ?? _nodeVersionNow;
-                _node = info ?? _node;
-            }
+            ImmutableInterlocked.Update(ref _view, view => view with { NodeVersion = version ?? view.NodeVersion, Node = info ?? view.Node });
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or System.Net.Sockets.SocketException or System.Text.Json.JsonException)
         {
         }
     }
 
-    private string UpdateNoteLocked() =>
-        _nodeVersionNow is { } node && IsNewer(ClientVersion, Plain(node))
+    private static string UpdateNoteOf(View view) =>
+        view.NodeVersion is { } node && IsNewer(ClientVersion, Plain(node))
             ? $" · the node is {Plain(node)}, this window {ClientVersion}: reopen to update"
             : "";
 
@@ -351,27 +288,36 @@ internal sealed class NodeFeed : IAsyncDisposable
     private static bool IsNewer(string current, string latest)
         => System.Version.TryParse(current.Split('-')[0], out var have) && System.Version.TryParse(latest.Split('-')[0], out var offered) && offered > have;
 
+    // On the feed thread: the event goes into the mirror, and the mirror out as the next View.
     private void Apply(NodeEvent next)
     {
-        lock (_lock)
+        _mirror.Apply(next);
+        var snapshot = next is SnapshotEvent;
+        SessionRow[] sessions = [.. _mirror.Sessions.Values];
+        FlightRow[] flights = [.. _mirror.Flights.Values];
+        LegRow[] legs = [.. _mirror.Legs.Values];
+        CardRow[] cards = [.. _mirror.Cards.Values];
+        JobRow[] jobs = [.. _mirror.Jobs.Values];
+        var usage = _mirror.Usage;
+        var stream = _mirror.Stream;
+        ImmutableInterlocked.Update(ref _view, view => view with
         {
-            _mirror.Apply(next);
-            if (next is SnapshotEvent || !_connected)
-            {
-                _connected = true;
-                _status = $"live from the node on {_socketPath}";
-            }
-        }
+            Sessions = sessions,
+            Flights = flights,
+            Legs = legs,
+            Cards = cards,
+            Jobs = jobs,
+            Usage = usage,
+            Stream = stream,
+            Status = snapshot || !view.Connected ? $"live from the node on {_socketPath}" : view.Status,
+            Connected = true,
+        });
         Interlocked.Increment(ref _version);
     }
 
     private void SetStatus(string status, bool connected)
     {
-        lock (_lock)
-        {
-            _status = status;
-            _connected = connected;
-        }
+        ImmutableInterlocked.Update(ref _view, view => view with { Status = status, Connected = connected });
         Interlocked.Increment(ref _version);
     }
 

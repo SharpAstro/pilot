@@ -64,13 +64,15 @@ internal sealed class TranscriptPane
     internal const float ProseSpace = 10f;
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive, Anchor = ScrollAnchor.Bottom };
-    private readonly List<TranscriptEntry> _entries = [];
-    private readonly Lock _lock = new();
-    private CancellationTokenSource? _following;
-    private int _total;
-    private string? _problem;
+    // What the follow has read, as one immutable record swapped whole: the follow appends on the pool, the render thread
+    // reads the record it finds, and neither ever waits on the other.
+    private sealed record Held(System.Collections.Immutable.ImmutableList<TranscriptEntry> Entries, int Total, string? Problem, string[] Queued)
+    {
+        public static readonly Held Empty = new([], 0, null, []);
+    }
 
-    private string[] _queued = [];
+    private Held _held = Held.Empty;
+    private CancellationTokenSource? _following;
 
     // The session as it was opened: switching to one of its subagents' transcripts, or back, opens it again.
     private SessionLine? _line;
@@ -122,16 +124,7 @@ internal sealed class TranscriptPane
     public Action<string>? OpenLink { get; set; }
 
     /// <summary>The entries it holds now, oldest first.</summary>
-    public IReadOnlyList<TranscriptEntry> Entries
-    {
-        get
-        {
-            lock (_lock)
-            {
-                return [.. _entries];
-            }
-        }
-    }
+    public IReadOnlyList<TranscriptEntry> Entries => Volatile.Read(ref _held).Entries;
 
     /// <summary>
     /// Opens <paramref name="line"/>'s transcript and follows it until <see cref="Close"/> or another opens: at its end, or
@@ -146,13 +139,7 @@ internal sealed class TranscriptPane
         Agent = agent;
         Title = $"{line.Role} · {line.Name}";
         _line = line;
-        lock (_lock)
-        {
-            _entries.Clear();
-            _total = 0;
-            _problem = null;
-            _queued = [];
-        }
+        Volatile.Write(ref _held, Held.Empty);
         _expanded.Clear();
         _markdown.Clear();
         _at = at;
@@ -161,7 +148,8 @@ internal sealed class TranscriptPane
         if (Load is { } load)
         {
             var following = _following = new CancellationTokenSource();
-            _ = FollowAsync(line.Row.Id, agent, load, following.Token);
+            // Started on the pool: its first stretch (finding the node's client, a first read) ran on the render thread.
+            _ = Task.Run(() => FollowAsync(line.Row.Id, agent, load, following.Token));
         }
     }
 
@@ -183,19 +171,13 @@ internal sealed class TranscriptPane
         {
             try
             {
-                int after;
-                lock (_lock)
-                {
-                    after = _entries.Count == 0 ? -1 : _entries[^1].Index;
-                }
+                var had = Volatile.Read(ref _held).Entries;
+                var after = had.Count == 0 ? -1 : had[^1].Index;
                 var page = await load(rowId, agent, after, cancellationToken).ConfigureAwait(false);
-                lock (_lock)
-                {
-                    _entries.AddRange(page.Entries.Where(e => _entries.Count == 0 || e.Index > _entries[^1].Index));
-                    _total = page.Total;
-                    _queued = page.Queued ?? [];
-                    _problem = null;
-                }
+                cancellationToken.ThrowIfCancellationRequested();
+                System.Collections.Immutable.ImmutableInterlocked.Update(ref _held, held => new Held(
+                    held.Entries.AddRange(page.Entries.Where(e => held.Entries.Count == 0 || e.Index > held.Entries[^1].Index)),
+                    page.Total, null, page.Queued ?? []));
                 Changed?.Invoke();
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -204,10 +186,7 @@ internal sealed class TranscriptPane
             }
             catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
             {
-                lock (_lock)
-                {
-                    _problem = ex.Message;
-                }
+                System.Collections.Immutable.ImmutableInterlocked.Update(ref _held, held => held with { Problem = ex.Message });
                 Changed?.Invoke();
             }
             try
@@ -233,17 +212,11 @@ internal sealed class TranscriptPane
         {
             live &= _subagents.FirstOrDefault(s => s.Id == agent)?.Working == true;
         }
-        List<TranscriptEntry> entries;
-        int total;
-        string? problem;
-        string[] queued;
-        lock (_lock)
-        {
-            entries = [.. _entries];
-            total = _total;
-            problem = _problem;
-            queued = _queued;
-        }
+        var held = Volatile.Read(ref _held);
+        List<TranscriptEntry> entries = [.. held.Entries];
+        var total = held.Total;
+        var problem = held.Problem;
+        var queued = held.Queued;
         // Opened at a moment: from the first entry at or after it (the first held, if all of them are later).
         var from = -1;
         if (_at is { } at && entries.Count > 0)

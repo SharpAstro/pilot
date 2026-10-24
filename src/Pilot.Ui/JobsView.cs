@@ -173,10 +173,11 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private int _count;
 
     // The selected job's log as last read, and the loop following it.
-    private readonly Lock _lock = new();
-    private string? _logFor;
-    private JobLog? _log;
-    private string? _logProblem;
+    // The followed job's log, as one immutable record swapped whole: the follow writes it on the pool, the render thread
+    // reads what it finds, and neither waits on the other. A read for a job no longer followed is dropped.
+    private sealed record Followed(string? For, JobLog? Log, string? Problem);
+
+    private Followed _followed = new(null, null, null);
     private CancellationTokenSource? _following;
 
     // A row's right-click menu, hung where the press was.
@@ -260,16 +261,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     public IReadOnlyList<DropdownItem<string>> MenuItems => _menu.IsOpen ? _menu.Items : [];
 
     /// <summary>The selected job's log as last read, or null before the first read.</summary>
-    public JobLog? Log
-    {
-        get
-        {
-            lock (_lock)
-            {
-                return _log;
-            }
-        }
-    }
+    public JobLog? Log => Volatile.Read(ref _followed).Log;
 
     public void Render(JobsScreen screen, RectF32 bounds)
     {
@@ -311,7 +303,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     {
         // Followed by its key, as two nodes' jobs may share an id; read by its id, from its node.
         var key = line?.Key;
-        if (key == _logFor)
+        if (key == Volatile.Read(ref _followed).For)
         {
             return;
         }
@@ -319,17 +311,13 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         _following?.Cancel();
         _following?.Dispose();
         _following = null;
-        lock (_lock)
-        {
-            _logFor = key;
-            _log = null;
-            _logProblem = null;
-        }
+        Volatile.Write(ref _followed, new Followed(key, null, null));
         _logScroll.ScrollToEnd();
         if (line is not null && LoadLog is { } load)
         {
             var following = _following = new CancellationTokenSource();
-            _ = FollowAsync(line.Key, line.Node, line.Id, load, following.Token);
+            // Started on the pool: Follow runs from Tree, on the render thread, and the first read found the node's client there.
+            _ = Task.Run(() => FollowAsync(line.Key, line.Node, line.Id, load, following.Token));
         }
     }
 
@@ -340,15 +328,12 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             try
             {
                 var log = await load(node, jobId, cancellationToken).ConfigureAwait(false);
-                bool changed;
-                lock (_lock)
+                var was = Volatile.Read(ref _followed);
+                var changed = was.For == key && (was.Log is null || was.Log.Length != log.Length || was.Problem is not null);
+                // Kept only while this job is still the one followed: a swap that lost to a newer follow is dropped.
+                if (was.For == key)
                 {
-                    changed = _logFor == key && (_log is null || _log.Length != log.Length || _logProblem is not null);
-                    if (_logFor == key)
-                    {
-                        _log = log;
-                        _logProblem = null;
-                    }
+                    Interlocked.CompareExchange(ref _followed, new Followed(key, log, null), was);
                 }
                 if (changed)
                 {
@@ -363,14 +348,11 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             {
                 // Any failure, whatever its type, is shown and retried: an HttpClient timeout is a TaskCanceledException that is not
                 // this follow's own cancellation, and a read that ends the follow silently leaves the box at "reading…" for good.
-                bool changed;
-                lock (_lock)
+                var was = Volatile.Read(ref _followed);
+                var changed = was.For == key && was.Problem != ex.Message;
+                if (was.For == key)
                 {
-                    changed = _logFor == key && _logProblem != ex.Message;
-                    if (_logFor == key)
-                    {
-                        _logProblem = ex.Message;
-                    }
+                    Interlocked.CompareExchange(ref _followed, was with { Problem = ex.Message }, was);
                 }
                 if (changed)
                 {
@@ -595,15 +577,10 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private Layout.Node LogTail(JobLine line)
     {
         var job = line.Row;
-        JobLog? log;
-        string? problem;
-        lock (_lock)
-        {
-            // The followed log is the line's key's (two nodes' jobs may share an id), as Follow stored it.
-            var followed = _logFor == line.Key;
-            log = followed ? _log : null;
-            problem = followed ? _logProblem : null;
-        }
+        // The followed log is the line's key's (two nodes' jobs may share an id), as Follow stored it.
+        var held = Volatile.Read(ref _followed);
+        var log = held.For == line.Key ? held.Log : null;
+        var problem = held.For == line.Key ? held.Problem : null;
         var head = log is null ? "output" : log.Clipped ? $"output · its end, of {Size(log.Length)}" : $"output · {Size(log.Length)}";
         var lines = new List<Layout.Node>();
         if (problem is not null)
