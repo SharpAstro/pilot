@@ -302,8 +302,10 @@ public sealed class ListTableTests : IDisposable
         (cells.HeaderX("Worktrees · action") - cells.HeaderX("Open PRs · session") - ListTable.ColumnGap).ShouldBe(280f, 0.5f);
         (cells.HeaderX("Flight · PR") - cells.HeaderX("Worktrees · action") - ListTable.ColumnGap).ShouldBe(170f, 0.5f);
         (cells.HeaderX("Checkout · diff") - cells.HeaderX("Repo · worktree")).ShouldBeGreaterThanOrEqualTo(190f + ListTable.ColumnGap);
-        // The repo with worktrees opens (▾) them with a toggle ahead of its name, at the column's start.
-        cells.HeaderX("Repo · worktree").ShouldBe(cells.RowX("▾"));
+        // The repo with worktrees opens (a caret icon) them with a toggle ahead of its name, at the column's start.
+        view.Render(screen, new RectF32(0f, 0f, PageWidth, PageHeight));
+        var toggle = Painted(view).Single(r => r.Result is HitResult.ButtonHit b && b.Action == $"repo:{repo.Key}:worktrees");
+        cells.HeaderX("Repo · worktree").ShouldBe(toggle.X, 0.5f);
         cells.HeaderX("Checkout · diff").ShouldBe(cells.RowX(repo.Main));
         // The sub-row's cells sit under the same columns; its name is indented from the column's start.
         cells.HeaderX("Checkout · diff").ShouldBe(cells.RowX(worktree.DiffStat), "the diff stat is under Checkout · diff");
