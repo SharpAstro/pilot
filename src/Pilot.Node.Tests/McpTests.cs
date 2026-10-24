@@ -215,6 +215,63 @@ public sealed class McpTests : IAsyncLifetime
         server.Who.ShouldBe("mcp");
     }
 
+    [Fact]
+    public async Task WhenTheInstalledVersionChangesTheReplyInHandIsFinishedAndRunAsyncEnds()
+    {
+        var installed = McpServer.Running;
+        var log = new StringWriter();
+        var output = new StringWriter();
+        var input = new StringReader(string.Join('\n', Initialize, """{"jsonrpc":"2.0","id":2,"method":"ping"}""", """{"jsonrpc":"2.0","id":3,"method":"ping"}""") + "\n");
+
+        // Nothing changed after the first message; it changes as the second is answered, so the third is never read.
+        var looks = 0;
+        var server = new McpServer(_node.Folder, node: null, socket: _node.SocketPath,
+            installed: _ => Task.FromResult<string?>(++looks < 2 ? installed : "99.0.0+abc"), log: log);
+        await server.RunAsync(input, output, Ct);
+
+        var replies = output.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => JsonDocument.Parse(l).RootElement.GetProperty("id").GetInt32()).ToArray();
+        replies.ShouldBe([1, 2]);
+        log.ToString().ShouldContain("pilot 99.0.0 is installed");
+        input.ReadLine().ShouldNotBeNull().ShouldContain("\"id\":3");
+    }
+
+    [Fact]
+    public async Task WhileTheInstalledVersionIsTheOneItRunsTheServerReadsToTheEndOfItsInput()
+    {
+        var log = new StringWriter();
+        var server = new McpServer(_node.Folder, node: null, socket: _node.SocketPath,
+            installed: _ => Task.FromResult<string?>(McpServer.Running + "+abc"), log: log);
+
+        var replies = await Serve(server, Initialize, """{"jsonrpc":"2.0","id":2,"method":"ping"}""", """{"jsonrpc":"2.0","id":3,"method":"ping"}""");
+
+        replies.Select(r => r.GetProperty("id").GetInt32()).ShouldBe([1, 2, 3]);
+        log.ToString().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AQuietServerNoticesAnUpdateWithoutAMessage()
+    {
+        var log = new StringWriter();
+        var server = new McpServer(_node.Folder, node: null, socket: _node.SocketPath,
+            installed: _ => Task.FromResult<string?>("99.0.0"), watch: TimeSpan.FromMilliseconds(20), log: log);
+        // An input that never says anything and never ends, as a host's stdin between calls.
+        using var quiet = new BlockedReader();
+
+        await server.RunAsync(quiet, new StringWriter(), Ct).WaitAsync(TimeSpan.FromSeconds(30), Ct);
+
+        log.ToString().ShouldContain("pilot 99.0.0 is installed");
+    }
+
+    /// <summary>A reader whose lines never come, until it is disposed.</summary>
+    private sealed class BlockedReader : TextReader
+    {
+        private readonly TaskCompletionSource<string?> _never = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override ValueTask<string?> ReadLineAsync(CancellationToken cancellationToken) => new(_never.Task.WaitAsync(cancellationToken));
+
+        protected override void Dispose(bool disposing) => _never.TrySetResult(null);
+    }
+
     private static Dictionary<string, JsonElement> Arguments(string json) =>
         JsonDocument.Parse(json).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.Clone());
 }

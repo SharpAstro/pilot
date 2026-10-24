@@ -22,9 +22,23 @@ namespace Pilot.Commands;
 /// by the same handler as the CLI, so a new verb lands here with no change. A call is from the client by the name it gave
 /// in <c>initialize</c> (else <c>mcp</c>), or from the Claude session running the server where the node knows it, as a
 /// CLI command is, so the watchtower's own merge or land is still refused when it comes this way.
+/// <para>A server lives as long as its host session, so it outlives an update: it holds the binaries open, and a host that
+/// never restarts it would keep it on the old release. It therefore watches the version installed beside it, after each
+/// message and on a quiet timer between them, and when that is no longer the one it runs as it finishes the reply in hand and
+/// ends <see cref="RunAsync"/>, so the process exits with 0 and the host (Claude restarts a stdio server it lost) starts the
+/// new binary.</para>
 /// </remarks>
-internal sealed class McpServer(string cwd, string? node, string? socket)
+/// <param name="installed">The version installed now (null: unknown); by default the <c>VERSION</c> marker of the folder this runs from.</param>
+/// <param name="watch">How long a quiet input waits before the installed version is looked at again.</param>
+/// <param name="log">Where the one line saying why it stopped goes (default: standard error, as stdout is the protocol's).</param>
+internal sealed class McpServer(string cwd, string? node, string? socket,
+    Func<CancellationToken, Task<string?>>? installed = null, TimeSpan? watch = null, TextWriter? log = null)
 {
+    /// <summary>The version this process runs as, without the commit after it (2.0.12+3969354 is 2.0.12).</summary>
+    internal static string Running { get; } = Plain(typeof(McpServer).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0");
+
+    private static readonly TimeSpan DefaultWatch = TimeSpan.FromSeconds(30);
+
     /// <summary>The newest protocol this speaks; a client asking for an older one it also speaks gets that.</summary>
     internal const string Protocol = "2025-11-25";
 
@@ -52,22 +66,82 @@ internal sealed class McpServer(string cwd, string? node, string? socket)
     /// <summary>Who the calls are from: the client by its name from <c>initialize</c>, until then <c>mcp</c>.</summary>
     internal string Who { get; private set; } = "mcp";
 
-    /// <summary>Answers each line of <paramref name="input"/> on <paramref name="output"/> until the input ends.</summary>
+    /// <summary>
+    /// Answers each line of <paramref name="input"/> on <paramref name="output"/> until the input ends, or until the installed
+    /// version is not the one this runs as (checked after the reply in hand, and while the input is quiet).
+    /// </summary>
     public async Task RunAsync(TextReader input, TextWriter output, CancellationToken cancellationToken)
     {
-        while (await input.ReadLineAsync(cancellationToken) is { } line)
+        var source = installed ?? InstalledMarkerAsync;
+        var every = watch ?? DefaultWatch;
+        var reading = input.ReadLineAsync(cancellationToken).AsTask();
+        while (true)
         {
-            if (string.IsNullOrWhiteSpace(line))
+            using var tick = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var quietFor = Task.Delay(every, tick.Token);
+            var arrived = await Task.WhenAny(reading, quietFor) == reading;
+            await tick.CancelAsync();
+            if (!arrived)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (await ReplacedAsync(source, cancellationToken) is { } quiet)
+                {
+                    Stop(quiet);
+                    return;
+                }
                 continue;
             }
-            if (await AnswerAsync(line, cancellationToken) is { } reply)
+            if (await reading is not { } line)
+            {
+                return;
+            }
+            if (!string.IsNullOrWhiteSpace(line) && await AnswerAsync(line, cancellationToken) is { } reply)
             {
                 await output.WriteLineAsync(reply);
                 await output.FlushAsync(cancellationToken);
             }
+            if (await ReplacedAsync(source, cancellationToken) is { } now)
+            {
+                Stop(now);
+                return;
+            }
+            reading = input.ReadLineAsync(cancellationToken).AsTask();
         }
     }
+
+    /// <summary>The installed version when it is another one than <see cref="Running"/>, else null (also when it cannot be told).</summary>
+    private static async Task<string?> ReplacedAsync(Func<CancellationToken, Task<string?>> source, CancellationToken cancellationToken)
+    {
+        string? now;
+        try
+        {
+            now = await source(cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+        return now is { Length: > 0 } && Plain(now) != Running ? Plain(now) : null;
+    }
+
+    private void Stop(string now) =>
+        (log ?? Console.Error).WriteLine($"pilot mcp: pilot {now} is installed and this server runs {Running}: exiting so the host restarts it on the new one");
+
+    /// <summary>The version the <c>VERSION</c> marker of this binary's folder says (its first line: version, then runtime); null for a build that has none.</summary>
+    private static Task<string?> InstalledMarkerAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var head = File.ReadLines(Path.Combine(AppContext.BaseDirectory, "VERSION")).FirstOrDefault()?.TrimStart('﻿').Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            return Task.FromResult(head is { Length: 2 } ? head[0] : null);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return Task.FromResult<string?>(null);
+        }
+    }
+
+    private static string Plain(string version) => version.Split('+')[0].Trim();
 
     /// <summary>The reply to one message, or null for a notification, which gets none.</summary>
     internal async Task<string?> AnswerAsync(string line, CancellationToken cancellationToken)
