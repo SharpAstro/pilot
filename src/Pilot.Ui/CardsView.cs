@@ -188,15 +188,29 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 .RowH(30f),
             Layout.Builder.Text($"{row.Name}{(row.ContextWindow > 0 ? $" · context {100.0 * row.ContextTokens / row.ContextWindow:0}%" : "")}", 11f, Dim).RowH(18f),
         };
-        if (row.RemoteControlUrl is { } url)
-        {
-            blocks.Add(Layout.Builder.Text("Remote Control: open in the browser" + Followable.Away, 12f, ForYou).BgHover(CardHover)
+        // The link's row is kept whether there is a link or not: the block is always as tall, so the cards under it never
+        // move when the watchtower gains or loses its Remote Control, or a fresh one starts (SE1, 2026-10-24).
+        blocks.Add(row.RemoteControlUrl is { } url
+            ? Layout.Builder.Text("Remote Control: open in the browser" + Followable.Away, 12f, ForYou).BgHover(CardHover)
                 .Follows(new HitResult.ButtonHit("watchtower:rc"), _ => OnOpen?.Invoke(url))
-                .RowH(20f));
-        }
+                .RowH(20f)
+            : Layout.Builder.Spacer().RowH(20f));
         blocks.Add(Layout.Builder.Spacer().RowH(10f));
         return blocks;
     }
+
+    /// <summary>The watchtower's block while none runs: as tall as a running one's, so the cards stay where they are.</summary>
+    private static List<Layout.Node> NoWatchtower() =>
+    [
+        Layout.Builder.HStack(
+                Layout.Builder.Text("Watchtower", 18f, Dim).WAuto(),
+                Layout.Builder.Spacer().WStar(),
+                Layout.Builder.Text("not running", 12f, Dim, TextAlign.Far).WAuto())
+            .RowH(30f),
+        Layout.Builder.Spacer().RowH(18f),
+        Layout.Builder.Spacer().RowH(20f),
+        Layout.Builder.Spacer().RowH(10f),
+    ];
 
     /// <summary>How many told lines the panel keeps above the box.</summary>
     internal const int ToldKept = 4;
@@ -247,7 +261,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     internal Layout.Node Build(CardsScreen screen)
     {
-        var blocks = screen.Watchtower is { } tower ? Watchtower(tower) : [];
+        var blocks = screen.Watchtower is { } tower ? Watchtower(tower) : NoWatchtower();
         blocks.Add(Layout.Builder.Text("For you", 18f, Bright).RowH(30f));
         blocks.Add(Layout.Builder.Text(screen.Summary, 12f, Dim).RowH(20f));
         foreach (var card in screen.Open)
