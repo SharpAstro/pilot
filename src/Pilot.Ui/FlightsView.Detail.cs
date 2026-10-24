@@ -16,9 +16,13 @@ internal sealed partial class FlightsView<TSurface>
     /// <summary>The open page's flight code, or null.</summary>
     public string? OpenCode => _openCode;
 
+    /// <summary>Called as a flight's page is about to open, before what the window shows changes: the chrome records the place being left.</summary>
+    public Action? Opening { get; set; }
+
     /// <summary>Opens <paramref name="code"/>'s page, from the top.</summary>
     public void OpenDetail(string code)
     {
+        Opening?.Invoke();
         _openCode = code;
         // Its row is shown whatever In play says while its page is open, and selected once the page is shut.
         _pinned = code;
