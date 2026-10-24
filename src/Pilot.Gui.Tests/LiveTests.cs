@@ -130,7 +130,7 @@ public sealed class NodeFeedTests
     }
 
     [Fact]
-    public async Task AWindowOlderThanItsNodeSaysToReopen()
+    public async Task TheUpdateNoteSaysTheNewerVersionIsInstalledAndToRestart()
     {
         var node = new FakeNode();
         var nodeVersion = NodeFeed.ClientVersion;
@@ -148,7 +148,7 @@ public sealed class NodeFeedTests
         node.Send(Live.Snapshot(5, "s1", Live.Row("aaaa1111", "one")));
         await Until(() => feed.UpdateNote.Length > 0 && feed.Screen(Live.At).Source.StartsWith("live", StringComparison.Ordinal));
 
-        feed.Screen(Live.At).Source.ShouldBe($"live from the node on node.sock · the node is 99.0.0, this window {NodeFeed.ClientVersion}: reopen to update");
+        feed.Screen(Live.At).Source.ShouldBe("live from the node on node.sock · pilot 99.0.0 is installed: restart to use it");
     }
 
     [Fact]

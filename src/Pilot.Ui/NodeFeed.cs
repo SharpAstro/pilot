@@ -110,7 +110,7 @@ internal sealed class NodeFeed : IAsyncDisposable
 
     /// <summary>
     /// What the header adds when the node runs a newer release than this window (it updated itself, and this window
-    /// runs on from its old binary): reopen to take it. Empty otherwise.
+    /// runs on from its old binary): restart to use it. Empty otherwise.
     /// </summary>
     public string UpdateNote => UpdateNoteOf(Volatile.Read(ref _view));
 
@@ -279,7 +279,7 @@ internal sealed class NodeFeed : IAsyncDisposable
 
     private static string UpdateNoteOf(View view) =>
         view.NodeVersion is { } node && IsNewer(ClientVersion, Plain(node))
-            ? $" · the node is {Plain(node)}, this window {ClientVersion}: reopen to update"
+            ? $" · pilot {Plain(node)} is installed: restart to use it"
             : "";
 
     // A version as people read it: no commit after it (2.0.12+3969354…).
