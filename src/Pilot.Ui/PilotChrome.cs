@@ -245,6 +245,19 @@ internal sealed class PilotChrome<TSurface>
         return worker is null ? null : sessions.Lines.FirstOrDefault(l => string.Equals(l.Name, worker, StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// Keeps the widths the user drags the list pages' columns to in <paramref name="file"/>: the pages start from what it
+    /// holds, and <paramref name="redraw"/> is asked for a frame as a drag moves a divider.
+    /// </summary>
+    public void KeepColumnWidths(GuiSettingsFile file, Action redraw)
+    {
+        foreach (var table in new[] { Sessions.Table, Jobs.Table })
+        {
+            file.Attach(table);
+            table.Changed += redraw;
+        }
+    }
+
     public float DpiScale
     {
         get => Sessions.DpiScale;

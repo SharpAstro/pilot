@@ -368,6 +368,13 @@ come through gh, and the TUI has the same wizard.
 The **Sessions** page drops Spend, Last response, the archive button and Model as the window narrows (in pilot-tui too), so
 the Session column keeps room for the role and the session name.
 
+The **Sessions** and **Jobs** pages build their header and rows over one set of columns (`ListTable`, on DIR.Lib's
+`TableHeader`/`TableRow`), so a drag on the divider between two titles resizes that column in the header and in every
+row. The fixed columns resize; the one that takes the slack and the optional ones that drop on a narrow window (stars
+capped at their width) stay as the layout gives them. The dragged widths are kept by column title, per page, in
+`gui-settings.json` beside the node's data folder (`%LOCALAPPDATA%\pilot2`), written a moment after the drag settles and
+when the window closes; a missing or unreadable file means the defaults. pilot-tui does not keep them.
+
 Every page is laid out by the layout engine, never by hand: rows size to their content, a column that cannot have its
 whole width collapses (`CollapseBelow`), and nothing multiplies by the DPI or measures a width to choose what to show.
 `LayoutDrivenTests` reads the views' sources and fails on a computed size, a hand-applied DPI or a width breakpoint, as

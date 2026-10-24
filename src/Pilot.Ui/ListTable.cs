@@ -1,0 +1,308 @@
+using DIR.Lib;
+
+namespace Pilot.Ui;
+
+/// <summary>
+/// One column of a <see cref="ListTable"/>: its title, how wide it is by default and, for one a narrow window drops,
+/// the width below which it goes.
+/// </summary>
+/// <param name="Header">The column's title, which also names it in the saved widths: the Node column comes and goes, so an index would drift.</param>
+/// <param name="Width">Its declared width: fixed for a value column a reader may drag, a star for the one that takes the slack.</param>
+/// <param name="DropBelow">With a value, the column collapses once the engine could give it less than this, on the header and on every row alike.</param>
+internal readonly record struct ListColumn(string Header, Layout.Sizing Width, float? DropBelow = null)
+{
+    /// <summary>A column of a fixed width, which a drag on the divider beside it resizes.</summary>
+    public static ListColumn Fixed(string header, float width) => new(header, Layout.Sizing.Fixed(width));
+
+    /// <summary>The column that takes what the others leave, never less than <paramref name="min"/> (0: it may shrink to nothing).</summary>
+    public static ListColumn Star(string header, float min = 0f) => new(header, Layout.Sizing.Star(1f, min));
+
+    /// <summary>
+    /// A column the page drops on a narrow window: its whole <paramref name="width"/> while there is room, gone once the
+    /// engine could give it less. It is a star capped at that width, so a drag leaves it as it is.
+    /// </summary>
+    public static ListColumn Optional(string header, float width) => new(header, Layout.Sizing.Star(1f, 0f, width), width);
+}
+
+/// <summary>
+/// A list page's table: its header and its rows built over one set of columns and one <see cref="Layout.TableColumnWidths"/>
+/// (DIR.Lib's <c>TableHeader</c> and <c>TableRow</c>), so a title sits over its values and a drag on the divider between two
+/// titles resizes that column in both. The dragged widths are kept by column title, so a column the page adds or drops
+/// (Node, which shows only with several nodes known) leaves the others' widths where they were, and
+/// <see cref="Saved"/>/<see cref="Restore"/> carry them to and from the GUI's settings file.
+/// </summary>
+/// <remarks>
+/// The state stripe is outside the table: a fixed cell ahead of the columns, which has no divider and cannot be dragged.
+/// Header and rows are laid out in the same gap and padding, so the stripe's cell and the gap after it keep them lined up.
+/// </remarks>
+internal sealed class ListTable
+{
+    /// <summary>The state stripe's width, ahead of the first column.</summary>
+    public const float StripeWidth = 4f;
+
+    /// <summary>The space between columns, and between the stripe and the first.</summary>
+    public const float ColumnGap = 14f;
+
+    /// <summary>The height of the header row.</summary>
+    public const float HeaderHeight = 28f;
+
+    /// <summary>The titles' size.</summary>
+    private const float TitleSize = 12f;
+
+    /// <summary>The padding at both ends of a row, around stripe and columns.</summary>
+    private const float EndPad = 8f;
+
+    private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
+    private static readonly RGBAColor32 Faint = new(0x5c, 0x5f, 0x6c, 0xff);
+    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
+
+    // The page's own look: the titles on the page's ground, as the header was before it was a table. No padding of the
+    // table's own, the row around stripe and table carries it; the gap is what the dividers sit in.
+    private static readonly Layout.TableStyle Style = new(Ground, Faint, Ground, Dim) { Gap = ColumnGap, PadX = 0f };
+
+    private readonly string _hitPrefix;
+
+    // What was dragged, by column title; the Widths object is index-based, so it is laid out from this whenever the
+    // columns on the page change.
+    private readonly Dictionary<string, float> _byTitle = new(StringComparer.Ordinal);
+    private readonly Lock _lock = new();
+    private string[] _titles = [];
+    private bool _syncing;
+
+    /// <param name="page">The page's name, <c>sessions</c>: it prefixes the header's hits (<c>sessions:table:divider:1</c>).</param>
+    public ListTable(string page)
+    {
+        Page = page;
+        _hitPrefix = $"{page}:table:";
+        Widths.Changed = OnDragged;
+    }
+
+    /// <summary>The page this table belongs to, the key its widths are saved under.</summary>
+    public string Page { get; }
+
+    /// <summary>The widths a reader has dragged, which header and rows both read.</summary>
+    public Layout.TableColumnWidths Widths { get; } = new();
+
+    /// <summary>Raised when a drag changed a width, on the input thread: the host asks for a frame, and the settings file is written.</summary>
+    public event Action? Changed;
+
+    /// <summary>The dragged widths by column title, for the settings file, as they are now; empty while nothing was dragged.</summary>
+    public IReadOnlyDictionary<string, float> Saved
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return new Dictionary<string, float>(_byTitle, StringComparer.Ordinal);
+            }
+        }
+    }
+
+    /// <summary>Takes widths read from the settings file; they apply to the columns of that title the next time the table is built.</summary>
+    public void Restore(IReadOnlyDictionary<string, float>? saved)
+    {
+        lock (_lock)
+        {
+            _byTitle.Clear();
+            if (saved is not null)
+            {
+                foreach (var (title, width) in saved)
+                {
+                    if (float.IsFinite(width) && width > 0f)
+                    {
+                        _byTitle[title] = width;
+                    }
+                }
+            }
+            // Laid out again from them whatever the columns were: the next build sees the titles as new.
+            _titles = [];
+        }
+    }
+
+    /// <summary>The width <paramref name="title"/>'s column has now, for a row outside the table that lines up under it; <paramref name="declared"/> where it was never dragged.</summary>
+    public float WidthOf(string title, float declared)
+    {
+        lock (_lock)
+        {
+            return _byTitle.TryGetValue(title, out var width) ? width : declared;
+        }
+    }
+
+    /// <summary>The header row: titles over the columns, a divider in each gap, the stripe's cell ahead of them.</summary>
+    public Layout.Node Header(IReadOnlyList<ListColumn> columns, DesignScale scale)
+    {
+        var specs = Lay(columns);
+        var style = Style;
+        var header = Dropping(Layout.Builder.TableHeader(specs, null, null, ref style, Widths, scale, TitleSize, _hitPrefix), columns);
+        return Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(StripeWidth), header.WStar())
+            .WithGap(ColumnGap)
+            .PadX(EndPad)
+            .RowH(HeaderHeight);
+    }
+
+    /// <summary>
+    /// A row: <paramref name="stripe"/> (a fixed cell, usually a colour) and <paramref name="cells"/>, one for each of
+    /// <paramref name="columns"/> in order, in the header's gap and padding. The caller sizes its height and gives it its
+    /// background and clicks.
+    /// </summary>
+    public Layout.Node Row(IReadOnlyList<ListColumn> columns, Layout.Node stripe, IReadOnlyList<Layout.Node> cells)
+    {
+        var specs = Lay(columns);
+        var style = Style;
+        var laid = ToArray(cells);
+        for (var i = 0; i < laid.Length && i < columns.Count; i++)
+        {
+            if (columns[i].DropBelow is { } dropAt)
+            {
+                laid[i] = laid[i].CollapseBelow(dropAt);
+            }
+        }
+        var row = Layout.Builder.TableRow(specs, laid, ref style, Widths);
+        return Layout.Builder.HStack(stripe.WFixed(StripeWidth).HStar(), row.WStar().HStar())
+            .WithGap(ColumnGap)
+            .Pad(EndPad, 6f);
+    }
+
+    /// <summary>
+    /// Makes the header's optional columns drop as the rows' do. DIR.Lib's header is two rows over each other: the titles
+    /// (a stack with the table's gap) and the grips (a stack with no gap, a divider as wide as the gap between every two
+    /// columns). A column that collapses takes its gap away in the first, but its divider would stay in the second and push
+    /// every grip after it a gap to the right; so each star column carries one divider with it, as a group sized as the
+    /// column plus the divider, which collapses together. Every star carrying one divider keeps the stars' shares in the
+    /// second row what they are in the first, so the grips stay under the gaps at any width. A divider no star carries
+    /// (one between two fixed columns) stands alone.
+    /// </summary>
+    private static Layout.Node Dropping(Layout.Node header, IReadOnlyList<ListColumn> columns)
+    {
+        if (columns.All(c => c.DropBelow is null) || header is not Layout.Node.Overlay { Base: Layout.Node.Stack titles, Top: Layout.Node.Stack grips })
+        {
+            return header;
+        }
+
+        var count = columns.Count;
+        var faces = titles.Children.ToArray();
+        for (var i = 0; i < count; i++)
+        {
+            if (columns[i].DropBelow is { } dropAt)
+            {
+                faces[i] = faces[i].CollapseBelow(dropAt);
+            }
+        }
+
+        // Which divider each star column carries: its own on the right, else the one on its left. From the right, so the
+        // last column (which has none on its right) takes the one its neighbour would otherwise.
+        var carried = new int[count];
+        var taken = new bool[Math.Max(0, count - 1)];
+        for (var c = count - 1; c >= 0; c--)
+        {
+            carried[c] = -1;
+            if (!grips.Children[2 * c].Width.IsStar)
+            {
+                continue;
+            }
+            if (c < count - 1 && !taken[c])
+            {
+                carried[c] = c;
+            }
+            else if (c >= 1 && !taken[c - 1])
+            {
+                carried[c] = c - 1;
+            }
+            if (carried[c] >= 0)
+            {
+                taken[carried[c]] = true;
+            }
+        }
+
+        var items = new List<Layout.Node>(grips.Children.Length);
+        for (var c = 0; c < count; c++)
+        {
+            var cell = grips.Children[2 * c];
+            if (carried[c] < 0)
+            {
+                items.Add(cell);
+            }
+            else
+            {
+                var divider = grips.Children[2 * carried[c] + 1];
+                var width = cell.Width;
+                var leading = carried[c] < c;
+                var inner = cell.WStar().HStar();
+                var group = Layout.Builder.HStack(leading ? [divider, inner] : [inner, divider]);
+                group = group with { Width = Layout.Sizing.Star(width.Value, width.Min + ColumnGap, width.Max > 0f ? width.Max + ColumnGap : 0f), Height = Layout.Sizing.Star() };
+                if (columns[c].DropBelow is { } dropAt)
+                {
+                    var groupDropAt = dropAt + ColumnGap;
+                    group = group.CollapseBelow(groupDropAt);
+                }
+                items.Add(group);
+            }
+            if (c < count - 1 && !taken[c])
+            {
+                items.Add(grips.Children[2 * c + 1]);
+            }
+        }
+
+        return Layout.Builder.Overlay(titles with { Children = [.. faces] }, grips with { Children = [.. items] });
+    }
+
+    private static Layout.Node[] ToArray(IReadOnlyList<Layout.Node> cells)
+    {
+        var array = new Layout.Node[cells.Count];
+        for (var i = 0; i < array.Length; i++)
+        {
+            array[i] = cells[i];
+        }
+        return array;
+    }
+
+    private Layout.TableColumn[] Lay(IReadOnlyList<ListColumn> columns)
+    {
+        var specs = new Layout.TableColumn[columns.Count];
+        var titles = new string[columns.Count];
+        for (var i = 0; i < specs.Length; i++)
+        {
+            specs[i] = new Layout.TableColumn(columns[i].Header, columns[i].Width, TextAlign.Near);
+            titles[i] = columns[i].Header;
+        }
+        lock (_lock)
+        {
+            if (!titles.AsSpan().SequenceEqual(_titles))
+            {
+                // The page's columns are not the ones the widths were last laid out for: lay them out from what was dragged.
+                _titles = titles;
+                _syncing = true;
+                try
+                {
+                    Widths.Restore(new Layout.TableColumnWidths.Saved([.. titles.Select(t => _byTitle.TryGetValue(t, out var w) ? w : null as float?)]));
+                }
+                finally
+                {
+                    _syncing = false;
+                }
+            }
+        }
+        return specs;
+    }
+
+    // A drag moved a width: read them back by title, so the next layout of other columns keeps them.
+    private void OnDragged()
+    {
+        if (_syncing)
+        {
+            return;
+        }
+        lock (_lock)
+        {
+            var widths = Widths.Save().Widths;
+            for (var i = 0; i < _titles.Length && i < widths.Length; i++)
+            {
+                if (widths[i] is { } width)
+                {
+                    _byTitle[_titles[i]] = width;
+                }
+            }
+        }
+        Changed?.Invoke();
+    }
+}
