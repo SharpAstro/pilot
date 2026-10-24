@@ -403,6 +403,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .Bg(Ground)
             .Stretch();
         page = About?.Over(page) ?? page;
+        // The open transcript's chips that did not fit on a row, as a menu over the page.
+        page = Transcript.Over(page, HeaderHeight);
         return _menu.IsOpen
             ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg))
             : page;
