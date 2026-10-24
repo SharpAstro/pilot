@@ -50,10 +50,15 @@ internal static class SessionsCapture
     /// <param name="jobs">The Background tasks page's screen, drawn when <paramref name="page"/> is Jobs.</param>
     /// <param name="openFlight">The code of the flight whose page the Flights page shows in place of its table.</param>
     public static SessionsView<RgbaImage> Render(RgbaImageRenderer renderer, SessionsScreen screen, float dpiScale = 1f, bool canSay = false,
-        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null)
+        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null, bool inPlay = false)
     {
         var view = new SessionsView<RgbaImage>(renderer) { CanSay = canSay };
         var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = FontPath, DpiScale = dpiScale };
+        // A capture is a moment of a file, whole: the window's In play default leaves the done out unless asked for.
+        if (!inPlay)
+        {
+            chrome.Play.ShowEverything();
+        }
         // Live, the window commands the node from the Flights page and tells the watchtower from its panel: so does a capture.
         chrome.Flights.CanCommand = canSay;
         chrome.Jobs.CanCommand = canSay;

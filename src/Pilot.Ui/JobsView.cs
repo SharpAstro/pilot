@@ -82,7 +82,11 @@ internal sealed record JobLine
 /// <summary>What the Background tasks page shows: the node's jobs, and where they come from.</summary>
 internal sealed record JobsScreen(IReadOnlyList<JobLine> Lines, string Source, DateTimeOffset AsOf)
 {
-    public string Summary
+    /// <summary>What In play left out, named (<c>12 finished hidden</c>); null while nothing is hidden.</summary>
+    public string? Hidden { get; init; }
+
+    /// <summary>The count without what is hidden: <c>3 jobs · 1 running · 1 queued</c>.</summary>
+    public string Counts
     {
         get
         {
@@ -91,6 +95,21 @@ internal sealed record JobsScreen(IReadOnlyList<JobLine> Lines, string Source, D
             var summary = $"{Lines.Count} {(Lines.Count == 1 ? "job" : "jobs")} · {running} running";
             return queued > 0 ? $"{summary} · {queued} queued" : summary;
         }
+    }
+
+    /// <summary>The header's count, naming what is hidden: <c>3 jobs · 1 running · 12 finished hidden</c>.</summary>
+    public string Summary => Hidden is null ? Counts : $"{Counts} · {Hidden}";
+
+    /// <summary>
+    /// The jobs in play: running and queued, and what finished in the last <see cref="PlayFilter.JobsFinished"/> before
+    /// <see cref="AsOf"/>, so a result just in is still seen.
+    /// </summary>
+    public JobsScreen InPlay()
+    {
+        var since = AsOf - PlayFilter.JobsFinished;
+        var kept = Lines.Where(l => l.Live || (l.Row.EndedAt ?? l.Row.StartedAt) >= since).ToList();
+        var hidden = Lines.Count - kept.Count;
+        return this with { Lines = kept, Hidden = hidden > 0 ? $"{hidden} finished hidden" : null };
     }
 }
 
@@ -199,6 +218,9 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
 
+    /// <summary>The window's In play / Everything choice, whose pills sit beside the node pills; null shows everything, as a capture does.</summary>
+    public PlayFilter? Play { get; set; }
+
     /// <summary>The node of the selected job, the one a command on it (Cancel) goes to; null is this window's.</summary>
     public NodeMark? FollowingNode { get; private set; }
 
@@ -208,6 +230,11 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>Puts the selection on <paramref name="job"/>'s row of <paramref name="screen"/>, as a click on it does.</summary>
     public void Select(JobsScreen screen, JobLine job)
     {
+        // The index is into the rows the page shows, so into the jobs in play while it shows only those.
+        if (Play is { InPlay: true })
+        {
+            screen = screen.InPlay();
+        }
         var index = screen.Lines.ToList().FindIndex(l => l.Key == job.Key);
         if (index >= 0)
         {
@@ -243,6 +270,10 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// </summary>
     internal Layout.Node Tree(JobsScreen screen)
     {
+        if (Play is { InPlay: true })
+        {
+            screen = screen.InPlay();
+        }
         if (screen.Lines.Count == 0)
         {
             ListCursor.Close();
@@ -401,8 +432,9 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                         Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
                         Layout.Builder.Text("background tasks", 20f, Dim).WAuto(),
                         .. (Nodes?.Pills() ?? []),
+                        .. (Play?.Pills() ?? []),
                         Layout.Builder.Spacer().WStar(),
-                        Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
+                        .. PlayFilter.Summary(Play, screen.Counts, screen.Hidden, "jobs:play-all", Body, RowHoverBg),
                         About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f)])
                     .WithGap(12f)
                     .RowH(32f),
@@ -416,7 +448,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     {
         if (screen.Lines.Count == 0)
         {
-            return Layout.Builder.Text("No jobs yet: a worker hands one over with pilot run -- <command>", 16f, Dim, TextAlign.Center).Stretch();
+            return Layout.Builder.Text(screen.Hidden is null ? "No jobs yet: a worker hands one over with pilot run -- <command>" : "No job in play: Everything, above, shows the finished", 16f, Dim, TextAlign.Center).Stretch();
         }
 
         var marked = screen.Lines.Any(l => l.Node is not null);

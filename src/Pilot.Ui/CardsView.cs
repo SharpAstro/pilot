@@ -135,6 +135,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>Opens <paramref name="line"/>'s transcript at the moment the card was raised.</summary>
     public Action<CardRow, SessionLine>? OnTranscript { get; set; }
 
+    /// <summary>The window's In play / Everything choice: In play folds the Handled list to one line; null lists it, as a capture does.</summary>
+    public PlayFilter? Play { get; set; }
+
+    /// <summary>Whether the Handled list is open under In play; a click on its line flips it.</summary>
+    public bool HandledOpen { get; set; }
+
     private static readonly RGBAColor32 Live = new(0x4c, 0xc3, 0x8a, 0xff);
 
     // The panel as last drawn, whose cards a button answers.
@@ -243,8 +249,20 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         if (screen.Handled.Count > 0)
         {
             blocks.Add(Layout.Builder.Spacer().RowH(16f));
-            blocks.Add(Layout.Builder.Text("Handled", 13f, Dim).RowH(22f));
-            foreach (var card in screen.Handled)
+            // In play, what is handled is out of the way: one line with its count, a click opens the list (and shuts it again).
+            var folds = Play is { InPlay: true };
+            if (folds)
+            {
+                blocks.Add(Layout.Builder.Text($"{(HandledOpen ? "▾" : "▸")} Handled · {screen.Handled.Count}", 13f, Dim)
+                    .BgHover(CardHover)
+                    .Follows(new HitResult.ButtonHit("cards:handled"), _ => HandledOpen = !HandledOpen)
+                    .RowH(22f));
+            }
+            else
+            {
+                blocks.Add(Layout.Builder.Text("Handled", 13f, Dim).RowH(22f));
+            }
+            foreach (var card in folds && !HandledOpen ? Enumerable.Empty<CardRow>() : screen.Handled)
             {
                 blocks.Add(Layout.Builder.Text(screen.NodeOf(card) is { } node ? $"{node.Name} · {Titled(card)}" : Titled(card), 12f, Dim).RowH(20f));
             }
