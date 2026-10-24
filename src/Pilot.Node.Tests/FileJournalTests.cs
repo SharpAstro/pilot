@@ -433,6 +433,94 @@ public sealed class FileJournalTests : IDisposable
         new NodeState(journal, TimeProvider.System).Snapshot().Notes.ShouldHaveSingleItem().Text.ShouldBe("still up");
     }
 
+    private static (string Record, int Contract) ReadRecord(string folder)
+    {
+        using var record = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(folder, FileJournal.RecordFile)));
+        return (record.RootElement.GetProperty("version").GetString()!, record.RootElement.GetProperty("storeContract").GetInt32());
+    }
+
+    private static Dictionary<string, byte[]> Bytes(string folder) =>
+        Directory.EnumerateFileSystemEntries(folder, "*", SearchOption.AllDirectories)
+            .ToDictionary(f => Path.GetRelativePath(folder, f), f => Directory.Exists(f) ? [] : File.ReadAllBytes(f));
+
+    [Fact]
+    public void AStoreGetsARecordOfItsWriterOnLoadAndOnEachSnapshot()
+    {
+        using (var journal = new FileJournal(_folder, maxDeltas: 4, version: "1.2.3", contract: 1))
+        {
+            // Stamped on load, before anything is journaled.
+            journal.Load();
+            ReadRecord(_folder).ShouldBe(("1.2.3", 1));
+        }
+
+        // A later build stamps its own on load, and again with the snapshot it compacts.
+        using (var journal = new FileJournal(_folder, maxDeltas: 4, version: "1.3.0", contract: 2))
+        {
+            var state = new NodeState(journal, TimeProvider.System);
+            ReadRecord(_folder).ShouldBe(("1.3.0", 2));
+            File.Delete(Path.Combine(_folder, FileJournal.RecordFile));
+            for (var i = 0; i < 8; i++)
+            {
+                state.Execute(Note($"note {i}"));
+            }
+            ReadRecord(_folder).ShouldBe(("1.3.0", 2));
+        }
+        File.Exists(Path.Combine(_folder, FileJournal.RecordFile + ".tmp")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ARecordFromTheDefaultBuildSaysThisBuildsVersionAndContract()
+    {
+        Run(state => state.Execute(Note("stamped")));
+
+        ReadRecord(_folder).ShouldBe((FileJournal.RunningVersion, FileJournal.StoreContract));
+    }
+
+    [Fact]
+    public void AStoreFromANewerNodeIsRefusedAndNotAFileOfItIsTouched()
+    {
+        Run(state =>
+        {
+            state.PutSession(Row("aaaa1111", SessionState.Working));
+            state.Execute(Note("a newer node's"));
+        }, maxDeltas: 4);
+        // Written by a node whose contract is higher, with a journal line this build could not read, and a cut tail.
+        File.WriteAllText(Path.Combine(_folder, FileJournal.RecordFile), """{"version":"9.9.9+abc","storeContract":2}""");
+        File.AppendAllText(Path.Combine(_folder, FileJournal.JournalFile), "{\"kind\":\"fromTheFuture\",\"seq\":99}\n{\"kind\":\"noteAdded\",\"seq\":");
+        var before = Bytes(_folder);
+
+        using (var journal = new FileJournal(_folder, version: "1.0.0", contract: 1))
+        {
+            var refused = Should.Throw<StoreTooNewException>(journal.Load);
+
+            refused.Message.ShouldBe("this store is from 9.9.9+abc; run that or newer");
+            refused.StoreContract.ShouldBe(2);
+        }
+
+        var after = Bytes(_folder);
+        after.Keys.OrderBy(k => k).ShouldBe(before.Keys.OrderBy(k => k));
+        foreach (var (file, bytes) in before)
+        {
+            after[file].ShouldBe(bytes, file);
+        }
+    }
+
+    [Fact]
+    public void AStoreWithNoRecordOrAnOlderOneLoadsAndIsStamped()
+    {
+        var was = Run(state => state.Execute(Note("an older node's")));
+
+        // An older node wrote no record at all.
+        File.Delete(Path.Combine(_folder, FileJournal.RecordFile));
+        ShouldMatch(Run(_ => { }), was);
+        ReadRecord(_folder).ShouldBe((FileJournal.RunningVersion, FileJournal.StoreContract));
+
+        // A lower contract, or the same one, loads too, and the record becomes this build's.
+        File.WriteAllText(Path.Combine(_folder, FileJournal.RecordFile), """{"version":"0.1.0","storeContract":0}""");
+        ShouldMatch(Run(_ => { }), was);
+        ReadRecord(_folder).ShouldBe((FileJournal.RunningVersion, FileJournal.StoreContract));
+    }
+
     private sealed class SnapshotFaultJournal : INodeJournal
     {
         private readonly List<NodeEvent> _kept = [];

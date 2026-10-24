@@ -1,16 +1,34 @@
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Pilot.Contracts;
 
 namespace Pilot.Node;
 
+/// <summary>The store was written by a node whose <see cref="FileJournal.StoreContract"/> is newer than this build's, so this build leaves it alone.</summary>
+public sealed class StoreTooNewException(string writerVersion, int storeContract, int ownContract)
+    : Exception($"this store is from {writerVersion}; run that or newer")
+{
+    /// <summary>The version that wrote the store.</summary>
+    public string WriterVersion { get; } = writerVersion;
+
+    /// <summary>The store's contract, higher than <see cref="OwnContract"/>.</summary>
+    public int StoreContract { get; } = storeContract;
+
+    /// <summary>The contract of the build that refused.</summary>
+    public int OwnContract { get; } = ownContract;
+}
+
 /// <summary>
 /// The node's store: its events as JSON files in the data folder, so a restart picks up every record where the last
 /// run left it, and the black box, one line per command saying who did what.
 /// </summary>
 /// <remarks>
-/// <para>Three files, the node their only writer (its lock admits one node per data folder's socket):</para>
+/// <para>Three files, the node their only writer (its lock admits one node per data folder's socket), and a record of who wrote them:</para>
 /// <list type="bullet">
+/// <item><description><c>store.json</c>: the writer's version and <see cref="StoreContract"/>, written atomically on load and
+/// with each snapshot. <see cref="Load"/> reads it first, and a contract above this build's is refused with a
+/// <see cref="StoreTooNewException"/> before any file is read or written; a store without one is an older node's.</description></item>
 /// <item><description><c>snapshot.json</c>: the state as of a sequence number, replaced whole and atomically (written
 /// beside, then moved over), so a crash leaves the old one or the new one, never half of either.</description></item>
 /// <item><description><c>journal.jsonl</c>: the deltas after that snapshot, one per line, appended and flushed as each
@@ -40,25 +58,47 @@ public sealed class FileJournal : INodeJournal, IDisposable
     public const string SnapshotFile = "snapshot.json";
     public const string JournalFile = "journal.jsonl";
     public const string BlackBoxFile = "blackbox.jsonl";
+    public const string RecordFile = "store.json";
+
+    /// <summary>
+    /// The version of what the store holds. Bump it whenever a stored event or row gains a field, or a kind, that an
+    /// older reader would drop on load: a node refuses a store whose contract is higher than its own (see
+    /// <see cref="StoreTooNewException"/>) before it reads or rewrites a file, as a newer node's records survive an older
+    /// node's compaction only by it never touching them. A change an older reader reads whole (a field it ignores and
+    /// loses nothing by) needs no bump.
+    /// </summary>
+    public const int StoreContract = 1;
 
     private static readonly byte[] NewLine = "\n"u8.ToArray();
 
     private readonly string _folder;
     private readonly int _maxDeltas;
+    private readonly string _version;
+    private readonly int _contract;
     private readonly NodeMirror _mirror = new();
     private FileStream? _journal;
     private FileStream? _blackBox;
     private int _deltas;
     private int _compactAt;
 
-    public FileJournal(string folder, int maxDeltas = DefaultMaxDeltas)
+    /// <param name="version">The running version, written to the store's record; the assembly's own by default.</param>
+    /// <param name="contract">The store contract this build reads and writes; <see cref="StoreContract"/> by default, lower in a test of an older node.</param>
+    public FileJournal(string folder, int maxDeltas = DefaultMaxDeltas, string? version = null, int contract = StoreContract)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(maxDeltas, 1);
         _folder = folder;
         _maxDeltas = maxDeltas;
         _compactAt = maxDeltas;
+        _version = version ?? RunningVersion;
+        _contract = contract;
         Directory.CreateDirectory(folder);
     }
+
+    /// <summary>This build's version, as it says of itself.</summary>
+    public static string RunningVersion { get; } =
+        typeof(FileJournal).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
+
+    public string RecordPath => Path.Combine(_folder, RecordFile);
 
     public string SnapshotPath => Path.Combine(_folder, SnapshotFile);
 
@@ -77,6 +117,9 @@ public sealed class FileJournal : INodeJournal, IDisposable
 
     public NodeHistory Load()
     {
+        // First of all: a store from a newer node is not read, let alone rewritten (a compaction would drop what this build cannot read).
+        CheckRecord();
+
         SnapshotEvent? snapshot = null;
         if (File.Exists(SnapshotPath))
         {
@@ -169,7 +212,55 @@ public sealed class FileJournal : INodeJournal, IDisposable
             // A whole last line that was never ended: end it, so the next append starts on a line of its own.
             File.AppendAllText(JournalPath, "\n");
         }
+        // Read whole, so this build may write: a store with no record (an older node's) is stamped with this one's.
+        StampRecord();
         return new NodeHistory(snapshot?.Stream, snapshot, deltas);
+    }
+
+    /// <summary>Throws <see cref="StoreTooNewException"/> when the record says a newer contract wrote the store; a missing record is an older store.</summary>
+    private void CheckRecord()
+    {
+        if (!File.Exists(RecordPath))
+        {
+            return;
+        }
+
+        int contract;
+        string writer;
+        try
+        {
+            using var record = JsonDocument.Parse(File.ReadAllBytes(RecordPath));
+            contract = record.RootElement.GetProperty("storeContract").GetInt32();
+            writer = record.RootElement.TryGetProperty("version", out var v) && v.GetString() is { Length: > 0 } text ? text : "a newer node";
+        }
+        catch (Exception e) when (e is JsonException or InvalidOperationException or KeyNotFoundException or FormatException)
+        {
+            // Not one this build wrote: it cannot tell whose it is, so it leaves the store as it is.
+            throw new InvalidDataException($"{RecordPath} cannot be read, so the store is left as it is", e);
+        }
+
+        if (contract > _contract)
+        {
+            throw new StoreTooNewException(writer, contract, _contract);
+        }
+    }
+
+    /// <summary>Writes the record of who wrote the store, atomically.</summary>
+    private void StampRecord()
+    {
+        var temp = RecordPath + ".tmp";
+        using (var file = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            using (var json = new Utf8JsonWriter(file, new JsonWriterOptions { Indented = true }))
+            {
+                json.WriteStartObject();
+                json.WriteString("version", _version);
+                json.WriteNumber("storeContract", _contract);
+                json.WriteEndObject();
+            }
+            file.Flush(flushToDisk: true);
+        }
+        File.Move(temp, RecordPath, overwrite: true);
     }
 
     /// <remarks>The first event appended to a new store is the starting snapshot <see cref="NodeState"/> writes.</remarks>
@@ -310,6 +401,8 @@ public sealed class FileJournal : INodeJournal, IDisposable
 
     private void WriteSnapshot(ReadOnlySpan<byte> json)
     {
+        // Before the snapshot, so the record is never older than what it describes.
+        StampRecord();
         var temp = SnapshotPath + ".tmp";
         using (var file = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
         {
