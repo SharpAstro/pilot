@@ -178,6 +178,9 @@ public sealed record SubagentRow
     /// <summary>What it was asked to do, in a few words.</summary>
     public string? Description { get; init; }
 
+    /// <summary>The first line of the prompt it was started with, clipped: what the GUI labels it by where it has no <see cref="Description"/>.</summary>
+    public string? Prompt { get; init; }
+
     /// <summary>The call in the session's transcript that started it, so the call can lead to it.</summary>
     public string? ToolUseId { get; init; }
 
