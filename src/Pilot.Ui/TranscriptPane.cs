@@ -38,6 +38,12 @@ internal sealed class TranscriptPane
     // The label column: wide enough for a tool's name.
     private const float LabelWidth = 96f;
 
+    // A call's line: the tool's column, the caret's column the unfolded body is indented by, and how many of a failed
+    // call's last lines show while it is folded.
+    private const float ToolWidth = 84f;
+    private const float CaretWidth = 16f;
+    private const int FailedLines = 3;
+
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive, Anchor = ScrollAnchor.Bottom };
     private readonly List<TranscriptEntry> _entries = [];
     private readonly Lock _lock = new();
@@ -334,36 +340,42 @@ internal sealed class TranscriptPane
         }
     }
 
-    // A tool call with its state as a dot (running, done, failed or refused, or cut off where the session ended first),
-    // then what it gave back: its first lines, the rest a click away.
+    // A tool call as one line: a caret, its state (a check, a cross, or a dot while running or cut off where the session
+    // ended first), the tool and what the call says it does (Claude Code's own description of it, else its short form). A
+    // click on the line unfolds the command and what it gave back; folded, only a failure shows anything, its last lines.
     private Layout.Node Call(TranscriptEntry call, TranscriptEntry? result, bool live)
     {
         var failed = result is { Kind: TranscriptKind.Error } || result?.Denied is not null;
-        var dot = result is null ? (live ? Running : Faint) : failed ? Failed : Ok;
-        var body = new List<Layout.Node> { Layout.Builder.Text(call.Text, 13f, Dim) };
+        var (mark, markColor) = result is null ? ("●", live ? Running : Faint) : failed ? ("✗", Failed) : ("✓", Ok);
+        var open = _expanded.Contains(call.Index);
+        var said = call.Description is { Length: > 0 } description ? description : call.Text;
+        var line = Layout.Builder.HStack(
+                Layout.Builder.Text(mark, 12f, markColor).WAuto(),
+                Layout.Builder.Text(call.Tool ?? "tool", 12f, Tool).WFixed(ToolWidth),
+                Layout.Builder.Text(said, 13f, Dim).WStar())
+            .WithGap(6f)
+            .BgHover(ButtonHover)
+            .Follows(new HitResult.ButtonHit($"transcript:call:{call.Index}"), _ => Toggle(call.Index));
+        var body = new List<Layout.Node>();
         // A call that started a subagent leads to its transcript.
         if (_subagents.FirstOrDefault(s => s.ToolUseId is not null && s.ToolUseId == call.ToolUseId) is { } started)
         {
             body.Add(AgentLink(started, $"open {started.Type ?? "its"} transcript", $"transcript:spawn:{call.Index}"));
         }
+        var command = call.Full ?? call.Text;
+        if (open && command.Length > 0 && command != said)
+        {
+            body.AddRange(command.ReplaceLineEndings("\n").Split('\n').Select(l => Layout.Builder.Text(l, 13f, Bright)));
+        }
         if (result?.Denied is { } denied)
         {
             body.Add(Layout.Builder.Text($"Denied · {denied}", 13f, Failed));
-            var command = call.Full ?? call.Text;
-            if (command.Length > 0)
+            if (command.Length > 0 && CopyText is { } copy)
             {
-                // The call's line says a one-line command already; one over several lines is shown as it was asked.
-                if (call.Full is { } full)
-                {
-                    body.AddRange(full.ReplaceLineEndings("\n").Split('\n').Select(l => Layout.Builder.Text(l, 13f, Bright)));
-                }
-                if (CopyText is { } copy)
-                {
-                    body.Add(Layout.Builder.HStack(
-                            Layout.Builder.Text("Copy the command", 12f, Bright, TextAlign.Center).Pad(10f, 3f).WAuto().Bg(Button).BgHover(ButtonHover)
-                                .Follows(new HitResult.ButtonHit($"transcript:copy:{call.Index}"), _ => copy(command)),
-                            Layout.Builder.Spacer().WStar()));
-                }
+                body.Add(Layout.Builder.HStack(
+                        Layout.Builder.Text("Copy the command", 12f, Bright, TextAlign.Center).Pad(10f, 3f).WAuto().Bg(Button).BgHover(ButtonHover)
+                            .Follows(new HitResult.ButtonHit($"transcript:copy:{call.Index}"), _ => copy(command)),
+                        Layout.Builder.Spacer().WStar()));
             }
         }
         else if (result is not null)
@@ -374,19 +386,18 @@ internal sealed class TranscriptPane
                 var count = result.Text.Length == 0 ? 0 : result.Text.ReplaceLineEndings("\n").Split('\n').Length;
                 body.Add(Layout.Builder.Text($"└ Read {count} {(count == 1 ? "line" : "lines")}", 12f, Faint));
             }
-            else
+            else if (open || failed)
             {
-                body.AddRange(Folded(result, result.Text.Length == 0 ? "(no output)" : result.Text, failed ? Failed : Faint, 3, "└ "));
+                // Unfolded, all of it; folded, a failure's last lines.
+                var all = result.Text.Length == 0 ? ["(no output)"] : result.Text.ReplaceLineEndings("\n").Split('\n');
+                var shown = open ? all : all[Math.Max(0, all.Length - FailedLines)..];
+                body.AddRange(shown.Select((l, i) => Layout.Builder.Text(i == 0 ? "└ " + l : "  " + l, 13f, failed ? Failed : Dim)));
             }
         }
-        return Layout.Builder.HStack(
-                Layout.Builder.HStack(
-                        Layout.Builder.Text("●", 12f, dot).WAuto(),
-                        Layout.Builder.Text(call.Tool ?? "tool", 12f, Tool).WStar())
-                    .WithGap(6f)
-                    .WFixed(LabelWidth),
-                Layout.Builder.VStack([.. body]).WStar())
-            .WithGap(10f);
+        var row = Layout.Builder.TreeRow(0, hasChildren: true, open, () => Toggle(call.Index), line, new Layout.TreeRowStyle(Dim));
+        return body.Count == 0
+            ? row
+            : Layout.Builder.VStack(row, Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(CaretWidth), Layout.Builder.VStack([.. body]).WStar())).WithGap(2f);
     }
 
     private Layout.Node Row(TranscriptEntry entry)

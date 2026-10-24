@@ -157,7 +157,7 @@ public sealed class TerminalTests
     }
 
     [Fact]
-    public async Task ACallShowsWithWhatItGaveBackFoldedToItsFirstLinesAndARefusedOneSaysWhy()
+    public async Task ACallShowsAsAFoldedLineWithWhatItGaveBackBehindItsClickAndARefusedOneSaysWhy()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var sessions = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
@@ -195,19 +195,18 @@ public sealed class TerminalTests
         }
 
         var described = Described();
-        // The result sits under its call, not after the words that came between them, and shows its first three lines.
-        described.IndexOf("└ one", StringComparison.Ordinal).ShouldBeLessThan(described.IndexOf("Meanwhile,", StringComparison.Ordinal));
-        described.ShouldContain("three");
-        described.ShouldNotContain("four");
-        described.ShouldContain("+2 lines (click to expand)");
+        // A call is one folded line: what it gave back waits behind its click, and a refused one says why at once.
+        described.ShouldContain("dotnet test");
+        described.ShouldNotContain("three");
         described.ShouldContain("Denied · auto mode: [Destructive]");
         described.ShouldContain("Explore");
         described.ShouldContain("reported");
 
-        Regions().Single(r => r.Result is HitResult.ButtonHit { Action: "transcript:fold:2" }).OnClick!.Invoke(InputModifier.None);
+        // Unfolded, the result sits under its call, not after the words that came between them.
+        Regions().Single(r => r.Result is HitResult.ButtonHit { Action: "transcript:call:0" }).OnClick!.Invoke(InputModifier.None);
         described = Described();
+        described.IndexOf("└ one", StringComparison.Ordinal).ShouldBeLessThan(described.IndexOf("Meanwhile,", StringComparison.Ordinal));
         described.ShouldContain("five");
-        described.ShouldContain("(click to collapse)");
 
         Regions().Single(r => r.Result is HitResult.ButtonHit { Action: "transcript:copy:3" }).OnClick!.Invoke(InputModifier.None);
         copied.ShouldBe(["rm -rf build"]);

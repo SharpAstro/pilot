@@ -28,6 +28,13 @@ public sealed record TranscriptEntry
     public string? Full { get; init; }
 
     /// <summary>
+    /// What the call says it does, in Claude Code's own words (the <c>description</c> input of Bash, PowerShell and any tool
+    /// that has one), on a tool call; null without one. <see cref="Text"/> and <see cref="Full"/> stay the command, so a
+    /// client or a node that does not know this still reads the call.
+    /// </summary>
+    public string? Description { get; init; }
+
+    /// <summary>
     /// A prompt Claude Code wrote rather than a person: a background task finishing, a command's output. Shown dim, as a
     /// note.
     /// </summary>
