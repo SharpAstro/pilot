@@ -223,10 +223,7 @@ internal sealed partial class FlightsView<TSurface>
         }
         foreach (var step in leg.Steps)
         {
-            rows.Add(Layout.Builder.HStack(
-                    Layout.Builder.Text(step.Done ? "[x]" : "[ ]", 12f, step.Done ? Flying : Dim).WFixed(28f),
-                    Prose(step.Text, 12f, step.Done ? Dim : Body))
-                .WithGap(8f).HAuto().WStar());
+            rows.Add(Labelled(Layout.Builder.Text(step.Done ? "[x]" : "[ ]", 12f, step.Done ? Flying : Dim), 28f, 8f, Prose(step.Text, 12f, step.Done ? Dim : Body)));
         }
         if (leg.Report is { } report)
         {
@@ -257,10 +254,20 @@ internal sealed partial class FlightsView<TSurface>
     private const float DetailLabelWidth = 76f;
 
     private Layout.Node Field(string label, string text, RGBAColor32? color = null) =>
-        Layout.Builder.HStack(Layout.Builder.Text(label, 11f, Faint).WFixed(DetailLabelWidth), Prose(text, 13f, color ?? Body))
-            .WithGap(10f)
-            .HAuto()
-            .WStar();
+        Labelled(Layout.Builder.Text(label, 11f, Faint), DetailLabelWidth, 10f, Prose(text, 13f, color ?? Body));
+
+    /// <summary>
+    /// A label beside wrapped text, as a two-column grid with rows as tall as their content: a grid measures each cell at
+    /// its own column's width, where a stack measured the text as if it had the label's room too, so it came out a line
+    /// short and ran into the row under it (Goal over Done when, and the last row cut off at the end of the scroll).
+    /// </summary>
+    private static Layout.Node Labelled(Layout.Node label, float labelWidth, float gap, Layout.Node text) =>
+        Layout.Builder.Grid(2, label, text)
+            .WithColumns(Layout.Sizing.Fixed(labelWidth), Layout.Sizing.Star())
+            .WithGaps(0f, gap)
+            .WithAutoRows()
+            .WStar()
+            .HAuto();
 
     private static Layout.Node Prose(string text, float size, RGBAColor32 color) => WrappedProse.Of(text, size, color);
 }
