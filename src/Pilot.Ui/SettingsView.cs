@@ -409,6 +409,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             {
                 stack.Add(Layout.Builder.HStack(
                         Layout.Builder.Text(root, 12f, Body).WAuto(),
+                        // The × stays a typeset rune for want of a close glyph: SharpAstro/DIR.Lib#151.
                         Pill("×", $"settings:{setting.Key}:remove:{root}", () => Act(Verbs.Set, [setting.Key, .. roots.Where(r => r != root).DefaultIfEmpty("default")], $"{setting.Label}: removing {root}…")),
                         Layout.Builder.Spacer().WStar())
                     .WithGap(8f).RowH(26f));

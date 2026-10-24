@@ -395,10 +395,12 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         if (!line.Here && OnOpen is { } open)
         {
             // Off unless the host sets it: the merged lists steer every node from this window.
+            // Open in its own window stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Pill("Open in its own window", $"fleet:{line.Where}:open", () => open(line)));
         }
         if (!line.CanCommand && OnConnect is { } connect)
         {
+            // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Pill("Connect", $"fleet:{line.Where}:connect", () => connect(line)));
         }
         if (line.CanForget && OnForget is { } forget)

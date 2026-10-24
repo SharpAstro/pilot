@@ -32,7 +32,7 @@ internal sealed partial class FlightsView<TSurface>
     internal FlightCanvas Canvas => _canvas;
 
     // Grid and List say it better as the marks DIR.Lib draws, each with the word as its tooltip; Canvas and Night stay words
-    // until DIR.Lib has a mark for them. Every segment keeps the flights:view:* id a pill had, and the hand cursor.
+    // until DIR.Lib has a mark for them (SharpAstro/DIR.Lib#151). Every segment keeps the flights:view:* id a pill had, and the hand cursor.
     private Layout.Node ViewSwitch()
     {
         ReadOnlySpan<Layout.ButtonGroupOption<FlightsViewMode>> options =

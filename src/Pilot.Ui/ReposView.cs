@@ -197,6 +197,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                     Layout.Builder.Text("repos", 20f, Dim).WAuto(),
                     .. (Nodes?.Pills() ?? []),
                     Layout.Builder.Spacer().WStar(),
+                    // Sync stays a word for want of a glyph (a refresh mark): SharpAstro/DIR.Lib#151.
                     .. (SyncRepos is null ? (IEnumerable<Layout.Node>)[] : [CardsView<TSurface>.Pill(Syncing ? "Syncing…" : "Sync", "repos:sync", () => _ = SyncAsync(), Syncing ? Lit : null)]),
                     CardsView<TSurface>.Pill("All repos", "repos:all", () => ShowAll = !ShowAll, ShowAll ? Lit : null),
                     Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),

@@ -304,6 +304,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         {
             // Answering and dismissing are commands: replaced by why not, and the ask for the grant.
             lines.Add(Layout.Builder.Text(SessionsView<TSurface>.SteerHint(watched), 11f, Dim).RowH(18f));
+            // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Pill("Connect", $"card:{card.Id}:connect", () => OnConnect?.Invoke(watched)));
         }
         for (var i = 0; watched is null && i < card.Choices.Length; i++)
@@ -319,6 +320,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         }
         if (watched is null)
         {
+            // Dismiss (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Pill("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
         }
         lines.Add(Layout.Builder.Spacer().RowH(6f));
