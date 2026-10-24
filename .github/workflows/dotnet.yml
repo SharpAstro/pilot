@@ -1,14 +1,16 @@
 name: v2 (.NET)
 
 # pilot v2 only: the solution under src/. v1 (pilot.py, web/, plugins/, tests/) is Python and is neither built nor
-# tested here, so a change to v1 alone does not run this workflow.
+# tested here, so a push to main changing v1 alone does not run this workflow. A PR and a merge queue's group always run
+# it, since main's ruleset requires its gate job and a check that never reports holds the PR forever; the changes job
+# skips the build for a PR touching nothing of v2, and the gate passes it.
 on:
   push:
     branches: [ main ]
     paths: [ 'src/**', '.github/workflows/dotnet.yml' ]
   pull_request:
     branches: [ main ]
-    paths: [ 'src/**', '.github/workflows/dotnet.yml' ]
+  merge_group:
 
 env:
   # Patch component is github.run_number. The MAJOR.MINOR lives in src/Directory.Build.props (VersionMajorMinor)
@@ -29,7 +31,31 @@ env:
 # There is no publish-nuget job: v2 ships no package yet (the node is an executable, and its contracts stay inside
 # this repo until a client outside it needs them). Add the org's artifact-mediated publish job when one does.
 jobs:
+  # Whether v2 changed: a PR's diff against its base. A push is filtered by its paths already, and a merge queue's group
+  # always builds, being the last word before main.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      v2: ${{ steps.diff.outputs.v2 }}
+    steps:
+    - uses: actions/checkout@v7
+      if: github.event_name == 'pull_request'
+      with:
+        fetch-depth: 0
+    - id: diff
+      shell: bash
+      run: |
+        if [ "${{ github.event_name }}" != "pull_request" ]; then
+          echo "v2=true" >> "$GITHUB_OUTPUT"
+        elif git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" | grep -qE '^(src/|\.github/workflows/dotnet\.yml$)'; then
+          echo "v2=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "v2=false" >> "$GITHUB_OUTPUT"
+        fi
+
   build:
+    needs: changes
+    if: needs.changes.outputs.v2 == 'true'
     # Both: the node, CLI and GUI run on Windows (the controller's win-arm64 machine) as much as on Linux, and much of
     # what can break is Windows-only: the socket's owner-only lock, case-insensitive paths, worktree locks, .exe names.
     # x64 Windows, not Arm: hosted Arm runners are limited on private repos, and the platform code is the same.
@@ -72,6 +98,20 @@ jobs:
     - name: Test the GUI
       # The sessions view rendered on the CPU from the sample snapshot: no display and no GPU needed.
       run: dotnet test Pilot.Gui.Tests -c $BUILD_CONF --no-build --logger "console;verbosity=detailed"
+
+  # The one check main's ruleset requires, for a PR and for the merge queue: it reports whatever ran, so a PR whose
+  # build was skipped (nothing of v2 changed) passes, and one whose build failed or was cancelled does not.
+  gate:
+    needs: [changes, build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+    - shell: bash
+      run: |
+        echo "changes: ${{ needs.changes.result }}, build: ${{ needs.build.result }}"
+        if [ "${{ needs.changes.result }}" != "success" ] || [[ "${{ needs.build.result }}" =~ ^(failure|cancelled)$ ]]; then
+          exit 1
+        fi
 
   # The beta channel: main's every push, as pilot-<version>-<rid>.zip on the `beta` prerelease, which a node on
   # --update-channel beta (the Settings page's Update channel) takes. <version> is the next patch after the latest tag,
