@@ -170,20 +170,31 @@ public sealed class FlyingTests
         DashboardCommands.ConnectTarget("pilot status").ShouldBeNull();
     }
 
+    /// <summary>
+    /// The nodes heard are the node pills' and the Fleet page's to show: the LAN line under the Flights header says only
+    /// what waits (an ask) or what is wrong (discovering, unavailable), never the nodes again as chips.
+    /// </summary>
     [Fact]
-    public void ANodeHeardOnTheLanHalfWritesItsConnect()
+    public void TheLanLineShowsOnlyWhatWaitsNotTheNodesAgain()
     {
+        var lan = LanWatch.Over(() => [new LanNode("192.168.1.20:47731", "LP1 LAPTOP")], Live.At);
+        lan.Quiet.ShouldBeTrue();
+        lan.Asking("192.168.1.20:47731", Live.At);
+        lan.Quiet.ShouldBeFalse();
+        lan.Answered("192.168.1.20:47731");
+        lan.Quiet.ShouldBeTrue();
+        LanWatch.Over(() => [], Live.At).Quiet.ShouldBeFalse("nothing heard yet is said");
+        LanWatch.Over(() => [new LanNode("192.168.1.20:47731", "LP1")], Live.At, () => "port taken").Quiet.ShouldBeFalse();
+
         using var renderer = new RgbaImageRenderer(1280, 800);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Flights.CanCommand = true;
-        chrome.Flights.Lan = LanWatch.Over(() => [new LanNode("192.168.1.20:47731", "LP1 LAPTOP")], Live.At);
+        chrome.Flights.Lan = lan;
         chrome.Show(PilotPage.Flights);
         chrome.Render(new SessionsScreen([], "test", Live.At), new FlightsScreen([], "test", Live.At), new RectF32(0, 0, 1280, 800));
-
         var regions = new List<ClickableRegion>();
         chrome.Flights.CollectPaintedRegions(regions);
-        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "lan:192.168.1.20:47731" }).OnClick!.Invoke(InputModifier.None);
-        chrome.Flights.CommandInput.Text.ShouldBe("connect 192.168.1.20:47731");
+        regions.Any(r => r.Result is HitResult.ButtonHit { Action: "lan:192.168.1.20:47731" }).ShouldBeFalse();
     }
 
     [Fact]
