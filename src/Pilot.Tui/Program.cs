@@ -11,7 +11,7 @@ using Pilot.Contracts;
 // this machine's node or one on the LAN.
 var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN, host:port; else PILOT_NODE, else this machine's" };
 var socketOption = new Option<string?>("--node-socket") { Description = "This machine's node's socket; else PILOT_NODE_SOCKET, else this user's default" };
-var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 sessions, 3 flights, 4 jobs, 5 fleet, 6 settings, Ctrl+K the command bar, Ctrl+T the watchtower, q quits")
+var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 sessions, 3 flights, 4 jobs, 5 fleet, 6 settings, 7 repos, Alt+Left or Backspace back and Alt+Right forward, Ctrl+K the command bar, Ctrl+T the watchtower, q quits")
 {
     Options = { nodeOption, socketOption },
 };
@@ -287,13 +287,13 @@ repos.OnOpen = location => DashboardCommands.Open(location);
 // The session menu's New flight in its repo: the Flights page, with the wizard open on it.
 sessions.OnNewFlight = repo =>
 {
-    page = PilotPage.Flights;
+    chrome.Show(PilotPage.Flights);
     flights.Wizard.Open(repo);
 };
 // The Repos page's New flight: the wizard on that repo's issues.
 repos.OnNewFlight = line =>
 {
-    page = PilotPage.Flights;
+    chrome.Show(PilotPage.Flights);
     flights.Wizard.Open(line.Status.Path, atIssues: true);
 };
 var arranged = System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>>.Empty;
@@ -395,33 +395,41 @@ void Handle(ConsoleInputEvent raw)
         case InputEvent.KeyDown(InputKey.Q, InputModifier.None) or InputEvent.KeyDown(InputKey.C, InputModifier.Ctrl):
             stop.Cancel();
             break;
+        // Back and Forward through the window's history: Alt+Left and Alt+Right (PilotChrome's own keys), and Backspace for Back
+        // here, where no field has the keyboard (a focused field took its keys above, so Backspace there still edits text).
+        case InputEvent.KeyDown(InputKey.Backspace, InputModifier.None):
+            chrome.Back();
+            break;
+        case InputEvent.KeyDown navKey when chrome.HandleInput(navKey):
+            break;
+        // The page keys are moves the history records; the show callback of the Link calls keeps `page` in step.
         case InputEvent.KeyDown(InputKey.D1, _):
-            page = PilotPage.Home;
+            chrome.Show(PilotPage.Home);
             break;
         case InputEvent.KeyDown(InputKey.D2, _):
-            page = PilotPage.Sessions;
+            chrome.Show(PilotPage.Sessions);
             break;
         case InputEvent.KeyDown(InputKey.D3, _):
-            page = PilotPage.Flights;
+            chrome.Show(PilotPage.Flights);
             break;
         case InputEvent.KeyDown(InputKey.D4, _):
-            page = PilotPage.Jobs;
+            chrome.Show(PilotPage.Jobs);
             break;
         case InputEvent.KeyDown(InputKey.D5, _):
-            page = PilotPage.Fleet;
+            chrome.Show(PilotPage.Fleet);
             break;
         case InputEvent.KeyDown(InputKey.D6, _):
-            page = PilotPage.Settings;
+            chrome.Show(PilotPage.Settings);
             break;
         case InputEvent.KeyDown(InputKey.D7, _):
-            page = PilotPage.Repos;
+            chrome.Show(PilotPage.Repos);
             break;
         case InputEvent.KeyDown(InputKey.K, InputModifier.Ctrl):
-            page = PilotPage.Flights;
+            chrome.Show(PilotPage.Flights);
             focus.Focus(flights.CommandInput);
             break;
         case InputEvent.KeyDown(InputKey.S, InputModifier.Ctrl):
-            page = PilotPage.Sessions;
+            chrome.Show(PilotPage.Sessions);
             focus.Focus(sessions.SayInput);
             break;
         case InputEvent.KeyDown(InputKey.T, InputModifier.Ctrl):

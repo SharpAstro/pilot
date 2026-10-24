@@ -176,8 +176,11 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>Whether the last frame drew the cards panel.</summary>
     public bool ShowsCards { get; private set; }
 
-    /// <summary>The page shown, by the chord or a click on the rail; a locked page is never shown. A move to another page is recorded for <see cref="Back"/>.</summary>
-    public void Show(PilotPage page) => Navigate(() => Switch(page, null));
+    /// <summary>
+    /// The page shown, by the chord or a click on the rail; a locked page is never shown. A move to another page is recorded for
+    /// <see cref="Back"/>. Where the host keeps the page itself (the show of a Link call), it is told as well.
+    /// </summary>
+    public void Show(PilotPage page) => Navigate(() => Switch(page, _show));
 
     // The page shown without a record: where the host keeps the page itself, the host's say, and the chrome's own page follows.
     private void Switch(PilotPage page, Action<PilotPage>? show)
