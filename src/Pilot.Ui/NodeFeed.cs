@@ -285,13 +285,8 @@ internal sealed class NodeFeed : IAsyncDisposable
             while (true)
             {
                 await Task.Delay(NodeRefresh, cancellationToken).ConfigureAwait(false);
-                (bool, bool) Seen()
-                {
-                    lock (_lock)
-                    {
-                        return (_node?.Maintenance ?? false, _node?.AcceptsFleetFlights ?? false);
-                    }
-                }
+                // The node as the immutable view holds it: no lock to take (the feed never waits on a reader).
+                (bool, bool) Seen() => (Node?.Maintenance ?? false, Node?.AcceptsFleetFlights ?? false);
                 var before = Seen();
                 await AskVersionAsync(cancellationToken).ConfigureAwait(false);
                 if (Seen() != before)
