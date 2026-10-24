@@ -135,6 +135,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>Opens <paramref name="line"/>'s transcript at the moment the card was raised.</summary>
     public Action<CardRow, SessionLine>? OnTranscript { get; set; }
 
+    /// <summary>Shows <paramref name="line"/> itself on the Sessions page (<b>Open</b>): offered on a waiting session's card when the session is an interactive one.</summary>
+    public Action<CardRow, SessionLine>? OnOpenSession { get; set; }
+
     /// <summary>The window's In play / Everything choice: In play folds the Handled list to one line; null lists it, as a capture does.</summary>
     public PlayFilter? Play { get; set; }
 
@@ -307,8 +310,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         {
             Layout.Builder.Text($"{(card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}", 10f, accent).RowH(16f),
             // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
-            // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own.
-            card.Link is { } titleLink
+            // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
+            // session's link is its button, Answer in the browser, so its title is no second one.
+            card.Link is { } titleLink && card.Kind != CardKinds.SessionWaiting
                 ? Layout.Builder.Text(Titled(card) + Followable.Away, 14f, Link)
                     .BgHover(CardHover)
                     .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => OnOpen?.Invoke(titleLink))
@@ -341,10 +345,21 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             var choice = card.Choices[i];
             buttons.Add(Pill(StatusLabel(choice), $"card:{card.Id}:{number}", () => OnAnswer?.Invoke(card, number), StatusTint(choice.Status)));
         }
+        // A waiting session is answered where its Remote Control has it: the card's link, one click away.
+        if (card.Kind == CardKinds.SessionWaiting && card.Link is { } answerUrl)
+        {
+            buttons.Add(Pill("Answer in the browser" + Followable.Away, $"card:{card.Id}:answer", () => OnOpen?.Invoke(answerUrl)));
+        }
         // A card about a leg's worker reads best beside what the worker was doing when it was raised.
-        if (OnTranscript is { } open && TranscriptOf?.Invoke(card) is { } session)
+        var session = TranscriptOf?.Invoke(card);
+        if (OnTranscript is { } open && session is not null)
         {
             buttons.Add(Pill("Its transcript", $"card:{card.Id}:transcript", () => open(card, session)));
+        }
+        // An interactive session is someone's terminal: shown on the Sessions page, where its row is.
+        if (OnOpenSession is { } show && card.Kind == CardKinds.SessionWaiting && session is { Row.Kind: SessionKind.Interactive })
+        {
+            buttons.Add(Pill("Open", $"card:{card.Id}:open", () => show(card, session)));
         }
         if (watched is null)
         {
@@ -352,7 +367,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             buttons.Add(Pill("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
         }
         lines.Add(Layout.Builder.Spacer().RowH(6f));
-        lines.Add(Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f).RowH(26f));
+        // Wrapping: a waiting session's card has up to four buttons, more than one line of the panel holds.
+        lines.Add(Layout.Builder.WrapH([.. buttons]).WithGap(8f).WithLineGap(4f).WStar());
 
         return Layout.Builder.HStack(
                 Layout.Builder.Spacer().Bg(accent).WFixed(3f).HStar(),

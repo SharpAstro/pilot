@@ -366,11 +366,18 @@ internal sealed class PilotChrome<TSurface>
     public void LinkCardTranscripts(Func<SessionsScreen> sessions, Func<FlightsScreen> flights, Action<PilotPage>? show = null, Func<JobsScreen>? jobs = null)
     {
         _show = show ?? _show;
-        Cards.TranscriptOf = card => WorkerOf(card, flights(), sessions());
+        Cards.TranscriptOf = card => WorkerOf(card, flights(), sessions()) ?? WaitingOf(card, sessions(), Cards.NodeOf(card));
         Cards.OnTranscript = (card, line) => Navigate(() =>
         {
             Switch(PilotPage.Sessions, show);
             OpenTranscript(line, card.At);
+        });
+        // A waiting session's card: Open shows its row on the Sessions page, selected, with no transcript over it.
+        Cards.OnOpenSession = (_, line) => Navigate(() =>
+        {
+            Switch(PilotPage.Sessions, show);
+            Sessions.Transcript.Close();
+            Sessions.SelectFirst(l => l.Row.Id == line.Row.Id && Equals(l.Node, line.Node));
         });
         // Home's chips open the thing's own page: a flight its page, a session its transcript, a job its row.
         Home.OnFlight = flight => Navigate(() =>
@@ -489,6 +496,12 @@ internal sealed class PilotChrome<TSurface>
             table.Changed += redraw;
         }
     }
+
+    /// <summary>The session a waiting-session <paramref name="card"/> (subject <c>session/&lt;id&gt;</c>) is about on <paramref name="node"/>, whose ids are its own, or null.</summary>
+    internal static SessionLine? WaitingOf(CardRow card, SessionsScreen sessions, NodeMark? node) =>
+        card.Kind == CardKinds.SessionWaiting && card.Subject.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal)
+            ? sessions.Lines.FirstOrDefault(l => l.Row.Id == card.Subject[Verbs.SessionTargetPrefix.Length..] && Equals(l.Node, node))
+            : null;
 
     public float DpiScale
     {
