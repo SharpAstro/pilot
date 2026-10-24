@@ -92,4 +92,7 @@ public static class NodeExitCodes
 
     /// <summary>Another node holds the lock on the socket, so this one never started.</summary>
     public const int AlreadyRunning = 3;
+
+    /// <summary>The store was written by a newer node, so this one never started: a keeper must not restart it either, as it would refuse again.</summary>
+    public const int StoreTooNew = 4;
 }

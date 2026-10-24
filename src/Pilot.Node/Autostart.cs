@@ -47,7 +47,7 @@ public static class Autostart
             WorkingDirectory={Path.GetDirectoryName(nodePath)}
             Restart=always
             RestartSec=5
-            RestartPreventExitStatus={NodeExitCodes.AlreadyRunning}
+            RestartPreventExitStatus={NodeExitCodes.AlreadyRunning} {NodeExitCodes.StoreTooNew}
 
             [Install]
             WantedBy=default.target
