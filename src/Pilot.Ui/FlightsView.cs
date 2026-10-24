@@ -642,6 +642,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>The dashboard's eye on the LAN; its line and the nodes it heard show under the header when set.</summary>
     public LanWatch? Lan { get; set; }
 
+    /// <summary>Whether this window's node is in maintenance: the header says so. Set by the host from the node's <see cref="NodeInfo.Maintenance"/>.</summary>
+    public bool Maintenance { get; set; }
+
     private const float LanRowHeight = 24f;
 
     private Layout.Node Header(FlightsScreen screen)
@@ -667,6 +670,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         // Discovering, discovery down, or an ask still waiting: nothing the dashboard waits for is invisible. The nodes heard
         // are not listed here: the node pills above and the Fleet page (with its Connect) show them, and a chip per node here
         // said it twice (SE1, 2026-10-24).
+        if (Maintenance)
+        {
+            rows.Add(Layout.Builder.Text(MaintenanceNotice.Line, 12f, Held).RowH(20f));
+        }
         if (Lan is { Quiet: false } lan)
         {
             rows.Add(Layout.Builder.Text(lan.Line(screen.AsOf), 12f, Held).RowH(LanRowHeight));

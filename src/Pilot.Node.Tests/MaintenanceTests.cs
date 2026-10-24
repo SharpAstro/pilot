@@ -114,6 +114,9 @@ public sealed class MaintenanceTests : IDisposable
         (await node.Client.GetNodeAsync(Ct)).Maintenance.ShouldBeTrue();
         var row = (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == "maintenance");
         (row.Value, row.Source, row.Pending).ShouldBe(("on", SettingSources.File, false));
+        // The Settings page offers both as on / off rows.
+        (row.Label, row.Choices).ShouldBe(("Maintenance", ["on", "off"]));
+        (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == "accept-fleet-flights").Choices.ShouldBe(["on", "off"]);
 
         (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["accept-fleet-flights", "on"], Who = "tests" }, Ct)).Response!.Way
             .ShouldBe("accept-fleet-flights saved as on, and in force now");

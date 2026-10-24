@@ -86,6 +86,54 @@ public sealed class SettingsPageTests
         }
     }
 
+    /// <summary>Maintenance and accept-fleet-flights are on / off rows: a pill each, the saved one chosen, and a pill is the node's set verb.</summary>
+    [Fact]
+    public async Task MaintenanceAndAcceptFleetFlightsAreOnOffRowsThatSendSet()
+    {
+        var page = Sample with
+        {
+            Settings =
+            [
+                new SettingRow { Key = "maintenance", Label = "Maintenance", Detail = "While on, this node takes no new flight", Value = "off", Source = SettingSources.Default, Choices = ["on", "off"] },
+                new SettingRow { Key = "accept-fleet-flights", Label = "Accept fleet flights", Detail = "Willing to take a flight another node routes to it", Value = "off", Source = SettingSources.Default, Choices = ["on", "off"] },
+            ],
+        };
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        var sent = new List<(string Verb, string[] Args)>();
+        chrome.Settings.Load = _ => Task.FromResult(page);
+        chrome.Settings.Send = (verb, args, _) =>
+        {
+            lock (sent)
+            {
+                sent.Add((verb, args));
+            }
+            return Task.FromResult("done");
+        };
+        chrome.Show(PilotPage.Settings);
+
+        void Draw() => chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 1280, 900));
+        Draw();
+        await WaitAsync(() => chrome.Settings.Page is not null);
+        Draw();
+        var regions = new List<ClickableRegion>();
+        chrome.Settings.CollectPaintedRegions(regions);
+        var buttons = regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).ToList();
+
+        buttons.ShouldContain("settings:maintenance:on");
+        buttons.ShouldContain("settings:maintenance:off");
+        buttons.ShouldContain("settings:accept-fleet-flights:on");
+        buttons.ShouldContain("settings:accept-fleet-flights:off");
+        Click(regions, "settings:maintenance:on");
+        Click(regions, "settings:accept-fleet-flights:on");
+        await WaitAsync(() => { lock (sent) { return sent.Count == 2; } });
+        lock (sent)
+        {
+            sent.ShouldContain(s => s.Verb == Verbs.Set && s.Args.SequenceEqual(new[] { "maintenance", "on" }));
+            sent.ShouldContain(s => s.Verb == Verbs.Set && s.Args.SequenceEqual(new[] { "accept-fleet-flights", "on" }));
+        }
+    }
+
     [Fact]
     public async Task TheGrantsSectionListsWhatThisNodeGaveWithRevokeAndWhatYouHoldWithForget()
     {

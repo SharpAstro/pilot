@@ -517,6 +517,8 @@ internal sealed class PilotChrome<TSurface>
             Rail.EmojiFontPath = emoji.Length > 0 ? emoji : null;
             // A landed card's title starts with 🛬, which the UI face lacks as well.
             Cards.EmojiFontPath = emoji.Length > 0 ? emoji : null;
+            // A node in maintenance is marked 🔧 on the Fleet, Home and Flights pages.
+            Fleet.EmojiFontPath = Home.EmojiFontPath = Flights.EmojiFontPath = Cards.EmojiFontPath;
         }
     }
 

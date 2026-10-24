@@ -125,6 +125,9 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
 
+    /// <summary>Whether this window's node is in maintenance: the page says so, under the two verdicts. Set by the host from the node's <see cref="NodeInfo.Maintenance"/>.</summary>
+    public bool Maintenance { get; set; }
+
     /// <summary>Opens a flight's page on Flights.</summary>
     public Action<FlightLine>? OnFlight { get; set; }
 
@@ -149,6 +152,10 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             Layout.Builder.Text(screen.Flying, 16f, screen.Flying == "Nothing is flying" ? Dim : Live).RowH(28f),
             Layout.Builder.Text(screen.Waiting, 16f, screen.Waiting == "Nothing waits on you" ? Dim : Ring).RowH(28f),
         };
+        if (Maintenance)
+        {
+            blocks.Add(Layout.Builder.Text(MaintenanceNotice.Line, 13f, Ring).RowH(24f));
+        }
         Section(blocks, "Flights", screen.FlightChips, "no flight is flying or held");
         Section(blocks, "Sessions", screen.SessionChips, "no live session");
         Section(blocks, "Background tasks", screen.JobChips, "no job running or queued");

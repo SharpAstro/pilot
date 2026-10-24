@@ -249,6 +249,13 @@ void Forget(string endpoint)
     Redraw();
 }
 fleet.OnForget = line => Forget(line.Where);
+// Maintenance on / off on a row's node: this window's, or a granted one, through the client its grant gives.
+fleet.OnMaintenance = (line, on) => _ = Task.Run(async () =>
+{
+    fleet.Said = (await FleetCommands.SetMaintenanceAsync(clients, line, on, Who, stop.Token)).ReplaceLineEndings(" ").Trim();
+    sessions.SayStatus = fleet.Said;
+    Redraw();
+});
 // The Settings page: this machine's node only, as its route is.
 if (remote is null)
 {
@@ -326,6 +333,8 @@ while (!stop.IsCancellationRequested)
         var width = columns * 8f;
         // Every node's rows on every page, each marked with its node, as the header's node selection picks them.
         var pages = merged = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now, reposWanted: page == PilotPage.Repos);
+        // This node in maintenance: Home and Flights say so.
+        home.Maintenance = flights.Maintenance = feed.Summary(now) is { Connected: true, Node.Maintenance: true };
         var pageTree = page switch
         {
             PilotPage.Sessions => sessions.Tree(pages.Sessions),
