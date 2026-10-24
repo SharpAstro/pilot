@@ -52,6 +52,13 @@ internal sealed class NodeFilter
     /// <summary>Whether rows of <paramref name="node"/> are shown; an unmarked row is this window's node's.</summary>
     public bool Shows(NodeMark? node) => All || (Volatile.Read(ref _picked) is var picked && (node is null ? Choices.FirstOrDefault(c => c.Here) is { } here && picked.Contains(here.Key) : picked.Contains(node.Key)));
 
+    /// <summary>Picks exactly <paramref name="keys"/>: what a place the window goes back to had picked.</summary>
+    public void Restore(IEnumerable<string> keys)
+    {
+        _picked.Clear();
+        _picked.UnionWith(keys);
+    }
+
     /// <summary>Shows every node again.</summary>
     public void ShowAll()
     {

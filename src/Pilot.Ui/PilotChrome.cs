@@ -57,6 +57,13 @@ internal sealed class PilotChrome<TSurface>
     private readonly List<TabItem<PilotPage>> _items = [];
     private Action<PilotPage>? _select;
 
+    // The window's moves, and how deep in one the chrome is (its own restore and its links open things without a record each).
+    private readonly NavHistory<NavPlace> _history = new();
+    private int _moving;
+
+    // The host's own page switch, as the links were given it: where Back puts the page when the host keeps it.
+    private Action<PilotPage>? _show;
+
     private readonly Renderer<TSurface> _renderer;
 
     /// <param name="playFile">Where the In play / Everything choice is kept across a restart (<see cref="PlayFilter.DefaultFile"/>); null keeps it in memory.</param>
@@ -90,6 +97,9 @@ internal sealed class PilotChrome<TSurface>
         Jobs.Play = Play;
         Cards.Play = Play;
         Settings.About = About;
+        // A transcript or a flight's page opened from inside a page (Enter, a click on a row) is a move too.
+        sessions.Transcript.Opening = RecordOpening;
+        Flights.Opening = RecordOpening;
         Rail = new TabBar<TSurface>(renderer)
         {
             Side = TabStripSide.Left,
@@ -153,14 +163,152 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>Whether the last frame drew the cards panel.</summary>
     public bool ShowsCards { get; private set; }
 
-    /// <summary>The page shown, by the chord or a click on the rail; a locked page is never shown.</summary>
-    public void Show(PilotPage page)
+    /// <summary>The page shown, by the chord or a click on the rail; a locked page is never shown. A move to another page is recorded for <see cref="Back"/>.</summary>
+    public void Show(PilotPage page) => Navigate(() => Switch(page, null));
+
+    // The page shown without a record: where the host keeps the page itself, the host's say, and the chrome's own page follows.
+    private void Switch(PilotPage page, Action<PilotPage>? show)
     {
-        if (Pages.Any(p => p.Page == page && p.Locked is null))
+        if (!Pages.Any(p => p.Page == page && p.Locked is null))
         {
-            Page = page;
+            return;
+        }
+        show?.Invoke(page);
+        Page = page;
+    }
+
+    /// <summary>Whether <see cref="Back"/> has a place to return to.</summary>
+    public bool CanGoBack => _history.CanGoBack;
+
+    /// <summary>Whether <see cref="Forward"/> has a place to return to.</summary>
+    public bool CanGoForward => _history.CanGoForward;
+
+    /// <summary>
+    /// Returns to the place before the last move: its page (through the host's own switch where it keeps the page), the nodes
+    /// it showed, its selection, and its open transcript or flight page. False, and nothing done, with no place before.
+    /// </summary>
+    public bool Back()
+    {
+        if (!_history.Back(Capture(), out var place))
+        {
+            return false;
+        }
+        Restore(place);
+        return true;
+    }
+
+    /// <summary>Returns to the place <see cref="Back"/> left, until a new move forgets it.</summary>
+    public bool Forward()
+    {
+        if (!_history.Forward(Capture(), out var place))
+        {
+            return false;
+        }
+        Restore(place);
+        return true;
+    }
+
+    // Runs a move and records the place it left, unless it led nowhere new. Moves nest (a link's page switch is one too): the outer one records.
+    private void Navigate(Action move)
+    {
+        if (_moving > 0)
+        {
+            move();
+            return;
+        }
+        var before = Capture();
+        _moving++;
+        try
+        {
+            move();
+        }
+        finally
+        {
+            _moving--;
+        }
+        if (!before.SameAs(Capture()))
+        {
+            _history.Push(before);
         }
     }
+
+    // A view is about to open something from inside its page: the place being left, unless the chrome is the one opening it.
+    private void RecordOpening()
+    {
+        if (_moving == 0)
+        {
+            _history.Push(Capture());
+        }
+    }
+
+    private NavPlace Capture()
+    {
+        SelectionPlace? selection = Page switch
+        {
+            PilotPage.Sessions => new(SessionsView<TSurface>.ListId, Sessions.Selected, Sessions.ListCursor.RowCount, Sessions.SelectedId),
+            PilotPage.Flights => Selection(FlightsView<TSurface>.ListId, Flights),
+            PilotPage.Jobs => Selection(JobsView<TSurface>.ListId, Jobs),
+            PilotPage.Fleet => Selection(FleetView<TSurface>.ListId, Fleet),
+            PilotPage.Repos => Selection(ReposView<TSurface>.ListId, Repos),
+            _ => null,
+        };
+        var transcript = Sessions.Transcript;
+        return new NavPlace(Page, [.. Nodes.Picked.Order(StringComparer.Ordinal)], selection,
+            transcript.Line is { } line ? new TranscriptPlace(line, transcript.At, transcript.Agent) : null, Flights.OpenCode);
+
+        static SelectionPlace Selection(string listId, PixelWidgetBase<TSurface> view) => new(listId, view.ListCursor.Index, view.ListCursor.RowCount, null);
+    }
+
+    // Puts the window back as the place had it, without a record of its own.
+    private void Restore(NavPlace place)
+    {
+        _moving++;
+        try
+        {
+            Nodes.Restore(place.Picked);
+            Switch(place.Page, _show);
+            if (place.Transcript is { } transcript)
+            {
+                Sessions.Transcript.Open(transcript.Line, transcript.At, transcript.Agent);
+            }
+            else
+            {
+                Sessions.Transcript.Close();
+            }
+            if (place.FlightCode is { } code)
+            {
+                Flights.OpenDetail(code);
+            }
+            else
+            {
+                Flights.CloseDetail();
+            }
+            if (place.Selection is { } selection)
+            {
+                if (selection.Key is { } key)
+                {
+                    Sessions.SelectFirst(l => l.Key == key);
+                }
+                else
+                {
+                    ViewOf(place.Page)?.ListCursor.Open(selection.ListId, selection.Index, selection.Rows ?? 0);
+                }
+            }
+        }
+        finally
+        {
+            _moving--;
+        }
+    }
+
+    private PixelWidgetBase<TSurface>? ViewOf(PilotPage page) => page switch
+    {
+        PilotPage.Flights => Flights,
+        PilotPage.Jobs => Jobs,
+        PilotPage.Fleet => Fleet,
+        PilotPage.Repos => Repos,
+        _ => null,
+    };
 
     /// <summary>
     /// Gives a card about a leg <b>Its transcript</b>: the leg's worker's transcript on the Sessions page, from the
@@ -169,38 +317,42 @@ internal sealed class PilotChrome<TSurface>
     /// </summary>
     public void LinkCardTranscripts(Func<SessionsScreen> sessions, Func<FlightsScreen> flights, Action<PilotPage>? show = null, Func<JobsScreen>? jobs = null)
     {
+        _show = show ?? _show;
         Cards.TranscriptOf = card => WorkerOf(card, flights(), sessions());
-        Cards.OnTranscript = (card, line) =>
+        Cards.OnTranscript = (card, line) => Navigate(() =>
         {
-            (show ?? Show)(PilotPage.Sessions);
+            Switch(PilotPage.Sessions, show);
             OpenTranscript(line, card.At);
-        };
+        });
         // Home's chips open the thing's own page: a flight its page, a session its transcript, a job its row.
-        Home.OnFlight = flight =>
+        Home.OnFlight = flight => Navigate(() =>
         {
-            (show ?? Show)(PilotPage.Flights);
+            Switch(PilotPage.Flights, show);
             Flights.OpenDetail(flight.Code);
-        };
-        Home.OnSession = line =>
+        });
+        Home.OnSession = line => Navigate(() =>
         {
-            (show ?? Show)(PilotPage.Sessions);
+            Switch(PilotPage.Sessions, show);
             OpenTranscript(line, line.Row.StartedAt);
-        };
-        Home.OnJob = job =>
+        });
+        Home.OnJob = job => Navigate(() =>
         {
-            (show ?? Show)(PilotPage.Jobs);
+            Switch(PilotPage.Jobs, show);
             if (jobs?.Invoke() is { } screen)
             {
                 Jobs.Select(screen, job);
             }
-        };
+        });
         // A job's Its session: the transcript of the session it wakes, from the moment it was handed over.
         Jobs.OnSession = job =>
         {
             if (sessions().Lines.FirstOrDefault(l => l.Row.Id == job.Owner) is { } line)
             {
-                (show ?? Show)(PilotPage.Sessions);
-                OpenTranscript(line, job.QueuedAt ?? job.StartedAt);
+                Navigate(() =>
+                {
+                    Switch(PilotPage.Sessions, show);
+                    OpenTranscript(line, job.QueuedAt ?? job.StartedAt);
+                });
             }
         };
     }
@@ -211,19 +363,20 @@ internal sealed class PilotChrome<TSurface>
     /// </summary>
     public void LinkRepos(Action<PilotPage>? show = null)
     {
-        Repos.OnFlight = worktree =>
+        _show = show ?? _show;
+        Repos.OnFlight = worktree => Navigate(() =>
         {
-            (show ?? Show)(PilotPage.Flights);
+            Switch(PilotPage.Flights, show);
             if (worktree.FlightCode is { } code)
             {
                 Flights.OpenDetail(code);
             }
-        };
-        Repos.OnSession = line =>
+        });
+        Repos.OnSession = line => Navigate(() =>
         {
-            (show ?? Show)(PilotPage.Sessions);
+            Switch(PilotPage.Sessions, show);
             OpenTranscript(line, null);
-        };
+        });
     }
 
     // A jump to a session shows its row whatever In play says, the page naming it as outside In play, until the user moves off it.
@@ -239,15 +392,16 @@ internal sealed class PilotChrome<TSurface>
     /// </summary>
     public void LinkFleet(Action<PilotPage>? show = null)
     {
-        Fleet.OnWaiting = line =>
+        _show = show ?? _show;
+        Fleet.OnWaiting = line => Navigate(() =>
         {
-            (show ?? Show)(PilotPage.Sessions);
+            Switch(PilotPage.Sessions, show);
             Nodes.ShowAll();
             Nodes.Toggle(line.Where);
             Sessions.Transcript.Close();
             // A node's rows are unmarked while it is the only one there is; otherwise marked with the key the pick is.
             Sessions.SelectFirst(l => l.Row.State == SessionState.Waiting && (l.Node is null ? line.Here : l.Node.Key == line.Where));
-        };
+        });
     }
 
     /// <summary>The session of the worker of the leg <paramref name="card"/> is about (its subject <c>flight/&lt;code&gt;/&lt;leg&gt;</c>), or null.</summary>
