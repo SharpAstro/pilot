@@ -715,8 +715,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         return index == Selected ? row.Bg(RowFocusBg) : (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }
 
-    // A session's name, and for one that started subagents how many, as the toggle that lists them under it.
-    // and, for one waiting on you that can be answered in the browser, the link that opens it there.
+    // A session's name; for one that started subagents how many, as the toggle that lists them under it; and for one
+    // waiting on you that can be answered in the browser, the link that opens it there.
     private Layout.Node NameLine(SessionLine line)
     {
         var name = Layout.Builder.Text(line.Name, 12f, Dim);
