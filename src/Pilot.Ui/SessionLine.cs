@@ -40,6 +40,27 @@ internal sealed partial record SessionLine
     /// <summary>What it waits on, while it waits on you; null otherwise.</summary>
     public string? WaitingFor { get; init; }
 
+    /// <summary>Since when it waits on you, while it does; null otherwise (<see cref="SessionRow.WaitingSince"/>).</summary>
+    public DateTimeOffset? WaitingSince { get; init; }
+
+    /// <summary>The tool and command it asks to run, while it waits on you: <c>Bash: git push origin main</c>; null otherwise.</summary>
+    public string? Asking { get; init; }
+
+    /// <summary>Its Remote Control link, where it can be answered in the browser; null while Remote Control is off.</summary>
+    public string? RemoteControlUrl { get; init; }
+
+    /// <summary>Whether it still says waiting but its process is gone: the wait is not live and nothing can answer it.</summary>
+    public bool Gone { get; init; }
+
+    /// <summary>
+    /// Whether it waits on you with a process to answer it: its state is waiting and its process is there. A stopped
+    /// session (an API error) is shown as stopped, not as waiting.
+    /// </summary>
+    public bool IsWaiting => Row.State == SessionState.Waiting && !Gone && !IsStopped(Row);
+
+    /// <summary>Its Remote Control link, only while it waits on you and can be answered there: what the Answer in the browser links lead to.</summary>
+    public string? AnswerUrl => IsWaiting ? RemoteControlUrl : null;
+
     /// <summary>Its spend in weighted tokens, against its budget when it has one: <c>2.31M / 4M · 58%</c>, or <c>1.83M</c>.</summary>
     public required string Spend { get; init; }
 
@@ -98,6 +119,10 @@ internal sealed partial record SessionLine
             LastResponse = row.LastResponseAt is { } at ? Ago(now - at) : "none yet",
             State = IsStopped(row) ? "stopped" : StateText(row.State),
             WaitingFor = IsStopped(row) ? StopText(row, now) : row.State == SessionState.Waiting ? row.WaitingFor : null,
+            WaitingSince = row.State == SessionState.Waiting ? row.WaitingSince : null,
+            Asking = row.State == SessionState.Waiting ? row.Asking : null,
+            RemoteControlUrl = row.RemoteControlUrl,
+            Gone = row.State == SessionState.Waiting && row.Gone,
             Spend = row.Budget is { } budget
                 ? $"{Tokens(row.SpendWeighted)} / {Tokens(budget)} · {Percent(spendFraction ?? 0f)}"
                 : Tokens(row.SpendWeighted),
