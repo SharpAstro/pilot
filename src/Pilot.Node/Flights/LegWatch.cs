@@ -47,6 +47,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>How long a started worker has to show up in the session listing.</summary>
     public TimeSpan ShowUpGrace { get; init; } = TimeSpan.FromMinutes(3);
 
+    /// <summary>How long a background session waits on its person before it rings rather than being a card for you.</summary>
+    public TimeSpan RingAfter { get; init; } = TimeSpan.FromMinutes(15);
+
     /// <summary>How many times one worker is nudged before the watch rings instead.</summary>
     public int MaxNudges { get; init; } = 2;
 
@@ -85,6 +88,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         var sessions = state.Sessions();
         LookAtReviews(sessions, now);
         LookAtValidators(sessions, now);
+        LookAtWaiting(sessions, now);
         foreach (var leg in state.Legs().Where(l => l.State == LegState.Flying && l.WorkerJob is not null))
         {
             var subject = Verbs.LegTarget(leg.Flight, leg.Name);
@@ -247,6 +251,43 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     new CardChoice { Label = "Remove leg", Verb = Verbs.RemoveLeg, Target = subject, Args = ["its validation stalled"] },
                 ]);
             }
+        }
+    }
+
+    /// <summary>
+    /// Every session waiting on its person that no leg already rings for (a flying leg's worker has its own, see
+    /// <see cref="Waiting"/>) is a card from this node: For you, or a ring once a background one (nobody's terminal, so
+    /// nobody sees the prompt) has waited over <see cref="RingAfter"/>. The card closes when the session stops waiting or its
+    /// process is gone. A card answered or dismissed is not raised again for the same wait, which the wait's start tells from
+    /// the next.
+    /// </summary>
+    private void LookAtWaiting(SessionRow[] sessions, DateTimeOffset now)
+    {
+        var workers = state.Legs().Where(l => l.State == LegState.Flying && l.WorkerJob is not null).Select(l => l.WorkerJob).ToHashSet(StringComparer.Ordinal);
+        var waiting = sessions.Where(s => s is { State: SessionState.Waiting, Gone: false, ApiError: null, Archived: false } && !workers.Contains(s.Id))
+            .ToDictionary(s => Verbs.SessionTarget(s.Id), StringComparer.Ordinal);
+        var cards = state.Cards();
+        foreach (var card in cards.Where(c => c.State == CardState.Open && c.Kind == CardKinds.SessionWaiting && !waiting.ContainsKey(c.Subject)))
+        {
+            var row = sessions.FirstOrDefault(s => Verbs.SessionTarget(s.Id) == card.Subject);
+            state.CloseCardsAbout(card.Subject, row is null ? "the session is gone" : row.Gone ? "its process is gone" : "it stopped waiting", CardKinds.SessionWaiting);
+        }
+        foreach (var (subject, session) in waiting)
+        {
+            var since = session.WaitingSince ?? session.LastResponseAt ?? session.StartedAt;
+            var carded = cards.Where(c => c.Kind == CardKinds.SessionWaiting && c.Subject == subject && c.At >= since).ToArray();
+            var rings = session.Kind == SessionKind.Background && session.WaitingSince is { } at && now - at > RingAfter;
+            if (carded.Any(c => c.Bin == CardBin.Ring) || (carded.Length > 0 && !rings))
+            {
+                continue;
+            }
+            if (rings)
+            {
+                state.CloseCardsAbout(subject, "it has waited over " + Waited.Say(RingAfter) + ", so it rings", CardKinds.SessionWaiting);
+            }
+            var what = session.WaitingFor is { Length: > 0 } w ? w : "a question or a permission";
+            var age = session.WaitingSince is { } started ? $" · since {Waited.Say(now - started)}" : "";
+            state.RaiseCard(rings ? CardBin.Ring : CardBin.ForYou, CardKinds.SessionWaiting, subject, $"{session.Name} waits on {what}{age}", session.Asking, link: session.RemoteControlUrl);
         }
     }
 

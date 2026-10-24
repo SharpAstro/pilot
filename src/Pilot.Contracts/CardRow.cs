@@ -64,6 +64,33 @@ public sealed record CardChoice
     public string? Status { get; init; }
 }
 
+/// <summary>Kinds of card a client treats specially, matched by word (<see cref="CardRow.Kind"/>).</summary>
+public static class CardKinds
+{
+    /// <summary>
+    /// A session waiting on its person that no leg's worker is: raised by the node with the session as its subject
+    /// (<c>session/&lt;id&gt;</c>) and its Remote Control URL, if it has one, as <see cref="CardRow.Link"/>. It closes itself
+    /// when the session stops waiting or its process is gone.
+    /// </summary>
+    public const string SessionWaiting = "session-waiting";
+}
+
+/// <summary>How long a thing has gone on, as a card or a banner says it: <c>under 1 m</c>, <c>37 m</c>, <c>9 h 37 m</c>, <c>2 d 3 h</c>.</summary>
+public static class Waited
+{
+    public static string Say(TimeSpan span)
+    {
+        if (span < TimeSpan.Zero)
+        {
+            span = TimeSpan.Zero;
+        }
+        return span.TotalMinutes < 1 ? "under 1 m"
+            : span.TotalHours < 1 ? $"{(int)span.TotalMinutes} m"
+            : span.TotalDays < 1 ? $"{(int)span.TotalHours} h {span.Minutes} m"
+            : $"{(int)span.TotalDays} d {span.Hours} h";
+    }
+}
+
 /// <summary>The <see cref="CardChoice.Status"/> values a merge's checks give.</summary>
 public static class ChoiceStatus
 {
