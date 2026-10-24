@@ -159,6 +159,133 @@ public sealed class UpdateTests : IDisposable
     }
 
     [Fact]
+    public async Task AReplacedFileThatIsHeldGoesAsideUnderAFreshNameAndTheInstallGoesIn()
+    {
+        Install("2.0.1", new() { ["pilot-node.exe"] = "old node", ["pilot.exe"] = "old cli" });
+        var feed = Feed("2.0.2", new() { ["pilot-node.exe"] = "new node", ["pilot.exe"] = "new cli" });
+        var release = (await feed.LatestAsync(Ct)).ShouldNotBeNull();
+        var (staging, staged) = await ReleaseInstall.StageAsync(feed, release, _install, "win-arm64", Layout, Ct);
+
+        // Held the way a running binary is: open for reading, renamable.
+        using (new FileStream(Path.Combine(_install, "pilot.exe"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        {
+            ReleaseInstall.Swap(staging, staged, _install, ReleaseInstall.ReadMarker(_install)).ShouldBeNull();
+
+            (Read("pilot-node.exe"), Read("pilot.exe")).ShouldBe(("new node", "new cli"));
+            Read("pilot.exe~old-1").ShouldBe("old cli");
+        }
+
+        ReleaseInstall.CleanAside(_install).ShouldBe(0);
+        AsideFiles().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AnEarlierAsideThatIsItselfHeldIsNeverReusedNorDeleted()
+    {
+        Install("2.0.1", new() { ["pilot-node.exe"] = "old node" });
+        File.WriteAllText(Path.Combine(_install, "pilot-node.exe~old"), "first aside");
+        File.WriteAllText(Path.Combine(_install, "pilot-node.exe~old2"), "second aside");
+        File.WriteAllText(Path.Combine(_install, "pilot-node.exe~old-1"), "held aside");
+        var feed = Feed("2.0.2", new() { ["pilot-node.exe"] = "new node" });
+        var release = (await feed.LatestAsync(Ct)).ShouldNotBeNull();
+        var (staging, staged) = await ReleaseInstall.StageAsync(feed, release, _install, "win-arm64", Layout, Ct);
+
+        using (new FileStream(Path.Combine(_install, "pilot-node.exe~old-1"), FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            ReleaseInstall.Swap(staging, staged, _install, ReleaseInstall.ReadMarker(_install)).ShouldBeNull();
+
+            Read("pilot-node.exe").ShouldBe("new node");
+            Read("pilot-node.exe~old-2").ShouldBe("old node");
+            (Read("pilot-node.exe~old"), Read("pilot-node.exe~old2"), Read("pilot-node.exe~old-1")).ShouldBe(("first aside", "second aside", "held aside"));
+        }
+    }
+
+    [Fact]
+    public void CleanAsideDeletesTheFreeAsidesOfEveryFormAndOnlyThose()
+    {
+        Install("2.0.2", new() { ["pilot-node.exe"] = "node" });
+        string[] asides = ["pilot-node.exe~old", "pilot-node.exe~old2", "pilot-node.exe~old-1", "pilot-node.exe~old-12", "Fonts/a.ttf~old-3"];
+        string[] kept = ["pilot-node.exe~older", "notes~old-x", "~old", "pilot-node.exe~old-"];
+        foreach (var name in asides.Concat(kept))
+        {
+            var path = Path.Combine(_install, name);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, name);
+        }
+
+        ReleaseInstall.CleanAside(_install).ShouldBe(0);
+
+        asides.ShouldAllBe(a => !File.Exists(Path.Combine(_install, a)));
+        kept.ShouldAllBe(k => File.Exists(Path.Combine(_install, k)));
+    }
+
+    [Fact]
+    public void CleanAsideLeavesTheHeldOnesAndCountsThem()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "a file held without FileShare.Delete cannot be deleted on Windows only");
+        Install("2.0.2", new() { ["pilot-node.exe"] = "node" });
+        string[] names = ["a.dll~old", "b.dll~old2", "c.dll~old-1", "d.dll~old-2"];
+        foreach (var name in names)
+        {
+            File.WriteAllText(Path.Combine(_install, name), name);
+        }
+
+        using (new FileStream(Path.Combine(_install, "a.dll~old"), FileMode.Open, FileAccess.Read, FileShare.Read))
+        using (new FileStream(Path.Combine(_install, "c.dll~old-1"), FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            ReleaseInstall.CleanAside(_install).ShouldBe(2);
+
+            AsideFiles().Select(Path.GetFileName).Order().ShouldBe(["a.dll~old", "c.dll~old-1"]);
+        }
+
+        ReleaseInstall.CleanAside(_install).ShouldBe(0);
+        AsideFiles().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ASwapThatCannotMoveAsideAnOldOnlyFilePutsEverythingBackAndNamesTheHolder()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "a file held without FileShare.Delete cannot be renamed on Windows only");
+        Install("2.0.1", new() { ["pilot-node.exe"] = "old node", ["Fonts/a.ttf"] = "old font", ["gone.dll"] = "old dll", ["Plugins/gone2.dll"] = "old dll 2" });
+        var feed = Feed("2.0.2", new() { ["pilot-node.exe"] = "new node", ["Fonts/a.ttf"] = "new font", ["New/b.ttf"] = "new font b" });
+        var release = (await feed.LatestAsync(Ct)).ShouldNotBeNull();
+        var (staging, staged) = await ReleaseInstall.StageAsync(feed, release, _install, "win-arm64", Layout, Ct);
+        var before = Snapshot();
+
+        string? failed;
+        // gone.dll goes aside, then gone2.dll is refused: the rest of the swap has been done by then, and all of it goes back.
+        using (new FileStream(Path.Combine(_install, "Plugins", "gone2.dll"), FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            failed = ReleaseInstall.Swap(staging, staged, _install, ReleaseInstall.ReadMarker(_install));
+        }
+
+        failed.ShouldNotBeNull().ShouldContain($"pid {Environment.ProcessId}");
+        Snapshot().ShouldBe(before);
+        ReleaseInstall.Installed(_install, "2.0.1").ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task ASwapThatCannotReplaceAHeldFileNamesTheProcessHoldingIt()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "a file held without FileShare.Delete cannot be renamed on Windows only");
+        Install("2.0.1", new() { ["pilot-node.exe"] = "old node", ["pilot.exe"] = "old cli" });
+        var feed = Feed("2.0.2", new() { ["pilot-node.exe"] = "new node", ["pilot.exe"] = "new cli" });
+        var release = (await feed.LatestAsync(Ct)).ShouldNotBeNull();
+        var (staging, staged) = await ReleaseInstall.StageAsync(feed, release, _install, "win-arm64", Layout, Ct);
+        var before = Snapshot();
+
+        string? failed;
+        using (new FileStream(Path.Combine(_install, "pilot.exe"), FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            failed = ReleaseInstall.Swap(staging, staged, _install, ReleaseInstall.ReadMarker(_install));
+        }
+
+        failed.ShouldNotBeNull().ShouldContain("held by");
+        failed.ShouldContain($"pid {Environment.ProcessId}");
+        Snapshot().ShouldBe(before);
+    }
+
+    [Fact]
     public async Task AskRaisesACardWithUpdateOnceAndAutoWaitsForTheJobs()
     {
         var node = NodeUpdater.Layout.Required[0];
@@ -259,6 +386,17 @@ public sealed class UpdateTests : IDisposable
     private static CommandRequest Command(params string[] args) => new() { Verb = Verbs.Update, Target = Verbs.NodeTarget, Args = args, Who = "cli" };
 
     private string Read(string file) => File.ReadAllText(Path.Combine(_install, file));
+
+    private string[] AsideFiles()
+        => [.. Directory.EnumerateFiles(_root, "*" + ReleaseInstall.AsideSuffix + "*", SearchOption.AllDirectories)];
+
+    // The install folder as it is: every folder and every file with its text, the staging folder left out.
+    private string[] Snapshot()
+        => [.. Directory.EnumerateFileSystemEntries(_install, "*", SearchOption.AllDirectories)
+            .Select(e => Path.GetRelativePath(_install, e).Replace('\\', '/'))
+            .Where(e => e != ReleaseInstall.StagingName && !e.StartsWith(ReleaseInstall.StagingName + "/", StringComparison.Ordinal))
+            .Order(StringComparer.Ordinal)
+            .Select(e => File.Exists(Path.Combine(_install, e)) ? $"{e}={Read(e)}" : e + "/")];
 
     // An installed release: its files and the marker that lists them.
     private void Install(string version, Dictionary<string, string> files, string rid = "win-arm64")

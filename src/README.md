@@ -116,11 +116,16 @@ the Actions artifacts earlier runs left (the zips that matter are release assets
 It looks a minute after it starts and every 6 hours (15 minutes on beta), through `gh` (the repo is private, and gh's login reads it).
 `pilot update` installs the latest now, whatever the policy; `pilot update --check` only says. An install downloads the
 runtime's zip into `update/` beside the binaries, checks it against the SHA-256 GitHub lists, runs the staged
-`pilot-node --version`, then renames each file it replaces to `<name>~old` and copies the new one in, the marker last;
-one that cannot finish is put back. The node then starts the new `pilot-node --after <its pid>` with its own arguments
+`pilot-node --version`, then renames each file it replaces (and each of the old release's the new one lacks) to
+`<name>~old-<n>`, a name nothing has: `n` counts up past every aside that exists, and an aside is never deleted to be
+reused, since a process (`pilot mcp` in every session, a hook, a worker's CLI) may still hold it. The new file is copied
+in, the marker last. The swap is all or nothing: a file that cannot be replaced fails the whole install, every rename is
+put back (and the folders it made removed), and the message names the process holding it where Windows' Restart Manager
+can tell, else gives the OS's own. The node then starts the new `pilot-node --after <its pid>` with its own arguments
 and stops; the new one waits for it and takes the socket. Flights, legs and cards are the store's and carry on, clients
 resume their stream, workers and the watchtower keep running. A GUI or TUI open at the time runs on from its renamed
-binary until it is reopened; the `~old` files go at a later start, once nothing runs from them.
+binary until it is reopened. At every start the node sweeps each aside it finds (`~old`, `~old<n>` of older installs,
+`~old-<n>`), deleting those nothing holds any more and leaving the held ones for the start after.
 
 The update code (`Pilot.Node/Updates`: `ReleaseFeed`, `ReleaseInstall`, `UpdatePolicy`) holds no pilot type: it began
 as a copy of YtPlayer's self-update and is meant to move to SharpAstro.AppShell once a second app updates itself the
