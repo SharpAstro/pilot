@@ -253,11 +253,10 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 {
     public const string ListId = "fleet";
 
-    private const float ColumnHeaderHeight = 28f;
     private const float RowHeight = 54f;
     private const float Gutter = 16f;
-    private const float ColumnGap = 14f;
-    private const float StripeWidth = 4f;
+
+    // Column widths, as they are before a reader drags a divider.
     private const float MachineWidth = 190f;
     private const float AccountWidth = 280f;
     private const float SessionsWidth = 170f;
@@ -273,7 +272,6 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
     private static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
     private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
-    private static readonly RGBAColor32 Faint = new(0x5c, 0x5f, 0x6c, 0xff);
     private static readonly RGBAColor32 Live = new(0x4c, 0xc3, 0x8a, 0xff);
     private static readonly RGBAColor32 Away = new(0x6a, 0x6d, 0x7a, 0xff);
     private static readonly RGBAColor32 Ringing = new(0xf0, 0xb4, 0x3c, 0xff);
@@ -282,6 +280,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
     private int _count;
+
+    /// <summary>The page's table: its columns' widths, which a drag on a title's divider changes and the GUI keeps.</summary>
+    public ListTable Table { get; } = new("fleet");
 
     /// <summary>Opens a window of its own flying the node at that address; null (the default) shows no such button.</summary>
     public Action<FleetLine>? OnOpen { get; set; }
@@ -367,22 +368,26 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         {
             rows[i] = Row(screen.Lines[i], i);
         }
-        var columns = new List<Layout.Node>
-        {
-            Layout.Builder.Spacer().WFixed(StripeWidth),
-            Label("Node").WFixed(MachineWidth),
-            Label("Account and usage").WFixed(AccountWidth),
-            Label("Sessions").WFixed(SessionsWidth),
-            Optional(Label("Flights and jobs"), WorkWidth),
-            Label("Rings").WFixed(RingsWidth),
-            Layout.Builder.Spacer().WFixed(ButtonsWidth),
-        };
         return Layout.Builder.VStack(
-                Layout.Builder.HStack([.. columns]).WithGap(ColumnGap).PadX(8f).RowH(ColumnHeaderHeight),
+                Table.Header(Columns, Scale),
                 Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch())
             .Pad(Gutter, 8f)
             .Stretch();
     }
+
+    /// <summary>
+    /// The page's columns, header and rows both over them. The last, untitled, holds the row's buttons: it keeps its width,
+    /// as no divider stands after it to drag.
+    /// </summary>
+    private static readonly IReadOnlyList<ListColumn> Columns =
+    [
+        ListColumn.Fixed("Node", MachineWidth),
+        ListColumn.Fixed("Account and usage", AccountWidth),
+        ListColumn.Fixed("Sessions", SessionsWidth),
+        ListColumn.Optional("Flights and jobs", WorkWidth),
+        ListColumn.Fixed("Rings", RingsWidth),
+        ListColumn.Fixed("", ButtonsWidth),
+    ];
 
     private Layout.Node Row(FleetLine line, int index)
     {
@@ -402,25 +407,20 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         }
         var cells = new List<Layout.Node>
         {
-            Layout.Builder.Spacer().Bg(line.Connected ? Live : Away).WFixed(StripeWidth).HStar(),
             Layout.Builder.VStack(
-                    Layout.Builder.Text(line.Machine, 15f, line.Connected ? Bright : Dim).RowH(22f),
-                    Layout.Builder.Text(line.Here ? $"{line.Where} · this window" : line.CanCommand ? line.Where : $"{line.Where} · watch only", 11f, Dim).RowH(18f))
-                .WFixed(MachineWidth),
+                Layout.Builder.Text(line.Machine, 15f, line.Connected ? Bright : Dim).RowH(22f),
+                Layout.Builder.Text(line.Here ? $"{line.Where} · this window" : line.CanCommand ? line.Where : $"{line.Where} · watch only", 11f, Dim).RowH(18f)),
             Layout.Builder.VStack(
-                    Layout.Builder.Text(line.Account, 13f, Body).RowH(22f),
-                    Layout.Builder.Text(line.Connected ? line.Usage : line.State, 11f, Dim).RowH(18f))
-                .WFixed(AccountWidth),
+                Layout.Builder.Text(line.Account, 13f, Body).RowH(22f),
+                Layout.Builder.Text(line.Connected ? line.Usage : line.State, 11f, Dim).RowH(18f)),
             SessionsCell(line),
-            Optional(Layout.Builder.VStack(
-                    Layout.Builder.Text(line.Flights, 13f, Body).RowH(22f),
-                    Layout.Builder.Text(line.Jobs switch { "—" => "", "none" => "no jobs", var jobs => $"jobs: {jobs}" }, 11f, Dim).RowH(18f)), WorkWidth),
-            Layout.Builder.Text(line.Rings == 0 ? "—" : $"{line.Rings} ringing", 13f, line.Rings == 0 ? Dim : Ringing).WFixed(RingsWidth),
-            Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f).WFixed(ButtonsWidth),
+            Layout.Builder.VStack(
+                Layout.Builder.Text(line.Flights, 13f, Body).RowH(22f),
+                Layout.Builder.Text(line.Jobs switch { "—" => "", "none" => "no jobs", var jobs => $"jobs: {jobs}" }, 11f, Dim).RowH(18f)),
+            ListTable.Top(Layout.Builder.Text(line.Rings == 0 ? "—" : $"{line.Rings} ringing", 13f, line.Rings == 0 ? Dim : Ringing)),
+            Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f),
         };
-        var row = Layout.Builder.HStack([.. cells])
-            .WithGap(ColumnGap)
-            .Pad(8f, 6f)
+        var row = Table.Row(Columns, Layout.Builder.Spacer().Bg(line.Connected ? Live : Away), cells)
             .RowH(RowHeight)
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
@@ -435,20 +435,14 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         var split = line.Sessions.IndexOf(" · ", StringComparison.Ordinal);
         if (line.WaitingOnYou <= 0 || OnWaiting is not { } onWaiting || split < 0)
         {
-            return Layout.Builder.Text(line.Sessions, 13f, waiting ? Ringing : Body).WFixed(SessionsWidth);
+            return ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, waiting ? Ringing : Body));
         }
-        return Layout.Builder.HStack(
+        return ListTable.Top(Layout.Builder.HStack(
                 Layout.Builder.Text(line.Sessions[..split] + " ·", 13f, Body).WAuto(),
                 Layout.Builder.Text(line.Sessions[(split + 3)..], 13f, Ringing).WAuto().BgHover(RowHoverBg)
                     .Clickable(new HitResult.ButtonHit($"fleet:{line.Where}:waiting"), _ => onWaiting(line)))
-            .WithGap(4f)
-            .WFixed(SessionsWidth);
+            .WithGap(4f));
     }
-
-    private static Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);
-
-    /// <summary>A column a narrow window drops, header and rows together (see the flights view).</summary>
-    private static Layout.Node Optional(Layout.Node cell, float width) => cell.WStar(1f, 0f, width).CollapseBelow(width);
 
     private static Layout.Node Pill(string label, string action, Action onClick) =>
         Layout.Builder.Text(label, 12f, Bright, TextAlign.Center)

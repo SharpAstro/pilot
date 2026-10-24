@@ -119,6 +119,12 @@ internal sealed class ListTable
         }
     }
 
+    /// <summary>
+    /// A cell's content at the top of the cell: a table row's cells are as tall as the row, and a line of text would
+    /// otherwise sit in the middle of it.
+    /// </summary>
+    public static Layout.Node Top(Layout.Node content) => Layout.Builder.VStack(content, Layout.Builder.Spacer().HStar());
+
     /// <summary>The width <paramref name="title"/>'s column has now, for a row outside the table that lines up under it; <paramref name="declared"/> where it was never dragged.</summary>
     public float WidthOf(string title, float declared)
     {
@@ -143,9 +149,9 @@ internal sealed class ListTable
     /// <summary>
     /// A row: <paramref name="stripe"/> (a fixed cell, usually a colour) and <paramref name="cells"/>, one for each of
     /// <paramref name="columns"/> in order, in the header's gap and padding. The caller sizes its height and gives it its
-    /// background and clicks.
+    /// background and clicks. <paramref name="padY"/> is the space above and below the cells, for a row lower than the page's usual.
     /// </summary>
-    public Layout.Node Row(IReadOnlyList<ListColumn> columns, Layout.Node stripe, IReadOnlyList<Layout.Node> cells)
+    public Layout.Node Row(IReadOnlyList<ListColumn> columns, Layout.Node stripe, IReadOnlyList<Layout.Node> cells, float padY = 6f)
     {
         var specs = Lay(columns);
         var style = Style;
@@ -160,7 +166,7 @@ internal sealed class ListTable
         var row = Layout.Builder.TableRow(specs, laid, ref style, Widths);
         return Layout.Builder.HStack(stripe.WFixed(StripeWidth).HStar(), row.WStar().HStar())
             .WithGap(ColumnGap)
-            .Pad(EndPad, 6f);
+            .Pad(EndPad, padY);
     }
 
     /// <summary>

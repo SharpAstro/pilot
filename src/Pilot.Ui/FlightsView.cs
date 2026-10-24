@@ -171,11 +171,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 {
     public const string ListId = "flights";
 
-    private const float ColumnHeaderHeight = 28f;
     private const float RowHeight = 54f;
     private const float Gutter = 16f;
-    private const float ColumnGap = 14f;
-    private const float StripeWidth = 4f;
+
+    // Column widths of the list, as they are before a reader drags a divider.
     private const float CodeWidth = 120f;
     private const float WhereWidth = 140f;
     private const float StateWidth = 160f;
@@ -232,6 +231,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     public static readonly KeyChord CommandShortcut = new(InputKey.K, InputModifier.Ctrl);
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
+
+    /// <summary>The list view's table: its columns' widths, which a drag on a title's divider changes and the GUI keeps.</summary>
+    public ListTable Table { get; } = new("flights");
     private int _count;
     private FlightsScreen _screen = new([], "", default);
 
@@ -648,72 +650,65 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             return GridBody(screen);
         }
 
-        var rows = new Layout.Node[screen.Lines.Count];
         var marked = screen.Lines.Any(l => l.Node is not null);
+        var columns = Columns(marked);
+        var rows = new Layout.Node[screen.Lines.Count];
         for (var i = 0; i < rows.Length; i++)
         {
-            rows[i] = Row(screen.Lines[i], i, marked);
+            rows[i] = Row(screen.Lines[i], i, marked, columns);
         }
 
-        var columns = new List<Layout.Node>
-        {
-            Layout.Builder.Spacer().WFixed(StripeWidth),
-            Label("Flight").WFixed(CodeWidth),
-            Label("What").WStar(),
-            Label("Repo").WFixed(WhereWidth),
-            Label("State").WFixed(StateWidth),
-            Label("Legs").WFixed(LegsWidth),
-            Optional(Label("Branch"), BranchWidth),
-            Optional(Label("Sessions"), SessionsWidth),
-        };
-        if (marked)
-        {
-            columns.Insert(1, Label("Node").WFixed(NodeWidth));
-        }
         return Layout.Builder.VStack(
-                Layout.Builder.HStack([.. columns])
-                    .WithGap(ColumnGap)
-                    .PadX(8f)
-                    .RowH(ColumnHeaderHeight),
+                Table.Header(columns, Scale),
                 Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch())
             .Pad(Gutter, 8f)
             .Stretch();
     }
 
+    /// <summary>The list's columns, header and rows both over them: Node only while the page merges several nodes.</summary>
+    private static IReadOnlyList<ListColumn> Columns(bool marked)
+    {
+        var columns = new List<ListColumn>
+        {
+            ListColumn.Fixed("Flight", CodeWidth),
+            ListColumn.Star("What"),
+            ListColumn.Fixed("Repo", WhereWidth),
+            ListColumn.Fixed("State", StateWidth),
+            ListColumn.Fixed("Legs", LegsWidth),
+            ListColumn.Optional("Branch", BranchWidth),
+            ListColumn.Optional("Sessions", SessionsWidth),
+        };
+        if (marked)
+        {
+            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth));
+        }
+        return columns;
+    }
+
     private Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);
 
-    /// <summary>
-    /// A column the page drops on a narrow window: its whole <paramref name="width"/> while there is room, gone once the
-    /// engine could give it less. Header and rows both say it, so they drop together.
-    /// </summary>
-    private static Layout.Node Optional(Layout.Node cell, float width) => cell.WStar(1f, 0f, width).CollapseBelow(width);
-
-    private Layout.Node Row(FlightLine line, int index, bool marked)
+    private Layout.Node Row(FlightLine line, int index, bool marked, IReadOnlyList<ListColumn> columns)
     {
         var landed = line.Row.State == FlightState.Landed;
         var color = line.Row.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
         var text = landed ? Dim : Bright;
         var cells = new List<Layout.Node>
         {
-            Layout.Builder.Spacer().Bg(color).WFixed(StripeWidth).HStar(),
-            Layout.Builder.Text(line.Code, 15f, text).WFixed(CodeWidth),
-            Layout.Builder.Text(line.Title, 14f, landed ? Dim : Body).WStar(),
-            Layout.Builder.Text(line.Where, 13f, Dim).WFixed(WhereWidth),
+            ListTable.Top(Layout.Builder.Text(line.Code, 15f, text)),
+            ListTable.Top(Layout.Builder.Text(line.Title, 14f, landed ? Dim : Body)),
+            ListTable.Top(Layout.Builder.Text(line.Where, 13f, Dim)),
             Layout.Builder.VStack(
-                    Layout.Builder.Text(line.State, 14f, color).RowH(22f),
-                    Layout.Builder.Text(line.StateDetail ?? "", 11f, Dim).RowH(18f))
-                .WFixed(StateWidth),
-            Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body).WFixed(LegsWidth),
-            Optional(Layout.Builder.Text(line.Branch, 12f, Dim), BranchWidth),
-            Optional(Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body), SessionsWidth),
+                Layout.Builder.Text(line.State, 14f, color).RowH(22f),
+                Layout.Builder.Text(line.StateDetail ?? "", 11f, Dim).RowH(18f)),
+            ListTable.Top(Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body)),
+            ListTable.Top(Layout.Builder.Text(line.Branch, 12f, Dim)),
+            ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body)),
         };
         if (marked)
         {
-            cells.Insert(1, Layout.Builder.Text(line.Node?.Name ?? "", 13f, landed ? Dim : Body).WFixed(NodeWidth));
+            cells.Insert(0, ListTable.Top(Layout.Builder.Text(line.Node?.Name ?? "", 13f, landed ? Dim : Body)));
         }
-        var row = Layout.Builder.HStack([.. cells])
-            .WithGap(ColumnGap)
-            .Pad(8f, 6f)
+        var row = Table.Row(columns, Layout.Builder.Spacer().Bg(color), cells)
             .RowH(RowHeight)
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
