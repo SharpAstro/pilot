@@ -423,7 +423,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         }
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && Transcript.IsOpen)
         {
-            Transcript.Close();
+            Transcript.GoBack();
             return true;
         }
         // Right lists the selected session's subagents under it, Left puts them away.

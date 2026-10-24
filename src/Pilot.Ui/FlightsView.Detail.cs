@@ -39,6 +39,22 @@ internal sealed partial class FlightsView<TSurface>
     private string? _pinned;
     private bool _selectPinned;
 
+    /// <summary>What the Back pill and Escape do: the chrome's Back, which returns to wherever the page was opened from. Null (a host with no history) closes it.</summary>
+    public Action? OnBack { get; set; }
+
+    /// <summary>Leaves the page the way Back does: through <see cref="OnBack"/>, or by closing it where there is none.</summary>
+    public void GoBack()
+    {
+        if (OnBack is { } back)
+        {
+            back();
+        }
+        else
+        {
+            CloseDetail();
+        }
+    }
+
     /// <summary>The open page's scroll position, in the layout's own units (a pixel in the window, a cell in the terminal).</summary>
     internal int DetailOffset => _detailScroll.AtomOffset;
 
@@ -88,7 +104,7 @@ internal sealed partial class FlightsView<TSurface>
         var color = flight.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
         var head = new List<Layout.Node>
         {
-            Pill("Back to the flights", "flight:back", CloseDetail),
+            Pill("← Back", "flight:back", GoBack),
             Layout.Builder.Text(line.Code, 16f, Bright).WAuto(),
             Layout.Builder.Text(line.Title, 14f, Body).WStar(),
             Layout.Builder.Text(line.StateDetail is null ? line.State : $"{line.State} ({line.StateDetail})", 13f, color, TextAlign.Far).WAuto(),
