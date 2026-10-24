@@ -47,11 +47,15 @@ public sealed class TranscriptPaneTests
     private static Layout.Content.Text TextOf(ImmutableArray<Layout.ArrangedNode<int>> arranged, string value) =>
         arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().First(t => t.Value.TrimEnd() == value);
 
-    private static async Task<(SessionsView<RgbaImage> View, SessionsScreen Screen, RgbaImageRenderer Renderer)> Open()
+    private static async Task<(SessionsView<RgbaImage> View, SessionsScreen Screen, RgbaImageRenderer Renderer)> Open(SubagentRow[]? subagents = null)
     {
         var renderer = new RgbaImageRenderer(1280, 800);
         var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
         var screen = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
+        if (subagents is not null)
+        {
+            screen = screen with { Lines = [screen.Lines[0] with { Row = screen.Lines[0].Row with { Subagents = subagents } }, .. screen.Lines.Skip(1)] };
+        }
         view.Transcript.Load = (_, _, after, _) => Task.FromResult(after < 0
             ? new TranscriptPage { Total = 6, Entries = Entries() }
             : new TranscriptPage { Total = 6, Entries = [] });
@@ -193,6 +197,84 @@ public sealed class TranscriptPaneTests
             && s.Children.Any(c => c is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "claude" } }));
         row.PadDown.ShouldBe(TranscriptPane.ProseSpace);
         TranscriptPane.ProseSpace.ShouldBeGreaterThan(TranscriptPane.ToolGap);
+        view.Transcript.Close();
+    }
+
+    private static SubagentRow[] Reviewers(int count) =>
+        [.. Enumerable.Range(1, count).Select(i => new SubagentRow { Id = $"r{i}", Type = "pilot:reviewer", Description = $"task {i}", Working = i % 2 == 1 })];
+
+    [Fact]
+    public async Task ThirteenReviewersAreLabelledWithoutTheirPluginPrefixNumberedInTheOrderTheyStartedAndNamingTheirTask()
+    {
+        var (view, screen, renderer) = await Open(Reviewers(13));
+        using var _ = renderer;
+        // Room for every chip: only the labels are looked at.
+        view.Transcript.ChipRowWidth = 100_000f;
+
+        var described = Described(view, screen);
+        for (var i = 1; i <= 13; i++)
+        {
+            described.ShouldContain($"reviewer {i}: task {i}");
+        }
+        described.ShouldNotContain("pilot:reviewer");
+        // One of its type, a subagent is named by its type alone.
+        view.Transcript.MenuItems.ShouldBeEmpty();
+        view.Transcript.Close();
+    }
+
+    [Fact]
+    public async Task AChipWithNoDescriptionIsLabelledFromItsPromptsFirstLineAndAnAgentOfItsOwnTypeHasNoNumber()
+    {
+        var (view, screen, renderer) = await Open([
+            new() { Id = "a1", Type = "Explore", Prompt = "Find the clock in the tree" },
+            new() { Id = "b2", Type = "pilot:reviewer", Description = "Check the fix", Prompt = "ignored: a description wins" },
+            new() { Id = "c3", Type = "pilot:reviewer", Prompt = "Review a prompt much longer than a chip can hold" },
+            new() { Id = "d4" },
+        ]);
+        using var _ = renderer;
+        view.Transcript.ChipRowWidth = 100_000f;
+
+        var described = Described(view, screen);
+        described.ShouldContain("Explore: Find the clock in the tree");
+        described.ShouldContain("reviewer 1: Check the fix");
+        described.ShouldNotContain("ignored");
+        // Clipped to the chip, with an ellipsis.
+        described.ShouldContain("reviewer 2: Review a prompt much longer…");
+        described.ShouldContain("○ subagent");
+        view.Transcript.Close();
+    }
+
+    [Fact]
+    public async Task MainIsFirstAndChipsPastOneRowGoIntoADropdownThatOpensTheirTranscript()
+    {
+        var (view, screen, renderer) = await Open(Reviewers(13));
+        using var _ = renderer;
+        view.Transcript.ChipRowWidth = 600f;
+
+        var described = Described(view, screen);
+        var chips = RowOf(described, "main");
+        chips.ShouldContain("reviewer 1: task 1");
+        chips.IndexOf("main", StringComparison.Ordinal).ShouldBeLessThan(chips.IndexOf("reviewer 1: task 1", StringComparison.Ordinal));
+        chips.ShouldContain("more ▾");
+        described.ShouldNotContain("reviewer 13: task 13");
+        view.Transcript.MenuItems.ShouldBeEmpty();
+
+        // The "more" chip opens the rest, in order, ending at the last.
+        Click(view, screen, "transcript:agents");
+        var items = view.Transcript.MenuItems;
+        items.Count.ShouldBeGreaterThan(0);
+        items[^1].Label.ShouldContain("reviewer 13: task 13");
+        items[0].Label.ShouldNotContain("reviewer 1:");
+        var numbers = items.Select(i => int.Parse(Regex.Match(i.Label, @"reviewer (\d+):").Groups[1].Value)).ToList();
+        numbers.ShouldBe([.. Enumerable.Range(numbers[0], 14 - numbers[0])]);
+        view.Render(screen, new RectF32(0, 0, 1280, 800));
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        regions.Count(r => r.Result is HitResult.ListItemHit { ListId: DropdownMenuState<string>.ListId }).ShouldBe(items.Count);
+
+        // Choosing one opens that subagent's transcript.
+        items[^1].OnChoose.ShouldNotBeNull().Invoke();
+        view.Transcript.Agent.ShouldBe("r13");
         view.Transcript.Close();
     }
 }

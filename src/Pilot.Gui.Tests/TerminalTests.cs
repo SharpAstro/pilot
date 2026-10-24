@@ -367,7 +367,7 @@ public sealed class TerminalTests
         Click("transcript:agent:main");
         await Loaded(null);
         // The call that started a subagent leads to it.
-        Described().ShouldContain("open Explore transcript");
+        Described().ShouldContain("open Explore: Find the clock transcript");
         Click("transcript:spawn:0");
         await Loaded("a1");
         lock (asked)

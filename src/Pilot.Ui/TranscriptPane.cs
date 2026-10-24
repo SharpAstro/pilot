@@ -285,17 +285,128 @@ internal sealed class TranscriptPane
             : Layout.Builder.VStack(Layout.Builder.HStack([.. head]).WithGap(12f).WStar(), Agents(), list).WithGap(8f).Pad(16f, 8f).Stretch();
     }
 
-    // The session and each subagent it started, one chip each: the open transcript lit, a click on another opens that one.
-    private Layout.Node Agents()
+    /// <summary>How much of a row of the pane the chips may take before the rest go into a dropdown: an estimate in design units, as the tree is built before it is laid out.</summary>
+    internal float ChipRowWidth { get; set; } = 960f;
+
+    // What a chip's label says of what the subagent is about: its description, else its prompt's first line, clipped.
+    private const int AboutChars = 28;
+
+    // The chips are sized from their text: roughly this much a character, plus their padding and the gap between them.
+    private const float ChipCharWidth = 7f;
+    private const float ChipPadding = 20f;
+    private const float ChipGap = 6f;
+
+    // The "+N more" chip's room, kept free in a row that overflows.
+    private const float MoreWidth = 96f;
+
+    // Where the row of chips sits in the pane, so a dropdown opened without a pointer (the keyboard) hangs under it.
+    private const float ChipRowTop = 46f;
+    private const float ChipHeight = 22f;
+
+    // The chips past the first row, as a dropdown: opened from the "+N more" chip, hung where it was pressed.
+    private readonly DropdownMenuState<string> _menu = new();
+    private RectF32? _menuAt;
+
+    /// <summary>The entries of the open dropdown of chips that did not fit on the row: the labels of the subagents in it.</summary>
+    internal IReadOnlyList<DropdownItem<string>> MenuItems => _menu.IsOpen ? _menu.Items : [];
+
+    /// <summary>
+    /// A subagent's name without its plugin prefix (<c>pilot:reviewer</c> is <c>reviewer</c>), or <c>subagent</c> where its
+    /// record does not say.
+    /// </summary>
+    internal static string TypeName(string? type)
     {
-        var chips = new List<Layout.Node> { Chip("main", null, Agent is null, working: null) };
-        chips.AddRange(_subagents.Select(s => Chip(s.Type ?? "subagent", s.Id, Agent == s.Id, s.Working)));
-        return Layout.Builder.WrapH([.. chips]).WithGap(6f).WithLineGap(4f).WStar();
+        if (type is not { Length: > 0 })
+        {
+            return "subagent";
+        }
+        var name = type[(type.LastIndexOf(':') + 1)..];
+        return name.Length > 0 ? name : type;
     }
 
-    private Layout.Node Chip(string label, string? agent, bool open, bool? working)
+    // Each subagent's label: its type, a number where that type was started more than once (in the order they started),
+    // and what it is about: "reviewer 3: TableHeader resize".
+    private string[] Labels()
     {
-        var text = working is { } w ? $"{(w ? "●" : "○")} {label}" : label;
+        var counts = _subagents.GroupBy(s => TypeName(s.Type), StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+        var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        return [.. _subagents.Select(s =>
+        {
+            var name = TypeName(s.Type);
+            seen[name] = seen.GetValueOrDefault(name) + 1;
+            var label = counts[name] > 1 ? $"{name} {seen[name]}" : name;
+            var about = (s.Description is { Length: > 0 } d ? d : s.Prompt)?.ReplaceLineEndings(" ").Trim();
+            return about is { Length: > 0 } ? $"{label}: {(about.Length > AboutChars ? about[..(AboutChars - 1)] + "…" : about)}" : label;
+        })];
+    }
+
+    // The label a subagent has in the chips, for the link on the call that started it.
+    private string LabelOf(SubagentRow subagent) => Labels()[_subagents.ToList().IndexOf(subagent)];
+
+    // The session and each subagent it started, one chip each, main first: the open transcript lit, a click on another
+    // opens that one. Chips that would not fit on a row go into a dropdown behind a "+N more" chip.
+    private Layout.Node Agents()
+    {
+        var labels = Labels();
+        var all = new List<(string Text, string? Id, bool Open)> { ("main", null, Agent is null) };
+        all.AddRange(_subagents.Select((s, i) => ($"{(s.Working ? "●" : "○")} {labels[i]}", (string?)s.Id, Agent == s.Id)));
+        static float Width(string text) => text.Length * ChipCharWidth + ChipPadding + ChipGap;
+        var fit = all.Count;
+        if (all.Sum(a => Width(a.Text)) > ChipRowWidth)
+        {
+            // Main is always on the row, then as many as leave room for the "+N more" chip.
+            fit = 1;
+            var used = Width(all[0].Text) + MoreWidth;
+            while (fit < all.Count && used + Width(all[fit].Text) <= ChipRowWidth)
+            {
+                used += Width(all[fit++].Text);
+            }
+        }
+        var chips = all.Take(fit).Select(a => Chip(a.Text, a.Id, a.Open)).ToList();
+        if (fit < all.Count)
+        {
+            var rest = all.Skip(fit).ToList();
+            _menu.Items = [.. rest.Select(a => new DropdownItem<string>(a.Text, a.Id ?? "main")
+            {
+                Tooltip = _subagents.FirstOrDefault(s => s.Id == a.Id)?.Description,
+                OnChoose = () =>
+                {
+                    if (_line is { } line)
+                    {
+                        OpenAgent(line, a.Id);
+                    }
+                },
+            })];
+            // Lit while the open transcript is one of those in it.
+            var lit = rest.Any(a => a.Open);
+            chips.Add(Layout.Builder.Text($"+{rest.Count} more ▾", 12f, lit ? Bright : Dim, TextAlign.Center).Pad(10f, 3f).WAuto().Bg(lit ? ButtonHover : Button)
+                .BgHover(ButtonHover)
+                .Clickable(new HitResult.ButtonHit("transcript:agents"), _ => _menu.Popover.Toggle())
+                // The menu hangs where the chip was pressed; the press is left to the click.
+                .Pressable(new HitResult.ButtonHit("transcript:agents"), press =>
+                {
+                    _menuAt = new RectF32(press.X, press.Y, 0f, 0f);
+                    return null;
+                }));
+        }
+        else
+        {
+            _menu.IsOpen = false;
+        }
+        return Layout.Builder.WrapH([.. chips]).WithGap(ChipGap).WithLineGap(4f).WStar();
+    }
+
+    /// <summary>
+    /// <paramref name="page"/> with the dropdown of the chips that did not fit over it while it is open. <paramref name="top"/>
+    /// is where the pane starts on the surface, for a menu opened without a pointer to hang under the chips.
+    /// </summary>
+    internal Layout.Node Over(Layout.Node page, float top) =>
+        IsOpen && _menu.IsOpen
+            ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt ?? new RectF32(16f, top + ChipRowTop, 0f, ChipHeight), _menu, 13f, Bright, OutputShade, ButtonHover))
+            : page;
+
+    private Layout.Node Chip(string text, string? agent, bool open)
+    {
         var chip = Layout.Builder.Text(text, 12f, open ? Bright : Dim, TextAlign.Center).Pad(10f, 3f).WAuto().Bg(open ? ButtonHover : Button);
         var description = agent is null ? null : _subagents.FirstOrDefault(s => s.Id == agent)?.Description;
         chip = description is null ? chip : chip.WithTooltip(description);
@@ -379,7 +490,7 @@ internal sealed class TranscriptPane
         // A call that started a subagent leads to its transcript.
         if (_subagents.FirstOrDefault(s => s.ToolUseId is not null && s.ToolUseId == call.ToolUseId) is { } started)
         {
-            body.Add(AgentLink(started, $"open {started.Type ?? "its"} transcript", $"transcript:spawn:{call.Index}"));
+            body.Add(AgentLink(started, $"open {LabelOf(started)} transcript", $"transcript:spawn:{call.Index}"));
         }
         // The command and its output as one shaded block, in the monospace face.
         var block = new List<Layout.Node>();
