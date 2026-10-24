@@ -34,10 +34,14 @@ public sealed class IconButtonTests
     };
 
     /// <summary>Every button of the tree that shows an icon and no text: its action, and what it carries.</summary>
-    private static List<(string Action, string? Tooltip, CursorKind? Cursor)> IconOnlyButtons(Layout.Node tree)
+    private static List<(string Action, string? Tooltip, CursorKind? Cursor)> IconOnlyButtons(Layout.Node tree) =>
+        [.. IconOnlyButtonsWithMarks(tree).Select(b => (b.Action, b.Tooltip, b.Cursor))];
+
+    /// <summary>As <see cref="IconOnlyButtons"/>, with the marks each one draws.</summary>
+    private static List<(string Action, string? Tooltip, CursorKind? Cursor, Layout.IconKind[] Marks)> IconOnlyButtonsWithMarks(Layout.Node tree)
     {
         var arranged = Layout.Engine.Arrange(tree, new Rect<int>(0, 0, 240, 80), CellMeasureContext.PixelAuthored);
-        var found = new List<(string, string?, CursorKind?)>();
+        var found = new List<(string, string?, CursorKind?, Layout.IconKind[])>();
         for (var i = 0; i < arranged.Length; i++)
         {
             if (arranged[i].Node.Hit is not HitResult.ButtonHit button)
@@ -48,11 +52,12 @@ public sealed class IconButtonTests
             // The button's own content and what is arranged inside its rect, in the arranged order (parents before children).
             var bounds = arranged[i].Bounds;
             var inside = arranged.Skip(i).Where(a => a.Node is Layout.Node.Leaf && Contains(bounds, a.Bounds)).Select(a => ((Layout.Node.Leaf)a.Node).Content).ToList();
-            var icon = inside.OfType<Layout.Content.Icon>().Any();
+            var marks = inside.OfType<Layout.Content.Icon>().Select(i => i.Kind).ToArray();
+            var icon = marks.Length > 0;
             var text = inside.OfType<Layout.Content.Text>().Any(t => t.Value.Trim().Length > 0);
             if (icon && !text)
             {
-                found.Add((button.Action, arranged[i].Node.Tooltip, arranged[i].Node.Cursor));
+                found.Add((button.Action, arranged[i].Node.Tooltip, arranged[i].Node.Cursor, marks));
             }
         }
         return found;
@@ -105,11 +110,25 @@ public sealed class IconButtonTests
 
         // The pages are not vacuous: the Flights header has its view switch and its New flight, and the Repos rows their folds.
         var all = new Dictionary<string, List<(string Action, string? Tooltip, CursorKind? Cursor)>>();
+        var drawn = new HashSet<Layout.IconKind>();
         foreach (var (page, tree) in pages)
         {
+            var withMarks = IconOnlyButtonsWithMarks(tree);
             var buttons = IconOnlyButtons(tree);
+            foreach (var mark in withMarks.SelectMany(b => b.Marks))
+            {
+                drawn.Add(mark);
+            }
             all[page] = buttons;
             ShouldBeToldAndPointedAt(page, buttons);
+        }
+
+        // The help card names every mark a button draws, so a reader who does not know one can look it up.
+        var named = AboutCard.IconButtons.SelectMany(b => b.Marks).ToHashSet();
+        drawn.ShouldNotBeEmpty();
+        foreach (var mark in drawn)
+        {
+            named.ShouldContain(mark, $"the help card does not name the {mark} icon button");
         }
 
         all["Flights (Canvas)"].Select(b => b.Action).ShouldBe(["flights:view:grid", "flights:view:list", "flights:new"]);

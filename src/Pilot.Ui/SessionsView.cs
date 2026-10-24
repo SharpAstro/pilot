@@ -530,6 +530,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                         Layout.Builder.Text($"Say to {_lines[Selected].Name}", 14f, Dim).WAuto(),
                         Layout.Builder.Text(SteerHint(watched), 14f, Dim).WStar(),
                         .. (OnConnect is { } connect
+                            // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
                             ? [CardsView<TSurface>.Pill("Connect", $"sessions:connect:{watched.Where}", () => connect(watched))]
                             : Array.Empty<Layout.Node>())])
                     .WithGap(12f)

@@ -545,10 +545,12 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         if (CanCommand && line.Live && WatchOnly(line) is { } watched)
         {
             // Cancel is disabled on a node this user cannot steer; the pill asks for the grant, and says why.
+            // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Pill("Connect", $"job:{job.Id}:connect", () => OnConnect?.Invoke(watched)));
         }
         else if (CanCommand && line.Live && OnCancel is { } cancel)
         {
+            // Cancel (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Pill("Cancel", $"job:{job.Id}:cancel", () => cancel(job)));
         }
         if (job.Owner is not null && OnSession is { } session)
@@ -558,6 +560,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         // The log's path is on the job's own machine, so there is nothing to open for a job on another node.
         if (OnOpen is { } open && IsHere(line))
         {
+            // Open log stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Pill("Open log", $"job:{job.Id}:log", () => open(job.LogPath)));
         }
 

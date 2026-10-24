@@ -480,6 +480,7 @@ internal sealed class TranscriptPane
             if (command.Length > 0 && CopyText is { } copy)
             {
                 body.Add(Layout.Builder.HStack(
+                        // Copy the command stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
                         Layout.Builder.Text("Copy the command", 12f, Bright, TextAlign.Center).Pad(10f, 3f).WAuto().Bg(Button).BgHover(ButtonHover)
                             .Follows(new HitResult.ButtonHit($"transcript:copy:{call.Index}"), _ => copy(command)),
                         Layout.Builder.Spacer().WStar()));

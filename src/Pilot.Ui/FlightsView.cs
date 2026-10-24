@@ -571,6 +571,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         if (CanCommand && WatchOnly(line) is { } watchedNode)
         {
             buttons.Add(Layout.Builder.Text(SessionsView<TSurface>.SteerHint(watchedNode), 12f, Dim).WAuto());
+            // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Pill("Connect", $"flight:{line.Code}:connect", () => OnConnect?.Invoke(watchedNode)));
         }
         else if (CanCommand)

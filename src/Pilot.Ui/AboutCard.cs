@@ -28,6 +28,17 @@ internal sealed class AboutCard
         ("Escape", "back: out of a transcript, a wizard step, a menu"),
     ];
 
+    /// <summary>
+    /// The buttons that are only a drawn mark, as the card draws them beside what they do: every one has its word as a tooltip, and
+    /// this list is what keeps a reader who does not know a mark from having to guess. Add a button's mark here when it becomes one.
+    /// </summary>
+    public static readonly IReadOnlyList<(Layout.IconKind[] Marks, string What)> IconButtons =
+    [
+        ([Layout.IconKind.Grid, Layout.IconKind.List], "the Flights page's Grid and List views (Canvas and Night are words)"),
+        ([Layout.IconKind.Plus], "New flight, in the Flights header"),
+        ([Layout.IconKind.CaretRight, Layout.IconKind.CaretDown], "unfold and fold a row's details"),
+    ];
+
     /// <summary>What the mark after a link's text means, as the card says it beside the keys.</summary>
     public static readonly (string Mark, string What) AwayMark = (Followable.Away.Trim(), "a link that opens elsewhere (the browser, a folder), not an action here");
 
@@ -51,7 +62,7 @@ internal sealed class AboutCard
 
     public void Close() => IsOpen = false;
 
-    /// <summary>The header's button.</summary>
+    /// <summary>The header's button. Stays a word for want of a help glyph: SharpAstro/DIR.Lib#151.</summary>
     public Layout.Node Button(FlightsPalette? night = null) =>
         Layout.Builder.Text("?", 14f, night?.Bright ?? Bright, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(night?.Button ?? ButtonBg).BgHover(night?.ButtonHover ?? ButtonHover)
             .Follows(new HitResult.ButtonHit("about:toggle"), _ => Toggle())
@@ -71,6 +82,7 @@ internal sealed class AboutCard
         {
             Layout.Builder.HStack(
                     Layout.Builder.Text("pilot", 16f, bright).WStar(),
+                    // The × stays a typeset rune for want of a close glyph: SharpAstro/DIR.Lib#151.
                     Layout.Builder.Text("×", 16f, body, TextAlign.Center).Pad(8f, 0f).WAuto().BgHover(hover)
                         .Follows(new HitResult.ButtonHit("about:close"), _ => Close()))
                 .RowH(26f),
@@ -85,8 +97,20 @@ internal sealed class AboutCard
             rows.Add(Line(keys, what, night));
         }
         rows.Add(Line(AwayMark.Mark, AwayMark.What, night));
+        rows.Add(Layout.Builder.Text("Icon buttons (point at one for its word)", 13f, bright).RowH(24f));
+        foreach (var (marks, what) in IconButtons)
+        {
+            rows.Add(IconLine(marks, what, night));
+        }
         return Layout.Builder.VStack([.. rows]).WithGap(2f).Pad(14f, 10f).Bg(night?.MenuBg ?? CardBg).WAuto().HAuto();
     }
+
+    private static Layout.Node IconLine(Layout.IconKind[] marks, string value, FlightsPalette? night) =>
+        Layout.Builder.HStack(
+                Layout.Builder.HStack([.. marks.Select(m => Layout.Builder.Icon(m, 12f, night?.Bright ?? Bright).WAuto())]).WithGap(8f).WFixed(140f),
+                Layout.Builder.Text(value, 12f, night?.Body ?? Body, trim: TextTrim.Start).WAuto())
+            .WithGap(10f)
+            .RowH(20f);
 
     private static Layout.Node Line(string label, string value, FlightsPalette? night) =>
         Layout.Builder.HStack(
