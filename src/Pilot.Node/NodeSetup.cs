@@ -114,7 +114,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             Title = "Watchtower folder trusted",
             Ok = trusted is not null,
             Line = trusted is { } by ? (by == options.WatchtowerFolder ? options.WatchtowerFolder : $"{options.WatchtowerFolder}, through {by}") : $"Claude Code starts no background session in {options.WatchtowerFolder} until someone accepts its trust prompt there once",
-            Fix = trusted is null && OperatingSystem.IsWindows() ? "Open the trust prompt" : null,
+            Fix = trusted is null ? "Trust it" : null,
         });
 
         var (gh, ghLine) = GhSignedIn();
@@ -176,7 +176,12 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                 }
                 return FirewallAllows() is (true, _) ? null : "the rule is still not there";
             case TrustKey:
+                // Recorded in Claude Code's file, carefully (ClaudeTrust); the prompt in a window only when that cannot be.
                 Directory.CreateDirectory(options.WatchtowerFolder);
+                if (Trust.Ensure(options.WatchtowerFolder) is null)
+                {
+                    return null;
+                }
                 return OpenWindow(options.WatchtowerFolder, "pilot: trust the watchtower folder")
                     ? null
                     : $"no window opened: run claude in {options.WatchtowerFolder} and accept its trust prompt";
@@ -437,34 +442,11 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             : (true, $"rule {FirewallRule} allows {Path.GetFileName(nodePath)} in, on {on} networks");
     }
 
+    /// <summary>Claude Code's folder trust, in this profile's file; a test points it elsewhere.</summary>
+    public ClaudeTrust Trust { get; init; } = new(ClaudeAccount.FileFor(profileRoot));
+
     /// <summary>The folder whose trust covers <paramref name="folder"/> (itself or one above it), or null when none does.</summary>
-    public string? Trusted(string folder)
-    {
-        try
-        {
-            var file = ClaudeAccount.FileFor(profileRoot);
-            if (!File.Exists(file) || JsonNode.Parse(File.ReadAllText(file)) is not JsonObject root || root["projects"] is not JsonObject projects)
-            {
-                return null;
-            }
-            // Claude Code keys a project by its path with forward slashes; trust in a folder covers those under it.
-            for (var dir = new DirectoryInfo(folder); dir is not null; dir = dir.Parent)
-            {
-                var key = Path.TrimEndingDirectorySeparator(dir.FullName).Replace('\\', '/');
-                key = key.EndsWith(':') ? key + "/" : key;
-                var project = projects.FirstOrDefault(p => string.Equals(p.Key, key, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)).Value;
-                if (project?["hasTrustDialogAccepted"] is JsonValue accepted && accepted.TryGetValue<bool>(out var yes) && yes)
-                {
-                    return dir.FullName;
-                }
-            }
-            return null;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
-        {
-            return null;
-        }
-    }
+    public string? Trusted(string folder) => Trust.Trusted(folder);
 
     private (bool, string) GhSignedIn()
     {

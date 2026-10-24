@@ -65,6 +65,7 @@ public static class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<RepoWatch>());
         builder.Services.AddSingleton<RepoSync>();
         builder.Services.AddSingleton<RepoCommander>();
+        builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));
         builder.Services.AddSingleton<IWorkerLauncher, ClaudeWorkerLauncher>();
         builder.Services.AddSingleton<ICheckRunner, ShellCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();

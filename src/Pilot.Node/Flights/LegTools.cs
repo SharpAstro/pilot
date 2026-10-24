@@ -33,7 +33,7 @@ public interface IWorkerLauncher
 /// whose trust was never accepted, and a plane git made is such a folder, while <c>-w</c> enters an existing worktree of a
 /// trusted repo under the repo's trust (it locks it while there; landing unlocks it).
 /// </remarks>
-public sealed partial class ClaudeWorkerLauncher : IWorkerLauncher
+public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust) : IWorkerLauncher
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
 
@@ -68,6 +68,9 @@ public sealed partial class ClaudeWorkerLauncher : IWorkerLauncher
 
     public async Task<string> StartAsync(WorkerStart start, CancellationToken cancellationToken)
     {
+        // A background session has no one to accept Claude Code's trust prompt: the folder it starts from (the repo's main
+        // checkout, or the watchtower's) is trusted first. A trust that cannot be recorded is left for claude to refuse.
+        trust.Ensure(start.RepoPath);
         ClaudeRun run;
         try
         {
