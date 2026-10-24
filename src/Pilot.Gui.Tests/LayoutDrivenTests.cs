@@ -57,6 +57,28 @@ public sealed class LayoutDrivenTests
             + "(Auto rows, a TableColumn span, CollapseBelow), or lower nothing and say why in review");
     }
 
+    // What may wait: a lock, a blocking wait on a task, a sleep. The UI's code is the render thread's, or shares state
+    // with it, and the render thread never waits on anyone: state that crosses threads is an immutable record swapped
+    // whole (Volatile, ImmutableInterlocked), work that takes time goes to the pool (SE1, 2026-10-24: a window that froze).
+    private static readonly Regex Waits = new(
+        @"\block\s*\(|\.Wait\s*\(|\.Result\b|GetAwaiter\s*\(\s*\)\s*\.GetResult|Thread\.Sleep|\bSemaphoreSlim\b|\bMonitor\.|ReaderWriterLock|\.WaitAll\s*\(",
+        RegexOptions.Compiled);
+
+    [Fact]
+    public void NothingInTheUiWaits()
+    {
+        if (ViewSources() is not { } sources)
+        {
+            return;
+        }
+
+        var waits = sources
+            .SelectMany(s => Waits.Matches(Literal.Replace(s.Text, m => new string(' ', m.Length))).Select(m => $"{s.Name}: {m.Value}"))
+            .ToList();
+        waits.ShouldBeEmpty("the UI never waits: swap an immutable record (Volatile.Read/Write, ImmutableInterlocked) instead of a lock, "
+            + "and run what takes time on the pool (tracker.Run, Task.Run) instead of waiting for it");
+    }
+
     [Fact]
     public void TheAllowanceListHasNoEntriesThatAreNoLongerEarned()
     {
