@@ -306,7 +306,7 @@ internal sealed class TranscriptPane
         }
         else
         {
-            var since = line.WaitingSince is { } at ? $" since {Span(now - at)}" : "";
+            var since = line.WaitingSince is { } at ? $" since {Waited.Say(now - at)}" : "";
             var headline = line.Asking is { } asking ? $"Waiting on a permission prompt{since}: {asking}"
                 : line.WaitingFor is { } what ? $"Waiting on you{since}: {what}"
                 : $"Waiting on you{since}";
@@ -333,19 +333,6 @@ internal sealed class TranscriptPane
             .Bg(Marked)
             .WStar()
             .HAuto();
-    }
-
-    // How long, as the banner says it: 37 m, 9 h 37 m, 2 d 3 h.
-    private static string Span(TimeSpan span)
-    {
-        if (span < TimeSpan.Zero)
-        {
-            span = TimeSpan.Zero;
-        }
-        return span.TotalMinutes < 1 ? "under 1 m"
-            : span.TotalHours < 1 ? $"{(int)span.TotalMinutes} m"
-            : span.TotalDays < 1 ? $"{(int)span.TotalHours} h {span.Minutes} m"
-            : $"{(int)span.TotalDays} d {span.Hours} h";
     }
 
     /// <summary>
