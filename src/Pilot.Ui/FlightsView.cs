@@ -663,19 +663,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                 .RowH(32f),
             Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC{(screen.Outside is { } outside ? $" · {outside}" : "")}", 12f, Dim).RowH(20f),
         };
-        if (Lan is { } lan)
+        // Discovering, discovery down, or an ask still waiting: nothing the dashboard waits for is invisible. The nodes heard
+        // are not listed here: the node pills above and the Fleet page (with its Connect) show them, and a chip per node here
+        // said it twice (SE1, 2026-10-24).
+        if (Lan is { Quiet: false } lan)
         {
-            // Discovering, the nodes heard, and every ask still waiting: nothing the dashboard waits for is invisible.
-            var line = new List<Layout.Node> { Layout.Builder.Text(lan.Line(screen.AsOf), 12f, Held).WAuto() };
-            if (CanCommand)
-            {
-                foreach (var node in lan.Nodes.Take(4))
-                {
-                    line.Add(Pill($"{node.Name} · {node.Endpoint}", $"lan:{node.Endpoint}", () => Prefill($"connect {node.Endpoint}")));
-                }
-            }
-            line.Add(Layout.Builder.Spacer().WStar());
-            rows.Add(Layout.Builder.HStack([.. line]).WithGap(8f).RowH(LanRowHeight));
+            rows.Add(Layout.Builder.Text(lan.Line(screen.AsOf), 12f, Held).RowH(LanRowHeight));
         }
         return Layout.Builder.VStack([.. rows])
             .Pad(Gutter, 6f)

@@ -66,6 +66,12 @@ internal sealed class LanWatch : IAsyncDisposable
     /// The LAN in a line: discovering, the nodes heard, or why it cannot listen; and every ask still waiting, with how
     /// long: <c>LAN: discovering… (4 s)</c>, <c>LAN: 1 node · waiting for 172.27.11.241:47731 to allow (45 s)</c>.
     /// </summary>
+    /// <summary>
+    /// Nothing to say beyond the nodes heard, which the header's node pills and the Fleet page show already: no ask waits,
+    /// discovery works, and it heard some.
+    /// </summary>
+    public bool Quiet => _asking.IsEmpty && _degradation() is not { Length: > 0 } && Nodes.Count > 0;
+
     public string Line(DateTimeOffset now)
     {
         var nodes = Nodes;
