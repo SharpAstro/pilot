@@ -383,6 +383,18 @@ internal sealed class PilotChrome<TSurface>
             Switch(PilotPage.Sessions, show);
             OpenTranscript(line, line.Row.StartedAt);
         });
+        // A flight page's Its transcript: the session working on it, on its own node.
+        Flights.OnSession = (row, node) =>
+        {
+            if (sessions().Lines.FirstOrDefault(l => l.Row.Id == row.Id && l.Node?.Key == node?.Key) is { } line)
+            {
+                Navigate(() =>
+                {
+                    Switch(PilotPage.Sessions, show);
+                    OpenTranscript(line, line.Row.StartedAt);
+                });
+            }
+        };
         Home.OnJob = job => Navigate(() =>
         {
             Switch(PilotPage.Jobs, show);

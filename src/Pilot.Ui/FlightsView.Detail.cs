@@ -149,9 +149,51 @@ internal sealed partial class FlightsView<TSurface>
         return Layout.Builder.VStack(
                 Layout.Builder.HStack([.. head]).WithGap(10f).RowH(32f),
                 Layout.Builder.HStack([.. facts]).WithGap(14f).RowH(22f),
+                Layout.Builder.HStack([.. WhoWorks(line)]).WithGap(10f).RowH(26f),
                 Layout.Builder.VStack([.. legs]).WithGap(10f).WithScroll(_detailScroll).Stretch())
             .Pad(Gutter, 8f)
             .Stretch();
+    }
+
+    /// <summary>
+    /// Who is working on the flight now, each with its transcript a click away, or why nothing is: "flying" said only that
+    /// the flight was open, so a flight with no planner and no legs looked busy while nothing ran (PIL208, 2026-10-24).
+    /// </summary>
+    private IEnumerable<Layout.Node> WhoWorks(FlightLine line)
+    {
+        if (line.Working.Count > 0)
+        {
+            foreach (var session in line.Working.Take(3))
+            {
+                var doing = session.Role switch
+                {
+                    SessionRole.Planner => "planning",
+                    SessionRole.Reviewer => "reviewing",
+                    _ => session.Leg is { } leg ? $"flying {leg}" : "working",
+                };
+                var color = session.State == SessionState.Idle ? Dim : Flying;
+                yield return Layout.Builder.Text($"{doing} · {session.Name} · {session.State.ToString().ToLowerInvariant()}", 12f, color).WAuto();
+                if (OnSession is { } open)
+                {
+                    var row = session;
+                    yield return Pill("Its transcript", $"flight:{line.Code}:session:{row.Id}", () => open(row, line.Node));
+                }
+            }
+        }
+        else if (line.Row.State == FlightState.Flying && line.LegRows.Count == 0)
+        {
+            yield return Layout.Builder.Text("not planned yet: no planner is running", 12f, Held).WAuto();
+            if (CanCommand && OnAction is { } act)
+            {
+                yield return Pill("Plan it", $"flight:{line.Code}:plan", () =>
+                    act(new FlightAction($"plan {line.Code}", Verbs.PlanFlight, Verbs.FlightTarget(line.Code), []) { Node = line.Node }));
+            }
+        }
+        else if (line.Row.State == FlightState.Flying)
+        {
+            yield return Layout.Builder.Text("nothing is running on it now", 12f, Dim).WAuto();
+        }
+        yield return Layout.Builder.Spacer().WStar();
     }
 
     private Layout.Node LegBlock(string code, LegDetail leg)

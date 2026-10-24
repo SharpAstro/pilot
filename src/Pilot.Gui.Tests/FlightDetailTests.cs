@@ -180,6 +180,42 @@ public sealed class FlightDetailTests
         flights.IsDetailOpen.ShouldBeFalse();
     }
 
+    /// <summary>
+    /// A flight's page says who works on it now and opens that session's transcript; one with no legs and nothing running
+    /// says it is not planned yet and offers Plan it, where "flying" alone made it look busy (PIL208, 2026-10-24).
+    /// </summary>
+    [Fact]
+    public void ThePageSaysWhoWorksOnTheFlightOrThatItIsNotPlannedYet()
+    {
+        using var vessel = new RgbaImageRenderer(1280, 800);
+        var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Flights;
+        flights.CanCommand = true;
+        var acted = new List<FlightAction>();
+        var opened = new List<string>();
+        flights.OnAction = acted.Add;
+        flights.OnSession = (row, _) => opened.Add(row.Id);
+        List<ClickableRegion> Open(FlightsScreen screen)
+        {
+            flights.Render(screen, new RectF32(0, 0, 1280, 800));
+            flights.OpenDetail("TIA1611");
+            flights.Render(screen, new RectF32(0, 0, 1280, 800));
+            var regions = new List<ClickableRegion>();
+            flights.CollectPaintedRegions(regions);
+            return regions;
+        }
+
+        var unplanned = Open(new FlightsScreen([FlightLine.Build([Flight()], [], Now, []).Single()], "live", Now));
+        unplanned.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:plan" }).OnClick!.Invoke(InputModifier.None);
+        acted.Single().ShouldSatisfyAllConditions(a => a.Verb.ShouldBe(Verbs.PlanFlight), a => a.Target.ShouldBe("flight/TIA1611"));
+
+        flights.CloseDetail();
+        var worker = Live.Row("wwww0001", "du1-tia1611-render", SessionState.Working) with { Role = SessionRole.Worker, Flight = "TIA1611", Leg = "render" };
+        var flying = Open(new FlightsScreen([FlightLine.Build([Flight()], [worker], Now, Legs()).Single()], "live", Now));
+        flying.Any(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:plan" }).ShouldBeFalse();
+        flying.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:session:wwww0001" }).OnClick!.Invoke(InputModifier.None);
+        opened.ShouldBe(["wwww0001"]);
+    }
+
     [Fact]
     public void ThePageLandsInTerminalCellsWithEveryLegsWords()
     {
