@@ -8,6 +8,12 @@ namespace Pilot.Node.Sessions;
 /// <summary>The last real response of a transcript: what the row's model, effort, context and last response come from.</summary>
 public sealed record AssistantTurn(string? Model, string? RequestedModel, string? Effort, long ContextTokens, DateTimeOffset? At);
 
+/// <summary>A tool call the main transcript holds with no result yet: what a session waiting on a permission prompt asks.</summary>
+/// <param name="Name">The tool (<c>Bash</c>).</param>
+/// <param name="Summary">One line of its command or input (<c>git push origin main</c>), or null when its input says nothing short.</param>
+/// <param name="At">When the call was written; null when the line had no timestamp.</param>
+public sealed record PendingTool(string Name, string? Summary, DateTimeOffset? At);
+
 /// <summary>What a session's transcripts say, as of the last read.</summary>
 public sealed record TranscriptFacts(
     string? Model,
@@ -18,7 +24,8 @@ public sealed record TranscriptFacts(
     long SpendWeighted,
     string? PendingQuestion,
     ApiStop? Stop = null,
-    IReadOnlyList<SubagentRow>? Subagents = null)
+    IReadOnlyList<SubagentRow>? Subagents = null,
+    PendingTool? PendingTool = null)
 {
     public static readonly TranscriptFacts None = new(null, null, null, 0, null, 0, null);
 }
@@ -33,7 +40,8 @@ public sealed record ApiStop(string Error, DateTimeOffset? ResetsAt);
 /// </summary>
 internal sealed class TranscriptTail(string path)
 {
-    private static readonly byte[] AskTool = "AskUserQuestion"u8.ToArray();
+    private static readonly byte[] ToolUse = "tool_use"u8.ToArray();
+    private static readonly byte[] AssistantType = "\"type\":\"assistant\""u8.ToArray();
     private static readonly byte[] Usage = "\"usage\""u8.ToArray();
     private static readonly byte[] ToolResult = "tool_result"u8.ToArray();
     private static readonly byte[] ApiErrorKey = "\"apiError\""u8.ToArray();
@@ -44,6 +52,8 @@ internal sealed class TranscriptTail(string path)
     private string? _pendingToolId;
     private string? _pendingQuestion;
     private string? _lastMessageId;
+    // The main transcript's calls with no result yet, oldest first: parallel calls are written as lines of one message.
+    private readonly List<(string Id, PendingTool Tool)> _pendingTools = [];
 
     public string Path { get; } = path;
 
@@ -55,6 +65,9 @@ internal sealed class TranscriptTail(string path)
 
     /// <summary>The question of an AskUserQuestion call the transcript holds but has no result for, else null.</summary>
     public string? PendingQuestion => _pendingQuestion;
+
+    /// <summary>The last tool call of this session's own turns that has no result yet, else null.</summary>
+    public PendingTool? PendingTool => _pendingTools.Count == 0 ? null : _pendingTools[^1].Tool;
 
     /// <summary>The API error that ended the last turn, until a real reply comes after it.</summary>
     public ApiStop? Stop { get; private set; }
@@ -138,6 +151,7 @@ internal sealed class TranscriptTail(string path)
         Stop = null;
         HandedBack = false;
         _pendingToolId = _pendingQuestion = _lastMessageId = null;
+        _pendingTools.Clear();
     }
 
     private void HandleLine(ReadOnlyMemory<byte> line)
@@ -160,13 +174,13 @@ internal sealed class TranscriptTail(string path)
         {
             HandedBack = true;
         }
+        // The answer to a call is a user line carrying its id: even one whose result mentions "usage".
+        if ((_pendingToolId is not null || _pendingTools.Count > 0) && span.IndexOf(ToolResult) >= 0 && span.IndexOf(AssistantType) < 0)
+        {
+            Resolve(span);
+        }
         if (span.IndexOf(Usage) < 0)
         {
-            // The answer to a pending question is a user line carrying the call's id.
-            if (_pendingToolId is not null && span.IndexOf(ToolResult) >= 0 && span.IndexOf(Encoding.UTF8.GetBytes(_pendingToolId)) >= 0)
-            {
-                _pendingToolId = _pendingQuestion = null;
-            }
             return;
         }
 
@@ -189,14 +203,18 @@ internal sealed class TranscriptTail(string path)
             }
 
             // A later message means the turn moved on, so a question it asked is answered or abandoned.
+            var sidechain = root.TryGetProperty("isSidechain", out var side) && side.ValueKind == JsonValueKind.True;
             if (id is not null && id != _lastMessageId)
             {
                 _pendingToolId = _pendingQuestion = null;
+                if (!sidechain)
+                {
+                    _pendingTools.Clear();
+                }
             }
             _lastMessageId = id;
 
             var model = ClaudeAgentsJson.Text(message, "model");
-            var sidechain = root.TryGetProperty("isSidechain", out var side) && side.ValueKind == JsonValueKind.True;
             if (model != "<synthetic>" && !sidechain)
             {
                 // A real reply: whatever stopped an earlier turn is behind it.
@@ -209,9 +227,9 @@ internal sealed class TranscriptTail(string path)
                     ClaudeAgentsJson.Text(root, "timestamp") is { } stamp && DateTimeOffset.TryParse(stamp, CultureInfo.InvariantCulture, DateTimeStyles.None, out var at) ? at : null);
             }
 
-            if (span.IndexOf(AskTool) >= 0 && message.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
+            if (span.IndexOf(ToolUse) >= 0 && message.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
             {
-                NoteQuestion(content);
+                NoteTools(content, sidechain, ClaudeAgentsJson.Text(root, "timestamp"));
             }
         }
         catch (JsonException)
@@ -251,29 +269,104 @@ internal sealed class TranscriptTail(string path)
         }
     }
 
-    private void NoteQuestion(JsonElement content)
+    /// <summary>Drops the calls (and the question) whose id the user line <paramref name="span"/> carries a result for.</summary>
+    private void Resolve(ReadOnlySpan<byte> span)
     {
+        if (_pendingToolId is not null && span.IndexOf(Encoding.UTF8.GetBytes(_pendingToolId)) >= 0)
+        {
+            _pendingToolId = _pendingQuestion = null;
+        }
+        foreach (var (id, _) in _pendingTools.ToArray())
+        {
+            if (span.IndexOf(Encoding.UTF8.GetBytes(id)) >= 0)
+            {
+                _pendingTools.RemoveAll(t => t.Id == id);
+            }
+        }
+    }
+
+    private void NoteTools(JsonElement content, bool sidechain, string? stamp)
+    {
+        DateTimeOffset? at = stamp is not null && DateTimeOffset.TryParse(stamp, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed) ? parsed : null;
         foreach (var block in content.EnumerateArray())
         {
-            if (block.ValueKind != JsonValueKind.Object || ClaudeAgentsJson.Text(block, "type") != "tool_use" || ClaudeAgentsJson.Text(block, "name") != "AskUserQuestion"
-                || ClaudeAgentsJson.Text(block, "id") is not { Length: > 0 } toolId)
+            if (block.ValueKind != JsonValueKind.Object || ClaudeAgentsJson.Text(block, "type") != "tool_use"
+                || ClaudeAgentsJson.Text(block, "id") is not { Length: > 0 } toolId || ClaudeAgentsJson.Text(block, "name") is not { Length: > 0 } tool)
             {
                 continue;
             }
 
-            string? question = null;
-            if (block.TryGetProperty("input", out var input) && input.ValueKind == JsonValueKind.Object
-                && input.TryGetProperty("questions", out var questions) && questions.ValueKind == JsonValueKind.Array)
+            if (!sidechain)
             {
-                foreach (var q in questions.EnumerateArray())
-                {
-                    question = q.ValueKind == JsonValueKind.Object ? ClaudeAgentsJson.Text(q, "question") ?? ClaudeAgentsJson.Text(q, "header") : null;
-                    break;
-                }
+                _pendingTools.RemoveAll(t => t.Id == toolId);
+                _pendingTools.Add((toolId, new PendingTool(tool, block.TryGetProperty("input", out var toolInput) ? Summarize(tool, toolInput) : null, at)));
             }
-            _pendingToolId = toolId;
-            _pendingQuestion = question is { Length: > 300 } ? question[..300] : question ?? "a question";
+            if (tool == "AskUserQuestion")
+            {
+                NoteQuestion(block, toolId);
+            }
         }
+    }
+
+    private const int SummaryLength = 200;
+
+    // The input keys that say best what a call is about, in the order they are tried.
+    private static readonly string[] SummaryKeys = ["command", "file_path", "path", "pattern", "url", "query", "skill", "description", "prompt"];
+
+    /// <summary>One line of a call's input: its command, or its file, pattern, …; the first line of it, cut at <see cref="SummaryLength"/>.</summary>
+    internal static string? Summarize(string tool, JsonElement input)
+    {
+        if (input.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        string? text = null;
+        if (tool == "AskUserQuestion" && input.TryGetProperty("questions", out var questions) && questions.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var q in questions.EnumerateArray())
+            {
+                text = q.ValueKind == JsonValueKind.Object ? ClaudeAgentsJson.Text(q, "question") : null;
+                break;
+            }
+        }
+        foreach (var key in SummaryKeys)
+        {
+            if (text is { Length: > 0 })
+            {
+                break;
+            }
+            text = ClaudeAgentsJson.Text(input, key);
+        }
+
+        if (text is null)
+        {
+            return null;
+        }
+        var line = text.AsSpan().Trim();
+        var newline = line.IndexOfAny('\r', '\n');
+        line = (newline >= 0 ? line[..newline] : line).Trim();
+        if (line.IsEmpty)
+        {
+            return null;
+        }
+        return line.Length > SummaryLength ? string.Concat(line[..SummaryLength], "…") : line.ToString();
+    }
+
+    private void NoteQuestion(JsonElement block, string toolId)
+    {
+        string? question = null;
+        if (block.TryGetProperty("input", out var input) && input.ValueKind == JsonValueKind.Object
+            && input.TryGetProperty("questions", out var questions) && questions.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var q in questions.EnumerateArray())
+            {
+                question = q.ValueKind == JsonValueKind.Object ? ClaudeAgentsJson.Text(q, "question") ?? ClaudeAgentsJson.Text(q, "header") : null;
+                break;
+            }
+        }
+        _pendingToolId = toolId;
+        _pendingQuestion = question is { Length: > 300 } ? question[..300] : question ?? "a question";
     }
 
     private static long Count(JsonElement usage, string name) =>
@@ -360,7 +453,7 @@ internal sealed class SessionTranscripts(ClaudeProfile profile, string sessionId
 
         var turn = _main.LastTurn;
         return new TranscriptFacts(turn?.Model, turn?.RequestedModel, turn?.Effort, turn?.ContextTokens ?? 0, turn?.At, _spend, _main.PendingQuestion, _main.Stop,
-            _subagents.Count == 0 ? null : Subagents());
+            _subagents.Count == 0 ? null : Subagents(), _main.PendingTool);
     }
 
     // The subagents in the order they started, each as its record (agent-<id>.meta.json) says: what it is, what it was
