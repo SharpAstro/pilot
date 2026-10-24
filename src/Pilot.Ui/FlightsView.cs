@@ -35,6 +35,9 @@ internal sealed record FlightLine
     /// <summary>Its sessions: <c>2 sessions · 1 live</c>, or <c>no session</c>.</summary>
     public required string Sessions { get; init; }
 
+    /// <summary>The sessions working on it now (its planner, a leg's worker, its reviewer), the one to watch first.</summary>
+    public IReadOnlyList<SessionRow> Working { get; init; } = [];
+
     /// <summary>The node it flies on, when the page merges several; null on a page of one node, this window's.</summary>
     public NodeMark? Node { get; init; }
 
@@ -90,6 +93,11 @@ internal sealed record FlightLine
             },
             Branch = flight.Branch,
             Sessions = sessions.Count == 0 ? "no session" : $"{sessions.Count} {(sessions.Count == 1 ? "session" : "sessions")} · {live} live",
+            Working = [.. sessions
+                .Where(s => s.Role is SessionRole.Planner or SessionRole.Worker or SessionRole.Reviewer
+                    && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle)
+                .OrderBy(s => s.State == SessionState.Idle)
+                .ThenByDescending(s => s.LastResponseAt)],
         };
     }
 }
@@ -283,6 +291,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     /// <summary>Runs an action's verb on the node.</summary>
     public Action<FlightAction>? OnAction { get; set; }
+
+    /// <summary>Opens a session's transcript, on the node it runs on: the flight page's Its transcript.</summary>
+    public Action<SessionRow, NodeMark?>? OnSession { get; set; }
 
     /// <summary>Whether this user may command a node's flights (its own, or one it holds a grant for); null: every row.</summary>
     public Func<NodeMark?, bool>? CanSteer { get; set; }
