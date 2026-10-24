@@ -55,8 +55,7 @@ internal sealed class NodeFilter
     /// <summary>Picks exactly <paramref name="keys"/>: what a place the window goes back to had picked.</summary>
     public void Restore(IEnumerable<string> keys)
     {
-        _picked.Clear();
-        _picked.UnionWith(keys);
+        Volatile.Write(ref _picked, _picked.Clear().Union(keys));
     }
 
     /// <summary>Shows every node again.</summary>
