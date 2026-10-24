@@ -103,11 +103,10 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 {
     public const string ListId = "jobs";
 
-    private const float ColumnHeaderHeight = 28f;
     private const float RowHeight = 54f;
     private const float Gutter = 16f;
-    private const float ColumnGap = 14f;
-    private const float StripeWidth = 4f;
+
+    // Column widths, as they are before a reader drags a divider.
     private const float IdWidth = 70f;
     private const float ForWidth = 170f;
     private const float StateWidth = 220f;
@@ -142,6 +141,9 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     public static readonly TimeSpan Every = TimeSpan.FromSeconds(2);
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
+
+    /// <summary>The page's table: its columns' widths, which a drag on a title's divider changes and the GUI keeps.</summary>
+    public ListTable Table { get; } = new("jobs");
     private readonly ListScrollController _logScroll = new() { Mode = ScrollBarMode.Interactive, Anchor = ScrollAnchor.Bottom };
     private int _count;
 
@@ -417,64 +419,69 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             return Layout.Builder.Text("No jobs yet: a worker hands one over with pilot run -- <command>", 16f, Dim, TextAlign.Center).Stretch();
         }
 
-        var rows = new Layout.Node[screen.Lines.Count];
         var marked = screen.Lines.Any(l => l.Node is not null);
+        var columns = Columns(marked);
+        var rows = new Layout.Node[screen.Lines.Count];
         for (var i = 0; i < rows.Length; i++)
         {
-            rows[i] = Row(screen.Lines[i], i, marked);
+            rows[i] = Row(screen.Lines[i], i, marked, columns);
         }
 
-        var columns = new List<Layout.Node>
-        {
-            Layout.Builder.Spacer().WFixed(StripeWidth),
-            Label("Job").WFixed(IdWidth),
-            Label("Command").WStar(),
-            Label("For").WFixed(ForWidth),
-            Label("State").WFixed(StateWidth),
-            Optional(Label("Started"), StartedWidth),
-            Optional(Label("Took"), TookWidth),
-        };
-        if (marked)
-        {
-            columns.Insert(1, Label("Node").WFixed(NodeWidth));
-        }
         return Layout.Builder.VStack(
-                Layout.Builder.HStack([.. columns])
-                    .WithGap(ColumnGap)
-                    .PadX(8f)
-                    .RowH(ColumnHeaderHeight),
+                Table.Header(columns, Scale),
                 Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch())
             .Pad(Gutter, 8f)
             .Stretch();
     }
 
+    /// <summary>The page's columns, header and rows both over them: Node only while the page merges several nodes.</summary>
+    private static IReadOnlyList<ListColumn> Columns(bool marked)
+    {
+        var columns = new List<ListColumn>
+        {
+            ListColumn.Fixed("Job", IdWidth),
+            ListColumn.Star("Command"),
+            ListColumn.Fixed("For", ForWidth),
+            ListColumn.Fixed("State", StateWidth),
+            ListColumn.Optional("Started", StartedWidth),
+            ListColumn.Optional("Took", TookWidth),
+        };
+        if (marked)
+        {
+            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth));
+        }
+        return columns;
+    }
+
+    /// <summary>
+    /// A cell's content at the top of the cell: a table row's cells are as tall as the row, and a line of text would
+    /// otherwise sit in the middle of it.
+    /// </summary>
+    private static Layout.Node Top(Layout.Node content) => Layout.Builder.VStack(content, Layout.Builder.Spacer().HStar());
+
     private static RGBAColor32 ColorOf(JobState state) =>
         state switch { JobState.Running => Running, JobState.Queued => Queued, JobState.Succeeded => Succeeded, JobState.Failed => Failed, _ => Dim };
 
-    private Layout.Node Row(JobLine line, int index, bool marked)
+    private Layout.Node Row(JobLine line, int index, bool marked, IReadOnlyList<ListColumn> columns)
     {
         var ended = !line.Live;
         var color = ColorOf(line.Row.State);
         var cells = new List<Layout.Node>
         {
-            Layout.Builder.Spacer().Bg(color).WFixed(StripeWidth).HStar(),
-            Layout.Builder.Text(line.Id, 15f, ended ? Dim : Bright).WFixed(IdWidth),
-            Layout.Builder.Text(line.Command, 14f, ended ? Dim : Body).WStar(),
-            Layout.Builder.Text(line.For, 13f, Dim).WFixed(ForWidth),
+            Top(Layout.Builder.Text(line.Id, 15f, ended ? Dim : Bright)),
+            Top(Layout.Builder.Text(line.Command, 14f, ended ? Dim : Body)),
+            Top(Layout.Builder.Text(line.For, 13f, Dim)),
             Layout.Builder.VStack(
-                    Layout.Builder.Text(line.Untold ? $"{line.State} · owner not told" : line.State, 14f, line.Untold ? Queued : color).RowH(22f),
-                    Layout.Builder.Text(line.StateDetail ?? "", 11f, Dim).RowH(18f))
-                .WFixed(StateWidth),
-            Optional(Layout.Builder.Text(line.Started, 13f, Dim), StartedWidth),
-            Optional(Layout.Builder.Text(line.Took, 13f, ended ? Dim : Body), TookWidth),
+                Layout.Builder.Text(line.Untold ? $"{line.State} · owner not told" : line.State, 14f, line.Untold ? Queued : color).RowH(22f),
+                Layout.Builder.Text(line.StateDetail ?? "", 11f, Dim).RowH(18f)),
+            Top(Layout.Builder.Text(line.Started, 13f, Dim)),
+            Top(Layout.Builder.Text(line.Took, 13f, ended ? Dim : Body)),
         };
         if (marked)
         {
-            cells.Insert(1, Layout.Builder.Text(line.Node?.Name ?? "", 13f, ended ? Dim : Body).WFixed(NodeWidth));
+            cells.Insert(0, Top(Layout.Builder.Text(line.Node?.Name ?? "", 13f, ended ? Dim : Body)));
         }
-        var row = Layout.Builder.HStack([.. cells])
-            .WithGap(ColumnGap)
-            .Pad(8f, 6f)
+        var row = Table.Row(columns, Layout.Builder.Spacer().Bg(color), cells)
             .RowH(RowHeight)
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)

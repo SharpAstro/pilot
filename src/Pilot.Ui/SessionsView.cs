@@ -49,17 +49,15 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     /// <summary>Takes the keyboard to the say bar from anywhere, a row or the list: Ctrl beats a focused field, so it always reaches it.</summary>
     public static readonly KeyChord SayShortcut = new(InputKey.S, InputModifier.Ctrl);
-    private const float ColumnHeaderHeight = 28f;
     private const float RowHeight = 54f;
     private const float SubagentRowHeight = 28f;
     private const float SubagentIndent = 16f;
     private const float FirstLine = 22f;
     private const float SecondLine = 18f;
     private const float Gutter = 16f;
-    private const float ColumnGap = 14f;
 
-    // Column widths. The session column takes what the fixed ones leave, which is ~300 at 1280 wide.
-    private const float StripeWidth = 4f;
+    // Column widths, as they are before a reader drags a divider. The session column takes what the fixed ones leave,
+    // which is ~300 at 1280 wide.
     private const float ModelWidth = 140f;
     private const float ContextWidth = 160f;
     private const float LastWidth = 120f;
@@ -95,6 +93,9 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     // decides, from the room it has; no width is measured here.
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
+
+    /// <summary>The page's table: its columns' widths, which a drag on a title's divider changes and the GUI keeps.</summary>
+    public ListTable Table { get; } = new("sessions");
     private IReadOnlyList<SessionLine> _lines = [];
     private Func<SessionLine, bool>? _pendingFirst;
 
@@ -562,11 +563,12 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             return Layout.Builder.Text("No sessions", 16f, Dim, TextAlign.Center).Stretch();
         }
 
+        var columns = Columns();
         var rows = new List<Layout.Node>(screen.Lines.Count);
         for (var i = 0; i < screen.Lines.Count; i++)
         {
             var line = screen.Lines[i];
-            rows.Add(Row(line, i));
+            rows.Add(Row(line, i, columns));
             // An opened session's subagents under it, one row each: not rows of the list the arrows step through, but
             // each a click from its transcript.
             if (line.Row.Subagents is { Length: > 0 } subagents && _subagentsOpen.Contains(line.Key))
@@ -576,44 +578,35 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         }
 
         return Layout.Builder.VStack(
-                ColumnHeader(),
+                Table.Header(columns, Scale),
                 Layout.Builder.VStack([.. rows]).WithScroll(_scroll).Stretch())
             .Pad(Gutter, 8f)
             .Stretch();
     }
 
-    private Layout.Node ColumnHeader()
+    /// <summary>The page's columns, header and rows both over them: Node only while the page merges several nodes.</summary>
+    private IReadOnlyList<ListColumn> Columns()
     {
-        var columns = new List<Layout.Node>
+        var columns = new List<ListColumn>
         {
-            Layout.Builder.Spacer().WFixed(StripeWidth),
-            Label("Session").WStar(1f, SessionMin),
-            Optional(Label("Model"), ModelWidth),
-            Label("Context").WFixed(ContextWidth),
-            Optional(Label("Last response"), LastWidth),
-            Label("State").WFixed(StateWidth),
-            Optional(Label("Spend"), SpendWidth),
-            Optional(Layout.Builder.Spacer(), ActWidth),
+            ListColumn.Star("Session", SessionMin),
+            ListColumn.Optional("Model", ModelWidth),
+            ListColumn.Fixed("Context", ContextWidth),
+            ListColumn.Optional("Last response", LastWidth),
+            ListColumn.Fixed(StateTitle, StateWidth),
+            ListColumn.Optional("Spend", SpendWidth),
+            ListColumn.Optional("", ActWidth),
         };
         if (_marked)
         {
-            columns.Insert(1, Label("Node").WFixed(NodeWidth));
+            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth));
         }
-        return Layout.Builder.HStack([.. columns])
-            .WithGap(ColumnGap)
-            .PadX(8f)
-            .RowH(ColumnHeaderHeight);
+        return columns;
     }
 
-    private static Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);
+    private const string StateTitle = "State";
 
-    /// <summary>
-    /// A column the page drops on a narrow window: its whole <paramref name="width"/> while there is room, gone once the
-    /// engine could give it less. Header and rows both say it, so they drop together.
-    /// </summary>
-    private static Layout.Node Optional(Layout.Node cell, float width) => cell.WStar(1f, 0f, width).CollapseBelow(width);
-
-    private Layout.Node Row(SessionLine line, int index)
+    private Layout.Node Row(SessionLine line, int index, IReadOnlyList<ListColumn> columns)
     {
         var live = line.IsLive;
         var text = live ? Bright : Dim;
@@ -622,23 +615,20 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
         var cells = new List<Layout.Node>
         {
-            Layout.Builder.Spacer().Bg(stateColor).WFixed(StripeWidth).HStar(),
-            Cell(Layout.Builder.Text(line.Role, 15f, text), NameLine(line)).WStar(1f, SessionMin),
-            Optional(Cell(Layout.Builder.Text(line.Model, 14f, body)), ModelWidth),
-            Metered(line.Context, line.ContextFraction, body).WFixed(ContextWidth),
-            Optional(Cell(Layout.Builder.Text(line.LastResponse, 14f, body)), LastWidth),
+            Cell(Layout.Builder.Text(line.Role, 15f, text), NameLine(line)),
+            Cell(Layout.Builder.Text(line.Model, 14f, body)),
+            Metered(line.Context, line.ContextFraction, body),
+            Cell(Layout.Builder.Text(line.LastResponse, 14f, body)),
             Cell(Layout.Builder.Text(line.State, 14f, stateColor),
-                line.WaitingFor is { } waitingFor ? Layout.Builder.Text(waitingFor, 11f, Dim) : null).WFixed(StateWidth),
-            Optional(Metered(line.Spend, line.SpendFraction, body), SpendWidth),
-            Optional(Act(line, index), ActWidth),
+                line.WaitingFor is { } waitingFor ? Layout.Builder.Text(waitingFor, 11f, Dim) : null),
+            Metered(line.Spend, line.SpendFraction, body),
+            Act(line, index),
         };
         if (_marked)
         {
-            cells.Insert(1, Cell(Layout.Builder.Text(line.Node?.Name ?? "", 13f, body)).WFixed(NodeWidth));
+            cells.Insert(0, Cell(Layout.Builder.Text(line.Node?.Name ?? "", 13f, body)));
         }
-        var row = Layout.Builder.HStack([.. cells])
-            .WithGap(ColumnGap)
-            .Pad(8f, 6f)
+        var row = Table.Row(columns, Layout.Builder.Spacer().Bg(stateColor), cells)
             .RowH(RowHeight)
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
@@ -679,12 +669,12 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     // its transcript.
     private Layout.Node SubagentRow(SessionLine line, Pilot.Contracts.SubagentRow subagent) =>
         Layout.Builder.HStack(
-                Layout.Builder.Spacer().WFixed(StripeWidth),
+                Layout.Builder.Spacer().WFixed(ListTable.StripeWidth),
                 Layout.Builder.Spacer().WFixed(SubagentIndent),
                 Layout.Builder.Text($"↳ {subagent.Type ?? "subagent"}", 13f, Body).WAuto(),
                 Layout.Builder.Text(subagent.Description ?? "", 12f, Dim).WStar(),
-                Layout.Builder.Text(subagent.Working ? "working" : "done", 12f, subagent.Working ? Working : Ended).WFixed(StateWidth))
-            .WithGap(ColumnGap)
+                Layout.Builder.Text(subagent.Working ? "working" : "done", 12f, subagent.Working ? Working : Ended).WFixed(Table.WidthOf(StateTitle, StateWidth)))
+            .WithGap(ListTable.ColumnGap)
             .Pad(8f, 2f)
             .RowH(SubagentRowHeight)
             .BgHover(RowHoverBg)
