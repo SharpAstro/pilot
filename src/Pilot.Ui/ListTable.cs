@@ -64,8 +64,9 @@ internal sealed class ListTable
 
     // What was dragged, by column title; the Widths object is index-based, so it is laid out from this whenever the
     // columns on the page change.
-    private readonly Dictionary<string, float> _byTitle = new(StringComparer.Ordinal);
-    private readonly Lock _lock = new();
+    // Swapped whole, never changed in place: the render thread lays out and drags, the settings file reads Saved from its
+    // timer's thread, and neither waits on the other. _titles and _syncing are the render thread's alone.
+    private System.Collections.Immutable.ImmutableDictionary<string, float> _byTitle = System.Collections.Immutable.ImmutableDictionary.Create<string, float>(StringComparer.Ordinal);
     private string[] _titles = [];
     private bool _syncing;
 
@@ -87,36 +88,19 @@ internal sealed class ListTable
     public event Action? Changed;
 
     /// <summary>The dragged widths by column title, for the settings file, as they are now; empty while nothing was dragged.</summary>
-    public IReadOnlyDictionary<string, float> Saved
-    {
-        get
-        {
-            lock (_lock)
-            {
-                return new Dictionary<string, float>(_byTitle, StringComparer.Ordinal);
-            }
-        }
-    }
+    public IReadOnlyDictionary<string, float> Saved => Volatile.Read(ref _byTitle);
 
     /// <summary>Takes widths read from the settings file; they apply to the columns of that title the next time the table is built.</summary>
     public void Restore(IReadOnlyDictionary<string, float>? saved)
     {
-        lock (_lock)
+        var restored = System.Collections.Immutable.ImmutableDictionary.Create<string, float>(StringComparer.Ordinal);
+        if (saved is not null)
         {
-            _byTitle.Clear();
-            if (saved is not null)
-            {
-                foreach (var (title, width) in saved)
-                {
-                    if (float.IsFinite(width) && width > 0f)
-                    {
-                        _byTitle[title] = width;
-                    }
-                }
-            }
-            // Laid out again from them whatever the columns were: the next build sees the titles as new.
-            _titles = [];
+            restored = restored.SetItems(saved.Where(s => float.IsFinite(s.Value) && s.Value > 0f));
         }
+        Volatile.Write(ref _byTitle, restored);
+        // Laid out again from them whatever the columns were: the next build sees the titles as new.
+        _titles = [];
     }
 
     /// <summary>
@@ -128,10 +112,7 @@ internal sealed class ListTable
     /// <summary>The width <paramref name="title"/>'s column has now, for a row outside the table that lines up under it; <paramref name="declared"/> where it was never dragged.</summary>
     public float WidthOf(string title, float declared)
     {
-        lock (_lock)
-        {
-            return _byTitle.TryGetValue(title, out var width) ? width : declared;
-        }
+        return Volatile.Read(ref _byTitle).TryGetValue(title, out var width) ? width : declared;
     }
 
     /// <summary>The header row: titles over the columns, a divider in each gap, the stripe's cell ahead of them.</summary>
@@ -271,21 +252,19 @@ internal sealed class ListTable
             specs[i] = new Layout.TableColumn(columns[i].Header, columns[i].Width, TextAlign.Near);
             titles[i] = columns[i].Header;
         }
-        lock (_lock)
+        if (!titles.AsSpan().SequenceEqual(_titles))
         {
-            if (!titles.AsSpan().SequenceEqual(_titles))
+            // The page's columns are not the ones the widths were last laid out for: lay them out from what was dragged.
+            _titles = titles;
+            _syncing = true;
+            try
             {
-                // The page's columns are not the ones the widths were last laid out for: lay them out from what was dragged.
-                _titles = titles;
-                _syncing = true;
-                try
-                {
-                    Widths.Restore(new Layout.TableColumnWidths.Saved([.. titles.Select(t => _byTitle.TryGetValue(t, out var w) ? w : null as float?)]));
-                }
-                finally
-                {
-                    _syncing = false;
-                }
+                var byTitle = Volatile.Read(ref _byTitle);
+                Widths.Restore(new Layout.TableColumnWidths.Saved([.. titles.Select(t => byTitle.TryGetValue(t, out var w) ? w : null as float?)]));
+            }
+            finally
+            {
+                _syncing = false;
             }
         }
         return specs;
@@ -298,17 +277,9 @@ internal sealed class ListTable
         {
             return;
         }
-        lock (_lock)
-        {
-            var widths = Widths.Save().Widths;
-            for (var i = 0; i < _titles.Length && i < widths.Length; i++)
-            {
-                if (widths[i] is { } width)
-                {
-                    _byTitle[_titles[i]] = width;
-                }
-            }
-        }
+        var widths = Widths.Save().Widths;
+        var dragged = _titles.Take(widths.Length).Select((title, i) => (Title: title, Width: widths[i])).Where(t => t.Width is not null).ToList();
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _byTitle, byTitle => byTitle.SetItems(dragged.Select(t => KeyValuePair.Create(t.Title, t.Width!.Value))));
         Changed?.Invoke();
     }
 }

@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Pilot.Contracts;
@@ -25,16 +26,19 @@ internal sealed class GuiSettingsFile : IDisposable
     /// <summary>How long after the last drag move the file is written: a drag is a stream of changes, and one write is enough.</summary>
     public static readonly TimeSpan Quiet = TimeSpan.FromMilliseconds(400);
 
-    private readonly Lock _lock = new();
-    private readonly Dictionary<string, Dictionary<string, float>> _tables;
-    private readonly List<ListTable> _attached = [];
-    private Timer? _pending;
-    private bool _dirty;
+    // A drag touches it on the render thread and the write runs on the timer's: the tables and the attached list are
+    // swapped whole, the dirty mark is one Interlocked int, and the one timer is moved, never replaced, so neither thread
+    // waits on the other.
+    private ImmutableDictionary<string, IReadOnlyDictionary<string, float>> _tables;
+    private ImmutableList<ListTable> _attached = [];
+    private readonly Timer _pending;
+    private int _dirty;
 
     private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables)
     {
         Path = path;
-        _tables = tables;
+        _tables = tables.ToImmutableDictionary(t => t.Key, t => (IReadOnlyDictionary<string, float>)t.Value, StringComparer.Ordinal);
+        _pending = new Timer(_ => Flush(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
     }
 
     /// <summary>The file this reads and writes.</summary>
@@ -74,43 +78,28 @@ internal sealed class GuiSettingsFile : IDisposable
     /// </summary>
     public void Attach(ListTable table)
     {
-        lock (_lock)
-        {
-            _attached.Add(table);
-            table.Restore(_tables.GetValueOrDefault(table.Page));
-        }
+        ImmutableInterlocked.Update(ref _attached, attached => attached.Add(table));
+        table.Restore(Volatile.Read(ref _tables).GetValueOrDefault(table.Page));
         table.Changed += Touch;
     }
 
     private void Touch()
     {
-        lock (_lock)
-        {
-            _dirty = true;
-            _pending?.Dispose();
-            _pending = new Timer(_ => Flush(), null, Quiet, Timeout.InfiniteTimeSpan);
-        }
+        Interlocked.Exchange(ref _dirty, 1);
+        _pending.Change(Quiet, Timeout.InfiniteTimeSpan);
     }
 
     /// <summary>Writes the file now if a width changed since it was last written.</summary>
     public void Flush()
     {
-        string json;
-        lock (_lock)
+        if (Interlocked.Exchange(ref _dirty, 0) == 0)
         {
-            if (!_dirty)
-            {
-                return;
-            }
-            _dirty = false;
-            _pending?.Dispose();
-            _pending = null;
-            foreach (var table in _attached)
-            {
-                _tables[table.Page] = new Dictionary<string, float>(table.Saved, StringComparer.Ordinal);
-            }
-            json = JsonSerializer.Serialize(new GuiSettings { Tables = new Dictionary<string, Dictionary<string, float>>(_tables) }, GuiSettingsJsonContext.Default.GuiSettings);
+            return;
         }
+        ImmutableInterlocked.Update(ref _tables, held => held.SetItems(Volatile.Read(ref _attached).Select(t => KeyValuePair.Create(t.Page, t.Saved))));
+        var json = JsonSerializer.Serialize(
+            new GuiSettings { Tables = Volatile.Read(ref _tables).ToDictionary(t => t.Key, t => new Dictionary<string, float>(t.Value, StringComparer.Ordinal), StringComparer.Ordinal) },
+            GuiSettingsJsonContext.Default.GuiSettings);
 
         try
         {
@@ -126,5 +115,9 @@ internal sealed class GuiSettingsFile : IDisposable
         }
     }
 
-    public void Dispose() => Flush();
+    public void Dispose()
+    {
+        _pending.Dispose();
+        Flush();
+    }
 }
