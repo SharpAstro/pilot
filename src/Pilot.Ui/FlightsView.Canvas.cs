@@ -31,25 +31,30 @@ internal sealed partial class FlightsView<TSurface>
     /// <summary>The geometry the last tree was built from.</summary>
     internal FlightCanvas Canvas => _canvas;
 
-    private Layout.Node ViewSwitch() =>
-        Layout.Builder.HStack(
-                SwitchPill("Canvas", "flights:view:canvas", FlightsViewMode.Canvas),
-                SwitchPill("Grid", "flights:view:grid", FlightsViewMode.Grid),
-                SwitchPill("List", "flights:view:list", FlightsViewMode.List),
-                SwitchPill("Night", "flights:view:night", FlightsViewMode.Night))
-            .WithGap(2f)
-            .WAuto();
-
-    private Layout.Node SwitchPill(string label, string action, FlightsViewMode mode)
+    // Grid and List say it better as the marks DIR.Lib draws, each with the word as its tooltip; Canvas and Night stay words
+    // until DIR.Lib has a mark for them (SharpAstro/DIR.Lib#151). Every segment keeps the flights:view:* id a pill had, and the hand cursor.
+    private Layout.Node ViewSwitch()
     {
-        var on = Mode == mode;
-        return Layout.Builder.Text(label, 12f, on ? Bright : Dim, TextAlign.Center)
-            .Pad(10f, 4f)
-            .WAuto()
-            .Bg(on ? RowFocusBg : Button)
-            .BgHover(ButtonHover)
-            .Follows(new HitResult.ButtonHit(action), _ => Mode = mode);
+        ReadOnlySpan<Layout.ButtonGroupOption<FlightsViewMode>> options =
+        [
+            new(FlightsViewMode.Canvas, "Canvas") { Hit = new HitResult.ButtonHit("flights:view:canvas") },
+            new(FlightsViewMode.Grid, Icon: Layout.IconKind.Grid) { Hit = new HitResult.ButtonHit("flights:view:grid"), Tooltip = "Grid" },
+            new(FlightsViewMode.List, Icon: Layout.IconKind.List) { Hit = new HitResult.ButtonHit("flights:view:list"), Tooltip = "List" },
+            new(FlightsViewMode.Night, "Night") { Hit = new HitResult.ButtonHit("flights:view:night") },
+        ];
+        var style = new Layout.ButtonGroupStyle(RowFocusBg, Button, Bright, Dim, ButtonHover)
+        {
+            Gap = 2f,
+            InsetFraction = 0.75f,
+            SegmentWidth = ViewSwitchSegment,
+        };
+        var group = Layout.Builder.ButtonGroup(options, Mode, mode => Mode = mode, style, 12f);
+        return (group is Layout.Node.Stack stack ? stack with { Children = [.. stack.Children.Select(c => c.WithCursor(CursorKind.Pointer))] } : group)
+            .WFixed(ViewSwitchWidth);
     }
+
+    private const float ViewSwitchSegment = 60f;
+    private const float ViewSwitchWidth = 4 * ViewSwitchSegment + 3 * 2f;
 
     // The cards as a wrapping grid, in the list's order: the engine wraps them by the width it is given.
     private Layout.Node GridBody(FlightsScreen screen)

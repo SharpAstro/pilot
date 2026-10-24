@@ -191,7 +191,7 @@ public sealed class FlightDetailTests
 
         var described = CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(screen), new Rect<int>(0, 0, 160, 60), CellMeasureContext.PixelAuthored));
 
-        described.ShouldContain("Back to the flights");
+        described.ShouldContain("← Back");
         described.ShouldContain("1. parser");
         described.ShouldContain("2. render");
         described.ShouldContain("1/3 steps");

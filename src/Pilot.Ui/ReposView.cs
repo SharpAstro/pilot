@@ -197,6 +197,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                     Layout.Builder.Text("repos", 20f, Dim).WAuto(),
                     .. (Nodes?.Pills() ?? []),
                     Layout.Builder.Spacer().WStar(),
+                    // Sync stays a word for want of a glyph (a refresh mark): SharpAstro/DIR.Lib#151.
                     .. (SyncRepos is null ? (IEnumerable<Layout.Node>)[] : [CardsView<TSurface>.Pill(Syncing ? "Syncing…" : "Sync", "repos:sync", () => _ = SyncAsync(), Syncing ? Lit : null)]),
                     CardsView<TSurface>.Pill("All repos", "repos:all", () => ShowAll = !ShowAll, ShowAll ? Lit : null),
                     Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
@@ -293,8 +294,8 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         var toggle = line.Worktrees.Count == 0
             ? Layout.Builder.Text(line.Name, 15f, tracked ? Bright : Dim)
             : Layout.Builder.HStack(
-                    Layout.Builder.Text(IsOpen(line) ? "▾" : "▸", 13f, Link).WAuto().BgHover(RowHoverBg)
-                        .Follows(new HitResult.ButtonHit($"repo:{line.Key}:worktrees"), _ => Toggle(line)),
+                    CardsView<TSurface>.IconPill(IsOpen(line) ? Layout.IconKind.CaretDown : Layout.IconKind.CaretRight, IsOpen(line) ? "Hide worktrees" : "Show worktrees",
+                        $"repo:{line.Key}:worktrees", () => Toggle(line), bare: true, color: Link, hover: RowHoverBg),
                     Layout.Builder.Text(line.Name, 15f, tracked ? Bright : Dim).WStar())
                 .WithGap(6f);
         var pulls = line.Pulls.Take(2).Select(PullText).ToList();

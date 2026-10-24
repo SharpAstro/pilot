@@ -489,7 +489,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         }
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && IsDetailOpen)
         {
-            CloseDetail();
+            GoBack();
             return true;
         }
         if (IsDetailOpen)
@@ -571,6 +571,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         if (CanCommand && WatchOnly(line) is { } watchedNode)
         {
             buttons.Add(Layout.Builder.Text(SessionsView<TSurface>.SteerHint(watchedNode), 12f, Dim).WAuto());
+            // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Pill("Connect", $"flight:{line.Code}:connect", () => OnConnect?.Invoke(watchedNode)));
         }
         else if (CanCommand)
@@ -659,7 +660,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                     .. PlayFilter.Summary(Play, screen.Counts, screen.Hidden, "flights:play-all", Body, RowHoverBg, NightOrNull),
                     CanvasAvailable && screen.Lines.Count > 0 ? ViewSwitch() : Layout.Builder.Spacer().WFixed(0f),
                     CanCommand && !Wizard.IsOpen && Wizard.LoadRepos is not null
-                        ? Pill("New flight", "flights:new", () => Wizard.Open())
+                        ? CardsView<TSurface>.IconPill(Layout.IconKind.Plus, "New flight", "flights:new", () => Wizard.Open())
                         : Layout.Builder.Spacer().WFixed(0f),
                     About is { } about ? about.Button(NightOrNull) : Layout.Builder.Spacer().WFixed(0f)])
                 .WithGap(12f)

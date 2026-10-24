@@ -43,6 +43,10 @@ pilot-gui --snapshot <file.json> [--capture out.png]         # a snapshot file i
   `PILOT_NODE_SOCKET` is only connected to.
 - **Rail:** the left rail, as tianwen's: Home (Ctrl+1), Sessions (Ctrl+2), Flights (Ctrl+3), Repos (Ctrl+7, listed after
   Flights so the other chords keep their keys), Background tasks (Ctrl+4), Fleet (Ctrl+5) and Settings (Ctrl+6).
+- **Back:** one Back and Forward for the whole window: **←** and **→** at the top of the rail (disabled when there is nothing to
+  go back or forward to), Alt+Left and Alt+Right, and the mouse's back and forward buttons. Every move between places (a
+  rail page, a transcript or a flight's page, a link from Home, Fleet, a card, Jobs or Repos) is recorded with the page,
+  node filter and selection it left; Escape and the **← Back** pill on a transcript or a flight's page are the same Back.
 - **Live:** the window follows the node's event stream, resumes with `since` after a drop, and says so in its header
   while no node answers, trying again every 2 s. The selection follows its session as the rows reorder.
 - **Say:** type in the bar at the foot (Ctrl+S takes the keyboard there from anywhere) and Enter says it to the selected session (the node's `say`: an idle background
@@ -346,7 +350,7 @@ end until you scroll up, when **Jump to end** follows it again; the header says 
 and the say bar stays under it. What you said while the session was busy shows last, dim, as **queued**, until the
 session reads it at its next step. A card about a leg's worker (stalled, idle, past its budget) has **Its
 transcript**: the worker's transcript from the moment the card was raised, that entry marked, until **Jump to end**.
-Escape, or **Back to the sessions**, goes back. The node reads each transcript on from where its last read stopped
+Escape, or **← Back**, goes back to where it was opened from. The node reads each transcript on from where its last read stopped
 (`GET /api/v1/sessions/<id>/transcript?after=<n>`, a grant's on the LAN).
 
 **Subagents.** A session that started subagents says how many under its name (**▸ 2 subagents, 1 working**); a click
@@ -509,7 +513,7 @@ takes the CLI's own commands, run in-process through the same command tree (`Pil
 its MCP server (`pilot mcp`) host: `flight create 1611 --repo C:\src\tianwen`, `leg plan …`, `cards`.
 
 **A flight's page** opens in place of the table: Enter on the selected flight, a double click, **Open flight** in its
-panel or right-click menu; Escape or **Back to the flights** goes back. The wheel scrolls it, and so do Up and Down (a
+panel or right-click menu; Escape or **← Back** goes back to where it was opened from. The wheel scrolls it, and so do Up and Down (a
 line), PageUp and PageDown, Home and End, which is how pilot-tui reaches the lower legs. Its header has the flight's state, its PR and
 review, and the same actions as the panel. Each leg follows in the flight's order as a block: its state, how many steps
 are ticked and its go-arounds, then its **Goal**, **Done when** (and the **Check** the node reruns, when it has one),

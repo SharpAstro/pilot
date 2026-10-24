@@ -16,9 +16,13 @@ internal sealed partial class FlightsView<TSurface>
     /// <summary>The open page's flight code, or null.</summary>
     public string? OpenCode => _openCode;
 
+    /// <summary>Called as a flight's page is about to open, before what the window shows changes: the chrome records the place being left.</summary>
+    public Action? Opening { get; set; }
+
     /// <summary>Opens <paramref name="code"/>'s page, from the top.</summary>
     public void OpenDetail(string code)
     {
+        Opening?.Invoke();
         _openCode = code;
         // Its row is shown whatever In play says while its page is open, and selected once the page is shut.
         _pinned = code;
@@ -34,6 +38,22 @@ internal sealed partial class FlightsView<TSurface>
     // The flight a jump opened: its row stays on the page whatever In play says, until the selection moves off it.
     private string? _pinned;
     private bool _selectPinned;
+
+    /// <summary>What the Back pill and Escape do: the chrome's Back, which returns to wherever the page was opened from. Null (a host with no history) closes it.</summary>
+    public Action? OnBack { get; set; }
+
+    /// <summary>Leaves the page the way Back does: through <see cref="OnBack"/>, or by closing it where there is none.</summary>
+    public void GoBack()
+    {
+        if (OnBack is { } back)
+        {
+            back();
+        }
+        else
+        {
+            CloseDetail();
+        }
+    }
 
     /// <summary>The open page's scroll position, in the layout's own units (a pixel in the window, a cell in the terminal).</summary>
     internal int DetailOffset => _detailScroll.AtomOffset;
@@ -84,7 +104,7 @@ internal sealed partial class FlightsView<TSurface>
         var color = flight.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
         var head = new List<Layout.Node>
         {
-            Pill("Back to the flights", "flight:back", CloseDetail),
+            Pill("← Back", "flight:back", GoBack),
             Layout.Builder.Text(line.Code, 16f, Bright).WAuto(),
             Layout.Builder.Text(line.Title, 14f, Body).WStar(),
             Layout.Builder.Text(line.StateDetail is null ? line.State : $"{line.State} ({line.StateDetail})", 13f, color, TextAlign.Far).WAuto(),

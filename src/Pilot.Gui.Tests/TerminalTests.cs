@@ -345,13 +345,15 @@ public sealed class TerminalTests
             }
         }
 
-        Described().ShouldContain("▸ 2 subagents, 1 working");
+        Described().ShouldContain("Icon(CaretRight)");
+        Described().ShouldContain("2 subagents, 1 working");
         Described().ShouldNotContain("Find the clock");
 
         // The toggle lists them under the row; Left puts them away again, Right brings them back.
         Click($"session:{parent.Row.Id}:subagents");
         var described = Described();
-        described.ShouldContain("▾ 2 subagents");
+        described.ShouldContain("Icon(CaretDown)");
+        described.ShouldContain("2 subagents");
         described.ShouldContain("↳ Explore");
         described.ShouldContain("Find the clock");
         described.ShouldContain("Review the fix");
