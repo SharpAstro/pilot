@@ -110,6 +110,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private static readonly RGBAColor32 Ended = new(0x5c, 0x5f, 0x6c, 0xff);
     private static readonly RGBAColor32 Failed = new(0xe0, 0x5a, 0x5a, 0xff);
     private static readonly RGBAColor32 Low = new(0x5a, 0x8f, 0xd8, 0xff);
+    private static readonly RGBAColor32 AnswerBg = new(0x2c, 0x35, 0x4a, 0xff);
+    private static readonly RGBAColor32 AnswerHoverBg = new(0x3a, 0x46, 0x62, 0xff);
 
     // Model, Last response, Spend and the archive button are the columns a narrow window drops, each as it can no longer
     // have its whole width (Optional), so the Session column keeps its SessionMin for the role and the name. The engine
@@ -580,7 +582,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         Transcript.CopyText = CopyText;
         Transcript.OpenLink = OnOpen;
         var open = _whole.FirstOrDefault(l => l.Key == Transcript.Key) ?? screen.Lines.FirstOrDefault(l => l.Key == Transcript.Key);
-        return Transcript.Tree(live: open?.Row.State is not (null or Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed), open?.Row.Subagents);
+        return Transcript.Tree(live: open?.Row.State is not (null or Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed), open?.Row.Subagents, open, screen.AsOf);
     }
 
     // Open the selected session's transcript; say the bar's text to all shown; archive every ended session, and show or hide
@@ -714,25 +716,28 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     }
 
     // A session's name, and for one that started subagents how many, as the toggle that lists them under it.
+    // and, for one waiting on you that can be answered in the browser, the link that opens it there.
     private Layout.Node NameLine(SessionLine line)
     {
         var name = Layout.Builder.Text(line.Name, 12f, Dim);
+        var answer = line.AnswerUrl is { } url && OnOpen is { } open
+            ? Layout.Builder.Text("Answer in the browser" + Followable.Away, 11f, Bright, TextAlign.Center).Pad(8f, 1f).WAuto().Bg(AnswerBg).BgHover(AnswerHoverBg)
+                .Follows(new HitResult.ButtonHit($"session:{line.Key}:answer"), _ => open(url))
+            : null;
         if (line.Row.Subagents is not { Length: > 0 } subagents)
         {
-            return name;
+            return answer is null ? name : Layout.Builder.HStack(name.WAuto(), answer, Layout.Builder.Spacer().WStar()).WithGap(8f);
         }
-        var open = _subagentsOpen.Contains(line.Key);
+        var toggled = _subagentsOpen.Contains(line.Key);
         var working = subagents.Count(s => s.Working);
         var label = $"{subagents.Length} {(subagents.Length == 1 ? "subagent" : "subagents")}{(working > 0 ? $", {working} working" : "")}";
         var colour = working > 0 ? Working : Dim;
-        return Layout.Builder.HStack(
-            name.WAuto(),
-            Layout.Builder.HStack(
-                    Layout.Builder.Icon(open ? Layout.IconKind.CaretDown : Layout.IconKind.CaretRight, color: colour),
-                    Layout.Builder.Text(label, 12f, colour).WAuto())
-                .WithGap(4f).WAuto().BgHover(RowHoverBg)
-                .Follows(new HitResult.ButtonHit($"session:{line.Key}:subagents"), _ => ToggleSubagents(line.Key)),
-            Layout.Builder.Spacer().WStar()).WithGap(8f);
+        var toggle = Layout.Builder.HStack(
+                Layout.Builder.Icon(toggled ? Layout.IconKind.CaretDown : Layout.IconKind.CaretRight, color: colour),
+                Layout.Builder.Text(label, 12f, colour).WAuto())
+            .WithGap(4f).WAuto().BgHover(RowHoverBg)
+            .Follows(new HitResult.ButtonHit($"session:{line.Key}:subagents"), _ => ToggleSubagents(line.Key));
+        return Layout.Builder.HStack([name.WAuto(), toggle, .. (answer is null ? [] : new[] { answer }), Layout.Builder.Spacer().WStar()]).WithGap(8f);
     }
 
     // One of a session's subagents, under its row: what it is, what it was asked, and whether it is at it; a click opens

@@ -228,9 +228,10 @@ internal sealed class TranscriptPane
 
     /// <summary>
     /// The pane as a tree, in the space the table takes otherwise. <paramref name="live"/>: the session is still running,
-    /// so a call with nothing back yet is running rather than cut off.
+    /// so a call with nothing back yet is running rather than cut off. <paramref name="current"/>: the open session's line as
+    /// the table has it now, whose wait the pinned banner under the entries says; <paramref name="now"/> is what "since" counts to.
     /// </summary>
-    internal Layout.Node Tree(bool live = true, IReadOnlyList<SubagentRow>? subagents = null)
+    internal Layout.Node Tree(bool live = true, IReadOnlyList<SubagentRow>? subagents = null, SessionLine? current = null, DateTimeOffset? now = null)
     {
         _subagents = subagents ?? [];
         // A subagent's transcript is live while the session is and the subagent has not handed back.
@@ -279,9 +280,72 @@ internal sealed class TranscriptPane
         var list = rows.Count == 0
             ? Layout.Builder.Text(problem ?? "reading the transcript…", 13f, Dim).Stretch()
             : Layout.Builder.VStack([.. rows]).WithGap(ToolGap).WithScroll(from >= 0 ? _atScroll : _scroll).Stretch();
-        return _subagents.Count == 0
-            ? Layout.Builder.VStack(Layout.Builder.HStack([.. head]).WithGap(12f).WStar(), list).WithGap(8f).Pad(16f, 8f).Stretch()
-            : Layout.Builder.VStack(Layout.Builder.HStack([.. head]).WithGap(12f).WStar(), Agents(), list).WithGap(8f).Pad(16f, 8f).Stretch();
+        // The banner is a row of the page, not of the list: it stays under the entries, whatever is scrolled.
+        var banner = Banner(current, now ?? DateTimeOffset.UtcNow);
+        var top = Layout.Builder.HStack([.. head]).WithGap(12f).WStar();
+        List<Layout.Node> page = _subagents.Count == 0 ? [top, list] : [top, Agents(), list];
+        if (banner is not null)
+        {
+            page.Add(banner);
+        }
+        return Layout.Builder.VStack([.. page]).WithGap(8f).Pad(16f, 8f).Stretch();
+    }
+
+    // What a session waiting on its person waits on, since when, and how to answer it: the session as the table has it now,
+    // or null while it does not wait (a gone one is still shown, its last state being waiting).
+    private Layout.Node? Banner(SessionLine? line, DateTimeOffset now)
+    {
+        if (line is null || line.Row.State != SessionState.Waiting || SessionLine.IsStopped(line.Row))
+        {
+            return null;
+        }
+        var body = new List<Layout.Node>();
+        if (line.Gone)
+        {
+            body.Add(WrappedProse.Of("the session is gone; its last state was waiting", 13f, Failed));
+        }
+        else
+        {
+            var since = line.WaitingSince is { } at ? $" since {Span(now - at)}" : "";
+            var headline = line.Asking is { } asking ? $"Waiting on a permission prompt{since}: {asking}"
+                : line.WaitingFor is { } what ? $"Waiting on you{since}: {what}"
+                : $"Waiting on you{since}";
+            body.Add(WrappedProse.Of(headline, 13f, Bright, 4));
+            if (line.AnswerUrl is { } url)
+            {
+                body.Add(Layout.Builder.HStack(
+                    Layout.Builder.Text("Answer in the browser" + Followable.Away, 12f, Bright, TextAlign.Center).Pad(10f, 3f).WAuto().Bg(Button).BgHover(ButtonHover)
+                        .Follows(new HitResult.ButtonHit("transcript:answer"), _ => Follow(url)),
+                    Layout.Builder.Spacer().WStar()));
+            }
+            else
+            {
+                body.Add(WrappedProse.Of(line.Row.Kind == SessionKind.Background
+                    ? "Remote Control is off and a background session has no terminal: it cannot be answered from here."
+                    : "Remote Control is off: answer it in its terminal.", 12f, Dim));
+            }
+        }
+        return Layout.Builder.HStack(
+                Layout.Builder.Spacer().Bg(line.Gone ? Failed : Prompt).WFixed(3f).HStar(),
+                Layout.Builder.VStack([.. body]).WithGap(4f).WStar())
+            .WithGap(8f)
+            .Pad(8f, 6f)
+            .Bg(Marked)
+            .WStar()
+            .HAuto();
+    }
+
+    // How long, as the banner says it: 37 m, 9 h 37 m, 2 d 3 h.
+    private static string Span(TimeSpan span)
+    {
+        if (span < TimeSpan.Zero)
+        {
+            span = TimeSpan.Zero;
+        }
+        return span.TotalMinutes < 1 ? "under 1 m"
+            : span.TotalHours < 1 ? $"{(int)span.TotalMinutes} m"
+            : span.TotalDays < 1 ? $"{(int)span.TotalHours} h {span.Minutes} m"
+            : $"{(int)span.TotalDays} d {span.Hours} h";
     }
 
     /// <summary>
