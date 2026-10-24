@@ -67,7 +67,9 @@ public static class SessionRowBuilder
             hookWaitingAt = hooked == SessionState.Waiting ? hook.At : null;
         }
         var waiting = state == SessionState.Waiting;
-        var asking = waiting && transcripts.PendingTool is { } pending ? pending.Summary is { Length: > 0 } summary ? $"{pending.Name}: {summary}" : pending.Name : null;
+        var pending = waiting ? transcripts.PendingTool : null;
+        // A question is no call it asks leave to run: what it waits on (WaitingFor) is the question already.
+        var asking = pending is { Name: not "AskUserQuestion" } ? pending.Summary is { Length: > 0 } summary ? $"{pending.Name}: {summary}" : pending.Name : null;
         // The transcript's record of an API stop, or the hook's; a later reply or turn clears both.
         var apiError = transcripts.Stop?.Error ?? (hook?.State is SessionState.Working ? null : hook?.ApiError);
         return new SessionRow
@@ -91,7 +93,7 @@ public static class SessionRowBuilder
                 ? hookWaiting ?? agent.WaitingFor ?? record?.WaitingFor ?? transcripts.PendingQuestion ?? (agent.State == "blocked" ? SessionStates.BlockedWaitingFor : null)
                 : null,
             // The hook fired the moment it began to wait; the pending call's line is the next best word on when.
-            WaitingSince = waiting ? hookWaitingAt ?? (asking is null ? null : transcripts.PendingTool?.At) : null,
+            WaitingSince = waiting ? hookWaitingAt ?? pending?.At : null,
             Asking = asking,
             // The listing keeps saying waiting for a session whose process died at the prompt; nobody is there to answer.
             Gone = waiting && agent.Pid is null,

@@ -41,6 +41,20 @@ public sealed class WaitingFactsTests : IDisposable
     }
 
     [Fact]
+    public void AQuestionIsWhatItWaitsOnNotACallItAsksToRun()
+    {
+        var facts = Read(Lines.Assistant("m1", input: 1),
+            ToolUse("m2", "toolu_q1", "AskUserQuestion", """{"questions":[{"question":"Which branch?","header":"Branch"}]}"""));
+
+        var row = SessionRowBuilder.Build(Agent(1), facts, null, null, SessionRoleInfo.AdHoc);
+
+        row.State.ShouldBe(SessionState.Waiting);
+        row.Asking.ShouldBeNull();
+        row.WaitingFor.ShouldBe("Which branch?");
+        row.WaitingSince.ShouldBe(DateTimeOffset.Parse(BashAt));
+    }
+
+    [Fact]
     public void WaitingSinceIsWhenTheHookThatPutItInWaitingFired()
     {
         var facts = Read(ToolUse("m1", "toolu_b1", "Bash", """{"command":"ls"}"""));
