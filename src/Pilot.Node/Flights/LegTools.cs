@@ -119,8 +119,11 @@ public sealed class ShellCheckRunner : ICheckRunner
 
     public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken)
     {
+        // On Windows the command goes to cmd verbatim, inside the one pair of quotes /s strips: through ArgumentList .NET
+        // escaped its own quotes as \", which cmd does not read, so the | in a test filter ("A|B") was piped on and every
+        // such check failed (PIL170, PIL188, PIL189, 2026-10-24).
         var start = OperatingSystem.IsWindows()
-            ? new ProcessStartInfo("cmd.exe") { ArgumentList = { "/d", "/s", "/c", command } }
+            ? new ProcessStartInfo("cmd.exe") { Arguments = $"/d /s /c \"{command}\"" }
             : new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", command } };
         start.WorkingDirectory = cwd;
         start.RedirectStandardOutput = true;
