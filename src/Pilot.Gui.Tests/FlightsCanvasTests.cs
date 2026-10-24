@@ -153,22 +153,21 @@ public sealed class FlightsCanvasTests
         return (renderer, view);
     }
 
-    // The longest horizontal run of the held colour: a card's stripe is 4 wide and text is anti-aliased, an arrow is long.
-    private static int LongestHeldRun(RgbaImage image)
+    // How many pixels are exactly the held colour: a card's stripe is a fixed few, text is anti-aliased, a dashed arrow adds a long trail.
+    private static int HeldPixels(RgbaImage image)
     {
-        var best = 0;
+        var count = 0;
         for (var y = 0; y < image.Height; y++)
         {
-            var run = 0;
             for (var x = 0; x < image.Width; x++)
             {
-                var i = (y * image.Width + x) * 4;
-                var held = image.Pixels[i] == 0xf0 && image.Pixels[i + 1] == 0xb4 && image.Pixels[i + 2] == 0x3c;
-                run = held ? run + 1 : 0;
-                best = Math.Max(best, run);
+                if (IsHeld(image, x, y))
+                {
+                    count++;
+                }
             }
         }
-        return best;
+        return count;
     }
 
     [Fact]
@@ -181,8 +180,7 @@ public sealed class FlightsCanvasTests
         using (withCanvas)
         using (withList)
         {
-            LongestHeldRun(withCanvas.Surface).ShouldBeGreaterThan(30);
-            LongestHeldRun(withList.Surface).ShouldBeLessThan(10);
+            HeldPixels(withCanvas.Surface).ShouldBeGreaterThan(HeldPixels(withList.Surface) + 60);
         }
     }
 
@@ -209,5 +207,60 @@ public sealed class FlightsCanvasTests
         view.CanvasShown.ShouldBeTrue();
         view.CanvasAvailable = false;
         view.CanvasShown.ShouldBeFalse();
+    }
+
+    private static bool IsHeld(RgbaImage image, int x, int y)
+    {
+        var i = (y * image.Width + x) * 4;
+        return image.Pixels[i] == 0xf0 && image.Pixels[i + 1] == 0xb4 && image.Pixels[i + 2] == 0x3c;
+    }
+
+    [Fact]
+    public void AnArrowIsDashedAndItsHeadIsSolid()
+    {
+        var (renderer, _) = Page(true, Flight("A"), Flight("B", FlightState.Held, "A"));
+        using var _ = renderer;
+        var image = renderer.Surface;
+
+        // The arrow's row: the one with the most of the held colour (the card text is anti-aliased, so it never matches).
+        var arrowY = Enumerable.Range(0, image.Height).MaxBy(y => Enumerable.Range(0, image.Width).Count(x => IsHeld(image, x, y)));
+        // B's stripe is the first held pixel on a row well below the arrow, and the arrow ends on its left edge.
+        var tipX = Enumerable.Range(0, image.Width).First(x => IsHeld(image, x, arrowY + 20));
+        var startX = Enumerable.Range(0, image.Width).First(x => IsHeld(image, x, arrowY));
+
+        // Short of the head, the run is painted and unpainted in turn.
+        var run = Enumerable.Range(startX, tipX - 14 - startX).Select(x => IsHeld(image, x, arrowY)).ToArray();
+        run.ShouldContain(true);
+        run.ShouldContain(false);
+        run.Zip(run.Skip(1), (a, b) => a && !b).Count(gapStarts => gapStarts).ShouldBeGreaterThan(2);
+
+        // The head's two strokes, either side of the line just before its tip, are painted solid.
+        foreach (var side in new[] { -1, 1 })
+        {
+            Enumerable.Range(tipX - 12, 11).Any(x => Enumerable.Range(2, 4).Any(dy => IsHeld(image, x, arrowY + side * dy))).ShouldBeTrue();
+        }
+    }
+
+    [Fact]
+    public void TwoArrowsIntoOneCardStartTheirDashesAtDifferentPhases()
+    {
+        var canvas = Canvas(Flight("A"), Flight("B"), Flight("C", FlightState.Held, "A", "B"));
+
+        canvas.Edges.Count.ShouldBe(2);
+        canvas.Edges.Select(e => e.ToCard).Distinct().Count().ShouldBe(1);
+        ArrowDashes.Phase(0).ShouldNotBe(ArrowDashes.Phase(1));
+        ArrowDashes.Opening(ArrowDashes.Phase(0), 6f, 4f).ShouldNotBe(ArrowDashes.Opening(ArrowDashes.Phase(1), 6f, 4f));
+    }
+
+    [Theory]
+    [InlineData(0f, 6f, 10f)]
+    [InlineData(0.3f, 3f, 7f)]
+    [InlineData(0.8f, 0f, 2f)]
+    public void ARunOpensWithTheRestOfADashOrOfAGap(float phase, float firstDash, float start)
+    {
+        var opening = ArrowDashes.Opening(phase, 6f, 4f);
+
+        opening.FirstDash.ShouldBe(firstDash, 0.001f);
+        opening.Start.ShouldBe(start, 0.001f);
     }
 }

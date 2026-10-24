@@ -150,19 +150,30 @@ public sealed class FlightsViewsTests
             (r >= g && r >= b && g == 0 && b == 0).ShouldBeTrue($"pixel {i} is {r:x2}{g:x2}{b:x2}");
         }
         painted.ShouldBeGreaterThan(1000);
-        // An arrow is a long horizontal run of the held red; a card's 4-wide stripe and anti-aliased text are not.
-        var longest = 0;
+        // An arrow is dashed: a row of several horizontal runs of the held red, each longer than a card's 4-wide stripe.
+        var dashes = 0;
         for (var y = 0; y < image.Height; y++)
         {
             var run = 0;
-            for (var x = 0; x < image.Width; x++)
+            var inRow = 0;
+            for (var x = 0; x <= image.Width; x++)
             {
-                var i = (y * image.Width + x) * 4;
-                run = image.Pixels[i] == 0xe0 && image.Pixels[i + 1] == 0 && image.Pixels[i + 2] == 0 ? run + 1 : 0;
-                longest = Math.Max(longest, run);
+                var held = x < image.Width && image.Pixels[(y * image.Width + x) * 4] == 0xe0
+                    && image.Pixels[(y * image.Width + x) * 4 + 1] == 0 && image.Pixels[(y * image.Width + x) * 4 + 2] == 0;
+                if (held)
+                {
+                    run++;
+                    continue;
+                }
+                if (run >= 5)
+                {
+                    inRow++;
+                }
+                run = 0;
             }
+            dashes = Math.Max(dashes, inRow);
         }
-        longest.ShouldBeGreaterThan(30);
+        dashes.ShouldBeGreaterThan(2);
         view.Canvas.Edges.Count.ShouldBe(2);
     }
 }
