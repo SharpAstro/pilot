@@ -56,6 +56,7 @@ public static class SessionRowBuilder
     {
         var state = SessionStates.Map(agent.Status ?? record?.Status, agent.State, agent.Pid is not null);
         string? hookWaiting = null;
+        DateTimeOffset? hookWaitingAt = null;
         // A live process is never ended, whatever a hook said: a background session resumed in place sends its SessionEnd
         // after the resumed process is up, and that once left every watchtower the node told something as ended while it
         // ran on, so the node started another (eleven alive at once on DE1, 2026-10-23).
@@ -63,7 +64,10 @@ public static class SessionRowBuilder
         {
             state = hooked;
             hookWaiting = hook.WaitingFor;
+            hookWaitingAt = hooked == SessionState.Waiting ? hook.At : null;
         }
+        var waiting = state == SessionState.Waiting;
+        var asking = waiting && transcripts.PendingTool is { } pending ? pending.Summary is { Length: > 0 } summary ? $"{pending.Name}: {summary}" : pending.Name : null;
         // The transcript's record of an API stop, or the hook's; a later reply or turn clears both.
         var apiError = transcripts.Stop?.Error ?? (hook?.State is SessionState.Working ? null : hook?.ApiError);
         return new SessionRow
@@ -83,9 +87,14 @@ public static class SessionRowBuilder
             ContextWindow = ContextWindows.For(transcripts.Model, transcripts.RequestedModel, transcripts.ContextTokens),
             LastResponseAt = transcripts.LastResponseAt,
             State = state,
-            WaitingFor = state == SessionState.Waiting
+            WaitingFor = waiting
                 ? hookWaiting ?? agent.WaitingFor ?? record?.WaitingFor ?? transcripts.PendingQuestion ?? (agent.State == "blocked" ? SessionStates.BlockedWaitingFor : null)
                 : null,
+            // The hook fired the moment it began to wait; the pending call's line is the next best word on when.
+            WaitingSince = waiting ? hookWaitingAt ?? (asking is null ? null : transcripts.PendingTool?.At) : null,
+            Asking = asking,
+            // The listing keeps saying waiting for a session whose process died at the prompt; nobody is there to answer.
+            Gone = waiting && agent.Pid is null,
             SpendWeighted = transcripts.SpendWeighted,
             Subagents = transcripts.Subagents is { Count: > 0 } subagents ? [.. subagents] : null,
             ApiError = apiError,

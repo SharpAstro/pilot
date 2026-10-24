@@ -96,6 +96,28 @@ public sealed record SessionRow
     public string? WaitingFor { get; init; }
 
     /// <summary>
+    /// Since when it waits, while <see cref="State"/> is <see cref="SessionState.Waiting"/>: when the hook that put it in
+    /// Waiting fired, else when the call it waits on was written to the transcript. Null otherwise, or when neither is known.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? WaitingSince { get; init; }
+
+    /// <summary>
+    /// What it asks, while <see cref="State"/> is <see cref="SessionState.Waiting"/>: the tool and its command or input, as
+    /// <c>Bash: git push origin main</c>: the main transcript's last tool call with no result yet. Null otherwise, and null
+    /// when what it waits on is no tool call (see <see cref="WaitingFor"/>).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Asking { get; init; }
+
+    /// <summary>
+    /// A Waiting row whose process is gone: Claude Code's listing still says waiting, but no process runs to be answered,
+    /// so the wait is not live. <see cref="State"/> stays the last state it was in. False for every other row.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Gone { get; init; }
+
+    /// <summary>
     /// Its spend so far in weighted tokens (input + 1.25 cache_creation + 0.1 cache_read + 5 output, every message
     /// counted once, its subagents included): v1's <c>Meter</c> over the transcript.
     /// </summary>
