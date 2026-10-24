@@ -656,7 +656,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                     .. PlayFilter.Summary(Play, screen.Counts, screen.Hidden, "flights:play-all", Body, RowHoverBg, NightOrNull),
                     CanvasAvailable && screen.Lines.Count > 0 ? ViewSwitch() : Layout.Builder.Spacer().WFixed(0f),
                     CanCommand && !Wizard.IsOpen && Wizard.LoadRepos is not null
-                        ? Pill("New flight", "flights:new", () => Wizard.Open())
+                        ? CardsView<TSurface>.IconPill(Layout.IconKind.Plus, "New flight", "flights:new", () => Wizard.Open())
                         : Layout.Builder.Spacer().WFixed(0f),
                     About is { } about ? about.Button(NightOrNull) : Layout.Builder.Spacer().WFixed(0f)])
                 .WithGap(12f)
