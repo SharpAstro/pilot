@@ -57,15 +57,30 @@ public sealed record FlightRow
 
     /// <summary>
     /// The other flights the planner found this one overlapping, each with the answer to it: a pair is asked once, so
-    /// a recorded answer is never asked about again.
+    /// a recorded answer is never asked about again. Not required, and null-safe: a flight journaled before overlaps has
+    /// no such property, and the generated reader leaves a missing property's initialiser out, so the getter stands in
+    /// for it (as <see cref="SnapshotEvent.Flights"/> does). With an initialiser alone the node read such a flight back
+    /// with null here and died writing its next snapshot (SE1, 2026-10-24).
     /// </summary>
-    public OverlapRow[] Overlaps { get; init; } = [];
+    public OverlapRow[] Overlaps
+    {
+        get => _overlaps ?? [];
+        init => _overlaps = value;
+    }
+
+    private readonly OverlapRow[]? _overlaps;
 
     /// <summary>
     /// The issues of other flights folded into this one (<c>fold</c>): its planner plans their points as legs after its own,
-    /// and its PR closes each beside <see cref="Issue"/>.
+    /// and its PR closes each beside <see cref="Issue"/>. Null-safe for the reason <see cref="Overlaps"/> is.
     /// </summary>
-    public FoldedIssue[] FoldedIn { get; init; } = [];
+    public FoldedIssue[] FoldedIn
+    {
+        get => _foldedIn ?? [];
+        init => _foldedIn = value;
+    }
+
+    private readonly FoldedIssue[]? _foldedIn;
 
     /// <summary>
     /// The code of the flight this one was folded into, when it was retired that way: it is <see cref="FlightState.Landed"/>

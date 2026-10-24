@@ -502,4 +502,28 @@ public sealed class OverlapTests : IDisposable
         F("TIA2").State.ShouldBe(FlightState.Flying);
         _state.Cards().Single(c => c.Kind == LegCommander.PlannedKind && c.Subject == "flight/TIA2").Choices.Single().Label.ShouldBe("Start docs");
     }
+
+    /// <summary>
+    /// A flight journaled before overlaps and folds has neither property: it reads back with both empty and writes again.
+    /// The generated reader leaves a missing property's initialiser out, so with an initialiser alone both were null and
+    /// the node died writing its next snapshot (SE1, 2026-10-24).
+    /// </summary>
+    [Fact]
+    public void AFlightJournaledBeforeOverlapsReadsBackWithNoneAndWritesAgain()
+    {
+        var row = new FlightRow
+        {
+            Code = "PIL81", Repo = "pilot", RepoPath = Repo, Issue = 81, Branch = "flight/pil81", Worktree = Repo, Base = "main",
+            State = FlightState.Landed, CreatedAt = DateTimeOffset.UtcNow,
+        };
+        var json = System.Text.Json.Nodes.JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(row, PilotJsonContext.Default.FlightRow))!.AsObject();
+        json.Remove("overlaps").ShouldBeTrue();
+        json.Remove("foldedIn").ShouldBeTrue();
+
+        var old = System.Text.Json.JsonSerializer.Deserialize(json.ToJsonString(), PilotJsonContext.Default.FlightRow)!;
+
+        old.Overlaps.ShouldBeEmpty();
+        old.FoldedIn.ShouldBeEmpty();
+        Should.NotThrow(() => System.Text.Json.JsonSerializer.Serialize(old, PilotJsonContext.Default.FlightRow));
+    }
 }
