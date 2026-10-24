@@ -29,7 +29,7 @@ internal sealed record NodeMark(string Key, string Where, string Name, bool Here
 /// </summary>
 internal sealed class NodeFilter
 {
-    private static readonly (RGBAColor32 Bg, RGBAColor32 Hover) Lit = (new RGBAColor32(0x2f, 0x5a, 0x8c, 0xff), new RGBAColor32(0x3a, 0x6c, 0xa6, 0xff));
+    internal static readonly (RGBAColor32 Bg, RGBAColor32 Hover) Lit = (new RGBAColor32(0x2f, 0x5a, 0x8c, 0xff), new RGBAColor32(0x3a, 0x6c, 0xa6, 0xff));
 
     private readonly HashSet<string> _picked = new(StringComparer.Ordinal);
 
@@ -78,6 +78,57 @@ internal sealed class NodeFilter
     /// <summary>The pills in a line, for a dump or a test: <c>[All nodes] SE1 LE1</c>, the lit ones bracketed.</summary>
     public string Line() =>
         Choices.Count < 2 ? "" : string.Join(" ", new[] { All ? "[All nodes]" : "All nodes" }.Concat(Choices.Select(c => !All && _picked.Contains(c.Key) ? $"[{c.Name}]" : c.Name)));
+}
+
+/// <summary>
+/// What the pages show of what is done: <b>In play</b> (the default) keeps what still moves and lets the rest get out of the
+/// way, <b>Everything</b> shows all. One per window, shared by the Sessions, Flights and Jobs pages and the cards panel, so it
+/// holds across a page switch; kept in memory, as the node selection is. Each view filters its own tree with it, so the
+/// screens stay whole for Home and the jumps between pages, which need the rows that are done.
+/// </summary>
+internal sealed class PlayFilter
+{
+    private static readonly RGBAColor32 ClauseColor = new(0x8a, 0xb4, 0xf8, 0xff);
+
+    /// <summary>How long a finished job stays in play, counted back from the screen's moment.</summary>
+    public static readonly TimeSpan JobsFinished = TimeSpan.FromMinutes(10);
+
+    /// <summary>Whether only what is in play is shown; true until a click on Everything or on a page's hidden clause.</summary>
+    public bool InPlay { get; private set; } = true;
+
+    /// <summary>Shows everything, as the pill and the hidden clause do.</summary>
+    public void ShowEverything() => InPlay = false;
+
+    /// <summary>Shows only what is in play again.</summary>
+    public void ShowInPlay() => InPlay = true;
+
+    /// <summary>The header's pills, beside the node pills: In play, Everything, the shown one lit.</summary>
+    public IEnumerable<Layout.Node> Pills(FlightsPalette? night = null)
+    {
+        var lit = night is null ? NodeFilter.Lit : (night.RowFocusBg, night.ButtonHover);
+        (RGBAColor32, RGBAColor32)? plain = night is null ? null : (night.Button, night.ButtonHover);
+        yield return CardsView<RgbaImage>.Pill("In play", "play:in-play", ShowInPlay, InPlay ? lit : plain, night?.Bright);
+        yield return CardsView<RgbaImage>.Pill("Everything", "play:everything", ShowEverything, InPlay ? plain : lit, night?.Bright);
+    }
+
+    /// <summary>The pills in a line, for a dump or a test: <c>[In play] Everything</c>, the shown one bracketed.</summary>
+    public string Line() => InPlay ? "[In play] Everything" : "In play [Everything]";
+
+    /// <summary>
+    /// A page's count in the header: <paramref name="counts"/>, then <paramref name="hidden"/> (<c>29 landed hidden</c>) as a
+    /// click that switches to Everything, so what is out of view is named and one click away.
+    /// </summary>
+    public static IEnumerable<Layout.Node> Summary(PlayFilter? play, string counts, string? hidden, string action, RGBAColor32 body, RGBAColor32 hover, FlightsPalette? night = null)
+    {
+        yield return Layout.Builder.Text(hidden is null ? counts : counts + " · ", 15f, body, TextAlign.Far).WAuto();
+        if (hidden is not null)
+        {
+            yield return Layout.Builder.Text(hidden, 15f, night?.Bright ?? ClauseColor, TextAlign.Far)
+                .WAuto()
+                .BgHover(hover)
+                .Follows(new HitResult.ButtonHit(action), _ => play?.ShowEverything());
+        }
+    }
 }
 
 /// <summary>

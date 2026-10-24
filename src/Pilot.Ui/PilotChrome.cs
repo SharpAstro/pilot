@@ -82,6 +82,11 @@ internal sealed class PilotChrome<TSurface>
         Repos.Nodes = Nodes;
         Jobs.Nodes = Nodes;
         Fleet.Nodes = Nodes;
+        // And one In play / Everything choice, on the pages that list what is done and on the cards panel; Home and Repos show it all.
+        sessions.Play = Play;
+        Flights.Play = Play;
+        Jobs.Play = Play;
+        Cards.Play = Play;
         Settings.About = About;
         Rail = new TabBar<TSurface>(renderer)
         {
@@ -99,6 +104,9 @@ internal sealed class PilotChrome<TSurface>
 
     /// <summary>Which nodes the window shows (<see cref="FleetPages.Merge"/>): all by default, kept across pages for the window's life.</summary>
     public NodeFilter Nodes { get; } = new();
+
+    /// <summary>Whether the pages show only what is in play (the default) or everything: kept across pages for the window's life.</summary>
+    public PlayFilter Play { get; } = new();
 
     /// <summary>The Home page: what flies, what waits on the controller, and a chip for each thing.</summary>
     public HomeView<TSurface> Home { get; }

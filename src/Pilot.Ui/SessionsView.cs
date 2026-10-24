@@ -13,8 +13,11 @@ namespace Pilot.Ui;
 /// <param name="Account">Whose usage it is, and whose sessions these are, in a line (<see cref="AccountRow.Line"/>); null when the node knows none.</param>
 internal sealed record SessionsScreen(IReadOnlyList<SessionLine> Lines, string Source, DateTimeOffset AsOf, string? Usage = null, string? Account = null)
 {
-    /// <summary>The header's count: <c>6 sessions · 4 live · 1 waiting on you</c>.</summary>
-    public string Summary
+    /// <summary>What In play left out, named (<c>5 ended hidden</c>); null while nothing is hidden.</summary>
+    public string? Hidden { get; init; }
+
+    /// <summary>The count without what is hidden: <c>6 sessions · 4 live · 1 waiting on you</c>.</summary>
+    public string Counts
     {
         get
         {
@@ -23,6 +26,20 @@ internal sealed record SessionsScreen(IReadOnlyList<SessionLine> Lines, string S
             var summary = $"{Lines.Count} {(Lines.Count == 1 ? "session" : "sessions")} · {live} live";
             return waiting > 0 ? $"{summary} · {waiting} waiting on you" : summary;
         }
+    }
+
+    /// <summary>The header's count, naming what is hidden: <c>6 sessions · 4 live · 5 ended hidden</c>.</summary>
+    public string Summary => Hidden is null ? Counts : $"{Counts} · {Hidden}";
+
+    /// <summary>
+    /// The sessions in play: working, waiting and idle. The ended and failed go; an archived row is the archive toggle's to
+    /// show or hide, so it is neither kept nor counted here.
+    /// </summary>
+    public SessionsScreen InPlay()
+    {
+        var kept = Lines.Where(l => l.Row.Archived || l.Row.State is Pilot.Contracts.SessionState.Working or Pilot.Contracts.SessionState.Waiting or Pilot.Contracts.SessionState.Idle).ToList();
+        var hidden = Lines.Count - kept.Count;
+        return this with { Lines = kept, Hidden = hidden > 0 ? $"{hidden} ended hidden" : null };
     }
 }
 
@@ -143,6 +160,12 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
+
+    /// <summary>The window's In play / Everything choice, whose pills sit beside the node pills; null shows everything, as a capture does.</summary>
+    public PlayFilter? Play { get; set; }
+
+    // The rows before In play and the archive toggle left any out: an open transcript still finds its session among them.
+    private IReadOnlyList<SessionLine> _whole = [];
 
     // Whether the rows come from more than one node, and so have a Node column; set by Tree.
     private bool _marked;
@@ -265,9 +288,14 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         // Archived rows are left out unless asked for: the selection and the count follow what is shown.
         _archivedCount = screen.Lines.Count(l => l.Row.Archived);
         _endedCount = screen.Lines.Count(l => !l.Row.Archived && l.Row.State is Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed);
+        _whole = screen.Lines;
         if (!ShowArchived && _archivedCount > 0)
         {
             screen = screen with { Lines = [.. screen.Lines.Where(l => !l.Row.Archived)] };
+        }
+        if (Play is { InPlay: true })
+        {
+            screen = screen.InPlay();
         }
         _lines = screen.Lines;
         _marked = screen.Lines.Any(l => l.Node is not null);
@@ -501,8 +529,9 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                         Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
                         Layout.Builder.Text("sessions", 20f, Dim).WAuto(),
                         .. (Nodes?.Pills() ?? []),
+                        .. (Play?.Pills() ?? []),
                         Layout.Builder.Spacer().WStar(),
-                        Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
+                        .. PlayFilter.Summary(Play, screen.Counts, screen.Hidden, "sessions:play-all", Body, RowHoverBg),
                         .. HeaderButtons()])
                     .WithGap(12f)
                     .RowH(32f),
@@ -521,7 +550,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         }
         Transcript.CopyText = CopyText;
         Transcript.OpenLink = OnOpen;
-        var open = screen.Lines.FirstOrDefault(l => l.Key == Transcript.Key);
+        var open = _whole.FirstOrDefault(l => l.Key == Transcript.Key) ?? screen.Lines.FirstOrDefault(l => l.Key == Transcript.Key);
         return Transcript.Tree(live: open?.Row.State is not (null or Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed), open?.Row.Subagents);
     }
 
@@ -559,7 +588,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     {
         if (screen.Lines.Count == 0)
         {
-            return Layout.Builder.Text("No sessions", 16f, Dim, TextAlign.Center).Stretch();
+            return Layout.Builder.Text(screen.Hidden is null ? "No sessions" : "No session in play: Everything, above, shows the ended", 16f, Dim, TextAlign.Center).Stretch();
         }
 
         var rows = new List<Layout.Node>(screen.Lines.Count);

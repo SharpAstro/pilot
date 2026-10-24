@@ -97,7 +97,11 @@ internal sealed record FlightLine
 /// <summary>What the Flights page shows: the flights, and where they come from.</summary>
 internal sealed record FlightsScreen(IReadOnlyList<FlightLine> Lines, string Source, DateTimeOffset AsOf)
 {
-    public string Summary
+    /// <summary>What In play left out, named (<c>29 landed hidden</c>); null while nothing is hidden.</summary>
+    public string? Hidden { get; init; }
+
+    /// <summary>The count without what is hidden: <c>10 flights · 6 flying · 4 held</c>.</summary>
+    public string Counts
     {
         get
         {
@@ -106,6 +110,20 @@ internal sealed record FlightsScreen(IReadOnlyList<FlightLine> Lines, string Sou
             var summary = $"{Lines.Count} {(Lines.Count == 1 ? "flight" : "flights")} · {flying} flying";
             return held > 0 ? $"{summary} · {held} held" : summary;
         }
+    }
+
+    /// <summary>The header's count, naming what is hidden: <c>10 flights · 6 flying · 4 held · 29 landed hidden</c>.</summary>
+    public string Summary => Hidden is null ? Counts : $"{Counts} · {Hidden}";
+
+    /// <summary>
+    /// The flights in play: flying and held. The landed go; one a flight shown waits for stands as its ghost on the canvas,
+    /// which is drawn for any connected code the page does not have.
+    /// </summary>
+    public FlightsScreen InPlay()
+    {
+        var kept = Lines.Where(l => l.Row.State is FlightState.Flying or FlightState.Held).ToList();
+        var hidden = Lines.Count - kept.Count;
+        return this with { Lines = kept, Hidden = hidden > 0 ? $"{hidden} landed hidden" : null };
     }
 }
 
@@ -271,6 +289,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
 
+    /// <summary>The window's In play / Everything choice, whose pills sit beside the node pills; null shows everything, as a capture does.</summary>
+    public PlayFilter? Play { get; set; }
+
     /// <summary>Puts text on the clipboard; the row menu's Copy entries. Null where the host has no clipboard.</summary>
     public Action<string>? CopyText { get; set; }
 
@@ -364,6 +385,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// </summary>
     internal Layout.Node Tree(FlightsScreen screen)
     {
+        // In play, the landed are left out of the table; an open flight's page still finds its flight among them.
+        var whole = screen;
+        if (Play is { InPlay: true })
+        {
+            screen = screen.InPlay();
+        }
         if (screen.Lines.Count == 0)
         {
             ListCursor.Close();
@@ -376,7 +403,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         _screen = screen;
         CommandInput.OnCommit = CommitAsync;
         CommandInput.Placeholder = "a pilot command: flight create 1611 --repo <checkout> · leg start TIA1611 gpu · cards";
-        return Build(screen);
+        return Build(screen, whole);
     }
 
     private async Task CommitAsync(string text)
@@ -449,10 +476,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         return evt is InputEvent.KeyDown key && HandleListKey(key.Key, key.Modifiers);
     }
 
-    internal Layout.Node Build(FlightsScreen screen)
+    internal Layout.Node Build(FlightsScreen screen, FlightsScreen? whole = null)
     {
         var selected = Selected >= 0 && Selected < screen.Lines.Count ? screen.Lines[Selected] : null;
-        var open = OpenLine(screen);
+        var open = OpenLine(whole ?? screen);
         // The wizard, or an open flight's page, takes the flights' place; the header and the command bar stay.
         var body = Wizard.IsOpen ? Wizard.Tree() : open is not null ? DetailPage(FlightDetail.From(open, screen.AsOf)) : Main(screen);
         var parts = new List<Layout.Node> { Header(screen), body.HStar() };
@@ -601,8 +628,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                     Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
                     Layout.Builder.Text("flights", 20f, Dim).WAuto(),
                     .. (Nodes?.Pills(NightOrNull) ?? []),
+                    .. (Play?.Pills(NightOrNull) ?? []),
                     Layout.Builder.Spacer().WStar(),
-                    Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
+                    .. PlayFilter.Summary(Play, screen.Counts, screen.Hidden, "flights:play-all", Body, RowHoverBg, NightOrNull),
                     CanvasAvailable && screen.Lines.Count > 0 ? ViewSwitch() : Layout.Builder.Spacer().WFixed(0f),
                     CanCommand && !Wizard.IsOpen && Wizard.LoadRepos is not null
                         ? Pill("New flight", "flights:new", () => Wizard.Open())
@@ -637,7 +665,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     {
         if (screen.Lines.Count == 0)
         {
-            return Layout.Builder.Text("No flights yet: New flight, above, makes one", 16f, Dim, TextAlign.Center).Stretch();
+            return Layout.Builder.Text(screen.Hidden is null ? "No flights yet: New flight, above, makes one" : "No flight in play: Everything, above, shows the landed", 16f, Dim, TextAlign.Center).Stretch();
         }
         if (CanvasShown)
         {

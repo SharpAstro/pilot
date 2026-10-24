@@ -49,6 +49,8 @@ public sealed class JobsTests
     private static (PilotChrome<RgbaImage> Chrome, JobsView<RgbaImage> Jobs) Chrome(RgbaImageRenderer renderer)
     {
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        // These tests are about every job's row; the In play default has its own tests.
+        chrome.Play.ShowEverything();
         return (chrome, chrome.Jobs);
     }
 
