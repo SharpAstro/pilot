@@ -273,6 +273,31 @@ public sealed class SayBarTests
 {
     private static SessionsScreen Screen(params SessionRow[] rows) => new(SessionLine.Build(rows, Live.At), "test", Live.At);
 
+    /// <summary>
+    /// Archive ended archives each shown node's ended rows on that node. With no node, the verb went to this window's node
+    /// alone, so another node's 181 stayed counted while this one's 3 went (SE1 showing DE1, 2026-10-24).
+    /// </summary>
+    [Fact]
+    public void ArchiveEndedGoesToEachShownNodeForItsOwnRows()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var acted = new List<FlightAction>();
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = acted.Add };
+        var here = new NodeMark("s", "node.sock", "SE1", Here: true);
+        var there = new NodeMark("192.168.0.79:47731", "192.168.0.79:47731", "DE1", Here: false);
+        var lines = SessionLine.Build([
+            Live.Row("aaaa1111", "a", SessionState.Ended), Live.Row("bbbb2222", "b", SessionState.Ended),
+            Live.Row("cccc3333", "c", SessionState.Ended), Live.Row("dddd4444", "d", SessionState.Working)], Live.At);
+        var marked = lines.Select(l => l with { Node = l.Row.Id == "aaaa1111" ? here : there }).ToList();
+        view.Render(new SessionsScreen(marked, "test", Live.At), new RectF32(0, 0, 1280, 800));
+
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        Hit(regions, "sessions:archive-ended");
+
+        acted.Select(a => (a.Verb, a.Target, a.Node?.Name)).OrderBy(a => a.Name).ShouldBe([(Verbs.Archive, Verbs.SessionsTarget, "DE1"), (Verbs.Archive, Verbs.SessionsTarget, "SE1")]);
+    }
+
     [Fact]
     public void ArchivedSessionsAreLeftOutUntilShownAndTheButtonsArchiveThroughTheNode()
     {

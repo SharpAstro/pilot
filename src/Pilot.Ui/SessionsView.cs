@@ -204,6 +204,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     // What the header says about what is left out, and what Archive ended would put away; set by Tree.
     private int _archivedCount;
     private int _endedCount;
+    private IReadOnlyList<SessionLine> _endedLines = [];
 
     /// <summary>Called with the selected session's line and the text when Enter is pressed in the say bar.</summary>
     public Func<SessionLine, string, Task>? OnSay { get; set; }
@@ -297,7 +298,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     {
         // Archived rows are left out unless asked for: the selection and the count follow what is shown.
         _archivedCount = screen.Lines.Count(l => l.Row.Archived);
-        _endedCount = screen.Lines.Count(l => !l.Row.Archived && l.Row.State is Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed);
+        _endedLines = [.. screen.Lines.Where(l => !l.Row.Archived && l.Row.State is Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed)];
+        _endedCount = _endedLines.Count;
         _whole = screen.Lines;
         if (!ShowArchived && _archivedCount > 0)
         {
@@ -596,8 +598,17 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         }
         if (_endedCount > 0 && OnAction is { } act)
         {
-            yield return CardsView<TSurface>.Pill($"Archive ended ({_endedCount})", "sessions:archive-ended",
-                () => act(new FlightAction($"archive {_endedCount} ended", Pilot.Contracts.Verbs.Archive, Pilot.Contracts.Verbs.SessionsTarget, [])));
+            // Each node shown archives its own ended rows: with no node the verb went to this window's node alone, so
+            // DE1's 181 stayed counted while SE1's 3 went (2026-10-24).
+            var ended = _endedLines;
+            yield return CardsView<TSurface>.Pill($"Archive ended ({_endedCount})", "sessions:archive-ended", () =>
+            {
+                foreach (var group in ended.GroupBy(l => l.Node))
+                {
+                    act(new FlightAction($"archive {group.Count()} ended{(group.Key is { } node ? $" on {node.Name}" : "")}",
+                        Pilot.Contracts.Verbs.Archive, Pilot.Contracts.Verbs.SessionsTarget, []) { Node = group.Key });
+                }
+            });
         }
         if (_archivedCount > 0)
         {
