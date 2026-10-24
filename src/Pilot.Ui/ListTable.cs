@@ -139,7 +139,7 @@ internal sealed class ListTable
     {
         var specs = Lay(columns);
         var style = Style;
-        var header = Dropping(Layout.Builder.TableHeader(specs, null, null, ref style, Widths, scale, TitleSize, _hitPrefix), columns);
+        var header = Dropping(Layout.Builder.TableHeader(specs, null, null, in style, Widths, scale, TitleSize, _hitPrefix), columns);
         return Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(StripeWidth), header.WStar())
             .WithGap(ColumnGap)
             .PadX(EndPad)
@@ -163,7 +163,7 @@ internal sealed class ListTable
                 laid[i] = laid[i].CollapseBelow(dropAt);
             }
         }
-        var row = Layout.Builder.TableRow(specs, laid, ref style, Widths);
+        var row = Layout.Builder.TableRow(specs, laid, in style, Widths);
         return Layout.Builder.HStack(stripe.WFixed(StripeWidth).HStar(), row.WStar().HStar())
             .WithGap(ColumnGap)
             .Pad(EndPad, padY);
