@@ -252,4 +252,26 @@ public sealed class WatchtowerPanelTests
 
         FootRows(renderer).ShouldBe(0);
     }
+
+    /// <summary>
+    /// The watchtower's block takes the same room whatever it holds, so a card under it stays put while the watchtower
+    /// gains or loses its Remote Control link, or none runs: a card moved just as it was clicked (SE1, 2026-10-24).
+    /// </summary>
+    [Fact]
+    public void ACardStaysPutWhateverTheWatchtowerShows()
+    {
+        float DismissAt(SessionRow? tower)
+        {
+            var view = NewView(out var renderer);
+            using var _ = renderer;
+            view.Render(CardsScreen.From([Card("c1")], tower is null ? [] : [tower]), new RectF32(0, 0, 460, 800));
+            var regions = new List<ClickableRegion>();
+            view.CollectPaintedRegions(regions);
+            return regions.Single(r => r.Result is HitResult.ButtonHit { Action: "card:c1:dismiss" }).Y;
+        }
+
+        var withLink = DismissAt(Tower());
+        DismissAt(Tower() with { RemoteControlUrl = null }).ShouldBe(withLink);
+        DismissAt(null).ShouldBe(withLink);
+    }
 }
