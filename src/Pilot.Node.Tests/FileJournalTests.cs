@@ -349,6 +349,108 @@ public sealed class FileJournalTests : IDisposable
         backups(FileJournal.JournalFile).Select(f => long.Parse(f[(f.LastIndexOf('-') + 1)..])).Max().ShouldBeGreaterThan(state.Seq - 8);
     }
 
+    private static CardRow[] StoreCards(NodeState state, bool openOnly = true) =>
+        [.. state.Cards(openOnly).Where(c => c.Kind == "store")];
+
+    [Fact]
+    public void AFailedSnapshotRingsACardKeepsJournalingAndTheNextCompactionClosesIt()
+    {
+        SnapshotEvent was;
+        using (var journal = new FileJournal(_folder, maxDeltas: 4))
+        {
+            var state = new NodeState(journal, TimeProvider.System);
+            var fail = true;
+            journal.BeforeSnapshotMove = () => { if (fail) { throw new IOException("There is not enough space on the disk."); } };
+
+            // The delta that brings the compaction on succeeds and is journaled; nothing escapes Execute.
+            for (var i = 0; i < 4; i++)
+            {
+                state.Execute(Note($"before {i}")).Ok.ShouldBeTrue();
+            }
+
+            var card = StoreCards(state).ShouldHaveSingleItem();
+            card.Bin.ShouldBe(CardBin.ForYou);
+            card.Title.ShouldContain("snapshot");
+            card.Detail.ShouldNotBeNull().ShouldContain("not enough space");
+
+            // Further deltas keep journaling; a second failed compaction is still one card, not two.
+            for (var i = 0; i < 6; i++)
+            {
+                state.Execute(Note($"after {i}")).Ok.ShouldBeTrue();
+            }
+            StoreCards(state).ShouldHaveSingleItem();
+            journal.CompactionError.ShouldBeOfType<IOException>();
+
+            // The next compaction tries again, and its success closes the card.
+            fail = false;
+            for (var i = 0; i < 8; i++)
+            {
+                state.Execute(Note($"later {i}")).Ok.ShouldBeTrue();
+            }
+            journal.CompactionError.ShouldBeNull();
+            StoreCards(state).ShouldBeEmpty();
+            StoreCards(state, openOnly: false).ShouldHaveSingleItem().Outcome.ShouldNotBeNullOrEmpty();
+            was = state.Snapshot();
+        }
+
+        ShouldMatch(Run(_ => { }, maxDeltas: 4), was);
+    }
+
+    [Fact]
+    public void AStartingSnapshotThatCannotBeWrittenLeavesTheNodeUpAndARestartHasEveryDelta()
+    {
+        SnapshotEvent was;
+        using (var journal = new FileJournal(_folder, maxDeltas: 4096))
+        {
+            journal.BeforeSnapshotMove = () => throw new IOException("There is not enough space on the disk.");
+            var state = new NodeState(journal, TimeProvider.System);
+
+            StoreCards(state).ShouldHaveSingleItem().Bin.ShouldBe(CardBin.ForYou);
+            state.PutSession(Row("aaaa1111", SessionState.Working));
+            state.Execute(Note("journaled all the same")).Ok.ShouldBeTrue();
+            was = state.Snapshot();
+        }
+
+        // The stream and every delta come back, and the card is still there to say the snapshot is missing.
+        var now = Run(state => StoreCards(state).ShouldHaveSingleItem());
+
+        ShouldMatch(now, was);
+        now.Sessions.ShouldHaveSingleItem().Id.ShouldBe("aaaa1111");
+        now.Notes.ShouldHaveSingleItem().Text.ShouldBe("journaled all the same");
+    }
+
+    [Fact]
+    public void AStartingSnapshotThatFailsToSerializeRingsACardInsteadOfKillingTheNode()
+    {
+        var journal = new SnapshotFaultJournal { Fail = true };
+
+        var state = new NodeState(journal, TimeProvider.System);
+
+        var card = StoreCards(state).ShouldHaveSingleItem();
+        card.Bin.ShouldBe(CardBin.ForYou);
+        card.Detail.ShouldNotBeNull().ShouldContain("overlaps");
+        state.Execute(Note("still up")).Ok.ShouldBeTrue();
+        new NodeState(journal, TimeProvider.System).Snapshot().Notes.ShouldHaveSingleItem().Text.ShouldBe("still up");
+    }
+
+    private sealed class SnapshotFaultJournal : INodeJournal
+    {
+        private readonly List<NodeEvent> _kept = [];
+
+        public bool Fail { get; set; }
+
+        public NodeHistory Load() => new(null, null, [.. _kept]);
+
+        public void Append(NodeEvent nodeEvent, ReadOnlyMemory<byte> json)
+        {
+            if (Fail && nodeEvent is SnapshotEvent)
+            {
+                throw new ArgumentNullException("overlaps");
+            }
+            _kept.Add(nodeEvent);
+        }
+    }
+
     private sealed class FailingJournal : INodeJournal
     {
         private readonly InMemoryJournal _inner = new();
