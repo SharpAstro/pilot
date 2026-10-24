@@ -50,6 +50,12 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>How long a background session waits on its person before it rings rather than being a card for you.</summary>
     public TimeSpan RingAfter { get; init; } = TimeSpan.FromMinutes(15);
 
+    /// <summary>
+    /// How long a session waits on its person before it is a card at all: a prompt answered at its terminal within it is no
+    /// card, where every one was a card raised and closed again within a look or two, piling up in Handled.
+    /// </summary>
+    public TimeSpan CardAfter { get; init; } = TimeSpan.FromMinutes(2);
+
     /// <summary>How many times one worker is nudged before the watch rings instead.</summary>
     public int MaxNudges { get; init; } = 2;
 
@@ -257,9 +263,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>
     /// Every session waiting on its person that no leg already rings for (a flying leg's worker has its own, see
     /// <see cref="Waiting"/>) is a card from this node: For you, or a ring once a background one (nobody's terminal, so
-    /// nobody sees the prompt) has waited over <see cref="RingAfter"/>. The card closes when the session stops waiting or its
-    /// process is gone. A card answered or dismissed is not raised again for the same wait, which the wait's start tells from
-    /// the next.
+    /// nobody sees the prompt) has waited over <see cref="RingAfter"/>, once it has waited <see cref="CardAfter"/>. The card
+    /// closes when the session stops waiting or its process is gone. A card dismissed is not raised again for the same wait,
+    /// nor rung for: the person has seen it. The wait's start tells one wait from the next.
     /// </summary>
     private void LookAtWaiting(SessionRow[] sessions, DateTimeOffset now)
     {
@@ -275,9 +281,14 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         foreach (var (subject, session) in waiting)
         {
             var since = session.WaitingSince ?? session.LastResponseAt ?? session.StartedAt;
+            if (now - since < CardAfter)
+            {
+                continue;
+            }
             var carded = cards.Where(c => c.Kind == CardKinds.SessionWaiting && c.Subject == subject && c.At >= since).ToArray();
             var rings = session.Kind == SessionKind.Background && session.WaitingSince is { } at && now - at > RingAfter;
-            if (carded.Any(c => c.Bin == CardBin.Ring) || (carded.Length > 0 && !rings))
+            // Rung already, or dismissed by its person (the node closes only its own For-you card on the way to a ring).
+            if (carded.Any(c => c.Bin == CardBin.Ring || c is { State: CardState.Closed, ClosedBy: not "node" }) || (carded.Length > 0 && !rings))
             {
                 continue;
             }

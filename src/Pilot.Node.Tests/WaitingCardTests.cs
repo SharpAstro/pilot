@@ -183,9 +183,42 @@ public sealed class WaitingCardTests
         // It works, then waits again: a new wait, a new card.
         Put(SessionState.Working);
         await _watch.LookAsync(Ct);
-        _time.Advance(TimeSpan.FromMinutes(1));
-        Put(waited: TimeSpan.Zero);
+        _time.Advance(TimeSpan.FromMinutes(3));
+        Put(waited: TimeSpan.FromMinutes(3));
         await _watch.LookAsync(Ct);
         Open().ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task AWaitAnsweredWithinTwoMinutesIsNoCard()
+    {
+        Put(waited: TimeSpan.FromSeconds(30));
+        await _watch.LookAsync(Ct);
+        Open().ShouldBeEmpty();
+
+        // Answered at its terminal: it works again, and nothing was raised or closed.
+        Put(SessionState.Working);
+        await _watch.LookAsync(Ct);
+        _state.Cards().Where(c => c.Kind == CardKinds.SessionWaiting).ShouldBeEmpty();
+
+        // A wait that goes on past the two minutes is a card.
+        _time.Advance(TimeSpan.FromMinutes(3));
+        Put(waited: TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        Open().ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task ABackgroundSessionsDismissedCardDoesNotRingForTheSameWait()
+    {
+        Put(kind: SessionKind.Background, waited: TimeSpan.FromMinutes(5));
+        await _watch.LookAsync(Ct);
+        _state.CloseCard(Open().Single().Id, "dismissed", "gui").ShouldBeTrue();
+
+        _time.Advance(TimeSpan.FromMinutes(20));
+        Put(kind: SessionKind.Background, waited: TimeSpan.FromMinutes(25));
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldBeEmpty();
     }
 }
