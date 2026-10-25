@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Pilot.Node.Flights;
 
@@ -9,7 +10,7 @@ namespace Pilot.Node.Flights;
 /// quoted <c>|</c> in a test filter for a pipe until each caller escaped it its own way (PIL170, TIA1778), and a file
 /// takes the line with no escaping at all, so what a planner or a worker wrote is what runs.
 /// </summary>
-public sealed class ShellScript : IDisposable
+public sealed partial class ShellScript : IDisposable
 {
     private ShellScript(ProcessStartInfo start, string? script)
     {
@@ -30,7 +31,7 @@ public sealed class ShellScript : IDisposable
             return new ShellScript(Quiet(new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", command }, WorkingDirectory = cwd }), null);
         }
         var script = Path.Combine(Path.GetTempPath(), $"pilot-{Guid.NewGuid():N}.ps1");
-        File.WriteAllText(script, Body(command), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        File.WriteAllText(script, Body(Unwrap(command)), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
         var start = new ProcessStartInfo("pwsh") { WorkingDirectory = cwd };
         foreach (var arg in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script })
         {
@@ -59,6 +60,39 @@ public sealed class ShellScript : IDisposable
     /// </summary>
     public static string Body(string command) =>
         $"{command}\nif ($?) {{ exit 0 }}\nif ($LASTEXITCODE) {{ exit $LASTEXITCODE }}\nexit 1\n";
+
+    /// <summary>
+    /// A line that runs pwsh again around its own command (<c>pwsh -NoProfile -Command "…"</c>) as that command alone, which the
+    /// script runs in pwsh anyway. Written into the script whole, the outer pwsh read the double-quoted command first and
+    /// expanded its <c>$LASTEXITCODE</c> to nothing, so the inner pwsh got <c>if ()</c> and every run of TIA1827's check
+    /// failed, its worker unable to change it (SE1, 2026-10-25). A single-quoted command is taken as it is, with <c>''</c>
+    /// for a quote; a double-quoted one with <c>""</c> or <c>`"</c>. Anything else is left as it was.
+    /// </summary>
+    public static string Unwrap(string command)
+    {
+        if (PwshCommand().Match(command) is not { Success: true } match)
+        {
+            return command;
+        }
+        var inner = match.Groups["body"].Value;
+        return match.Groups["quote"].Value == "'"
+            ? inner.Replace("''", "'", StringComparison.Ordinal)
+            : inner.Replace("\"\"", "\"", StringComparison.Ordinal).Replace("`\"", "\"", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The shell a command line starts only to run its own command in (<c>pwsh -Command</c>, <c>powershell -c</c>,
+    /// <c>bash -c</c>, <c>sh -c</c>, <c>cmd /c</c>), or null when it does not: a leg's check is refused so when it is
+    /// planned, as the node already runs it in a shell of its own.
+    /// </summary>
+    public static string? WrappingShell(string command) =>
+        WrappedCommand().Match(command) is { Success: true } match ? match.Groups["shell"].Value : null;
+
+    [GeneratedRegex(@"^\s*(?:pwsh|powershell)(?:\.exe)?(?:\s+-(?!c(?:ommand)?\b)\w+)*\s+-(?:c|command)\s+(?<quote>[""'])(?<body>.*)\k<quote>\s*$", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex PwshCommand();
+
+    [GeneratedRegex(@"^\s*(?<shell>pwsh|powershell|bash|sh|cmd)(?:\.exe)?(?:\s+[-/](?!c(?:ommand)?\b)\w+)*\s+[-/](?:c|command)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex WrappedCommand();
 
     public void Dispose()
     {
