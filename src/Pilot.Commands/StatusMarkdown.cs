@@ -63,7 +63,7 @@ internal static class StatusMarkdown
         {
             var state = flight.State switch
             {
-                FlightState.Held => $"held, waiting for {string.Join(", ", flight.Connections)}",
+                FlightState.Held => $"held, waiting for {FlightWaiting.For(flight)}",
                 FlightState.Landed => "landed",
                 _ => "flying",
             };

@@ -54,6 +54,9 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <summary>GitHub: what it says is the test's.</summary>
     public FakeGitHub GitHub { get; private init; } = new();
 
+    /// <summary>nuget.org: what it lists is the test's.</summary>
+    public FakeNuGetFeed NuGet { get; private init; } = new();
+
     /// <param name="retainedDeltas">How many deltas the node holds for a resuming client.</param>
     /// <param name="holdFirstListing">Keeps the session tracker's first poll waiting until the test releases it.</param>
     /// <param name="lanPort">Listens on the LAN too, on this port, announcing nothing, and on loopback only (no firewall prompt): a client on loopback stands in for one on another machine.</param>
@@ -80,6 +83,7 @@ internal sealed class NodeHarness : IAsyncDisposable
         var workers = new FakeWorkers();
         var checks = new FakeChecks();
         var github = new FakeGitHub();
+        var nuget = new FakeNuGetFeed();
         try
         {
             var app = NodeApp.Build(options, held, builder =>
@@ -93,6 +97,7 @@ internal sealed class NodeHarness : IAsyncDisposable
                 builder.Services.AddSingleton<Pilot.Node.Flights.IWorkerLauncher>(workers);
                 builder.Services.AddSingleton<Pilot.Node.Flights.ICheckRunner>(checks);
                 builder.Services.AddSingleton<Pilot.Node.Flights.IGitHub>(github);
+                builder.Services.AddSingleton<Pilot.Node.Flights.INuGetFeed>(nuget);
                 builder.Services.AddSingleton(new SessionTrackerOptions(
                     new ClaudeProfile(Path.Combine(folder, "claude")),
                     TimeSpan.FromMilliseconds(100),
@@ -100,7 +105,7 @@ internal sealed class NodeHarness : IAsyncDisposable
                     SessionTrackerOptions.DefaultEndedRetention));
             });
             await app.StartAsync(cancellationToken);
-            return new NodeHarness(app, held, folder, options, agents, delivery) { Workers = workers, Checks = checks, GitHub = github };
+            return new NodeHarness(app, held, folder, options, agents, delivery) { Workers = workers, Checks = checks, GitHub = github, NuGet = nuget };
         }
         catch
         {

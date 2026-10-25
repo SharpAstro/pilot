@@ -8,8 +8,9 @@ namespace Pilot.Node.Flights;
 /// state's lock, one at a time (two creates must not claim one code), and puts its result on the stream when done.
 /// </summary>
 /// <param name="workers">Stops the flight's sessions before its plane goes; null in a test that starts none.</param>
-/// <param name="github">Gives a flight made without a title its issue's; null in a test that names its titles.</param>
-public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider time, IWorkerLauncher? workers = null, IGitHub? github = null)
+/// <param name="github">Gives a flight made without a title its issue's, and the commit a landed PR merged as; null in a test that names its titles.</param>
+/// <param name="packages">Reads what a landing flight releases, for the flights connected to it to wait for; null in a test that has none wait for a package.</param>
+public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider time, IWorkerLauncher? workers = null, IGitHub? github = null, PackageReleases? packages = null)
 {
     private readonly SemaphoreSlim _one = new(1, 1);
 
@@ -295,6 +296,13 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         {
             throw new FlightException($"{flight.Code}'s plane holds {loose.Count} commit{(loose.Count == 1 ? "" : "s")} on no remote and not in {mainRef}: {string.Join("; ", loose)}. Push {(loose.Count == 1 ? "it" : "them")} (flight pr) or drop {(loose.Count == 1 ? "it" : "them")}, then land");
         }
+
+        // What it releases is read before its plane goes, and before anything is changed: a land that cannot say what its
+        // consumers wait for is refused, never half done. A folded flight released nothing.
+        var released = foldedInto is null && packages is not null && state.Flights().Any(f => f.State != FlightState.Landed && f.Connections.Contains(flight.Code, StringComparer.Ordinal))
+            ? await packages.WaitsAsync(flight, mergedHead, await MergeCommitAsync(flight, cancellationToken), cancellationToken)
+            : [];
+
         var leftover = await planes.RemoveAsync(flight.RepoPath, flight.Worktree, cancellationToken);
         if (leftover is not null)
         {
@@ -331,11 +339,81 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
                 }
                 waiting = waiting with { Connections = [.. connections] };
             }
+            else if (released.Length > 0)
+            {
+                // Landed with a release: it flies once the package can be fetched, not before.
+                waiting = waiting with { PackageWaits = [.. waiting.PackageWaits, .. released.Where(r => !waiting.PackageWaits.Any(w => w.Id == r.Id && w.Producer == r.Producer))] };
+            }
             state.PutFlight(Settle(waiting));
         }
     }
 
-    /// <summary>A flight held while any flight it connects from has not landed, flying otherwise; a landed one stays landed.</summary>
+    /// <summary>The commit <paramref name="flight"/>'s PR merged as, when GitHub says; null otherwise.</summary>
+    private async Task<string?> MergeCommitAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        if (github is null)
+        {
+            return null;
+        }
+        try
+        {
+            var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+            return pr is { State: "MERGED", MergeCommit.Length: > 0 } && (flight.PullRequest is null || flight.PullRequest == pr.Number) ? pr.MergeCommit : null;
+        }
+        catch (FlightException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Drops <paramref name="met"/> (package id and producer code) from the waits of <paramref name="code"/>, as the node found
+    /// each package on nuget.org, and lets the flight go once nothing else holds it. One at a time with the flight verbs.
+    /// </summary>
+    public async Task DropPackageWaitsAsync(string code, IReadOnlyCollection<(string Id, string Producer)> met, CancellationToken cancellationToken)
+    {
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is not { } flight || flight.State == FlightState.Landed)
+            {
+                return;
+            }
+            var rest = flight.PackageWaits.Where(w => !met.Contains((w.Id, w.Producer))).ToArray();
+            if (rest.Length == flight.PackageWaits.Length)
+            {
+                return;
+            }
+            state.PutFlight(Settle(flight with { PackageWaits = rest }));
+            if (rest.Length == 0)
+            {
+                state.CloseCardsAbout(Verbs.FlightTarget(code), "its package is on nuget.org", PackageWatch.LateKind);
+            }
+        }
+        finally
+        {
+            _one.Release();
+        }
+    }
+
+    /// <summary>Marks the wait for <paramref name="id"/> of <paramref name="producer"/> on <paramref name="code"/> as said to be late, so no second card is raised for it.</summary>
+    public async Task MarkPackageWaitLateAsync(string code, string id, string producer, CancellationToken cancellationToken)
+    {
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is { } flight)
+            {
+                state.PutFlight(flight with { PackageWaits = [.. flight.PackageWaits.Select(w => w.Id == id && w.Producer == producer ? w with { Escalated = true } : w)] });
+            }
+        }
+        finally
+        {
+            _one.Release();
+        }
+    }
+
+    /// <summary>A flight held while any flight it connects from has not landed or any package it waits for is not up, flying otherwise; a landed one stays landed.</summary>
     private FlightRow Settle(FlightRow flight)
     {
         if (flight.State == FlightState.Landed)
@@ -343,7 +421,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             return flight;
         }
         var flights = state.Flights().ToDictionary(f => f.Code, StringComparer.Ordinal);
-        var held = flight.Connections.Any(c => !flights.TryGetValue(c, out var other) || other.State != FlightState.Landed);
+        var held = flight.PackageWaits.Length > 0 || flight.Connections.Any(c => !flights.TryGetValue(c, out var other) || other.State != FlightState.Landed);
         return flight with { State = held ? FlightState.Held : FlightState.Flying };
     }
 

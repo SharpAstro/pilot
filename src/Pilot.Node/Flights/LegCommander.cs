@@ -434,7 +434,7 @@ public sealed partial class LegCommander(
         var (flight, leg) = LegOf(command.Target);
         if (flight.State != FlightState.Flying)
         {
-            throw new FlightException($"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}{(flight.State == FlightState.Held ? $", waiting for {string.Join(", ", flight.Connections)}" : "")}");
+            throw new FlightException($"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}{(flight.State == FlightState.Held ? $", waiting for {FlightWaiting.For(flight)}" : "")}");
         }
         if (leg.State != LegState.Planned)
         {
