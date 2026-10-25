@@ -239,36 +239,29 @@ public sealed class StandingTests
     public async Task TheCliSendsTheAgentFlagWhenClaudeCodeIsInItsEnvironmentAndAnMcpClientAlways()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
-        var before = Environment.GetEnvironmentVariable("CLAUDECODE");
-        try
-        {
-            // A human at their own terminal: no CLAUDECODE, so the person's, and autopilot is theirs to set.
-            Environment.SetEnvironmentVariable("CLAUDECODE", null);
-            PilotCommand.IsAgent(bySession: true, agent: null).ShouldBeFalse();
-            (await Cli(node, "settings", "set", "autopilot", "on")).ShouldContain("ok: set");
-            (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeTrue();
+        // The environment is read through IsAgent's own seam, never changed: other tests run a human's CLI beside this one.
+        // A human at their own terminal: no CLAUDECODE, so the person's, and autopilot is theirs to set.
+        PilotCommand.IsAgent(bySession: true, agent: null, claudeCode: null).ShouldBeFalse();
+        PilotCommand.IsAgent(bySession: true, agent: null, claudeCode: "").ShouldBeFalse();
+        (await Cli(node, agent: false, "settings", "set", "autopilot", "on")).ShouldContain("ok: set");
+        (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeTrue();
 
-            // A Claude session's tool: CLAUDECODE is set, so an assistant's, and it is refused.
-            Environment.SetEnvironmentVariable("CLAUDECODE", "1");
-            PilotCommand.IsAgent(bySession: true, agent: null).ShouldBeTrue();
-            (await Cli(node, "settings", "set", "autopilot", "off")).ShouldContain("autopilot is the person's to change");
-            (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeTrue();
+        // A Claude session's tool: CLAUDECODE is set, so an assistant's, and it is refused.
+        PilotCommand.IsAgent(bySession: true, agent: null, claudeCode: "1").ShouldBeTrue();
+        (await Cli(node, agent: true, "settings", "set", "autopilot", "off")).ShouldContain("autopilot is the person's to change");
+        (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeTrue();
 
-            // The GUI never sets it, whatever its environment holds; an MCP client always does, whatever its does not.
-            PilotCommand.IsAgent(bySession: false, agent: null).ShouldBeFalse();
-            Environment.SetEnvironmentVariable("CLAUDECODE", null);
-            PilotCommand.IsAgent(bySession: true, agent: true).ShouldBeTrue();
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("CLAUDECODE", before);
-        }
+        // The GUI never sets it, whatever its environment holds; an MCP client always does, whatever its does not.
+        PilotCommand.IsAgent(bySession: false, agent: null, claudeCode: "1").ShouldBeFalse();
+        PilotCommand.IsAgent(bySession: true, agent: true, claudeCode: null).ShouldBeTrue();
     }
 
-    private static async Task<string> Cli(NodeHarness node, params string[] args)
+    private static Task<string> Cli(NodeHarness node, params string[] args) => Cli(node, agent: false, args);
+
+    private static async Task<string> Cli(NodeHarness node, bool agent, params string[] args)
     {
         var output = new StringWriter();
-        await PilotCommand.RunAsync(["--node-socket", node.SocketPath, .. args], node.Folder, output, output, Ct);
+        await PilotCommand.RunAsync(["--node-socket", node.SocketPath, .. args], node.Folder, output, output, Ct, agent: agent);
         return output.ToString();
     }
 

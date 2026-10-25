@@ -17,8 +17,9 @@ public static class PilotCommand
     /// <param name="who">Who the commands are from: <c>cli</c> for a terminal (a Claude session running it is named by its
     /// <c>CLAUDE_CODE_SESSION_ID</c>), or the host's own name, as the GUI's command bar sends <c>gui</c>.</param>
     /// <param name="console">The console host, pilot itself: only it has standard streams of its own for <c>pilot mcp</c> to serve on.</param>
-    public static Task<int> RunAsync(string[] args, string cwd, TextWriter output, TextWriter error, CancellationToken cancellationToken, string who = "cli", bool console = false) =>
-        InvokeAsync(args, cwd, output, error, who, bySession: who == "cli", console, cancellationToken);
+    /// <param name="agent">Whether the commands are a Claude session's, where the caller knows; null reads it from the environment (<see cref="IsAgent(bool, bool?)"/>).</param>
+    public static Task<int> RunAsync(string[] args, string cwd, TextWriter output, TextWriter error, CancellationToken cancellationToken, string who = "cli", bool console = false, bool? agent = null) =>
+        InvokeAsync(args, cwd, output, error, who, bySession: who == "cli", console, cancellationToken, agent);
 
     /// <summary>
     /// Whether a command sent from here is a Claude session's (<see cref="CommandRequest.Agent"/>): Claude Code puts
@@ -27,8 +28,11 @@ public static class PilotCommand
     /// server, not the GUI or the TUI) is asked; <paramref name="agent"/> settles it for a host that knows (the MCP server's
     /// client always is a session).
     /// </summary>
-    internal static bool IsAgent(bool bySession, bool? agent) =>
-        agent ?? (bySession && Environment.GetEnvironmentVariable("CLAUDECODE") is { Length: > 0 });
+    internal static bool IsAgent(bool bySession, bool? agent) => IsAgent(bySession, agent, Environment.GetEnvironmentVariable("CLAUDECODE"));
+
+    /// <summary><see cref="IsAgent(bool, bool?)"/> with the value of <c>CLAUDECODE</c> given, so a test need not change the process's environment.</summary>
+    internal static bool IsAgent(bool bySession, bool? agent, string? claudeCode) =>
+        agent ?? (bySession && claudeCode is { Length: > 0 });
 
     /// <param name="bySession">Whether a command is from the Claude session running this host, where one is (the CLI's and
     /// the MCP server's are), before <paramref name="who"/>.</param>
