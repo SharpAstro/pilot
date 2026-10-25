@@ -82,11 +82,11 @@ internal sealed class NodeFilter
         var all = All;
         var lit = night is null ? Lit : (night.RowFocusBg, night.ButtonHover);
         (RGBAColor32, RGBAColor32)? plain = night is null ? null : (night.Button, night.ButtonHover);
-        yield return CardsView<RgbaImage>.Pill("All nodes", "nodes:all", ShowAll, all ? lit : plain, night?.Bright);
+        yield return CardsView<RgbaImage>.HeaderPill("All nodes", "nodes:all", ShowAll, all ? lit : plain, night?.Bright);
         foreach (var choice in Choices)
         {
             var key = choice.Key;
-            yield return CardsView<RgbaImage>.Pill(choice.Name, $"nodes:{key}", () => Toggle(key), !all && _picked.Contains(key) ? lit : plain, night?.Bright);
+            yield return CardsView<RgbaImage>.HeaderPill(choice.Name, $"nodes:{key}", () => Toggle(key), !all && _picked.Contains(key) ? lit : plain, night?.Bright);
         }
     }
 
@@ -189,8 +189,8 @@ internal sealed class PlayFilter
     {
         var lit = night is null ? NodeFilter.Lit : (night.RowFocusBg, night.ButtonHover);
         (RGBAColor32, RGBAColor32)? plain = night is null ? null : (night.Button, night.ButtonHover);
-        yield return CardsView<RgbaImage>.Pill("In play", "play:in-play", ShowInPlay, InPlay ? lit : plain, night?.Bright);
-        yield return CardsView<RgbaImage>.Pill("Everything", "play:everything", ShowEverything, InPlay ? plain : lit, night?.Bright);
+        yield return CardsView<RgbaImage>.HeaderPill("In play", "play:in-play", ShowInPlay, InPlay ? lit : plain, night?.Bright);
+        yield return CardsView<RgbaImage>.HeaderPill("Everything", "play:everything", ShowEverything, InPlay ? plain : lit, night?.Bright);
     }
 
     /// <summary>The pills in a line, for a dump or a test: <c>[In play] Everything</c>, the shown one bracketed.</summary>
