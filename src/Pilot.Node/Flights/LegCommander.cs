@@ -1077,6 +1077,23 @@ public sealed partial class LegCommander(
         }
     }
 
+    /// <summary>
+    /// Keeps a flight's PR marks to what the node's look at the PR found: its conflicts and merge queue as labels, and its head
+    /// and <c>pilot:</c> label as GitHub has them on the flight's row.
+    /// </summary>
+    public async Task NoteGitHubAsync(string code, PullRequest pr, bool queued, CancellationToken cancellationToken)
+    {
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            await _marks.NoteAsync(code, pr, queued, cancellationToken);
+        }
+        finally
+        {
+            _one.Release();
+        }
+    }
+
     private async Task<string?> SendBackAsync(string code, Func<int, string> changesFor, string closing, CancellationToken cancellationToken)
     {
         await _one.WaitAsync(cancellationToken);
