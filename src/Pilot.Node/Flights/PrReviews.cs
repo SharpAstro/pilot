@@ -31,6 +31,9 @@ public sealed class PrReviews(
     /// <summary>How long a reviewer that gave its verdict has to end its turn before it is stopped.</summary>
     public TimeSpan SelfFinishGrace { get; init; } = TimeSpan.FromSeconds(90);
 
+    /// <summary>Whether a verdict on a PR still open is posted by the node at once; off, it waits on its card's Post, as a test of that path has it.</summary>
+    public bool PostsItself { get; init; } = true;
+
     /// <summary>The model and effort the reviewer starts on; a test passes none.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
 
@@ -310,7 +313,8 @@ public sealed class PrReviews(
             detail.Append($"\n{finding}");
         }
         state.CloseCardsAbout(subject, "the verdict is in", LegWatch.ReviewStalled);
-        var card = state.RaiseCard(CardBin.Ring, ReadyKind, subject,
+        // For-you, not a ring: on an open PR the node posts it itself (below), and the card is only for one it could not.
+        var card = state.RaiseCard(CardBin.ForYou, ReadyKind, subject,
             $"{pr}: review ready, {verdict}{(review.Title is { Length: > 0 } title ? $" ({title})" : "")}",
             detail.ToString(),
             [new CardChoice { Label = PostLabel, Verb = Verbs.PostReview, Target = subject }],
@@ -318,6 +322,7 @@ public sealed class PrReviews(
         state.PutPrReview(reviewed with { Card = card.Id });
         var (verdictStatus, verdictDescription) = StatusOf(reviewed);
         await SetStatusAsync(reviewed, verdictStatus, verdictDescription, review.Url, cancellationToken);
+        await PostIfOpenAsync(pr, subject, cancellationToken);
 
         // A reviewer that gave its verdict is done with, after a grace to end its turn, as a flight's is.
         if (review.ReviewerJob is { } job)
@@ -329,6 +334,48 @@ public sealed class PrReviews(
             }, CancellationToken.None);
         }
     }
+
+    /// <summary>
+    /// A verdict on a PR still open is posted by the node at once, as a flight's review is, and a Handled card says what went
+    /// out: the person is asked for nothing. It rang with a Post button whatever the verdict, and #241's sat ringing all night
+    /// (SE1, 2026-10-26). A PR merged or closed meanwhile, or a post GitHub refused, keeps the For-you card and its Post.
+    /// </summary>
+    private async Task PostIfOpenAsync(PrRef pr, string subject, CancellationToken cancellationToken)
+    {
+        if (!PostsItself)
+        {
+            return;
+        }
+        try
+        {
+            var read = await github.PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken);
+            if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+            await PostAsync(pr, new CommandRequest { Verb = Verbs.PostReview, Target = subject, Who = "node" }, cancellationToken);
+            if (Of(pr) is { PostedUrl: { } url, Verdict: { } verdict })
+            {
+                state.RaiseCard(CardBin.Handled, PostedKind, subject, $"{pr}: pilot's review posted, {verdict}", url, link: url);
+            }
+        }
+        catch (FlightException ex)
+        {
+            // The For-you card with Post stays, and says why the node did not post it, so a press is not a guess.
+            if (Of(pr)?.Card is { } card && state.Cards(openOnly: true).FirstOrDefault(c => c.Id == card) is { } open)
+            {
+                state.CloseCard(open.Id, "replaced: the node could not post it", "node");
+                var again = state.RaiseCard(CardBin.ForYou, ReadyKind, subject, open.Title, $"Not posted by the node: {ex.Message}\n{open.Detail}", open.Choices, link: open.Link);
+                if (Of(pr) is { } review)
+                {
+                    state.PutPrReview(review with { Card = again.Id });
+                }
+            }
+        }
+    }
+
+    /// <summary>The Handled card of a review the node posted itself.</summary>
+    public const string PostedKind = "pr-review-posted";
 
     /// <summary>
     /// Posts the review to GitHub, as one review under gh's login: the draft written again with the event that login takes,
