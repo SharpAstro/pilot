@@ -16,6 +16,9 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     // A PR head whose failed checks were sent back as changes: once, not every look.
     private readonly HashSet<string> _failed = new(StringComparer.Ordinal);
 
+    // A flight and head the autopilot has asked to merge: once, not every look.
+    private readonly HashSet<string> _autoMerged = new(StringComparer.Ordinal);
+
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(30);
 
     /// <summary>The card of a flight whose PR left its merge queue unmerged: why, and Merge to queue it again.</summary>
@@ -503,6 +506,42 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 var choices = current.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = status } : c).ToList();
                 state.UpdateChoices(current.Id, choices, ifStill: current.Choices);
             }
+            // A merge GitHub already holds (armed, or in its queue) is not asked for again.
+            if (merge is not { Kind: MergeKinds.Armed or MergeKinds.Queued })
+            {
+                await MergeOnAutopilotAsync(card, flight, status, cancellationToken);
+            }
         }
+    }
+
+    /// <summary>The card a merge the autopilot asked for and GitHub or the node refused: why, with Merge to try again.</summary>
+    public const string AutopilotMergeRefused = "autopilot-merge-refused";
+
+    /// <summary>
+    /// With the autopilot on, a flight whose review passed is merged by the node itself, from its PR-ready card, once its checks
+    /// are not failing: green, or still running, when the merge waits for them (<see cref="FlightRow.MergeWhenGreen"/>). The
+    /// autopilot was read as "an assistant's merge runs at once", and the watchtower may never merge, so the night's passed
+    /// PRs sat for seven hours with the autopilot on until the person pressed Merge (SE1, 2026-10-26). Tried once a head: a
+    /// refusal rings with why and Merge, rather than being tried every look.
+    /// </summary>
+    private async Task MergeOnAutopilotAsync(CardRow card, FlightRow flight, string? status, CancellationToken cancellationToken)
+    {
+        if (legs is not { Models.Autopilot: true } || status is ChoiceStatus.Failing or ChoiceStatus.Conflicting
+            || flight.Review is not { State: ReviewState.Passed } || flight.MergeWhenGreen is not null
+            || card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { } merge
+            || !_autoMerged.Add($"{flight.Code} {string.Join(' ', merge.Args ?? [])}"))
+        {
+            return;
+        }
+        var result = await legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = merge.Target, Args = merge.Args, Who = "node" }, cancellationToken);
+        if (result.Ok)
+        {
+            state.CloseCard(card.Id, result.Made is { Length: > 0 } made ? $"on autopilot: {made}" : "merged on autopilot", "node");
+            state.RaiseCard(CardBin.Handled, CardKinds.AutopilotRan, Verbs.FlightTarget(flight.Code),
+                $"{flight.Code}'s PR #{flight.PullRequest} {(result.Made is { Length: > 0 } ? "is merging" : "merged")} on autopilot", result.Made);
+            return;
+        }
+        state.RaiseCard(CardBin.Ring, AutopilotMergeRefused, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s merge on autopilot was refused",
+            result.Error, [merge with { Status = null }], link: flight.PullRequestUrl);
     }
 }
