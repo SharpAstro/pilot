@@ -91,6 +91,12 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
 
+    /// <summary>The ? card and the update light, in the top bar.</summary>
+    public AboutCard? About { get; set; }
+
+    /// <summary>The window's node selection, whose pills the top bar shows.</summary>
+    public NodeFilter? Nodes { get; set; }
+
     /// <summary>The box the message is typed in: the host focuses it to give the page the keyboard.</summary>
     public TextInputState Input => _composer.Input;
 
@@ -249,22 +255,20 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         var held = Volatile.Read(ref _held);
         _composer.Input.OnCommit = _ => SendAsync();
         _composer.Input.Placeholder = "Message the watchtower · Enter sends · Shift+Enter a new line";
-        var head = new List<Layout.Node>
-        {
-            Layout.Builder.Text("Chat with the watchtower", 22f, Bright).WAuto(),
-            Layout.Builder.Text(held.Problem ?? (Load is null ? "not live" : ""), 12f, held.Problem is null ? Dim : Failed).WStar(),
-        };
+        var buttons = new List<Layout.Node>();
         if (!_scroll.IsFollowingEnd)
         {
-            head.Add(Layout.Builder.Text("Jump to end", 13f, Bright, TextAlign.Center).Pad(12f, 5f).WAuto().Bg(Button).BgHover(ButtonHover)
-                .Follows(new HitResult.ButtonHit("chat:end"), _ =>
-                {
-                    _scroll.ScrollToEnd();
-                    Changed?.Invoke();
-                }));
+            buttons.Add(CardsView<TSurface>.HeaderPill("Jump to end", "chat:end", () =>
+            {
+                _scroll.ScrollToEnd();
+                Changed?.Invoke();
+            }));
         }
-        head.Add(AutopilotSwitch.In(Autopilot));
-        var top = Layout.Builder.HStack([.. head]).WithGap(12f).RowH(36f);
+        var top = TopBar.Build(new PageHeader("chat")
+        {
+            Buttons = buttons,
+            Source = held.Problem ?? (Load is null ? "not live" : "the conversation with the node's watchtower"),
+        }, new TopBarParts(Nodes, null, Autopilot, About));
 
         var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking)], held.Working).Select(r => r.WStar()).ToList();
         // What was said and the watchtower has not taken yet: last among the messages, dim, and saying so.
@@ -287,9 +291,11 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             : Layout.Builder.VStack([.. rows]).WithGap(ToolGap).WithScroll(_scroll).Stretch();
 
         var page = OnSend is null
-            ? Layout.Builder.VStack(top, list.HStar())
-            : Layout.Builder.VStack(top, list.HStar(), Foot());
-        return page.WithGap(8f).Pad(Gutter, 8f).Bg(PageBg).Stretch();
+            ? Layout.Builder.VStack(list.HStar())
+            : Layout.Builder.VStack(list.HStar(), Foot());
+        var body = page.WithGap(8f).Pad(Gutter, 8f).Stretch();
+        var whole = Layout.Builder.VStack(top, body.HStar()).Bg(PageBg).Stretch();
+        return About?.Over(whole) ?? whole;
     }
 
     // A message that did not go.

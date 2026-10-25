@@ -116,6 +116,8 @@ internal sealed class PilotChrome<TSurface>
         Home.About = About;
         Settings.Nodes = Nodes;
         Home.Nodes = Nodes;
+        Chat.About = About;
+        Chat.Nodes = Nodes;
         // The Autopilot switch, in every page's header, for the node the window shows.
         sessions.Autopilot = Autopilot;
         Flights.Autopilot = Autopilot;
