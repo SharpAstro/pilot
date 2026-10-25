@@ -595,19 +595,19 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         if (!Transcript.IsOpen && Transcript.Load is not null && Selected >= 0 && Selected < _lines.Count)
         {
             var line = _lines[Selected];
-            yield return CardsView<TSurface>.Pill("Open transcript", "sessions:open-transcript", () => Transcript.Open(line));
+            yield return CardsView<TSurface>.HeaderPill("Open transcript", "sessions:open-transcript", () => Transcript.Open(line));
         }
         // The say bar's text to every shown row say-all would pick: only with text in the bar and a row to tell.
         if (!Transcript.IsOpen && !string.IsNullOrWhiteSpace(SayInput.Text) && SayAllCount is > 0 and var sayAll)
         {
-            yield return CardsView<TSurface>.Pill($"Say to all shown ({sayAll})", "sessions:say-all", () => _ = SayAllAsync());
+            yield return CardsView<TSurface>.HeaderPill($"Say to all shown ({sayAll})", "sessions:say-all", () => _ = SayAllAsync());
         }
         if (_endedCount > 0 && OnAction is { } act)
         {
             // Each node shown archives its own ended rows: with no node the verb went to this window's node alone, so
             // DE1's 181 stayed counted while SE1's 3 went (2026-10-24).
             var ended = _endedLines;
-            yield return CardsView<TSurface>.Pill($"Archive ended ({_endedCount})", "sessions:archive-ended", () =>
+            yield return CardsView<TSurface>.HeaderPill($"Archive ended ({_endedCount})", "sessions:archive-ended", () =>
             {
                 foreach (var group in ended.GroupBy(l => l.Node))
                 {
@@ -618,7 +618,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         }
         if (_archivedCount > 0)
         {
-            yield return CardsView<TSurface>.Pill(ShowArchived ? "Hide archived" : $"Show archived ({_archivedCount})", "sessions:show-archived",
+            yield return CardsView<TSurface>.HeaderPill(ShowArchived ? "Hide archived" : $"Show archived ({_archivedCount})", "sessions:show-archived",
                 () => ShowArchived = !ShowArchived);
         }
         if (Autopilot is { } autopilot)

@@ -166,6 +166,25 @@ public sealed class ReposPageTests
     }
 
     [Fact]
+    public void TheHeadersButtonsAreAllAsTallAsItsQuestionMark()
+    {
+        using var renderer = new RgbaImageRenderer(2000, 800);
+        var (chrome, repos) = Chrome(renderer);
+        repos.SyncRepos = _ => Task.FromResult<RepoSyncOutcome[]>([]);
+        chrome.Autopilot.OnToggle = _ => { };
+
+        var arranged = Layout.Engine.Arrange(repos.Tree(Screen()), new Rect<float>(0, 0, 2000, 800), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        Rect<float> Of(string action) => arranged.First(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == action).Bounds;
+
+        // Sync, All repos and Autopilot each stood their own height beside the ? (SE1, 2026-10-25).
+        var help = Of("about:toggle");
+        foreach (var action in new[] { "repos:sync", "repos:all", AutopilotSwitch.Action })
+        {
+            (Of(action).Y, Of(action).Height).ShouldBe((help.Y, help.Height), action);
+        }
+    }
+
+    [Fact]
     public void AllReposAddsTheUntrackedOnes()
     {
         using var vessel = new RgbaImageRenderer(1, 1);

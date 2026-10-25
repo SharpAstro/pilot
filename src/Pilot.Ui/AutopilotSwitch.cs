@@ -44,9 +44,11 @@ internal sealed class AutopilotSwitch
     /// <summary>The header's button: lit while on. <paramref name="night"/> is the Flights page's own palette.</summary>
     public Layout.Node Button(FlightsPalette? night = null)
     {
-        var button = Layout.Builder.Text(Label, 12f, On ? Bright : night?.Dim ?? Dim, TextAlign.Center)
-            .Pad(10f, 4f)
+        // As tall as the header's other buttons, its word in their middle.
+        var button = Layout.Builder.Text(Label, 12f, On ? Bright : night?.Dim ?? Dim, TextAlign.Center, TextAlign.Center)
+            .Pad(10f, 0f)
             .WAuto()
+            .HFixed(AboutCard.HeaderButton)
             .Bg(On ? LitBg : night?.Button ?? PlainBg)
             .BgHover(On ? LitHover : night?.ButtonHover ?? PlainHover)
             .WithTooltip(Tooltip);
