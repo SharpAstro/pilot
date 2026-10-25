@@ -95,6 +95,7 @@ public static class NodeApp
             return reviews;
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PrReviews>());
+        builder.Services.AddSingleton<Autopilot>();
         builder.Services.AddSingleton<NodeCommands>();
         builder.Services.AddSingleton<NodeLan>();
         if (options.Lan && options.LanAnnounce)

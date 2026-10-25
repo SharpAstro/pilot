@@ -393,6 +393,8 @@ public sealed class FileJournal : INodeJournal, IDisposable
             Ok = result.Result.Ok,
             Way = result.Result.Way,
             Error = result.Result.Error,
+            Autopilot = result.Result.Autopilot,
+            Why = result.Result.Why,
         };
         box.Write(JsonSerializer.SerializeToUtf8Bytes(line, PilotJsonContext.Default.BlackBoxLine));
         box.Write(NewLine);

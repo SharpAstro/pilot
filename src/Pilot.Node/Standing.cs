@@ -100,11 +100,23 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// exactly when that is.)
     /// </summary>
     public static bool YourOnly(CommandRequest command, NodeState state) =>
-        YourOnlyVerbs.Contains(command.Verb) || command.Verb == Verbs.Dismiss && IsRing(command, state);
+        YourOnlyVerbs.Contains(command.Verb) || command.Verb == Verbs.Dismiss && IsRing(command, state) || IsAsk(command, state);
 
     private static bool IsRing(CommandRequest command, NodeState state) =>
+        CardOf(command, state) is { State: CardState.Open, Bin: CardBin.Ring };
+
+    /// <summary>
+    /// Whether <paramref name="command"/> answers (<c>answer</c>, either choice) or dismisses an assistant's open ask
+    /// (<see cref="CardKinds.AssistantAsk"/>): the person's alone, whatever the autopilot says, as an assistant that could press
+    /// its own Allow would have no ask at all.
+    /// </summary>
+    public static bool IsAsk(CommandRequest command, NodeState state) =>
+        command.Verb is Verbs.Answer or Verbs.Dismiss && CardOf(command, state) is { State: CardState.Open, Kind: CardKinds.AssistantAsk };
+
+    private static CardRow? CardOf(CommandRequest command, NodeState state) =>
         command.Target.StartsWith(Verbs.CardTargetPrefix, StringComparison.Ordinal)
-        && state.Cards().FirstOrDefault(c => c.Id == command.Target[Verbs.CardTargetPrefix.Length..]) is { State: CardState.Open, Bin: CardBin.Ring };
+            ? state.Cards().FirstOrDefault(c => c.Id == command.Target[Verbs.CardTargetPrefix.Length..])
+            : null;
 
     /// <summary>Why this standing may not send <paramref name="command"/>; null when it may, as far as who it is goes.</summary>
     public string? Refusal(CommandRequest command, NodeState state)
@@ -125,9 +137,11 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
                 return Flight is { } code
                     ? $"{command.Target} is not {code}'s: a flight's session acts on its own flight only"
                     : $"{command.Target} is not the PR this review is of ({Pr}): a review acts on its own PR only";
+            case StandingKind.Assistant when IsAsk(command, state):
+                return "answering an assistant's ask is the person's: Allow and Deny are theirs to press, on the card";
             default:
-                // An assistant's your-only command runs as it did before the autopilot rule; the confirm card (autopilot
-                // off) and the direct run it records (autopilot on) are #208's next leg, which goes here.
+                // An assistant's other your-only commands are not refused here but sorted by the autopilot rule in
+                // NodeCommands.RunAsync: a confirm card with it off, a direct run recorded as such with it on (see Autopilot).
                 return null;
         }
     }

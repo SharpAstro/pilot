@@ -44,6 +44,12 @@ public sealed record CardRow
     public string? ClosedBy { get; init; }
 
     public DateTimeOffset? ClosedAt { get; init; }
+
+    /// <summary>The assistant's session that asked for what the card confirms (<see cref="CardKinds.AssistantAsk"/>), told what became of it; null for any other card.</summary>
+    public string? AskedBy { get; init; }
+
+    /// <summary>The message that assistant said it acted on (<see cref="CommandRequest.Why"/>), when it gave one.</summary>
+    public string? Why { get; init; }
 }
 
 /// <summary>A card's button: what it says, and the command it runs.</summary>
@@ -73,6 +79,16 @@ public static class CardKinds
     /// when the session stops waiting or its process is gone.
     /// </summary>
     public const string SessionWaiting = "session-waiting";
+
+    /// <summary>
+    /// An assistant's your-only command (a merge, a landing, a setting) waiting on the person with the autopilot off (#208): a
+    /// For-you card whose <c>Allow</c> runs the command as the person and whose <c>Deny</c> closes it, the asking session
+    /// told either way (<see cref="CardRow.AskedBy"/>). Answering it is the person's alone.
+    /// </summary>
+    public const string AssistantAsk = "assistant-ask";
+
+    /// <summary>What an assistant did on the autopilot, as a Handled line: the session, what it did, and the message it acted on.</summary>
+    public const string AutopilotRan = "autopilot-ran";
 }
 
 /// <summary>How long a thing has gone on, as a card or a banner says it: <c>under 1 m</c>, <c>37 m</c>, <c>9 h 37 m</c>, <c>2 d 3 h</c>.</summary>

@@ -96,8 +96,12 @@ public static class PilotCommand
 
         // Who a command is from: the Claude session running this host when it may be one, else the host; a leg's worker
         // or a flight's reviewer when the plane says so, as they are named already.
-        Task<int> Send(NodeClient client, string verb, string target, string[] args, string sender, CancellationToken ct) =>
-            SendAsync(client, verb, target, args, sender, bySession && sender == who, byAgent, output, ct);
+        Task<int> Send(NodeClient client, string verb, string target, string[] args, string sender, CancellationToken ct, string? why = null) =>
+            SendAsync(client, verb, target, args, sender, bySession && sender == who, byAgent, why, output, ct);
+
+        // What an assistant says it acted on, for the commands that are the person's alone (merge, land, a setting, setup, an
+        // update): the node keeps it in the black box and on the card it raises (autopilot off) or the Handled line it leaves (on).
+        var actingOn = new Option<string?>("--why") { Description = "The message you are acting on, in your words: recorded with a command only the person may do, whose card or Handled line shows it" };
 
         Argument<string> Arg(string name, string description) => new(name) { Description = description };
 
@@ -195,17 +199,17 @@ public static class PilotCommand
         var merge = Action(new Command("merge", "Merge the flight's PR, guarded on the head you reviewed, then land it")
             {
                 Arguments = { code, head },
-                Options = { method, squash, rebase, mergeCommit },
+                Options = { method, squash, rebase, mergeCommit, actingOn },
             },
             (p, client, ct) =>
             {
                 var how = p.GetValue(method) ?? (p.GetValue(rebase) ? "rebase" : p.GetValue(mergeCommit) ? "merge" : p.GetValue(squash) ? "squash" : null);
                 string[] args = how is null ? [p.GetValue(head)!] : [p.GetValue(head)!, how];
-                return Send(client, Verbs.Merge, Verbs.FlightTarget(p.GetValue(code)!), args, who, ct);
+                return Send(client, Verbs.Merge, Verbs.FlightTarget(p.GetValue(code)!), args, who, ct, p.GetValue(actingOn));
             });
 
-        var land = Action(new Command("land", "The flight's work is in: its plane goes, its branch and code stay") { Arguments = { code } },
-            (p, client, ct) => Send(client, Verbs.Land, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct));
+        var land = Action(new Command("land", "The flight's work is in: its plane goes, its branch and code stay") { Arguments = { code }, Options = { actingOn } },
+            (p, client, ct) => Send(client, Verbs.Land, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct, p.GetValue(actingOn)));
 
         var reviewStart = Action(new Command("review", "Start a fresh reviewer on the flight's branch (flight pr starts one by itself)") { Arguments = { code } },
             (p, client, ct) => Send(client, Verbs.StartReview, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct));
@@ -554,9 +558,9 @@ public static class PilotCommand
         var updateCheck = new Option<bool>("--check") { Description = "Only say whether a newer release is out" };
         var updateAdopt = new Option<bool>("--adopt") { Description = "Install the latest release over a build of one's own, which then updates itself" };
         var update = Action(new Command("update", "Install the latest release of pilot where the node runs from, and restart the node; its flights and sessions carry on")
-            { Options = { updateCheck, updateAdopt } },
+            { Options = { updateCheck, updateAdopt, actingOn } },
             (p, client, ct) => Send(client, Verbs.Update, Verbs.NodeTarget,
-                [p.GetValue(updateCheck) ? "check" : "install", .. p.GetValue(updateAdopt) ? new[] { "--adopt" } : []], who, ct));
+                [p.GetValue(updateCheck) ? "check" : "install", .. p.GetValue(updateAdopt) ? new[] { "--adopt" } : []], who, ct, p.GetValue(actingOn)));
 
         var subject = Arg("subject", "What it is about: flight/<code>, flight/<code>/<leg>, session/<id> or node");
         var cardTitle = Arg("title", "The card in a line");
@@ -692,11 +696,11 @@ public static class PilotCommand
         });
         var settingKey = Arg("setting", "lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory or lan-port");
         var settingValue = Words("value", "Its value (every folder, for repo-roots); none, or default, takes it out", required: false);
-        var set = Action(new Command("set", "Save a setting; the node restarts to run with it once no job runs") { Arguments = { settingKey, settingValue } },
-            (p, client, ct) => Send(client, Verbs.Set, Verbs.NodeTarget, [p.GetValue(settingKey)!, .. p.GetValue(settingValue) ?? []], who, ct));
+        var set = Action(new Command("set", "Save a setting; the node restarts to run with it once no job runs") { Arguments = { settingKey, settingValue }, Options = { actingOn } },
+            (p, client, ct) => Send(client, Verbs.Set, Verbs.NodeTarget, [p.GetValue(settingKey)!, .. p.GetValue(settingValue) ?? []], who, ct, p.GetValue(actingOn)));
         var checkKey = Arg("check", "autostart, no-autostart, hooks, lan, firewall or trust");
-        var setupCommand = Action(new Command("setup", "Make a setup check's fix: the logon entry, the hooks, the LAN, the firewall rule (asks for elevation), the trust prompt") { Arguments = { checkKey } },
-            (p, client, ct) => Send(client, Verbs.Setup, Verbs.NodeTarget, [p.GetValue(checkKey)!], who, ct));
+        var setupCommand = Action(new Command("setup", "Make a setup check's fix: the logon entry, the hooks, the LAN, the firewall rule (asks for elevation), the trust prompt") { Arguments = { checkKey }, Options = { actingOn } },
+            (p, client, ct) => Send(client, Verbs.Setup, Verbs.NodeTarget, [p.GetValue(checkKey)!], who, ct, p.GetValue(actingOn)));
         settings.Subcommands.Add(set);
         settings.Subcommands.Add(setupCommand);
 
@@ -825,10 +829,10 @@ public static class PilotCommand
             ? Caller(await SnapshotAsync(client, cancellationToken), sessionId, who)
             : who;
 
-    private static async Task<int> SendAsync(NodeClient client, string verb, string target, string[] args, string who, bool bySession, bool agent, TextWriter output, CancellationToken cancellationToken)
+    private static async Task<int> SendAsync(NodeClient client, string verb, string target, string[] args, string who, bool bySession, bool agent, string? why, TextWriter output, CancellationToken cancellationToken)
     {
         who = await SenderAsync(client, who, bySession, cancellationToken);
-        var envelope = await client.SendAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who, Agent = agent }, cancellationToken);
+        var envelope = await client.SendAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who, Agent = agent, Why = why }, cancellationToken);
         if (envelope.Success && envelope.Response is { Ok: true } result)
         {
             await output.WriteLineAsync($"ok: {verb} {target}{(result.Way is { } way ? $" ({way})" : "")}");
