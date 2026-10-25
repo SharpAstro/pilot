@@ -295,7 +295,22 @@ if (feed is not null && client is not null && clients is not null)
         loop.RequestRedraw();
     }, "a Sessions action");
     // A card's button is a command on the node, as a click anywhere else is; the stream closes the card.
-    async Task CardCommandAsync(string verb, CardRow card, string[] args)
+    async Task CardCommandAsync(string verb, CardRow card, string[] args, string action)
+    {
+        // Said on the button at once, cleared when the node has answered, whatever it said.
+        chrome.Cards.NoteWorking(card.Id, action);
+        loop.RequestRedraw();
+        try
+        {
+            await SendCardCommandAsync(verb, card, args);
+        }
+        finally
+        {
+            chrome.Cards.NoteWorking(card.Id, null);
+            loop.RequestRedraw();
+        }
+    }
+    async Task SendCardCommandAsync(string verb, CardRow card, string[] args)
     {
         // A card raised on another node is answered there.
         if (clients.For(chrome.Cards.NodeOf(card)) is not { } to)
@@ -317,8 +332,8 @@ if (feed is not null && client is not null && clients is not null)
     // Every task a click starts goes through the tracker, never `_ =`: it is drained at shutdown and a fault it did not
     // expect is logged (ProcessCompletions, each frame) rather than lost with an unobserved task.
     chrome.Cards.OnAnswer = (card, number) => tracker.Run(
-        () => CardCommandAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)]), $"answer {card.Id}");
-    chrome.Cards.OnDismiss = card => tracker.Run(() => CardCommandAsync(Verbs.Dismiss, card, []), $"dismiss {card.Id}");
+        () => CardCommandAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)], $"card:{card.Id}:{number}"), $"answer {card.Id}");
+    chrome.Cards.OnDismiss = card => tracker.Run(() => CardCommandAsync(Verbs.Dismiss, card, [], $"card:{card.Id}:dismiss"), $"dismiss {card.Id}");
 
     // The watchtower, from its panel: its Remote Control link one click away, and a shortcut to the Chat page.
     chrome.Cards.CanTell = true;
