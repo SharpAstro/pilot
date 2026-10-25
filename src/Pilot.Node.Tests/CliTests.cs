@@ -368,7 +368,7 @@ public sealed class CliTests : IAsyncLifetime
     {
         (await Pilot(_root, "cards", "--output-format", "markdown")).Output.ShouldBe("No open cards.\n");
 
-        var snapshot = new SnapshotEvent { Seq = 1, At = DateTimeOffset.UnixEpoch, Stream = "s", Notes = [], Cards =
+        var snapshot = new SnapshotEvent { Seq = 1, At = DateTimeOffset.UnixEpoch, Stream = "s", Notes = [], Sessions = [], Cards =
         [
             new CardRow
             {
