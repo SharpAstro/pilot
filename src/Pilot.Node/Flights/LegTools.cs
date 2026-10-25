@@ -246,7 +246,8 @@ public static class MergeKinds
 /// <param name="Reason">What blocks it, in words, when <see cref="MergeKinds.Blocked"/>.</param>
 /// <param name="FailedName">The first failed check, and <paramref name="FailedLink"/> its page.</param>
 /// <param name="DroppedFromQueue">Why GitHub took it out of the queue unmerged, when it did and it is not queued again.</param>
-public sealed record MergeState(string Kind, int Done = 0, int Total = 0, int? Position = null, string? Reason = null, string? FailedName = null, string? FailedLink = null, string? DroppedFromQueue = null)
+/// <param name="AwaitsCheck">A <see cref="MergeKinds.Pending"/> with every check shown green: GitHub says BLOCKED because a required check has yet to be created (a gate job starts only once the builds finish), the gap between the last build and it.</param>
+public sealed record MergeState(string Kind, int Done = 0, int Total = 0, int? Position = null, string? Reason = null, string? FailedName = null, string? FailedLink = null, string? DroppedFromQueue = null, bool AwaitsCheck = false)
 {
     /// <summary>The checks' progress as the card says it: <c>6 of 7</c>; null with no checks.</summary>
     public string? Progress => Total > 0 ? ArmedProgress.Say(Done, Total) : null;
@@ -523,7 +524,7 @@ public sealed class GhCli : IGitHub
             var failed = checks.FirstOrDefault(c => c.Bucket == "fail");
             var dropped = queue is { Queued: false, RemovedAt: not null, RemovedReason: { Length: > 0 } reason } && !reason.Equals("merged", StringComparison.OrdinalIgnoreCase)
                 ? reason.Replace('_', ' ').ToLowerInvariant() : null;
-            MergeState Say(string kind, string? why = null) => new(kind, done, total, queue is { Queued: true } ? queue.Position : null, why, failed.Name, failed.Link, dropped);
+            MergeState Say(string kind, string? why = null, bool awaits = false) => new(kind, done, total, queue is { Queued: true } ? queue.Position : null, why, failed.Name, failed.Link, dropped, awaits);
 
             var mergeState = TextOf(root, "mergeStateStatus");
             if (queue is { Queued: true })
@@ -562,7 +563,11 @@ public sealed class GhCli : IGitHub
             return mergeState switch
             {
                 null or "" or "UNKNOWN" => null,
-                "BLOCKED" => Say(MergeKinds.Blocked, review == "REVIEW_REQUIRED" ? "a review is required" : "a branch rule blocks it: the PR page says which"),
+                "BLOCKED" when review == "REVIEW_REQUIRED" => Say(MergeKinds.Blocked, "a review is required"),
+                // Every check shown is green, no draft, no review in the way: a required check that GitHub has not created yet (a gate
+                // job starts only after the builds finish) is the one thing left. Waiting, not blocked: an armed merge keeps waiting
+                // for it, and Merge arms one.
+                "BLOCKED" => Say(MergeKinds.Pending, "a required check has yet to report, or a branch rule blocks it: the PR page says which", awaits: true),
                 _ => Say(MergeKinds.Ready),
             };
         }

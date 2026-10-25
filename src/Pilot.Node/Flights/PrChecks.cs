@@ -190,12 +190,19 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             // What GitHub says of the PR is what the card says of the merge: an auto-merge somebody turned off on the PR page, or a
             // merge GitHub blocks (a review required, changes requested, behind its base), is no merge waiting any more, and the
             // card shows what GitHub shows rather than "merging when checks pass" for good (pilot #244).
-            if (dropped is null && pr is not null && await github.MergeStateAsync(flight.RepoPath, number, cancellationToken) is { } merge
-                && await LeftArmedAsync(flight, pr, merge, native, cancellationToken))
+            var merge = dropped is null && pr is not null ? await github.MergeStateAsync(flight.RepoPath, number, cancellationToken) : null;
+            if (merge is not null && pr is not null && await LeftArmedAsync(flight, pr, merge, native, cancellationToken))
             {
                 continue;
             }
             var checks = dropped is null ? await github.ChecksSummaryAsync(flight.RepoPath, number, cancellationToken) : null;
+            if (dropped is null && merge is { AwaitsCheck: true } && checks?.Status != ChoiceStatus.Failing)
+            {
+                // Every check shown is green, but one GitHub requires is not there yet (a gate job starts once the builds finish):
+                // the merge keeps waiting for it, and is neither taken nor dropped in that gap.
+                legs?.ShowMerge(subject, LegCommander.ArmedLine(checks, how, LegCommander.AwaitingCheckLine), MergeWays.Armed);
+                continue;
+            }
             if (dropped is null && checks?.Status == ChoiceStatus.Pending)
             {
                 // Said on the card as each check finishes.

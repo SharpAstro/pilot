@@ -25,6 +25,17 @@ public sealed class MergeStateTests
         (state.Done, state.Total, state.Progress).ShouldBe((2, 3, "2 of 3"));
     }
 
+    [Fact]
+    public void EveryCheckGreenWithTheRequiredGateNotCreatedYetIsPendingNotBlocked()
+    {
+        // Recorded from #251's merged.json a second before gate started: both builds done, gate absent, GitHub says BLOCKED with
+        // no review decision. A required check yet to report: waiting, never a branch rule that blocks.
+        var state = Read("gate-absent").ShouldNotBeNull();
+        state.Kind.ShouldBe(MergeKinds.Pending);
+        state.AwaitsCheck.ShouldBeTrue();
+        state.FailedName.ShouldBeNull();
+    }
+
     [Theory]
     [InlineData("ready")]
     [InlineData("ready-approved")]

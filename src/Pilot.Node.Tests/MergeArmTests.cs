@@ -358,6 +358,50 @@ public sealed class MergeArmTests
         Card(node, ready).Detail.ShouldNotBeNull().ShouldNotContain("enable-auto-merge");
     }
 
+    private static MergeState GateAbsent() => GhCli.ParseMergeState(
+        File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "gh", "gate-absent.json"))).ShouldNotBeNull();
+
+    [Fact]
+    public async Task ANodePolledMergeStaysArmedThroughTheGapBeforeTheRequiredGateExistsAndMergesOnceItPasses()
+    {
+        // SharpAstro/pilot: merge queue, auto-merge off, the node polls; the only required check, gate, is created after both builds
+        // finish, so a look in the gap reads every check green with GitHub saying BLOCKED (Fixtures/gh/gate-absent.json).
+        await using var node = await NodeHarness.StartAsync(Ct);
+        node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: false);
+        node.GitHub.Queues = true;
+        var ready = Ready(node);
+        node.GitHub.Summary = Passing(5);
+        node.GitHub.Merge = GateAbsent();
+
+        // Merge pressed in the gap arms rather than refusing with "blocked on GitHub".
+        (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
+        node.State.Flights().Single().MergeWhenGreen.ShouldBe([PrHead, "rebase", LegCommander.ArmedByNode]);
+        node.GitHub.Merged.ShouldBeEmpty();
+        Card(node, ready).Choices.Single(c => c.Verb == Verbs.Merge).Status.ShouldBe(ChoiceStatus.Armed);
+
+        // Looks in the gap keep it armed: neither dropped, nor blocked, nor merged early.
+        await Look(node);
+        await Look(node);
+        node.State.Flights().Single().MergeWhenGreen.ShouldBe([PrHead, "rebase", LegCommander.ArmedByNode]);
+        var card = Card(node, ready);
+        card.State.ShouldBe(CardState.Open);
+        card.Choices.Single(c => c.Verb == Verbs.Merge).Status.ShouldBe(ChoiceStatus.Armed);
+        card.Detail.ShouldNotBeNull().ShouldContain("a required check has yet to report");
+        node.GitHub.Merged.ShouldBeEmpty();
+
+        // Gate starts: pending, still armed.
+        node.GitHub.Summary = Pending(4, 6);
+        node.GitHub.Merge = new MergeState(MergeKinds.Pending, 4, 6);
+        await Look(node);
+        node.State.Flights().Single().MergeWhenGreen.ShouldNotBeNull();
+
+        // Gate passes: the node takes the merge.
+        node.GitHub.Summary = Passing(6);
+        node.GitHub.Merge = new MergeState(MergeKinds.Ready, 6, 6);
+        await Look(node);
+        node.GitHub.Merged.Select(m => m.Number).ShouldBe([63]);
+    }
+
     [Fact]
     public async Task AMergeQueueBaseKeepsJoiningTheQueueAtGreenInsteadOfArmingGitHub()
     {

@@ -434,8 +434,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         {
             // Wraps within the panel, three lines at most (eight on a merge's); an explicit newline stays a break.
             var cap = DetailLinesOf(card);
+            // The whole text is on hover wherever it could pass the cap: a narrow panel wraps a detail of a few hundred characters
+            // past eight lines, and a later paragraph gets one line, so the length is judged at the narrowest width (DetailFits per
+            // DetailLines), never scaled up by the cap, and a second paragraph is a cut of its own.
             lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap), detail,
-                detail.Length > DetailFits * cap / DetailLines || detail.Count(c => c == '\n') >= cap));
+                detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
         }
         // What the node said to the last button pressed here, when it refused: on the card, never only in a log.
         if (Volatile.Read(ref _refused).TryGetValue(card.Id, out var refused))

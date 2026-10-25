@@ -871,6 +871,11 @@ public sealed partial class LegCommander(
         {
             return await ArmAsync(flight, pr, method, checks, null, cancellationToken);
         }
+        if (mergeState is { AwaitsCheck: true })
+        {
+            // Every check shown is green, GitHub blocks it for a required check not created yet: arm, and the merge goes through once it passes.
+            return await ArmAsync(flight, pr, method, checks, AwaitingCheckLine, cancellationToken);
+        }
         if (flight.MergeWhenGreen is not null)
         {
             state.PutFlight(flight with { MergeWhenGreen = null });
@@ -879,6 +884,9 @@ public sealed partial class LegCommander(
             ? (false, QueuedLine(flight.Code), MergeWays.Queued)
             : (true, null, null);
     }
+
+    /// <summary>What an armed merge says while every check shown is green and one GitHub requires has yet to be created.</summary>
+    public const string AwaitingCheckLine = "merging when checks pass: a required check has yet to report";
 
     /// <summary>The third element of <see cref="FlightRow.MergeWhenGreen"/> when GitHub's own auto-merge waits for the checks.</summary>
     public const string ArmedByGitHub = "github";
@@ -1056,6 +1064,7 @@ public sealed partial class LegCommander(
         var unarmed = showing == ChoiceStatus.Armed && merge.DroppedFromQueue is null ? "Its merge is not armed any more: GitHub's auto-merge was turned off, or the merge was dropped. Merge arms it again." : null;
         var (status, note, title, detail) = merge.Kind switch
         {
+            MergeKinds.Pending when merge.AwaitsCheck => (ChoiceStatus.Pending, null, ready, own ? card.Detail : unarmed ?? "A check GitHub requires has yet to report. Merge arms the merge: it goes through once it passes."),
             MergeKinds.Pending => (ChoiceStatus.Pending, merge.Progress, ready, own ? card.Detail : unarmed ?? "Its checks run again. Merge arms the merge: it goes through once they pass."),
             MergeKinds.Ready => (ChoiceStatus.Passing, null, ready, own ? card.Detail : unarmed ?? "Nothing on GitHub stands in its way."),
             MergeKinds.Armed => (ChoiceStatus.Armed, merge.Progress, $"{code}'s PR #{number} merges when its checks pass", $"GitHub's auto-merge is armed: merging when checks pass{(merge.Progress is { } progress ? $", {progress} done" : "")}. GitHub merges it, with the node up or not."),
