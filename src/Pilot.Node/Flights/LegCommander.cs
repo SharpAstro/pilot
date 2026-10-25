@@ -400,6 +400,13 @@ public sealed partial class LegCommander(
         {
             throw new FlightException("a leg needs a goal and a done-when (goal=… done-when=…)");
         }
+        // The node runs a check in a shell of its own (pwsh on Windows, sh elsewhere): one wrapped in another shell has its
+        // quoting read twice, and TIA1827's check, double-quoted around a $LASTEXITCODE, failed every run for it.
+        if (check is not null && ShellScript.WrappingShell(check) is { } shell)
+        {
+            throw new FlightException(
+                $"the check runs in {shell} -c/-Command of its own, but the node already runs a check in its shell (pwsh on Windows, sh elsewhere): give the command itself, without the wrapper");
+        }
         if (check is not null && ShellScript.BarePipe(check) is { } pipe)
         {
             throw new FlightException(

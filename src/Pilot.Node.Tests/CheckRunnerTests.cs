@@ -84,4 +84,23 @@ public sealed class CheckRunnerTests
     [InlineData("dotnet build || exit 1", null)]
     [InlineData("dotnet test", null)]
     public void ABarePipeIsFound(string check, int? at) => ShellScript.BarePipe(check).ShouldBe(at);
+
+    [Theory]
+    // TIA1827's check, double-quoted around a $LASTEXITCODE the script's own pwsh expanded to nothing.
+    [InlineData("pwsh -NoProfile -Command \"dotnet build; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\"", "dotnet build; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }")]
+    [InlineData("pwsh -Command 'python -I x.py --name ''a'''", "python -I x.py --name 'a'")]
+    [InlineData("powershell.exe -NoProfile -c \"echo \"\"hi\"\"\"", "echo \"hi\"")]
+    [InlineData("dotnet test --filter 'A|B'", "dotnet test --filter 'A|B'")]
+    [InlineData("pwsh -NoProfile -File check.ps1", "pwsh -NoProfile -File check.ps1")]
+    public void APwshCommandWrappedAroundTheCheckIsUnwrapped(string check, string runs) => ShellScript.Unwrap(check).ShouldBe(runs);
+
+    [Theory]
+    [InlineData("pwsh -NoProfile -Command \"dotnet test\"", "pwsh")]
+    [InlineData("bash -c 'make test'", "bash")]
+    [InlineData("cmd /c dotnet test", "cmd")]
+    [InlineData("sh -c \"x\"", "sh")]
+    [InlineData("pwsh -NoProfile -File check.ps1", null)]
+    [InlineData("dotnet test --configuration Release", null)]
+    [InlineData("bash ./check.sh", null)]
+    public void AShellWrappedAroundTheCheckIsFound(string check, string? shell) => ShellScript.WrappingShell(check).ShouldBe(shell);
 }
