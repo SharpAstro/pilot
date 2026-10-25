@@ -15,6 +15,9 @@ public sealed partial class LegCommander(
 {
     private readonly SemaphoreSlim _one = new(1, 1);
 
+    // What a flight's review leaves on its PR on GitHub: the COMMENT review, the pilot/review status, the pilot: label.
+    private readonly PrMarks _marks = new(state, github, options);
+
     /// <summary>How long a worker that finished its own leg has to end its turn and report before it is stopped.</summary>
     public TimeSpan SelfFinishGrace { get; init; } = TimeSpan.FromSeconds(90);
 
@@ -966,9 +969,19 @@ public sealed partial class LegCommander(
         var plan = ReviewPlan.Choose(state.Usage(), Models.IsPriority(flight.Repo), numstat.Ok ? ReviewPlan.ParseNumstat(numstat.Output) : null, time.GetUtcNow());
         var reviewer = ReviewerName(flight);
         var brief = Briefs.Review(flight, legs, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Briefs.Run(Cli, Socket), plan);
+        // The head the reviewer reads, as GitHub has the PR: the pilot/review status goes on it, whatever the branch moves to.
+        var reviewedHead = await _marks.HeadAsync(flight, cancellationToken);
         var job = await workers.StartAsync(new WorkerStart(reviewer, flight.RepoPath, PlaneOf(flight), brief, Models.ReviewerModel(plan.Depth), Models.ReviewerEffort(plan.Depth)), cancellationToken);
-        state.PutFlight(flight with { Review = new ReviewRow { State = ReviewState.Reviewing, Reviewer = reviewer, ReviewerJob = job, StartedAt = time.GetUtcNow(), Depth = plan.Depth, DepthWhy = plan.Why } });
+        state.PutFlight(flight with
+        {
+            Review = new ReviewRow
+            {
+                State = ReviewState.Reviewing, Reviewer = reviewer, ReviewerJob = job, StartedAt = time.GetUtcNow(), Depth = plan.Depth, DepthWhy = plan.Why,
+                GoAround = legs.Sum(l => l.GoArounds), ReviewedHead = reviewedHead,
+            },
+        });
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "a fresh review started", ReviewChanges, PrReady, LegWatch.ReviewStalled);
+        await _marks.ApplyAsync(flight.Code, cancellationToken);
     }
 
     private async Task ReviewAsync(CommandRequest command, CancellationToken cancellationToken)
@@ -1010,6 +1023,8 @@ public sealed partial class LegCommander(
         var now = time.GetUtcNow();
         var kept = fromReviewer ? report : $"{report} (passed by {command.Who} over: {review.Report})";
         state.PutFlight(flight with { Review = review with { State = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes, Report = kept, FinishedAt = now } });
+        // On the PR now the verdict is kept: a mark GitHub refuses is a card, never a verdict lost.
+        await _marks.ApplyAsync(flight.Code, cancellationToken);
         flight = FlightOf(command.Target);
         if (verdict == "pass")
         {
@@ -1048,6 +1063,20 @@ public sealed partial class LegCommander(
     public Task<string?> ConflictsAsync(string code, string why, CancellationToken cancellationToken) =>
         SendBackAsync(code, _ => $"the PR conflicts with its base ({why}): rebase the plane onto its base, resolving every conflict so both sides' work stays, rerun the check, and push", "it conflicts with its base", cancellationToken);
 
+    /// <summary>Sets on GitHub what an earlier refusal left: the review comment, the status, the label. The node's look at the PRs calls it.</summary>
+    public async Task RetryMarksAsync(CancellationToken cancellationToken)
+    {
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            await _marks.RetryAsync(cancellationToken);
+        }
+        finally
+        {
+            _one.Release();
+        }
+    }
+
     private async Task<string?> SendBackAsync(string code, Func<int, string> changesFor, string closing, CancellationToken cancellationToken)
     {
         await _one.WaitAsync(cancellationToken);
@@ -1059,7 +1088,9 @@ public sealed partial class LegCommander(
             }
             var changes = changesFor(number);
             await github.SetDraftAsync(flight.RepoPath, number, draft: true, cancellationToken);
-            state.PutFlight(flight with { Review = review with { State = ReviewState.Changes, Report = changes, FinishedAt = time.GetUtcNow() } });
+            // A new go-around's changes: its own COMMENT review, so the one that passed is not the last word on the PR.
+            state.PutFlight(flight with { Review = review with { State = ReviewState.Changes, Report = changes, FinishedAt = time.GetUtcNow(), ReviewUrl = null, MarksWhy = null } });
+            await _marks.ApplyAsync(code, cancellationToken);
             state.CloseCardsAbout(Verbs.FlightTarget(code), closing, PrReady);
             RaiseReviewChanges(FlightOf(Verbs.FlightTarget(code)), changes);
             return null;

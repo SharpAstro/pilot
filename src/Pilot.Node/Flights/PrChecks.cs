@@ -129,6 +129,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     {
         await LandMergedWithoutCardAsync(cancellationToken);
         await LookAtQueuesAsync(cancellationToken);
+        if (legs is not null)
+        {
+            // What GitHub refused of a review's marks is set again at each look.
+            await legs.RetryMarksAsync(cancellationToken);
+        }
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady))
         {
             var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : null;
