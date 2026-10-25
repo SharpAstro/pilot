@@ -78,7 +78,8 @@ public static class HookCommands
         try
         {
             var text = File.Exists(settings) ? File.ReadAllText(settings) : "";
-            var updated = install ? Install(text, nodePath, socket) : Remove(text);
+            // Taking pilot's hooks out takes the merge guard with them: it is pilot-node's too, and says to use a node that is gone.
+            var updated = install ? Install(text, nodePath, socket) : MergeGuard.Remove(Remove(text));
             if (updated == text)
             {
                 output.WriteLine($"{settings}: {(install ? "pilot's hooks were already in" : "no pilot hooks to remove")}");
@@ -118,8 +119,16 @@ public static class HookCommands
         {
             var entries = hooks[name] as JsonArray ?? new JsonArray();
             hooks[name] = entries;
-            RemoveOurs(entries);
-            entries.Add((JsonNode)Entry(name, nodePath, socket));
+            var desired = Entry(name, nodePath, socket);
+            // Already there and alone: left where it is, so another installer's entry on the same event (the merge guard on
+            // PreToolUse) does not trade places with it on every install.
+            if (entries.OfType<JsonObject>().Where(e => e["hooks"] is JsonArray).SelectMany(e => e["hooks"]!.AsArray()).Count(IsOurs) == 1
+                && entries.Any(e => JsonNode.DeepEquals(e, desired)))
+            {
+                continue;
+            }
+            RemoveOurs(entries, IsOurs);
+            entries.Add((JsonNode)desired);
         }
 
         var updated = Write(root);
@@ -146,7 +155,7 @@ public static class HookCommands
         {
             if (value is JsonArray entries)
             {
-                changed |= RemoveOurs(entries);
+                changed |= RemoveOurs(entries, IsOurs);
                 if (entries.Count == 0)
                 {
                     hooks.Remove(name);
@@ -194,8 +203,8 @@ public static class HookCommands
         return entry;
     }
 
-    /// <summary>Takes pilot's handlers out of an event's entries, and any entry left with none; true when it took any.</summary>
-    private static bool RemoveOurs(JsonArray entries)
+    /// <summary>Takes the handlers <paramref name="ours"/> picks out of an event's entries, and any entry left with none; true when it took any.</summary>
+    internal static bool RemoveOurs(JsonArray entries, Func<JsonNode?, bool> ours)
     {
         var changed = false;
         for (var i = entries.Count - 1; i >= 0; i--)
@@ -206,7 +215,7 @@ public static class HookCommands
             }
             for (var j = handlers.Count - 1; j >= 0; j--)
             {
-                if (IsOurs(handlers[j]))
+                if (ours(handlers[j]))
                 {
                     handlers.RemoveAt(j);
                     changed = true;
@@ -233,7 +242,7 @@ public static class HookCommands
     /// The binary's name without folder or <c>.exe</c>, splitting on both separators: a settings file may hold a Windows
     /// path read on Linux (CI) or the other way round, where <see cref="Path"/> splits on its own platform's only.
     /// </summary>
-    private static string BinaryName(string command)
+    internal static string BinaryName(string command)
     {
         var name = command[(command.LastIndexOfAny(['/', '\\']) + 1)..];
         return name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? name[..^4] : name;

@@ -813,6 +813,11 @@ replaces an earlier install's rule), the trust prompt (opened in a window titled
 prints both. The route and both verbs are this machine's only: a grant from the LAN never reaches them, and nor does
 the watchtower.
 
+The **Merge guard** check (`setup node merge-guard`, not optional) says whether `~/.claude/settings.json` has the merge
+guard for this binary: a user-wide `PreToolUse` hook on `Bash` running `pilot-node merge-guard` (see Hooks). It is TODO
+until its button (or `pilot-node setup`, or `pilot settings setup merge-guard`) installs it; a guard for another path of
+the binary fails it until the fix replaces it, and a second install changes nothing.
+
 One more optional check is **Guard hooks** (`setup node guard-hooks`): it says whether three generic guard hooks
 are in `~/.claude/settings.json`: `big_read_guard.sh` (refuses a whole-file `Read` and a bare `cat`),
 `fat_result_notice.sh` (says a tool result was unusually large) and `pgrep_self_match_guard.sh` (refuses an inline
@@ -937,6 +942,20 @@ stop with the plane clean closes the ring. Only a plane the node flies counts, n
 it under `.claude/worktrees`; every other session, a subagent and any other event get no answer. This is why Stop's
 handler is not `async`: Claude Code never reads an async hook's output. It waits for the node at most 2 s, and no
 node, a slow one or a hook it cannot read prints nothing, which lets the stop through.
+
+**The merge guard: merges lead back to the node.** `pilot-node merge-guard` is a second hook, installed user-wide by
+`pilot-node setup` (the **Merge guard** check; `pilot-node hooks remove` takes it out with the others) as a `PreToolUse`
+handler on `Bash`, in step with the session since a deny is never read from an async hook. It reads the hook's JSON and
+refuses, naming `pilot flight merge <code> <head>` (or the Merge button on the flight's card), a command with a part
+that is `gh pr merge`, `gh api graphql` with `enqueuePullRequest` or `mergePullRequest`, `gh api -X PUT
+repos/.../pulls/N/merge`, or a `git push` whose destination is `main`, `master` or the repo's default branch
+(`origin/HEAD`): a refspec's right side (`HEAD:master`, `+main`, `:main` too), `HEAD` read as the checkout's branch,
+`--all` and `--mirror`, and a bare `git push` (or one naming only a remote) from a checkout on the default branch. A line is
+split on `&&`, `||`, `;`, `|`, `&`, newlines, backticks and parentheses outside quotes and each part is matched, after
+leading `VAR=x` and `sudo`/`env`/`command`; `cd` and `git -C` move where the checkout is read, and `bash -c '…'` and
+`eval` are read inside. Everything else, a push of a flight branch included, passes untouched. Like `pilot-node hook` it
+is fail-open (input it cannot read passes, exit 0 always) and never calls the node; the node's own merge
+(`pilot flight merge` runs `gh pr merge` itself) is not a session's tool call, so the hook never sees it.
 
 A session the API stopped (its transcript's `apiError`, `usage_limit_reached` with when the limit resets) shows as
 **stopped** with why and when it can go on, hooks or not.

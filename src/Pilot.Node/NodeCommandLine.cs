@@ -29,7 +29,7 @@ public static class NodeCommandLine
         var parsed = Build(stdin, output, error, nodePath ?? Environment.ProcessPath!).Parse(args);
         // hook runs inside every Claude Code session, fail-open by rule: even a command line it cannot read costs the
         // session nothing, no error line and no exit code Claude Code would show as a hook error.
-        if (parsed.Errors.Count > 0 && args is [HookCommands.HookArgument, ..])
+        if (parsed.Errors.Count > 0 && args is [HookCommands.HookArgument or MergeGuard.Argument, ..])
         {
             return Task.FromResult(0);
         }
@@ -97,6 +97,10 @@ public static class NodeCommandLine
         // hook: fail-open by rule, so it reads no option it could refuse.
         var hook = new Command(HookCommands.HookArgument, "Forward one Claude Code hook's stdin to the node; always exits 0, and prints only the node's answer to a Stop it holds");
         hook.SetAction((parseResult, ct) => HookCommands.HookAsync(parseResult.GetValue(socket), stdin, output));
+
+        // merge-guard: a PreToolUse hook on Bash, fail-open too; it answers with a deny for a merge made around the node.
+        var mergeGuard = new Command(MergeGuard.Argument, "Read one PreToolUse hook's stdin and refuse a Bash command that merges a PR or pushes to a default branch, pointing at pilot flight merge; always exits 0");
+        mergeGuard.SetAction((_, _) => MergeGuard.RunAsync(stdin, output));
 
         var settings = new Option<string?>("--settings") { Description = "The Claude Code settings file; else ~/.claude/settings.json (or under CLAUDE_CONFIG_DIR)" };
         Command HooksAction(string name, string description, bool install)
@@ -167,7 +171,7 @@ public static class NodeCommandLine
         var root = new RootCommand("pilot v2's node: one per machine, the one writer of its flights, legs, cards and sessions")
         {
             Options = { socket, data, machine, noWatchtower, watchtowerFolder, lan, lanPort, localOnly, maxJobs, jobMemory, updatePolicy, updateChannel, releaseFeed, repoRoot, after },
-            Subcommands = { hook, hooks, autostart, setup },
+            Subcommands = { hook, mergeGuard, hooks, autostart, setup },
         };
         root.SetAction(async (parseResult, ct) =>
         {
