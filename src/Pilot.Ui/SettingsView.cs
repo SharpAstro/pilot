@@ -210,8 +210,8 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         var line = Said ?? page?.Restart ?? (page is null ? (problem ?? "") : $"saved in {page.File} · the command line wins over it");
         return Layout.Builder.VStack(
                 Layout.Builder.HStack(
-                        Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
-                        Layout.Builder.Text("settings", 20f, Dim).WAuto(),
+                        Layout.Builder.Text("pilot v2", 20f, Bright, TextAlign.Near, TextAlign.Far).WAuto(),
+                        Layout.Builder.Text("settings", 20f, Dim, TextAlign.Near, TextAlign.Far).WAuto(),
                         Layout.Builder.Spacer().WStar(),
                         Layout.Builder.Text(summary, 15f, Body, TextAlign.Far).WAuto(),
                         About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f))

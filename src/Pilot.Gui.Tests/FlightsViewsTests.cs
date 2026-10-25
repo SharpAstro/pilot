@@ -121,6 +121,34 @@ public sealed class FlightsViewsTests
     }
 
     [Fact]
+    public void TheHeadersButtonsShareAHeightAndTheViewSwitchIsDrawnFull()
+    {
+        using var renderer = new RgbaImageRenderer(2000, 800);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        var flights = chrome.Flights;
+        flights.CanCommand = true;
+        flights.Wizard.LoadRepos = _ => Task.FromResult<RepoInfo[]>([]);
+        var screen = new FlightsScreen(FlightLine.Build(Six(), [], Live.At), "test", Live.At);
+
+        var arranged = Layout.Engine.Arrange(flights.Tree(screen), new Rect<float>(0, 0, 2000, 800), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        Rect<float> Of(string action) => arranged.First(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == action).Bounds;
+
+        // + and ? are the same square.
+        var help = Of("about:toggle");
+        var add = Of("flights:new");
+        (add.Width, add.Height).ShouldBe((help.Width, help.Height));
+        help.Width.ShouldBe(help.Height);
+        // Every segment of the view switch as tall as they are, its Grid and List marks drawn with a size: under a row sized
+        // by its content the segments got no height, the words drew at the top and the marks not at all (SE1, 2026-10-25).
+        foreach (var mode in new[] { "canvas", "grid", "list", "night" })
+        {
+            Of($"flights:view:{mode}").Height.ShouldBe(help.Height, mode);
+        }
+        arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Icon }).Where(a => a.Bounds.Y < help.Y + help.Height)
+            .ShouldAllBe(a => a.Bounds.Height > 0f && a.Bounds.Width > 0f);
+    }
+
+    [Fact]
     public void AFlightInTheMergeQueueSaysWhereItWaits()
     {
         var queued = Flight("Q", minutes: 1) with { MergeQueue = "in the merge queue, position 2" };

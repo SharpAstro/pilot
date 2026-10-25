@@ -83,9 +83,13 @@ internal sealed class AboutCard
     /// The header's button, and while a newer pilot is installed the update light before it. The "?" stays a word for want
     /// of a help glyph: SharpAstro/DIR.Lib#151.
     /// </summary>
+    /// <summary>The side of the header's square buttons (?, +) and the height of everything else on its row that is a button.</summary>
+    public const float HeaderButton = 28f;
+
     public Layout.Node Button(FlightsPalette? night = null)
     {
-        var help = Layout.Builder.Text("?", 14f, night?.Bright ?? Bright, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(night?.Button ?? ButtonBg).BgHover(night?.ButtonHover ?? ButtonHover)
+        var help = Layout.Builder.Text("?", 14f, night?.Bright ?? Bright, TextAlign.Center, TextAlign.Center).WFixed(HeaderButton).HFixed(HeaderButton)
+            .Bg(night?.Button ?? ButtonBg).BgHover(night?.ButtonHover ?? ButtonHover)
             .Follows(new HitResult.ButtonHit("about:toggle"), _ => Toggle())
             .WithTooltip("Which pilot this is, where its things are, and the keys");
         return Newer?.Invoke() is { } newer ? Layout.Builder.HStack(Light(newer), help).WithGap(8f).WAuto() : help;
@@ -100,7 +104,7 @@ internal sealed class AboutCard
         var lit = Lit;
         var label = newer.LastIndexOf('-') is var dash and >= 0 ? newer[(dash + 1)..] : newer;
         var light = Layout.Builder.Text(Restart is null ? $"{label} installed" : $"Restart for {label}", 13f, lit ? LightText : LightOn, TextAlign.Center)
-            .Pad(10f, 4f).WAuto().Bg(lit ? LightOn : LightOff)
+            .Pad(10f, 0f).WAuto().HFixed(HeaderButton).Bg(lit ? LightOn : LightOff)
             .WithTooltip($"pilot {newer} is installed; this window runs {NodeFeed.ClientVersion}." + (Restart is null ? " Restart it to use the new one." : " A click starts it again on the new one."));
         return Restart is { } restart ? light.Follows(new HitResult.ButtonHit("about:restart"), _ => restart()) : light;
     }

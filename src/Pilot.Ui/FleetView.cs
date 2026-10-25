@@ -364,8 +364,8 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         var rows = new List<Layout.Node>
         {
             Layout.Builder.HStack([
-                    Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
-                    Layout.Builder.Text("fleet", 20f, Dim).WAuto(),
+                    Layout.Builder.Text("pilot v2", 20f, Bright, TextAlign.Near, TextAlign.Far).WAuto(),
+                    Layout.Builder.Text("fleet", 20f, Dim, TextAlign.Near, TextAlign.Far).WAuto(),
                     .. (Nodes?.Pills() ?? []),
                     Layout.Builder.Spacer().WStar(),
                     Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),

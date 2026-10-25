@@ -403,11 +403,16 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <see cref="Pill"/>'s plumbing (the id, the click, the hand cursor, the lit background under the pointer). A
     /// <paramref name="bare"/> one, a fold toggle in a row, has no fill of its own and takes <paramref name="hover"/> under the pointer.
     /// </summary>
-    internal static Layout.Node IconPill(Layout.IconKind icon, string tooltip, string action, Action onClick, bool bare = false, RGBAColor32? color = null, RGBAColor32? hover = null)
+    internal static Layout.Node IconPill(Layout.IconKind icon, string tooltip, string action, Action onClick, bool bare = false, RGBAColor32? color = null, RGBAColor32? hover = null,
+        float? square = null)
     {
-        var mark = Layout.Builder.Icon(icon, IconSize, color ?? Bright)
-            .Pad(bare ? 4f : 10f, 4f)
-            .WAuto();
+        // A square of a given side (the header's + beside its ?), its mark centred; else padded round the mark.
+        var mark = square is { } side
+            ? Layout.Builder.HStack(Layout.Builder.Spacer().WStar(), Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), Layout.Builder.Icon(icon, IconSize, color ?? Bright), Layout.Builder.Spacer().HStar()).WAuto().HFixed(side),
+                Layout.Builder.Spacer().WStar()).WFixed(side).HFixed(side)
+            : Layout.Builder.Icon(icon, IconSize, color ?? Bright)
+                .Pad(bare ? 4f : 10f, 4f)
+                .WAuto();
         return (bare ? mark : mark.Bg(Button))
             .BgHover(hover ?? ButtonHover)
             .Follows(new HitResult.ButtonHit(action), _ => onClick())
