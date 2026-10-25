@@ -123,7 +123,7 @@ public sealed class McpTests : IAsyncLifetime
         var replies = await Serve(Server(),
             Initialize,
             Call(2, "note", """{"text":["hello","from","mcp"]}"""),
-            Call(3, "flight_land", """{"code":"TIA9"}"""),
+            Call(3, "flight_review", """{"code":"TIA9"}"""),
             Call(4, "check", """{"step":"1"}"""),
             Call(5, "note", """{"words":"x"}"""),
             Call(6, "launch", "{}"),
@@ -133,7 +133,7 @@ public sealed class McpTests : IAsyncLifetime
         var note = (await PilotCommand.SnapshotAsync(_node.Client, Ct)).Notes.ShouldHaveSingleItem();
         (note.Who, note.Text).ShouldBe(("test-client", "hello from mcp"));
 
-        Result(replies[2]).ShouldBe((true, "refused: land flight/TIA9: There is no flight TIA9"));
+        Result(replies[2]).ShouldBe((true, "refused: start-review flight/TIA9: There is no flight TIA9"));
         // Outside any plane a leg must be named: the CLI's usage error, as the tool's.
         Result(replies[3]).ShouldBe((true, "pilot: this folder is in no flight's plane; name the leg with --leg <code>/<leg>"));
         var unknown = Result(replies[4]);
