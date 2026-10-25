@@ -78,7 +78,7 @@ public static class PilotCommand
         };
         var outputFormat = new Option<string>("--output-format")
         {
-            Description = "auto (rich on a terminal that shows Sixel, else plain), rich, markdown or plain; status takes it",
+            Description = "auto (rich on a terminal that shows Sixel, else plain), rich, markdown or plain; status, cards and repos take it",
             Recursive = true,
             DefaultValueFactory = _ => "auto",
         };
@@ -196,7 +196,8 @@ public static class PilotCommand
                     await error.WriteLineAsync($"pilot: {envelope.Error}");
                     return 1;
                 }
-                await output.WriteAsync(Repos(rows, p.GetValue(allRepos)));
+                var everyRepo = p.GetValue(allRepos);
+                await WriteAsync(p.GetValue(outputFormat), () => Repos(rows, everyRepo), () => ReposMarkdown.Build(rows, everyRepo));
                 return 0;
             });
 
