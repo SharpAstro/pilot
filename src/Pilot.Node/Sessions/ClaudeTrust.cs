@@ -25,7 +25,7 @@ public sealed class ClaudeTrust(string file)
 
     public string File { get; } = file;
 
-    /// <summary>The folder whose trust covers <paramref name="folder"/> (itself or one above it), or null when none does.</summary>
+    /// <summary><paramref name="folder"/> when Claude Code's file trusts it, else null. Only its own record counts: see <see cref="Covering"/>.</summary>
     public string? Trusted(string folder)
     {
         try
@@ -38,7 +38,7 @@ public sealed class ClaudeTrust(string file)
         }
     }
 
-    /// <summary>Trusts <paramref name="folder"/> unless a folder covers it already: null when it is trusted now, else why not.</summary>
+    /// <summary>Trusts <paramref name="folder"/> unless its own record does already: null when it is trusted now, else why not.</summary>
     public string? Ensure(string folder)
     {
         string? why = null;
@@ -112,22 +112,18 @@ public sealed class ClaudeTrust(string file)
         return key.EndsWith(':') ? key + "/" : key;
     }
 
-    // Trust in a folder covers those under it.
+    // A folder's own record, and only that: Claude Code does not take a trusted folder's trust for those under it. With
+    // the org root trusted, the node took tianwen as covered, wrote nothing, and claude --bg refused TIA1821's planner
+    // ("Workspace not trusted", SE1 2026-10-25).
     private static string? Covering(JsonObject root, string folder)
     {
         if (root["projects"] is not JsonObject projects)
         {
             return null;
         }
-        for (var dir = new DirectoryInfo(folder); dir is not null; dir = dir.Parent)
-        {
-            var key = Key(dir.FullName);
-            var project = projects.FirstOrDefault(p => string.Equals(p.Key, key, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)).Value;
-            if (project?["hasTrustDialogAccepted"] is JsonValue accepted && accepted.TryGetValue<bool>(out var yes) && yes)
-            {
-                return dir.FullName;
-            }
-        }
-        return null;
+        var dir = new DirectoryInfo(folder);
+        var key = Key(dir.FullName);
+        var project = projects.FirstOrDefault(p => string.Equals(p.Key, key, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)).Value;
+        return project?["hasTrustDialogAccepted"] is JsonValue accepted && accepted.TryGetValue<bool>(out var yes) && yes ? dir.FullName : null;
     }
 }
