@@ -7,6 +7,7 @@ internal sealed class FakeNuGetFeed : INuGetFeed
 {
     private readonly Dictionary<string, List<string>> _listed = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _nupkgs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTimeOffset> _published = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>How many index.json reads and .nupkg fetches were made.</summary>
     public int IndexReads;
@@ -17,8 +18,12 @@ internal sealed class FakeNuGetFeed : INuGetFeed
     public bool Offline { get; set; }
 
     /// <summary>Lists <paramref name="version"/> of <paramref name="id"/> in its index.json, and serves its .nupkg unless <paramref name="nupkg"/> is false.</summary>
-    public void Publish(string id, string version, bool nupkg = true)
+    public void Publish(string id, string version, bool nupkg = true, DateTimeOffset? at = null)
     {
+        if (at is { } when)
+        {
+            _published[$"{id}/{version}"] = when;
+        }
         if (!_listed.TryGetValue(id, out var versions))
         {
             _listed[id] = versions = [];
@@ -37,6 +42,9 @@ internal sealed class FakeNuGetFeed : INuGetFeed
             ? Task.FromException<IReadOnlyList<string>>(new HttpRequestException("offline"))
             : Task.FromResult<IReadOnlyList<string>>(_listed.TryGetValue(id, out var versions) ? [.. versions] : []);
     }
+
+    public Task<DateTimeOffset?> PublishedAtAsync(string id, string version, CancellationToken cancellationToken) =>
+        Offline ? Task.FromException<DateTimeOffset?>(new HttpRequestException("offline")) : Task.FromResult<DateTimeOffset?>(_published.TryGetValue($"{id}/{version}", out var when) ? when : null);
 
     public Task<bool> HasPackageAsync(string id, string version, CancellationToken cancellationToken)
     {

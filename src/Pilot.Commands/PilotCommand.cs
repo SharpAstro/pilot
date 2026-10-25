@@ -228,6 +228,9 @@ public static class PilotCommand
         var connect = Action(new Command("connect", "The flight holds until the other has landed") { Arguments = { code, other } },
             (p, client, ct) => Send(client, Verbs.Connect, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
 
+        var fly = Action(new Command("fly", "Stop the flight's wait for a package nuget.org does not serve: it flies now") { Arguments = { code } },
+            (p, client, ct) => Send(client, Verbs.FlyAnyway, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct));
+
         var prTitle = Words("title", "The PR's title after the code; else the flight's", required: false);
         var pr = Action(new Command("pr", "Push the plane and open its PR") { Arguments = { code, prTitle } },
             (p, client, ct) => Send(client, Verbs.OpenPr, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(prTitle) ?? [], who, ct));
@@ -267,8 +270,8 @@ public static class PilotCommand
             (p, client, ct) => Send(client, Verbs.Overlap, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!, .. p.GetValue(overlapWhy) ?? []], who, ct));
         var separate = Action(new Command("separate", "Plan the flight on its own despite the overlap: a fresh planner is started, told the answer") { Arguments = { code, other } },
             (p, client, ct) => Send(client, Verbs.Separate, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
-        var flight = new Command("flight", "Flights: create, plan, overlap, connect, open a PR, review, merge, land")
-            { Subcommands = { create, planFlight, planned, overlap, separate, connect, pr, reviewStart, merge, land } };
+        var flight = new Command("flight", "Flights: create, plan, overlap, connect, fly past a package wait, open a PR, review, merge, land")
+            { Subcommands = { create, planFlight, planned, overlap, separate, connect, fly, pr, reviewStart, merge, land } };
 
         // leg
         var name = Arg("name", "The leg's name: lower-case letters, digits and dashes");

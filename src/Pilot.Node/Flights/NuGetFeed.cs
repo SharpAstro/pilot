@@ -19,6 +19,10 @@ public interface INuGetFeed
     /// <summary>Whether the .nupkg of <paramref name="id"/> <paramref name="version"/> can be fetched.</summary>
     /// <exception cref="HttpRequestException">The feed could not be reached or would not say.</exception>
     Task<bool> HasPackageAsync(string id, string version, CancellationToken cancellationToken);
+
+    /// <summary>When <paramref name="version"/> of <paramref name="id"/> was published; null when the feed does not say.</summary>
+    /// <exception cref="HttpRequestException">The feed could not be reached or would not say.</exception>
+    Task<DateTimeOffset?> PublishedAtAsync(string id, string version, CancellationToken cancellationToken);
 }
 
 /// <summary><see cref="INuGetFeed"/> by nuget.org's flat container: <c>…/&lt;id&gt;/index.json</c>, then <c>…/&lt;id&gt;/&lt;version&gt;/&lt;id&gt;.&lt;version&gt;.nupkg</c>, ids and versions in lower case.</summary>
@@ -53,6 +57,23 @@ public sealed class NuGetOrgFeed(HttpClient http) : INuGetFeed
         }
         response.EnsureSuccessStatusCode();
         return true;
+    }
+
+    /// <summary>The registration hive (uncompressed, SemVer 1) that has one leaf per version, with the time it was published.</summary>
+    public const string Registration = "https://api.nuget.org/v3/registration5-semver1/";
+
+    public async Task<DateTimeOffset?> PublishedAtAsync(string id, string version, CancellationToken cancellationToken)
+    {
+        using var response = await http.GetAsync(new Uri($"{Registration}{id.ToLowerInvariant()}/{version.ToLowerInvariant()}.json"), cancellationToken);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+        response.EnsureSuccessStatusCode();
+        await using var body = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var doc = await JsonDocument.ParseAsync(body, cancellationToken: cancellationToken);
+        return doc.RootElement.TryGetProperty("published", out var published) && published.ValueKind == JsonValueKind.String
+            && DateTimeOffset.TryParse(published.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out var when) ? when : null;
     }
 }
 

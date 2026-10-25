@@ -161,6 +161,12 @@ public sealed record PackageWait
     /// <summary>The commit the producer's PR merged as, whose publish run the node reads; null when GitHub did not say.</summary>
     public string? Commit { get; init; }
 
+    /// <summary>
+    /// The name of the producer's workflow that pushes its packages on a push to main (its <c>name:</c>, or its path when it has
+    /// none: what GitHub calls its runs), whose run on <see cref="Commit"/> is the publish run; null when not known.
+    /// </summary>
+    public string? Workflow { get; init; }
+
     /// <summary>Whether a card has said the package is late: one per wait, never a second.</summary>
     public bool Escalated { get; init; }
 

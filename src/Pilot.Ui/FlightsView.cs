@@ -175,6 +175,11 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
         {
             return actions;
         }
+        // Held for a package that nuget.org does not serve: the way out is here, not only on the late card.
+        if (flight.PackageWaits.Length > 0)
+        {
+            actions.Add(new FlightAction("Fly anyway", Verbs.FlyAnyway, target, []));
+        }
         var legs = line.LegRows;
         var flying = legs.FirstOrDefault(l => l.State == LegState.Flying);
         var failed = legs.FirstOrDefault(l => l.State == LegState.Failed);

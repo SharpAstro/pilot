@@ -124,6 +124,12 @@ public static class Verbs
     public const string Connect = "connect";
 
     /// <summary>
+    /// <c>fly-anyway flight/&lt;code&gt;</c>: the flight stops waiting for the packages it is held for (a connection's release
+    /// that nuget.org does not serve, or never will), and flies when nothing else holds it.
+    /// </summary>
+    public const string FlyAnyway = "fly-anyway";
+
+    /// <summary>
     /// <c>land flight/&lt;code&gt;</c>: its work is in. Its worktree is removed when it is clean (never when it holds
     /// changes); its branch and code are kept, and flights connected to it are cleared.
     /// </summary>

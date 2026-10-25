@@ -33,9 +33,46 @@ public sealed class PackageWaitTests : IDisposable
         File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
         Git(Repo, "add", ".");
         Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
+
+        Directory.CreateDirectory(Path.Combine(Consumer, "src", "App"));
+        Git(Consumer, "init", "-q", "-b", "main");
+        File.WriteAllText(Path.Combine(Consumer, "src", "App", "App.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><PackageReference Include=\"Drawboard.Core\" Version=\"1.*\" /></ItemGroup></Project>\n");
+        Git(Consumer, "add", ".");
+        Git(Consumer, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
     }
 
     private string Repo => Path.Combine(_root, "tianwen");
+
+    /// <summary>The repo of the flight that consumes the package: it names Drawboard.Core in a project, and releases nothing itself.</summary>
+    private string Consumer => Path.Combine(_root, "sdlapp");
+
+    /// <summary>A workflow as the org's repos have it: a build on every push and PR, and a job that pushes the packages on a push to main.</summary>
+    private const string PublishWorkflow = """
+        name: CI/CD
+        on:
+          push:
+            branches: [ main ]
+          pull_request:
+            branches: [ main ]
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            steps:
+            - run: dotnet build -c Release
+          publish:
+            needs: build
+            if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+            runs-on: ubuntu-latest
+            steps:
+            - run: dotnet nuget push **/*.nupkg -s nuget.org -k ${{ secrets.NUGET_API_KEY }}
+        """;
+
+    private static void WriteWorkflow(string repo, string text, string file = "dotnet.yml")
+    {
+        Directory.CreateDirectory(Path.Combine(repo, ".github", "workflows"));
+        File.WriteAllText(Path.Combine(repo, ".github", "workflows", file), text + "\n");
+    }
 
     public void Dispose()
     {
@@ -84,6 +121,7 @@ public sealed class PackageWaitTests : IDisposable
         Directory.CreateDirectory(Path.Combine(Repo, "src", "Core"));
         File.WriteAllText(Path.Combine(Repo, "src", "Core", "Core.csproj"),
             "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><PackageId>Drawboard.Core</PackageId></PropertyGroup></Project>\n");
+        WriteWorkflow(Repo, PublishWorkflow);
         Directory.CreateDirectory(Path.Combine(Repo, "src", "Core.Tests"));
         File.WriteAllText(Path.Combine(Repo, "src", "Core.Tests", "Core.Tests.csproj"),
             "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><IsPackable>false</IsPackable></PropertyGroup></Project>\n");
@@ -105,25 +143,25 @@ public sealed class PackageWaitTests : IDisposable
     private async Task<CommandResult> Drive(Rig node, string verb, string target, params string[] args) =>
         await node.Flights.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct);
 
-    /// <summary>TIA1, the producer, and TIA2, connected to it.</summary>
-    private async Task TwoConnectedFlights(Rig node)
+    /// <summary>TIA1, the producer, and SDL2, a flight of the repo that uses its package, connected to it.</summary>
+    private async Task TwoConnectedFlights(Rig node, string? consumerRepo = null)
     {
-        foreach (var issue in new[] { "1", "2" })
-        {
-            (await Drive(node, Verbs.CreateFlight, Verbs.RepoTarget(Repo), issue, $"Issue {issue}")).Ok.ShouldBeTrue();
-        }
-        (await Drive(node, Verbs.Connect, "flight/TIA2", "TIA1")).Ok.ShouldBeTrue();
-        node.State.Flights().Single(f => f.Code == "TIA2").State.ShouldBe(FlightState.Held);
+        (await Drive(node, Verbs.CreateFlight, Verbs.RepoTarget(Repo), "1", "Issue 1")).Ok.ShouldBeTrue();
+        var second = consumerRepo ?? Consumer;
+        (await Drive(node, Verbs.CreateFlight, Verbs.RepoTarget(second), "2", "Issue 2")).Ok.ShouldBeTrue();
+        var code = node.State.Flights().Single(f => f.Issue == 2).Code;
+        (await Drive(node, Verbs.Connect, $"flight/{code}", "TIA1")).Ok.ShouldBeTrue();
+        node.State.Flights().Single(f => f.Issue == 2).State.ShouldBe(FlightState.Held);
     }
 
     /// <summary>Lands TIA1 as its PR's merge does: at the head of its plane, GitHub saying which commit it merged as.</summary>
-    private async Task LandProducer(Rig node, bool merged = true)
+    private async Task LandProducer(Rig node, bool merged = true, DateTimeOffset? mergedAt = null)
     {
         var flight = node.State.Flights().Single(f => f.Code == "TIA1");
         var head = Git(flight.Worktree, "rev-parse", "HEAD");
         if (merged)
         {
-            _github.Pr = new PullRequest(7, "MERGED", head, "https://github.com/x/tianwen/pull/7", MergeCommit: MergeCommit);
+            _github.Pr = new PullRequest(7, "MERGED", head, "https://github.com/x/tianwen/pull/7", MergeCommit: MergeCommit, MergedAt: mergedAt);
         }
         await node.Flights.LandAfterMergeAsync("TIA1", head, Ct);
         node.State.Flights().Single(f => f.Code == "TIA1").State.ShouldBe(FlightState.Landed);
@@ -146,18 +184,18 @@ public sealed class PackageWaitTests : IDisposable
         await LandProducer(node);
         _github.Runs[MergeCommit] = [RunOf("success", Start.AddMinutes(1))];
 
-        var waiting = Flight(node, "TIA2");
+        var waiting = Flight(node, "SDL2");
         waiting.State.ShouldBe(FlightState.Held);
         var wait = waiting.PackageWaits.ShouldHaveSingleItem();
         (wait.Id, wait.Line, wait.Above, wait.Producer, wait.Commit).ShouldBe(("Drawboard.Core", "1.2", "1.2.5", "TIA1", MergeCommit));
         // The test project is no package, and the status says what it waits for.
         FlightWaiting.For(waiting).ShouldBe("Drawboard.Core 1.2 on nuget.org");
-        new Digest(node.State, _time).Raise(_time.GetUtcNow()).Detail.ShouldNotBeNull().ShouldContain("- TIA2 held, waiting for Drawboard.Core 1.2 on nuget.org");
-        Briefs.Watchtower("wt", node.State.Flights(), node.State.Legs(), node.State.Cards(), "pilot").ShouldContain("TIA2: Issue 2 (tianwen #2, held, waiting for Drawboard.Core 1.2 on nuget.org)");
+        new Digest(node.State, _time).Raise(_time.GetUtcNow()).Detail.ShouldNotBeNull().ShouldContain("- SDL2 held, waiting for Drawboard.Core 1.2 on nuget.org");
+        Briefs.Watchtower("wt", node.State.Flights(), node.State.Legs(), node.State.Cards(), "pilot").ShouldContain("SDL2: Issue 2 (sdlapp #2, held, waiting for Drawboard.Core 1.2 on nuget.org)");
 
         // Nothing newer than what there was at the land: still held, and the look backs off.
         await node.Watch.LookAsync(Ct);
-        Flight(node, "TIA2").State.ShouldBe(FlightState.Held);
+        Flight(node, "SDL2").State.ShouldBe(FlightState.Held);
         var reads = _feed.IndexReads;
         _time.Advance(TimeSpan.FromSeconds(30));
         await node.Watch.LookAsync(Ct);
@@ -167,12 +205,12 @@ public sealed class PackageWaitTests : IDisposable
         _feed.Publish("Drawboard.Core", "1.2.6", nupkg: false);
         _time.Advance(TimeSpan.FromMinutes(11));
         await node.Watch.LookAsync(Ct);
-        Flight(node, "TIA2").State.ShouldBe(FlightState.Held);
+        Flight(node, "SDL2").State.ShouldBe(FlightState.Held);
 
         _feed.Publish("Drawboard.Core", "1.2.7");
         _time.Advance(TimeSpan.FromMinutes(11));
         await node.Watch.LookAsync(Ct);
-        var flying = Flight(node, "TIA2");
+        var flying = Flight(node, "SDL2");
         flying.State.ShouldBe(FlightState.Flying);
         flying.PackageWaits.ShouldBeEmpty();
         node.State.Cards().ShouldNotContain(c => c.Kind == PackageWatch.LateKind);
@@ -192,15 +230,15 @@ public sealed class PackageWaitTests : IDisposable
 
         await LandProducer(node);
 
-        var wait = Flight(node, "TIA2").PackageWaits.ShouldHaveSingleItem();
+        var wait = Flight(node, "SDL2").PackageWaits.ShouldHaveSingleItem();
         (wait.Line, wait.Above).ShouldBe(("1.3", null));
         await node.Watch.LookAsync(Ct);
-        Flight(node, "TIA2").State.ShouldBe(FlightState.Held);
+        Flight(node, "SDL2").State.ShouldBe(FlightState.Held);
 
         _feed.Publish("Drawboard.Core", "1.3.1");
         _time.Advance(TimeSpan.FromMinutes(11));
         await node.Watch.LookAsync(Ct);
-        Flight(node, "TIA2").State.ShouldBe(FlightState.Flying);
+        Flight(node, "SDL2").State.ShouldBe(FlightState.Flying);
     }
 
     [Fact]
@@ -212,7 +250,7 @@ public sealed class PackageWaitTests : IDisposable
 
         await LandProducer(node);
 
-        var flying = Flight(node, "TIA2");
+        var flying = Flight(node, "SDL2");
         flying.State.ShouldBe(FlightState.Flying);
         flying.PackageWaits.ShouldBeEmpty();
         _feed.IndexReads.ShouldBe(0);
@@ -236,13 +274,13 @@ public sealed class PackageWaitTests : IDisposable
         _time.Advance(TimeSpan.FromMinutes(2));
         await node.Watch.LookAsync(Ct);
         var card = node.State.Cards().Where(c => c.Kind == PackageWatch.LateKind).ShouldHaveSingleItem();
-        (card.Bin, card.Subject, card.State).ShouldBe((CardBin.Ring, "flight/TIA2", CardState.Open));
+        (card.Bin, card.Subject, card.State).ShouldBe((CardBin.Ring, "flight/SDL2", CardState.Open));
         card.Title.ShouldContain("Drawboard.Core 1.2");
         card.Detail.ShouldNotBeNull().ShouldContain("CI/CD #4711");
         card.Detail.ShouldContain("concluded success");
         card.Detail.ShouldContain("a version of 1.2 newer than 1.2.5");
         card.Detail.ShouldContain("latest published: 1.2.5");
-        Flight(node, "TIA2").PackageWaits.ShouldHaveSingleItem().Escalated.ShouldBeTrue();
+        Flight(node, "SDL2").PackageWaits.ShouldHaveSingleItem().Escalated.ShouldBeTrue();
 
         // Never a second one, however long it takes.
         for (var i = 0; i < 4; i++)
@@ -251,13 +289,13 @@ public sealed class PackageWaitTests : IDisposable
             await node.Watch.LookAsync(Ct);
         }
         node.State.Cards().Count(c => c.Kind == PackageWatch.LateKind).ShouldBe(1);
-        Flight(node, "TIA2").State.ShouldBe(FlightState.Held);
+        Flight(node, "SDL2").State.ShouldBe(FlightState.Held);
 
         // It comes in the end: the flight flies and its card closes.
         _feed.Publish("Drawboard.Core", "1.2.9");
         _time.Advance(TimeSpan.FromMinutes(11));
         await node.Watch.LookAsync(Ct);
-        Flight(node, "TIA2").State.ShouldBe(FlightState.Flying);
+        Flight(node, "SDL2").State.ShouldBe(FlightState.Flying);
         node.State.Cards().Single(c => c.Kind == PackageWatch.LateKind).State.ShouldBe(CardState.Closed);
     }
 
@@ -326,7 +364,7 @@ public sealed class PackageWaitTests : IDisposable
         var second = new FileJournal(folder);
         _journals.Add(second);
         var restarted = NewRig(new NodeState(second, _time));
-        var waiting = Flight(restarted, "TIA2");
+        var waiting = Flight(restarted, "SDL2");
         waiting.State.ShouldBe(FlightState.Held);
         var wait = waiting.PackageWaits.ShouldHaveSingleItem();
         (wait.Id, wait.Line, wait.Above, wait.Producer, wait.Commit, wait.Escalated).ShouldBe(("Drawboard.Core", "1.2", "1.2.5", "TIA1", MergeCommit, true));
@@ -334,11 +372,11 @@ public sealed class PackageWaitTests : IDisposable
         // The new node looks at once, says nothing twice, and lets the flight go when the package is up.
         await restarted.Watch.LookAsync(Ct);
         restarted.State.Cards().Count(c => c.Kind == PackageWatch.LateKind).ShouldBe(1);
-        Flight(restarted, "TIA2").State.ShouldBe(FlightState.Held);
+        Flight(restarted, "SDL2").State.ShouldBe(FlightState.Held);
         _feed.Publish("Drawboard.Core", "1.2.6");
         _time.Advance(TimeSpan.FromMinutes(11));
         await restarted.Watch.LookAsync(Ct);
-        Flight(restarted, "TIA2").State.ShouldBe(FlightState.Flying);
+        Flight(restarted, "SDL2").State.ShouldBe(FlightState.Flying);
     }
 
     [Fact]
@@ -356,7 +394,7 @@ public sealed class PackageWaitTests : IDisposable
         ex.Message.ShouldContain("nuget.org could not say");
         Flight(node, "TIA1").State.ShouldBe(FlightState.Flying);
         Directory.Exists(producer.Worktree).ShouldBeTrue();
-        Flight(node, "TIA2").PackageWaits.ShouldBeEmpty();
+        Flight(node, "SDL2").PackageWaits.ShouldBeEmpty();
     }
 
     [Fact]
@@ -370,13 +408,225 @@ public sealed class PackageWaitTests : IDisposable
         _feed.Offline = true;
 
         await node.Watch.LookAsync(Ct);
-        Flight(node, "TIA2").State.ShouldBe(FlightState.Held);
+        Flight(node, "SDL2").State.ShouldBe(FlightState.Held);
 
         _feed.Offline = false;
         _feed.Publish("Drawboard.Core", "1.2.6");
         _time.Advance(TimeSpan.FromMinutes(11));
         await node.Watch.LookAsync(Ct);
-        Flight(node, "TIA2").State.ShouldBe(FlightState.Flying);
+        Flight(node, "SDL2").State.ShouldBe(FlightState.Flying);
+    }
+
+    [Fact]
+    public async Task AFlightOfTheProducersOwnRepoFliesOnTheLandBecauseItBuildsFromSource()
+    {
+        MakeRepoAReleaser();
+        _feed.Publish("Drawboard.Core", "1.2.5");
+        var node = NewRig();
+        await TwoConnectedFlights(node, consumerRepo: Repo);
+
+        await LandProducer(node);
+
+        var flying = Flight(node, "TIA2");
+        flying.State.ShouldBe(FlightState.Flying);
+        flying.PackageWaits.ShouldBeEmpty();
+        _feed.IndexReads.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AFlightOfAnotherRepoThatNamesNoPackageOfTheReleaseFliesOnTheLand()
+    {
+        MakeRepoAReleaser();
+        File.WriteAllText(Path.Combine(Consumer, "src", "App", "App.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><PackageReference Include=\"Some.Other\" Version=\"1.*\" /></ItemGroup></Project>\n");
+        Commit(Consumer, "uses something else");
+        var node = NewRig();
+        await TwoConnectedFlights(node);
+
+        await LandProducer(node);
+
+        Flight(node, "SDL2").State.ShouldBe(FlightState.Flying);
+        Flight(node, "SDL2").PackageWaits.ShouldBeEmpty();
+        _feed.IndexReads.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ACentralPackageVersionFileNamingThePackageIsAReferenceToo()
+    {
+        MakeRepoAReleaser();
+        File.Delete(Path.Combine(Consumer, "src", "App", "App.csproj"));
+        File.WriteAllText(Path.Combine(Consumer, "Directory.Packages.props"),
+            "<Project><ItemGroup><PackageVersion Include=\"Drawboard.Core\" Version=\"1.2.5\" /></ItemGroup></Project>\n");
+        Commit(Consumer, "central versions");
+        _feed.Publish("Drawboard.Core", "1.2.5");
+        var node = NewRig();
+        await TwoConnectedFlights(node);
+
+        await LandProducer(node);
+
+        Flight(node, "SDL2").PackageWaits.ShouldHaveSingleItem().Id.ShouldBe("Drawboard.Core");
+    }
+
+    [Fact]
+    public async Task APackableRepoWhoseCiPushesNoPackageOnAPushToMainReleasesNothingAndNobodyWaits()
+    {
+        MakeRepoAReleaser();
+        // As pilot's own: projects packable by default, and a workflow that ships nothing.
+        WriteWorkflow(Repo, "name: v2 (.NET)\non:\n  push:\n    branches: [ main ]\njobs:\n  build:\n    steps:\n    - run: dotnet build -c Release");
+        Commit(Repo, "no publish job");
+        var node = NewRig();
+        await TwoConnectedFlights(node);
+
+        await LandProducer(node);
+
+        Flight(node, "SDL2").State.ShouldBe(FlightState.Flying);
+        Flight(node, "SDL2").PackageWaits.ShouldBeEmpty();
+        _feed.IndexReads.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ARepoThatPublishesOnAVersionTagReleasesNothingOnTheLand()
+    {
+        MakeRepoAReleaser();
+        WriteWorkflow(Repo, "name: tag\non:\n  push:\n    tags: [ 'v*' ]\njobs:\n  publish:\n    steps:\n    - run: dotnet nuget push **/*.nupkg -s nuget.org");
+        Commit(Repo, "publishes on a tag");
+        var node = NewRig();
+        await TwoConnectedFlights(node);
+
+        await LandProducer(node);
+
+        Flight(node, "SDL2").State.ShouldBe(FlightState.Flying);
+    }
+
+    [Fact]
+    public async Task APersonLetsAWaitingFlightFlyAnywayFromTheLateCardAndTheWaitIsDropped()
+    {
+        MakeRepoAReleaser();
+        _feed.Publish("Drawboard.Core", "1.2.5");
+        var node = NewRig();
+        await TwoConnectedFlights(node);
+        await LandProducer(node);
+        _github.Runs[MergeCommit] = [RunOf("failure", Start.AddMinutes(2))];
+        _time.Advance(TimeSpan.FromMinutes(3));
+        await node.Watch.LookAsync(Ct);
+
+        var card = node.State.Cards().Where(c => c.Kind == PackageWatch.LateKind).ShouldHaveSingleItem();
+        var way = card.Choices.ShouldHaveSingleItem();
+        (way.Label, way.Verb, way.Target).ShouldBe(("Fly anyway", Verbs.FlyAnyway, "flight/SDL2"));
+        Flight(node, "SDL2").State.ShouldBe(FlightState.Held);
+
+        (await Drive(node, way.Verb, way.Target)).Ok.ShouldBeTrue();
+
+        var flying = Flight(node, "SDL2");
+        flying.State.ShouldBe(FlightState.Flying);
+        flying.PackageWaits.ShouldBeEmpty();
+        node.State.Cards().Single(c => c.Kind == PackageWatch.LateKind).State.ShouldBe(CardState.Closed);
+
+        // The watch has nothing left to look at, and a second ask is told so.
+        var reads = _feed.IndexReads;
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await node.Watch.LookAsync(Ct);
+        _feed.IndexReads.ShouldBe(reads);
+        (await Drive(node, Verbs.FlyAnyway, "flight/SDL2")).Error.ShouldNotBeNull().ShouldContain("waits for no package");
+    }
+
+    [Fact]
+    public async Task AFlightHeldOnlyByAnotherLandStaysHeldWhenToldToFlyAnyway()
+    {
+        MakeRepoAReleaser();
+        var node = NewRig();
+        await TwoConnectedFlights(node);
+
+        var result = await Drive(node, Verbs.FlyAnyway, "flight/SDL2");
+
+        result.Error.ShouldNotBeNull().ShouldContain("waits for no package");
+        Flight(node, "SDL2").State.ShouldBe(FlightState.Held);
+    }
+
+    [Fact]
+    public async Task ALandReadAfterThePublishFinishedWaitsForNothingNewerThanTheFlightsOwnRelease()
+    {
+        MakeRepoAReleaser();
+        var merged = Start.AddMinutes(-20);
+        // 1.2.5 was there before the merge; the flight's own release, 1.2.6, is up already (the node was down across the merge).
+        _feed.Publish("Drawboard.Core", "1.2.4", at: merged.AddDays(-9));
+        _feed.Publish("Drawboard.Core", "1.2.5", at: merged.AddDays(-2));
+        _feed.Publish("Drawboard.Core", "1.2.6", at: merged.AddMinutes(8));
+        var node = NewRig();
+        await TwoConnectedFlights(node);
+
+        await LandProducer(node, mergedAt: merged);
+
+        var wait = Flight(node, "SDL2").PackageWaits.ShouldHaveSingleItem();
+        wait.Above.ShouldBe("1.2.5");
+        await node.Watch.LookAsync(Ct);
+        Flight(node, "SDL2").State.ShouldBe(FlightState.Flying);
+        node.State.Cards().ShouldNotContain(c => c.Kind == PackageWatch.LateKind);
+    }
+
+    [Fact]
+    public async Task ALandReadBeforeThePublishStillWaitsForTheVersionAfterTheLatestThereWasAtTheMerge()
+    {
+        MakeRepoAReleaser();
+        var merged = Start.AddMinutes(-1);
+        _feed.Publish("Drawboard.Core", "1.2.5", at: merged.AddDays(-2));
+        var node = NewRig();
+        await TwoConnectedFlights(node);
+
+        await LandProducer(node, mergedAt: merged);
+
+        Flight(node, "SDL2").PackageWaits.ShouldHaveSingleItem().Above.ShouldBe("1.2.5");
+        await node.Watch.LookAsync(Ct);
+        Flight(node, "SDL2").State.ShouldBe(FlightState.Held);
+    }
+
+    [Fact]
+    public async Task TheLateCardReadsTheRunOfTheWorkflowThatPushesPackagesAndNotAnUnrelatedFastOne()
+    {
+        MakeRepoAReleaser();
+        _feed.Publish("Drawboard.Core", "1.2.5");
+        var node = NewRig();
+        await TwoConnectedFlights(node);
+        await LandProducer(node);
+        Flight(node, "SDL2").PackageWaits.ShouldHaveSingleItem().Workflow.ShouldBe("CI/CD");
+        // A lint workflow's push run, newer and already done, and the publish run still going.
+        _github.Runs[MergeCommit] =
+        [
+            new WorkflowRun(4800, "Labeler", "completed", "failure", "https://github.com/x/tianwen/actions/runs/4800", "push", Start.AddMinutes(1)),
+            RunOf("success", null, status: "in_progress"),
+        ];
+
+        // Past the start grace: the publish run is going, so the package is not late, whatever the other workflow said.
+        _time.Advance(TimeSpan.FromMinutes(40));
+        await node.Watch.LookAsync(Ct);
+        node.State.Cards().ShouldNotContain(c => c.Kind == PackageWatch.LateKind);
+
+        // The publish run concludes: the card is about its run.
+        _github.Runs[MergeCommit] = [_github.Runs[MergeCommit][0], RunOf("failure", Start.AddMinutes(41))];
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await node.Watch.LookAsync(Ct);
+        var card = node.State.Cards().Where(c => c.Kind == PackageWatch.LateKind).ShouldHaveSingleItem();
+        card.Detail.ShouldNotBeNull().ShouldContain("CI/CD #4711");
+        card.Detail.ShouldNotContain("Labeler");
+        card.Detail.ShouldContain("concluded failure");
+    }
+
+    [Fact]
+    public void ARepoPublishesOnAPushToMainWhenAWorkflowPushesPackagesAndIsTriggeredByABranchPush()
+    {
+        string? Of(string text) => PublishShape.PushPublisher([(".github/workflows/dotnet.yml", text)]);
+
+        Of(PublishWorkflow).ShouldBe("CI/CD");
+        // No name: GitHub calls its runs by the path.
+        Of("on: [push, pull_request]\njobs:\n  p:\n    steps:\n    - run: nuget push x.nupkg").ShouldBe(".github/workflows/dotnet.yml");
+        Of("on: push\njobs:\n  p:\n    steps:\n    - run: dotnet nuget push x.nupkg").ShouldNotBeNull();
+        // Tags alone, by the trigger or by the job's own gate: the release is the tag's.
+        Of("on:\n  push:\n    tags: [ 'v*' ]\njobs:\n  p:\n    steps:\n    - run: dotnet nuget push x.nupkg").ShouldBeNull();
+        Of("on:\n  push:\n    branches: [ main ]\n    tags: [ 'v*' ]\njobs:\n  build:\n    steps:\n    - run: dotnet build\n  publish:\n    if: startsWith(github.ref, 'refs/tags/v')\n    steps:\n    - run: dotnet nuget push x.nupkg").ShouldBeNull();
+        // A PR-only or manual workflow, a workflow that builds only, and a push that is commented out.
+        Of("on:\n  pull_request:\njobs:\n  p:\n    steps:\n    - run: dotnet nuget push x.nupkg").ShouldBeNull();
+        Of("on:\n  push:\n    branches: [ main ]\njobs:\n  b:\n    steps:\n    - run: dotnet build -c Release").ShouldBeNull();
+        Of("on:\n  push:\n    branches: [ main ]\njobs:\n  b:\n    steps:\n    # - run: dotnet nuget push x.nupkg\n    - run: dotnet build").ShouldBeNull();
     }
 
     [Fact]

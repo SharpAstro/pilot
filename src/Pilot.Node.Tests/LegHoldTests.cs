@@ -98,6 +98,10 @@ public sealed class LegHoldTests : IDisposable
         Directory.CreateDirectory(Path.Combine(Core, "src", "Core"));
         File.WriteAllText(Path.Combine(Core, "src", "Core", "Core.csproj"),
             "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><PackageId>Drawboard.Core</PackageId></PropertyGroup></Project>\n");
+        // Its CI pushes the packages on a push to main, which is what makes the repo a release.
+        Directory.CreateDirectory(Path.Combine(Core, ".github", "workflows"));
+        File.WriteAllText(Path.Combine(Core, ".github", "workflows", "dotnet.yml"),
+            "name: CI/CD\non:\n  push:\n    branches: [ main ]\njobs:\n  publish:\n    if: github.ref == 'refs/heads/main'\n    steps:\n    - run: dotnet nuget push **/*.nupkg -s nuget.org\n");
         Commit(Core, "releases");
     }
 
