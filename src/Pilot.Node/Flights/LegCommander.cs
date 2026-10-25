@@ -326,7 +326,7 @@ public sealed partial class LegCommander(
         }
         HoldForOverlap(flight);
 
-        string? name = null, goal = null, doneWhen = null, check = null, model = null, effort = null;
+        string? name = null, goal = null, doneWhen = null, check = null, model = null, effort = null, ciDiffers = null;
         long? budget = null;
         var items = new List<CheckItem>();
         foreach (var arg in command.Args ?? [])
@@ -334,7 +334,7 @@ public sealed partial class LegCommander(
             var equals = arg.IndexOf('=');
             if (equals <= 0)
             {
-                throw new FlightException($"plan-leg takes key=value arguments (name, goal, done-when, check, budget, model, effort, item), not '{arg}'");
+                throw new FlightException($"plan-leg takes key=value arguments (name, goal, done-when, check, ci-differs, budget, model, effort, item), not '{arg}'");
             }
             var (key, value) = (arg[..equals].Trim(), arg[(equals + 1)..].Trim());
             switch (key)
@@ -343,6 +343,7 @@ public sealed partial class LegCommander(
                 case "goal": goal = value; break;
                 case "done-when": doneWhen = value; break;
                 case "check": check = value.Length > 0 ? value : null; break;
+                case "ci-differs": ciDiffers = value.Length > 0 ? value : null; break;
                 case "model": model = value.Length > 0 ? value : null; break;
                 case "effort": effort = value.Length > 0 ? value : null; break;
                 case "item" when value.Length > 0: items.Add(new CheckItem { Text = value }); break;
@@ -371,6 +372,20 @@ public sealed partial class LegCommander(
         {
             throw new FlightException(
                 $"the check pipes on the | at column {pipe + 1}, outside quotes: the shell would run what follows it as a program. Quote it, as in --filter 'A|B'");
+        }
+
+        // A check builds as the repo's CI does (SDL144: a Debug check needing what the Release package never carries). One that
+        // cannot match says why, and the reason stays with the leg, in its Done-when, where the worker and the reviewer read it.
+        if (check is not null)
+        {
+            if (CiShape.Mismatch(check, CiShape.Of(flight.Worktree)) is { } mismatch)
+            {
+                if (ciDiffers is null)
+                {
+                    throw new FlightException(mismatch);
+                }
+                doneWhen = $"{doneWhen}\nThe check differs from CI on purpose: {ciDiffers}";
+            }
         }
 
         var legs = state.Legs(flight.Code);
