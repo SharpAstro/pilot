@@ -78,6 +78,14 @@ public sealed record FlightRow
     public string? GitHubDisagrees { get; init; }
 
     /// <summary>
+    /// A merge asked for while its PR's checks still ran: the head reviewed and the method, which the node merges (or queues)
+    /// once the checks pass on that head, and drops, saying why, when they fail or the head moves. Null while none waits. A
+    /// merge queue takes no PR whose required checks have not passed, so a Merge pressed early was refused (TIA1818's #1826,
+    /// DE1 2026-10-25).
+    /// </summary>
+    public string[]? MergeWhenGreen { get; init; }
+
+    /// <summary>
     /// The other flights the planner found this one overlapping, each with the answer to it: a pair is asked once, so
     /// a recorded answer is never asked about again. Not required, and null-safe: a flight journaled before overlaps has
     /// no such property, and the generated reader leaves a missing property's initialiser out, so the getter stands in

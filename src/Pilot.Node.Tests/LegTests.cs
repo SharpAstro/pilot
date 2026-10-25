@@ -112,10 +112,13 @@ internal sealed class FakeGitHub : IGitHub
     public Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken) =>
         Task.FromResult(Pr is { } pr ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. labels] : [] } : null);
 
-    public Task MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
+    /// <summary>Whether a merge joins a merge queue rather than merging, as on a base that has one.</summary>
+    public bool Queues { get; set; }
+
+    public Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
         Merged.Add((number, head, method));
-        return Task.CompletedTask;
+        return Task.FromResult(Queues);
     }
 
     /// <summary>What ChecksAsync answers for any PR.</summary>
@@ -777,6 +780,94 @@ public sealed class LegCommanderTests : IDisposable
         _github.Merged.ShouldBe([(63, tip, "rebase")]);
         _state.Flights().Single().State.ShouldBe(FlightState.Landed);
         Directory.Exists(flight.Worktree).ShouldBeFalse();
+    }
+
+    // A flight with both legs done, reviewed and passed, and its PR open at the plane's head: the tip.
+    private async Task<string> ReadyToMerge()
+    {
+        var flight = await FlightWithTwoLegs();
+        _legs.Models = new RoleModels(null);
+        foreach (var name in new[] { "parser", "render" })
+        {
+            if (L(name).State == LegState.Planned)
+            {
+                await Leg(Verbs.StartLeg, $"flight/TIA1/{name}");
+            }
+            if (L(name).State == LegState.Planned)
+            {
+                await Leg(Verbs.ValidateLeg, $"flight/TIA1/{name}", "go");
+            }
+            foreach (var i in Enumerable.Range(1, L(name).Checklist.Length))
+            {
+                await Leg(Verbs.Check, $"flight/TIA1/{name}", i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            (await Leg(Verbs.FinishLeg, $"flight/TIA1/{name}", "done")).Ok.ShouldBeTrue();
+        }
+        var tip = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
+        _github.Pr = new PullRequest(63, "OPEN", tip, "https://github.com/x/tianwen/pull/63");
+        _state.PutFlight(_state.Flights().Single() with
+        {
+            PullRequest = 63,
+            Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow },
+        });
+        return tip;
+    }
+
+    [Fact]
+    public async Task AMergeThatOnlyJoinsTheMergeQueueLeavesTheFlightFlyingUntilGitHubMergesIt()
+    {
+        var tip = await ReadyToMerge();
+        _github.Queues = true;
+
+        (await Leg(Verbs.Merge, "flight/TIA1", tip[..8])).Ok.ShouldBeTrue();
+
+        _github.Merged.ShouldBe([(63, tip, "rebase")]);
+        // Queued is not merged: landing now would stop its sessions and take its plane while the queue may still drop it.
+        _state.Flights().Single().State.ShouldBe(FlightState.Flying);
+        Directory.Exists(_state.Flights().Single().Worktree).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AMergePressedWhileChecksRunWaitsForThemAndTheNodeMergesOnceTheyPass()
+    {
+        var tip = await ReadyToMerge();
+        _github.Checks = ChoiceStatus.Pending;
+
+        // A queue takes no PR whose required checks have not passed (TIA1818's #1826): the merge waits on the flight.
+        var asked = await Leg(Verbs.Merge, "flight/TIA1", tip[..8]);
+        asked.Ok.ShouldBeTrue();
+        _github.Merged.ShouldBeEmpty();
+        _state.Flights().Single().MergeWhenGreen.ShouldBe([tip, "rebase"]);
+        _state.Flights().Single().State.ShouldBe(FlightState.Flying);
+
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+        await checks.LookAsync(Ct);
+        _github.Merged.ShouldBeEmpty();
+        _state.Flights().Single().MergeQueue.ShouldBe("merges once its checks pass");
+
+        _github.Checks = ChoiceStatus.Passing;
+        await checks.LookAsync(Ct);
+
+        _github.Merged.ShouldBe([(63, tip, "rebase")]);
+        _state.Flights().Single().MergeWhenGreen.ShouldBeNull();
+        _state.Flights().Single().State.ShouldBe(FlightState.Landed);
+    }
+
+    [Fact]
+    public async Task AWaitingMergeWhoseChecksFailIsDroppedOnACardThatOffersItAgain()
+    {
+        var tip = await ReadyToMerge();
+        _github.Checks = ChoiceStatus.Pending;
+        (await Leg(Verbs.Merge, "flight/TIA1", tip[..8])).Ok.ShouldBeTrue();
+
+        _github.Checks = ChoiceStatus.Failing;
+        await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
+
+        _github.Merged.ShouldBeEmpty();
+        _state.Flights().Single().MergeWhenGreen.ShouldBeNull();
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrChecks.MergeDropped);
+        card.Detail.ShouldNotBeNull().ShouldContain("checks failed");
+        card.Choices.Single().Verb.ShouldBe(Verbs.Merge);
     }
 
     [Fact]

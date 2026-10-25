@@ -192,9 +192,9 @@ public interface IGitHub
     /// <summary>
     /// Merges PR <paramref name="number"/> by <paramref name="method"/>, refused by GitHub unless its head is still
     /// <paramref name="head"/>. Where its base has a merge queue it joins the queue instead, by the queue's own method, and
-    /// lands once the queue's checks pass: the PR's MERGED, as ever, says it landed.
+    /// lands once the queue's checks pass: the PR's MERGED, as ever, says it landed. True when it was queued, not merged.
     /// </summary>
-    Task MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken);
+    Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken);
 
     /// <summary>
     /// Marks PR <paramref name="number"/> a draft (<paramref name="draft"/>), which GitHub will not merge, or ready for review
@@ -341,14 +341,14 @@ public sealed class GhCli : IGitHub
         }
     }
 
-    public async Task MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
+    public async Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
         // gh pr merge reaches a merge queue only through auto-merge, which the repos keep off: "Auto merge is not allowed for
         // this repository" (pilot#212, 2026-10-24). The queue is joined by the API itself, as its web page's button does.
         if (await QueuedPullRequestAsync(repoPath, number, cancellationToken) is { } id)
         {
             await EnqueueAsync(repoPath, number, id, head, cancellationToken);
-            return;
+            return true;
         }
         var (exit, output, error) = await RunAsync(
             ["pr", "merge", number.ToString(System.Globalization.CultureInfo.InvariantCulture), $"--{method}", "--match-head-commit", head], repoPath, cancellationToken);
@@ -356,6 +356,7 @@ public sealed class GhCli : IGitHub
         {
             throw new FlightException($"gh could not merge #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
+        return false;
     }
 
     private const string QueueStateQuery = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){"
