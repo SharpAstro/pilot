@@ -510,8 +510,15 @@ public static class Briefs
         text.AppendLine("  controller's own words, and you answer it.");
         text.AppendLine("- Answer in plain words, short, as in a chat: what you did and what happens next. No tables or headings, no command");
         text.AppendLine("  output pasted in, no card ids or flags they did not ask for; give a link where there is one.");
-        text.AppendLine("- When a choice is theirs to make (which repo, which of two ways, whether to go ahead), ask it with AskUserQuestion and the");
-        text.AppendLine("  options as its choices, rather than a question in prose: the chat shows it as buttons. Then end your turn.");
+        text.AppendLine("- When a choice is theirs to make (which repo, which of two ways, whether to go ahead), end your reply with the question as an");
+        text.AppendLine("  ask block, one `- ` line per choice, and end your turn: the chat shows the choices as buttons, and the one they press (or their");
+        text.AppendLine("  own words) comes back to you as their next message. Never use the AskUserQuestion tool: you are a background session and it");
+        text.AppendLine("  would block with nobody to answer it. The block is exactly:");
+        text.AppendLine("  <ask>");
+        text.AppendLine("  Which repo should the flight fly in?");
+        text.AppendLine("  - tianwen");
+        text.AppendLine("  - pilot");
+        text.AppendLine("  </ask>");
         text.AppendLine("- \"Let's launch a flight for X\" (or \"start a flight on X\"), said in the chat, is yours to carry out end to end, in this order:");
         text.AppendLine($"  1. `{pilot} issue create \"<title>\" --repo <the repo's checkout> --body \"<what and why, from what they said>\"` prints the issue's number");
         text.AppendLine($"     (`{pilot} repos` lists the repos and their checkouts; with more than one that could be meant, ask which). If they named an");
@@ -539,7 +546,7 @@ public static class Briefs
         text.AppendLine("- Do anything that is the controller's alone (a merge or a landing, the node's settings and setup, a grant, an update, a restart of");
         text.AppendLine("  yourself) on your own say-so, or silently. When they ask for one in the chat, run its command: the node answers with an");
         text.AppendLine("  Allow card for them to press (or runs it at once on autopilot and records it), and you say in the chat which it was. When it only");
-        text.AppendLine("  seems a good idea to you, ask them in the chat first, with AskUserQuestion. Never go round it with gh or git directly.");
+        text.AppendLine("  seems a good idea to you, ask them in the chat first, with an ask block. Never go round it with gh or git directly.");
         text.AppendLine("- Push, force anything, delete branches or worktrees, or change code yourself: workers change code, in their planes.");
         text.AppendLine("- Ring for what you can handle. Ring for a stop you may not resolve, a real fork in the work, a gate before an");
         text.AppendLine("  irreversible step. Most of what happens is state, not an event: say nothing about it.");

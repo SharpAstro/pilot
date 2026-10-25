@@ -656,7 +656,8 @@ internal sealed class PilotChrome<TSurface>
         // The window as a tree: the rail, the page, and the cards panel, which takes room only when it has something
         // (the sessions table needs the width more than an empty "nothing waits on you"). The engine places them at the
         // window's scale; each is painted into its own leaf.
-        ShowsCards = cards is { HasAny: true } || (cards is not null && Cards.CanTell);
+        Cards.OnChatPage = Page == PilotPage.Chat;
+        ShowsCards = cards is { HasAny: true } || (cards is not null && Cards.CanTell && !Cards.OnChatPage);
         // The page's flight lights its cards in the panel, and the flight's own page offers the merge its card does.
         Flights.Cards = cards;
         Cards.Focus = Page switch

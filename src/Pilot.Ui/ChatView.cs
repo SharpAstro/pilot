@@ -254,7 +254,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     {
         var held = Volatile.Read(ref _held);
         _composer.Input.OnCommit = _ => SendAsync();
-        _composer.Input.Placeholder = "Message the watchtower · Enter sends · Shift+Enter a new line";
+        _composer.Input.Placeholder = "Message the watchtower";
         var buttons = new List<Layout.Node>();
         if (!_scroll.IsFollowingEnd)
         {
@@ -279,7 +279,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
         if (OnSend is not null && held.Question is { Length: > 0 } question)
         {
-            rows.Add(Question(question, held.Choices));
+            // The reply the question ends already says it in the feed: the card then holds only the choices.
+            var said = held.Entries.LastOrDefault(e => e.Kind == TranscriptKind.Assistant)?.Text;
+            rows.Add(Question(question, said is not null && said.Contains(question, StringComparison.Ordinal), held.Choices));
         }
         var sending = Volatile.Read(ref _sending) > 0;
         if (held.Working || sending)
@@ -307,13 +309,18 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             .WStar();
 
     // The question the watchtower waits on, with its choices as buttons: a click says the choice to it, as typing it would.
-    private Layout.Node Question(string question, string[] choices)
+    private Layout.Node Question(string question, bool saidAlready, string[] choices)
     {
-        var body = new List<Layout.Node>
+        var body = new List<Layout.Node>();
+        if (saidAlready)
         {
-            Layout.Builder.Text("The watchtower asks", 11f, Dim),
-            WrappedProse.Of(question, 14f, Bright, 8),
-        };
+            body.Add(Layout.Builder.Text("Pick one, or answer in your own words", 11f, Dim));
+        }
+        else
+        {
+            body.Add(Layout.Builder.Text("The watchtower asks", 11f, Dim));
+            body.Add(WrappedProse.Of(question, 14f, Bright, 8));
+        }
         if (choices.Length > 0)
         {
             body.Add(Layout.Builder.Spacer().RowH(4f));

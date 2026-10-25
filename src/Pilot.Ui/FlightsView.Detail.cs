@@ -159,7 +159,7 @@ internal sealed partial class FlightsView<TSurface>
         facts.Add(Layout.Builder.Spacer().WStar());
 
         var legs = detail.Legs.Count == 0
-            ? [Layout.Builder.Text("no legs yet: Plan a leg", 13f, Dim).RowH(24f)]
+            ? [Layout.Builder.Text(line.Node is null or { Here: true } ? "no legs yet: Plan a leg" : "no legs yet", 13f, Dim).RowH(24f)]
             : detail.Legs.Select(l => LegBlock(line.Code, l)).ToList();
 
         List<Layout.Node> page =

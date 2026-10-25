@@ -196,6 +196,21 @@ public sealed class ChatTests
     }
 
     [Fact]
+    public async Task AQuestionTheLastReplyAlreadySaysIsNotSaidAgainOverItsButtons()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        TranscriptEntry[] entries = [new() { Index = 0, Kind = TranscriptKind.Assistant, Text = "Two repos fit.\nWhich repo should the flight fly in?", At = At }];
+        var chat = NewChat(renderer, Page(entries, question: "Which repo should the flight fly in?", choices: ["tianwen", "pilot"]));
+        await Read(chat, 1);
+
+        var text = Described(chat);
+
+        text.Split("Which repo should the flight fly in?").Length.ShouldBe(2, "the reply says it; the card holds only the choices");
+        text.ShouldNotContain("The watchtower asks");
+        text.ShouldContain("tianwen");
+    }
+
+    [Fact]
     public async Task NoQuestionNoButtons()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
@@ -291,6 +306,17 @@ public sealed class ChatTests
         chat.Close();
 
         text.ShouldContain("the node is not answering");
+    }
+
+    [Fact]
+    public async Task TheKeysHintIsSaidOnceUnderTheBoxAndNotAgainInItsPlaceholder()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chat = NewChat(renderer);
+        await Read(chat, Conversation().Length);
+
+        Described(chat).Split("Enter sends").Length.ShouldBe(2, "the hint under the box is the one that says it");
+        chat.Input.Placeholder.ShouldNotBeNull().ShouldNotContain("Enter");
     }
 
     private static async Task<string> TypeAndEnter(ChatView<RgbaImage> chat, params string[] lines)

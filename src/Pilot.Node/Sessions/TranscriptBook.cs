@@ -86,8 +86,8 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         return reader;
     }
 
-    /// <summary>A question an <c>AskUserQuestion</c> call asked that nothing has answered: its first question and its choices' labels.</summary>
-    public sealed record PendingAsk(string ToolUseId, string Question, string[] Choices);
+    /// <summary>A question a reply asked in an <c>&lt;ask&gt;</c> block that nothing has answered: the question and its choices' labels.</summary>
+    public sealed record PendingAsk(string Question, string[] Choices);
 
     /// <summary>What <see cref="Window"/> reads of a transcript.</summary>
     public sealed record TranscriptWindow(TranscriptEntry[] Entries, int Total, PendingAsk? Pending, string[] Queued);
@@ -104,7 +104,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         /// <summary>The messages queued for the session that it has not taken yet, oldest first.</summary>
         public List<string> Queued { get; } = [];
 
-        /// <summary>The question it asked with <c>AskUserQuestion</c> that has no answer yet, else null.</summary>
+        /// <summary>The question it asked in an <c>&lt;ask&gt;</c> block that has no answer yet, else null.</summary>
         public PendingAsk? Pending { get; private set; }
 
         public void Refresh()
@@ -171,8 +171,10 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         }
 
         /// <summary>
-        /// Keeps <see cref="Pending"/>: an <c>AskUserQuestion</c> call is pending until its result comes, the person says
-        /// something else, or the session's next message begins (it moved on without the answer).
+        /// Keeps <see cref="Pending"/>: a reply that holds an <see cref="Asked"/> block is pending until the person says something
+        /// (their answer: a choice's label, or their own words) or the session's next message begins (it moved on without the
+        /// answer). What the node says in its own name (a card, a nudge) is not an answer. The session ended its turn on the
+        /// question, so the answer resumes it: nothing blocks, as an <c>AskUserQuestion</c> call would.
         /// </summary>
         private void Ask(JsonElement line)
         {
@@ -184,19 +186,17 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
             }
             if (type == "user")
             {
-                if (Pending is null)
+                if (Pending is null || line.TryGetProperty("isMeta", out var meta) && meta.ValueKind == JsonValueKind.True)
                 {
                     return;
                 }
-                // The answer is a tool result carrying the call's id; any other prompt is the person moving the talk on.
-                var answered = content.ValueKind == JsonValueKind.Array
-                    ? content.EnumerateArray().Any(p => Str(p, "type") == "tool_result" && Str(p, "tool_use_id") == Pending.ToolUseId || Str(p, "type") == "text")
-                    : content.ValueKind == JsonValueKind.String;
-                if (answered && line.TryGetProperty("isMeta", out var meta) && meta.ValueKind == JsonValueKind.True)
+                var said = content.ValueKind switch
                 {
-                    answered = false;
-                }
-                if (answered)
+                    JsonValueKind.String => content.GetString(),
+                    JsonValueKind.Array => string.Join("\n", content.EnumerateArray().Where(p => Str(p, "type") == "text").Select(p => Str(p, "text")).OfType<string>()),
+                    _ => null,
+                };
+                if (said is { Length: > 0 } && !said.TrimStart().StartsWith(NodeVoice.Prefix, StringComparison.Ordinal))
                 {
                     Pending = null;
                 }
@@ -214,10 +214,9 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
             }
             foreach (var part in content.EnumerateArray())
             {
-                if (Str(part, "type") == "tool_use" && Str(part, "name") == "AskUserQuestion" && Str(part, "id") is { Length: > 0 } toolId
-                    && part.TryGetProperty("input", out var input) && FirstQuestion(input) is { } question)
+                if (Str(part, "type") == "text" && Str(part, "text") is { } text && Asked(text) is { } ask)
                 {
-                    Pending = new PendingAsk(toolId, question.Text.Length > 300 ? question.Text[..300] : question.Text, question.Choices);
+                    Pending = new PendingAsk(ask.Question.Length > 300 ? ask.Question[..300] : ask.Question, ask.Choices);
                     _askedIn = id;
                 }
             }
@@ -373,7 +372,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         {
             if (text.Trim().Length > 0)
             {
-                yield return new TranscriptEntry { Index = 0, Kind = apiError ? TranscriptKind.Error : TranscriptKind.Assistant, Text = text.Trim() };
+                yield return new TranscriptEntry { Index = 0, Kind = apiError ? TranscriptKind.Error : TranscriptKind.Assistant, Text = (apiError ? text : Plain(text)).Trim() };
             }
             yield break;
         }
@@ -569,6 +568,29 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
 
     private static string? Str(JsonElement element, string name) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    /// <summary>
+    /// The question a watchtower reply asks, as a block the node parses: <c>&lt;ask&gt;</c>, the question, one <c>- choice</c> line
+    /// per choice, <c>&lt;/ask&gt;</c>. The watchtower is a background session whose <c>AskUserQuestion</c> would block with
+    /// nobody to answer it, so it asks in its reply and ends its turn; the answer is a say that resumes it.
+    /// </summary>
+    internal static (string Question, string[] Choices)? Asked(string text)
+    {
+        if (AskBlock().Match(text) is not { Success: true } block)
+        {
+            return null;
+        }
+        var lines = block.Groups["body"].Value.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        var choices = lines.Where(l => l.StartsWith("- ", StringComparison.Ordinal)).Select(l => l[2..].Trim()).Where(l => l.Length > 0).ToArray();
+        var question = string.Join(" ", lines.Where(l => !l.StartsWith("- ", StringComparison.Ordinal)));
+        return question.Length == 0 ? null : (question, choices);
+    }
+
+    // A reply as a person reads it: its ask block is the question, and the choices are the buttons under it.
+    private static string Plain(string text) => AskBlock().Replace(text, m => Asked(m.Value) is { } ask ? ask.Question : "");
+
+    [GeneratedRegex(@"<ask>(?<body>.*?)</ask>", RegexOptions.Singleline)]
+    private static partial Regex AskBlock();
 
     [GeneratedRegex(@"<system-reminder>.*?(</system-reminder>|$)", RegexOptions.Singleline)]
     private static partial Regex Reminder();

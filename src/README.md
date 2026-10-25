@@ -465,7 +465,7 @@ image; for `cards` a heading per card, for `repos` a heading per repo with its w
 clickable links, and the screenshot itself on a terminal that can show it. `auto`, the default, is rich only when
 standard output is a terminal, `NO_COLOR` is unset and the terminal answers that it shows Sixel. Anything else (a pipe,
 a script, an agent's shell) is plain, and the terminal is not asked. Only the CLI renders, through the `RichOutput` it
-hands the command tree, so the tree takes no Console.Lib; the GUI's command bar and `pilot mcp` write plain for auto
+hands the command tree, so the tree takes no Console.Lib; the GUI and `pilot mcp` write plain for auto
 and the source for rich.
 
 ### Say to all
@@ -534,7 +534,7 @@ artifacts (a click opens them), and what can be done with it now: **Start <leg>*
 at once. **Go around** and **Remove** need words, so each opens a one-line field under its button (also in a flight's page and
 from the row menu) asking why: Enter sends the verb (`go-around`, `remove-leg`) with that why to the flight's own node, Escape
 closes the field. **Plan a leg** needs a goal and a Done-when, which the planner writes: it opens the Chat page with
-`plan a leg on <code>: ` in its box for the person to finish, and the watchtower's plan card comes back to confirm. There is no
+`plan a leg on <code>: ` in its box for the person to finish, and the watchtower's plan card comes back to confirm; only on this window's own node's flights, since the chat's watchtower runs `pilot` against that node and another node's flight has no such leg there. There is no
 command bar: the page says what the last action answered in one line under the flights, and anything else is said in the chat
 (or run with the `pilot` binary and its MCP server, `pilot mcp`).
 
@@ -690,11 +690,15 @@ with no history of its own, so the feed is the transcript of every watchtower th
   error), their `Index` counting across all the watchtowers, so a client asks for what came after the last index it has
   whichever watchtower said it. Without `after` it gives the last 300; later reads give at most 500. Where a fresh watchtower
   began there is a `divider` entry (its text says why: `A fresh watchtower started: its brief changed`, its time the start's).
-  An `AskUserQuestion` call shows as its question.
+  A reply's `<ask>` block (below) shows as its question, without its choices.
 - **`Working`** is whether the watchtower is on a turn now (the chat's "typing").
-- **`PendingQuestion`** and **`Choices`** are the question of an `AskUserQuestion` it has asked that nothing answered, and its
-  choice labels in the order it gave them. The call is answered by its result, by the person saying something else, or by the
-  session's next message; the person's answer to it is a say to the watchtower (`tell`), a choice's label or their own words.
+- **`PendingQuestion`** and **`Choices`** are the question the watchtower's last reply asked in an `<ask>` block that nothing
+  answered, and its choice labels in the order it gave them. The block is the question, then one `- choice` line each, then
+  `</ask>`. The watchtower is a background session, whose `AskUserQuestion` blocks until someone answers it in `claude agents`
+  (a say is read only between tool calls, so never answers it), so the node starts it with that tool denied and its brief has it
+  end its turn on the block instead. The question is answered by the person saying anything but the node's own `[node]`
+  messages, or by the session's next reply; the person's answer is a say to the watchtower (`tell`), a choice's label or their
+  own words, and it resumes the idle session like any say to an idle background session.
 - **`Queued`** is what was said to it that it has not taken yet.
 - **Notes.** What the node says to the watchtower in its own name (a card it says, a nudge, a wake-up: a `say` whose `Who` is
   `node`) begins `[node] ` (`NodeVoice.Prefix`), and a compaction is its `/compact`; both come back as entries with `Note` set
@@ -708,7 +712,7 @@ node has seen are folded in, so one an older node started is in the chat too. Af
 the earlier conversations stay readable. A watchtower that never said anything has no transcript and no divider.
 
 The brief makes the watchtower the person's assistant in the window as well as the fleet's lookout: it answers in plain
-words, asks with `AskUserQuestion` when a choice is the person's, tells the node's `[node]` messages from theirs, and
+words, asks with an `<ask>` block when a choice is the person's, tells the node's `[node]` messages from theirs, and
 carries out "let's launch a flight for X" as `pilot issue create`, then `pilot flight create`, then `pilot flight plan` (the
 planner's own overlap check covers "already flying"), saying back what it made with links. "Plan a leg on <code>: …" is
 `pilot leg plan` then `pilot flight planned`, so the plan card comes back. What is the person's alone (merge, land, the
@@ -1066,7 +1070,7 @@ A session the API stopped (its transcript's `apiError`, `usage_limit_reached` wi
 | `POST /api/v1/commands` | Every command, `{verb, target, args, who}`. The result is the response and a `commandResult` event on the stream. Verbs: `note node <text>`, `say session/<id> <text>`, `compact session/<id> [focus]`, and the flight and review verbs above. |
 | (cards) | `answer card/<id> <choice>`, `dismiss card/<id> [why]`: verbs on `POST /api/v1/commands`. |
 | `GET /api/v1/sessions/<id>/transcript?after=<n>` | A session's transcript as entries after the n-th (its last 300 without one); a grant's on the LAN. |
-| `GET /api/v1/chat?after=<n>` | The watchtower's conversation as one feed across every watchtower there has been: a `ChatPage` of entries after the n-th (the last 300 without one) with a `divider` entry where a fresh watchtower began, whether it is working, its pending `AskUserQuestion` and choices, and what is queued for it (see The chat); a grant's on the LAN. |
+| `GET /api/v1/chat?after=<n>` | The watchtower's conversation as one feed across every watchtower there has been: a `ChatPage` of entries after the n-th (the last 300 without one) with a `divider` entry where a fresh watchtower began, whether it is working, its pending question and choices, and what is queued for it (see The chat); a grant's on the LAN. |
 | `GET /api/v1/jobs/<id>/log` | The end of a job's output: its last 200 lines from its last 64 KiB, the log's length, and whether it was clipped; a grant's on the LAN. |
 | `GET /api/v1/repos` | The repos a flight can be made in, with their GitHub names; a grant's on the LAN. |
 | `GET /api/v1/repos/status` | Each repo's state, a `RepoStatus[]` from the node's cache (see Repo status); `?refresh=true` waits for a fresh read. A grant's on the LAN. |
