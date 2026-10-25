@@ -175,7 +175,7 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
-    public void TrustInAFolderAboveCoversTheWatchtowerFolder()
+    public void TheWatchtowerFolderIsTrustedByItsOwnRecordNotByAFolderAbove()
     {
         var profile = Directory.CreateDirectory(Path.Combine(_root, ".claude")).FullName;
         var watchtower = Directory.CreateDirectory(Path.Combine(_root, "data", "watchtower")).FullName;
@@ -183,8 +183,12 @@ public sealed class SettingsTests : IDisposable
         string Key(string path) => path.Replace('\\', '/');
 
         setup.Trusted(watchtower).ShouldBeNull();
+        // As SE1's file has it: the folder above trusted, the watchtower's own record not. Claude Code goes by the folder's
+        // own record, so setup still has the watchtower's trust to give.
         File.WriteAllText(Path.Combine(_root, ".claude.json"), $$"""{ "projects": { "{{Key(watchtower)}}": { "hasTrustDialogAccepted": false }, "{{Key(_root)}}": { "hasTrustDialogAccepted": true } } }""");
-        setup.Trusted(watchtower).ShouldBe(_root);
+        setup.Trusted(watchtower).ShouldBeNull();
+        File.WriteAllText(Path.Combine(_root, ".claude.json"), $$"""{ "projects": { "{{Key(watchtower)}}": { "hasTrustDialogAccepted": true } } }""");
+        setup.Trusted(watchtower).ShouldBe(watchtower);
     }
 
     [Fact]
