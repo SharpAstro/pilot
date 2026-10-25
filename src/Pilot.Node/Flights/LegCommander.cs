@@ -969,8 +969,10 @@ public sealed partial class LegCommander(
         var plan = ReviewPlan.Choose(state.Usage(), Models.IsPriority(flight.Repo), numstat.Ok ? ReviewPlan.ParseNumstat(numstat.Output) : null, time.GetUtcNow());
         var reviewer = ReviewerName(flight);
         var brief = Briefs.Review(flight, legs, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Briefs.Run(Cli, Socket), plan);
-        // The head the reviewer reads, as GitHub has the PR: the pilot/review status goes on it, whatever the branch moves to.
-        var reviewedHead = await _marks.HeadAsync(flight, cancellationToken);
+        // The head the reviewer reads, from the plane it reads: the pilot/review status goes on it, whatever the branch moves to.
+        // GitHub can still report the head before a push for a moment, so it is only the fallback.
+        var plane = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken);
+        var reviewedHead = plane.Ok && plane.Output.Trim() is { Length: > 0 } sha ? sha : await _marks.HeadAsync(flight, cancellationToken);
         var job = await workers.StartAsync(new WorkerStart(reviewer, flight.RepoPath, PlaneOf(flight), brief, Models.ReviewerModel(plan.Depth), Models.ReviewerEffort(plan.Depth)), cancellationToken);
         state.PutFlight(flight with
         {

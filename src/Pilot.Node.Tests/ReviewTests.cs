@@ -418,6 +418,8 @@ public sealed class ReviewTests : IDisposable
         var (flight, number) = await Passed("33");
         var reviewed = F(flight.Code).Review!.ReviewedHead.ShouldNotBeNull();
         var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+        // GitHub has caught up with the push: the head the reviewer read in the plane.
+        _github.Pr = _github.Pr! with { Head = reviewed };
 
         await checks.LookAsync(Ct);
 

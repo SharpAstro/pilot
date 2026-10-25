@@ -178,13 +178,16 @@ public sealed class PrReviews(
     /// </summary>
     private async Task SetStatusAsync(PrReviewRow review, string status, string description, string? link, CancellationToken cancellationToken)
     {
+        var subject = Verbs.PrTarget(review.Repo, review.Number);
         try
         {
             await github.SetCommitStatusAsync(review.ClonePath, review.Head, status, description, link, cancellationToken);
+            // A refusal an earlier write left is over once one goes through.
+            state.CloseCardsAbout(subject, "set on GitHub", PrMarks.RefusedKind);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            var subject = Verbs.PrTarget(review.Repo, review.Number);
+            state.CloseCardsAbout(subject, "refused again", PrMarks.RefusedKind);
             state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused the {PilotMarks.StatusContext} status on {review.Repo}#{review.Number}",
                 $"{ex.Message}. The review itself stands.", link: review.Url);
         }

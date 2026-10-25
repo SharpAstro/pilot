@@ -14,7 +14,8 @@ public sealed class PrMarksTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private const string Reviewed = "cafe0000cafe0000";
+    /// <summary>The head the reviewer reads: the flight's plane as it stands, which GitHub's own (stale for a moment after a push) is not.</summary>
+    private string Reviewed => Git(_state.Flights().Single().Worktree, "rev-parse", "HEAD");
 
     private const string Moved = "beef1111beef1111";
 
@@ -119,6 +120,8 @@ public sealed class PrMarksTests : IDisposable
     {
         var flight = await Opened();
 
+        // GitHub still says the head from before the push (the fake's): the status goes on the plane's, which the reviewer reads.
+        _github.Pr!.Head.ShouldNotBe(Reviewed);
         var status = _github.Statuses.ShouldHaveSingleItem();
         (status.Sha, status.State, status.Description, status.Url).ShouldBe((Reviewed, "pending", "reviewing", flight.PullRequestUrl));
         _github.LabelCalls.ShouldBe([(71, "pilot: reviewing")]);
@@ -253,7 +256,12 @@ public sealed class PrMarksTests : IDisposable
         await _legs.RetryMarksAsync(Ct);
 
         _github.Posted.ShouldHaveSingleItem().Payload.ShouldContain("fix the parser");
-        F(flight.Code).Review!.MarksWhy.ShouldBeNull();
+        var review = F(flight.Code).Review!;
+        review.MarksWhy.ShouldBeNull();
+        // The status already stood at failure, but linked the PR page: it is set again with the comment's link.
+        review.ReviewUrl.ShouldNotBeNull();
+        _github.Statuses.Last().Url.ShouldBe(review.ReviewUrl);
+        _github.Statuses.Last().State.ShouldBe("failure");
     }
 
     [Fact]
