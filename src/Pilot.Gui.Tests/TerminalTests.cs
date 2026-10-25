@@ -9,7 +9,7 @@ namespace Pilot.Gui.Tests;
 
 /// <summary>
 /// pilot-tui's screen: the GUI's own trees arranged in terminal cells (Console.Lib's CellLayout, pixel-authored), so the
-/// same rows, buttons and command bar land in cells, and a click on a cell runs what a click on the pixels would.
+/// same rows and buttons land in cells, and a click on a cell runs what a click on the pixels would.
 /// </summary>
 public sealed class TerminalTests
 {
@@ -29,7 +29,7 @@ public sealed class TerminalTests
     }
 
     [Fact]
-    public void TheFlightsPageLandsInCellsWithItsButtonsAndCommandBar()
+    public void TheFlightsPageLandsInCellsWithItsButtonsAndNoCommandBar()
     {
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
@@ -45,7 +45,9 @@ public sealed class TerminalTests
         described.ShouldContain("TIA1611");
         described.ShouldContain("Planets on the GPU");
         described.ShouldContain("Start render");
-        CellLayout.TextInputs(arranged).ShouldContain(flights.CommandInput);
+        // No command bar: no field in the cells until a why is asked, and no hint of Ctrl+K.
+        CellLayout.TextInputs(arranged).ShouldBeEmpty();
+        described.ShouldNotContain("Ctrl+K");
 
         // A click on the button's cell runs it, as a click on its pixels does in the window.
         var button = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "Start render" } } || a.Node.Hit is HitResult.ButtonHit { Action: "flight:TIA1611:start-leg" });
@@ -86,6 +88,41 @@ public sealed class TerminalTests
         described.ShouldContain("Ctrl+S");
         chrome.About.Close();
         CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored)).ShouldNotContain("Ctrl+S");
+    }
+
+    [Fact]
+    public async Task ARemoveFromTheMenuAsksItsWhyInACellFieldAndPlanALegGoesToTheChat()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        var flights = chrome.Flights;
+        flights.CanvasAvailable = false;
+        flights.CanCommand = true;
+        var acted = new List<FlightAction>();
+        flights.OnAction = acted.Add;
+        var screen = Screen();
+        flights.Tree(screen);
+
+        flights.OpenMenu(screen.Lines[0], 0, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
+        flights.MenuItems.Single(i => i.Label == "Remove render…").OnChoose!();
+
+        // The field lands in the cells under the buttons, asking; Enter sends the verb with the why.
+        acted.ShouldBeEmpty();
+        var arranged = Layout.Engine.Arrange(flights.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
+        CellLayout.TextInputs(arranged).ShouldHaveSingleItem().ShouldBe(flights.WhyInput);
+        CellLayout.Describe(arranged).ShouldContain("Enter sends");
+        await flights.WhyInput.OnCommit.ShouldNotBeNull()("covered by parser");
+        var sent = acted.ShouldHaveSingleItem();
+        (sent.Verb, sent.Target).ShouldBe((Verbs.RemoveLeg, "flight/TIA1611/render"));
+        sent.Args.ShouldBe(["covered by parser"]);
+        CellLayout.TextInputs(Layout.Engine.Arrange(flights.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored)).ShouldBeEmpty();
+
+        // Plan a leg says its start in the chat's box, which the terminal then holds the keyboard for.
+        flights.OpenMenu(screen.Lines[0], 0, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
+        flights.MenuItems.Single(i => i.Label == "Plan a leg…").OnChoose!();
+        chrome.Page.ShouldBe(PilotPage.Chat);
+        chrome.Chat.Input.Text.ShouldBe("plan a leg on TIA1611: ");
+        acted.Count.ShouldBe(1);
     }
 
     [Fact]

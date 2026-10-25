@@ -289,7 +289,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// <summary>
     /// Hands this view's window context to the other pages and panels, so the one input router (built on this view's
     /// <see cref="PixelWidgetBase{TSurface}.Ui"/>) moves the keyboard between all their fields: the Flights page's
-    /// command bar takes text only because of it.
+    /// why field and the chat's box take text only because of it.
     /// </summary>
     public void ShareWith(params PixelWidgetBase<TSurface>[] others) => ShareUiContext(others);
 

@@ -339,7 +339,7 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Chat.OpenLink = url => OpenAway(url);
     chrome.Chat.CopyText = text => SetClipboardText(text);
 
-    // The Flights page flies a flight from here alone: its buttons are verbs, its command bar the CLI's own commands.
+    // The Flights page flies a flight from here alone: its buttons are verbs on the node, and Plan a leg is said in the chat.
     chrome.Flights.CanCommand = true;
     // The LAN as the dashboard sees it, discovering from the start: a node that cannot listen still shows why. Tracked,
     // so shutdown waits for it before it disposes the watch it started.
@@ -355,33 +355,6 @@ if (feed is not null && client is not null && clients is not null)
             Console.Error.WriteLine($"pilot-gui: the LAN cannot be watched: {ex.Message}");
         }
     }, "watch the LAN");
-    chrome.Flights.OnCommand = async (line, row) =>
-    {
-        chrome.Flights.Say($"> {line}");
-        loop.RequestRedraw();
-        // A line an action on a flight row prefilled goes to that row's node, not this window's unless it is the same.
-        var target = DashboardCommands.NodeArgsFor(row, NodeArgs(), CanSteer);
-        if (target is null)
-        {
-            chrome.Flights.Say(FleetClients.WatchOnly(row));
-            loop.RequestRedraw();
-            return;
-        }
-        // A connect waits on the other machine's person; the LAN line says so while it does.
-        var asking = DashboardCommands.ConnectTarget(line);
-        if (asking is not null)
-        {
-            chrome.Flights.Lan?.Asking(asking, DateTimeOffset.UtcNow);
-        }
-        var said = await DashboardCommands.RunAsync(line, target, GuiSay.Who, cts.Token, overrideNode: row is { Here: false });
-        if (asking is not null)
-        {
-            chrome.Flights.Lan?.Answered(asking);
-        }
-        chrome.Flights.Say(said);
-        Console.WriteLine($"pilot-gui: command `{line}`: {said.ReplaceLineEndings(" / ")}");
-        loop.RequestRedraw();
-    };
     // The new-flight wizard reads the node's repos and issues, and its Create makes the flights through the node.
     var wizard = chrome.Flights.Wizard;
     wizard.LoadRepos = async ct => (await client.GetReposAsync(ct)) is { Success: true, Response: { } repos }

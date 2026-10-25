@@ -6,76 +6,23 @@ using Pilot.Contracts;
 namespace Pilot.Ui;
 
 /// <summary>
-/// The Flights page's command bar and buttons, for either host (the GUI's window, pilot-tui's terminal): a line typed
-/// there is split as a shell would and run through the CLI's own command tree (Pilot.Commands), in-process, against the
-/// host's node and as the host (<c>gui</c>, <c>tui</c>); a button is one verb on the node. What either says goes back to
-/// the bar.
+/// What the dashboard's buttons run, for either host (the GUI's window, pilot-tui's terminal): one verb on the node, a
+/// <c>connect</c> through the CLI's own command tree (Pilot.Commands), in-process, against the host's node and as the host
+/// (<c>gui</c>, <c>tui</c>), and the opening of a file or a URL.
 /// </summary>
 internal static class DashboardCommands
 {
-    /// <summary>Runs <paramref name="line"/> (<c>leg start TIA1 parser</c>, with or without a leading <c>pilot</c>); returns what it printed.</summary>
+    /// <summary>Runs <paramref name="line"/> (<c>connect 192.168.1.20:47731</c>) through the CLI's commands; returns what it printed.</summary>
     /// <param name="node">Which node: <c>--node-socket &lt;path&gt;</c> for this machine's, <c>--node host:port</c> for one on the LAN.</param>
     /// <param name="who">The host, as the commands say who sent them.</param>
-    /// <param name="overrideNode">The node is a row's: a <c>--node</c> or <c>--node-socket</c> typed in the line gives way to it.</param>
-    public static async Task<string> RunAsync(string line, string[] node, string who, CancellationToken cancellationToken, bool overrideNode = false)
+    public static async Task<string> RunAsync(string line, string[] node, string who, CancellationToken cancellationToken)
     {
         var args = CommandLineParser.SplitCommandLine(line).ToList();
-        if (overrideNode)
-        {
-            StripNode(args);
-        }
-        if (args.Count > 0 && args[0] is "pilot" or "pilot.exe")
-        {
-            args.RemoveAt(0);
-        }
         var output = new StringWriter();
         var error = new StringWriter();
         var exit = await PilotCommand.RunAsync([.. node, .. args], Environment.CurrentDirectory, output, error, cancellationToken, who);
         var said = (output.ToString() + error.ToString()).TrimEnd();
         return said.Length > 0 ? said : exit == 0 ? "ok" : $"exit {exit}";
-    }
-
-    /// <summary>
-    /// The node options for a command from <paramref name="row"/>'s node: <c>--node &lt;endpoint&gt;</c> for another machine's,
-    /// <paramref name="here"/> for this window's own (or no row); null when the row is watch-only, whose command stays unrun.
-    /// </summary>
-    public static string[]? NodeArgsFor(NodeMark? row, string[] here, Func<NodeMark?, bool>? canSteer)
-    {
-        if (row is not { Here: false })
-        {
-            return here;
-        }
-        return canSteer?.Invoke(row) == false ? null : ["--node", row.Where];
-    }
-
-    private static void StripNode(List<string> args)
-    {
-        for (var i = args.Count - 1; i >= 0; i--)
-        {
-            if (args[i] is "--node" or "--node-socket")
-            {
-                args.RemoveAt(i);
-                if (i < args.Count)
-                {
-                    args.RemoveAt(i);
-                }
-            }
-            else if (args[i].StartsWith("--node=", StringComparison.Ordinal) || args[i].StartsWith("--node-socket=", StringComparison.Ordinal))
-            {
-                args.RemoveAt(i);
-            }
-        }
-    }
-
-    /// <summary>The node a typed <c>connect host:port</c> asks for control, or null for any other line.</summary>
-    public static string? ConnectTarget(string line)
-    {
-        var args = CommandLineParser.SplitCommandLine(line).ToList();
-        if (args.Count > 0 && args[0] is "pilot" or "pilot.exe")
-        {
-            args.RemoveAt(0);
-        }
-        return args.Count >= 2 && args[0] == "connect" && NodeClient.IsEndpoint(args[1], out var endpoint) ? endpoint : null;
     }
 
     /// <summary>Runs one action's verb on the node; returns what became of it.</summary>
@@ -92,7 +39,7 @@ internal static class DashboardCommands
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or System.Text.Json.JsonException)
         {
-            // A button that fails says so in the bar: a node that answered with no envelope (a crash) or not at all.
+            // A button that fails says so on the page: a node that answered with no envelope (a crash) or not at all.
             return $"failed: {action.Label}: {ex.Message}";
         }
     }

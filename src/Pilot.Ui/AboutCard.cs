@@ -21,7 +21,6 @@ internal sealed class AboutCard
     [
         ("Ctrl+1 to Ctrl+7", "Home, Sessions, Flights, Background tasks, Fleet, Settings and Repos"),
         ("Ctrl+S", "the say bar, to the selected session"),
-        ("Ctrl+K", "the command bar (a pilot command)"),
         ("Enter, double-click", "a session's transcript"),
         ("Right-click", "a row's menu"),
         ("Up, Down", "the selection, or a wizard's highlight"),

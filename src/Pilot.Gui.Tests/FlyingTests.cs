@@ -5,7 +5,7 @@ using Xunit;
 
 namespace Pilot.Gui.Tests;
 
-/// <summary>Flying a flight from the window alone: the actions a flight offers, the command bar, and the watchtower's panel.</summary>
+/// <summary>Flying a flight from the window alone: the actions a flight offers (a why asked under its button, Plan a leg said in the chat), and the watchtower's panel.</summary>
 public sealed class FlyingTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -46,17 +46,20 @@ public sealed class FlyingTests
         Labels(Line(Flight(FlightState.Held), Leg("parser", 1, LegState.Planned))).ShouldBe(["Remove parser", "Plan a leg"]);
         Labels(Line(Flight(FlightState.Landed), Leg("parser", 1, LegState.Done))).ShouldBeEmpty();
 
-        // What needs words goes to the command bar, half written; what does not is a verb at once.
+        // What needs words asks for them: a why under its button (Go around, Remove), the chat's box (Plan a leg); what does not is a verb at once.
         var actions = FlightAction.For(Line(Flight(), Leg("parser", 1, LegState.Flying)));
-        actions[0].Prefill.ShouldBe("leg go-around --leg TIA1611/parser ");
+        actions[0].WhyPrompt.ShouldBe("why go around parser?");
+        actions[0].ChatMessage.ShouldBeNull();
         FlightAction.For(Line(Flight(), Leg("parser", 1, LegState.Planned)))[0]
             .ShouldBe(new FlightAction("Start parser", Verbs.StartLeg, "flight/TIA1611/parser", []), new FlightActionComparer());
-        FlightAction.For(Line(Flight(), Leg("parser", 1, LegState.Planned)))[1].Prefill.ShouldBe("leg remove TIA1611 parser ");
+        FlightAction.For(Line(Flight(), Leg("parser", 1, LegState.Planned)))[1].WhyPrompt.ShouldBe("why remove parser?");
+        FlightAction.For(Line(Flight())).Single().ChatMessage.ShouldBe("plan a leg on TIA1611: ");
+        FlightAction.For(Line(Flight())).Single().WhyPrompt.ShouldBeNull();
         Labels(Line(Flight(), Leg("parser", 1, LegState.Flying), Leg("render", 2, LegState.Planned))).ShouldBe(["Go around parser", "Remove render", "Plan a leg"]);
     }
 
     [Fact]
-    public void TheSelectedFlightShowsItsLegsArtifactsButtonsAndTheCommandBar()
+    public void TheSelectedFlightShowsItsLegsArtifactsAndButtonsAndNoCommandBar()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
@@ -76,22 +79,139 @@ public sealed class FlyingTests
         buttons.ShouldContain("flight:TIA1611:plan-leg");
         buttons.ShouldContain("artifact:TIA1611:The planets");
 
-        // Plan a leg needs words: it half-writes the command bar instead of running anything.
-        chrome.Flights.Prefill("leg plan TIA1611 docs ");
-        chrome.Flights.CommandInput.Text.ShouldBe("leg plan TIA1611 docs ");
+        // No command bar: no field on the page until a why is asked, and nothing of the bar is left on the view.
+        regions.Any(r => r.Result is HitResult.TextInputHit).ShouldBeFalse();
+        foreach (var gone in new[] { "CommandInput", "CommandOutput", "OnCommand", "CommandShortcut", "Prefill" })
+        {
+            var members = typeof(FlightsView<RgbaImage>).GetMember(gone, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static);
+            members.ShouldBeEmpty(gone);
+        }
+        AboutCard.Keys.ShouldNotContain(k => k.Keys == "Ctrl+K");
+
+        // What an action said is one line, under the flights.
         chrome.Flights.Say("ok: plan-leg flight/TIA1611\nmore");
-        chrome.Flights.CommandOutput.ShouldBe(["ok: plan-leg flight/TIA1611", "more"]);
+        chrome.Flights.Said.ShouldBe("ok: plan-leg flight/TIA1611 · more");
+    }
+
+    // The Flights page with TIA1611 selected, rendered, and its painted regions.
+    private static (PilotChrome<RgbaImage> Chrome, List<FlightAction> Acted, Func<List<ClickableRegion>> Regions) Flying(
+        RgbaImageRenderer renderer, FlightLine line, bool detailPage = false)
+    {
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Flights.CanCommand = true;
+        var acted = new List<FlightAction>();
+        chrome.Flights.OnAction = acted.Add;
+        var screen = new FlightsScreen([line], "test", Live.At);
+        chrome.Show(PilotPage.Flights);
+        chrome.Flights.ListCursor.MoveTo(0);
+        if (detailPage)
+        {
+            chrome.Flights.OpenDetail(line.Code);
+        }
+        void Render() => chrome.Render(new SessionsScreen([], "test", Live.At), screen, new RectF32(0, 0, 1280, 800));
+        List<ClickableRegion> Regions()
+        {
+            Render();
+            var regions = new List<ClickableRegion>();
+            chrome.Flights.CollectPaintedRegions(regions);
+            return regions;
+        }
+        Render();
+        return (chrome, acted, Regions);
+    }
+
+    private static void Press(List<ClickableRegion> regions, string action) =>
+        regions.Single(r => r.Result is HitResult.ButtonHit hit && hit.Action == action).OnClick!.Invoke(InputModifier.None);
+
+    private static bool AsksWhy(PilotChrome<RgbaImage> chrome, List<ClickableRegion> regions) =>
+        regions.Any(r => r.Result is HitResult.TextInputHit hit && hit.Input == chrome.Flights.WhyInput);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GoAroundAsksWhyInAOneLineFieldUnderItsButtonAndEnterSendsTheVerbWithIt(bool detailPage)
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var (chrome, acted, regions) =Flying(renderer, Line(Flight(), Leg("parser", 1, LegState.Flying)), detailPage);
+
+        // Pressed, it runs nothing: it opens a field, with its question, in place.
+        AsksWhy(chrome, regions()).ShouldBeFalse();
+        Press(regions(), "flight:TIA1611:go-around");
+        acted.ShouldBeEmpty();
+        AsksWhy(chrome, regions()).ShouldBeTrue();
+        chrome.Flights.WhyInput.Placeholder.ShouldBe("why go around parser?");
+
+        // Enter with nothing typed keeps it open; with words it sends the verb with them as its argument, and the field goes.
+        await chrome.Flights.WhyInput.OnCommit.ShouldNotBeNull()("   ");
+        acted.ShouldBeEmpty();
+        AsksWhy(chrome, regions()).ShouldBeTrue();
+        await chrome.Flights.WhyInput.OnCommit.ShouldNotBeNull()(" it went in circles ");
+        var sent = acted.ShouldHaveSingleItem();
+        (sent.Verb, sent.Target).ShouldBe((Verbs.GoAround, "flight/TIA1611/parser"));
+        sent.Args.ShouldBe(["it went in circles"]);
+        AsksWhy(chrome, regions()).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RemoveAsksWhyAndEscapeCancelsTheField(bool detailPage)
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var (chrome, acted, regions) =Flying(renderer, Line(Flight(), Leg("parser", 1, LegState.Done), Leg("render", 2, LegState.Planned)), detailPage);
+
+        Press(regions(), "flight:TIA1611:remove-leg");
+        AsksWhy(chrome, regions()).ShouldBeTrue();
+        chrome.Flights.WhyInput.Placeholder.ShouldBe("why remove render?");
+
+        // Escape in the field is its cancel: nothing is sent and the field is gone.
+        chrome.Flights.WhyInput.OnCancel.ShouldNotBeNull()();
+        acted.ShouldBeEmpty();
+        AsksWhy(chrome, regions()).ShouldBeFalse();
+
+        // Asked again, and answered, the verb goes with the why to the leg's target.
+        Press(regions(), "flight:TIA1611:remove-leg");
+        await chrome.Flights.WhyInput.OnCommit.ShouldNotBeNull()("the render step is covered by parser");
+        var sent = acted.ShouldHaveSingleItem();
+        (sent.Verb, sent.Target).ShouldBe((Verbs.RemoveLeg, "flight/TIA1611/render"));
+        sent.Args.ShouldBe(["the render step is covered by parser"]);
     }
 
     [Fact]
-    public async Task TheCommandBarRunsTheClisCommandsAndSaysWhatTheyPrinted()
+    public void TheWhyFieldGoesWhenTheActionIsNoLongerOpenToTheFlight()
     {
-        var gone = Path.Combine(Path.GetTempPath(), "p2g-" + Guid.NewGuid().ToString("N")[..8] + ".sock");
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var (chrome, acted, regions) =Flying(renderer, Line(Flight(), Leg("parser", 1, LegState.Flying)));
+        Press(regions(), "flight:TIA1611:go-around");
+        AsksWhy(chrome, regions()).ShouldBeTrue();
 
-        var said = await DashboardCommands.RunAsync("pilot status", ["--node-socket", gone], "gui", Ct);
+        // The leg went done under it: its Go around is gone, and so is the field that was asking for it.
+        var done = new FlightsScreen([Line(Flight(), Leg("parser", 1, LegState.Done))], "test", Live.At);
+        chrome.Render(new SessionsScreen([], "test", Live.At), done, new RectF32(0, 0, 1280, 800));
+        var after = new List<ClickableRegion>();
+        chrome.Flights.CollectPaintedRegions(after);
+        AsksWhy(chrome, after).ShouldBeFalse();
+        acted.ShouldBeEmpty();
+    }
 
-        said.ShouldContain("no node answers");
-        (await DashboardCommands.RunAsync("flight launch", ["--node-socket", gone], "gui", Ct)).ShouldContain("pilot --help lists the commands");
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PlanALegPutsItsStartInTheChatsBoxAndOpensTheChat(bool detailPage)
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var (chrome, acted, regions) =Flying(renderer, Line(Flight(), Leg("parser", 1, LegState.Done)), detailPage);
+        // Something already typed in the box gives way to it.
+        chrome.Chat.Input.Text = "old";
+
+        Press(regions(), "flight:TIA1611:plan-leg");
+
+        chrome.Page.ShouldBe(PilotPage.Chat);
+        chrome.Chat.Input.Text.ShouldBe("plan a leg on TIA1611: ");
+        chrome.Chat.Input.CursorPos.ShouldBe("plan a leg on TIA1611: ".Length);
+        chrome.Chat.Ui.Focus.Current.ShouldBe(chrome.Chat.Input);
+        // Nothing was sent to a node: the person finishes the message and sends it as any other.
+        acted.ShouldBeEmpty();
     }
 
     [Fact]
@@ -190,9 +310,17 @@ public sealed class FlyingTests
         lan.Answered("192.168.1.20:47731");
         lan.Line(started.AddSeconds(80)).ShouldBe("LAN: 1 node");
         LanWatch.Over(() => [], started, () => "port 38821 is taken").Line(started).ShouldBe("LAN: discovery unavailable (port 38821 is taken)");
+    }
 
-        DashboardCommands.ConnectTarget("connect 192.168.1.20:47731 --as se1-gui").ShouldBe("192.168.1.20:47731");
-        DashboardCommands.ConnectTarget("pilot status").ShouldBeNull();
+    [Fact]
+    public async Task ConnectRunsTheClisCommandAndSaysWhatItPrinted()
+    {
+        var gone = Path.Combine(Path.GetTempPath(), "p2g-" + Guid.NewGuid().ToString("N")[..8] + ".sock");
+
+        var said = await DashboardCommands.RunAsync("status", ["--node-socket", gone], "gui", Ct);
+
+        said.ShouldContain("no node answers");
+        (await DashboardCommands.RunAsync("flight launch", ["--node-socket", gone], "gui", Ct)).ShouldContain("pilot --help lists the commands");
     }
 
     /// <summary>

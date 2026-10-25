@@ -227,7 +227,7 @@ an answer that is not coming.
 | `merge flight/<code> <head> [squash\|rebase\|merge]` | With every leg done: `gh pr merge --match-head-commit`, by the node's `merge-method` (rebase unless set otherwise) when none is named; refused when the PR moved past the head you reviewed, or the plane holds commits past it; then the flight lands. |
 
 **A planned leg can be taken out** (`remove-leg`, `pilot leg remove <code> <leg> [why]`, **Remove** on the Flights page
-for the next planned leg, which half-writes the command bar for its why): a leg planned by mistake, or made redundant by
+for the next planned leg, which asks its why in a one-line field under its button): a leg planned by mistake, or made redundant by
 an earlier one, no longer waits in the order for the node to fly it. Only a planned leg goes; a flying, done or failed
 one is refused, naming its state. The legs after it close up the order (so their numbering and the next `plan-leg`
 stay contiguous), a Handled card says the leg went, who took it out and why, and any card offering its start closes.
@@ -531,9 +531,12 @@ The **resources** are the snapshot's pieces as JSON, each row as the node's wire
 context against its window, last response, state, spend, usage in the header; a bar to say something to the selected
 one) and **Flights**. On Flights the selected flight shows its legs (steps, go-arounds), its review, its PR and
 artifacts (a click opens them), and what can be done with it now: **Start <leg>**, **Open PR**, **Review again** run
-at once; **Go around** and **Plan a leg** half-write the command bar for the words they need. The command bar (Ctrl+K)
-takes the CLI's own commands, run in-process through the same command tree (`Pilot.Commands`) the `pilot` binary and
-its MCP server (`pilot mcp`) host: `flight create 1611 --repo C:\src\tianwen`, `leg plan …`, `cards`.
+at once. **Go around** and **Remove** need words, so each opens a one-line field under its button (also in a flight's page and
+from the row menu) asking why: Enter sends the verb (`go-around`, `remove-leg`) with that why to the flight's own node, Escape
+closes the field. **Plan a leg** needs a goal and a Done-when, which the planner writes: it opens the Chat page with
+`plan a leg on <code>: ` in its box for the person to finish, and the watchtower's plan card comes back to confirm. There is no
+command bar: the page says what the last action answered in one line under the flights, and anything else is said in the chat
+(or run with the `pilot` binary and its MCP server, `pilot mcp`).
 
 **A flight's page** opens in place of the table: Enter on the selected flight, a double click, **Open flight** in its
 panel or right-click menu; Escape or **← Back** goes back to where it was opened from. The wheel scrolls it, and so do Up and Down (a
@@ -574,7 +577,7 @@ The right panel is the watchtower's: its state and context, its Remote Control l
 (Merge is a card's) and what was handled, and at its foot a **Chat with the watchtower** shortcut to the Chat page (the
 panel once had a box to tell it things; that box is the chat's now).
 
-**The Chat page** (#207, Ctrl+8) is the conversation with the node's watchtower, in the window in place of a command bar.
+**The Chat page** (#207, Ctrl+8) is the conversation with the node's watchtower, in the window, where a command bar once was.
 It is a page of the rail, not a dock under the right panel: the panel is 300 units wide, a conversation with tables of
 output and Markdown replies wants the page's width, and a page keeps its own scroll and the keyboard the way Sessions' say
 bar does. It reads the chat feed (`NodeClient.GetChatAsync`, above) while it is the page shown, pinned to its end until
@@ -631,15 +634,15 @@ and not since refused: the fleet tick (every 5 s) re-reads the grants, and a nod
 (a revoked token) reads as watch-only until a different token is saved for it. A **watch-only** row (a node with no
 usable grant) keeps its transcript and log readable, but its say bar, Stop, Archive, Cancel and answers are disabled: the
 say bar and the row menu say *Connect to LE1 to steer*, and a **Connect** pill stands there (and in place of Cancel on
-Background tasks), running the same ask as the Fleet page's. There is no second window per node. The command bar and the new-flight wizard stay this window's
+Background tasks), running the same ask as the Fleet page's. There is no second window per node. The new-flight wizard stays this window's
 node's. pilot-tui shows the same merged pages.
 
 ## The TUI
 
 `pilot-tui` is the same dashboard in a terminal, over SSH as well as locally: the GUI's own pages and panels
 (`Pilot.Ui`), their DIR.Lib trees arranged in terminal cells by Console.Lib (`CellMeasureContext.PixelAuthored`)
-instead of painted on pixels, so a row, a button or the command bar is the same node on both. **1** Home, **2** Sessions,
-**3** Flights, **4** Background tasks, **5** Fleet, **6** Settings, **7** Repos, **8** Chat, **Ctrl+K** the command bar, **Ctrl+S** the say bar, **Ctrl+T** the chat with the watchtower (the box focused), Up/Down to select, a
+instead of painted on pixels, so a row, a button or a why field is the same node on both. **1** Home, **2** Sessions,
+**3** Flights, **4** Background tasks, **5** Fleet, **6** Settings, **7** Repos, **8** Chat, **Ctrl+S** the say bar, **Ctrl+T** the chat with the watchtower (the box focused), Up/Down to select, a
 click on a cell runs what a click on the pixels would, **q** quits. The watchtower and cards panel shows beside the page
 from 120 columns. `--node host:port` flies a node on the LAN, as everywhere.
 
@@ -792,7 +795,7 @@ beacon too; the address route works either way.
 pilot nodes                                    # the nodes announcing themselves on the LAN, by host:port
 pilot connect 192.168.1.20:47731 [--as se2-gui]  # rings an Allow/Deny card on that node; the token is kept here
 pilot --node 192.168.1.20:47731 status         # any command, against that node (or PILOT_NODE=...)
-pilot-gui --node 192.168.1.20:47731            # the whole window, its buttons and command bar, on that node
+pilot-gui --node 192.168.1.20:47731            # the whole window, its buttons and chat, on that node
 pilot grants / pilot grants revoke <id>        # on the node: who may command it, and taking that back
 ```
 

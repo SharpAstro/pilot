@@ -90,6 +90,12 @@ internal sealed class PilotChrome<TSurface>
         sessions.ShareWith(Flights, Repos, Jobs, Fleet, Settings, Cards, Chat);
         // The panel's watchtower foot is the way into the chat.
         Cards.OnChat = () => Show(PilotPage.Chat);
+        // Plan a leg says its start in the chat, whose plan card comes back to confirm: the box has it, the keyboard in it.
+        Flights.OnChat = text =>
+        {
+            Show(PilotPage.Chat);
+            Chat.Prefill(text);
+        };
         sessions.About = About;
         Flights.About = About;
         Repos.About = About;

@@ -122,17 +122,7 @@ internal sealed partial class FlightsView<TSurface>
         {
             foreach (var action in FlightAction.For(line))
             {
-                head.Add(Pill(action.Label, $"flight:{line.Code}:{action.Verb}", () =>
-                {
-                    if (action.Prefill is { } prefill)
-                    {
-                        Prefill(prefill);
-                    }
-                    else
-                    {
-                        OnAction?.Invoke(action);
-                    }
-                }));
+                head.Add(Pill(action.Label, $"flight:{line.Code}:{action.Verb}", () => Choose(action, line.Code)));
             }
         }
 
@@ -176,6 +166,8 @@ internal sealed partial class FlightsView<TSurface>
         [
             Layout.Builder.HStack([.. head]).WithGap(10f).RowH(32f),
         ];
+        // A why asked for sits under the buttons it was asked by.
+        page.AddRange(WhyRow(line));
         if (ReadyToMerge(line) is { } ready)
         {
             page.Add(ready);

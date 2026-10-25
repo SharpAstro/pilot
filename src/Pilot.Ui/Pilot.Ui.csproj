@@ -15,7 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Pilot.Contracts\Pilot.Contracts.csproj" />
-    <!-- The command bar runs the CLI's own command tree in-process, in either host. -->
+    <!-- A Connect runs the CLI's own command tree in-process, in either host. -->
     <ProjectReference Include="..\Pilot.Commands\Pilot.Commands.csproj" />
     <PackageReference Include="System.CommandLine" />
   </ItemGroup>

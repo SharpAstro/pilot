@@ -148,13 +148,20 @@ internal sealed record FlightsScreen(IReadOnlyList<FlightLine> Lines, string Sou
 }
 
 /// <summary>
-/// What can be done with a flight from its details, as the node's verbs: run at once when it needs nothing more, or put
-/// in the command bar to be finished in words (a go-around's why, a leg's goal).
+/// What can be done with a flight from its details, as the node's verbs: run at once when it needs nothing more, after a
+/// one-line why under its button (<see cref="WhyPrompt"/>), or said in the chat for the watchtower to take up
+/// (<see cref="ChatMessage"/>: a leg's goal and Done-when are for the planner to write, not a form here).
 /// </summary>
-internal sealed record FlightAction(string Label, string Verb, string Target, string[] Args, string? Prefill = null)
+internal sealed record FlightAction(string Label, string Verb, string Target, string[] Args)
 {
     /// <summary>The node it is for: its row's; null is this window's.</summary>
     public NodeMark? Node { get; init; }
+
+    /// <summary>What the why field under its button asks (<c>why go around parser?</c>); null when the verb needs no words.</summary>
+    public string? WhyPrompt { get; init; }
+
+    /// <summary>The start of the message it puts in the chat's box, for the person to finish; null when it is not said in the chat.</summary>
+    public string? ChatMessage { get; init; }
 
     /// <summary>The actions open to <paramref name="line"/>'s flight now, in the order a controller reaches for them.</summary>
     public static IReadOnlyList<FlightAction> For(FlightLine line)
@@ -177,7 +184,7 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
         }
         if ((flying ?? failed) is { } stuck)
         {
-            actions.Add(new FlightAction($"Go around {stuck.Name}", Verbs.GoAround, Verbs.LegTarget(code, stuck.Name), [], $"leg go-around --leg {code}/{stuck.Name} "));
+            actions.Add(new FlightAction($"Go around {stuck.Name}", Verbs.GoAround, Verbs.LegTarget(code, stuck.Name), []) { WhyPrompt = $"why go around {stuck.Name}?" });
         }
         var allDone = legs.Count > 0 && legs.All(l => l.State == LegState.Done);
         if (allDone && (flight.PullRequest is null || flight.Review is null))
@@ -188,13 +195,13 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
         {
             actions.Add(new FlightAction("Review again", Verbs.StartReview, target, []));
         }
-        // The next planned leg only: a button is named by its verb, so one a flight, and the others go by the command bar.
-        // It needs words (why), so it half-writes the bar rather than taking a leg out on one click.
+        // The next planned leg only: a button is named by its verb, so one a flight. It needs words (why), so it asks for them
+        // under its button rather than taking a leg out on one click.
         if (next is not null)
         {
-            actions.Add(new FlightAction($"Remove {next.Name}", Verbs.RemoveLeg, Verbs.LegTarget(code, next.Name), [], $"leg remove {code} {next.Name} "));
+            actions.Add(new FlightAction($"Remove {next.Name}", Verbs.RemoveLeg, Verbs.LegTarget(code, next.Name), []) { WhyPrompt = $"why remove {next.Name}?" });
         }
-        actions.Add(new FlightAction("Plan a leg", Verbs.PlanLeg, target, [], $"leg plan {code} <name> --goal \"...\" --done-when \"...\" --item \"...\""));
+        actions.Add(new FlightAction("Plan a leg", Verbs.PlanLeg, target, []) { ChatMessage = $"plan a leg on {code}: " });
         return [.. actions.Select(a => a with { Node = line.Node })];
     }
 }
@@ -202,8 +209,9 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
 /// <summary>
 /// The Flights page: every flight as a row, its code and title, repo and issue, state, branch and sessions; the selected
 /// flight's legs, review, artifacts and actions beneath; its page (Enter, a double click) with every leg's goal,
-/// Done-when, checklist and artifacts; and, live, a command bar that takes the CLI's own commands, so a
-/// flight is flown from this window alone. Generic over the surface, as the sessions view is.
+/// Done-when, checklist and artifacts; and, live, buttons that fly a flight from this window alone: a verb on the node, a
+/// one-line why under its button where the verb needs words, or a message put in the chat's box (Plan a leg). Generic over
+/// the surface, as the sessions view is.
 /// </summary>
 internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
 {
@@ -257,16 +265,13 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private RGBAColor32 MenuBg => P.MenuBg;
 
     private const float DetailHeight = 168f;
+    // The panel while a why is asked under its buttons: a row (WhyRowHeight) taller.
+    private const float DetailHeightAsking = DetailHeight + WhyRowHeight;
     private const float DetailColumn = 380f;
     // Branch and Sessions are the columns a narrow window drops, each as it can no longer have its whole width (Optional);
     // the engine decides, from the room it has.
 
-    private const float OutputLineHeight = 16f;
-    private const int OutputLines = 4;
-
-
-    /// <summary>Ctrl+K puts the keyboard in the command bar.</summary>
-    public static readonly KeyChord CommandShortcut = new(InputKey.K, InputModifier.Ctrl);
+    private const float WhyRowHeight = 32f;
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
 
@@ -275,28 +280,32 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private int _count;
     private FlightsScreen _screen = new([], "", default);
 
-    /// <summary>Whether there is a node to command: a snapshot file has none, and shows no actions or command bar.</summary>
+    /// <summary>Whether there is a node to command: a snapshot file has none, and shows no actions.</summary>
     public bool CanCommand { get; set; }
 
-    /// <summary>The command bar's text: the CLI's commands without <c>pilot</c> (<c>leg start TIA1 parser</c>).</summary>
-    public TextInputState CommandInput { get; } = new();
-
     /// <summary>
-    /// What the last commands said, newest last. Swapped whole, never changed in place: a command's answer is said from the
-    /// pool while the render thread reads the last lines, and the render thread never waits on anyone.
+    /// What the last action said, one line. Swapped whole, never changed in place: an action's answer is said from the pool
+    /// while the render thread reads it, and the render thread never waits on anyone.
     /// </summary>
-    public IReadOnlyList<string> CommandOutput => Volatile.Read(ref _commandOutput);
+    public string? Said => Volatile.Read(ref _said);
 
-    private System.Collections.Immutable.ImmutableList<string> _commandOutput = [];
+    private string? _said;
 
-    /// <summary>Runs a command typed in the bar, with the node of the row whose action prefilled it (null: this window's).</summary>
-    public Func<string, NodeMark?, Task>? OnCommand { get; set; }
-
-    // The node of the flight row a prefilled action came from, kept until the line is committed or the bar is prefilled again.
-    private NodeMark? _prefillNode;
-
-    /// <summary>Runs an action's verb on the node.</summary>
+    /// <summary>Runs an action's verb on the node (a why, where it asked for one, is its only argument).</summary>
     public Action<FlightAction>? OnAction { get; set; }
+
+    /// <summary>Puts text in the chat's box and opens the chat: Plan a leg's message, for the person to finish and send.</summary>
+    public Action<string>? OnChat { get; set; }
+
+    /// <summary>The one-line field a Go around or a Remove asks its why in, under its button.</summary>
+    public TextInputState WhyInput { get; } = new();
+
+    // The action whose why is being asked, and its flight: the field shows under the button of that action alone, and is gone
+    // when the action is no longer open to the flight.
+    private (string Code, FlightAction Action)? _asking;
+
+    /// <summary>The verb of the action whose why field is open, or null.</summary>
+    public string? AskingVerb => _asking?.Action.Verb;
 
     /// <summary>Opens a session's transcript, on the node it runs on: the flight page's Its transcript.</summary>
     public Action<SessionRow, NodeMark?>? OnSession { get; set; }
@@ -353,19 +362,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             foreach (var action in FlightAction.For(line))
             {
-                items.Add(new DropdownItem<string>(action.Prefill is null ? action.Label : action.Label + "…", action.Verb)
+                items.Add(new DropdownItem<string>(action.WhyPrompt is null && action.ChatMessage is null ? action.Label : action.Label + "…", action.Verb)
                 {
-                    OnChoose = () =>
-                    {
-                        if (action.Prefill is { } prefill)
-                        {
-                            Prefill(prefill, action.Node);
-                        }
-                        else
-                        {
-                            OnAction?.Invoke(action);
-                        }
-                    },
+                    OnChoose = () => Choose(action, flight.Code),
                 });
             }
         }
@@ -414,7 +413,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     /// <summary>
     /// The page as a tree, for <paramref name="width"/> design units: what <see cref="Render"/> paints on pixels, and
-    /// what pilot-tui arranges in terminal cells (the selection, the command bar and their callbacks the same).
+    /// what pilot-tui arranges in terminal cells (the selection, the why field and their callbacks the same).
     /// </summary>
     internal Layout.Node Tree(FlightsScreen screen)
     {
@@ -446,43 +445,83 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         }
         _count = screen.Lines.Count;
         _screen = screen;
-        CommandInput.OnCommit = CommitAsync;
-        CommandInput.Placeholder = "a pilot command: flight create 1611 --repo <checkout> · leg start TIA1611 gpu · cards";
+        WhyInput.OnCommit = text => SendWhy(text);
+        WhyInput.OnCancel = CloseWhy;
         return Build(screen, whole);
     }
 
-    private async Task CommitAsync(string text)
+    /// <summary>
+    /// What a click on <paramref name="action"/>'s button does: asks its why under the button, puts its message in the chat,
+    /// or runs its verb at once, as the action says it needs.
+    /// </summary>
+    internal void Choose(FlightAction action, string code)
     {
-        if (string.IsNullOrWhiteSpace(text) || OnCommand is not { } run)
+        if (action.ChatMessage is { } message)
         {
-            return;
+            CloseWhy();
+            OnChat?.Invoke(message);
         }
-        CommandInput.Text = "";
-        CommandInput.CursorPos = 0;
-        var node = _prefillNode;
-        _prefillNode = null;
-        await run(text.Trim(), node);
-    }
-
-    /// <summary>Puts <paramref name="text"/> in the command bar for the controller to finish, as an action that needs words does.</summary>
-    /// <param name="node">The node the line is for when an action on a flight row prefilled it; null is this window's.</param>
-    public void Prefill(string text, NodeMark? node = null)
-    {
-        _prefillNode = node;
-        CommandInput.Text = text;
-        CommandInput.CursorPos = text.Length;
-    }
-
-    /// <summary>Keeps the lines a command printed, for the bar to show its last few.</summary>
-    public void Say(string text)
-    {
-        var lines = text.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        System.Collections.Immutable.ImmutableInterlocked.Update(ref _commandOutput, output =>
+        else if (action.WhyPrompt is { } prompt)
         {
-            output = output.AddRange(lines);
-            return output.Count > 200 ? output.RemoveRange(0, output.Count - 200) : output;
-        });
+            AskWhy(action, code, prompt);
+        }
+        else
+        {
+            CloseWhy();
+            OnAction?.Invoke(action);
+        }
     }
+
+    private void AskWhy(FlightAction action, string code, string prompt)
+    {
+        _asking = (code, action);
+        WhyInput.Text = "";
+        WhyInput.CursorPos = 0;
+        WhyInput.Placeholder = prompt;
+        Ui.Focus.Focus(WhyInput);
+    }
+
+    /// <summary>Shuts the why field without sending, as Escape does.</summary>
+    public void CloseWhy()
+    {
+        _asking = null;
+        Ui.Focus.BlurIfFocused(WhyInput);
+    }
+
+    // Enter in the why field: the action's verb goes with the why as its one argument; nothing typed keeps the field open.
+    private Task SendWhy(string text)
+    {
+        var why = text.Trim();
+        if (why.Length == 0 || _asking is not { } asking)
+        {
+            return Task.CompletedTask;
+        }
+        CloseWhy();
+        OnAction?.Invoke(asking.Action with { Args = [why] });
+        return Task.CompletedTask;
+    }
+
+    // The why field's row under the buttons of <line>, or none: it is under the button of the action it was opened for, and
+    // only while the flight still offers that action.
+    private IEnumerable<Layout.Node> WhyRow(FlightLine line)
+    {
+        if (_asking is not { } asking || asking.Code != line.Code
+            || !FlightAction.For(line).Any(a => a.Verb == asking.Action.Verb && a.Target == asking.Action.Target))
+        {
+            yield break;
+        }
+        var action = asking.Action;
+        yield return Layout.Builder.HStack(
+                Layout.Builder.Text(action.WhyPrompt ?? "why?", 12f, Dim).WAuto(),
+                Layout.Builder.TextInput(WhyInput, 14f, NightOrNull is { } n ? NightInput(n) : null, focusOnOpen: true).WStar(),
+                Layout.Builder.Text("Enter sends · Esc cancels", 11f, Faint).WAuto())
+            .WithGap(10f)
+            .RowH(WhyRowHeight);
+    }
+
+    /// <summary>Keeps what the last action said, for the page to show under the flights.</summary>
+    public void Say(string text) =>
+        Volatile.Write(ref _said, string.Join(" · ", text.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)));
 
     public override bool HandleInput(InputEvent evt)
     {
@@ -500,6 +539,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                 default:
                     return false;
             }
+        }
+        // An open why field takes Escape ahead of the page's own (the field has the keyboard while it is focused; this is for after).
+        if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && _asking is not null)
+        {
+            CloseWhy();
+            return true;
         }
         // Enter opens the selected flight's page; Escape goes back to the table.
         if (evt is InputEvent.KeyDown { Key: InputKey.Enter } && !IsDetailOpen && Selected >= 0 && Selected < _screen.Lines.Count)
@@ -523,16 +568,17 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     {
         var selected = Selected >= 0 && Selected < screen.Lines.Count ? screen.Lines[Selected] : null;
         var open = OpenLine(whole ?? screen);
-        // The wizard, or an open flight's page, takes the flights' place; the header and the command bar stay.
+        // The wizard, or an open flight's page, takes the flights' place; the header stays.
         var body = Wizard.IsOpen ? Wizard.Tree() : open is not null ? DetailPage(FlightDetail.From(open, screen.AsOf)) : Main(screen);
         var parts = new List<Layout.Node> { Header(screen), body.HStar() };
         if (selected is not null && !Wizard.IsOpen && open is null)
         {
             parts.Add(Details(selected));
         }
-        if (CanCommand)
+        if (CanCommand && Said is { Length: > 0 } said)
         {
-            parts.Add(CommandBar());
+            // Wrapped, never cut: a refusal's reason is what the person came to read.
+            parts.Add(Prose(said, 11f, Dim).Pad(Gutter, 4f).Bg(HeaderBg).WStar().HAuto());
         }
         var page = Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch();
         page = About?.Over(page, NightOrNull) ?? page;
@@ -616,31 +662,24 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             foreach (var action in FlightAction.For(line))
             {
-                buttons.Add(Pill(action.Label, $"flight:{line.Code}:{action.Verb}", () =>
-                {
-                    if (action.Prefill is { } prefill)
-                    {
-                        Prefill(prefill, action.Node);
-                    }
-                    else
-                    {
-                        OnAction?.Invoke(action);
-                    }
-                }));
+                buttons.Add(Pill(action.Label, $"flight:{line.Code}:{action.Verb}", () => Choose(action, line.Code)));
             }
         }
 
-        return Layout.Builder.VStack(
+        // A why asked for sits under the buttons, the panel a row taller while it is there.
+        var why = WhyRow(line).ToList();
+        return Layout.Builder.VStack([
                 Layout.Builder.HStack(
                         Layout.Builder.VStack([.. legs]).WFixed(DetailColumn),
                         Layout.Builder.VStack([.. artifacts]).WFixed(DetailColumn),
                         Layout.Builder.Spacer().WStar())
                     .WithGap(24f)
                     .HStar(),
-                Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f).RowH(28f))
+                Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f).RowH(28f),
+                .. why])
             .Pad(Gutter, 8f)
             .Bg(PanelBg)
-            .RowH(DetailHeight);
+            .RowH(why.Count > 0 ? DetailHeightAsking : DetailHeight);
     }
 
     // The marks' colour: amber for changes, a disagreement or a write still to do, green for a pass, dim otherwise.
@@ -663,26 +702,6 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             .Bg(Button)
             .BgHover(ButtonHover)
             .Follows(new HitResult.ButtonHit(action), _ => onClick());
-
-    private Layout.Node CommandBar()
-    {
-        var output = CommandOutput.TakeLast(OutputLines).Select(l => Layout.Builder.Text(l, 11f, Dim).RowH(OutputLineHeight)).ToList();
-        var lines = new List<Layout.Node>
-        {
-            Layout.Builder.HStack(
-                    Layout.Builder.Text("pilot", 14f, Body).WAuto(),
-                    Layout.Builder.TextInput(CommandInput, 15f, NightOrNull is { } n ? NightInput(n) : null).WithShortcut(CommandShortcut).WStar())
-                .WithGap(12f)
-                .RowH(28f),
-        };
-        lines.AddRange(output);
-        lines.Add(Layout.Builder.Text("Ctrl+K to type here · Enter runs · --help lists the commands", 11f, Faint).RowH(OutputLineHeight));
-        return Layout.Builder.VStack([.. lines])
-            .Pad(Gutter, 4f)
-            .Bg(HeaderBg)
-            .WStar()
-            .HAuto();
-    }
 
     /// <summary>The dashboard's eye on the LAN; its line and the nodes it heard show under the header when set.</summary>
     public LanWatch? Lan { get; set; }
