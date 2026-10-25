@@ -275,8 +275,8 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
 
 ### Any PR's review
 
-A PR pilot did not make, in a repo it may not fly, is reviewed from its link (#113, after Sam's campaigner's review
-team): `pilot review pr <owner>/<repo>#<n>` or `pilot review pr <its URL>` (the node's `review-pr pr/<owner>/<repo>#<n>`).
+A PR pilot did not make, in a repo it may not fly, is reviewed from its link (#113):
+`pilot review pr <owner>/<repo>#<n>` or `pilot review pr <its URL>` (the node's `review-pr pr/<owner>/<repo>#<n>`).
 
 - **The clone.** The node reads the PR through gh (`gh pr view <n> -R <owner>/<repo>`: its head, base, title and author;
   one not open is refused) and uses the repo's clone under its repo roots, found by its origin, as the new-flight wizard
@@ -308,7 +308,7 @@ team): `pilot review pr <owner>/<repo>#<n>` or `pilot review pr <its URL>` (the 
 - **Post.** The card's **Post** (`post-review pr/<owner>/<repo>#<n>`) puts the review on the PR as one review, under
   gh's login: the draft is written again with the event that login takes (`APPROVE` for approve, `REQUEST_CHANGES` for
   changes, `COMMENT` for comment, and `COMMENT` whatever the verdict on the login's own PR, as GitHub refuses the others
-  there), then posted in exactly one call, the shape Sam's `shared/review-post.md` writes out: `gh api -X POST
+  there), then posted in exactly one call: `gh api -X POST
   repos/<owner>/<repo>/pulls/<n>/reviews --input <the draft's full path> -q '.id, .state, .html_url'`, run by the node
   with no shell. Never twice: the post is marked on the review before the call, the review GitHub made (its id, state
   and page) is kept on it and the card's outcome says it (*Post: review <id>, <state>, under <login>*, the card then
@@ -797,30 +797,28 @@ replaces an earlier install's rule), the trust prompt (opened in a window titled
 prints both. The route and both verbs are this machine's only: a grant from the LAN never reaches them, and nor does
 the watchtower.
 
-One more optional check is **Runaway-agent guard hooks** (`setup node guard-hooks`): it says whether three of
-runaway-agent's generic hooks are in `~/.claude/settings.json`: `big_read_guard.sh` (refuses a whole-file `Read` and a bare `cat`),
+One more optional check is **Guard hooks** (`setup node guard-hooks`): it says whether three generic guard hooks
+are in `~/.claude/settings.json`: `big_read_guard.sh` (refuses a whole-file `Read` and a bare `cat`),
 `fat_result_notice.sh` (says a tool result was unusually large) and `pgrep_self_match_guard.sh` (refuses an inline
 `pgrep -f`/`pkill -f`). It counts a guard wired by hand in any spelling (`bash path`, quoted, `$HOME/...`). Its button
-takes the scripts from a runaway-agent clone, the first `source/repos/*/runaway-agent` under the user's profile that
-has all three, copies them into `hooks/` beside the settings file as runaway-agent's own `install.sh` does, and adds a
+takes the scripts from a `runaway-agent` clone (the guards' source), the first `source/repos/*/runaway-agent` under the
+user's profile that has all three, copies them into `hooks/` beside the settings file, and adds a
 handler each under the event and matcher of its `settings-fragment.json` (PreToolUse for the first, PreToolUse on
 `Bash` for the third, PostToolUse for the second), leaving the rest of the file alone. A guard already wired is not
 added again, a script already there with the same content is not copied again, and a second run changes nothing. The
 copies would otherwise go stale, so while a clone is found, a script in `hooks/` that differs from the clone's fails the
 check too, its line naming the scripts older than the clone, and the button copies them afresh. With no clone the line
-says to get it from `github.com/DrawboardLtd/runaway-agent` and clone it beside the others, and there is no button. Its
-token and call budgets and hand-back gates are not offered: those are for Sam's campaigner setup, and pilot budgets
-legs at the session level.
+says to clone `github.com/DrawboardLtd/runaway-agent` beside the others, and there is no button. Only these three
+guards are offered; pilot budgets legs at the session level.
 
-A third optional check, **MSBuild node reuse off** (`setup node build-rsp`), says whether runaway-agent's
-`machine/Directory.Build.rsp` is in the user's home folder, as its `install.sh` installs it. MSBuild reads one found by
+A third optional check, **MSBuild node reuse off** (`setup node build-rsp`), says whether the clone's
+`machine/Directory.Build.rsp` is in the user's home folder. MSBuild reads one found by
 walking up from the project, so every build under home, a flight's included, runs with `-nodeReuse:false` and its worker
 nodes exit with the build; idle nodes had held worktree folders (a removal refused on 15 Oct) and about 40 GB. The
 checklist shows it installed, missing, or differing from the clone's copy. Its button copies the file from the same
-runaway-agent clone the guard hooks use; a file that differs is first copied to `Directory.Build.rsp.bak-<UTC
-timestamp>` beside it, as `install.sh` does, one that is the same is left alone, and so a second run changes nothing and
-makes no backup. With no clone the line says to get runaway-agent from `github.com/DrawboardLtd/runaway-agent`, with no
-button (a file that is there then passes, as there is nothing to compare it with); a clone too old to have the file says
+clone the guard hooks use; a file that differs is first copied to `Directory.Build.rsp.bak-<UTC timestamp>` beside it,
+one that is the same is left alone, and so a second run changes nothing and makes no backup. With no clone the line
+says to clone it, with no button (a file that is there then passes, as there is nothing to compare it with); a clone too old to have the file says
 so, also with no button.
 
 Below the settings, a **Grants** section (#118) lists, from the same rows and pills, the grants this node has given
@@ -832,7 +830,7 @@ rows in the merged lists turn watch-only with Connect offered, from the next fle
 
 ## Cards
 
-An event that needs the controller is one card, with its choices on it (after Sam's campaigner): **Rings** (a gate
+An event that needs the controller is one card, with its choices on it: **Rings** (a gate
 before an irreversible step, a stop: waits until someone acts), **For you** (a card, no push) and **Handled** (what the
 node or the watchtower did itself: one line, born closed). A session going quiet is not a card by itself; it changes
 how its row looks. A flying leg's worker stalling is: its flight is derailing (see Liveness). A card leaves when its
