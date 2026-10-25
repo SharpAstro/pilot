@@ -332,8 +332,9 @@ public sealed class MergeArmTests
         // Each look keeps the switch on the card beside the count.
         node.GitHub.Summary = Pending(2);
         await Look(node);
-        Card(node, ready).Detail.ShouldNotBeNull().ShouldContain("2 of 3 done");
-        Card(node, ready).Detail.ShouldContain("--enable-auto-merge");
+        var polled = Card(node, ready).Detail.ShouldNotBeNull();
+        polled.ShouldContain("2 of 3 done");
+        polled.ShouldContain("--enable-auto-merge");
 
         // And the node merges at green, as before; it disarms nothing, there is nothing of GitHub's to disarm.
         node.GitHub.Summary = Passing();
