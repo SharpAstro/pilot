@@ -98,6 +98,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         private long _offset;
         private readonly List<byte> _partial = [];
         private string? _askedIn;
+        private bool _nodeSpoke;
 
         public List<TranscriptEntry> Entries { get; } = [];
 
@@ -121,6 +122,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                     Queued.Clear();
                     Pending = null;
                     _askedIn = null;
+                    _nodeSpoke = false;
                 }
                 file.Seek(_offset, SeekOrigin.Begin);
                 var buffer = new byte[64 * 1024];
@@ -172,9 +174,11 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
 
         /// <summary>
         /// Keeps <see cref="Pending"/>: a reply that holds an <see cref="Asked"/> block is pending until the person says something
-        /// (their answer: a choice's label, or their own words) or the session's next message begins (it moved on without the
-        /// answer). What the node says in its own name (a card, a nudge) is not an answer. The session ended its turn on the
-        /// question, so the answer resumes it: nothing blocks, as an <c>AskUserQuestion</c> call would.
+        /// (their answer: a choice's label, or their own words) or the session's next message begins in the same turn (it moved
+        /// on without the answer). What the node says in its own name (a card, a nudge) is not an answer, and it resumes the
+        /// session, whose reply to it is not a move on either: after one, the question stays pending until the person says
+        /// something or a later <c>&lt;ask&gt;</c> replaces it. The session ended its turn on the question, so the answer
+        /// resumes it: nothing blocks, as an <c>AskUserQuestion</c> call would.
         /// </summary>
         private void Ask(JsonElement line)
         {
@@ -196,15 +200,23 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                     JsonValueKind.Array => string.Join("\n", content.EnumerateArray().Where(p => Str(p, "type") == "text").Select(p => Str(p, "text")).OfType<string>()),
                     _ => null,
                 };
-                if (said is { Length: > 0 } && !said.TrimStart().StartsWith(NodeVoice.Prefix, StringComparison.Ordinal))
+                if (said is { Length: > 0 })
                 {
-                    Pending = null;
+                    if (said.TrimStart().StartsWith(NodeVoice.Prefix, StringComparison.Ordinal))
+                    {
+                        // The node's card wakes the session: what it does next is about the card, not an answer to or a drop of the question.
+                        _nodeSpoke = true;
+                    }
+                    else
+                    {
+                        Pending = null;
+                    }
                 }
                 return;
             }
 
             var id = Str(message, "id") ?? Str(line, "uuid");
-            if (Pending is not null && id is not null && id != _askedIn)
+            if (Pending is not null && !_nodeSpoke && id is not null && id != _askedIn)
             {
                 Pending = null;
             }
@@ -218,6 +230,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                 {
                     Pending = new PendingAsk(ask.Question.Length > 300 ? ask.Question[..300] : ask.Question, ask.Choices);
                     _askedIn = id;
+                    _nodeSpoke = false;
                 }
             }
         }
