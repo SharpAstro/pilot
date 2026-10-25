@@ -245,7 +245,7 @@ public static class PilotCommand
         var remove = Action(new Command("remove", "Take a planned leg out of the flight; the legs after it keep their order") { Arguments = { code, legName, removeWhy } },
             (p, client, ct) => Send(client, Verbs.RemoveLeg, Verbs.LegTarget(p.GetValue(code)!, p.GetValue(legName)!), p.GetValue(removeWhy) ?? [], who, ct));
 
-        var outcome = Arg("outcome", "done, failed, or accepted (the controller's: a failed leg's read taken as it is, so the flight goes on)");
+        var outcome = Arg("outcome", "done, failed, or accepted (the controller's: a failed leg marked done anyway, its failure kept in its report, so the flight goes on)");
         outcome.AcceptOnlyFromAmong("done", "failed", "accepted");
         var report = Words("report", "A line on what was done, or why not", required: false);
         var finish = Action(new Command("finish", "Finish the leg: done reruns its check; failed rings for a go-around") { Arguments = { outcome, report }, Options = { leg } },

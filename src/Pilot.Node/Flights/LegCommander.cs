@@ -117,7 +117,7 @@ public sealed partial class LegCommander(
             _one.Release();
         }
 
-        // A leg done (or its failed read accepted): the flight goes on by itself to what needs no person, its next leg or
+        // A leg done (or a failed one marked done anyway): the flight goes on by itself to what needs no person, its next leg or
         // its PR (which starts its review), after this lock is let go. Off, a card offers it, so a flight never just sits.
         if (error is null && command.Verb == Verbs.FinishLeg && (command.Args ?? []).FirstOrDefault() is "done" or "accepted")
         {
@@ -603,21 +603,23 @@ public sealed partial class LegCommander(
         var args = command.Args ?? [];
         var outcome = args.Length > 0 ? args[0] : "";
         var report = string.Join(' ', args.Skip(1)).Trim();
-        // A failed leg whose read the controller takes as it is: done, its failure kept in the report, so the flight goes on
-        // to its next leg with no go-around to stage (TIA1737's S2, 2026-10-23, closed by a go-around that only finished it).
+        // A failed leg the controller marks done anyway: done, its failure kept in the report, so the flight goes on to its
+        // next leg with no go-around to stage (TIA1737's S2, 2026-10-23, closed by a go-around that only finished it). Its
+        // card said "Accept the read", and nobody knew what that did (SE1, 2026-10-25): the words now say what happens.
+        // The command keeps its word, accepted.
         if (outcome == "accepted")
         {
             if (leg.State != LegState.Failed)
             {
-                throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}: only a failed leg is accepted as it is");
+                throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}: only a failed leg is marked done anyway");
             }
             if (string.Equals(command.Who, $"{options.Machine.ToLowerInvariant()}-watchtower", StringComparison.Ordinal) || string.Equals(command.Who, leg.Worker, StringComparison.Ordinal))
             {
-                throw new FlightException($"accepting {flight.Code}/{leg.Name}'s failed read is the controller's, not {command.Who}'s");
+                throw new FlightException($"marking {flight.Code}/{leg.Name} done anyway is the controller's, not {command.Who}'s");
             }
-            var accepted = $"failed, accepted by {command.Who}{(report.Length > 0 ? $": {report}" : "")}";
+            var accepted = $"failed, marked done anyway by {command.Who}{(report.Length > 0 ? $": {report}" : "")}";
             state.PutLeg(leg with { State = LegState.Done, Report = leg.Report is { Length: > 0 } was ? $"{accepted}\n{was}" : accepted });
-            state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} accepted as it is");
+            state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} marked done anyway");
             return;
         }
         if (leg.State != LegState.Flying)
@@ -662,7 +664,7 @@ public sealed partial class LegCommander(
                     $"{flight.Code}/{leg.Name} failed", report.Length > 0 ? report : null,
                     [
                         new CardChoice { Label = "Go around", Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker gave up: {(report.Length > 0 ? report : "no reason given")}"] },
-                        new CardChoice { Label = "Accept the read", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
+                        new CardChoice { Label = "Mark done anyway", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
                     ]);
                 break;
             default:
