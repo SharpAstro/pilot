@@ -166,8 +166,16 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                 var after = had.Count == 0 ? -1 : had[^1].Index;
                 var page = await load(after, cancellationToken).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
+                var renumbered = after >= 0 && page.Total <= after;
+                if (renumbered)
+                {
+                    // The feed is shorter than what is held (an earlier watchtower's transcript is gone, so every index dropped):
+                    // asking after the old index would skip the entries that now sit below it. Read it all again.
+                    page = await load(-1, cancellationToken).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
                 ImmutableInterlocked.Update(ref _held, held => new Held(
-                    held.Entries.AddRange(page.Entries.Where(e => held.Entries.Count == 0 || e.Index > held.Entries[^1].Index)),
+                    renumbered ? ImmutableList.CreateRange(page.Entries) : held.Entries.AddRange(page.Entries.Where(e => held.Entries.Count == 0 || e.Index > held.Entries[^1].Index)),
                     page.Total, null, page.Working, page.PendingQuestion, page.Choices ?? [], page.Queued ?? []));
                 Changed?.Invoke();
             }

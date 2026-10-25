@@ -236,6 +236,38 @@ public sealed class WatchtowerChatTests : IDisposable
         answered.Choices.ShouldBeNull();
     }
 
+    private static string Taken(string prompt) =>
+        $$$"""{"type":"attachment","attachment":{"type":"queued_command","prompt":"{{{prompt}}}"}}""";
+
+    [Fact]
+    public async Task APersonsAnswerTakenMidTurnEndsTheQuestionAfterACardResumedTheSession()
+    {
+        (await _tower.RestartAsync("first", Ct)).ShouldBeNull();
+        Row("job00001", First, SessionState.Working);
+        _profile.Append(_profile.TranscriptPath(First), Asked("m1", AskReply), Said("user", "[node] A card opened: c1 rings"));
+        _chat.Page(-1).PendingQuestion.ShouldBe("Which repo should the flight fly in?");
+
+        // The person clicks a choice while the card's turn is still running: the tell is relayed mid-turn, as an attachment.
+        _profile.Append(_profile.TranscriptPath(First), Taken("pilot"));
+
+        var answered = _chat.Page(-1);
+        answered.PendingQuestion.ShouldBeNull();
+        answered.Choices.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ATaskFinishingOrAHandBackAfterAQuestionLeavesItPending()
+    {
+        (await _tower.RestartAsync("first", Ct)).ShouldBeNull();
+        Row("job00001", First, SessionState.Working);
+        _profile.Append(_profile.TranscriptPath(First), Asked("m1", AskReply),
+            Taken("<task-notification>build finished</task-notification>"),
+            Taken("<agent-message>planner is done</agent-message>"),
+            Said("user", "<task-notification>another finished</task-notification>"));
+
+        _chat.Page(-1).PendingQuestion.ShouldBe("Which repo should the flight fly in?");
+    }
+
     [Fact]
     public async Task AQuestionTheSessionMovedOnFromIsNoLongerPending()
     {

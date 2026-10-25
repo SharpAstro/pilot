@@ -183,6 +183,12 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         private void Ask(JsonElement line)
         {
             var type = Str(line, "type");
+            // A message taken mid-turn (the person's tell while the session is working) is an attachment, not a user line.
+            if (type == "attachment" && line.TryGetProperty("attachment", out var attachment) && Str(attachment, "type") == "queued_command")
+            {
+                Said(PromptText(attachment));
+                return;
+            }
             if (type is not ("assistant" or "user") || !line.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.Object
                 || !message.TryGetProperty("content", out var content))
             {
@@ -194,24 +200,12 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                 {
                     return;
                 }
-                var said = content.ValueKind switch
+                Said(content.ValueKind switch
                 {
                     JsonValueKind.String => content.GetString(),
                     JsonValueKind.Array => string.Join("\n", content.EnumerateArray().Where(p => Str(p, "type") == "text").Select(p => Str(p, "text")).OfType<string>()),
                     _ => null,
-                };
-                if (said is { Length: > 0 })
-                {
-                    if (said.TrimStart().StartsWith(NodeVoice.Prefix, StringComparison.Ordinal))
-                    {
-                        // The node's card wakes the session: what it does next is about the card, not an answer to or a drop of the question.
-                        _nodeSpoke = true;
-                    }
-                    else
-                    {
-                        Pending = null;
-                    }
-                }
+                });
                 return;
             }
 
@@ -232,6 +226,29 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                     _askedIn = id;
                     _nodeSpoke = false;
                 }
+            }
+        }
+
+        /// <summary>
+        /// Something said to the session (a user line, or a message it took mid-turn) while a question may be pending. A card the
+        /// node said is not an answer, and neither is what Claude Code hands the session itself (a subagent's hand-back, a task
+        /// finishing): only the person's own words end the question.
+        /// </summary>
+        private void Said(string? said)
+        {
+            if (Pending is null || said is not { Length: > 0 })
+            {
+                return;
+            }
+            var text = said.TrimStart();
+            if (text.StartsWith(NodeVoice.Prefix, StringComparison.Ordinal))
+            {
+                // The node's card wakes the session: what it does next is about the card, not an answer to or a drop of the question.
+                _nodeSpoke = true;
+            }
+            else if (!text.StartsWith("<task-notification", StringComparison.Ordinal) && !text.StartsWith("<agent-message", StringComparison.Ordinal))
+            {
+                Pending = null;
             }
         }
 
