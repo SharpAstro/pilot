@@ -17,14 +17,16 @@ public sealed class TranscriptPaneTests
 {
     private static string Output(int lines) => string.Join("\n", Enumerable.Range(1, lines).Select(i => $"output-line-{i}"));
 
+    private static readonly DateTimeOffset Called = new(2026, 10, 25, 9, 40, 12, TimeSpan.Zero);
+
     private static TranscriptEntry[] Entries() =>
     [
-        new() { Index = 0, Kind = TranscriptKind.ToolUse, Tool = "Bash", Text = "dotnet test src/Pilot.slnx --no-build", Description = "Run every test", ToolUseId = "t1" },
+        new() { Index = 0, Kind = TranscriptKind.ToolUse, Tool = "Bash", Text = "dotnet test src/Pilot.slnx --no-build", Description = "Run every test", ToolUseId = "t1", At = Called },
         new() { Index = 1, Kind = TranscriptKind.ToolResult, Text = Output(12), ToolUseId = "t1" },
         new() { Index = 2, Kind = TranscriptKind.ToolUse, Tool = "Bash", Text = "dotnet build src/Pilot.slnx", Description = "Build the solution", ToolUseId = "t2" },
         new() { Index = 3, Kind = TranscriptKind.Error, Text = "restore-line-1\nrestore-line-2\nerror-line-3\nerror-line-4\nerror-line-5", ToolUseId = "t2" },
         new() { Index = 4, Kind = TranscriptKind.ToolUse, Tool = "Grep", Text = "TreeRow", ToolUseId = "t3" },
-        new() { Index = 5, Kind = TranscriptKind.Assistant, Text = "assistant-words" },
+        new() { Index = 5, Kind = TranscriptKind.Assistant, Text = "assistant-words", At = Called.AddSeconds(75) },
     ];
 
     // WCAG 2.x relative luminance and contrast ratio.
@@ -86,6 +88,19 @@ public sealed class TranscriptPaneTests
         var regions = new List<ClickableRegion>();
         view.CollectPaintedRegions(regions);
         regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == action).OnClick!.Invoke(InputModifier.None);
+    }
+
+    [Fact]
+    public async Task EachEntryAndCallSaysWhenInThisMachinesTime()
+    {
+        var (view, screen, renderer) = await Open();
+        using var _ = renderer;
+
+        var described = Described(view, screen);
+
+        RowOf(described, "Run every test").ShouldContain(Called.ToLocalTime().ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture));
+        RowOf(described, "claude").ShouldContain(Called.AddSeconds(75).ToLocalTime().ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture));
+        view.Transcript.Close();
     }
 
     [Fact]

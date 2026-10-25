@@ -1,3 +1,4 @@
+using System.Globalization;
 using DIR.Lib;
 using Pilot.Contracts;
 
@@ -50,6 +51,9 @@ internal sealed class TranscriptPane
 
     // The label column: wide enough for a tool's name.
     private const float LabelWidth = 96f;
+
+    // The time column down the right of every entry and tool line: hh:mm:ss, wide enough for any.
+    private const float TimeWidth = 64f;
 
     // A call's line: the tool's column, the caret's column the unfolded body is indented by, and how many of a failed
     // call's last lines show while it is folded.
@@ -534,7 +538,8 @@ internal sealed class TranscriptPane
         var line = Layout.Builder.HStack(
                 Layout.Builder.Text(mark, 12f, markColor).WAuto(),
                 Layout.Builder.Text(call.Tool ?? "tool", 12f, Tool).WFixed(ToolWidth),
-                Layout.Builder.Text(said, 13f, Dim).WStar())
+                Layout.Builder.Text(said, 13f, Dim).WStar(),
+                Stamp(call.At))
             .WithGap(6f)
             .BgHover(ButtonHover)
             .Follows(new HitResult.ButtonHit($"transcript:call:{call.Index}"), _ => Toggle(call.Index));
@@ -593,6 +598,14 @@ internal sealed class TranscriptPane
             : Layout.Builder.VStack(row, Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(CaretWidth), Layout.Builder.VStack([.. body]).WStar())).WithGap(2f);
     }
 
+    // When an entry was written, in this machine's time, the day and zone on hover; blank for one the transcript gave no
+    // time. Every entry is stamped by Claude Code, and a reader asks "when was that" of a long run (SE1, 2026-10-25).
+    internal static Layout.Node Stamp(DateTimeOffset? at) =>
+        at is { } when
+            ? Layout.Builder.Text(when.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture), 11f, Faint, TextAlign.Far).WFixed(TimeWidth)
+                .WithTooltip(when.ToLocalTime().ToString("ddd d MMM yyyy HH:mm:ss zzz", CultureInfo.InvariantCulture), Layout.DockSide.Left)
+            : Layout.Builder.Spacer().WFixed(TimeWidth);
+
     // A line of a command or its output. One helper for all of it, so a monospace face for a text leaf lands here once:
     // DIR.Lib has none yet (SharpAstro/DIR.Lib#152). An empty line keeps its height as a space.
     private static Layout.Node Mono(string line, RGBAColor32 color) =>
@@ -628,7 +641,8 @@ internal sealed class TranscriptPane
             : Folded(entry, entry.Text, textColor, lines, ""));
         var row = Layout.Builder.HStack(
                 Layout.Builder.Text(label, 12f, labelColor).WFixed(LabelWidth),
-                Layout.Builder.VStack([.. body]).WStar())
+                Layout.Builder.VStack([.. body]).WStar(),
+                ListTable.Top(Stamp(entry.At)).WFixed(TimeWidth))
             .WithGap(10f);
         // Claude's words and a prompt stand apart from the tool lines around them.
         return entry.Kind is TranscriptKind.Assistant or TranscriptKind.User ? row.Pad(0f, ProseSpace) : row;
