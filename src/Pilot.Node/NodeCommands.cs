@@ -204,9 +204,16 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             return state.Complete(command, null);
         }
 
-        // Closed by the answer before the choice runs: a merge lands its flight, and landing closes the flight's cards,
-        // this one included, as landed rather than as the answer it was. Refused, it opens again.
-        state.CloseCard(card.Id, choice.Label, command.Who);
+        // A merge (or a re-run of checks) pressed on a PR card is in progress while it runs, which is seconds of gh calls: the
+        // card stays open throughout, on every client, and closes when the thing is done (landing closes it as landed) or turns
+        // to say it is armed or queued. A refusal leaves it as it was.
+        var inProgress = choice.Verb is Verbs.Merge or Verbs.RerunChecks && card.Kind is LegCommander.PrReady or LegCommander.MergeFailed;
+        // Any other choice closes the card by the answer before it runs: it lands its flight, and landing closes the flight's
+        // cards, this one included, as landed rather than as the answer it was. Refused, it opens again.
+        if (!inProgress)
+        {
+            state.CloseCard(card.Id, choice.Label, command.Who);
+        }
         CommandResult result;
         try
         {
@@ -224,12 +231,19 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             state.ReopenCard(card.Id);
             return state.Complete(command, $"{choice.Label} was refused: {result.Error}");
         }
-        // A merge armed (its checks still run) or queued is not done: the card stays open saying so, and the node closes it
-        // as merged once it is, or turns it to what failed.
-        if (result.Way is MergeWays.Armed or MergeWays.Queued && card.Kind is LegCommander.PrReady or LegCommander.MergeFailed)
+        if (inProgress)
         {
-            state.ReopenCard(card.Id);
-            Get<LegCommander>().ShowMerge(choice.Target, result.Made, result.Way);
+            // A merge armed (its checks still run) or queued is not done: the card says so and stays, and the node closes it as
+            // merged once it is, or turns it to what failed. Done (merged and landed), the landing has closed it already.
+            if (result.Way is MergeWays.Armed or MergeWays.Queued)
+            {
+                Get<LegCommander>().ShowMerge(choice.Target, result.Made, result.Way);
+            }
+            else if (!state.CloseCard(card.Id, choice.Label, command.Who))
+            {
+                // Closed by the landing already, as landed: it says too which answer it was.
+                state.NoteOutcome(card.Id, choice.Label);
+            }
             return state.Complete(command, null);
         }
         if (card.Kind == PrReviews.ReadyKind)

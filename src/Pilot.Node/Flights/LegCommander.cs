@@ -193,6 +193,24 @@ public sealed partial class LegCommander(
             {
                 return $"{code}'s plane holds changes not committed, so it is not rebased by itself";
             }
+            // A merge armed on the head being replaced is let go, GitHub's auto-merge included: it would merge the rebased head
+            // before anyone has reviewed it, and the node's own rebase is no dropped merge to ring about.
+            if (flight.MergeWhenGreen is not null)
+            {
+                if (flight.MergeWhenGreen.ElementAtOrDefault(2) == ArmedByGitHub && flight.PullRequest is { } armed)
+                {
+                    try
+                    {
+                        await github.DisarmAutoMergeAsync(flight.RepoPath, armed, cancellationToken);
+                    }
+                    catch (FlightException ex)
+                    {
+                        return $"{code}'s PR #{armed} is armed with GitHub's auto-merge, which could not be turned off ({ex.Message}), so it is not rebased: switch it off on the PR page";
+                    }
+                }
+                flight = flight with { MergeWhenGreen = null };
+                state.PutFlight(flight);
+            }
             await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
             // A base that is no branch on the remote is the remote's default first, as when its PR opened.
             flight = await RepairBaseAsync(flight, cancellationToken);
@@ -1019,8 +1037,10 @@ public sealed partial class LegCommander(
     /// word per state: the same card, in place, each look at it. Checks running and ready keep their button (Merge arms, or
     /// merges); queued, blocked and changes requested are marks, not buttons; conflicts and behind turn the card to a go-around
     /// (<see cref="ShowMergeFailed"/>) that rebases, with no Merge. Nothing for a state the card already shows.
+    /// <paramref name="replaceWords"/> turns a card that said what failed (<see cref="MergeFailed"/>) back to a plain Merge: its
+    /// words and its go-around and re-run go, as GitHub no longer shows what they were about.
     /// </summary>
-    public void ShowMergeState(CardRow card, MergeState merge, string head)
+    public void ShowMergeState(CardRow card, MergeState merge, string head, bool replaceWords = false)
     {
         var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : card.Subject;
         var flight = state.Flights().FirstOrDefault(f => f.Code == code);
@@ -1030,7 +1050,7 @@ public sealed partial class LegCommander(
         // words over them (queued, blocked) is replaced by a plain line when the PR is mergeable again.
         var showing = card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge)?.Status;
         var hasMerge = card.Choices.Any(c => c.Verb == Verbs.Merge);
-        var own = hasMerge && showing is null or ChoiceStatus.Passing or ChoiceStatus.Pending or ChoiceStatus.Failing or ChoiceStatus.Conflicting;
+        var own = !replaceWords && hasMerge && showing is null or ChoiceStatus.Passing or ChoiceStatus.Pending or ChoiceStatus.Failing or ChoiceStatus.Conflicting;
         var ready = $"{code}'s PR #{number} is ready to merge";
         // A merge that was armed and is not any more says so, and how to arm it again.
         var unarmed = showing == ChoiceStatus.Armed && merge.DroppedFromQueue is null ? "Its merge is not armed any more: GitHub's auto-merge was turned off, or the merge was dropped. Merge arms it again." : null;
@@ -1055,9 +1075,9 @@ public sealed partial class LegCommander(
             detail = $"Dropped from the merge queue: {dropped}. Merge queues it again once that is fixed.{(detail is null ? "" : " " + detail)}";
         }
         // A card turned to a go-around (conflicting, behind) has no Merge: it comes back with the state that allows one.
-        var choices = hasMerge
+        var choices = hasMerge && !replaceWords
             ? card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Label = "Merge", Status = status, Note = note } : c).ToList()
-            : [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = card.Subject, Args = [head], Status = status, Note = note }];
+            : [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = card.Subject, Args = [head, .. card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge)?.Args.Skip(1) ?? []], Status = status, Note = note }];
         state.UpdateCard(card.Id, title, detail, choices, merge.FailedLink ?? link, PrReady);
     }
 

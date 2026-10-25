@@ -187,6 +187,14 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             string? dropped = pr is null || pr.Number != number || pr.State != "OPEN" ? $"#{number} is no longer open"
                 : moved ? $"#{number}'s head moved from {head[..Math.Min(8, head.Length)]} to {pr.Head[..Math.Min(8, pr.Head.Length)]} while its checks ran: look at what is new, then merge again"
                 : null;
+            // What GitHub says of the PR is what the card says of the merge: an auto-merge somebody turned off on the PR page, or a
+            // merge GitHub blocks (a review required, changes requested, behind its base), is no merge waiting any more, and the
+            // card shows what GitHub shows rather than "merging when checks pass" for good (pilot #244).
+            if (dropped is null && pr is not null && await github.MergeStateAsync(flight.RepoPath, number, cancellationToken) is { } merge
+                && await LeftArmedAsync(flight, pr, merge, native, cancellationToken))
+            {
+                continue;
+            }
             var checks = dropped is null ? await github.ChecksSummaryAsync(flight.RepoPath, number, cancellationToken) : null;
             if (dropped is null && checks?.Status == ChoiceStatus.Pending)
             {
@@ -257,6 +265,66 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         }
     }
 
+    /// <summary>
+    /// A merge armed on the flight whose PR GitHub no longer shows as waiting for it (<paramref name="merge"/> is anything but
+    /// armed, checks running, or merged; a failed check is <see cref="MergeWhenGreenAsync"/>'s own path, and a node that polls also
+    /// merges a ready one itself): the arm is cleared, GitHub's auto-merge turned off where a rebase is due, and the card says
+    /// what GitHub says. Conflicts and behind are shown by the card loop, which rebases. True when the merge is no longer armed.
+    /// </summary>
+    private async Task<bool> LeftArmedAsync(FlightRow flight, PullRequest pr, MergeState merge, bool native, CancellationToken cancellationToken)
+    {
+        var left = merge.Kind switch
+        {
+            MergeKinds.Armed or MergeKinds.Pending or MergeKinds.Merged => false,
+            MergeKinds.Ready => native,
+            MergeKinds.Blocked => merge.FailedName is null,
+            _ => true,
+        };
+        if (!left)
+        {
+            return false;
+        }
+        if (native && merge.Kind is MergeKinds.Conflicts or MergeKinds.Behind)
+        {
+            // Its head is about to move: GitHub's auto-merge would merge what nobody reviewed.
+            try
+            {
+                await github.DisarmAutoMergeAsync(flight.RepoPath, flight.PullRequest!.Value, cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                await Console.Error.WriteLineAsync($"pr checks: {flight.Code}'s auto-merge could not be turned off: {ex.Message}");
+            }
+        }
+        if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is { MergeWhenGreen: not null } now)
+        {
+            state.PutFlight(now with { MergeWhenGreen = null });
+        }
+        var subject = Verbs.FlightTarget(flight.Code);
+        if (legs is not null && ShowingMerge(subject) is { } card)
+        {
+            legs.ShowMergeState(card, merge, pr.Head);
+        }
+        else if (merge.Kind is not (MergeKinds.Conflicts or MergeKinds.Behind))
+        {
+            // No card shows the merge to say it: a For-you card does, as for any dropped merge.
+            var why = merge.Kind switch
+            {
+                MergeKinds.Ready => "GitHub's auto-merge was turned off",
+                MergeKinds.ChangesRequested => "a review asks for changes",
+                MergeKinds.Blocked => $"GitHub blocks it: {merge.Reason}",
+                _ => $"GitHub shows it as {merge.Kind}",
+            };
+            state.RaiseCard(CardBin.ForYou, MergeDropped, subject, $"{flight.Code}'s merge did not go through", $"{why}. Merge again once that is dealt with.",
+                [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [pr.Head] }], link: flight.PullRequestUrl);
+        }
+        return true;
+    }
+
+    // The open card that shows a flight's merge: its PR-ready card, or the one turned to what failed.
+    private CardRow? ShowingMerge(string subject) =>
+        state.Cards(openOnly: true).FirstOrDefault(c => c.Kind is LegCommander.PrReady or LegCommander.MergeFailed && c.Subject == subject && c.Choices.Any(ch => ch.Verb == Verbs.Merge));
+
     /// <summary>One look at every open PR-ready card's PR.</summary>
     public async Task LookAsync(CancellationToken cancellationToken)
     {
@@ -269,10 +337,15 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             await legs.RetryMarksAsync(cancellationToken);
         }
         await LookAtMarksAsync(cancellationToken);
-        foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady))
+        foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind is LegCommander.PrReady or LegCommander.MergeFailed))
         {
             var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : null;
             if (state.Flights().FirstOrDefault(f => f.Code == code) is not { PullRequest: { } number } flight)
+            {
+                continue;
+            }
+            // An armed merge is MergeWhenGreenAsync's: GitHub is read there, and what it says is put on the card there.
+            if (flight.MergeWhenGreen is not null)
             {
                 continue;
             }
@@ -303,6 +376,18 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             // What GitHub says of the PR's merge, which the card's Merge mirrors; null while GitHub works it out.
             var merge = await github.MergeStateAsync(flight.RepoPath, number, cancellationToken);
             var head = pr?.Head ?? card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge)?.Args.FirstOrDefault() ?? "";
+            if (card.Kind == LegCommander.MergeFailed)
+            {
+                // A failed check is said until GitHub says otherwise: re-run green on the PR page, or the PR made ready again, turns the
+                // card back to a Merge; the go-around and re-run it offered stay while it is blocked. A card that says something
+                // GitHub shows no state for (the head moved, a merge refused) stays until it is answered.
+                if (card.Choices.Any(c => c.Verb == Verbs.RerunChecks)
+                    && merge is { Kind: MergeKinds.Pending or MergeKinds.Ready or MergeKinds.Armed or MergeKinds.Queued } && legs is not null)
+                {
+                    legs.ShowMergeState(card, merge, head, replaceWords: true);
+                }
+                continue;
+            }
             // Reviewed and passed, but no longer merging into its base: main moved. Rebased by itself, once a head, and
             // reviewed afresh; a rebase that conflicts rings with what to do. The card says so meanwhile, offering the go-around
             // that does it by hand, not a Merge GitHub would refuse.
@@ -327,12 +412,6 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                         goAroundWhy: $"the PR {what}: rebase the plane onto its base, resolving every conflict so both sides' work stays, rerun the check, and push",
                         mergeAgain: false, kind: LegCommander.PrReady);
                 }
-                continue;
-            }
-            // A merge armed keeps its card as MergeWhenGreenAsync wrote it; the card closes as merged when GitHub says so, above.
-            var current = state.Flights().FirstOrDefault(f => f.Code == flight.Code);
-            if (current?.MergeWhenGreen is not null)
-            {
                 continue;
             }
             var status = await github.ChecksAsync(flight.RepoPath, number, cancellationToken);

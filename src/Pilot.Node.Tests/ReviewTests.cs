@@ -559,6 +559,33 @@ public sealed class ReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task TheNodesOwnRebaseOfAnArmedPrLetsGoOfTheMergeAndGitHubsAutoMergeAndRaisesNoDroppedMergeCard()
+    {
+        var flight = await NewFlight("16", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA16"), "controller");
+        (await Run(Verbs.Review, "flight/TIA16", Reviewer("TIA16"), "pass", "fine")).Ok.ShouldBeTrue();
+        var pr = _github.Pr.ShouldNotBeNull();
+        // Armed natively on the reviewed head, then main moves on.
+        _state.PutFlight(F("TIA16") with { MergeWhenGreen = [pr.Head, "rebase", LegCommander.ArmedByGitHub] });
+        _github.AutoMergeArmed.Add((pr.Number, pr.Head, "rebase"));
+        File.WriteAllText(Path.Combine(Repo, "later16.txt"), "later\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "commit", "-q", "-m", "later on main");
+        Git(Repo, "push", "-q", "origin", "main");
+
+        (await _legs.RebaseOntoBaseAsync("TIA16", Ct)).ShouldBeNull();
+        _github.Pr = pr with { Head = Git(F("TIA16").Worktree, "rev-parse", "HEAD") };
+        await new PrChecks(_state, _github, TimeProvider.System, legs: _legs).LookAsync(Ct);
+
+        F("TIA16").MergeWhenGreen.ShouldBeNull();
+        _github.AutoMergeDisarmed.ShouldBe([pr.Number]);
+        _state.Cards().Where(c => c.Kind == PrChecks.MergeDropped || c.Kind == LegCommander.MergeFailed).ShouldBeEmpty();
+        F("TIA16").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task APassedPrWhoseChecksFailIsSentBackAsChangesOnceAHeadSoItsDoneLegGoesAround()
     {
         var flight = await NewFlight("7", "parser");
