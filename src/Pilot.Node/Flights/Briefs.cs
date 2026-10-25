@@ -115,6 +115,17 @@ public static class Briefs
         }
 
         text.AppendLine();
+        // A view that only passed its tests shipped wrong to the eye (pilot's tooltips, 2026-10-25): where the org keeps a UI
+        // checklist beside its clones, a leg is told to work by it and to show a capture.
+        if (UiChecklist(flight) is { } checklist)
+        {
+            text.AppendLine("## If your leg changes what a person sees");
+            text.AppendLine($"Read the UI checklist, {checklist}, and work by it: contrast against the real background, no text cut");
+            text.AppendLine("silently, one height and one middle per row, one source for each value and component, the right control, no");
+            text.AppendLine("clutter, nothing moving under the pointer. Render a capture at a narrow and a wide size with long content,");
+            text.AppendLine($"look at it yourself, and record it on the leg (`{run} artifact <path> <title>`): the reviewer looks at it.");
+            text.AppendLine();
+        }
         text.AppendLine("## Keeping the node told");
         text.AppendLine("The node tracks this leg; tell it as you go, from this folder (it knows your leg by the folder):");
         if (leg.Checklist.Length > 0)
@@ -142,6 +153,15 @@ public static class Briefs
         text.AppendLine("left. Start it with DONE when every step is done and the Done-when holds, or BLOCKED: and why.");
         return text.ToString();
     }
+
+    /// <summary>
+    /// The org's UI checklist beside the flight's clone (<c>.github/docs/ui-changes.md</c> in the folder holding its repo,
+    /// as SharpAstro keeps it), or null where there is none.
+    /// </summary>
+    internal static string? UiChecklist(FlightRow flight) =>
+        Path.GetDirectoryName(Path.GetFullPath(flight.RepoPath)) is { } root && Path.Combine(root, ".github", "docs", "ui-changes.md") is var path && File.Exists(path)
+            ? path
+            : null;
 
     /// <summary>
     /// A leg's validator's brief: it checks the few facts about the tree that the leg rests on (files, types, verbs and tests it

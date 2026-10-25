@@ -36,7 +36,14 @@ you have.
 4. **Work off the checklist.** Go through the leg's *Done when* clause by clause and the checklist item by
    item, and for each one find where in the diff it is met. One that is not met, or met only in the worker's
    report and not in the code, is a BUG; the evidence is the clause and where the diff should have met it.
-5. You may run read-only commands: `git` (log, show, diff, grep), `gh pr view` / `gh pr diff` / `gh pr checks`,
+5. **A change a person sees** (a view, a widget, colours, layout, wording on screen): read the org's UI checklist
+   when there is one (`../.github/docs/ui-changes.md` from the repo, SharpAstro's), and look at the leg's
+   captures. Go through it against them: contrast against the real background, text cut silently, controls on a
+   row of differing heights, a value or component kept twice, the wrong control, clutter, something that moves
+   under the pointer. **No capture for a layout or colour change is an unmet clause**: the change has been
+   reviewed for how it is written, not for how it looks. A breach you can see in a capture, or prove from the
+   arranged bounds, is a BUG. One you would only suspect is a QUESTION.
+6. You may run read-only commands: `git` (log, show, diff, grep), `gh pr view` / `gh pr diff` / `gh pr checks`,
    and a single targeted test or build in the worktree to prove or break a finding. Never edit a file, commit,
    push, comment, label, approve or merge. You write nothing but your answer.
 
