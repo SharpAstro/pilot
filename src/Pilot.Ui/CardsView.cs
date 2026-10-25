@@ -352,6 +352,18 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>How many lines a card's detail may take before it is cut.</summary>
     internal const int DetailLines = 3;
 
+    /// <summary>
+    /// How many a merge card's detail may take: what an armed merge says (who waits, how to switch on auto-merge) and why a
+    /// disarmed one failed (which check, what to do) run past three lines in the panel, and are what the person reads it for.
+    /// </summary>
+    internal const int MergeDetailLines = 8;
+
+    /// <summary>The width of the bar down a card's left edge, in its bin's colour.</summary>
+    private const float AccentBar = 3f;
+
+    /// <summary>The cap on a card's detail: more for a card that offers a merge.</summary>
+    internal static int DetailLinesOf(CardRow card) => card.Choices.Any(c => c.Verb == Verbs.Merge) ? MergeDetailLines : DetailLines;
+
     // Past these a card's title or detail may well be cut in the panel (a title is one line, a detail three), so it carries
     // its whole text as hover text, opening to the left, into the window rather than off its edge. DIR.Lib's capped wrap
     // drops the words past its last line with no "…" (SharpAstro/DIR.Lib#155), so the hover text is the only way to read
@@ -388,9 +400,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         };
         if (card.Detail is { Length: > 0 } detail)
         {
-            // Wraps within the panel, three lines at most; an explicit newline stays a break.
-            lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, DetailLines), detail,
-                detail.Length > DetailFits || detail.Count(c => c == '\n') >= DetailLines));
+            // Wraps within the panel, three lines at most (eight on a merge's); an explicit newline stays a break.
+            var cap = DetailLinesOf(card);
+            lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap), detail,
+                detail.Length > DetailFits * cap / DetailLines || detail.Count(c => c == '\n') >= cap));
         }
         // What the node said to the last button pressed here, when it refused: on the card, never only in a log.
         if (Volatile.Read(ref _refused).TryGetValue(card.Id, out var refused))
@@ -413,7 +426,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         {
             var number = i + 1;
             var choice = card.Choices[i];
-            buttons.Add(Button(StatusLabel(choice), $"card:{card.Id}:{number}", () => OnAnswer?.Invoke(card, number), StatusTint(choice.Status)));
+            buttons.Add(closed
+                ? Dead(StatusLabel(choice, card.Detail))
+                : ChoiceControl(choice, card.Detail, $"card:{card.Id}:{number}", () => OnAnswer?.Invoke(card, number)));
         }
         // A waiting session is answered where its Remote Control has it: the card's link, one click away.
         if (card.Kind == CardKinds.SessionWaiting && card.Link is { } answerUrl)
@@ -440,9 +455,17 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         // Wrapping: a waiting session's card has up to four buttons, more than one line of the panel holds.
         lines.Add(Layout.Builder.WrapH([.. buttons]).WithGap(8f).WithLineGap(4f).WStar());
 
-        return Layout.Builder.HStack(
-                Layout.Builder.Spacer().Bg(accent).WFixed(3f).HStar(),
-                Layout.Builder.VStack([.. lines]).Pad(10f, 8f).WStar())
+        // A grid, not a stack with the accent bar beside the content and the content padded: a stack measures each child against its
+        // whole width, taking off neither a sibling's width nor a padding, so the detail and the buttons were measured wider than
+        // they were arranged, and a card whose last button wrapped came out a line short, the button poking out of its bottom edge
+        // (DIR.Lib: Engine.MeasureStack). A grid measures its cells at the width their column is given.
+        return Layout.Builder.Grid(4,
+                Layout.Builder.Spacer().Bg(accent).HStar(),
+                Layout.Builder.Spacer(),
+                Layout.Builder.VStack([.. lines]).Pad(0f, 8f).WStar(),
+                Layout.Builder.Spacer())
+            .WithColumns(Layout.Sizing.Fixed(AccentBar), Layout.Sizing.Fixed(10f), Layout.Sizing.Star(), Layout.Sizing.Fixed(10f))
+            .WithAutoRows()
             .Bg(!closed && Focused(card) ? FocusBg : CardBg)
             .WStar()
             .HAuto();
@@ -503,21 +526,49 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>The side of an icon button's mark, design units: the font size of the pill beside it.</summary>
     internal const float IconSize = 12f;
 
-    /// <summary>A choice's label with what its checks say: <c>Merge</c>, <c>Merge · checks running</c>, <c>Merge · checks failed</c>.</summary>
-    internal static string StatusLabel(CardChoice choice) => choice.Status switch
+    /// <summary>
+    /// A choice's label with what its checks say: <c>Merge</c>, <c>Merge · checks running</c>, <c>Merge · checks failed</c>; an
+    /// armed merge says what it does and how far its checks are (<paramref name="detail"/>, the card's, holds the count):
+    /// <c>Merging when checks pass · 6 of 7</c>.
+    /// </summary>
+    internal static string StatusLabel(CardChoice choice, string? detail = null) => choice.Status switch
     {
         ChoiceStatus.Pending => $"{choice.Label} · checks running",
         ChoiceStatus.Failing => $"{choice.Label} · checks failed",
         ChoiceStatus.Conflicting => $"{choice.Label} · conflicts with main",
+        ChoiceStatus.Armed => ArmedProgress.Read(detail) is { } progress ? $"{ArmedLabel} · {progress}" : ArmedLabel,
         _ => choice.Label,
     };
 
-    /// <summary>The button's colours for a choice's status: green when its checks pass, amber while they run, red when one failed.</summary>
-    private static (RGBAColor32 Bg, RGBAColor32 Hover)? StatusTint(string? status) => status switch
+    /// <summary>What an armed Merge says in place of its verb: it is not pressed again, it is waited on.</summary>
+    internal const string ArmedLabel = "Merging when checks pass";
+
+    /// <summary>The armed merge's fill, a violet no other status uses (green passes, amber runs, red fails, blue is a plain button). Its words, <see cref="Bright"/>, are 8:1 on it.</summary>
+    internal static readonly RGBAColor32 ArmedBg = new(0x4a, 0x35, 0x7a, 0xff);
+
+    internal static readonly RGBAColor32 ArmedText = Bright;
+
+    /// <summary>The button's colours for a choice's status: green when its checks pass, amber while they run, red when one failed, violet once armed.</summary>
+    internal static (RGBAColor32 Bg, RGBAColor32 Hover)? StatusTint(string? status) => status switch
     {
         ChoiceStatus.Passing => (new RGBAColor32(0x1f, 0x6b, 0x45, 0xff), new RGBAColor32(0x27, 0x85, 0x56, 0xff)),
         ChoiceStatus.Pending => (new RGBAColor32(0x6b, 0x52, 0x1c, 0xff), new RGBAColor32(0x85, 0x66, 0x23, 0xff)),
         ChoiceStatus.Failing or ChoiceStatus.Conflicting => (new RGBAColor32(0x7a, 0x28, 0x28, 0xff), new RGBAColor32(0x96, 0x32, 0x32, 0xff)),
+        ChoiceStatus.Armed => (ArmedBg, ArmedBg),
         _ => null,
     };
+
+    /// <summary>
+    /// A card's choice as a control: a button for what can be pressed, tinted by its status; an armed merge, which is waited
+    /// on and not pressed (a second press would only arm it again), a state chip in the same size and place with no hover and
+    /// no click. The one place a Merge is drawn, so the card and the flight's page cannot disagree about it.
+    /// </summary>
+    internal static Layout.Node ChoiceControl(CardChoice choice, string? detail, string action, Action onClick) =>
+        choice.Status == ChoiceStatus.Armed
+            ? Layout.Builder.Text(StatusLabel(choice, detail), 12f, ArmedText, TextAlign.Center)
+                .Pad(10f, 4f)
+                .WAuto()
+                .Bg(ArmedBg)
+                .WithTooltip("Merges by itself once its checks pass: nothing to press.", Layout.DockSide.Left)
+            : Pill(StatusLabel(choice, detail), action, onClick, StatusTint(choice.Status));
 }

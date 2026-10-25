@@ -861,7 +861,7 @@ public sealed partial class LegCommander(
     /// </summary>
     public static string ArmedLine(ChecksSummary? checks, string? how = null, string? progress = null)
     {
-        var line = progress ?? (checks is { Total: > 0 } ? $"merging when checks pass: {checks.Done} of {checks.Total} done" : "merging when checks pass");
+        var line = progress ?? (checks is { Total: > 0 } ? $"merging when checks pass: {ArmedProgress.Say(checks.Done, checks.Total)} done" : "merging when checks pass");
         return how switch
         {
             ArmedByGitHub => $"{line}. GitHub merges it, with the node up or not.",
