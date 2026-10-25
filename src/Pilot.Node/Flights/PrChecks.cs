@@ -168,12 +168,21 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// </summary>
     private async Task MergeWhenGreenAsync(CancellationToken cancellationToken)
     {
-        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, MergeWhenGreen: [_, _], PullRequest: not null }))
+        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, MergeWhenGreen: [_, _, ..], PullRequest: not null }))
         {
             var (head, method) = (flight.MergeWhenGreen![0], flight.MergeWhenGreen[1]);
+            var how = flight.MergeWhenGreen.ElementAtOrDefault(2);
+            var native = how == LegCommander.ArmedByGitHub;
             var number = flight.PullRequest!.Value;
             var subject = Verbs.FlightTarget(flight.Code);
             var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+            if (pr is { State: "MERGED" } && pr.Number == number)
+            {
+                // Merged, by GitHub's auto-merge or from outside: the card below closes as merged and the flight lands. Nothing
+                // here merges it a second time.
+                state.PutFlight(flight with { MergeWhenGreen = null });
+                continue;
+            }
             var moved = pr is { State: "OPEN" } && pr.Number == number && !string.Equals(pr.Head, head, StringComparison.OrdinalIgnoreCase);
             string? dropped = pr is null || pr.Number != number || pr.State != "OPEN" ? $"#{number} is no longer open"
                 : moved ? $"#{number}'s head moved from {head[..Math.Min(8, head.Length)]} to {pr.Head[..Math.Min(8, pr.Head.Length)]} while its checks ran: look at what is new, then merge again"
@@ -182,11 +191,32 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             if (dropped is null && checks?.Status == ChoiceStatus.Pending)
             {
                 // Said on the card as each check finishes.
-                legs?.ShowMerge(subject, LegCommander.ArmedLine(checks), MergeWays.Armed);
+                legs?.ShowMerge(subject, LegCommander.ArmedLine(checks, how), MergeWays.Armed);
                 continue;
             }
             var failed = checks?.Status == ChoiceStatus.Failing;
             dropped ??= failed ? $"#{number}'s checks failed: the merge waited for them to pass" : null;
+            if (native && dropped is null)
+            {
+                // GitHub merges it when its checks pass (and its other rules allow): the PR's MERGED, read above on a later look,
+                // is what lands the flight.
+                legs?.ShowMerge(subject, checks?.Status == ChoiceStatus.Passing ? "checks passed: GitHub merges it now" : LegCommander.ArmedLine(checks, how), MergeWays.Armed);
+                continue;
+            }
+            // GitHub's auto-merge would merge a head that moved, or one whose check was re-run green, on its own: off first.
+            var autoMergeNote = "";
+            if (native && pr is { State: "OPEN" })
+            {
+                try
+                {
+                    await github.DisarmAutoMergeAsync(flight.RepoPath, number, cancellationToken);
+                    autoMergeNote = " GitHub's auto-merge is turned off.";
+                }
+                catch (FlightException ex)
+                {
+                    autoMergeNote = $" GitHub's auto-merge could not be turned off ({ex.Message}): switch it off on the PR page, or it merges once the checks pass.";
+                }
+            }
             var armed = state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady && c.Subject == subject && c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Status == ChoiceStatus.Armed)).Select(c => c.Id).ToList();
             if (dropped is null && legs is not null)
             {
@@ -216,8 +246,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             var headNow = pr?.Head ?? head;
             var (title, detail, link) = failed && checks is { FailedName: { } name }
-                ? ($"{flight.Code}'s PR #{number}: check {name} failed", $"The merge waited for the checks to pass, and {name} failed on {head[..Math.Min(8, head.Length)]}. Go around to fix what it found, re-run the checks if it was a flake, or merge again.", checks.FailedLink)
-                : ($"{flight.Code}'s merge did not go through", dropped, null);
+                ? ($"{flight.Code}'s PR #{number}: check {name} failed", $"The merge waited for the checks to pass, and {name} failed on {head[..Math.Min(8, head.Length)]}. Go around to fix what it found, re-run the checks if it was a flake, or merge again.{autoMergeNote}", checks.FailedLink)
+                : ($"{flight.Code}'s merge did not go through", dropped + autoMergeNote, null);
             if (legs is null || !legs.ShowMergeFailed(flight.Code, headNow, method, title, detail, link ?? flight.PullRequestUrl, rerun: failed,
                     goAroundWhy: failed ? $"the PR's checks failed{(checks?.FailedName is { } n ? $" ({n})" : "")} on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push" : dropped))
             {

@@ -68,7 +68,7 @@ public sealed class MergeArmTests
         var card = Card(node, ready);
         card.State.ShouldBe(CardState.Open);
         card.Choices.Single(c => c.Verb == Verbs.Merge).Status.ShouldBe(ChoiceStatus.Armed);
-        card.Detail.ShouldBe("merging when checks pass: 1 of 3 done");
+        card.Detail.ShouldNotBeNull().ShouldStartWith("merging when checks pass: 1 of 3 done");
         card.Title.ShouldContain("merges when its checks pass");
         node.State.Cards(openOnly: true).ShouldHaveSingleItem().Id.ShouldBe(ready.Id);
         node.GitHub.Merged.ShouldBeEmpty();
@@ -88,7 +88,7 @@ public sealed class MergeArmTests
 
             var card = Card(node, ready);
             card.State.ShouldBe(CardState.Open);
-            card.Detail.ShouldBe($"merging when checks pass: {done} of 4 done");
+            card.Detail.ShouldNotBeNull().ShouldStartWith($"merging when checks pass: {done} of 4 done");
             card.Choices.Single().Status.ShouldBe(ChoiceStatus.Armed);
             node.State.Cards().ShouldHaveSingleItem();
         }
@@ -188,6 +188,192 @@ public sealed class MergeArmTests
         node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
         node.State.Flights().Single().MergeWhenGreen.ShouldBeNull();
         Card(node, ready).State.ShouldBe(CardState.Closed);
+    }
+
+    [Theory]
+    [InlineData("true\n", true)]
+    [InlineData("true", true)]
+    [InlineData("false\n", false)]
+    [InlineData("null\n", false)]
+    [InlineData("", false)]
+    public void GhCliReadsAllowAutoMergeFromTheRepoApi(string output, bool allowed) =>
+        GhCli.ParseAllowAutoMerge(output).ShouldBe(allowed);
+
+    private static async Task<(NodeHarness Node, CardRow Card)> ArmedNatively(ChecksSummary at)
+    {
+        var node = await NodeHarness.StartAsync(Ct);
+        node.GitHub.AutoMergeAllowed = true;
+        var card = Ready(node);
+        node.GitHub.Summary = at;
+        (await Answer(node, card, "Merge")).Error.ShouldBeNull();
+        return (node, card);
+    }
+
+    [Fact]
+    public async Task WithAutoMergeAllowedAMergeOnPendingChecksArmsGitHubOnTheReviewedHeadAndRecordsItOnTheFlight()
+    {
+        var (node, ready) = await ArmedNatively(Pending(1));
+        await using var _ = node;
+
+        node.GitHub.AutoMergeArmed.ShouldBe([(63, PrHead, "squash")]);
+        node.GitHub.Merged.ShouldBeEmpty();
+        node.State.Flights().Single().MergeWhenGreen.ShouldBe([PrHead, "squash", LegCommander.ArmedByGitHub]);
+        var card = Card(node, ready);
+        card.State.ShouldBe(CardState.Open);
+        card.Choices.Single().Status.ShouldBe(ChoiceStatus.Armed);
+        card.Detail.ShouldNotBeNull().ShouldContain("1 of 3 done");
+        card.Detail.ShouldContain("GitHub merges it");
+        card.Detail.ShouldNotContain("enable-auto-merge");
+    }
+
+    [Fact]
+    public async Task ANativelyArmedCardKeepsItsProgressAndTheNodeNeverMergesAtGreen()
+    {
+        var (node, ready) = await ArmedNatively(Pending(1));
+        await using var _ = node;
+
+        node.GitHub.Summary = Pending(2);
+        await Look(node);
+        Card(node, ready).Detail.ShouldNotBeNull().ShouldContain("2 of 3 done");
+
+        node.GitHub.Summary = Passing();
+        await Look(node);
+
+        // GitHub merges it: the node waits for the PR's MERGED instead of merging a second time.
+        node.GitHub.Merged.ShouldBeEmpty();
+        node.GitHub.AutoMergeDisarmed.ShouldBeEmpty();
+        var card = Card(node, ready);
+        card.State.ShouldBe(CardState.Open);
+        card.Detail.ShouldNotBeNull().ShouldContain("GitHub merges it now");
+        node.State.Flights().Single().MergeWhenGreen.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task ANativelyArmedPrMergedByGitHubClosesTheCardAsMergedAndLandsTheFlight()
+    {
+        var (node, ready) = await ArmedNatively(Pending(1));
+        await using var _ = node;
+
+        node.GitHub.Pr = new PullRequest(63, "MERGED", PrHead, PrUrl);
+        await Look(node);
+
+        node.GitHub.Merged.ShouldBeEmpty();
+        node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
+        node.State.Flights().Single().MergeWhenGreen.ShouldBeNull();
+        var card = Card(node, ready);
+        card.State.ShouldBe(CardState.Closed);
+        card.Outcome.ShouldNotBeNull().ShouldContain("merged");
+    }
+
+    [Fact]
+    public async Task AFailedCheckDisarmsGitHubsAutoMergeAndTheCardSaysWhichCheckFailed()
+    {
+        var (node, ready) = await ArmedNatively(Pending(1));
+        await using var _ = node;
+
+        node.GitHub.Summary = Failing();
+        await Look(node);
+
+        node.GitHub.AutoMergeDisarmed.ShouldBe([63]);
+        var card = Card(node, ready);
+        card.Kind.ShouldBe(LegCommander.MergeFailed);
+        card.Title.ShouldContain("build (linux)");
+        card.Detail.ShouldNotBeNull().ShouldContain("build (linux) failed");
+        card.Detail.ShouldContain("auto-merge is turned off");
+        card.Link.ShouldBe(CheckLink);
+        node.State.Flights().Single().MergeWhenGreen.ShouldBeNull();
+        node.State.Cards().ShouldHaveSingleItem();
+        node.GitHub.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AMovedHeadDisarmsGitHubsAutoMergeToo()
+    {
+        var (node, ready) = await ArmedNatively(Pending(1));
+        await using var _ = node;
+
+        node.GitHub.Pr = new PullRequest(63, "OPEN", "beef1111aaaabbbbccccdddd", PrUrl);
+        await Look(node);
+
+        node.GitHub.AutoMergeDisarmed.ShouldBe([63]);
+        var card = Card(node, ready);
+        card.Kind.ShouldBe(LegCommander.MergeFailed);
+        card.Detail.ShouldNotBeNull().ShouldContain("head moved");
+        node.State.Flights().Single().MergeWhenGreen.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ADisarmGitHubRefusesIsSaidOnTheCardNotSwallowed()
+    {
+        var (node, ready) = await ArmedNatively(Pending(1));
+        await using var _ = node;
+
+        node.GitHub.DisarmFails = "gh could not turn auto-merge off on #63: HTTP 502";
+        node.GitHub.Summary = Failing();
+        await Look(node);
+
+        var card = Card(node, ready);
+        card.Kind.ShouldBe(LegCommander.MergeFailed);
+        card.Detail.ShouldNotBeNull().ShouldContain("could not be turned off");
+    }
+
+    [Fact]
+    public async Task WithAutoMergeOffTheNodePollsAndTheCardNamesTheSwitch()
+    {
+        var (node, ready) = await Armed(Pending(1));
+        await using var _ = node;
+
+        node.GitHub.AutoMergeArmed.ShouldBeEmpty();
+        node.State.Flights().Single().MergeWhenGreen.ShouldBe([PrHead, "squash"]);
+        var card = Card(node, ready);
+        card.Detail.ShouldNotBeNull().ShouldContain("gh repo edit --enable-auto-merge");
+        card.Detail.ShouldContain("Settings > General > Allow auto-merge");
+
+        // Each look keeps the switch on the card beside the count.
+        node.GitHub.Summary = Pending(2);
+        await Look(node);
+        Card(node, ready).Detail.ShouldNotBeNull().ShouldContain("2 of 3 done");
+        Card(node, ready).Detail.ShouldContain("--enable-auto-merge");
+
+        // And the node merges at green, as before; it disarms nothing, there is nothing of GitHub's to disarm.
+        node.GitHub.Summary = Passing();
+        await Look(node);
+        node.GitHub.Merged.Select(m => m.Number).ShouldBe([63]);
+        node.GitHub.AutoMergeDisarmed.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AGitHubThatWillNotArmLeavesTheNodePollingWithoutTheSwitchHint()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        node.GitHub.AutoMergeAllowed = true;
+        node.GitHub.ArmFails = "gh could not arm auto-merge on #63: Pull request is in clean status";
+        var ready = Ready(node);
+        node.GitHub.Summary = Pending(1);
+
+        (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
+
+        node.State.Flights().Single().MergeWhenGreen.ShouldBe([PrHead, "squash", LegCommander.ArmedByNode]);
+        Card(node, ready).Detail.ShouldNotBeNull().ShouldNotContain("enable-auto-merge");
+    }
+
+    [Fact]
+    public async Task AMergeQueueBaseKeepsJoiningTheQueueAtGreenInsteadOfArmingGitHub()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        node.GitHub.AutoMergeAllowed = true;
+        node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: false);
+        node.GitHub.Queues = true;
+        var ready = Ready(node);
+        node.GitHub.Summary = Pending(1);
+
+        (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
+        node.GitHub.AutoMergeArmed.ShouldBeEmpty();
+        node.State.Flights().Single().MergeWhenGreen.ShouldBe([PrHead, "squash", LegCommander.ArmedByNode]);
+
+        node.GitHub.Summary = Passing();
+        await Look(node);
+        node.GitHub.Merged.Select(m => m.Number).ShouldBe([63]);
     }
 
     [Fact]

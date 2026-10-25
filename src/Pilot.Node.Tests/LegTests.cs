@@ -132,6 +132,43 @@ internal sealed class FakeGitHub : IGitHub
     public Task<ChecksSummary?> ChecksSummaryAsync(string repoPath, int number, CancellationToken cancellationToken) =>
         Task.FromResult(Summary ?? (Checks is { } status ? new ChecksSummary(status, 0, 0) : null));
 
+    /// <summary>Whether the repo allows GitHub's auto-merge, as AutoMergeAllowedAsync answers.</summary>
+    public bool AutoMergeAllowed { get; set; }
+
+    /// <summary>When set, ArmAutoMergeAsync fails with it, as GitHub refusing a PR with nothing to wait for.</summary>
+    public string? ArmFails { get; set; }
+
+    /// <summary>When set, DisarmAutoMergeAsync fails with it.</summary>
+    public string? DisarmFails { get; set; }
+
+    /// <summary>Every auto-merge armed, as (PR number, head, method).</summary>
+    public List<(int Number, string Head, string Method)> AutoMergeArmed { get; } = [];
+
+    /// <summary>Every auto-merge disarmed, by PR number.</summary>
+    public List<int> AutoMergeDisarmed { get; } = [];
+
+    public Task<bool> AutoMergeAllowedAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(AutoMergeAllowed);
+
+    public Task ArmAutoMergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
+    {
+        if (ArmFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        AutoMergeArmed.Add((number, head, method));
+        return Task.CompletedTask;
+    }
+
+    public Task DisarmAutoMergeAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        if (DisarmFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        AutoMergeDisarmed.Add(number);
+        return Task.CompletedTask;
+    }
+
     /// <summary>How many times the failed runs were asked to run again, each as the PR's number.</summary>
     public List<int> Reruns { get; } = [];
 

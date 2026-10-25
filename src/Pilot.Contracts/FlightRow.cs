@@ -81,7 +81,10 @@ public sealed record FlightRow
     /// A merge asked for while its PR's checks still ran: the head reviewed and the method, which the node merges (or queues)
     /// once the checks pass on that head, and drops, saying why, when they fail or the head moves. Null while none waits. A
     /// merge queue takes no PR whose required checks have not passed, so a Merge pressed early was refused (TIA1818's #1826,
-    /// DE1 2026-10-25).
+    /// DE1 2026-10-25). A third element says who waits: <c>github</c> when GitHub's own auto-merge is armed (it merges even
+    /// with the node down, and the node only keeps the card's progress and disarms it on a failed check or a moved head),
+    /// <c>node</c> when the node polls for a reason that needs no word (a merge queue base, or GitHub would not arm); with
+    /// none the node polls because the repo has auto-merge off, and the card says how to switch it on.
     /// </summary>
     public string[]? MergeWhenGreen { get; init; }
 
