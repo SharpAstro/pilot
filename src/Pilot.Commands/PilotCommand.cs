@@ -19,8 +19,8 @@ public static class PilotCommand
     /// <param name="console">The console host, pilot itself: only it has standard streams of its own for <c>pilot mcp</c> to serve on.</param>
     /// <param name="agent">Whether the commands are a Claude session's, where the caller knows; null reads it from the environment (<see cref="IsAgent(bool, bool?)"/>).</param>
     /// <param name="sessionId">The Claude session running the commands, where the caller knows; null reads <c>CLAUDE_CODE_SESSION_ID</c> from the environment.</param>
-    public static Task<int> RunAsync(string[] args, string cwd, TextWriter output, TextWriter error, CancellationToken cancellationToken, string who = "cli", bool console = false, bool? agent = null, string? sessionId = null) =>
-        InvokeAsync(args, cwd, output, error, who, bySession: who == "cli", console, cancellationToken, agent, sessionId);
+    public static Task<int> RunAsync(string[] args, string cwd, TextWriter output, TextWriter error, CancellationToken cancellationToken, string who = "cli", bool console = false, bool? agent = null, string? sessionId = null, RichOutput? rich = null) =>
+        InvokeAsync(args, cwd, output, error, who, bySession: who == "cli", console, cancellationToken, agent, sessionId, rich);
 
     /// <summary>
     /// Whether a command sent from here is a Claude session's (<see cref="CommandRequest.Agent"/>): Claude Code puts
@@ -39,9 +39,9 @@ public static class PilotCommand
     /// the MCP server's are), before <paramref name="who"/>.</param>
     /// <param name="agent">Whether the commands are a Claude session's, where the host knows; null reads it from the environment (<see cref="IsAgent"/>).</param>
     /// <param name="sessionId">The Claude session running the commands, where the caller knows; null reads <c>CLAUDE_CODE_SESSION_ID</c> from the environment.</param>
-    internal static async Task<int> InvokeAsync(string[] args, string cwd, TextWriter output, TextWriter error, string who, bool bySession, bool console, CancellationToken cancellationToken, bool? agent = null, string? sessionId = null)
+    internal static async Task<int> InvokeAsync(string[] args, string cwd, TextWriter output, TextWriter error, string who, bool bySession, bool console, CancellationToken cancellationToken, bool? agent = null, string? sessionId = null, RichOutput? rich = null)
     {
-        var root = Build(cwd, output, error, who, bySession, console, agent, sessionId);
+        var root = Build(cwd, output, error, who, bySession, console, agent, sessionId, rich);
         var parsed = root.Parse(args);
         if (args.Length == 0)
         {
@@ -62,7 +62,7 @@ public static class PilotCommand
     }
 
     /// <summary>The command tree; actions write to <paramref name="output"/> and <paramref name="error"/>, and resolve folders against <paramref name="cwd"/>.</summary>
-    internal static RootCommand Build(string cwd, TextWriter output, TextWriter error, string who = "cli", bool bySession = true, bool console = false, bool? agent = null, string? sessionId = null)
+    internal static RootCommand Build(string cwd, TextWriter output, TextWriter error, string who = "cli", bool bySession = true, bool console = false, bool? agent = null, string? sessionId = null, RichOutput? rich = null)
     {
         var byAgent = IsAgent(bySession, agent);
         sessionId ??= Environment.GetEnvironmentVariable("CLAUDE_CODE_SESSION_ID");
@@ -76,6 +76,13 @@ public static class PilotCommand
             Description = "A node on the LAN, host:port (pilot nodes finds them); else PILOT_NODE, else this machine's. Commands need pilot connect first",
             Recursive = true,
         };
+        var outputFormat = new Option<string>("--output-format")
+        {
+            Description = "auto (rich on a terminal that shows Sixel, else plain), rich, markdown or plain; status takes it",
+            Recursive = true,
+            DefaultValueFactory = _ => "auto",
+        };
+        outputFormat.AcceptOnlyFromAmong("auto", "rich", "markdown", "md", "plain", "text");
 
         // Every action talks to the node the same way: a refusal is exit 1, a usage problem found late 2, no node 3.
         Command Action(Command command, Func<ParseResult, NodeClient, CancellationToken, Task<int>> run)
@@ -117,6 +124,30 @@ public static class PilotCommand
 
         string Join(ParseResult parseResult, Argument<string[]> words) => string.Join(' ', parseResult.GetValue(words) ?? []);
 
+        // What --output-format asks for: plain text, the Markdown source, or (auto and rich) the Markdown rendered by the
+        // host's RichOutput, which says false when auto settles on plain. A host with none has no terminal: auto is plain
+        // there and rich the source.
+        async Task WriteAsync(string? format, Func<string> plain, Func<string> markdown)
+        {
+            switch (format)
+            {
+                case "markdown" or "md":
+                    await output.WriteAsync(markdown());
+                    return;
+                case "auto" or null when rich is null:
+                case "plain" or "text":
+                    await output.WriteAsync(plain());
+                    return;
+                case "rich" when rich is null:
+                    await output.WriteAsync(markdown());
+                    return;
+            }
+            if (!await rich!(format ?? "auto", markdown(), output, error))
+            {
+                await output.WriteAsync(plain());
+            }
+        }
+
         // A leg command names its leg with --leg, or is run from the plane and finds it.
         var leg = new Option<string?>("--leg") { Description = "The leg, <code>/<leg>; inside a plane, its flying leg" };
 
@@ -128,7 +159,7 @@ public static class PilotCommand
         }
 
         // status, sessions
-        var status = Action(new Command("status", "Flights, their legs and artifacts, open cards, and live sessions"), async (_, client, ct) =>
+        var status = Action(new Command("status", "Flights, their legs and artifacts, open cards, and live sessions"), async (parseResult, client, ct) =>
         {
             var snapshot = await SnapshotAsync(client, ct);
             var maintenance = false;
@@ -143,7 +174,8 @@ public static class PilotCommand
             {
                 // The node's own word on itself is a line more: the flights and sessions are what status is for.
             }
-            await output.WriteAsync(Status(snapshot, maintenance: maintenance, autopilot: autopilot));
+            await WriteAsync(parseResult.GetValue(outputFormat), () => Status(snapshot, maintenance: maintenance, autopilot: autopilot),
+                () => StatusMarkdown.Build(snapshot, maintenance, autopilot));
             return 0;
         });
         var sessions = Action(new Command("sessions", "Every Claude session on the machine"), async (_, client, ct) =>
@@ -713,7 +745,7 @@ public static class PilotCommand
 
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
-            Options = { socket, node },
+            Options = { socket, node, outputFormat },
             Subcommands = { status, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, archive, ring, flag, handled, nodes, connectNode, grants, settings },
         };
 

@@ -295,4 +295,66 @@ public sealed class CliTests : IAsyncLifetime
         PilotCommand.Caller(snapshot, "b1b2b3b4-0000-4000-8000-000000000000").ShouldBe("du1-tia1-parser");
         PilotCommand.Caller(snapshot, "a1a2a3a4-0000-4000-8000-000000000000").ShouldBe("du1-tia1-parser");
     }
+
+    [Fact]
+    public async Task StatusWritesMarkdownForOutputFormatMarkdownAndPlainTextWhenNoHostCanRenderAuto()
+    {
+        await Ok(Repo, "flight", "create", "1611", "Planets", "on", "the", "GPU");
+        var flight = _node.State.Flights().Single();
+        await Ok(_root, "leg", "plan", "TIA1611", "gpu", "--goal", "Draw the planets", "--done-when", "The capture shows them", "--item", "Write the shader", "--item", "Capture it");
+        await Ok(_root, "leg", "start", "TIA1611", "gpu");
+        await Ok(flight.Worktree, "check", "1");
+        await Ok(flight.Worktree, "artifact", "capture.png", "The planets");
+
+        var (_, markdown, _) = await Pilot(_root, "status", "--output-format", "markdown");
+        markdown.ShouldContain("## Flights");
+        markdown.ShouldContain("### TIA1611 · Planets on the GPU");
+        markdown.ShouldContain("| 1 | gpu | flying | 1/2 |");
+        markdown.ShouldContain($"![The planets]({Path.Combine(flight.Worktree, "capture.png").Replace('\\', '/')})");
+
+        // The tests' host has no terminal, as the GUI's command bar and the MCP server have none: auto is plain, and rich the source.
+        var (_, auto, _) = await Pilot(_root, "status");
+        auto.ShouldContain("TIA1611  Planets on the GPU");
+        auto.ShouldNotContain("##");
+        (await Pilot(_root, "status", "--output-format", "rich")).Output.ShouldBe(markdown);
+        (await Pilot(_root, "status", "--output-format", "plain")).Output.ShouldBe(auto);
+
+        var (exit, _, error) = await Pilot(_root, "status", "--output-format", "html");
+        exit.ShouldBe(2);
+        error.ShouldContain("'html' not recognized");
+    }
+
+    [Fact]
+    public async Task StatusHandsAutoAndRichToTheHostsRendererAndWritesPlainTextWhenItSettlesOnPlain()
+    {
+        await Ok(Repo, "flight", "create", "1611", "Planets", "on", "the", "GPU");
+        var asked = new List<string>();
+        async Task<string> Run(bool renders, params string[] args)
+        {
+            var output = new StringWriter();
+            await PilotCommand.RunAsync(["--node-socket", _node.SocketPath, .. args], _root, output, new StringWriter(), Ct, rich: async (format, markdown, writer, _) =>
+            {
+                asked.Add(format);
+                if (renders)
+                {
+                    await writer.WriteAsync("RENDERED " + markdown.Split('\n')[0].TrimEnd('\r'));
+                }
+                return renders;
+            });
+            return output.ToString();
+        }
+
+        (await Run(renders: true, "status")).ShouldBe("RENDERED # pilot status");
+        (await Run(renders: true, "status", "--output-format", "rich")).ShouldBe("RENDERED # pilot status");
+        (await Run(renders: false, "status")).ShouldContain("TIA1611  Planets on the GPU");
+        (await Run(renders: true, "status", "--output-format", "plain")).ShouldContain("TIA1611  Planets on the GPU");
+        asked.ShouldBe(["auto", "rich", "auto"]);
+    }
+
+    [Theory]
+    [InlineData("a|b", @"a\|b")]
+    [InlineData("snake_case *x* [y] <z> `q`", @"snake\_case \*x\* \[y\] \<z\> \`q\`")]
+    [InlineData("issue #12", "issue #12")]
+    public void StatusMarkdownEscapesWhatMarkdownWouldActOn(string text, string escaped) =>
+        StatusMarkdown.Text(text).ShouldBe(escaped);
 }
