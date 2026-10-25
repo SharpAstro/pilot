@@ -23,7 +23,7 @@
        Pilot.Gui.csproj); these are what CI restores. -->
   <ItemGroup>
     <PackageVersion Include="DIR.Lib" Version="11.36.*" />
-    <PackageVersion Include="Console.Lib" Version="5.10.*" />
+    <PackageVersion Include="Console.Lib" Version="5.11.*" />
     <PackageVersion Include="LAN.Lib" Version="2.4.*" />
     <!-- The per-user node's socket location, lock, Kestrel hosting, event queue and ring buffer (SharpAstro/Node.Lib), shared with tianwen. -->
     <PackageVersion Include="Node.Lib" Version="1.2.*" />

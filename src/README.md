@@ -412,6 +412,7 @@ The cache is read every three minutes once something has asked (a node nobody as
 
 ```bash
 pilot status                                   # flights, their legs and artifacts, and the live sessions
+pilot status --output-format markdown          # the same as Markdown (see Output formats)
 pilot sessions
 pilot repos [--all] [--refresh]                # each tracked repo: branch, worktrees (flight, diff stat) and open PRs; --all adds untracked ones
 pilot repos sync                               # fetch -p --all, then fast-forward each tracked repo's default branch; prints each repo's outcome
@@ -454,6 +455,17 @@ Inside a plane a leg command names no leg: the flight is the one whose worktree 
 flying, and the command is sent as that leg's worker, so the black box says which worker ticked what. A worker's brief
 gives it these commands by the CLI's full path (beside the node, else the source tree's build), with `--node-socket`
 when its node is not on the default socket. Exit codes: 0 done, 1 refused by the node (it says why), 2 usage, 3 no node.
+
+### Output formats
+
+`--output-format auto|rich|markdown|plain` is taken on any command, and `status` reads it. `plain` is the text above.
+`markdown` is the Markdown source: the issue and PR as links, each flight's legs in a table, and a leg's screenshot as an
+image. `rich` is that Markdown rendered for the terminal by Console.Lib's `MarkdownOutput`, as `mdcat` renders it: colour,
+clickable links, and the screenshot itself on a terminal that can show it. `auto`, the default, is rich only when
+standard output is a terminal, `NO_COLOR` is unset and the terminal answers that it shows Sixel. Anything else (a pipe,
+a script, an agent's shell) is plain, and the terminal is not asked. Only the CLI renders, through the `RichOutput` it
+hands the command tree, so the tree takes no Console.Lib; the GUI's command bar and `pilot mcp` write plain for auto
+and the source for rich.
 
 ### Say to all
 

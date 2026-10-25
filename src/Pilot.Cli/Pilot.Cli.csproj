@@ -16,4 +16,18 @@
     <ProjectReference Include="..\Pilot.Commands\Pilot.Commands.csproj" />
   </ItemGroup>
 
+  <!-- Console.Lib's MarkdownOutput for the output-format option: status rendered as mdcat renders it, on a terminal that
+       shows Sixel. Only this host takes it (see Pilot.Commands' RichOutput). From the sibling clone when it is there. -->
+  <PropertyGroup>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\Console.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\Console.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
+    <UseLocalConsoleLib Condition="'$(UseLocalConsoleLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)Console.Lib\src\Console.Lib\Console.Lib.csproj')">true</UseLocalConsoleLib>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalConsoleLib)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)Console.Lib\src\Console.Lib\Console.Lib.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalConsoleLib)' != 'true'">
+    <PackageReference Include="Console.Lib" />
+  </ItemGroup>
+
 </Project>
