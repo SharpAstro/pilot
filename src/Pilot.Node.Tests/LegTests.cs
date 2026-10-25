@@ -20,14 +20,22 @@ internal sealed class FakeWorkers : IWorkerLauncher
     /// <summary>What the next start throws, as the claude CLI refusing it; null to start it.</summary>
     public Exception? Fail { get; set; }
 
-    public Task<string> StartAsync(WorkerStart start, CancellationToken cancellationToken)
+    /// <summary>What the next start waits for before the worker is up, as a slow claude start; null to start at once.</summary>
+    public Task? Hold { get; set; }
+
+    public async Task<string> StartAsync(WorkerStart start, CancellationToken cancellationToken)
     {
         if (Fail is { } fail)
         {
-            return Task.FromException<string>(fail);
+            throw fail;
+        }
+        if (Hold is { } hold)
+        {
+            Hold = null;
+            await hold;
         }
         Started.Add(start);
-        return Task.FromResult($"job{++_next:D5}");
+        return $"job{++_next:D5}";
     }
 
     public Task StopAsync(string job, CancellationToken cancellationToken)
@@ -892,6 +900,37 @@ public sealed class LegCommanderTests : IDisposable
         await _legs.AdvanceAllAsync(Ct);
         _state.Cards(openOnly: true).Count(c => c.Kind == LegCommander.NextStepKind).ShouldBe(1);
         _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ASweepWhileAValidatorsGoStartsTheLegRingsNothing()
+    {
+        await FlightWithTwoLegs();
+        _legs.Models = new RoleModels(null);
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        foreach (var i in Enumerable.Range(1, L("parser").Checklist.Length))
+        {
+            await Leg(Verbs.Check, "flight/TIA1/parser", i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done")).Ok.ShouldBeTrue();
+        L("render").Validation.ShouldBe(LegValidation.Pending);
+
+        // The go starts render's worker, which takes its time to come up: render reads planned and validated meanwhile, and a
+        // sweep in that gap asks to start it too (TIA1818's web-header, DE1 2026-10-25).
+        var up = new TaskCompletionSource();
+        _workers.Hold = up.Task;
+        var go = Leg(Verbs.ValidateLeg, "flight/TIA1/render", "go");
+        while (L("render").Validation != LegValidation.Go && !go.IsCompleted)
+        {
+            await Task.Yield();
+        }
+        var sweep = _legs.AdvanceAllAsync(Ct);
+        up.SetResult();
+        (await go).Ok.ShouldBeTrue();
+        await sweep;
+
+        L("render").State.ShouldBe(LegState.Flying);
+        _state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.NextStepKind).ShouldBeEmpty();
     }
 
     [Fact]
