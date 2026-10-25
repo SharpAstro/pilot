@@ -97,6 +97,14 @@ internal sealed class PilotChrome<TSurface>
         Jobs.Play = Play;
         Cards.Play = Play;
         Settings.About = About;
+        // The Autopilot switch, in every page's header, for the node the window shows.
+        sessions.Autopilot = Autopilot;
+        Flights.Autopilot = Autopilot;
+        Repos.Autopilot = Autopilot;
+        Jobs.Autopilot = Autopilot;
+        Fleet.Autopilot = Autopilot;
+        Settings.Autopilot = Autopilot;
+        Home.Autopilot = Autopilot;
         // A transcript or a flight's page opened from inside a page (Enter, a click on a row) is a move too.
         sessions.Transcript.Opening = RecordOpening;
         Flights.Opening = RecordOpening;
@@ -126,6 +134,9 @@ internal sealed class PilotChrome<TSurface>
 
     /// <summary>The header's ? card, the same on every page.</summary>
     public AboutCard About { get; } = new();
+
+    /// <summary>The header's Autopilot switch, the same on every page: the host sets <see cref="AutopilotSwitch.On"/> from the node in view and <see cref="AutopilotSwitch.OnToggle"/> to flip it.</summary>
+    public AutopilotSwitch Autopilot { get; } = new();
 
     /// <summary>Which nodes the window shows (<see cref="FleetPages.Merge"/>): all by default, kept across pages for the window's life.</summary>
     public NodeFilter Nodes { get; } = new();

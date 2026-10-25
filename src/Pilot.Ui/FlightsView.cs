@@ -316,6 +316,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
     public AboutCard? About { get; set; }
 
+    /// <summary>The header's Autopilot switch, the same on every page.</summary>
+    public AutopilotSwitch? Autopilot { get; set; }
+
     /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
 
@@ -679,6 +682,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                     CanCommand && !Wizard.IsOpen && Wizard.LoadRepos is not null
                         ? CardsView<TSurface>.IconPill(Layout.IconKind.Plus, "New flight", "flights:new", () => Wizard.Open(), square: AboutCard.HeaderButton)
                         : Layout.Builder.Spacer().WFixed(0f),
+                    AutopilotSwitch.In(Autopilot, NightOrNull),
                     About is { } about ? about.Button(NightOrNull) : Layout.Builder.Spacer().WFixed(0f)])
                 .WithGap(12f)
                 .RowH(32f),

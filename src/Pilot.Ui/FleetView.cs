@@ -74,6 +74,12 @@ internal sealed record FleetLine
     /// <summary>Whether the row offers Maintenance on / off: a node this user may command (this window's, or a granted one) and that answers now.</summary>
     public bool CanSetMaintenance => CanCommand && Connected;
 
+    /// <summary>Whether the node says its autopilot is on (its <see cref="NodeInfo.Autopilot"/>). False for a node not reached, whose last word would read as now.</summary>
+    public bool Autopilot { get; init; }
+
+    /// <summary>What the row says of the autopilot, <c>autopilot on</c> or <c>autopilot off</c>; null for a node not reached.</summary>
+    public string? AutopilotWord => Connected ? (Autopilot ? "autopilot on" : "autopilot off") : null;
+
     /// <summary>The mark a node in maintenance wears on its row.</summary>
     public const string MaintenanceMark = "🔧 maintenance";
 
@@ -98,7 +104,7 @@ internal sealed record FleetLine
     public required int Rings { get; init; }
 
     public string ToDumpLine() => string.Join(" | ", Machine, Where + (Here ? " (this window)" : ""), State, Account, Usage.Length == 0 ? "-" : Usage, Sessions, Flights, Jobs,
-        Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : "watch only") + (Maintenance ? " | " + MaintenanceMark : "");
+        Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : "watch only") + (AutopilotWord is { } autopilot ? " | " + autopilot : "") + (Maintenance ? " | " + MaintenanceMark : "");
 
     public static FleetLine From(string where, bool here, bool canCommand, string? announcedAs, NodeSummary summary)
     {
@@ -115,6 +121,7 @@ internal sealed record FleetLine
             NeverReached = !summary.Connected && summary.Node is null,
             Held = canCommand && !here,
             Maintenance = summary.Connected && summary.Node is { Maintenance: true },
+            Autopilot = summary.Connected && summary.Node is { Autopilot: true },
             Account = summary.Account ?? (summary.Connected ? "account unknown" : "—"),
             Usage = summary.Usage ?? "",
             // A node not reached says nothing it last said: its counts would read as now.
@@ -324,6 +331,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
     public AboutCard? About { get; set; }
 
+    /// <summary>The header's Autopilot switch, the same on every page.</summary>
+    public AutopilotSwitch? Autopilot { get; set; }
+
     /// <summary>The window's node selection: its pills in the header, and the nodes picked are the rows shown.</summary>
     public NodeFilter? Nodes { get; set; }
 
@@ -369,6 +379,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                     .. (Nodes?.Pills() ?? []),
                     Layout.Builder.Spacer().WStar(),
                     Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
+                    AutopilotSwitch.In(Autopilot),
                     About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f)])
                 .WithGap(12f)
                 .RowH(32f),
@@ -435,8 +446,11 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 Layout.Builder.Text(line.Here ? $"{line.Where} · this window" : line.CanCommand ? line.Where : $"{line.Where} · watch only", 11f, Dim).RowH(18f)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.Account, 13f, Body).RowH(22f),
-                line.Maintenance
-                    ? Layout.Builder.HStack(Layout.Builder.Text(FleetLine.MaintenanceMark, 11f, Ringing).WAuto(), Layout.Builder.Text(line.Usage, 11f, Dim).WStar()).WithGap(8f).RowH(18f)
+                line.Maintenance || line.AutopilotWord is not null
+                    ? Layout.Builder.HStack([
+                            .. (line.Maintenance ? [Layout.Builder.Text(FleetLine.MaintenanceMark, 11f, Ringing).WAuto()] : (Layout.Node[])[]),
+                            .. (line.AutopilotWord is { } autopilot ? [Layout.Builder.Text(autopilot, 11f, line.Autopilot ? Live : Dim).WAuto()] : (Layout.Node[])[]),
+                            Layout.Builder.Text(line.Connected ? line.Usage : line.State, 11f, Dim).WStar()]).WithGap(8f).RowH(18f)
                     : Layout.Builder.Text(line.Connected ? line.Usage : line.State, 11f, Dim).RowH(18f)),
             SessionsCell(line),
             Layout.Builder.VStack(
