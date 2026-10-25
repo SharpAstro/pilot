@@ -178,6 +178,14 @@ public sealed class ShellCheckRunner : ICheckRunner
 /// <param name="Base">The branch it goes into, as read by repo and number; empty otherwise.</param>
 public sealed record PullRequest(int Number, string State, string Head, string Url, string Mergeable = "", string Title = "", string Author = "", string Base = "");
 
+/// <summary>
+/// Where a PR stands in its base's merge queue. <paramref name="State"/> and <paramref name="Head"/> are the PR's own
+/// (<c>OPEN</c>, <c>MERGED</c>, <c>CLOSED</c>); <paramref name="Queued"/> whether it is in the queue now, at
+/// <paramref name="Position"/>; <paramref name="RemovedAt"/> and <paramref name="RemovedReason"/> its last removal from the
+/// queue, when that came after its last joining it. A merge through the queue is a removal too, with the reason <c>merged</c>.
+/// </summary>
+public sealed record MergeQueueState(string State, string Head, bool Queued, int? Position = null, DateTimeOffset? RemovedAt = null, string? RemovedReason = null);
+
 /// <summary>The GitHub calls a merge needs, so a test decides what GitHub says.</summary>
 public interface IGitHub
 {
@@ -207,6 +215,9 @@ public interface IGitHub
     /// aside), null with no checks or when GitHub would not say.
     /// </summary>
     Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken);
+
+    /// <summary>Where PR <paramref name="number"/> stands in its base's merge queue; null when its base has none, or GitHub would not say.</summary>
+    Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken);
 
     /// <summary>The repo's open issues, most recently updated first.</summary>
     /// <exception cref="FlightException">gh could not list them.</exception>
@@ -302,6 +313,55 @@ public sealed class GhCli : IGitHub
             throw new FlightException($"gh could not merge #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
     }
+
+    private const string QueueStateQuery = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){"
+        + "state headRefOid isMergeQueueEnabled isInMergeQueue mergeQueueEntry{position} "
+        + "timelineItems(last:10,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT]){nodes{__typename ... on AddedToMergeQueueEvent{createdAt} ... on RemovedFromMergeQueueEvent{createdAt reason}}}}}}";
+
+    public async Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (exit, output, _) = await RunAsync(
+            ["api", "graphql", "-F", "owner={owner}", "-F", "name={repo}", "-F", $"number={number.ToString(System.Globalization.CultureInfo.InvariantCulture)}", "-f", $"query={QueueStateQuery}"],
+            repoPath, cancellationToken);
+        return exit == 0 ? ParseMergeQueue(output) : null;
+    }
+
+    /// <summary><see cref="QueueStateQuery"/>'s answer as a <see cref="MergeQueueState"/>; null when the base has no queue or the answer says nothing.</summary>
+    internal static MergeQueueState? ParseMergeQueue(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!(doc.RootElement.TryGetProperty("data", out var data)
+                && data.TryGetProperty("repository", out var repo) && repo.ValueKind == JsonValueKind.Object
+                && repo.TryGetProperty("pullRequest", out var pr) && pr.ValueKind == JsonValueKind.Object
+                && pr.TryGetProperty("isMergeQueueEnabled", out var enabled) && enabled.ValueKind == JsonValueKind.True))
+            {
+                return null;
+            }
+            var queued = pr.TryGetProperty("isInMergeQueue", out var inQueue) && inQueue.ValueKind == JsonValueKind.True;
+            int? position = pr.TryGetProperty("mergeQueueEntry", out var entry) && entry.ValueKind == JsonValueKind.Object
+                && entry.TryGetProperty("position", out var at) && at.TryGetInt32(out var p) ? p : null;
+            // The last event says whether it left the queue after it last joined.
+            DateTimeOffset? removedAt = null;
+            string? reason = null;
+            if (pr.TryGetProperty("timelineItems", out var items) && items.TryGetProperty("nodes", out var nodes) && nodes.ValueKind == JsonValueKind.Array
+                && nodes.GetArrayLength() > 0 && nodes[nodes.GetArrayLength() - 1] is var last
+                && TextOf(last, "__typename") == "RemovedFromMergeQueueEvent")
+            {
+                removedAt = TextOf(last, "createdAt") is { } stamp && DateTimeOffset.TryParse(stamp, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var when) ? when : null;
+                reason = TextOf(last, "reason");
+            }
+            return new MergeQueueState(TextOf(pr, "state") ?? "", TextOf(pr, "headRefOid") ?? "", queued, position, removedAt, reason);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string? TextOf(JsonElement element, string name) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
     private const string QueueQuery = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id isMergeQueueEnabled}}}";
 

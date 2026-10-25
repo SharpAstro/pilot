@@ -89,6 +89,8 @@ internal sealed record FlightLine
             {
                 FlightState.Held => $"waiting for {string.Join(", ", flight.Connections)}",
                 FlightState.Landed when flight.LandedAt is { } at => SessionLine.Ago(now - at),
+                // Merged through a queue is not landed yet: it waits for the queue's checks.
+                FlightState.Flying when flight.MergeQueue is { } queue => queue,
                 _ => null,
             },
             Branch = flight.Branch,

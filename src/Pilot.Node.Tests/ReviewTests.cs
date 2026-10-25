@@ -286,6 +286,77 @@ public sealed class ReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task APrThatLeftTheMergeQueueUnmergedIsACardSayingWhyWithMergeAgain()
+    {
+        var flight = await NewFlight("20", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA20"), "controller");
+        (await Run(Verbs.Review, "flight/TIA20", Reviewer("TIA20"), "pass", "fine")).Ok.ShouldBeTrue();
+        // Merged through the card, which closes then: on a base with a queue that only queued it.
+        var ready = Open().ShouldHaveSingleItem();
+        _state.CloseCard(ready.Id, "done", "controller").ShouldBeTrue();
+        var head = _github.Pr!.Head;
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights);
+
+        // While it waits, the flight says where; nothing is carded.
+        _github.Queue = new MergeQueueState("OPEN", head, Queued: true, Position: 2);
+        await checks.LookAsync(Ct);
+        F("TIA20").MergeQueue.ShouldBe("in the merge queue, position 2");
+        Open().ShouldBeEmpty();
+
+        // The queue's checks failed: out of the queue, still open, and a card says so with the merge again.
+        _github.Queue = new MergeQueueState("OPEN", head, Queued: false, RemovedAt: DateTimeOffset.UtcNow.AddSeconds(-5), RemovedReason: "failed checks");
+        await checks.LookAsync(Ct);
+        F("TIA20").MergeQueue.ShouldBeNull();
+        var card = Open().ShouldHaveSingleItem();
+        (card.Kind, card.Bin, card.Title).ShouldBe((PrChecks.QueueDropped, CardBin.ForYou, "TIA20's PR #71 left the merge queue unmerged"));
+        card.Detail.ShouldNotBeNull().ShouldContain("failed checks");
+        card.Link.ShouldBe("https://github.com/x/tianwen/pull/71");
+        var merge = card.Choices.ShouldHaveSingleItem();
+        (merge.Verb, merge.Target, merge.Args.Single()).ShouldBe((Verbs.Merge, "flight/TIA20", head));
+
+        // Once a removal: the next look, or a dismissal, raises it no second time.
+        await checks.LookAsync(Ct);
+        Open().ShouldHaveSingleItem().Id.ShouldBe(card.Id);
+        _state.CloseCard(card.Id, "dismissed", "gui").ShouldBeTrue();
+        await checks.LookAsync(Ct);
+        Open().ShouldBeEmpty();
+
+        // Queued again and dropped again: a new removal, a new card, closed by itself once it is back in the queue.
+        _github.Queue = new MergeQueueState("OPEN", head, Queued: false, RemovedAt: DateTimeOffset.UtcNow.AddSeconds(1), RemovedReason: "merge conflict");
+        await checks.LookAsync(Ct);
+        var again = Open().ShouldHaveSingleItem();
+        again.Detail.ShouldNotBeNull().ShouldContain("merge conflict");
+        _github.Queue = new MergeQueueState("OPEN", head, Queued: true, Position: 1);
+        await checks.LookAsync(Ct);
+        Open().ShouldBeEmpty();
+        _state.Cards().Single(c => c.Id == again.Id).Outcome.ShouldBe("queued again");
+        F("TIA20").MergeQueue.ShouldBe("in the merge queue, position 1");
+    }
+
+    [Fact]
+    public async Task APrWithItsReadyCardStillOpenOrABaseWithNoQueueIsNoQueueCard()
+    {
+        var flight = await NewFlight("21", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA21"), "controller");
+        (await Run(Verbs.Review, "flight/TIA21", Reviewer("TIA21"), "pass", "fine")).Ok.ShouldBeTrue();
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights);
+
+        // Taken out of the queue while its PR-ready card is open: that card offers the merge already.
+        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: false, RemovedAt: DateTimeOffset.UtcNow, RemovedReason: "manually removed");
+        await checks.LookAsync(Ct);
+        Open().ShouldHaveSingleItem().Kind.ShouldBe(LegCommander.PrReady);
+
+        // A base with no queue: nothing to say, and the flight says no queue.
+        _github.Queue = null;
+        _state.CloseCard(Open().Single().Id, "done", "controller").ShouldBeTrue();
+        await checks.LookAsync(Ct);
+        Open().ShouldBeEmpty();
+        F("TIA21").MergeQueue.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task AFlightWhosePrMergedWithNoCardOpenLandsAllTheSame()
     {
         var flight = await NewFlight("5", "parser");
