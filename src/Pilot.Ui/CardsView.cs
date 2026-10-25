@@ -57,6 +57,49 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
             watchtower);
     }
 
+    /// <summary>
+    /// This panel held to <paramref name="held"/>'s order, as while the pointer is over it, so nothing moves under it: each
+    /// card <paramref name="held"/> showed keeps its place, as it reads now, or as it last read when it has closed since;
+    /// the cards raised since wait, never pushed in above. The summary and the handled lines are this panel's own.
+    /// </summary>
+    internal (CardsScreen Screen, IReadOnlyList<CardRow> Waiting, IReadOnlySet<CardRow> Closed) HeldTo(CardsScreen held)
+    {
+        var now = new Dictionary<(string?, string), CardRow>();
+        foreach (var card in Open)
+        {
+            now[(NodeOf(card)?.Name, card.Id)] = card;
+        }
+        var nodes = new Dictionary<CardRow, NodeMark>(ReferenceEqualityComparer.Instance);
+        var open = new List<CardRow>();
+        var closed = new HashSet<CardRow>(ReferenceEqualityComparer.Instance);
+        foreach (var card in held.Open)
+        {
+            var node = held.NodeOf(card);
+            var shown = now.Remove((node?.Name, card.Id), out var current) ? current : card;
+            if (shown == card && !Open.Contains(card))
+            {
+                closed.Add(card);
+            }
+            open.Add(shown);
+            if (node is not null)
+            {
+                nodes[shown] = node;
+            }
+        }
+        var waiting = Open.Where(c => now.ContainsKey((NodeOf(c)?.Name, c.Id))).ToList();
+        foreach (var card in waiting.Concat(Handled))
+        {
+            if (NodeOf(card) is { } node)
+            {
+                nodes[card] = node;
+            }
+        }
+        return (new CardsScreen(open, Handled, Watchtower) { _nodes = nodes, _summary = Summary }, waiting, closed);
+    }
+
+    // A held panel's summary: the cards as they are, not as held.
+    private string? _summary;
+
     /// <summary>Whether the panel has anything to show: the watchtower, an open card or a handled line. Empty, it takes no room.</summary>
     public bool HasAny => Watchtower is not null || Open.Count > 0 || Handled.Count > 0;
 
@@ -65,6 +108,10 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
     {
         get
         {
+            if (_summary is { } held)
+            {
+                return held;
+            }
             var rings = Open.Count(c => c.Bin == CardBin.Ring);
             var forYou = Open.Count(c => c.Bin == CardBin.ForYou);
             return rings + forYou == 0 ? "Nothing waits on you"
@@ -155,7 +202,29 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     public void Render(CardsScreen screen, RectF32 bounds)
     {
         BeginFrame();
-        RenderLayout(Tree(screen), bounds);
+        var over = Pointer is { } p && p.X >= bounds.X && p.X < bounds.X + bounds.Width && p.Y >= bounds.Y && p.Y < bounds.Y + bounds.Height;
+        RenderLayout(Tree(Steady(screen, over)), bounds);
+    }
+
+    // The panel as it stood when the pointer came over it, which it keeps to until the pointer leaves; null while it is
+    // elsewhere. A card raised meanwhile would push the cards under the pointer down, so the next click lands on another
+    // card's button (SE1, 2026-10-25): it waits as a dot on the summary line instead, and a card closed meanwhile stays
+    // where it was, its buttons dead.
+    private CardsScreen? _held;
+    private IReadOnlyList<CardRow> _waiting = [];
+    private IReadOnlySet<CardRow> _closed = new HashSet<CardRow>();
+
+    /// <summary><paramref name="screen"/>, or, with the pointer <paramref name="over"/> the panel, the panel held as it stood when the pointer came.</summary>
+    internal CardsScreen Steady(CardsScreen screen, bool over)
+    {
+        if (!over)
+        {
+            (_held, _waiting, _closed) = (null, [], new HashSet<CardRow>());
+            return screen;
+        }
+        _held ??= _shown;
+        (var held, _waiting, _closed) = screen.HeldTo(_held);
+        return held;
     }
 
     /// <summary>The panel as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
@@ -266,11 +335,17 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     {
         var blocks = screen.Watchtower is { } tower ? Watchtower(tower) : NoWatchtower();
         blocks.Add(Layout.Builder.Text("For you", 18f, Bright).RowH(30f));
-        blocks.Add(Layout.Builder.Text(screen.Summary, 12f, Dim).RowH(20f));
+        blocks.Add(_waiting.Count == 0
+            ? Layout.Builder.Text(screen.Summary, 12f, Dim).RowH(20f)
+            : Layout.Builder.HStack([
+                    Layout.Builder.Text(screen.Summary, 12f, Dim).WAuto(),
+                    Layout.Builder.Spacer().WStar(),
+                    .. _waiting.Select(Waiting)])
+                .RowH(20f));
         foreach (var card in screen.Open)
         {
             blocks.Add(Layout.Builder.Spacer().RowH(8f));
-            blocks.Add(Card(card, screen.NodeOf(card)));
+            blocks.Add(Card(card, screen.NodeOf(card), _closed.Contains(card)));
         }
         if (screen.Handled.Count > 0)
         {
@@ -312,12 +387,18 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>The card's title as shown: a landed flight's starts with 🛬. The node's title is left as it raised it.</summary>
     internal static string Titled(CardRow card) => card.Kind == "landed" ? "🛬 " + card.Title : card.Title;
 
-    private Layout.Node Card(CardRow card, NodeMark? node)
+    /// <summary>A card raised while the panel is held: a dot in its bin's colour, its title on hover, until the pointer leaves.</summary>
+    private static Layout.Node Waiting(CardRow card) =>
+        Layout.Builder.Text("●", 12f, card.Bin == CardBin.Ring ? Ring : ForYou, TextAlign.Center).Pad(2f, 0f).WAuto()
+            .WithTooltip($"new: {Titled(card)}", Layout.DockSide.Left);
+
+    /// <param name="closed">Closed while the panel was held: drawn where and as it was, marked closed, its buttons dead.</param>
+    private Layout.Node Card(CardRow card, NodeMark? node, bool closed = false)
     {
-        var accent = card.Bin == CardBin.Ring ? Ring : ForYou;
+        var accent = closed ? Dim : card.Bin == CardBin.Ring ? Ring : ForYou;
         var lines = new List<Layout.Node>
         {
-            Layout.Builder.Text($"{(card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}", 10f, accent).RowH(16f),
+            Layout.Builder.Text($"{(card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}{(closed ? " · closed" : "")}", 10f, accent).RowH(16f),
             // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
             // session's link is its button, Answer in the browser, so its title is no second one.
@@ -341,40 +422,42 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         }
 
         var buttons = new List<Layout.Node>();
+        Layout.Node Button(string label, string action, Action onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null) =>
+            closed ? Dead(label) : Pill(label, action, onClick, tint);
         var watched = node is { Here: false } && CanSteer?.Invoke(node) == false ? node : null;
         if (watched is not null)
         {
             // Answering and dismissing are commands: replaced by why not, and the ask for the grant.
             lines.Add(Layout.Builder.Text(SessionsView<TSurface>.SteerHint(watched), 11f, Dim).RowH(18f));
             // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            buttons.Add(Pill("Connect", $"card:{card.Id}:connect", () => OnConnect?.Invoke(watched)));
+            buttons.Add(Button("Connect", $"card:{card.Id}:connect", () => OnConnect?.Invoke(watched)));
         }
         for (var i = 0; watched is null && i < card.Choices.Length; i++)
         {
             var number = i + 1;
             var choice = card.Choices[i];
-            buttons.Add(Pill(StatusLabel(choice), $"card:{card.Id}:{number}", () => OnAnswer?.Invoke(card, number), StatusTint(choice.Status)));
+            buttons.Add(Button(StatusLabel(choice), $"card:{card.Id}:{number}", () => OnAnswer?.Invoke(card, number), StatusTint(choice.Status)));
         }
         // A waiting session is answered where its Remote Control has it: the card's link, one click away.
         if (card.Kind == CardKinds.SessionWaiting && card.Link is { } answerUrl)
         {
-            buttons.Add(Pill("Answer in the browser" + Followable.Away, $"card:{card.Id}:answer", () => OnOpen?.Invoke(answerUrl)));
+            buttons.Add(Button("Answer in the browser" + Followable.Away, $"card:{card.Id}:answer", () => OnOpen?.Invoke(answerUrl)));
         }
         // A card about a leg's worker reads best beside what the worker was doing when it was raised.
         var session = TranscriptOf?.Invoke(card);
         if (OnTranscript is { } open && session is not null)
         {
-            buttons.Add(Pill("Its transcript", $"card:{card.Id}:transcript", () => open(card, session)));
+            buttons.Add(Button("Its transcript", $"card:{card.Id}:transcript", () => open(card, session)));
         }
         // An interactive session is someone's terminal: shown on the Sessions page, where its row is.
         if (OnOpenSession is { } show && card.Kind == CardKinds.SessionWaiting && session is { Row.Kind: SessionKind.Interactive })
         {
-            buttons.Add(Pill("Open", $"card:{card.Id}:open", () => show(card, session)));
+            buttons.Add(Button("Open", $"card:{card.Id}:open", () => show(card, session)));
         }
         if (watched is null)
         {
             // Dismiss (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            buttons.Add(Pill("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
+            buttons.Add(Button("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
         }
         lines.Add(Layout.Builder.Spacer().RowH(6f));
         // Wrapping: a waiting session's card has up to four buttons, more than one line of the panel holds.
@@ -387,6 +470,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             .WStar()
             .HAuto();
     }
+
+    // A closed card's button as it was, the same size, answering nothing.
+    private static Layout.Node Dead(string label) =>
+        Layout.Builder.Text(label, 12f, Dim, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(CardBg);
 
     /// <summary>A small button: what the cards' choices are, and what the Sessions page's archive buttons borrow.</summary>
     internal static Layout.Node Pill(string label, string action, Action onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null, RGBAColor32? textColor = null) =>
