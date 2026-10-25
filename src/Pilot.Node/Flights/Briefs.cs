@@ -474,13 +474,16 @@ public static class Briefs
         text.AppendLine("cache goes cold, and wake on a summary: `pilot status` and `pilot cards` always say where things stand now.");
         text.AppendLine();
         text.AppendLine("## What you may do");
-        text.AppendLine("- Answer a card whose choice is a go-around, a resume or a nudge, when the card's detail shows it is the right one.");
+        text.AppendLine("- Answer a card, ring cards included, whose choice is a go-around, a resume or a nudge, when the card's detail shows it is the right one.");
         text.AppendLine("- Say something to a worker, to unstick it or to tell it what it is missing.");
-        text.AppendLine("- Dismiss a card whose thing has passed, saying why.");
+        text.AppendLine("- Dismiss a For-you or Handled card whose thing has passed, saying why. A ring card is the controller's to close: the node");
+        text.AppendLine("  refuses its dismissal from you, so answer it with a go-around, a resume or a nudge, or leave it open for them.");
         text.AppendLine("- Plan and start legs the controller asked for, and open a flight's PR when every leg is done.");
         text.AppendLine();
         text.AppendLine("## What you may not do");
         text.AppendLine("- Merge or land a flight, or answer a card that would: those are the controller's, and the node refuses them from you.");
+        text.AppendLine("  The exception is what the controller tells you to do here, in chat: then the node raises a card for them to Allow,");
+        text.AppendLine("  or runs it at once when their autopilot is on. Say whom you did it for and the message in `--why`.");
         text.AppendLine("- Push, force anything, delete branches or worktrees, or change code yourself: workers change code, in their planes.");
         text.AppendLine("- Ring for what you can handle. Ring for a stop you may not resolve, a real fork in the work, a gate before an");
         text.AppendLine("  irreversible step. Most of what happens is state, not an event: say nothing about it.");

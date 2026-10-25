@@ -862,9 +862,9 @@ session); the GUI and the TUI never set it. One place, `Standing.Of` on the node
 | Standing | Known by | May do |
 |---|---|---|
 | **Grant** | the LAN token's grant (never read from the wire) | as before: never the settings, setup or grants of this machine (but `maintenance`) |
-| **Lookout** | `Who` is the watchtower's session name, whatever the flag | watch, ring, nudge, answer; nothing your-only, and not a review's verdict or posting, `sync-repos`, `create-issue`, `fold` or `separate` |
-| **Flight's session** | `Who` is a leg's worker or validator, a flight's reviewer or a PR review's reviewer, or a planner, worker or reviewer session row that names its flight | its own flight's legs, checks, artifacts and reviews, and a PR review its own PR; a `flight/` or `pr/` target that is another's is refused; nothing your-only, nor `post-review`, `fold` or `separate` |
-| **Assistant** | the `Agent` flag, from no session above | everything asked in words; its your-only commands follow the autopilot rule, below |
+| **Lookout** | `Who` is the watchtower's session name, whatever the flag, unless it is acting on the person's message (an assistant, below) | watch, ring, nudge, answer (a ring card too, with a button whose command it may send itself: a stall's Resume, Nudge or Go around); nothing your-only (so no dismissing a ring card), and not a review's verdict or posting, `sync-repos`, `create-issue`, `fold` or `separate` |
+| **Flight's session** | `Who` is a leg's worker or validator, a flight's reviewer or a PR review's reviewer, or a planner, worker or reviewer session row that names its flight | its own flight's legs, checks, artifacts and reviews, and a PR review its own PR; a `flight/` or `pr/` target that is another's is refused, as is `stop` or `compact` of a session and `cancel-job` of a job that is not its flight's (or its own); nothing your-only, nor `post-review`, `fold`, `separate`, `create-issue`, `create-flight` or `sync-repos` |
+| **Assistant** | the `Agent` flag, from no session above; and the watchtower while it acts on a message the person sent it (the node's `tell`, the GUI or TUI chat, a human's `pilot say`) | everything asked in words; its your-only commands follow the autopilot rule, below |
 | **Person** | the rest: a GUI click, a human-run CLI (no `CLAUDECODE`), the node's own steps (`Who` is `node`) | everything |
 
 The **your-only** commands are `merge`, `land`, `set`, `setup`, `answer-grant`, `revoke-grant`, `update`,
@@ -872,6 +872,11 @@ The **your-only** commands are `merge`, `land`, `set`, `setup`, `answer-grant`, 
 command, so it is your-only exactly when that is). Every route runs them through `NodeCommands.RunAsync`, so a card's button is fenced like the
 command by hand, and an answer keeps the answerer's standing. A refused command says why and leaves its card open.
 `connect flight/<code> <other>` is a flight's dependency, not a grant's, and is not your-only.
+
+The watchtower is told apart by what began its turn: the node notes who sent the latest message to its session (the person's
+chat, a `tell`, or the node's own card and nudge, which are not theirs), and while that was the person's and the session has
+not gone idle since, `Standing.Of` takes the watchtower for an assistant, so "merge TIA1" said in the chat gets the Allow card
+(autopilot off) or runs at once with a Handled card (on). Any other turn it is the lookout.
 
 ### An assistant's your-only request: the autopilot rule
 
@@ -956,7 +961,9 @@ repos/.../pulls/N/merge`, or a `git push` whose destination is `main`, `master` 
 (`origin/HEAD`): a refspec's right side (`HEAD:master`, `+main`, `:main` too), `HEAD` read as the checkout's branch,
 `--all` and `--mirror`, and a bare `git push` (or one naming only a remote) from a checkout on the default branch. A line is
 split on `&&`, `||`, `;`, `|`, `&`, newlines, backticks and parentheses outside quotes and each part is matched, after
-leading `VAR=x` and `sudo`/`env`/`command`; `cd` and `git -C` move where the checkout is read, and `bash -c '…'` and
+leading `VAR=x`, shell keywords (`if`, `then`, `do`, `!`, `{`…) and wrappers (`sudo`/`env`/`command`/`nice`, `timeout <duration>`,
+`xargs`), and with `gh`'s `-R`/`--repo` value skipped before `pr` or `api`; a bash backslash-newline joins the line, a
+heredoc's body (`<<EOF` … `EOF`) and a PowerShell here-string (`@'`…`'@`) are text, not commands; `cd` and `git -C` move where the checkout is read, and `bash -c '…'` and
 `eval` are read inside. A `PowerShell` call is read with PowerShell's own quoting (the backtick is the escape, a
 backslash is a path's, `''` and `""` are literal quotes), split on `{` and `}` too, and `Set-Location`, `iex` /
 `Invoke-Expression` and `pwsh -Command '…'` are followed as `cd`, `eval` and `bash -c` are. Everything else, a push of a

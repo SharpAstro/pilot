@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using Microsoft.Extensions.DependencyInjection;
 using Pilot.Commands;
 using Pilot.Contracts;
+using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
 
@@ -88,25 +89,181 @@ public sealed class StandingTests
     }
 
     [Fact]
-    public async Task AnAnswerToARingCardIsTheControllersToo()
+    public async Task AFlightsSessionMayNotAnswerARingCardAndTheLookoutMayOnlyWithWhatItMaySendItself()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         const string worker = "du1-tia1-parser";
         var lookout = Lookout(node);
         Fly(node, "TIA1", worker);
-        var choices = new[] { new CardChoice { Label = "Retry", Verb = Verbs.Raise, Target = "flight/TIA1", Args = ["for-you", "retried"] } };
+        var choices = new[]
+        {
+            new CardChoice { Label = "Retry", Verb = Verbs.Raise, Target = "flight/TIA1", Args = ["for-you", "retried"] },
+            new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/TIA1", Args = ["cafe0000"] },
+        };
         var ring = node.State.RaiseCard(CardBin.Ring, "stalled", "flight/TIA1", "TIA1 stalled", null, choices);
         var forYou = node.State.RaiseCard(CardBin.ForYou, "landed", "flight/TIA1", "TIA1 landed", null, choices);
 
-        // The lookout and a flight's session may not answer the ring, however the choice reads; any other card they may.
-        (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(ring.Id), lookout, false, "Retry"))).ShouldNotBeNull().ShouldContain("answer is the controller's, not the watchtower's");
+        // A flight's session may not answer the ring, however the choice reads; any other card it may.
         (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(ring.Id), worker, false, "Retry"))).ShouldNotBeNull().ShouldContain("answer is the controller's, not a flight session's");
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
-        (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(forYou.Id), lookout, false, "Retry"))).ShouldBeNull();
 
-        // The person may.
-        (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(ring.Id), "gui", false, "Retry"))).ShouldBeNull();
+        // The lookout may answer a ring card with a choice it could send itself; the choice is run again as the lookout's, so a merge is refused and the card stays open.
+        (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(ring.Id), lookout, false, "Merge"))).ShouldNotBeNull().ShouldContain("merge is the controller's, not the watchtower's");
+        node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
+        (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(forYou.Id), lookout, false, "Merge"))).ShouldNotBeNull().ShouldContain("merge is the controller's, not the watchtower's");
+        (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(ring.Id), lookout, false, "Retry"))).ShouldBeNull();
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
+
+        // The person may answer either.
+        (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(forYou.Id), "gui", false, "Retry"))).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task TheLookoutAnswersALegWatchStallCardWithResumeAndWithGoAround()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        const string worker = "du1-tia1-parser";
+        var lookout = Lookout(node);
+        node.State.PutFlight(Flight("TIA1"));
+        // The leg is done, so its own rule answers the go-around: that it got that far is what is under test, as the lookout's choice ran.
+        node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done, Worker = worker });
+        node.Agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, worker, status: "busy"));
+        var row = await Listed(node, worker);
+
+        // The choices LegWatch gives a stalled worker's ring card: Resume says to the worker, Go around starts a fresh one.
+        var choices = new[]
+        {
+            new CardChoice { Label = "Resume", Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = ["Carry on with your leg from where you left off."] },
+            new CardChoice { Label = "Go around", Verb = Verbs.GoAround, Target = "flight/TIA1/parser", Args = ["the last worker stalled (idle)"] },
+        };
+        var resume = node.State.RaiseCard(CardBin.Ring, "leg-stalled", "flight/TIA1/parser", "TIA1/parser's worker stopped", null, choices);
+
+        (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(resume.Id), lookout, true, "Resume"))).ShouldBeNull();
+        node.Delivery.Relays.ShouldHaveSingleItem().Text.ShouldContain("Carry on with your leg");
+        node.State.Cards().Single(c => c.Id == resume.Id).State.ShouldBe(CardState.Closed);
+
+        var around = node.State.RaiseCard(CardBin.Ring, "leg-stalled", "flight/TIA1/parser", "TIA1/parser's worker stalled", null, choices);
+
+        var error = await Error(node, Command(Verbs.Answer, Verbs.CardTarget(around.Id), lookout, true, "Go around"));
+        error.ShouldNotBeNull().ShouldContain("a go-around is for a leg flying or failed");
+        error.ShouldNotContain("controller's");
+
+        // Its dismissal of a ring card stays the controller's.
+        (await Error(node, Command(Verbs.Dismiss, Verbs.CardTarget(around.Id), lookout, true))).ShouldNotBeNull().ShouldContain("dismiss is the controller's, not the watchtower's");
+    }
+
+    private static async Task<SessionRow> Listed(NodeHarness node, string name)
+    {
+        for (var i = 0; i < 100 && !node.State.Sessions().Any(s => s.Name == name); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        return node.State.Sessions().Single(s => s.Name == name);
+    }
+
+    [Fact]
+    public async Task TheWatchtowerActingOnThePersonsMessageIsAnAssistantAndOtherwiseTheLookout()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var lookout = Lookout(node);
+        node.State.PutFlight(Flight("TIA1"));
+        node.Agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, lookout, status: "busy"));
+        var row = await Listed(node, lookout);
+        const string why = "the person asked me in the chat to merge TIA1";
+
+        // On its own, a merge is refused outright, with no card.
+        (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
+        node.State.Cards().ShouldBeEmpty();
+
+        // The person tells it in the chat: the same ask is an assistant's, with the autopilot off a card for the person to Allow.
+        (await Error(node, Command(Verbs.Tell, Verbs.WatchtowerTarget, "gui", false, "merge TIA1"))).ShouldBeNull();
+        (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000") with { Why = why })).ShouldNotBeNull().ShouldContain("waits on their card");
+        var ask = node.State.Cards(openOnly: true).ShouldHaveSingleItem();
+        (ask.Kind, ask.AskedBy, ask.Why).ShouldBe((CardKinds.AssistantAsk, lookout, why));
+
+        // With the autopilot on it runs at once (here as far as the flight's own fence).
+        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "on"))).ShouldBeNull();
+        (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000") with { Why = why })).ShouldNotBeNull().ShouldContain(PastTheFence);
+
+        // The node's own message to it (a card it says) starts a turn that is not the person's: the lookout again.
+        (await Error(node, Command(Verbs.Say, Verbs.SessionTarget(row.Id), "node", false, "a card opened"))).ShouldBeNull();
+        (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
+
+        // So is a turn an assistant's agent-run CLI began, after the person's.
+        (await Error(node, Command(Verbs.Tell, Verbs.WatchtowerTarget, "gui", false, "merge again"))).ShouldBeNull();
+        (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain(PastTheFence);
+        (await Error(node, Command(Verbs.Say, Verbs.SessionTarget(row.Id), "some-assistant", true, "ring me"))).ShouldBeNull();
+        (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
+    }
+
+    [Fact]
+    public async Task TheWatchtowerWhoseTurnHasEndedIsTheLookoutEvenAfterAPersonsMessage()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var lookout = Lookout(node);
+        node.State.PutFlight(Flight("TIA1"));
+        node.Agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, lookout, status: "busy"));
+        await Listed(node, lookout);
+        (await Error(node, Command(Verbs.Tell, Verbs.WatchtowerTarget, "gui", false, "merge TIA1"))).ShouldBeNull();
+        (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain("waits on their card");
+
+        // Its turn over (the session is idle again), what it sends is its own.
+        node.Agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, lookout, status: "idle"));
+        var error = "";
+        for (var i = 0; i < 100 && !error.Contains("not the watchtower's", StringComparison.Ordinal); i++)
+        {
+            await Task.Delay(50, Ct);
+            error = await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000")) ?? "";
+        }
+        error.ShouldContain("not the watchtower's");
+    }
+
+    [Fact]
+    public async Task AFlightsSessionMayNotStopOrCompactAnotherFlightsSessionNorCancelItsJobNorReachOutsideItsFlight()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        const string worker = "du1-tia1-parser";
+        const string other = "du1-tia2-parser";
+        Fly(node, "TIA1", worker);
+        Fly(node, "TIA2", other);
+        node.State.PutSession(Session(worker, "a1b2c3d4-0000-4000-8000-000000000001"));
+        node.State.PutSession(Session(other, "b1b2b3b4-0000-4000-8000-000000000002") with { Flight = "TIA2", Cwd = "/r/TIA2" });
+        node.State.PutSession(new SessionRow
+        {
+            Id = "c1c2c3c4", SessionId = "c1c2c3c4-0000-4000-8000-000000000003", Name = "se1-assistant", Kind = SessionKind.Background, Cwd = "/r",
+            Role = SessionRole.AdHoc, ContextTokens = 0, ContextWindow = 1, State = SessionState.Idle, SpendWeighted = 0, StartedAt = DateTimeOffset.UnixEpoch,
+        });
+        JobRow Job(string id, string? owner, string? ownerName, string? flight) => new()
+        {
+            Id = id, Command = "dotnet test", Cwd = node.Folder, Owner = owner, OwnerName = ownerName, Flight = flight, State = JobState.Running, LogPath = Path.Combine(node.Folder, id + ".log"),
+            Timeout = TimeSpan.FromMinutes(5), StartedAt = DateTimeOffset.UnixEpoch,
+        };
+        node.State.PutJob(Job("j1", "a1b2c3d4", worker, "TIA1"));
+        node.State.PutJob(Job("j2", "b1b2b3b4", other, "TIA2"));
+        node.State.PutJob(Job("j3", null, null, null));
+
+        // Another flight's session, and one that is no flight's, are not its to stop or compact; its own is not stopped by the fence.
+        foreach (var verb in new[] { Verbs.Stop, Verbs.Compact })
+        {
+            (await Error(node, Command(verb, "session/b1b2b3b4", worker, true))).ShouldBe("session/b1b2b3b4 is not TIA1's session: a flight's session stops and compacts its own flight's only");
+            (await Error(node, Command(verb, "session/c1c2c3c4", worker, true))).ShouldNotBeNull().ShouldContain("not TIA1's session");
+            (await Error(node, Command(verb, "session/zzzzzzzz", worker, true))).ShouldNotBeNull().ShouldContain("not TIA1's session");
+            ((await Error(node, Command(verb, "session/a1b2c3d4", worker, true))) ?? "").ShouldNotContain("not TIA1's session");
+        }
+
+        // A job it does not own is not its to cancel.
+        (await Error(node, Command(Verbs.CancelJob, "job/j2", worker, true))).ShouldBe("job/j2 is not TIA1's job: a flight's session cancels its own flight's only");
+        (await Error(node, Command(Verbs.CancelJob, "job/j3", worker, true))).ShouldNotBeNull().ShouldContain("not TIA1's job");
+        ((await Error(node, Command(Verbs.CancelJob, "job/j1", worker, true))) ?? "").ShouldNotContain("not TIA1's job");
+
+        // Nothing that reaches outside the flight, whatever it targets.
+        foreach (var (verb, target) in new[] { (Verbs.CreateIssue, "repo/tianwen"), (Verbs.CreateFlight, Verbs.NodeTarget), (Verbs.SyncRepos, Verbs.NodeTarget) })
+        {
+            (await Error(node, Command(verb, target, worker, true, "x"))).ShouldBe($"{verb} is the controller's, not a flight session's: leave it to them");
+        }
+        // The person is not fenced by who they are.
+        ((await Error(node, Command(Verbs.Stop, "session/b1b2b3b4", "gui"))) ?? "").ShouldNotContain("not TIA1's session");
+        ((await Error(node, Command(Verbs.CancelJob, "job/j2", "gui"))) ?? "").ShouldNotContain("not TIA1's job");
     }
 
     [Fact]
