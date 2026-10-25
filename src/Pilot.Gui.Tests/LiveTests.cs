@@ -513,8 +513,8 @@ public sealed class RailTests
         chrome.Rail.CollectPaintedRegions(regions);
         // One cell per page down the rail's 52 px, every one live.
         var cells = regions.Where(r => r.Result is HitResult.ListItemHit).ToList();
-        cells.Count.ShouldBe(7);
-        cells.Count(r => r.Result is HitResult.ListItemHit { ListId: TabBarRegions.Tabs }).ShouldBe(7);
+        cells.Count.ShouldBe(8);
+        cells.Count(r => r.Result is HitResult.ListItemHit { ListId: TabBarRegions.Tabs }).ShouldBe(8);
         cells.ShouldAllBe(r => r.X + r.Width <= 53f);
     }
 }
