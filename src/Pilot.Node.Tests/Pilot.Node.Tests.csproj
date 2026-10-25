@@ -42,4 +42,10 @@
     <None Include="..\Pilot.Contracts\Fixtures\snapshot.sample.json" Link="Fixtures\snapshot.sample.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- What gh and GitHub's merge queue API answered for a PR in each merge state (pending and merged recorded from SharpAstro/pilot
+       #249 and #242 on 2026-10-26, the rest shaped as GitHub answers them): the MergeState tests read them. -->
+  <ItemGroup>
+    <None Include="Fixtures\gh\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

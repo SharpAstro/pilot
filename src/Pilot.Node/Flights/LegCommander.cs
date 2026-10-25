@@ -155,6 +155,8 @@ public sealed partial class LegCommander(
         // merge queue, or waits for its checks, is no merge yet: the flight flies on, and lands once GitHub says merged.
         if (error is null && command.Verb == Verbs.Merge && merged)
         {
+            // The card reads Merged on every client, for the moment before the landing closes it.
+            state.MarkMerged(command.Target);
             try
             {
                 await flights.LandAfterMergeAsync(FlightOf(command.Target).Code, (command.Args ?? [""])[0].Trim(), cancellationToken);
@@ -792,7 +794,7 @@ public sealed partial class LegCommander(
         // A done leg goes around too when the review asked for changes: that is how they are made.
         // Or when its armed merge failed (a PR-ready card turned to say which check): the same card offers it.
         if (leg.State is not (LegState.Flying or LegState.Failed) && !(leg.State == LegState.Done && flight.Review is { State: ReviewState.Changes })
-            && !(leg.State == LegState.Done && state.Cards(openOnly: true).Any(c => c.Kind == MergeFailed && c.Subject == Verbs.FlightTarget(flight.Code))))
+            && !(leg.State == LegState.Done && state.Cards(openOnly: true).Any(c => c.Kind is MergeFailed or PrReady && c.Subject == Verbs.FlightTarget(flight.Code) && c.Choices.Any(ch => ch.Verb == Verbs.GoAround))))
         {
             throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}; a go-around is for a leg flying or failed, or done when the review asked for changes");
         }
@@ -815,7 +817,7 @@ public sealed partial class LegCommander(
         state.PutLeg(next with { State = LegState.Flying, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), FinishedAt = null, Report = $"go-around: {why}" });
         // Every card about the leg was about its last worker: failed, stopped, idle, waiting.
         state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"went around: {why}");
-        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around for it", ReviewChanges, MergeFailed);
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around for it", ReviewChanges, MergeFailed, PrReady);
     }
 
     /// <summary>
@@ -832,6 +834,20 @@ public sealed partial class LegCommander(
         if (checks?.Status == ChoiceStatus.Failing)
         {
             throw new FlightException($"#{pr.Number}'s checks fail: it merges once they pass");
+        }
+        // What GitHub says about the PR is what the button does: a PR in the queue is not queued twice, one behind its base or
+        // with changes requested is refused with that said, as GitHub's own button would not be there (pilot #244).
+        var mergeState = await github.MergeStateAsync(flight.RepoPath, pr.Number, cancellationToken);
+        switch (mergeState?.Kind)
+        {
+            case MergeKinds.Queued:
+                return (false, QueuedLine(flight.Code, mergeState.Place is { } place ? $"in the merge queue, {place}" : "in the merge queue"), MergeWays.Queued);
+            case MergeKinds.Behind:
+                throw new FlightException($"#{pr.Number} is behind its base, so GitHub will not merge it: go around to rebase it, and it is reviewed afresh");
+            case MergeKinds.ChangesRequested:
+                throw new FlightException($"#{pr.Number} has changes requested on GitHub: they are read first, then it merges");
+            case MergeKinds.Blocked when mergeState.Reason is { } why && mergeState.FailedName is null:
+                throw new FlightException($"#{pr.Number} is blocked on GitHub: {why}");
         }
         if (checks?.Status == ChoiceStatus.Pending)
         {
@@ -983,17 +999,66 @@ public sealed partial class LegCommander(
     /// offering it: the card says <paramref name="line"/>, its Merge choice armed, until the merge lands, or fails and the card
     /// is turned by <see cref="ShowMergeFailed"/>.
     /// </summary>
-    public void ShowMerge(string target, string? line, string way)
+    public void ShowMerge(string target, string? line, string way, string? note = null)
     {
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind is PrReady or MergeFailed && c.Subject == target && c.Choices.Any(ch => ch.Verb == Verbs.Merge)))
         {
             var code = target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? target[Verbs.FlightTargetPrefix.Length..] : target;
             var flight = state.Flights().FirstOrDefault(f => f.Code == code);
             var merge = card.Choices.First(ch => ch.Verb == Verbs.Merge);
+            // The line says how far the checks are, or where in the queue: the choice carries it too, for a client to put on the button.
+            note ??= way == MergeWays.Queued ? System.Text.RegularExpressions.Regex.Match(line ?? "", @"position \d+") is { Success: true } place ? place.Value : null : ArmedProgress.Read(line);
             state.UpdateCard(card.Id,
                 way == MergeWays.Queued ? $"{code}'s PR #{flight?.PullRequest} is in the merge queue" : $"{code}'s PR #{flight?.PullRequest} merges when its checks pass",
-                line, [merge with { Label = "Merge", Status = ChoiceStatus.Armed }], card.Link ?? flight?.PullRequestUrl, PrReady);
+                line, [merge with { Label = "Merge", Status = way == MergeWays.Queued ? ChoiceStatus.Queued : ChoiceStatus.Armed, Note = note }], card.Link ?? flight?.PullRequestUrl, PrReady);
         }
+    }
+
+    /// <summary>
+    /// Sets an open PR-ready card's Merge choice, title and detail to what GitHub says of its PR (<paramref name="merge"/>), one
+    /// word per state: the same card, in place, each look at it. Checks running and ready keep their button (Merge arms, or
+    /// merges); queued, blocked and changes requested are marks, not buttons; conflicts and behind turn the card to a go-around
+    /// (<see cref="ShowMergeFailed"/>) that rebases, with no Merge. Nothing for a state the card already shows.
+    /// </summary>
+    public void ShowMergeState(CardRow card, MergeState merge, string head)
+    {
+        var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : card.Subject;
+        var flight = state.Flights().FirstOrDefault(f => f.Code == code);
+        var number = flight?.PullRequest;
+        var link = card.Link ?? flight?.PullRequestUrl;
+        // The card's own words (the review, the head) stay while the Merge only changes its colour; a state that wrote its own
+        // words over them (queued, blocked) is replaced by a plain line when the PR is mergeable again.
+        var showing = card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge)?.Status;
+        var hasMerge = card.Choices.Any(c => c.Verb == Verbs.Merge);
+        var own = hasMerge && showing is null or ChoiceStatus.Passing or ChoiceStatus.Pending or ChoiceStatus.Failing or ChoiceStatus.Conflicting;
+        var ready = $"{code}'s PR #{number} is ready to merge";
+        // A merge that was armed and is not any more says so, and how to arm it again.
+        var unarmed = showing == ChoiceStatus.Armed && merge.DroppedFromQueue is null ? "Its merge is not armed any more: GitHub's auto-merge was turned off, or the merge was dropped. Merge arms it again." : null;
+        var (status, note, title, detail) = merge.Kind switch
+        {
+            MergeKinds.Pending => (ChoiceStatus.Pending, merge.Progress, ready, own ? card.Detail : unarmed ?? "Its checks run again. Merge arms the merge: it goes through once they pass."),
+            MergeKinds.Ready => (ChoiceStatus.Passing, null, ready, own ? card.Detail : unarmed ?? "Nothing on GitHub stands in its way."),
+            MergeKinds.Armed => (ChoiceStatus.Armed, merge.Progress, $"{code}'s PR #{number} merges when its checks pass", $"GitHub's auto-merge is armed: merging when checks pass{(merge.Progress is { } progress ? $", {progress} done" : "")}. GitHub merges it, with the node up or not."),
+            MergeKinds.Queued => (ChoiceStatus.Queued, merge.Place, $"{code}'s PR #{number} is in the merge queue", QueuedLine(code, merge.Place is { } place ? $"in the merge queue, {place}" : "in the merge queue")),
+            MergeKinds.Blocked => (ChoiceStatus.Blocked, merge.FailedName ?? merge.Reason, $"{code}'s PR #{number} is blocked: {merge.Reason}",
+                merge.FailedName is { } name ? $"GitHub blocks the merge: {name} failed. Go around to fix what it found, or re-run the check if it was a flake." : $"GitHub blocks the merge: {merge.Reason}."),
+            MergeKinds.ChangesRequested => (ChoiceStatus.ChangesRequested, null, $"{code}'s PR #{number} has changes requested", "A review on GitHub asks for changes. They are read first, then the merge is offered again."),
+            _ => ((string?)null, null, null, null),
+        };
+        if (status is null || title is null)
+        {
+            return;
+        }
+        // A dropped queue entry is said on a card that showed it queued, once it is offered again: why GitHub took it out.
+        if (!own && merge.DroppedFromQueue is { } dropped && merge.Kind is MergeKinds.Ready or MergeKinds.Pending)
+        {
+            detail = $"Dropped from the merge queue: {dropped}. Merge queues it again once that is fixed.{(detail is null ? "" : " " + detail)}";
+        }
+        // A card turned to a go-around (conflicting, behind) has no Merge: it comes back with the state that allows one.
+        var choices = hasMerge
+            ? card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Label = "Merge", Status = status, Note = note } : c).ToList()
+            : [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = card.Subject, Args = [head], Status = status, Note = note }];
+        state.UpdateCard(card.Id, title, detail, choices, merge.FailedLink ?? link, PrReady);
     }
 
     /// <summary>
@@ -1002,10 +1067,11 @@ public sealed partial class LegCommander(
     /// (<paramref name="rerun"/>, when checks failed rather than the head moved) and the merge again. False when the flight has no
     /// such card, and nothing is changed.
     /// </summary>
-    public bool ShowMergeFailed(string code, string head, string method, string title, string detail, string? link, bool rerun, string goAroundWhy)
+    public bool ShowMergeFailed(string code, string head, string method, string title, string detail, string? link, bool rerun, string goAroundWhy, bool mergeAgain = true, string kind = MergeFailed)
     {
         var target = Verbs.FlightTarget(code);
-        if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind is PrReady or MergeFailed && c.Subject == target && c.Choices.Any(ch => ch.Verb == Verbs.Merge)) is not { } card)
+        // A go-around card (no Merge) is the one a conflicting PR already turned; it is turned again for the head it conflicts on.
+        if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind is PrReady or MergeFailed && c.Subject == target && c.Choices.Any(ch => ch.Verb is Verbs.Merge or Verbs.GoAround)) is not { } card)
         {
             return false;
         }
@@ -1018,8 +1084,12 @@ public sealed partial class LegCommander(
         {
             choices.Add(new CardChoice { Label = "Re-run checks", Verb = Verbs.RerunChecks, Target = target, Args = [head, method] });
         }
-        choices.Add(new CardChoice { Label = "Merge again", Verb = Verbs.Merge, Target = target, Args = [head, method] });
-        state.UpdateCard(card.Id, title, detail, choices, link ?? card.Link, MergeFailed);
+        // A PR GitHub cannot merge as it is (conflicting, behind) is offered the go-around that rebases it, and no Merge to refuse.
+        if (mergeAgain)
+        {
+            choices.Add(new CardChoice { Label = "Merge again", Verb = Verbs.Merge, Target = target, Args = [head, method] });
+        }
+        state.UpdateCard(card.Id, title, detail, choices, link ?? card.Link, kind);
         return true;
     }
 

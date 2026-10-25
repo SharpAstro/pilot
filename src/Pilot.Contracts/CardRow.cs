@@ -71,6 +71,12 @@ public sealed record CardChoice
     /// which a client shows on the button (green, amber, red); null where there is nothing to tell.
     /// </summary>
     public string? Status { get; init; }
+
+    /// <summary>
+    /// What the status adds, as GitHub has it: <c>6 of 7</c> for checks, <c>position 2</c> in a merge queue, the failed check's
+    /// name when blocked. A client shows it after the status's words; null where there is nothing to add.
+    /// </summary>
+    public string? Note { get; init; }
 }
 
 /// <summary>Kinds of card a client treats specially, matched by word (<see cref="CardRow.Kind"/>).</summary>
@@ -122,6 +128,21 @@ public static class ChoiceStatus
 
     /// <summary>A merge answered while its checks run, or one that joined a merge queue: it goes through by itself once they pass or the queue takes it.</summary>
     public const string Armed = "armed";
+
+    /// <summary>The PR is in its base's merge queue (<see cref="CardChoice.Note"/> says its position): the queue merges it, nothing to press.</summary>
+    public const string Queued = "queued";
+
+    /// <summary>The PR is behind its base and GitHub will not merge it as it is: a go-around rebases it, so the card offers that, not Merge.</summary>
+    public const string Behind = "behind";
+
+    /// <summary>GitHub blocks the merge (a required check failed, a review is required, the PR is a draft): <see cref="CardChoice.Note"/> says which. Not a button.</summary>
+    public const string Blocked = "blocked";
+
+    /// <summary>A review on GitHub asks for changes. Not a button.</summary>
+    public const string ChangesRequested = "changes-requested";
+
+    /// <summary>The PR merged: the card reads Merged for a few seconds, then goes.</summary>
+    public const string Merged = "merged";
 }
 
 /// <summary>

@@ -391,6 +391,31 @@ public sealed class NodeState
     }
 
     /// <summary>
+    /// Marks the Merge choice of every card about <paramref name="subject"/> that offers one, open or closed already, as merged
+    /// (<see cref="ChoiceStatus.Merged"/>): the card reads Merged on every client for the few seconds it lingers, as the answer that
+    /// merged it closes it, or the landing does. One <see cref="CardChangedEvent"/> per card changed.
+    /// </summary>
+    public void MarkMerged(string subject)
+    {
+        lock (_gate)
+        {
+            foreach (var card in _cards.Values.Where(c => c.Subject == subject && c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Status != ChoiceStatus.Merged)).ToList())
+            {
+                // Closed within the last minute only: an older card's Merge says what it said when it closed.
+                if (card.State == CardState.Closed && (card.ClosedAt is not { } at || _time.GetUtcNow() - at > TimeSpan.FromMinutes(1)))
+                {
+                    continue;
+                }
+                Publish(new CardChangedEvent
+                {
+                    Seq = _seq + 1, At = _time.GetUtcNow(),
+                    Card = card with { Choices = [.. card.Choices.Select(ch => ch.Verb == Verbs.Merge ? ch with { Status = ChoiceStatus.Merged, Note = null } : ch)] },
+                });
+            }
+        }
+    }
+
+    /// <summary>
     /// Says what the choice a card closed with came to (a review posted, by its id), and where to see it; nothing when the
     /// card is not closed.
     /// </summary>

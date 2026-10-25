@@ -280,6 +280,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             if (pr is not null && pr.Number == number && pr.State is "MERGED" or "CLOSED")
             {
                 var merged = pr.State == "MERGED";
+                if (merged)
+                {
+                    // Merged reads on the card for the few seconds before it goes.
+                    state.MarkMerged(card.Subject);
+                }
                 state.CloseCard(card.Id, merged ? $"merged on GitHub as #{number}" : $"#{number} closed on GitHub without a merge", "github");
                 if (merged && flights is not null)
                 {
@@ -295,40 +300,54 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 }
                 continue;
             }
+            // What GitHub says of the PR's merge, which the card's Merge mirrors; null while GitHub works it out.
+            var merge = await github.MergeStateAsync(flight.RepoPath, number, cancellationToken);
+            var head = pr?.Head ?? card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge)?.Args.FirstOrDefault() ?? "";
             // Reviewed and passed, but no longer merging into its base: main moved. Rebased by itself, once a head, and
-            // reviewed afresh; a rebase that conflicts rings with what to do.
-            if (pr is { Mergeable: "CONFLICTING" } && pr.Number == number)
+            // reviewed afresh; a rebase that conflicts rings with what to do. The card says so meanwhile, offering the go-around
+            // that does it by hand, not a Merge GitHub would refuse.
+            var conflicts = pr is { Mergeable: "CONFLICTING" } && pr.Number == number || merge is { Kind: MergeKinds.Conflicts };
+            if (conflicts || merge is { Kind: MergeKinds.Behind })
             {
-                // Said on the card while it lasts: its Merge would only be refused.
-                state.UpdateChoices(card.Id, [.. card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = ChoiceStatus.Conflicting } : c)]);
-                if (legs is not null && _rebased.Add($"{flight.Code} {pr.Head}")
+                if (legs is not null && _rebased.Add($"{flight.Code} {head}")
                     && await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } why
                     && await legs.ConflictsAsync(flight.Code, why, cancellationToken) is { } notSent)
                 {
                     // Not sent back (no passed review to turn): rung, with what to do.
-                    state.RaiseCard(CardBin.Ring, "pr-conflicts", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number} conflicts with its base", $"{why} ({notSent})", link: pr.Url);
+                    state.RaiseCard(CardBin.Ring, "pr-conflicts", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number} conflicts with its base", $"{why} ({notSent})", link: pr?.Url);
+                }
+                // The rebase closes the card when it starts a fresh review; one still open says what is wrong and offers the go-around.
+                if (legs is not null && state.Cards(openOnly: true).Any(c => c.Id == card.Id))
+                {
+                    var what = conflicts ? "conflicts with its base" : "is behind its base";
+                    legs.ShowMergeFailed(flight.Code, head, "", $"{flight.Code}'s PR #{number} {what}",
+                        conflicts ? "GitHub cannot merge it until the conflict is resolved. The node rebases it by itself, once a head; one that conflicts is a go-around: the last leg resolves it."
+                            : "GitHub will not merge it until it is rebased onto its base. The node rebases it by itself, once a head; a go-around does it by hand.",
+                        pr?.Url ?? card.Link, rerun: false,
+                        goAroundWhy: $"the PR {what}: rebase the plane onto its base, resolving every conflict so both sides' work stays, rerun the check, and push",
+                        mergeAgain: false, kind: LegCommander.PrReady);
                 }
                 continue;
             }
-            // A merge armed keeps its card as MergeWhenGreenAsync wrote it; one queued says where in the queue it is, and the card
-            // closes as merged when GitHub says so, above.
+            // A merge armed keeps its card as MergeWhenGreenAsync wrote it; the card closes as merged when GitHub says so, above.
             var current = state.Flights().FirstOrDefault(f => f.Code == flight.Code);
             if (current?.MergeWhenGreen is not null)
             {
                 continue;
             }
-            var showsArmed = card.Choices.Any(c => c.Verb == Verbs.Merge && c.Status == ChoiceStatus.Armed);
-            if (current?.MergeQueue is { } queued && queued.StartsWith("in the merge queue", StringComparison.Ordinal))
-            {
-                legs?.ShowMerge(card.Subject, LegCommander.QueuedLine(flight.Code, queued), MergeWays.Queued);
-                continue;
-            }
             var status = await github.ChecksAsync(flight.RepoPath, number, cancellationToken);
-            // Said armed, but the node holds no armed merge and the queue has no PR: the card is the one that offers the merge again.
-            if (showsArmed)
+            var showsArmed = card.Choices.Any(c => c.Verb == Verbs.Merge && c.Status is ChoiceStatus.Armed or ChoiceStatus.Queued);
+            // Said on the card as GitHub has it, before anything is done about it: queued at its place, checks n of m, blocked on
+            // which check, changes requested, ready.
+            if (merge is not null && legs is not null)
             {
+                legs.ShowMergeState(card, merge, head);
+            }
+            else if (showsArmed)
+            {
+                // Said armed, but the node holds no armed merge and GitHub did not say more: the card offers the merge again.
                 state.UpdateCard(card.Id, $"{flight.Code}'s PR #{number} is ready to merge", "Its merge is not armed any more: it left the merge queue unmerged, or was dropped. Merge arms it again.",
-                    [.. card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = status } : c)], card.Link);
+                    [.. card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = status, Note = null } : c)], card.Link);
                 continue;
             }
             // Reviewed and passed, but its checks failed: sent back as changes, once a head, so the leg goes around.
@@ -340,8 +359,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 }
                 continue;
             }
-            var choices = card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = status } : c).ToList();
-            state.UpdateChoices(card.Id, choices);
+            if (merge is null || legs is null)
+            {
+                var choices = card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = status } : c).ToList();
+                state.UpdateChoices(card.Id, choices);
+            }
         }
     }
 }
