@@ -241,34 +241,12 @@ public sealed partial class LegCommander(
     /// </summary>
     private async Task AdvanceAsync(FlightRow flight, CancellationToken cancellationToken)
     {
-        if (!Models.Advances || state.Flights().FirstOrDefault(f => f.Code == flight.Code) is not { State: FlightState.Flying } current)
+        if (!Models.Advances || state.Flights().FirstOrDefault(f => f.Code == flight.Code) is not { State: FlightState.Flying } current
+            || Due(current) is not { } due)
         {
             return;
         }
-        // Its planner's question about an overlapping flight is not answered: no leg starts until it is.
-        if (current.Overlaps.Any(o => o.Answer == OverlapAnswer.Pending))
-        {
-            return;
-        }
-        var legs = state.Legs(current.Code).OrderBy(l => l.Order).ToList();
-        if (legs.Count == 0 || legs.Any(l => l.State is LegState.Flying or LegState.Failed))
-        {
-            return;
-        }
-        // A next leg whose validator is reading it, or whose validator said no-go, waits for that answer or a person: the
-        // sweep starts neither a second validator nor the worker.
-        if (legs.FirstOrDefault(l => l.State == LegState.Planned) is { Validation: LegValidation.Pending or LegValidation.NoGo })
-        {
-            return;
-        }
-        CommandRequest? step = legs.FirstOrDefault(l => l.State == LegState.Planned) is { } next
-            ? new CommandRequest { Verb = Verbs.StartLeg, Target = Verbs.LegTarget(current.Code, next.Name), Who = "node" }
-            : current.PullRequest is null
-                ? new CommandRequest { Verb = Verbs.OpenPr, Target = Verbs.FlightTarget(current.Code), Who = "node" }
-                : current.Review is null
-                    ? new CommandRequest { Verb = Verbs.StartReview, Target = Verbs.FlightTarget(current.Code), Who = "node" }
-                    : null;
-        if (step is null)
+        if (due.Step is not { } step)
         {
             _rung.TryRemove(current.Code, out _);
             return;
@@ -288,10 +266,49 @@ public sealed partial class LegCommander(
             _rung.TryRemove(current.Code, out _);
             return;
         }
+        // Taken meanwhile by another path: a validator's go starts its leg's worker itself, and until the worker is up the
+        // leg still reads planned, so a sweep in that gap asks for the same start and is refused as the leg is flying by
+        // then. The step is done, not failed, and a ring offering it again would only be refused again (TIA1818's
+        // web-header, DE1 2026-10-25).
+        if (state.Flights().FirstOrDefault(f => f.Code == current.Code) is not { State: FlightState.Flying } now
+            || Due(now)?.Step is not { } still || still.Verb != step.Verb || still.Target != step.Target)
+        {
+            return;
+        }
         _rung[current.Code] = $"failed {step.Target}";
         state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not {label} by itself", result.Error,
             [new CardChoice { Label = char.ToUpperInvariant(label[0]) + label[1..], Verb = step.Verb, Target = step.Target, Args = step.Args }]);
     }
+
+    /// <summary>What the flight is to do next by itself, its <see cref="DueStep.Step"/> null when nothing is left to it; or null when it waits on something else (a leg flying or failed, a validator, an overlap's answer).</summary>
+    private DueStep? Due(FlightRow current)
+    {
+        // Its planner's question about an overlapping flight is not answered: no leg starts until it is.
+        if (current.Overlaps.Any(o => o.Answer == OverlapAnswer.Pending))
+        {
+            return null;
+        }
+        var legs = state.Legs(current.Code).OrderBy(l => l.Order).ToList();
+        if (legs.Count == 0 || legs.Any(l => l.State is LegState.Flying or LegState.Failed))
+        {
+            return null;
+        }
+        // A next leg whose validator is reading it, or whose validator said no-go, waits for that answer or a person: the
+        // sweep starts neither a second validator nor the worker.
+        if (legs.FirstOrDefault(l => l.State == LegState.Planned) is { Validation: LegValidation.Pending or LegValidation.NoGo })
+        {
+            return null;
+        }
+        return new DueStep(legs.FirstOrDefault(l => l.State == LegState.Planned) is { } next
+            ? new CommandRequest { Verb = Verbs.StartLeg, Target = Verbs.LegTarget(current.Code, next.Name), Who = "node" }
+            : current.PullRequest is null
+                ? new CommandRequest { Verb = Verbs.OpenPr, Target = Verbs.FlightTarget(current.Code), Who = "node" }
+                : current.Review is null
+                    ? new CommandRequest { Verb = Verbs.StartReview, Target = Verbs.FlightTarget(current.Code), Who = "node" }
+                    : null);
+    }
+
+    private sealed record DueStep(CommandRequest? Step);
 
     private void Plan(CommandRequest command)
     {
@@ -476,6 +493,8 @@ public sealed partial class LegCommander(
         var job = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), Briefs.For(flight, leg, legs, cli: Cli, socket: Socket), leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), cancellationToken);
         state.PutLeg(leg with { State = LegState.Flying, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), Report = null });
         state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} started", NoGoKind, ValidatingKind);
+        // A ring that this step could not be taken by itself is moot once it is.
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}/{leg.Name} started", NextStepKind);
     }
 
     /// <summary>
