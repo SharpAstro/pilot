@@ -68,7 +68,7 @@ public sealed class JobsTests
         PilotChrome<RgbaImage>.JobsGlyph(Of(Job("j1", JobState.Running, Live.At), Job("j2", JobState.Queued, Live.At)), Live.At).ShouldBe(("🔄", "1 running, 1 waiting"));
         // A failure in play outranks a run: it is what wants a look.
         PilotChrome<RgbaImage>.JobsGlyph(Of(Job("j1", JobState.Running, Live.At), Job("j3", JobState.Failed, Live.At.AddMinutes(-5), Live.At.AddMinutes(-2))), Live.At)
-            .ShouldBe(("🛑", "1 running, 1 failed just now"));
+            .ShouldBe(("🔴", "1 running, 1 failed just now"));
         // One that failed long ago is history, not news.
         PilotChrome<RgbaImage>.JobsGlyph(Of(Job("j3", JobState.Failed, Live.At.AddHours(-3), Live.At.AddHours(-2))), Live.At).ShouldBe(("📋", null));
 
