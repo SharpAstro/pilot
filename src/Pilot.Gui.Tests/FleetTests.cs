@@ -28,7 +28,7 @@ public sealed class FleetTests
     {
         var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: false, "SE2 DESKTOP-7", Summary("s2", "bo@example.org (Other, max)", flying: 2, rings: 1, waiting: 1));
 
-        line.ToDumpLine().ShouldBe("SE2 · DESKTOP-7 | 10.0.0.9:47731 | live | bo@example.org (Other, max) | - | 3 live · 1 waiting on you | 2 flying | none | 1 ringing | watch only");
+        line.ToDumpLine().ShouldBe("SE2 · DESKTOP-7 | 10.0.0.9:47731 | live | bo@example.org (Other, max) | - | 3 live · 1 waiting on you | 2 flying | none | 1 ringing | watch only | autopilot off");
         FleetLine.From("10.0.0.9:47731", false, true, "SE2 DESKTOP-7", Summary("s2", connected: false) with { Node = null }).Machine.ShouldBe("SE2 DESKTOP-7");
     }
 

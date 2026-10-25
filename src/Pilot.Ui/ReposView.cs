@@ -123,6 +123,9 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
     public AboutCard? About { get; set; }
 
+    /// <summary>The header's Autopilot switch, the same on every page.</summary>
+    public AutopilotSwitch? Autopilot { get; set; }
+
     /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
 
@@ -201,6 +204,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                     .. (SyncRepos is null ? (IEnumerable<Layout.Node>)[] : [CardsView<TSurface>.Pill(Syncing ? "Syncing…" : "Sync", "repos:sync", () => _ = SyncAsync(), Syncing ? Lit : null)]),
                     CardsView<TSurface>.Pill("All repos", "repos:all", () => ShowAll = !ShowAll, ShowAll ? Lit : null),
                     Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
+                    AutopilotSwitch.In(Autopilot),
                     About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f)])
                 .WithGap(12f)
                 .RowH(32f),

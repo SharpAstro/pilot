@@ -75,6 +75,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
     public AboutCard? About { get; set; }
 
+    /// <summary>The header's Autopilot switch, the same on every page.</summary>
+    public AutopilotSwitch? Autopilot { get; set; }
+
     /// <summary>The page as last read, or null before the first read.</summary>
     public SettingsPage? Page => Volatile.Read(ref _read).Page;
 
@@ -214,6 +217,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                         Layout.Builder.Text("settings", 20f, Dim, TextAlign.Near, TextAlign.Far).WAuto(),
                         Layout.Builder.Spacer().WStar(),
                         Layout.Builder.Text(summary, 15f, Body, TextAlign.Far).WAuto(),
+                        AutopilotSwitch.In(Autopilot),
                         About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f))
                     .WithGap(12f)
                     .RowH(32f),

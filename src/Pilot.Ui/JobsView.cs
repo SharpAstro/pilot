@@ -222,6 +222,9 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
     public AboutCard? About { get; set; }
 
+    /// <summary>The header's Autopilot switch, the same on every page.</summary>
+    public AutopilotSwitch? Autopilot { get; set; }
+
     /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
 
@@ -435,6 +438,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                         .. (Play?.Pills() ?? []),
                         Layout.Builder.Spacer().WStar(),
                         .. PlayFilter.Summary(Play, screen.Counts, screen.Hidden, "jobs:play-all", Body, RowHoverBg),
+                        AutopilotSwitch.In(Autopilot),
                         About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f)])
                     .WithGap(12f)
                     .RowH(32f),

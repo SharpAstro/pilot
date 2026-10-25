@@ -167,6 +167,9 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// <summary>The header's ? card: which pilot this is and where its things are; null shows no ? (a capture).</summary>
     public AboutCard? About { get; set; }
 
+    /// <summary>The header's Autopilot switch, the same on every page.</summary>
+    public AutopilotSwitch? Autopilot { get; set; }
+
     /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
 
@@ -617,6 +620,10 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         {
             yield return CardsView<TSurface>.Pill(ShowArchived ? "Hide archived" : $"Show archived ({_archivedCount})", "sessions:show-archived",
                 () => ShowArchived = !ShowArchived);
+        }
+        if (Autopilot is { } autopilot)
+        {
+            yield return autopilot.Button();
         }
         if (About is { } about)
         {

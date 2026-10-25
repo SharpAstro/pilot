@@ -128,6 +128,9 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>Whether this window's node is in maintenance: the page says so, under the two verdicts. Set by the host from the node's <see cref="NodeInfo.Maintenance"/>.</summary>
     public bool Maintenance { get; set; }
 
+    /// <summary>The header's Autopilot switch, the same on every page; Home's title row carries it.</summary>
+    public AutopilotSwitch? Autopilot { get; set; }
+
     /// <summary>Opens a flight's page on Flights.</summary>
     public Action<FlightLine>? OnFlight { get; set; }
 
@@ -148,7 +151,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     {
         var blocks = new List<Layout.Node>
         {
-            Layout.Builder.Text("Home", 22f, Bright).RowH(36f),
+            Layout.Builder.HStack(Layout.Builder.Text("Home", 22f, Bright).WStar(), AutopilotSwitch.In(Autopilot)).WithGap(12f).RowH(36f),
             Layout.Builder.Text(screen.Flying, 16f, screen.Flying == "Nothing is flying" ? Dim : Live).RowH(28f),
             Layout.Builder.Text(screen.Waiting, 16f, screen.Waiting == "Nothing waits on you" ? Dim : Ring).RowH(28f),
         };

@@ -329,6 +329,24 @@ public sealed class SteerByNodeTests : IAsyncDisposable
         watchOnly.ShouldContain("Connect to");
     }
 
+    /// <summary>The header switch's click is <c>set node autopilot on|off</c> to the window's node, as the GUI (#208).</summary>
+    [Fact]
+    public async Task TheAutopilotSwitchSendsSetAutopilotToThisNodeAsGui()
+    {
+        using var here = NodeClient.Remote(_se1.Endpoint);
+
+        var on = await AutopilotCommands.SetAsync(here, on: true, GuiSay.Who, Ct);
+        var off = await AutopilotCommands.SetAsync(here, on: false, GuiSay.Who, Ct);
+
+        on.ShouldBe("autopilot on: done");
+        off.ShouldBe("autopilot off: done");
+        _se1.Commands.Count.ShouldBe(2);
+        _se1.Commands.ShouldAllBe(c => c.Contains("\"set\"", StringComparison.Ordinal) && c.Contains("autopilot", StringComparison.Ordinal) && c.Contains("\"gui\"", StringComparison.Ordinal));
+        _se1.Commands[0].ShouldContain("\"on\"");
+        _se1.Commands[1].ShouldContain("\"off\"");
+        _le1.Commands.ShouldBeEmpty();
+    }
+
     [Fact]
     public void TheFleetPageOffersNoOpenUnlessAHostSetsIt()
     {

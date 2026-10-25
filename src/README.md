@@ -557,6 +557,15 @@ its planner) follow with no command typed; Escape closes the form first.
 The right panel is the watchtower's: its state and context, its Remote Control link, a box to tell it things, then the
 cards with their buttons (Merge is a card's) and what was handled.
 
+**The Autopilot switch** (#208) stands at the top right of every page's header, beside the **?** (on Home, on the title
+row): a button that says *Autopilot*, plain while the node in view has its autopilot off and lit (the accent blue) while it
+is on (`AutopilotSwitch`, shared by every page through `PilotChrome.Autopilot`). It follows the node's own answer
+(`NodeInfo.Autopilot`, read with the other node facts every few seconds), never the click. A click sends `set node autopilot
+on|off` to this window's node as `gui`, which is the person (the node takes the setting from the person only), and the status
+line says what became of it, a refusal included. Its tooltip says what the state means. The **Fleet** page says it per node:
+`autopilot on` or `autopilot off` on each row that answers (nothing for a node not reached, whose last word would read as
+now), beside the maintenance mark, and the row's dump line ends in it.
+
 The **Background tasks** page (Ctrl+4) is the node's jobs: running first, then those waiting in the order they will
 start, then the ended, last ended first. Each row has the job's command, whom it wakes (the flight and leg, a session,
 or a terminal), its state with what it is doing, waits on or came to, when it started and how long it ran; a job that
