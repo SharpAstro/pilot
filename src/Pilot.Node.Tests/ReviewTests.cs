@@ -358,6 +358,45 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    public async Task OnAutopilotTheNodeMergesAPassedFlightItselfOnceItsChecksAreNotFailingAndOnlyOnce()
+    {
+        // The watchtower may never merge, so the night's passed PRs sat for seven hours with the autopilot on (SE1, 2026-10-26).
+        var (flight, pr) = await Passed("30");
+        var ready = Open().Single(c => c.Kind == LegCommander.PrReady);
+        _github.Checks = ChoiceStatus.Passing;
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        // Off: the merge is the person's, as ever.
+        await checks.LookAsync(Ct);
+        _github.Merged.ShouldBeEmpty();
+        Open().ShouldContain(c => c.Id == ready.Id);
+
+        // On: the node merges it from its card, closes the card and says so.
+        var on = NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!;
+        _legs.Models = new RoleModels(on);
+        await checks.LookAsync(Ct);
+        _github.Merged.ShouldHaveSingleItem().Item1.ShouldBe(pr);
+        Open().ShouldNotContain(c => c.Id == ready.Id);
+        _state.Cards().ShouldContain(c => c.Kind == CardKinds.AutopilotRan && c.Subject == $"flight/{flight.Code}");
+
+        // Once a head, not every look.
+        await checks.LookAsync(Ct);
+        _github.Merged.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task OnAutopilotAFailingPrIsNotMerged()
+    {
+        var (_, _) = await Passed("31");
+        _github.Checks = ChoiceStatus.Failing;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+
+        await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
+
+        _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task APrDroppedFromTheQueueOnAConflictIsRebasedAndReviewedAfreshNotOfferedMergeAgain()
     {
         // PIL207's #238 left the queue on merge_conflict and its card offered Merge, which could only be refused again (SE1, 2026-10-25).
