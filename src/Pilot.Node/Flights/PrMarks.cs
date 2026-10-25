@@ -119,6 +119,61 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
         }
     }
 
+    /// <summary>
+    /// What the node's look at an open PR found, <paramref name="pr"/> as GitHub has it now and <paramref name="queued"/> whether
+    /// it waits in the merge queue: the label its own state calls for (conflicts, queued) set through <see cref="ApplyAsync"/>,
+    /// so a refusal is a card and a retry like any other mark; and the PR's head and <c>pilot:</c> label as GitHub has them,
+    /// kept on the flight with where they disagree with what the node set or read.
+    /// </summary>
+    public async Task NoteAsync(string code, PullRequest pr, bool queued, CancellationToken cancellationToken)
+    {
+        if (Of(code) is not { PullRequest: { } number, Review: { } review } || number != pr.Number || pr.State != "OPEN")
+        {
+            return;
+        }
+        var standing = pr.Mergeable == "CONFLICTING" ? PilotMarks.Conflicts
+            : queued ? PilotMarks.Queued
+            // GitHub still works out whether it merges after a push: a conflict stands until it says otherwise.
+            : review.LabelOverride == PilotMarks.Conflicts && pr.Mergeable != "MERGEABLE" ? PilotMarks.Conflicts
+            : null;
+        if (review.LabelOverride != standing)
+        {
+            Update(code, r => r with { LabelOverride = standing });
+            // A write still refused is set by the retry at the next look, with this label in it.
+            if (review.MarksWhy is null)
+            {
+                await ApplyAsync(code, cancellationToken);
+            }
+            // What GitHub said is older than what was just written: it is read again at the next look.
+            return;
+        }
+        if (Of(code) is not { Review: { } now } flight)
+        {
+            return;
+        }
+
+        var label = pr.Labels is null ? null
+            : string.Join(", ", pr.Labels.Where(l => l.StartsWith(PilotMarks.LabelPrefix, StringComparison.Ordinal))) is { Length: > 0 } text ? text : null;
+        var disagrees = new List<string>();
+        if (pr.Labels is not null && now is { Label: { } set, MarksWhy: null } && label != set)
+        {
+            disagrees.Add(label is null ? $"{set} was removed on GitHub" : $"{set} is {label} on GitHub");
+        }
+        if (now.ReviewedHead is { } read && pr.Head.Length > 0 && pr.Head != read)
+        {
+            disagrees.Add($"the head moved to {Short(pr.Head)} since the review read {Short(read)}");
+        }
+        var why = disagrees.Count > 0 ? string.Join("; ", disagrees) : null;
+        var head = pr.Head.Length > 0 ? pr.Head : null;
+        var seen = pr.Labels is null ? flight.GitHubLabel : label;
+        if (flight.GitHubHead != head || flight.GitHubLabel != seen || flight.GitHubDisagrees != why)
+        {
+            state.PutFlight(flight with { GitHubHead = head, GitHubLabel = seen, GitHubDisagrees = why });
+        }
+    }
+
+    private static string Short(string sha) => sha[..Math.Min(8, sha.Length)];
+
     /// <summary>Sets what a refused write left, for every flying flight whose row says it is still to do.</summary>
     public async Task RetryAsync(CancellationToken cancellationToken)
     {
@@ -128,13 +183,18 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
         }
     }
 
-    /// <summary>The status state and the label a review stands at.</summary>
-    internal static (string State, string Label) Intended(ReviewRow review) => review.State switch
+    /// <summary>The status state and the label a review stands at: its verdict's, or the one its PR's state calls for in place of it.</summary>
+    internal static (string State, string Label) Intended(ReviewRow review)
     {
-        ReviewState.Passed => ("success", PilotMarks.Passed),
-        ReviewState.Changes => ("failure", PilotMarks.Changes),
-        _ => ("pending", PilotMarks.Reviewing),
-    };
+        var (status, label) = review.State switch
+        {
+            ReviewState.Passed => ("success", PilotMarks.Passed),
+            ReviewState.Changes => ("failure", PilotMarks.Changes),
+            _ => ("pending", PilotMarks.Reviewing),
+        };
+        // The verdict stays in the status; the label says what the PR is doing now.
+        return (status, review.LabelOverride ?? label);
+    }
 
     internal static string Description(ReviewRow review, string head)
     {
@@ -148,7 +208,7 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
     }
 
     /// <summary>The first line of a report that says something, without a list marker.</summary>
-    private static string FirstFinding(string? report) =>
+    internal static string FirstFinding(string? report) =>
         (report ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(l => l.TrimStart('-', '*', '#', ' ', '\t')).FirstOrDefault(l => l.Length > 0) ?? "see the review";
 

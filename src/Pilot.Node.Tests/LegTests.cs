@@ -100,7 +100,9 @@ internal sealed class FakeGitHub : IGitHub
 
     public List<(int Number, string Head, string Method)> Merged { get; } = [];
 
-    public Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken) => Task.FromResult(Pr);
+    // The labels are what the fake keeps on the PR, so a label taken off by hand is read as GitHub says it.
+    public Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken) =>
+        Task.FromResult(Pr is { } pr ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. labels] : [] } : null);
 
     public Task MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {

@@ -176,7 +176,8 @@ public sealed class ShellCheckRunner : ICheckRunner
 /// <param name="Title">Its title, as read by repo and number; empty otherwise.</param>
 /// <param name="Author">Its author's login, as read by repo and number; empty otherwise.</param>
 /// <param name="Base">The branch it goes into, as read by repo and number; empty otherwise.</param>
-public sealed record PullRequest(int Number, string State, string Head, string Url, string Mergeable = "", string Title = "", string Author = "", string Base = "");
+/// <param name="Labels">The labels it carries, as read by branch; null when the read did not ask for them.</param>
+public sealed record PullRequest(int Number, string State, string Head, string Url, string Mergeable = "", string Title = "", string Author = "", string Base = "", IReadOnlyList<string>? Labels = null);
 
 /// <summary>
 /// Where a PR stands in its base's merge queue. <paramref name="State"/> and <paramref name="Head"/> are the PR's own
@@ -307,7 +308,7 @@ public sealed class GhCli : IGitHub
 
     public async Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(["pr", "view", branch, "--json", "number,state,headRefOid,url,mergeable"], repoPath, cancellationToken);
+        var (exit, output, error) = await RunAsync(["pr", "view", branch, "--json", "number,state,headRefOid,url,mergeable,labels"], repoPath, cancellationToken);
         if (exit != 0)
         {
             return error.Contains("no pull requests found", StringComparison.OrdinalIgnoreCase)
@@ -318,7 +319,10 @@ public sealed class GhCli : IGitHub
         var root = doc.RootElement;
         return new PullRequest(root.GetProperty("number").GetInt32(), root.GetProperty("state").GetString() ?? "",
             root.GetProperty("headRefOid").GetString() ?? "", root.GetProperty("url").GetString() ?? "",
-            root.TryGetProperty("mergeable", out var mergeable) ? mergeable.GetString() ?? "" : "");
+            root.TryGetProperty("mergeable", out var mergeable) ? mergeable.GetString() ?? "" : "",
+            Labels: root.TryGetProperty("labels", out var labels) && labels.ValueKind == JsonValueKind.Array
+                ? [.. labels.EnumerateArray().Select(l => TextOf(l, "name")).OfType<string>()]
+                : null);
     }
 
     public async Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken)

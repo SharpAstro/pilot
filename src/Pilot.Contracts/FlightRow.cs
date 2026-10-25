@@ -61,6 +61,22 @@ public sealed record FlightRow
     /// </summary>
     public string? MergeQueue { get; init; }
 
+    /// <summary>The PR's head as GitHub had it at the node's last look at it (#222); null before a look.</summary>
+    public string? GitHubHead { get; init; }
+
+    /// <summary>
+    /// The <c>pilot:</c> label GitHub has on the PR as of the node's last look (several, joined by a comma, if someone added
+    /// more); null when it has none, or before a look. Compare with <see cref="ReviewRow.Label"/>, which the node set.
+    /// </summary>
+    public string? GitHubLabel { get; init; }
+
+    /// <summary>
+    /// Where GitHub disagrees with what the node set or read (<c>pilot: passed was removed on GitHub</c>, <c>the head moved to
+    /// beef1111 since the review read cafe0000</c>), as of the last look; null when they agree. Clients show it; the node
+    /// puts nothing right by itself, since the person who changed it may have meant to.
+    /// </summary>
+    public string? GitHubDisagrees { get; init; }
+
     /// <summary>
     /// The other flights the planner found this one overlapping, each with the answer to it: a pair is asked once, so
     /// a recorded answer is never asked about again. Not required, and null-safe: a flight journaled before overlaps has
@@ -182,6 +198,13 @@ public sealed record ReviewRow
 
     /// <summary>The <c>pilot:</c> label the node last set on the PR (<c>pilot: passed</c>); null while none is set.</summary>
     public string? Label { get; init; }
+
+    /// <summary>
+    /// The <c>pilot:</c> label the PR's own state calls for in place of the review's (<c>pilot: conflicts</c> while it conflicts
+    /// with its base, <c>pilot: queued</c> in the merge queue), as the node's look at the PR last found it; null while the
+    /// review's own label stands.
+    /// </summary>
+    public string? LabelOverride { get; init; }
 
     /// <summary>The page of the COMMENT review the node posted with the reviewer's report; null until it is posted.</summary>
     public string? ReviewUrl { get; init; }

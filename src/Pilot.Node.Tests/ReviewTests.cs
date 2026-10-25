@@ -334,6 +334,133 @@ public sealed class ReviewTests : IDisposable
         F("TIA20").MergeQueue.ShouldBe("in the merge queue, position 1");
     }
 
+    private static string[] PilotLabels(HashSet<string>? labels) => [.. (labels ?? []).Where(l => l.StartsWith("pilot: ", StringComparison.Ordinal))];
+
+    /// <summary>A flight whose done leg's PR passed its review, so its marks are set and its ready card open.</summary>
+    private async Task<(FlightRow Flight, int Pr)> Passed(string issue)
+    {
+        var flight = await NewFlight(issue, "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        (await Run(Verbs.Review, $"flight/{flight.Code}", Reviewer(flight.Code), "pass", "fine")).Ok.ShouldBeTrue();
+        return (F(flight.Code), _github.Pr!.Number);
+    }
+
+    [Fact]
+    public async Task AQueuedPrIsLabelledQueuedAndItsRefusedLabelIsSetAtTheNextLookClosingItsCardThenPassedAgainOnceItLeaves()
+    {
+        var (flight, number) = await Passed("31");
+        _state.CloseCard(Open().Single(c => c.Kind == LegCommander.PrReady).Id, "done", "controller").ShouldBeTrue();
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+        PilotLabels(_github.Labels[number]).ShouldBe(["pilot: passed"]);
+
+        // Joining the queue is a label, and GitHub refusing it is a card, not a failed look.
+        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: true, Position: 2);
+        _github.LabelFails = "GitHub refused the label: rate limited";
+        await checks.LookAsync(Ct);
+        var refused = Open().Single(c => c.Kind == PrMarks.RefusedKind);
+        refused.Detail.ShouldNotBeNull().ShouldContain("pilot: queued");
+        F(flight.Code).Review!.LabelOverride.ShouldBe("pilot: queued");
+        PilotLabels(_github.Labels[number]).ShouldBe(["pilot: passed"]);
+
+        // Still refused: tried again at the look, not carded twice.
+        await checks.LookAsync(Ct);
+        Open().Count(c => c.Kind == PrMarks.RefusedKind).ShouldBe(1);
+
+        _github.LabelFails = null;
+        await checks.LookAsync(Ct);
+        PilotLabels(_github.Labels[number]).ShouldBe(["pilot: queued"]);
+        Open().ShouldNotContain(c => c.Kind == PrMarks.RefusedKind);
+        F(flight.Code).Review!.MarksWhy.ShouldBeNull();
+        _github.Statuses.Last().State.ShouldBe("success");
+
+        // Out of the queue (dropped, and carded for that): the review's own label again.
+        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: false);
+        await checks.LookAsync(Ct);
+        PilotLabels(_github.Labels[number]).ShouldBe(["pilot: passed"]);
+        F(flight.Code).Review!.LabelOverride.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AConflictingPrIsLabelledConflictsWhateverItsReviewSaidAndPassedAgainOnceGitHubSaysItMerges()
+    {
+        var flight = await NewFlight("32", "parser");
+        File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA32"), "controller");
+        (await Run(Verbs.Review, "flight/TIA32", Reviewer("TIA32"), "pass", "fine")).Ok.ShouldBeTrue();
+        File.WriteAllText(Path.Combine(Repo, "README.md"), "ours\n");
+        Git(Repo, "commit", "-qam", "README on main");
+        Git(Repo, "push", "-q", "origin", "main");
+        var number = _github.Pr!.Number;
+        _github.Pr = _github.Pr with { Mergeable = "CONFLICTING" };
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        await checks.LookAsync(Ct);
+
+        // Sent back as changes for the conflict, and the label says the conflict, not the changes.
+        F("TIA32").Review!.State.ShouldBe(ReviewState.Changes);
+        PilotLabels(_github.Labels[number]).ShouldBe(["pilot: conflicts"]);
+        _github.Statuses.Last().State.ShouldBe("failure");
+
+        // GitHub working it out again after a push does not lift it; its saying MERGEABLE does.
+        _github.Pr = _github.Pr! with { Mergeable = "UNKNOWN" };
+        await checks.LookAsync(Ct);
+        PilotLabels(_github.Labels[number]).ShouldBe(["pilot: conflicts"]);
+        _github.Pr = _github.Pr! with { Mergeable = "MERGEABLE" };
+        await checks.LookAsync(Ct);
+        PilotLabels(_github.Labels[number]).ShouldBe(["pilot: changes"]);
+    }
+
+    [Fact]
+    public async Task TheLookKeepsTheHeadAndPilotLabelGitHubHasOnTheFlightAndWhereTheyDisagreeWithTheNode()
+    {
+        var (flight, number) = await Passed("33");
+        var reviewed = F(flight.Code).Review!.ReviewedHead.ShouldNotBeNull();
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        await checks.LookAsync(Ct);
+
+        var agreed = F(flight.Code);
+        (agreed.GitHubHead, agreed.GitHubLabel, agreed.GitHubDisagrees).ShouldBe((reviewed, "pilot: passed", null));
+
+        // The label taken off by hand, and the branch pushed to since the reviewer read it.
+        _github.Labels[number].Remove("pilot: passed");
+        _github.Pr = _github.Pr! with { Head = "beef1111beef1111" };
+        await checks.LookAsync(Ct);
+
+        var drifted = F(flight.Code);
+        (drifted.GitHubHead, drifted.GitHubLabel).ShouldBe(("beef1111beef1111", null));
+        drifted.GitHubDisagrees.ShouldBe($"pilot: passed was removed on GitHub; the head moved to beef1111 since the review read {reviewed[..8]}");
+        // Recorded, not put right: the node's own marks stand as it set them.
+        (drifted.Review!.Label, drifted.Review.StatusState).ShouldBe(("pilot: passed", "success"));
+        _github.LabelCalls.Count(c => c.Number == number).ShouldBe(2);
+
+        // Changed by hand to another pilot: label, then put back and the branch back: they agree again.
+        _github.Labels[number].Add("pilot: changes");
+        await checks.LookAsync(Ct);
+        F(flight.Code).GitHubDisagrees.ShouldNotBeNull().ShouldContain("pilot: passed is pilot: changes on GitHub");
+        _github.Labels[number].Clear();
+        _github.Labels[number].Add("pilot: passed");
+        _github.Pr = _github.Pr! with { Head = reviewed };
+        await checks.LookAsync(Ct);
+        var again = F(flight.Code);
+        (again.GitHubHead, again.GitHubLabel, again.GitHubDisagrees).ShouldBe((reviewed, "pilot: passed", null));
+    }
+
+    [Fact]
+    public async Task APrThatIsNotOpenIsNotNoted()
+    {
+        var (flight, _) = await Passed("34");
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+        _github.Pr = _github.Pr! with { State = "CLOSED" };
+        _github.Labels[_github.Pr.Number].Clear();
+
+        await checks.LookAsync(Ct);
+
+        (F(flight.Code).GitHubHead, F(flight.Code).GitHubLabel, F(flight.Code).GitHubDisagrees).ShouldBe((null, null, null));
+    }
+
     [Fact]
     public async Task APrWithItsReadyCardStillOpenOrABaseWithNoQueueIsNoQueueCard()
     {

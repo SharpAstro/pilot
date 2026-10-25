@@ -124,6 +124,38 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         }
     }
 
+    /// <summary>
+    /// Every flying flight's open PR with a review, read once: a conflict is its <c>pilot: conflicts</c> label and the merge
+    /// queue its <c>pilot: queued</c>, and the PR's head and <c>pilot:</c> label as GitHub has them go on the flight's row, with
+    /// where they differ from what the node set (a label taken off by hand, a head moved since the review read it). Read after
+    /// the retry of what GitHub refused, so what that wrote is in what is read.
+    /// </summary>
+    private async Task LookAtMarksAsync(CancellationToken cancellationToken)
+    {
+        if (legs is null)
+        {
+            return;
+        }
+        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null, Review: not null }))
+        {
+            PullRequest? pr;
+            try
+            {
+                pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                // One PR GitHub would not say is not a reason to skip the others'.
+                await Console.Error.WriteLineAsync($"pr checks: {flight.Code}'s PR could not be read: {ex.Message}");
+                continue;
+            }
+            if (pr is not null && pr.Number == flight.PullRequest)
+            {
+                await legs.NoteGitHubAsync(flight.Code, pr, state.Flights().FirstOrDefault(f => f.Code == flight.Code)?.MergeQueue is not null, cancellationToken);
+            }
+        }
+    }
+
     /// <summary>One look at every open PR-ready card's PR.</summary>
     public async Task LookAsync(CancellationToken cancellationToken)
     {
@@ -134,6 +166,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             // What GitHub refused of a review's marks is set again at each look.
             await legs.RetryMarksAsync(cancellationToken);
         }
+        await LookAtMarksAsync(cancellationToken);
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady))
         {
             var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : null;
