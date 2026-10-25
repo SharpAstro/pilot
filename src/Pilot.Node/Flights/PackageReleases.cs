@@ -7,8 +7,11 @@ namespace Pilot.Node.Flights;
 /// <summary>
 /// What a landed flight releases, read from its repo at the merged head: the <c>MAJOR.MINOR</c> in
 /// <c>VersionMajorMinor</c> of <c>Directory.Build.props</c> (the root's or <c>src/</c>'s) and the package ids of the repo's
-/// packable projects. The repo's CI publishes <c>MAJOR.MINOR.&lt;run&gt;</c> of every packable project on a push to main, so a
-/// flight that lands in a repo that has any releases something, and its consumers wait for the package, not just the land.
+/// packable projects. A repo releases only when its CI pushes packages on a push to main (<see cref="PublishShape"/>): then it
+/// publishes <c>MAJOR.MINOR.&lt;run&gt;</c> of every packable project, and the consumers of a flight that lands there wait for
+/// the package, not just the land. A project packable by default in a repo whose CI ships no package, or ships on a tag, is no
+/// release. Only a flight of another repo that references the package waits: a flight of the producer's own repo builds from
+/// source.
 /// </summary>
 public sealed partial class PackageReleases(IGit git, INuGetFeed feed, TimeProvider time)
 {
@@ -18,15 +21,63 @@ public sealed partial class PackageReleases(IGit git, INuGetFeed feed, TimeProvi
     private static partial Regex MajorMinor();
 
     /// <summary>
-    /// The packages <paramref name="producer"/>'s land releases, as waits a consumer holds for: none when it releases nothing.
+    /// Whether <paramref name="consumer"/> waits for the package <paramref name="id"/> that <paramref name="producer"/> releases:
+    /// it flies in another repo, whose projects or central package versions name the package (as <c>Include</c> or <c>Update</c>).
+    /// </summary>
+    public async Task<bool> ConsumesAsync(FlightRow consumer, FlightRow producer, string id, CancellationToken cancellationToken)
+    {
+        if (SameRepo(consumer, producer))
+        {
+            return false;
+        }
+        var cwd = Directory.Exists(consumer.Worktree) ? consumer.Worktree : consumer.RepoPath;
+        var found = await git.RunAsync(["grep", "-l", "-i", "-F", "-e", $"\"{id}\"", "-e", $"'{id}'", "HEAD", "--", "*.csproj", "*.props", "*.targets"], cwd, cancellationToken);
+        return found.Ok && found.Output.Trim().Length > 0;
+    }
+
+    private static bool SameRepo(FlightRow a, FlightRow b) =>
+        string.Equals(Path.GetFullPath(a.RepoPath), Path.GetFullPath(b.RepoPath), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The workflow of the repo at <paramref name="commit"/> that pushes packages on a push to main, as GitHub names its runs
+    /// (<see cref="PublishShape"/>); null when its CI ships none that way.
+    /// </summary>
+    private async Task<string?> PublisherAsync(string cwd, string commit, CancellationToken cancellationToken)
+    {
+        var tree = await git.RunAsync(["ls-tree", "--name-only", commit, ".github/workflows/"], cwd, cancellationToken);
+        if (!tree.Ok)
+        {
+            return null;
+        }
+        var workflows = new List<(string Path, string Text)>();
+        foreach (var path in tree.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                     .Where(p => p.EndsWith(".yml", StringComparison.OrdinalIgnoreCase) || p.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)))
+        {
+            if (await ShowAsync(cwd, commit, path, cancellationToken) is { } text)
+            {
+                workflows.Add((path, text));
+            }
+        }
+        return PublishShape.PushPublisher(workflows);
+    }
+
+    /// <summary>
+    /// The packages <paramref name="producer"/>'s land releases that <paramref name="consumers"/> wait for, as waits a consumer
+    /// holds for: none when it releases nothing, or none of the consumers (flights of other repos) references what it does.
     /// Reads git at <paramref name="head"/> (the merged head; the plane's own head when null) before the plane goes, and the
     /// feed for what is published within the line, so a flight that did not bump the line waits for a version newer than the
-    /// latest there is now. Throws <see cref="FlightException"/> when nuget.org cannot be read: the floor is not known, and a
-    /// guess would let a consumer fly on the old package.
+    /// latest there was <paramref name="mergedAt"/> (now, when not known). Throws <see cref="FlightException"/> when nuget.org
+    /// cannot be read: the floor is not known, and a guess would let a consumer fly on the old package.
     /// </summary>
     /// <param name="mergeCommit">The commit its PR merged as, kept on each wait for the publish run to be found by.</param>
-    public async Task<PackageWait[]> WaitsAsync(FlightRow producer, string? head, string? mergeCommit, CancellationToken cancellationToken)
+    /// <param name="mergedAt">When its PR merged: a version published after it is the flight's own release, or a later one, never the floor.</param>
+    public async Task<PackageWait[]> WaitsAsync(FlightRow producer, IReadOnlyList<FlightRow> consumers, string? head, string? mergeCommit, DateTimeOffset? mergedAt, CancellationToken cancellationToken)
     {
+        consumers = [.. consumers.Where(c => !SameRepo(c, producer))];
+        if (consumers.Count == 0)
+        {
+            return [];
+        }
         var cwd = Directory.Exists(producer.Worktree) ? producer.Worktree : producer.RepoPath;
         if (head is not { Length: > 0 })
         {
@@ -42,7 +93,23 @@ public sealed partial class PackageReleases(IGit git, INuGetFeed feed, TimeProvi
         {
             return [];
         }
-        var ids = await PackageIdsAsync(cwd, head, cancellationToken);
+        var workflow = await PublisherAsync(cwd, head, cancellationToken);
+        if (workflow is null)
+        {
+            return [];
+        }
+        var ids = new List<string>();
+        foreach (var id in await PackageIdsAsync(cwd, head, cancellationToken))
+        {
+            foreach (var consumer in consumers)
+            {
+                if (await ConsumesAsync(consumer, producer, id, cancellationToken))
+                {
+                    ids.Add(id);
+                    break;
+                }
+            }
+        }
         if (ids.Count == 0)
         {
             return [];
@@ -72,7 +139,7 @@ public sealed partial class PackageReleases(IGit git, INuGetFeed feed, TimeProvi
                 {
                     throw new FlightException($"nuget.org could not say which versions of {id} exist ({ex.Message}), so {producer.Code}'s consumers cannot be told what to wait for; land again once it answers");
                 }
-                above = PackageVersions.InLine(versions, line).FirstOrDefault();
+                above = await FloorAsync(id, PackageVersions.InLine(versions, line), mergedAt, cancellationToken);
             }
             waits.Add(new PackageWait
             {
@@ -82,9 +149,44 @@ public sealed partial class PackageReleases(IGit git, INuGetFeed feed, TimeProvi
                 Producer = producer.Code,
                 Since = now,
                 Commit = mergeCommit is { Length: > 0 } ? mergeCommit : null,
+                Workflow = workflow,
             });
         }
         return [.. waits];
+    }
+
+    /// <summary>How many of the newest versions of a line are asked when they were published.</summary>
+    private const int FloorLooks = 10;
+
+    /// <summary>
+    /// The newest of <paramref name="inLine"/> (newest first) that was published before <paramref name="mergedAt"/>: the
+    /// release the land is the next one after. A land read after its publish finished (the node was down across the merge)
+    /// finds the flight's own release newest, which is no floor. The newest when the merge time is not known; a version the feed
+    /// gives no time for counts as published before.
+    /// </summary>
+    private async Task<string?> FloorAsync(string id, IReadOnlyList<string> inLine, DateTimeOffset? mergedAt, CancellationToken cancellationToken)
+    {
+        if (mergedAt is not { } merged)
+        {
+            return inLine.FirstOrDefault();
+        }
+        foreach (var version in inLine.Take(FloorLooks))
+        {
+            DateTimeOffset? published;
+            try
+            {
+                published = await feed.PublishedAtAsync(id, version, cancellationToken);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException && !cancellationToken.IsCancellationRequested)
+            {
+                throw new FlightException($"nuget.org could not say when {id} {version} was published ({ex.Message}), so what to wait for is not known; land again once it answers");
+            }
+            if (published is not { } at || at <= merged)
+            {
+                return version;
+            }
+        }
+        return null;
     }
 
     /// <summary>The branches a repo's merged main is looked for on, first to last.</summary>
@@ -140,7 +242,7 @@ public sealed partial class PackageReleases(IGit git, INuGetFeed feed, TimeProvi
         if (flights.SelectMany(f => f.PackageWaits)
                 .FirstOrDefault(w => string.Equals(w.Id, miss.Id, StringComparison.OrdinalIgnoreCase) && InLine(w.Line) && now - w.Since < RecentRelease) is { } recorded)
         {
-            return Wait(recorded.Line, recorded.Producer, recorded.Commit, recorded.RepoPath ?? flights.FirstOrDefault(f => f.Code == recorded.Producer)?.RepoPath);
+            return Wait(recorded.Line, recorded.Producer, recorded.Commit, recorded.RepoPath ?? flights.FirstOrDefault(f => f.Code == recorded.Producer)?.RepoPath) with { Workflow = recorded.Workflow };
         }
 
         // A sibling repo whose merged main releases it: the org's clones beside the flights' own.
@@ -160,9 +262,10 @@ public sealed partial class PackageReleases(IGit git, INuGetFeed feed, TimeProvi
                     continue;
                 }
                 if (await LineAtAsync(repo, commit, cancellationToken) is { } line && InLine(line)
-                    && (await PackageIdsAsync(repo, commit, cancellationToken)).Contains(miss.Id, StringComparer.OrdinalIgnoreCase))
+                    && (await PackageIdsAsync(repo, commit, cancellationToken)).Contains(miss.Id, StringComparer.OrdinalIgnoreCase)
+                    && await PublisherAsync(repo, commit, cancellationToken) is { } workflow)
                 {
-                    return Wait(line, Path.GetFileName(repo), commit, repo);
+                    return Wait(line, Path.GetFileName(repo), commit, repo) with { Workflow = workflow };
                 }
                 break;
             }

@@ -9,7 +9,8 @@ namespace Pilot.Node.Flights;
 /// (<see cref="FirstDelay"/>, doubling to <see cref="MaxDelay"/>); one that is met is dropped, and the flight flies when
 /// nothing else holds it. A package that does not come is one ring card, once per wait: <see cref="PublishGrace"/> after the
 /// producer's publish run on the merge commit succeeded, at once when that run failed, and after <see cref="NoRunGrace"/>
-/// when it never ran. The card names the run, its conclusion and the version expected against the latest published.
+/// when it never ran. The card names the run, its conclusion and the version expected against the latest published, and
+/// offers the way out: <c>fly anyway</c> (<see cref="Verbs.FlyAnyway"/>) drops the wait and lets the flight fly.
 /// A leg held for a package its restore could not find (<see cref="LegRow.Hold"/>) is watched the same way, on the same
 /// backoff and with the same one card, and is started afresh once the package is up.
 /// </summary>
@@ -91,7 +92,7 @@ public sealed class PackageWatch(NodeState state, FlightCommander flights, INuGe
 
         // One wait, a flight's or a leg's: the version that met it, or null while it is not met, in which case it is looked at
         // again on its backoff and rung for once when it is late. A met wait is dropped by the caller.
-        async Task<string?> LookAtAsync(string subject, string target, string verb, PackageWait wait, Func<Task> markLate)
+        async Task<string?> LookAtAsync(string subject, string target, string verb, PackageWait wait, CardChoice way, Func<Task> markLate)
         {
             var key = (subject, wait.Id, wait.Producer);
             live.Add(key);
@@ -110,7 +111,7 @@ public sealed class PackageWatch(NodeState state, FlightCommander flights, INuGe
             if (!wait.Escalated && await LateAsync(subject, verb, wait, versions, now, cancellationToken) is { } late)
             {
                 // The card first: a node that stops between the two says it twice, never not at all.
-                state.RaiseCard(CardBin.Ring, LateKind, target, late.Title, late.Detail);
+                state.RaiseCard(CardBin.Ring, LateKind, target, late.Title, late.Detail, [way]);
                 await markLate();
             }
             return null;
@@ -122,6 +123,7 @@ public sealed class PackageWatch(NodeState state, FlightCommander flights, INuGe
             foreach (var wait in flight.PackageWaits)
             {
                 if (await LookAtAsync(flight.Code, Verbs.FlightTarget(flight.Code), "waits for", wait,
+                        new CardChoice { Label = "Fly anyway", Verb = Verbs.FlyAnyway, Target = Verbs.FlightTarget(flight.Code) },
                         () => flights.MarkPackageWaitLateAsync(flight.Code, wait.Id, wait.Producer, cancellationToken)) is not null)
                 {
                     met.Add((wait.Id, wait.Producer));
@@ -141,6 +143,7 @@ public sealed class PackageWatch(NodeState state, FlightCommander flights, INuGe
             {
                 var subject = $"{leg.Flight}/{leg.Name}";
                 if (await LookAtAsync(subject, Verbs.LegTarget(leg.Flight, leg.Name), "holds for", leg.Hold!,
+                        new CardChoice { Label = "Start anyway", Verb = Verbs.StartLeg, Target = Verbs.LegTarget(leg.Flight, leg.Name), Args = ["anyway"] },
                         () => legs.MarkHoldLateAsync(leg.Flight, leg.Name, cancellationToken)) is { } up)
                 {
                     await legs.ResumeHeldAsync(leg.Flight, leg.Name, up, cancellationToken);
@@ -226,10 +229,11 @@ public sealed class PackageWatch(NodeState state, FlightCommander flights, INuGe
                 }
                 return Card(subject, verb, wait, versions, $"{wait.Producer}'s publish run could not be read ({ex.Message})");
             }
-            if (runs.FirstOrDefault(r => r.Event == "push") is not { } publish)
+            // The run of the workflow that pushes packages, when it is known: another workflow's fast push run says nothing of the package.
+            if (runs.FirstOrDefault(r => r.Event == "push" && (wait.Workflow is null || string.Equals(r.Name, wait.Workflow, StringComparison.Ordinal))) is not { } publish)
             {
                 // A push starts its run within seconds; none by now means it never ran.
-                return waited < NoRunGrace ? null : Card(subject, verb, wait, versions, $"no workflow run on {Short(commit)} was started by its push, so {wait.Producer}'s publish never ran");
+                return waited < NoRunGrace ? null : Card(subject, verb, wait, versions, $"no {(wait.Workflow is null ? "workflow run" : $"{wait.Workflow} run")} on {Short(commit)} was started by its push, so {wait.Producer}'s publish never ran");
             }
             run = $"{wait.Producer}'s publish run {publish.Name} #{publish.Id.ToString(inv)} ({publish.Url})";
             if (publish.Status != "completed")

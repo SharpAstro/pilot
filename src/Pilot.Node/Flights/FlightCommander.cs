@@ -30,7 +30,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
     public const string RoutedKind = "routed";
 
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
-    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.Connect or Verbs.Land;
+    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.Connect or Verbs.Land or Verbs.FlyAnyway;
 
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
@@ -52,6 +52,9 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
                         break;
                     case Verbs.Land:
                         await LandAsync(command, cancellationToken);
+                        break;
+                    case Verbs.FlyAnyway:
+                        FlyAnyway(command);
                         break;
                 }
             }
@@ -299,8 +302,11 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
 
         // What it releases is read before its plane goes, and before anything is changed: a land that cannot say what its
         // consumers wait for is refused, never half done. A folded flight released nothing.
-        var released = foldedInto is null && packages is not null && state.Flights().Any(f => f.State != FlightState.Landed && f.Connections.Contains(flight.Code, StringComparer.Ordinal))
-            ? await packages.WaitsAsync(flight, mergedHead, await MergeCommitAsync(flight, cancellationToken), cancellationToken)
+        var consumers = state.Flights().Where(f => f.State != FlightState.Landed && f.Connections.Contains(flight.Code, StringComparer.Ordinal)).ToList();
+        var released = foldedInto is null && packages is not null && consumers.Count > 0
+            ? await MergeOfAsync(flight, cancellationToken) is var (mergeCommit, mergedAt)
+                ? await packages.WaitsAsync(flight, consumers, mergedHead, mergeCommit, mergedAt, cancellationToken)
+                : []
             : [];
 
         var leftover = await planes.RemoveAsync(flight.RepoPath, flight.Worktree, cancellationToken);
@@ -341,29 +347,60 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             }
             else if (released.Length > 0)
             {
-                // Landed with a release: it flies once the package can be fetched, not before.
-                waiting = waiting with { PackageWaits = [.. waiting.PackageWaits, .. released.Where(r => !waiting.PackageWaits.Any(w => w.Id == r.Id && w.Producer == r.Producer))] };
+                // Landed with a release it uses: it flies once the package can be fetched, not before.
+                var uses = new List<PackageWait>();
+                foreach (var release in released.Where(r => !waiting.PackageWaits.Any(w => w.Id == r.Id && w.Producer == r.Producer)))
+                {
+                    if (await packages!.ConsumesAsync(waiting, flight, release.Id, cancellationToken))
+                    {
+                        uses.Add(release);
+                    }
+                }
+                waiting = waiting with { PackageWaits = [.. waiting.PackageWaits, .. uses] };
             }
             state.PutFlight(Settle(waiting));
         }
     }
 
-    /// <summary>The commit <paramref name="flight"/>'s PR merged as, when GitHub says; null otherwise.</summary>
-    private async Task<string?> MergeCommitAsync(FlightRow flight, CancellationToken cancellationToken)
+    /// <summary>The commit <paramref name="flight"/>'s PR merged as and when, as far as GitHub says; both null when it does not (the land then reads as of now).</summary>
+    private async Task<(string? Commit, DateTimeOffset? At)> MergeOfAsync(FlightRow flight, CancellationToken cancellationToken)
     {
         if (github is null)
         {
-            return null;
+            return (null, null);
         }
         try
         {
             var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
-            return pr is { State: "MERGED", MergeCommit.Length: > 0 } && (flight.PullRequest is null || flight.PullRequest == pr.Number) ? pr.MergeCommit : null;
+            return pr is { State: "MERGED" } && (flight.PullRequest is null || flight.PullRequest == pr.Number)
+                ? (pr.MergeCommit.Length > 0 ? pr.MergeCommit : null, pr.MergedAt)
+                : (null, null);
         }
         catch (FlightException)
         {
-            return null;
+            return (null, null);
         }
+    }
+
+    /// <summary>
+    /// <c>fly-anyway flight/&lt;code&gt;</c>: the way out of a wait for a package that is not coming (its publish failed, or the
+    /// connection never needed it). Every package wait of the flight is dropped, its late card closed, and the flight flies when
+    /// nothing else holds it.
+    /// </summary>
+    private void FlyAnyway(CommandRequest command)
+    {
+        var flight = Find(command.Target);
+        if (flight.State == FlightState.Landed)
+        {
+            throw new FlightException($"{flight.Code} has landed");
+        }
+        if (flight.PackageWaits.Length == 0)
+        {
+            throw new FlightException($"{flight.Code} waits for no package{(flight.State == FlightState.Held ? $", only for {FlightWaiting.For(flight)}" : "")}");
+        }
+        var dropped = string.Join(", ", flight.PackageWaits.Select(FlightWaiting.Text).Distinct(StringComparer.Ordinal));
+        state.PutFlight(Settle(flight with { PackageWaits = [] }));
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{command.Who} let {flight.Code} fly without {dropped}", PackageWatch.LateKind);
     }
 
     /// <summary>
