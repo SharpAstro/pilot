@@ -54,10 +54,6 @@ internal sealed class AutopilotSwitch
             .WithTooltip(Tooltip);
         return OnToggle is { } toggle ? button.Follows(new HitResult.ButtonHit(Action), _ => toggle(!On)) : button;
     }
-
-    /// <summary>The switch for a header's row, or nothing in its place where a page has no switch.</summary>
-    public static Layout.Node In(AutopilotSwitch? autopilot, FlightsPalette? night = null) =>
-        autopilot?.Button(night) ?? Layout.Builder.Spacer().WFixed(0f);
 }
 
 /// <summary>The switch's verb on the node, for either host.</summary>

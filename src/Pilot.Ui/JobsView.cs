@@ -430,23 +430,13 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     }
 
     private Layout.Node Header(JobsScreen screen) =>
-        Layout.Builder.VStack(
-                Layout.Builder.HStack([
-                        Layout.Builder.Text("pilot v2", 20f, Bright, TextAlign.Near, TextAlign.Far).WAuto(),
-                        Layout.Builder.Text("background tasks", 20f, Dim, TextAlign.Near, TextAlign.Far).WAuto(),
-                        .. (Nodes?.Pills() ?? []),
-                        .. (Play?.Pills() ?? []),
-                        Layout.Builder.Spacer().WStar(),
-                        .. PlayFilter.Summary(Play, screen.Counts, screen.Hidden, "jobs:play-all", Body, RowHoverBg),
-                        AutopilotSwitch.In(Autopilot),
-                        About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f)])
-                    .WithGap(12f)
-                    .RowH(32f),
-                Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC{(screen.Outside is { } outside ? $" · {outside}" : "")}", 12f, Dim).RowH(20f))
-            .Pad(Gutter, 6f)
-            .Bg(HeaderBg)
-            .WStar()
-            .HAuto();
+        TopBar.Build(new PageHeader("background tasks")
+        {
+            Counts = screen.Counts,
+            Hidden = screen.Hidden,
+            HiddenAction = "jobs:play-all",
+            Source = PageHeader.SourceLine(screen.Source, screen.AsOf, screen.Outside),
+        }, new TopBarParts(Nodes, Play, Autopilot, About));
 
     private Layout.Node Main(JobsScreen screen)
     {

@@ -100,6 +100,9 @@ internal sealed class PilotChrome<TSurface>
         Jobs.Play = Play;
         Cards.Play = Play;
         Settings.About = About;
+        Home.About = About;
+        Settings.Nodes = Nodes;
+        Home.Nodes = Nodes;
         // The Autopilot switch, in every page's header, for the node the window shows.
         sessions.Autopilot = Autopilot;
         Flights.Autopilot = Autopilot;
