@@ -160,7 +160,8 @@ public sealed class SettingsTests : IDisposable
         var setup = new NodeSetup(new NodeOptions("/tmp/n.sock", _root), node, _root)
         {
             Run = (_, _, _) => (0, netsh),
-            RunElevated = (_, args) => { elevated = args; netsh += Rule(gui); return true; },
+            // The elevated pwsh runs a script: what it says is read while it is there.
+            RunElevated = (_, args) => { elevated = File.ReadAllText(args.Split("-File \"")[1].TrimEnd('"')); netsh += Rule(gui); return true; },
         };
 
         // pilot-gui.exe is beside the node with no rule of its own; pilot.exe and pilot-tui.exe are not installed here.
@@ -168,7 +169,8 @@ public sealed class SettingsTests : IDisposable
 
         Assert.SkipUnless(OperatingSystem.IsWindows(), "the node makes a firewall rule on Windows only");
         (await setup.FixAsync(NodeSetup.FirewallKey, Ct)).ShouldBeNull();
-        elevated.ShouldNotBeNull().ShouldContain($"program=\"{node}\" &");
+        elevated.ShouldNotBeNull().ShouldContain($"program=\"{node}\"\n");
+        elevated.ShouldContain("netsh --% advfirewall");
         elevated.ShouldContain($"program=\"{gui}\" protocol=udp localport={LAN.Lib.LanProtocol.DiscoveryPort}");
         elevated.ShouldNotContain("pilot-tui.exe");
         setup.FirewallAllows().Allows.ShouldBeTrue();

@@ -276,6 +276,8 @@ public static class Briefs
         text.AppendLine($"`{run} leg plan {flight.Code} <name> --goal \"…\" --done-when \"…\" --check \"<command>\" --item \"<step>\" --item \"<step>\"`");
         text.AppendLine("Name: lower-case letters, digits and dashes. Items are the worker's checklist, in order. Add --model or --effort");
         text.AppendLine("only when a leg needs more (or less) than the default.");
+        text.AppendLine("The check runs as written in pwsh on Windows (sh elsewhere): quote anything holding a |, as a test filter");
+        text.AppendLine("(`--filter 'FullyQualifiedName~A|FullyQualifiedName~B'`). A bare | is refused, since it would pipe.");
         text.AppendLine();
         text.AppendLine("## When the legs are planned");
         text.AppendLine($"`{run} flight planned {flight.Code} \"<the plan in a line or two: why these legs, in this order>\"`. It shows the");

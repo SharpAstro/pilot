@@ -287,19 +287,22 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>Starts a job; null when it started, else why not.</summary>
     private string? Start(JobRow job)
     {
+        ShellScript? shell = null;
         Process process;
         try
         {
-            process = StartProcess(job);
+            shell = ShellScript.For(job.Command, job.Cwd);
+            process = StartProcess(job, shell);
         }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException)
         {
+            shell?.Dispose();
             return ex.Message;
         }
         // In _running before the Running row is put: a cancel that sees the row must find the process.
         _running[job.Id] = process;
         state.PutJob(job);
-        _ = Task.Run(() => WatchAsync(job, process), CancellationToken.None);
+        _ = Task.Run(() => WatchAsync(job, process, shell), CancellationToken.None);
         return null;
     }
 
@@ -326,12 +329,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     private readonly ConcurrentDictionary<string, string> _cancelled = new(StringComparer.Ordinal);
 
-    private static Process StartProcess(JobRow job)
+    private static Process StartProcess(JobRow job, ShellScript shell)
     {
-        var start = OperatingSystem.IsWindows()
-            ? new ProcessStartInfo("cmd.exe") { ArgumentList = { "/d", "/s", "/c", job.Command } }
-            : new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", job.Command } };
-        start.WorkingDirectory = job.Cwd;
+        var start = shell.Start;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
         start.UseShellExecute = false;
@@ -339,8 +339,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         return Process.Start(start) ?? throw new InvalidOperationException($"`{job.Command}` did not start");
     }
 
-    private async Task WatchAsync(JobRow job, Process process)
+    private async Task WatchAsync(JobRow job, Process process, ShellScript shell)
     {
+        using var script = shell;
         // Its output, from stdout's and stderr's threads, goes through a channel to ONE writer: the log, its last lines
         // (Node.Lib's ring, read once it has ended) and the step, in the order the lines came, and no lock.
         var tail = new CircularBuffer<string>(TailLines);
