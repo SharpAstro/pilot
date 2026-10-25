@@ -58,6 +58,35 @@ public sealed class JobsTests
         CellLayout.Describe(Layout.Engine.Arrange(jobs.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored));
 
     [Fact]
+    public void TheRailsTasksGlyphSaysWhatTheJobsAreDoingAndItsTooltipCountsThem()
+    {
+        // The rail showed the same hammer and pick whatever its jobs did (SE1, 2026-10-25).
+        JobsScreen Of(params JobRow[] rows) => new(JobLine.Build(rows, Live.At), "test", Live.At);
+
+        PilotChrome<RgbaImage>.JobsGlyph(Of(), Live.At).ShouldBe(("📋", null));
+        PilotChrome<RgbaImage>.JobsGlyph(Of(Job("j1", JobState.Queued, Live.At)), Live.At).ShouldBe(("🕓", "1 waiting"));
+        PilotChrome<RgbaImage>.JobsGlyph(Of(Job("j1", JobState.Running, Live.At), Job("j2", JobState.Queued, Live.At)), Live.At).ShouldBe(("🔄", "1 running, 1 waiting"));
+        // A failure in play outranks a run: it is what wants a look.
+        PilotChrome<RgbaImage>.JobsGlyph(Of(Job("j1", JobState.Running, Live.At), Job("j3", JobState.Failed, Live.At.AddMinutes(-5), Live.At.AddMinutes(-2))), Live.At)
+            .ShouldBe(("🛑", "1 running, 1 failed just now"));
+        // One that failed long ago is history, not news.
+        PilotChrome<RgbaImage>.JobsGlyph(Of(Job("j3", JobState.Failed, Live.At.AddHours(-3), Live.At.AddHours(-2))), Live.At).ShouldBe(("📋", null));
+
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 } capture)
+        {
+            // The rail four times over, idle, waiting, running and failed, side by side.
+            using var renderer = new RgbaImageRenderer(4 * 300, 420);
+            JobsScreen[] states = [Of(), Of(Job("j1", JobState.Queued, Live.At)), Of(Job("j1", JobState.Running, Live.At)), Of(Job("j3", JobState.Failed, Live.At.AddMinutes(-5), Live.At.AddMinutes(-2)))];
+            for (var i = 0; i < states.Length; i++)
+            {
+                var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+                chrome.Render(new SessionsScreen([], "test", Live.At), null, null, states[i], new RectF32(i * 300, 0, 300, 420));
+            }
+            File.WriteAllBytes(capture, SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, 4 * 300, 420));
+        }
+    }
+
+    [Fact]
     public void JobsShowRunningThenQueuedThenTheEndedLastEndedFirstEachInWords()
     {
         var lines = Screen().Lines;

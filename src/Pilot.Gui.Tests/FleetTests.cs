@@ -271,8 +271,8 @@ public sealed class FleetTests
         var described = CellLayout.Describe(arranged);
 
         toggles.ShouldBe(["fleet:node.sock:maintenance", "fleet:10.0.0.7:47731:maintenance"]);
-        described.ShouldContain("Maintenance on");
-        described.ShouldContain("Maintenance off");
+        described.ShouldContain("Put into maintenance");
+        described.ShouldContain("Take out of maintenance");
         foreach (var where in new[] { "node.sock", "10.0.0.7:47731" })
         {
             var pill = arranged.First(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == $"fleet:{where}:maintenance");
