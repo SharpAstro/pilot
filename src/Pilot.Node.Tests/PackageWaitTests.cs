@@ -336,7 +336,12 @@ public sealed class PackageWaitTests : IDisposable
         await node.Watch.LookAsync(Ct);
         node.State.Cards().ShouldNotContain(c => c.Kind == PackageWatch.LateKind);
 
-        _time.Advance(TimeSpan.FromMinutes(10));
+        // GitHub has created a push run 12 minutes after its commit: still no card then.
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await node.Watch.LookAsync(Ct);
+        node.State.Cards().ShouldNotContain(c => c.Kind == PackageWatch.LateKind);
+
+        _time.Advance(TimeSpan.FromMinutes(20));
         await node.Watch.LookAsync(Ct);
         var card = node.State.Cards().Where(c => c.Kind == PackageWatch.LateKind).ShouldHaveSingleItem();
         card.Detail.ShouldNotBeNull().ShouldContain("never ran");

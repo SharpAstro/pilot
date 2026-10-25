@@ -9,13 +9,24 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public static partial class CiShape
 {
-    /// <summary>The configuration CI builds, and the workflow that says so.</summary>
-    public sealed record Build(string Configuration, string Workflow);
+    /// <summary>
+    /// The configuration CI's main build uses and the workflow that says so, and every configuration CI builds (the main one
+    /// included), which a check may use as well: tianwen builds Release throughout but for one Debug-only job.
+    /// </summary>
+    public sealed record Build(string Configuration, string Workflow, IReadOnlyList<string>? Builds = null)
+    {
+        /// <summary>Every configuration CI builds.</summary>
+        public IReadOnlyList<string> All => Builds ?? [Configuration];
+
+        /// <summary>Whether CI builds <paramref name="configuration"/>.</summary>
+        public bool BuildsConfiguration(string configuration) => All.Contains(configuration, StringComparer.OrdinalIgnoreCase);
+    }
 
     /// <summary>
-    /// The one configuration every <c>dotnet build</c>/<c>dotnet test</c> in the plane's workflows runs with (the
+    /// How the plane's workflows build: every configuration a <c>dotnet build</c>/<c>dotnet test</c> runs with (the
     /// <c>-c</c>/<c>--configuration</c> it names, a <c>$VAR</c>, <c>${VAR}</c> or <c>${{ env.VAR }}</c> resolved from the
-    /// workflow's own <c>VAR: value</c> lines), or null when there is no workflow, none names one, or they disagree.
+    /// workflow's own <c>VAR: value</c> lines). The main one, which the briefs name, is Release when CI builds Release at all
+    /// (a Release package is what consumers get), else the one used most. Null when there is no workflow or none names one.
     /// </summary>
     public static Build? Of(string plane)
     {
@@ -25,7 +36,7 @@ public static partial class CiShape
             return null;
         }
 
-        var found = new Dictionary<string, (string Configuration, string Workflow)>(StringComparer.OrdinalIgnoreCase);
+        var found = new Dictionary<string, (string Configuration, string Workflow, int Uses)>(StringComparer.OrdinalIgnoreCase);
         foreach (var file in Directory.EnumerateFiles(folder).Where(f => f.EndsWith(".yml", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)).Order(StringComparer.Ordinal))
         {
             string[] lines;
@@ -53,19 +64,31 @@ public static partial class CiShape
                 {
                     if (ConfigurationOf(segment) is { } raw && Resolve(raw, vars) is { } configuration)
                     {
-                        found.TryAdd(configuration, (configuration, Path.GetFileName(file)));
+                        found[configuration] = found.TryGetValue(configuration, out var seen)
+                            ? seen with { Uses = seen.Uses + 1 }
+                            : (configuration, Path.GetFileName(file), 1);
                     }
                 }
             }
         }
 
-        return found.Count == 1 ? new Build(found.Values.Single().Configuration, found.Values.Single().Workflow) : null;
+        if (found.Count == 0)
+        {
+            return null;
+        }
+
+        var main = found.Values.FirstOrDefault(f => f.Configuration.Equals("Release", StringComparison.OrdinalIgnoreCase));
+        if (main.Configuration is null)
+        {
+            main = found.Values.MaxBy(f => f.Uses);
+        }
+        return new Build(main.Configuration, main.Workflow, [.. found.Values.Select(f => f.Configuration)]);
     }
 
     /// <summary>
-    /// The refusal for a check that builds or tests under another configuration than CI, or null when it matches (or CI's
-    /// is not known). Every <c>dotnet build</c>/<c>dotnet test</c> in the line is held to it, so a bare one, which builds
-    /// Debug, is refused too.
+    /// The refusal for a check that builds or tests under a configuration CI never builds, or with none, or null when it
+    /// matches (or CI's is not known). Every <c>dotnet build</c>/<c>dotnet test</c> in the line is held to it, so a bare one,
+    /// which builds Debug, is refused too, even where CI has a Debug job of its own.
     /// </summary>
     public static string? Mismatch(string check, Build? ci)
     {
@@ -76,9 +99,10 @@ public static partial class CiShape
         foreach (var segment in Invocations(check))
         {
             var used = ConfigurationOf(segment);
-            if (used is null || !used.Equals(ci.Configuration, StringComparison.OrdinalIgnoreCase))
+            if (used is null || !ci.BuildsConfiguration(used))
             {
-                return $"the check `{segment.Trim()}` builds {(used is null ? "Debug (no -c)" : used)}, but CI ({ci.Workflow}) builds {ci.Configuration}: " +
+                var also = ci.All.Where(c => !c.Equals(ci.Configuration, StringComparison.OrdinalIgnoreCase)).ToArray();
+                return $"the check `{segment.Trim()}` builds {(used is null ? "Debug (no -c)" : used)}, but CI ({ci.Workflow}) builds {ci.Configuration}{(also.Length > 0 ? $" (and {string.Join(", ", also)})" : "")}: " +
                     $"a worktree build that CI never runs can fail for reasons that are not the leg's. Add `-c {ci.Configuration}`, or say why the check " +
                     $"cannot match CI with ci-differs=<why> (--ci-differs \"<why>\")";
             }

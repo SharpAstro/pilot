@@ -81,14 +81,91 @@ public sealed class CiShapedCheckTests : IDisposable
     }
 
     [Fact]
-    public void WithNoWorkflowOrNoConfigurationOrTwoCiKnowsNothingAndRefusesNothing()
+    public void WithNoWorkflowOrNoConfigurationCiKnowsNothingAndRefusesNothing()
     {
         CiShape.Of(Plane).ShouldBeNull();
         WriteWorkflow("jobs:\n  b:\n    steps:\n    - run: dotnet build\n");
         CiShape.Of(Plane).ShouldBeNull();
-        WriteWorkflow("jobs:\n  b:\n    steps:\n    - run: dotnet build -c Release\n    - run: dotnet test -c Debug\n");
-        CiShape.Of(Plane).ShouldBeNull();
         CiShape.Mismatch("dotnet build", null).ShouldBeNull();
+    }
+
+    // The shape of tianwen's dotnet.yml: Release everywhere from a workflow env var, and one job that builds Debug only.
+    private const string TianwenWorkflow = """
+        name: .NET
+        env:
+          BUILD_CONF: Release
+        jobs:
+          build:
+            steps:
+            - run: dotnet build src/TianWen.slnx -c $BUILD_CONF --no-restore
+            - run: dotnet test src/TianWen.Tests -c ${{ env.BUILD_CONF }} --no-build
+          DebugOnly:
+            steps:
+            - run: dotnet build src/TianWen.slnx -c Debug
+        """;
+
+    [Fact]
+    public void WhereCiBuildsReleaseAndOneDebugJobTheBriefsNameReleaseAndTheDebugJobIsKnownToo()
+    {
+        WriteWorkflow(TianwenWorkflow);
+
+        var ci = CiShape.Of(Plane).ShouldNotBeNull();
+
+        (ci.Configuration, ci.Workflow).ShouldBe(("Release", "dotnet.yml"));
+        ci.All.ShouldBe(["Release", "Debug"], ignoreOrder: true);
+    }
+
+    [Fact]
+    public void WhereCiBuildsNoReleaseTheConfigurationUsedMostIsTheMainOne()
+    {
+        WriteWorkflow("jobs:\n  b:\n    steps:\n    - run: dotnet build -c Debug\n    - run: dotnet test -c Debug\n    - run: dotnet build -c Beta\n");
+
+        CiShape.Of(Plane).ShouldNotBeNull().Configuration.ShouldBe("Debug");
+    }
+
+    [Theory]
+    [InlineData("dotnet build src/TianWen.slnx -c Release")]
+    [InlineData("dotnet build src/TianWen.slnx -c Debug")]
+    public void ATianwenShapedCiAcceptsACheckWhoseConfigurationAnyCiJobBuilds(string check)
+    {
+        WriteWorkflow(TianwenWorkflow);
+
+        CiShape.Mismatch(check, CiShape.Of(Plane)).ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("dotnet build src/TianWen.slnx", "no -c")]
+    [InlineData("dotnet test src/TianWen.Tests -c Beta", "Beta")]
+    public void ATianwenShapedCiRefusesACheckWithNoConfigurationOrOneCiNeverBuildsNamingReleaseAndTheDebugJob(string check, string saw)
+    {
+        WriteWorkflow(TianwenWorkflow);
+
+        var why = CiShape.Mismatch(check, CiShape.Of(Plane)).ShouldNotBeNull();
+
+        why.ShouldContain("dotnet.yml");
+        why.ShouldContain("-c Release");
+        why.ShouldContain("(and Debug)");
+        why.ShouldContain(saw);
+    }
+
+    [Fact]
+    public async Task LegPlanRefusesABareCheckInATianwenShapedRepoAndTakesOneThatBuildsRelease()
+    {
+        WriteWorkflow(TianwenWorkflow);
+
+        (await PlanLeg("dotnet test src/TianWen.Tests")).Error.ShouldNotBeNull().ShouldContain("dotnet.yml");
+        _state.Legs("TIA1").ShouldBeEmpty();
+        (await PlanLeg("dotnet test src/TianWen.Tests -c Release")).Ok.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void BothBriefsNameReleaseForATianwenShapedRepo()
+    {
+        WriteWorkflow(TianwenWorkflow);
+        var leg = new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Planned };
+
+        Briefs.Plan(Flight, [], "pilot").ShouldContain("CI (dotnet.yml) builds Release");
+        Briefs.For(Flight, leg, [leg]).ShouldContain("`-c Release`");
     }
 
     [Theory]

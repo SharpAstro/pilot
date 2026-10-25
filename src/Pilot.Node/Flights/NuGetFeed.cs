@@ -59,18 +59,32 @@ public sealed class NuGetOrgFeed(HttpClient http) : INuGetFeed
         return true;
     }
 
-    /// <summary>The registration hive (uncompressed, SemVer 1) that has one leaf per version, with the time it was published.</summary>
-    public const string Registration = "https://api.nuget.org/v3/registration5-semver1/";
+    /// <summary>
+    /// The registration hive that has one leaf per version, with the time it was published: the gzipped SemVer 2 one. SharpAstro
+    /// versions carry <c>+sha</c> build metadata, which makes them SemVer 2, and the SemVer 1 hive answers 404 for every one.
+    /// </summary>
+    public const string Registration = "https://api.nuget.org/v3/registration5-gz-semver2/";
+
+    /// <summary>The registration leaf of <paramref name="version"/> (build metadata dropped, lower case), as the feed names it.</summary>
+    public static Uri RegistrationLeaf(string id, string version) =>
+        new($"{Registration}{id.ToLowerInvariant()}/{version.Split('+')[0].Trim().ToLowerInvariant()}.json");
 
     public async Task<DateTimeOffset?> PublishedAtAsync(string id, string version, CancellationToken cancellationToken)
     {
-        using var response = await http.GetAsync(new Uri($"{Registration}{id.ToLowerInvariant()}/{version.ToLowerInvariant()}.json"), cancellationToken);
+        using var response = await http.GetAsync(RegistrationLeaf(id, version), cancellationToken);
         if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
             return null;
         }
         response.EnsureSuccessStatusCode();
-        await using var body = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var raw = await response.Content.ReadAsStreamAsync(cancellationToken);
+        // The hive is gzip: the HttpClient inflates it when the response says Content-Encoding, and a body that is still gzip
+        // (served as a plain blob) is recognised by its magic bytes.
+        await using var buffered = new MemoryStream();
+        await raw.CopyToAsync(buffered, cancellationToken);
+        buffered.Position = 0;
+        var gzipped = buffered.Length > 2 && buffered.GetBuffer()[0] == 0x1f && buffered.GetBuffer()[1] == 0x8b;
+        await using var body = gzipped ? new System.IO.Compression.GZipStream(buffered, System.IO.Compression.CompressionMode.Decompress) : (Stream)buffered;
         using var doc = await JsonDocument.ParseAsync(body, cancellationToken: cancellationToken);
         return doc.RootElement.TryGetProperty("published", out var published) && published.ValueKind == JsonValueKind.String
             && DateTimeOffset.TryParse(published.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out var when) ? when : null;

@@ -35,8 +35,12 @@ public sealed class PackageWatch(NodeState state, FlightCommander flights, INuGe
     /// <summary>How long after the publish run succeeded the package may take to show on nuget.org before it is late.</summary>
     public TimeSpan PublishGrace { get; init; } = TimeSpan.FromMinutes(30);
 
-    /// <summary>How long after the land the push may take to start its run before it is said never to have run.</summary>
-    public TimeSpan NoRunGrace { get; init; } = TimeSpan.FromMinutes(5);
+    /// <summary>
+    /// How long after the land the push may take to start its run before it is said never to have run. As long as
+    /// <see cref="PublishGrace"/>: GitHub has created a push run 12 minutes after its commit (DIR.Lib), and the card escalates the wait,
+    /// so a card rung too early would leave a later failing run without the card that names its conclusion.
+    /// </summary>
+    public TimeSpan NoRunGrace { get; init; } = TimeSpan.FromMinutes(30);
 
     /// <summary>How long after the land a publish run may stay unfinished before it is rung for.</summary>
     public TimeSpan RunStuckAfter { get; init; } = TimeSpan.FromHours(2);
