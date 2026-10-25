@@ -864,6 +864,15 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}");
         }
+        // A review that keeps asking may be asking for what no worker can do (an edit to the PR itself, a decision): past
+        // MaxReviewGoArounds the watchtower sends the leg round no more, and the card is the person's. TIA1241 went round
+        // six times overnight on review findings, the last ones about its PR's body and milestone (SE1, 2026-10-26).
+        if (leg.State == LegState.Done && leg.GoArounds >= MaxReviewGoArounds
+            && string.Equals(command.Who, $"{options.Machine.ToLowerInvariant()}-watchtower", StringComparison.Ordinal))
+        {
+            throw new FlightException(
+                $"{flight.Code}/{leg.Name} has gone around {leg.GoArounds} times on its review's findings: another is the person's call, as the review may want what no worker can do. Leave the card open for them");
+        }
 
         // A done leg that goes around from the merge card (a failed check, conflicts, behind) sits under a review that passed: it is
         // sent back as the node's own sends are (PR to draft, review to Changes), so its finish pushes the fixed branch and a fresh
@@ -1576,9 +1585,17 @@ public sealed partial class LegCommander(
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url);
     }
 
+    /// <summary>How many times the watchtower may send a done leg round on its review's findings before the card is the person's.</summary>
+    public const int MaxReviewGoArounds = 3;
+
     private void RaiseReviewChanges(FlightRow flight, string changes)
     {
         var last = state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault();
+        // Said on the card once the watchtower may no longer answer it, so the person sees why it waits on them.
+        if (last is { GoArounds: >= MaxReviewGoArounds })
+        {
+            changes = $"{last.Name} has gone around {last.GoArounds} times on review findings: this is yours to decide (go around once more, mark it ready, or change what the review asks).\n{changes}";
+        }
         var choices = new List<CardChoice>();
         if (last is not null)
         {
