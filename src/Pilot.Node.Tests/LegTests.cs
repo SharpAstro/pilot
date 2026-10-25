@@ -124,7 +124,22 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>What ChecksAsync answers for any PR.</summary>
     public string? Checks { get; set; }
 
-    public Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult(Checks);
+    /// <summary>What ChecksSummaryAsync answers for any PR, and so what ChecksAsync's status is; null to derive it from <see cref="Checks"/>, with no counts.</summary>
+    public ChecksSummary? Summary { get; set; }
+
+    public Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult(Summary?.Status ?? Checks);
+
+    public Task<ChecksSummary?> ChecksSummaryAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult(Summary ?? (Checks is { } status ? new ChecksSummary(status, 0, 0) : null));
+
+    /// <summary>How many times the failed runs were asked to run again, each as the PR's number.</summary>
+    public List<int> Reruns { get; } = [];
+
+    public Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        Reruns.Add(number);
+        return Task.FromResult(1);
+    }
 
     /// <summary>The workflow runs each commit has, by commit; a commit with none listed has none.</summary>
     public Dictionary<string, WorkflowRun[]> Runs { get; } = new(StringComparer.OrdinalIgnoreCase);

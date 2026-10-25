@@ -183,6 +183,12 @@ public static class Verbs
     public const string Merge = "merge";
 
     /// <summary>
+    /// <c>rerun-checks flight/&lt;code&gt; &lt;head&gt; [squash|rebase|merge]</c>: the failed runs of the flight's PR run again
+    /// (<c>gh run rerun --failed</c>), and the merge waits for them as a merge pressed while checks run does.
+    /// </summary>
+    public const string RerunChecks = "rerun-checks";
+
+    /// <summary>
     /// <c>open-pr flight/&lt;code&gt; [title…]</c>: the plane's branch pushed and its PR opened against its base, titled with
     /// the code, its body the legs and <c>Closes #&lt;issue&gt;</c>. A PR already open for the branch is taken as it is.
     /// </summary>
@@ -375,6 +381,19 @@ public static class Verbs
 
     /// <summary>The target naming the session row <paramref name="id"/>.</summary>
     public static string SessionTarget(string id) => SessionTargetPrefix + id;
+}
+
+/// <summary>
+/// The ways a <c>merge</c> that is neither refused nor merged went (<see cref="CommandResult.Way"/>; a merge that merged has
+/// none). The result's <see cref="CommandResult.Made"/> says where it stands, as the card shows it.
+/// </summary>
+public static class MergeWays
+{
+    /// <summary>The PR's checks still run: the merge waits for them and the node takes it once they pass.</summary>
+    public const string Armed = "armed";
+
+    /// <summary>The PR joined its base's merge queue: the flight lands once the queue merges it.</summary>
+    public const string Queued = "queued";
 }
 
 /// <summary>The ways a <c>say</c> reaches a session (<see cref="CommandResult.Way"/>).</summary>

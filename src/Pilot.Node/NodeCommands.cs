@@ -224,6 +224,14 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             state.ReopenCard(card.Id);
             return state.Complete(command, $"{choice.Label} was refused: {result.Error}");
         }
+        // A merge armed (its checks still run) or queued is not done: the card stays open saying so, and the node closes it
+        // as merged once it is, or turns it to what failed.
+        if (result.Way is MergeWays.Armed or MergeWays.Queued && card.Kind is LegCommander.PrReady or LegCommander.MergeFailed)
+        {
+            state.ReopenCard(card.Id);
+            Get<LegCommander>().ShowMerge(choice.Target, result.Made, result.Way);
+            return state.Complete(command, null);
+        }
         if (card.Kind == PrReviews.ReadyKind)
         {
             await Get<PrReviews>().SweepAsync(cancellationToken);

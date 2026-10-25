@@ -367,6 +367,30 @@ public sealed class NodeState
     }
 
     /// <summary>
+    /// Turns an open card into what its thing has become (a merge armed, then failed on one check), keeping its place and id:
+    /// one <see cref="CardChangedEvent"/>, none when nothing changed. A <paramref name="kind"/> given is the card's new kind.
+    /// False when the card is not open or nothing changed.
+    /// </summary>
+    public bool UpdateCard(string id, string title, string? detail, IReadOnlyList<CardChoice> choices, string? link, string? kind = null)
+    {
+        lock (_gate)
+        {
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open)
+            {
+                return false;
+            }
+            var next = card with { Title = title, Detail = detail, Choices = [.. choices], Link = link, Kind = kind ?? card.Kind };
+            if (next.Title == card.Title && next.Detail == card.Detail && next.Link == card.Link && next.Kind == card.Kind
+                && next.Choices.SequenceEqual(card.Choices, EqualityComparer<CardChoice>.Create((a, b) => a! with { Args = [] } == b! with { Args = [] } && a.Args.SequenceEqual(b.Args))))
+            {
+                return false;
+            }
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = next });
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Says what the choice a card closed with came to (a review posted, by its id), and where to see it; nothing when the
     /// card is not closed.
     /// </summary>

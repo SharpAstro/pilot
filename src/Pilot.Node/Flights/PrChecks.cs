@@ -157,13 +157,14 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         }
     }
 
-    /// <summary>The card of a flight whose merge waited for its checks and was dropped: why, and Merge to ask again.</summary>
+    /// <summary>The card of a flight whose merge waited for its checks and was dropped: why, and Merge to ask again. Raised only when no card was showing the armed merge.</summary>
     public const string MergeDropped = "merge-dropped";
 
     /// <summary>
-    /// Each merge pressed while its PR's checks ran (<see cref="FlightRow.MergeWhenGreen"/>): merged, or queued, once they pass on
-    /// the head reviewed, as the person asked; dropped with a For-you card saying why when they fail, the head moves or the PR
-    /// closes, so a merge never waits on what will not come.
+    /// Each merge pressed while its PR's checks ran (<see cref="FlightRow.MergeWhenGreen"/>), the card that armed it kept up to
+    /// date with how many checks are done: merged, or queued, once they pass on the head reviewed, as the person asked; when
+    /// they fail, the head moves or the PR closes the merge is dropped, so it never waits on what will not come. The card
+    /// showing it turns to say which check failed (<see cref="LegCommander.ShowMergeFailed"/>); with none, a For-you card says why.
     /// </summary>
     private async Task MergeWhenGreenAsync(CancellationToken cancellationToken)
     {
@@ -173,28 +174,55 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             var number = flight.PullRequest!.Value;
             var subject = Verbs.FlightTarget(flight.Code);
             var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+            var moved = pr is { State: "OPEN" } && pr.Number == number && !string.Equals(pr.Head, head, StringComparison.OrdinalIgnoreCase);
             string? dropped = pr is null || pr.Number != number || pr.State != "OPEN" ? $"#{number} is no longer open"
-                : !string.Equals(pr.Head, head, StringComparison.OrdinalIgnoreCase) ? $"#{number}'s head moved from {head[..Math.Min(8, head.Length)]} to {pr.Head[..Math.Min(8, pr.Head.Length)]} while its checks ran: look at what is new, then merge again"
+                : moved ? $"#{number}'s head moved from {head[..Math.Min(8, head.Length)]} to {pr.Head[..Math.Min(8, pr.Head.Length)]} while its checks ran: look at what is new, then merge again"
                 : null;
-            var checks = dropped is null ? await github.ChecksAsync(flight.RepoPath, number, cancellationToken) : null;
-            if (dropped is null && checks == ChoiceStatus.Pending)
+            var checks = dropped is null ? await github.ChecksSummaryAsync(flight.RepoPath, number, cancellationToken) : null;
+            if (dropped is null && checks?.Status == ChoiceStatus.Pending)
             {
+                // Said on the card as each check finishes.
+                legs?.ShowMerge(subject, LegCommander.ArmedLine(checks), MergeWays.Armed);
                 continue;
             }
-            dropped ??= checks == ChoiceStatus.Failing ? $"#{number}'s checks failed: the merge waited for them to pass" : null;
+            var failed = checks?.Status == ChoiceStatus.Failing;
+            dropped ??= failed ? $"#{number}'s checks failed: the merge waited for them to pass" : null;
+            var armed = state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady && c.Subject == subject && c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Status == ChoiceStatus.Armed)).Select(c => c.Id).ToList();
             if (dropped is null && legs is not null)
             {
                 var result = await legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = subject, Args = [head, method], Who = "node" }, cancellationToken);
                 dropped = result.Ok ? null : $"its checks passed, but the merge was refused: {result.Error}";
+                if (result.Ok && result.Way is null)
+                {
+                    // Merged: its landing closed the card as landed; it says it merged.
+                    foreach (var id in armed)
+                    {
+                        state.NoteOutcome(id, $"merged as #{number}, {flight.Code} landed", flight.PullRequestUrl);
+                    }
+                }
+                else if (result.Ok)
+                {
+                    // Joined the merge queue instead: the flight keeps flying, and its card says so (LegCommander.RunAsync).
+                    continue;
+                }
             }
             if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is { MergeWhenGreen: not null } now)
             {
                 state.PutFlight(now with { MergeWhenGreen = null });
             }
-            if (dropped is not null)
+            if (dropped is null)
+            {
+                continue;
+            }
+            var headNow = pr?.Head ?? head;
+            var (title, detail, link) = failed && checks is { FailedName: { } name }
+                ? ($"{flight.Code}'s PR #{number}: check {name} failed", $"The merge waited for the checks to pass, and {name} failed on {head[..Math.Min(8, head.Length)]}. Go around to fix what it found, re-run the checks if it was a flake, or merge again.", checks.FailedLink)
+                : ($"{flight.Code}'s merge did not go through", dropped, null);
+            if (legs is null || !legs.ShowMergeFailed(flight.Code, headNow, method, title, detail, link ?? flight.PullRequestUrl, rerun: failed,
+                    goAroundWhy: failed ? $"the PR's checks failed{(checks?.FailedName is { } n ? $" ({n})" : "")} on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push" : dropped))
             {
                 state.RaiseCard(CardBin.ForYou, MergeDropped, subject, $"{flight.Code}'s merge did not go through", dropped,
-                    [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [pr?.Head ?? head] }], link: flight.PullRequestUrl);
+                    [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [headNow] }], link: flight.PullRequestUrl);
             }
         }
     }
@@ -252,7 +280,27 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 }
                 continue;
             }
+            // A merge armed keeps its card as MergeWhenGreenAsync wrote it; one queued says where in the queue it is, and the card
+            // closes as merged when GitHub says so, above.
+            var current = state.Flights().FirstOrDefault(f => f.Code == flight.Code);
+            if (current?.MergeWhenGreen is not null)
+            {
+                continue;
+            }
+            var showsArmed = card.Choices.Any(c => c.Verb == Verbs.Merge && c.Status == ChoiceStatus.Armed);
+            if (current?.MergeQueue is { } queued && queued.StartsWith("in the merge queue", StringComparison.Ordinal))
+            {
+                legs?.ShowMerge(card.Subject, LegCommander.QueuedLine(flight.Code, queued), MergeWays.Queued);
+                continue;
+            }
             var status = await github.ChecksAsync(flight.RepoPath, number, cancellationToken);
+            // Said armed, but the node holds no armed merge and the queue has no PR: the card is the one that offers the merge again.
+            if (showsArmed)
+            {
+                state.UpdateCard(card.Id, $"{flight.Code}'s PR #{number} is ready to merge", "Its merge is not armed any more: it left the merge queue unmerged, or was dropped. Merge arms it again.",
+                    [.. card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = status } : c)], card.Link);
+                continue;
+            }
             // Reviewed and passed, but its checks failed: sent back as changes, once a head, so the leg goes around.
             if (legs is not null && status == ChoiceStatus.Failing && pr is { } failed && failed.Number == number && _failed.Add($"{flight.Code} {failed.Head}"))
             {
