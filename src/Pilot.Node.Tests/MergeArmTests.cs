@@ -390,7 +390,8 @@ public sealed class MergeArmTests
         var card = Card(node, ready);
         card.State.ShouldBe(CardState.Open);
         card.Detail.ShouldNotBeNull().ShouldContain("in the merge queue");
-        card.Choices.Single().Status.ShouldBe(ChoiceStatus.Armed);
+        // In the queue is its own state, not an armed merge: the card mirrors GitHub's queue.
+        card.Choices.Single().Status.ShouldBe(ChoiceStatus.Queued);
         node.State.Flights().Single().State.ShouldBe(FlightState.Flying);
 
         // Once GitHub says the queue merged it, the card closes and the flight lands.
