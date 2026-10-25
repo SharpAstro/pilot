@@ -662,6 +662,8 @@ loop.OnRender = () =>
 
     view.Ui.FrameId++;
     chrome.Render(screen, flights, cards, jobs, fleet, repos, new RectF32(0, 0, width, height));
+    // The hover text the router says is due, last, over everything.
+    chrome.Tooltips.Render(router.Tooltip, new RectF32(0, 0, width, height));
     router.AfterPaint();
 
     // Say which session is selected whenever it changes, so stdout follows what the window shows.

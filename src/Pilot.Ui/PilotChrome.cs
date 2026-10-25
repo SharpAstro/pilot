@@ -78,6 +78,7 @@ internal sealed class PilotChrome<TSurface>
         Settings = new SettingsView<TSurface>(renderer);
         Repos = new ReposView<TSurface>(renderer);
         Cards = new CardsView<TSurface>(renderer);
+        Tooltips = new TooltipLayer<TSurface>(renderer);
         Home = new HomeView<TSurface>(renderer);
         sessions.ShareWith(Flights, Repos, Jobs, Fleet, Settings, Cards);
         sessions.About = About;
@@ -165,6 +166,9 @@ internal sealed class PilotChrome<TSurface>
 
     /// <summary>The cards panel down the right, on every page.</summary>
     public CardsView<TSurface> Cards { get; }
+
+    /// <summary>The hover text the router says is due, painted over the window after everything else (<see cref="TooltipLayer{TSurface}"/>).</summary>
+    public TooltipLayer<TSurface> Tooltips { get; }
 
     /// <summary>The page shown beside the rail.</summary>
     public PilotPage Page { get; private set; } = PilotPage.Home;
@@ -527,6 +531,7 @@ internal sealed class PilotChrome<TSurface>
             Fleet.DpiScale = value;
             Settings.DpiScale = value;
             Cards.DpiScale = value;
+            Tooltips.DpiScale = value;
             Rail.DpiScale = value;
             Nav.DpiScale = value;
         }
@@ -545,6 +550,7 @@ internal sealed class PilotChrome<TSurface>
             Fleet.FontPath = value;
             Settings.FontPath = value;
             Cards.FontPath = value;
+            Tooltips.FontPath = value;
             Rail.FontPath = value;
             Nav.FontPath = value;
             // The rail's glyphs are emoji, which the UI face lacks: the platform's colour emoji face draws them
