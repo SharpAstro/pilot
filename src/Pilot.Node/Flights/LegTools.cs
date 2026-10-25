@@ -197,6 +197,13 @@ public sealed record WorkflowRun(long Id, string Name, string Status, string? Co
 /// </summary>
 public sealed record MergeQueueState(string State, string Head, bool Queued, int? Position = null, DateTimeOffset? RemovedAt = null, string? RemovedReason = null);
 
+/// <summary>
+/// Where a PR's checks stand: <paramref name="Status"/> a <see cref="ChoiceStatus"/> (failing, pending, passing),
+/// <paramref name="Done"/> of <paramref name="Total"/> checks finished (a skipped one is finished), and the first that failed by
+/// <paramref name="FailedName"/> and <paramref name="FailedLink"/>, the page of its run.
+/// </summary>
+public sealed record ChecksSummary(string Status, int Done, int Total, string? FailedName = null, string? FailedLink = null);
+
 /// <summary>The GitHub calls a merge needs, so a test decides what GitHub says.</summary>
 public interface IGitHub
 {
@@ -233,6 +240,16 @@ public interface IGitHub
     /// </summary>
     /// <exception cref="FlightException">gh could not list them.</exception>
     Task<WorkflowRun[]> WorkflowRunsAsync(string repoPath, string commit, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// PR <paramref name="number"/>'s checks as <see cref="ChecksAsync"/> reads them, with how many are done of how many, and the
+    /// first failed one; null with no checks or when GitHub would not say.
+    /// </summary>
+    Task<ChecksSummary?> ChecksSummaryAsync(string repoPath, int number, CancellationToken cancellationToken);
+
+    /// <summary>Runs PR <paramref name="number"/>'s failed workflow runs again (<c>gh run rerun --failed</c>); how many runs it asked for.</summary>
+    /// <exception cref="FlightException">The PR has no failed run, or gh could not rerun one.</exception>
+    Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken);
 
     /// <summary>Where PR <paramref name="number"/> stands in its base's merge queue; null when its base has none, or GitHub would not say.</summary>
     Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken);
@@ -366,23 +383,70 @@ public sealed class GhCli : IGitHub
             .OrderByDescending(r => r.Id)];
     }
 
-    public async Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
+    public async Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        (await ChecksSummaryAsync(repoPath, number, cancellationToken))?.Status;
+
+    public async Task<ChecksSummary?> ChecksSummaryAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
         // gh exits non-zero while checks run or after one failed, and prints the JSON all the same: read it either way.
-        var (_, output, _) = await RunAsync(["pr", "checks", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "bucket"], repoPath, cancellationToken);
+        var (_, output, _) = await RunAsync(["pr", "checks", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "bucket,name,link"], repoPath, cancellationToken);
+        return ParseChecks(output);
+    }
+
+    /// <summary><c>gh pr checks --json bucket,name,link</c>'s answer as a <see cref="ChecksSummary"/>; null with no checks or no answer.</summary>
+    internal static ChecksSummary? ParseChecks(string json)
+    {
         try
         {
-            using var doc = JsonDocument.Parse(output);
-            var buckets = doc.RootElement.EnumerateArray().Select(c => c.TryGetProperty("bucket", out var b) ? b.GetString() : null).OfType<string>().ToList();
-            return buckets.Count == 0 ? null
-                : buckets.Contains("fail") || buckets.Contains("cancel") ? ChoiceStatus.Failing
-                : buckets.Contains("pending") ? ChoiceStatus.Pending
-                : buckets.Any(b => b == "pass") ? ChoiceStatus.Passing
+            using var doc = JsonDocument.Parse(json);
+            var checks = doc.RootElement.EnumerateArray().Select(c => (Bucket: TextOf(c, "bucket"), Name: TextOf(c, "name"), Link: TextOf(c, "link"))).Where(c => c.Bucket is not null).ToList();
+            var failed = checks.FirstOrDefault(c => c.Bucket is "fail" or "cancel");
+            var status = checks.Count == 0 ? null
+                : failed.Bucket is not null ? ChoiceStatus.Failing
+                : checks.Any(c => c.Bucket == "pending") ? ChoiceStatus.Pending
+                : checks.Any(c => c.Bucket == "pass") ? ChoiceStatus.Passing
                 : null;
+            return status is null ? null : new ChecksSummary(status, checks.Count(c => c.Bucket != "pending"), checks.Count, failed.Name, failed.Link);
         }
         catch (JsonException)
         {
             return null;
+        }
+    }
+
+    public async Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (_, output, _) = await RunAsync(["pr", "checks", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "bucket,link"], repoPath, cancellationToken);
+        var runs = FailedRuns(output);
+        if (runs.Count == 0)
+        {
+            throw new FlightException($"#{number} has no failed workflow run to run again");
+        }
+        foreach (var run in runs)
+        {
+            var (exit, runOutput, error) = await RunAsync(["run", "rerun", run, "--failed"], repoPath, cancellationToken);
+            if (exit != 0)
+            {
+                throw new FlightException($"gh could not run {run} again: {(error.Trim().Length > 0 ? error : runOutput).Trim()}");
+            }
+        }
+        return runs.Count;
+    }
+
+    /// <summary>The workflow runs (their ids, from the checks' links) behind the failed checks of <c>gh pr checks --json bucket,link</c>'s answer.</summary>
+    internal static List<string> FailedRuns(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return [.. doc.RootElement.EnumerateArray()
+                .Where(c => TextOf(c, "bucket") is "fail" or "cancel")
+                .Select(c => TextOf(c, "link") is { } link ? Regex.Match(link, @"/actions/runs/(\d+)") : Match.Empty)
+                .Where(m => m.Success).Select(m => m.Groups[1].Value).Distinct()];
+        }
+        catch (JsonException)
+        {
+            return [];
         }
     }
 

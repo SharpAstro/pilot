@@ -119,6 +119,9 @@ public static class ChoiceStatus
 
     /// <summary>The PR conflicts with its base: GitHub cannot merge it until it is rebased, which the node does by itself.</summary>
     public const string Conflicting = "conflicting";
+
+    /// <summary>A merge answered while its checks run, or one that joined a merge queue: it goes through by itself once they pass or the queue takes it.</summary>
+    public const string Armed = "armed";
 }
 
 /// <summary>Which of the bins a card is in, and so how it reaches the controller.</summary>

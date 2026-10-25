@@ -42,7 +42,7 @@ public sealed partial class LegCommander(
     private static partial Regex LegName();
 
     public static bool Handles(string verb) =>
-        verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.ValidateLeg or Verbs.Check or Verbs.FinishLeg or Verbs.GoAround or Verbs.Merge
+        verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.ValidateLeg or Verbs.Check or Verbs.FinishLeg or Verbs.GoAround or Verbs.Merge or Verbs.RerunChecks
             or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review
             or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Fold or Verbs.Separate;
 
@@ -51,6 +51,7 @@ public sealed partial class LegCommander(
         await _one.WaitAsync(cancellationToken);
         string? error = null;
         string? made = null;
+        string? way = null;
         var merged = false;
         try
         {
@@ -87,7 +88,10 @@ public sealed partial class LegCommander(
                     await GoAroundAsync(command, cancellationToken);
                     break;
                 case Verbs.Merge:
-                    (merged, made) = await MergeAsync(command, cancellationToken);
+                    (merged, made, way) = await MergeAsync(command, cancellationToken);
+                    break;
+                case Verbs.RerunChecks:
+                    (made, way) = await RerunChecksAsync(command, cancellationToken);
                     break;
                 case Verbs.OpenPr:
                     await OpenPrAsync(command, cancellationToken);
@@ -160,7 +164,13 @@ public sealed partial class LegCommander(
                 error = $"merged, but the flight did not land: {ex.Message}";
             }
         }
-        return state.Complete(command, error, made: made);
+        // A merge armed or queued is no merge yet: any card of the flight offering it says where it stands. The card an answer
+        // runs it from is closed meanwhile, and is shown by the answer (NodeCommands.AnswerAsync) once it opens again.
+        if (error is null && way is not null)
+        {
+            ShowMerge(command.Target, made, way);
+        }
+        return state.Complete(command, error, way, made: made);
     }
 
     /// <summary>
@@ -191,7 +201,7 @@ public sealed partial class LegCommander(
                 return $"rebasing {code} onto {flight.Base} conflicts ({rebase.Why}): rebase its plane by hand, or go around its last leg to";
             }
             await PushAsync(flight, cancellationToken);
-            state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} rebased onto {flight.Base}; reviewed afresh", PrReady);
+            state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} rebased onto {flight.Base}; reviewed afresh", PrReady, MergeFailed);
             await StartReviewAsync(flight, cancellationToken);
             return null;
         }
@@ -780,7 +790,9 @@ public sealed partial class LegCommander(
             throw new FlightException("a go-around needs why: the next worker is told it");
         }
         // A done leg goes around too when the review asked for changes: that is how they are made.
-        if (leg.State is not (LegState.Flying or LegState.Failed) && !(leg.State == LegState.Done && flight.Review is { State: ReviewState.Changes }))
+        // Or when its armed merge failed (a PR-ready card turned to say which check): the same card offers it.
+        if (leg.State is not (LegState.Flying or LegState.Failed) && !(leg.State == LegState.Done && flight.Review is { State: ReviewState.Changes })
+            && !(leg.State == LegState.Done && state.Cards(openOnly: true).Any(c => c.Kind == MergeFailed && c.Subject == Verbs.FlightTarget(flight.Code))))
         {
             throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}; a go-around is for a leg flying or failed, or done when the review asked for changes");
         }
@@ -803,15 +815,70 @@ public sealed partial class LegCommander(
         state.PutLeg(next with { State = LegState.Flying, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), FinishedAt = null, Report = $"go-around: {why}" });
         // Every card about the leg was about its last worker: failed, stopped, idle, waiting.
         state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"went around: {why}");
-        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around for it", ReviewChanges);
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around for it", ReviewChanges, MergeFailed);
     }
 
     /// <summary>
     /// <c>merge &lt;head&gt; [method]</c>: merges the flight's PR, or joins its base's merge queue. While its checks still run,
     /// the merge waits on the flight (<see cref="FlightRow.MergeWhenGreen"/>) and the node takes it once they pass. Whether it
-    /// merged, and what it did when not.
+    /// merged, and when it did not, where it stands (<see cref="MergeWays"/>) and the line the card shows for it.
     /// </summary>
-    private async Task<(bool Merged, string? Made)> MergeAsync(CommandRequest command, CancellationToken cancellationToken)
+    private async Task<(bool Merged, string? Made, string? Way)> MergeAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var (flight, pr, method) = await MergeableAsync(command, cancellationToken);
+        // A merge queue takes no PR whose required checks have not passed, and a plain merge would be refused for the same:
+        // pressed while they run, the merge waits for them on this head (TIA1818's #1826, DE1 2026-10-25).
+        var checks = await github.ChecksSummaryAsync(flight.RepoPath, pr.Number, cancellationToken);
+        if (checks?.Status == ChoiceStatus.Failing)
+        {
+            throw new FlightException($"#{pr.Number}'s checks fail: it merges once they pass");
+        }
+        if (checks?.Status == ChoiceStatus.Pending)
+        {
+            return Arm(flight, pr, method, ArmedLine(checks));
+        }
+        if (flight.MergeWhenGreen is not null)
+        {
+            state.PutFlight(flight with { MergeWhenGreen = null });
+        }
+        return await github.MergeAsync(flight.RepoPath, pr.Number, pr.Head, method, cancellationToken)
+            ? (false, QueuedLine(flight.Code), MergeWays.Queued)
+            : (true, null, null);
+    }
+
+    /// <summary>What a merge waiting for its checks shows: how many are done.</summary>
+    public static string ArmedLine(ChecksSummary? checks) =>
+        checks is { Total: > 0 } ? $"merging when checks pass: {checks.Done} of {checks.Total} done" : "merging when checks pass";
+
+    /// <summary>What a merge that joined its base's merge queue shows, at its place in it when known.</summary>
+    public static string QueuedLine(string code, string where = "in the merge queue") =>
+        $"{where}: {code} lands once the queue merges it";
+
+    // The merge waits on the flight for its checks, on the head reviewed.
+    private (bool Merged, string? Made, string? Way) Arm(FlightRow flight, PullRequest pr, string method, string line)
+    {
+        state.PutFlight(flight with { MergeWhenGreen = [pr.Head, method] });
+        return (false, line, MergeWays.Armed);
+    }
+
+    /// <summary>
+    /// <c>rerun-checks &lt;head&gt; [method]</c>: the PR's failed runs run again, and the merge waits for them as a merge pressed
+    /// while checks run does. What a merge that is not merged returns.
+    /// </summary>
+    private async Task<(string? Made, string? Way)> RerunChecksAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var (flight, pr, method) = await MergeableAsync(command, cancellationToken);
+        var runs = await github.RerunFailedChecksAsync(flight.RepoPath, pr.Number, cancellationToken);
+        var (_, made, way) = Arm(flight, pr, method, $"merging when checks pass: {runs} failed {(runs == 1 ? "run" : "runs")} running again");
+        return (made, way);
+    }
+
+    /// <summary>
+    /// What a merge needs before anything is asked of GitHub about its checks: the flight flying with every leg done and its
+    /// review passed, its PR open at the head the controller reviewed and nothing in the plane past it, and not conflicting.
+    /// Throws <see cref="FlightException"/> with why not.
+    /// </summary>
+    private async Task<(FlightRow Flight, PullRequest Pr, string Method)> MergeableAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var flight = FlightOf(command.Target);
         var args = command.Args ?? [];
@@ -862,25 +929,52 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"#{pr.Number} conflicts with its base, so GitHub cannot merge it");
         }
-        // A merge queue takes no PR whose required checks have not passed, and a plain merge would be refused for the same:
-        // pressed while they run, the merge waits for them on this head (TIA1818's #1826, DE1 2026-10-25).
-        var checks = await github.ChecksAsync(flight.RepoPath, pr.Number, cancellationToken);
-        if (checks == ChoiceStatus.Failing)
+        return (flight, pr, method);
+    }
+
+    /// <summary>
+    /// Shows a merge that is armed or queued (<paramref name="way"/>, a <see cref="MergeWays"/>) on every open card of the target
+    /// offering it: the card says <paramref name="line"/>, its Merge choice armed, until the merge lands, or fails and the card
+    /// is turned by <see cref="ShowMergeFailed"/>.
+    /// </summary>
+    public void ShowMerge(string target, string? line, string way)
+    {
+        foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind is PrReady or MergeFailed && c.Subject == target && c.Choices.Any(ch => ch.Verb == Verbs.Merge)))
         {
-            throw new FlightException($"#{pr.Number}'s checks fail: it merges once they pass");
+            var code = target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? target[Verbs.FlightTargetPrefix.Length..] : target;
+            var flight = state.Flights().FirstOrDefault(f => f.Code == code);
+            var merge = card.Choices.First(ch => ch.Verb == Verbs.Merge);
+            state.UpdateCard(card.Id,
+                way == MergeWays.Queued ? $"{code}'s PR #{flight?.PullRequest} is in the merge queue" : $"{code}'s PR #{flight?.PullRequest} merges when its checks pass",
+                line, [merge with { Label = "Merge", Status = ChoiceStatus.Armed }], card.Link ?? flight?.PullRequestUrl, PrReady);
         }
-        if (checks == ChoiceStatus.Pending)
+    }
+
+    /// <summary>
+    /// Turns an armed merge's card, open still, into what failed: <paramref name="title"/> and <paramref name="detail"/> say why, its
+    /// link the failed check's page, and it offers a go-around of the flight's last leg, a re-run of the failed checks
+    /// (<paramref name="rerun"/>, when checks failed rather than the head moved) and the merge again. False when the flight has no
+    /// such card, and nothing is changed.
+    /// </summary>
+    public bool ShowMergeFailed(string code, string head, string method, string title, string detail, string? link, bool rerun, string goAroundWhy)
+    {
+        var target = Verbs.FlightTarget(code);
+        if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind is PrReady or MergeFailed && c.Subject == target && c.Choices.Any(ch => ch.Verb == Verbs.Merge)) is not { } card)
         {
-            state.PutFlight(flight with { MergeWhenGreen = [pr.Head, method] });
-            return (false, $"#{pr.Number}'s checks are running: it merges once they pass on {pr.Head[..Math.Min(8, pr.Head.Length)]}");
+            return false;
         }
-        if (flight.MergeWhenGreen is not null)
+        var choices = new List<CardChoice>();
+        if (state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is { } last)
         {
-            state.PutFlight(flight with { MergeWhenGreen = null });
+            choices.Add(new CardChoice { Label = $"Go around {last.Name}", Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name), Args = [goAroundWhy] });
         }
-        return await github.MergeAsync(flight.RepoPath, pr.Number, pr.Head, method, cancellationToken)
-            ? (false, $"#{pr.Number} joined its merge queue: {flight.Code} lands once the queue merges it")
-            : (true, null);
+        if (rerun)
+        {
+            choices.Add(new CardChoice { Label = "Re-run checks", Verb = Verbs.RerunChecks, Target = target, Args = [head, method] });
+        }
+        choices.Add(new CardChoice { Label = "Merge again", Verb = Verbs.Merge, Target = target, Args = [head, method] });
+        state.UpdateCard(card.Id, title, detail, choices, link ?? card.Link, MergeFailed);
+        return true;
     }
 
     // A merge refused because the PR no longer merges into its base (main moved under it).
@@ -948,6 +1042,13 @@ public sealed partial class LegCommander(
     public const string ReviewChanges = "review-changes";
 
     public const string PrReady = "pr-ready";
+
+    /// <summary>
+    /// What a PR-ready card turns into when its armed merge fails on a check or a moved head: the same card, saying what failed,
+    /// offering a go-around, a re-run of the checks and the merge again. Not sent back as changes by itself, as a PR-ready one
+    /// whose checks fail is: the person chooses.
+    /// </summary>
+    public const string MergeFailed = "merge-failed";
 
     /// <summary>The card a leg's start raises when a sibling clone its build compiles against is behind its origin.</summary>
     public const string SiblingBehindKind = "sibling-behind";
@@ -1052,7 +1153,7 @@ public sealed partial class LegCommander(
             if (flight.Review is not null)
             {
                 state.PutFlight(flight with { Review = null });
-                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review waits for the 5-hour window", ReviewChanges, PrReady, LegWatch.ReviewStalled);
+                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review waits for the 5-hour window", ReviewChanges, PrReady, MergeFailed, LegWatch.ReviewStalled);
             }
             return;
         }
@@ -1077,7 +1178,7 @@ public sealed partial class LegCommander(
                 GoAround = legs.Sum(l => l.GoArounds), ReviewedHead = reviewedHead,
             },
         });
-        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "a fresh review started", ReviewChanges, PrReady, LegWatch.ReviewStalled);
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "a fresh review started", ReviewChanges, PrReady, MergeFailed, LegWatch.ReviewStalled);
         await _marks.ApplyAsync(flight.Code, cancellationToken);
     }
 
@@ -1205,7 +1306,7 @@ public sealed partial class LegCommander(
             // A new go-around's changes: its own COMMENT review, so the one that passed is not the last word on the PR.
             state.PutFlight(flight with { Review = review with { State = ReviewState.Changes, Report = changes, FinishedAt = time.GetUtcNow(), ReviewUrl = null, MarksWhy = null } });
             await _marks.ApplyAsync(code, cancellationToken);
-            state.CloseCardsAbout(Verbs.FlightTarget(code), closing, PrReady);
+            state.CloseCardsAbout(Verbs.FlightTarget(code), closing, PrReady, MergeFailed);
             RaiseReviewChanges(FlightOf(Verbs.FlightTarget(code)), changes);
             return null;
         }
