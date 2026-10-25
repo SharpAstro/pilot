@@ -185,6 +185,15 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>Shows <paramref name="line"/> itself on the Sessions page (<b>Open</b>): offered on a waiting session's card when the session is an interactive one.</summary>
     public Action<CardRow, SessionLine>? OnOpenSession { get; set; }
 
+    /// <summary>The flight the page in front is about (open, or selected): its cards are lit in the panel. Null lights none.</summary>
+    public string? Focus { get; set; }
+
+    private static readonly RGBAColor32 FocusBg = new(0x26, 0x33, 0x4a, 0xff);
+
+    // A card about the focused flight: about the flight itself, or one of its legs.
+    private bool Focused(CardRow card) =>
+        Focus is { } code && (card.Subject == Verbs.FlightTarget(code) || card.Subject.StartsWith(Verbs.FlightTarget(code) + "/", StringComparison.Ordinal));
+
     /// <summary>The window's In play / Everything choice: In play folds the Handled list to one line; null lists it, as a capture does.</summary>
     public PlayFilter? Play { get; set; }
 
@@ -466,7 +475,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         return Layout.Builder.HStack(
                 Layout.Builder.Spacer().Bg(accent).WFixed(3f).HStar(),
                 Layout.Builder.VStack([.. lines]).Pad(10f, 8f).WStar())
-            .Bg(CardBg)
+            .Bg(!closed && Focused(card) ? FocusBg : CardBg)
             .WStar()
             .HAuto();
     }
