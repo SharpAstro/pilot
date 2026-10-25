@@ -266,6 +266,37 @@ public sealed class ChatTests
     }
 
     [Fact]
+    public async Task AFeedThatRenumberedUnderTheHeldIndexIsReadAgainFromTheStart()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var afters = new List<int>();
+        var shrunk = false;
+        var chat = new ChatView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        // An earlier watchtower's transcript goes (Claude Code deletes old sessions): the feed is the last three entries, renumbered from 0.
+        var remaining = Conversation()[3..].Select((e, i) => e with { Index = i, Text = "after the shrink " + i }).ToArray();
+        chat.Load = (after, _) =>
+        {
+            afters.Add(after);
+            return Task.FromResult(!shrunk
+                ? (after < 0 ? Page() : new ChatPage { Entries = [], Total = 6 })
+                : after < 0 ? Page(remaining) : new ChatPage { Entries = [.. remaining.Where(e => e.Index > after)], Total = remaining.Length });
+        };
+
+        await Read(chat, 6);
+        shrunk = true;
+        chat.Open();
+        for (var i = 0; i < 100 && chat.Entries.Count != 3; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+        chat.Close();
+
+        chat.Entries.Select(e => e.Text).ShouldBe(["after the shrink 0", "after the shrink 1", "after the shrink 2"]);
+        // The first read, then after the held last index (5), which finds the feed shorter: read from the start.
+        afters.Take(3).ShouldBe([-1, 5, -1]);
+    }
+
+    [Fact]
     public async Task ClosingStopsTheFollowAndReopeningReadsOnFromWhatItHolds()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
