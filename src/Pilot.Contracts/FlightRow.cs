@@ -166,6 +166,31 @@ public sealed record ReviewRow
 
     /// <summary>Why that depth, in a few words ("usage at 88%"); said in the reviewer's brief and on the PR-ready card.</summary>
     public string? DepthWhy { get; init; }
+
+    /// <summary>How many go-arounds the flight had flown when this review started (0 for the first); said in its pending status.</summary>
+    public int GoAround { get; init; }
+
+    /// <summary>
+    /// The PR head the reviewer reads, as GitHub had it when the review started, and the commit the node's <c>pilot/review</c>
+    /// status goes on whatever the branch has moved to since: a pass never carries over to code the reviewer never saw. Null
+    /// on a review started before the node marked PRs.
+    /// </summary>
+    public string? ReviewedHead { get; init; }
+
+    /// <summary>The state the node last set on the <c>pilot/review</c> status of <see cref="ReviewedHead"/>: pending, success or failure; null while none is set.</summary>
+    public string? StatusState { get; init; }
+
+    /// <summary>The <c>pilot:</c> label the node last set on the PR (<c>pilot: passed</c>); null while none is set.</summary>
+    public string? Label { get; init; }
+
+    /// <summary>The page of the COMMENT review the node posted with the reviewer's report; null until it is posted.</summary>
+    public string? ReviewUrl { get; init; }
+
+    /// <summary>
+    /// Why a write to GitHub is still to do (the status, the label or the review comment, as GitHub last refused it); null
+    /// when what the node meant to set is set. The node tries again at its next look at the PR.
+    /// </summary>
+    public string? MarksWhy { get; init; }
 }
 
 /// <summary>How much reading a review gets: one light pass, today's standard, or a deep one with subagents checking claims.</summary>

@@ -170,6 +170,44 @@ internal sealed class FakeGitHub : IGitHub
         Cloned.Add((repo, path));
     }
 
+    /// <summary>Every <c>pilot/review</c> status set, in order: the commit, its state, its description and the page it links to.</summary>
+    public List<(string Sha, string State, string Description, string? Url)> Statuses { get; } = [];
+
+    /// <summary>When set, a status write fails with it, as GitHub refusing it.</summary>
+    public string? StatusFails { get; set; }
+
+    public Task SetCommitStatusAsync(string repoPath, string sha, string state, string description, string? targetUrl, CancellationToken cancellationToken)
+    {
+        if (StatusFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        Statuses.Add((sha, state, description, targetUrl));
+        return Task.CompletedTask;
+    }
+
+    /// <summary>The labels each PR carries, by number: a pilot: label replaces any other, as the real call does; others are left.</summary>
+    public Dictionary<int, HashSet<string>> Labels { get; } = [];
+
+    /// <summary>Every pilot: label asked for, by PR number, in order.</summary>
+    public List<(int Number, string Label)> LabelCalls { get; } = [];
+
+    /// <summary>When set, a label write fails with it, as GitHub refusing it.</summary>
+    public string? LabelFails { get; set; }
+
+    public Task SetPilotLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
+    {
+        if (LabelFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        LabelCalls.Add((number, label));
+        var labels = Labels.TryGetValue(number, out var existing) ? existing : Labels[number] = [];
+        labels.RemoveWhere(l => l.StartsWith(PilotMarks.LabelPrefix, StringComparison.Ordinal));
+        labels.Add(label);
+        return Task.CompletedTask;
+    }
+
     /// <summary>The login gh says it is signed in as.</summary>
     public string? Login { get; set; } = "controller";
 

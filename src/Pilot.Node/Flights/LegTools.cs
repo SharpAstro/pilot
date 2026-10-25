@@ -251,6 +251,50 @@ public interface IGitHub
     /// </summary>
     /// <exception cref="FlightException">gh said GitHub refused it, so nothing was posted. Anything else may have been.</exception>
     Task<PostedReview> PostReviewAsync(string repo, int number, string payload, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sets the <see cref="PilotMarks.StatusContext"/> commit status on <paramref name="sha"/> of the repo at
+    /// <paramref name="repoPath"/> to <paramref name="state"/> (<c>pending</c>, <c>success</c>, <c>failure</c>), linking to
+    /// <paramref name="targetUrl"/>. A status belongs to its commit, so a later head has none until it is set there.
+    /// </summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task SetCommitStatusAsync(string repoPath, string sha, string state, string description, string? targetUrl, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Makes <paramref name="label"/> the one <c>pilot:</c> label of PR <paramref name="number"/>: created in the repo when
+    /// it has none like it, added, and every other <c>pilot:</c> label taken off.
+    /// </summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task SetPilotLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken);
+}
+
+/// <summary>What the node sets on a flight PR on GitHub: the <c>pilot/review</c> status and the <c>pilot:</c> labels.</summary>
+public static class PilotMarks
+{
+    public const string StatusContext = "pilot/review";
+
+    public const string LabelPrefix = "pilot: ";
+
+    public const string Reviewing = LabelPrefix + "reviewing";
+
+    public const string Changes = LabelPrefix + "changes";
+
+    public const string Passed = LabelPrefix + "passed";
+
+    public const string Conflicts = LabelPrefix + "conflicts";
+
+    public const string Queued = LabelPrefix + "queued";
+
+    /// <summary>The colour (hex, no #) and description a label is made with in a repo that has none.</summary>
+    public static (string Color, string Description) LabelStyle(string label) => label switch
+    {
+        Reviewing => ("fbca04", "pilot's reviewer is reading this PR"),
+        Changes => ("d93f0b", "pilot's review asks for changes"),
+        Passed => ("0e8a16", "pilot's review passed on its reviewed head"),
+        Conflicts => ("b60205", "this PR conflicts with its base"),
+        Queued => ("5319e7", "this PR waits in the merge queue"),
+        _ => ("ededed", "set by pilot"),
+    };
 }
 
 /// <summary>A review GitHub made: its id, its state (<c>APPROVED</c>, <c>CHANGES_REQUESTED</c>, <c>COMMENTED</c>) and its page.</summary>
@@ -596,6 +640,55 @@ public sealed class GhCli : IGitHub
             ? new PostedReview(review, state, url)
             : throw new InvalidOperationException($"gh posted the review of {repo}#{number} but did not say which: {output.Trim()}");
     }
+
+    public async Task SetCommitStatusAsync(string repoPath, string sha, string state, string description, string? targetUrl, CancellationToken cancellationToken)
+    {
+        // gh fills {owner}/{repo} from the clone it runs in. GitHub keeps a description to 140 characters and refuses more.
+        var args = new List<string>
+        {
+            "api", "-X", "POST", $"repos/{{owner}}/{{repo}}/statuses/{sha}",
+            "-f", $"state={state}", "-f", $"context={PilotMarks.StatusContext}", "-f", $"description={Clip(description, 140)}",
+        };
+        if (targetUrl is { Length: > 0 })
+        {
+            args.AddRange(["-f", $"target_url={targetUrl}"]);
+        }
+        var (exit, output, error) = await RunAsync(args, repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"GitHub refused the {PilotMarks.StatusContext} status on {sha[..Math.Min(8, sha.Length)]}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+    }
+
+    public async Task SetPilotLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
+    {
+        var (color, description) = PilotMarks.LabelStyle(label);
+        // Made when missing: a repo that has it already answers "already exists", which is the state wanted.
+        var (made, madeOutput, madeError) = await RunAsync(["label", "create", label, "--color", color, "--description", description], repoPath, cancellationToken);
+        if (made != 0 && !(madeError + madeOutput).Contains("already exists", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException($"GitHub refused the label {label} on the repo: {(madeError.Trim().Length > 0 ? madeError : madeOutput).Trim()}");
+        }
+        var text = number.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var (read, readOutput, readError) = await RunAsync(["pr", "view", text, "--json", "labels", "-q", ".labels[].name"], repoPath, cancellationToken);
+        if (read != 0)
+        {
+            throw new FlightException($"gh could not read #{number}'s labels: {(readError.Trim().Length > 0 ? readError : readOutput).Trim()}");
+        }
+        var args = new List<string> { "pr", "edit", text, "--add-label", label };
+        foreach (var other in readOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                     .Where(l => l.StartsWith(PilotMarks.LabelPrefix, StringComparison.Ordinal) && l != label))
+        {
+            args.AddRange(["--remove-label", other]);
+        }
+        var (exit, output, error) = await RunAsync(args, repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"GitHub refused the label {label} on #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+    }
+
+    private static string Clip(string text, int length) => text.Length <= length ? text : text[..(length - 1)] + "…";
 
     private static async Task RunGitAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
     {
