@@ -478,8 +478,38 @@ public sealed class StandingTests
             .ShouldContain("land is the controller's, not a flight session's");
 
         // The same command from outside every plane is an assistant's, and runs at once with autopilot on; a human's CLI in the plane is the person's.
-        (await CliIn(node, agent: true, null, node.Folder, "flight", "merge", "TIA1", "cafe0000")).ShouldNotContain("not a flight session's");
+        var outside = await CliIn(node, agent: true, null, node.Folder, "flight", "merge", "TIA1", "cafe0000");
+        outside.ShouldNotContain("not a flight session's");
+        outside.ShouldNotContain("is the controller's");
         (await CliIn(node, agent: false, null, plane, "flight", "merge", "TIA1", "cafe0000")).ShouldNotContain("not a flight session's");
+    }
+
+    [Fact]
+    public async Task ANewFlightsPlannerNoRowKnowsYetIsThatFlightsSessionAndMayNotMergeAnyFlightWithAutopilotOn()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var plane = Directory.CreateDirectory(Path.Combine(node.Folder, "TIA1")).FullName;
+        node.State.PutFlight(Flight("TIA1") with { Worktree = plane });
+        node.State.PutFlight(Flight("TIA2"));
+        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "on"))).ShouldBeNull();
+        node.State.Sessions().ShouldBeEmpty();
+
+        // The CLI in the plane, no leg, no row and a session id the node has not polled: it is sent as the flight's planner.
+        foreach (var target in new[] { "TIA1", "TIA2" })
+        {
+            (await CliIn(node, agent: true, "ffffffff-0000-4000-8000-000000000000", plane, "flight", "merge", target, "cafe0000"))
+                .ShouldContain("merge is the controller's, not a flight session's: leave it to them");
+        }
+        (await CliIn(node, agent: true, null, plane, "flight", "land", "TIA2")).ShouldContain("land is the controller's, not a flight session's");
+
+        // The node reads the planner's name as the flight's whether or not the CLI named it: refused with no session row and autopilot on.
+        var machine = (await node.Client.GetNodeAsync(Ct)).MachinePrefix.ToLowerInvariant();
+        (await Error(node, Command(Verbs.Merge, "flight/TIA2", $"{machine}-tia1-plan", true, "cafe0000"))).ShouldBe("merge is the controller's, not a flight session's: leave it to them");
+        (await Error(node, Command(Verbs.Check, "flight/TIA2/parser", $"{machine}-tia1-plan", true, "1"))).ShouldBe("flight/TIA2/parser is not TIA1's: a flight's session acts on its own flight only");
+        node.State.Cards().ShouldBeEmpty();
+
+        // An assistant elsewhere is not fenced by that: its merge of the same flight runs at once, recorded.
+        (await Error(node, Command(Verbs.Merge, "flight/TIA2", "pilot-33", true, "cafe0000"))).ShouldNotBe("merge is the controller's, not a flight session's: leave it to them");
     }
 
     private static Task<string> Cli(NodeHarness node, params string[] args) => Cli(node, agent: false, args);

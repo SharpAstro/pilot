@@ -502,7 +502,8 @@ is what the command printed; a refusal (with the node's reason), a usage error a
 `isError`, as exit codes 1, 2 and 3 are on the CLI. A call is from the Claude session running the server where the node
 knows it (`CLAUDE_CODE_SESSION_ID`, matched against its current id and the ones before the node resumed it), as a CLI
 command is, and a session the node does not know yet, run inside a flight's plane, is that plane's own session (its leg's
-worker, a validator, the reviewer), so the watchtower's own merge or land is still refused and a flight's is never an assistant's;
+worker, a validator, the reviewer, else the planner `<machine>-<flight>-plan` of a flight that has no session row yet; the node also reads a
+`<machine>-<flight>-plan`, `-review` or `-<leg>` name as that flight's with no row), so the watchtower's own merge or land is still refused and a flight's is never an assistant's;
 else from the client by the name it gave in `initialize`; else `mcp`. Every call carries the `Agent` flag (an MCP
 client is a Claude session), so it is an assistant's unless a session the node knows for a flight or the lookout says otherwise
 (**Who may do what**).
@@ -963,8 +964,10 @@ repos/.../pulls/N/merge`, or a `git push` whose destination is `main`, `master` 
 split on `&&`, `||`, `;`, `|`, `&`, newlines, backticks and parentheses outside quotes and each part is matched, after
 leading `VAR=x`, shell keywords (`if`, `then`, `do`, `!`, `{`…) and wrappers (`sudo`/`env`/`command`/`nice`, `timeout <duration>`,
 `xargs`), and with `gh`'s `-R`/`--repo` value skipped before `pr` or `api`; a bash backslash-newline joins the line, a
-heredoc's body (`<<EOF` … `EOF`) and a PowerShell here-string (`@'`…`'@`) are text, not commands; `cd` and `git -C` move where the checkout is read, and `bash -c '…'` and
-`eval` are read inside. A `PowerShell` call is read with PowerShell's own quoting (the backtick is the escape, a
+heredoc's body (`<<EOF` … `EOF`) and a PowerShell here-string (`@'`…`'@`) are text, not commands; a `$(…)` or backticks inside double quotes are commands of their own
+(so `git commit -m "$(cat <<'EOF' … EOF)"` is a commit whatever quotes its body holds, and a merge inside one is still refused); a redirection (`2>&1`, `> /dev/null`) is not a refspec, and
+`git push --tags` alone moves no branch and passes (`--follow-tags` pushes the branch too); `cd` and `git -C` move where the checkout is read, with `~`, `$HOME` and Git Bash's `/c/…` mapped to
+real paths, and `bash -c '…'` and `eval` are read inside. A `PowerShell` call is read with PowerShell's own quoting (the backtick is the escape, a
 backslash is a path's, `''` and `""` are literal quotes), split on `{` and `}` too, and `Set-Location`, `iex` /
 `Invoke-Expression` and `pwsh -Command '…'` are followed as `cd`, `eval` and `bash -c` are. Everything else, a push of a
 flight branch included, passes untouched. Like `pilot-node hook` it

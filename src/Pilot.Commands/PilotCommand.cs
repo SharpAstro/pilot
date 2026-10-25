@@ -841,14 +841,16 @@ public static class PilotCommand
     /// <summary>
     /// Who a Claude session's command is from: its name on the node (<see cref="Caller"/>), and when the node knows no such
     /// session (not polled yet) but the command is agent-run inside a flight's plane, that plane's own session (its flying leg's
-    /// worker, a validator waiting, the review's reviewer, else a planner or worker row of the flight), since a session working
+    /// worker, a validator waiting, the review's reviewer, else a planner or worker row of the flight, else the flight's planner
+    /// by the name the node gives it, <c>&lt;machine&gt;-&lt;flight&gt;-plan</c>, as a new flight's planner has no row yet), since a session working
     /// in a plane is that flight's and must not be taken for an assistant. Otherwise <paramref name="fallback"/>.
     /// </summary>
-    internal static string Sender(SnapshotEvent snapshot, string? sessionId, string cwd, bool agent, string fallback = "cli") =>
-        SessionNamed(snapshot, sessionId) ?? (agent ? PlaneSession(snapshot, cwd) : null) ?? fallback;
+    /// <param name="machine">The node's machine prefix (<c>DU1</c>), for a planner's name; null when not known.</param>
+    internal static string Sender(SnapshotEvent snapshot, string? sessionId, string cwd, bool agent, string fallback = "cli", string? machine = null) =>
+        SessionNamed(snapshot, sessionId) ?? (agent ? PlaneSession(snapshot, cwd, machine) : null) ?? fallback;
 
     /// <summary>The name of the session the plane (or PR review worktree) holding <paramref name="cwd"/> belongs to, or null outside every one or when none is named.</summary>
-    internal static string? PlaneSession(SnapshotEvent snapshot, string cwd)
+    internal static string? PlaneSession(SnapshotEvent snapshot, string cwd, string? machine = null)
     {
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         var folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(cwd)) + Path.DirectorySeparatorChar;
@@ -858,7 +860,8 @@ public static class PilotCommand
             return snapshot.Legs.FirstOrDefault(l => l.Flight == flight.Code && l.State == LegState.Flying)?.Worker
                 ?? snapshot.Legs.FirstOrDefault(l => l.Flight == flight.Code && l.State == LegState.Planned && l.Validation == LegValidation.Pending)?.Validator
                 ?? (flight.Review is { State: ReviewState.Reviewing } review ? review.Reviewer : null)
-                ?? snapshot.Sessions.FirstOrDefault(s => s.Flight == flight.Code && s.Role is SessionRole.Planner or SessionRole.Worker or SessionRole.Reviewer)?.Name;
+                ?? snapshot.Sessions.FirstOrDefault(s => s.Flight == flight.Code && s.Role is SessionRole.Planner or SessionRole.Worker or SessionRole.Reviewer)?.Name
+                ?? (machine is { Length: > 0 } ? $"{machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-plan" : null);
         }
         return PrHere(snapshot, cwd) is { Who: not "cli" } pr ? pr.Who : null;
     }
@@ -866,8 +869,21 @@ public static class PilotCommand
     /// <summary>Who a command is from: the Claude session running this host by its name on the node, where there is one, else <paramref name="who"/>.</summary>
     private static async Task<string> SenderAsync(NodeClient client, string who, bool bySession, bool agent, string cwd, string? sessionId, CancellationToken cancellationToken) =>
         bySession && (sessionId is { Length: > 0 } || agent)
-            ? Sender(await SnapshotAsync(client, cancellationToken), sessionId, cwd, agent, who)
+            ? Sender(await SnapshotAsync(client, cancellationToken), sessionId, cwd, agent, who, agent ? await MachineAsync(client, cancellationToken) : null)
             : who;
+
+    /// <summary>The node's machine prefix, or null when it cannot be had: the name of a planner the node has not listed yet is built from it.</summary>
+    private static async Task<string?> MachineAsync(NodeClient client, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return (await client.GetNodeAsync(cancellationToken)).MachinePrefix is { Length: > 0 } prefix ? prefix : null;
+        }
+        catch (HttpRequestException)
+        {
+            return null;
+        }
+    }
 
     private static async Task<int> SendAsync(NodeClient client, string verb, string target, string[] args, string who, bool bySession, bool agent, string? why, string cwd, string? sessionId, TextWriter output, CancellationToken cancellationToken)
     {

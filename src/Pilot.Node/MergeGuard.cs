@@ -183,12 +183,33 @@ public static partial class MergeGuard
     {
         try
         {
-            return Path.GetFullPath(Path.Combine(folder, to));
+            return Path.GetFullPath(Path.Combine(folder, ShellPath(to, OperatingSystem.IsWindows(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile))));
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
         {
             return folder;
         }
+    }
+
+    /// <summary>
+    /// A path as the shell wrote it, as the machine reads it: <c>~</c> and <c>$HOME</c> are the user's folder, and on Windows Git Bash's
+    /// <c>/c/Users/x</c> is <c>C:\Users\x</c> (the Bash tool there is Git Bash), which <see cref="Path.GetFullPath(string)"/> would read as a
+    /// folder of the current drive. Any other path is as written.
+    /// </summary>
+    internal static string ShellPath(string path, bool windows, string home)
+    {
+        foreach (var prefix in new[] { "~", "$HOME", "${HOME}" })
+        {
+            if (home.Length > 0 && path.StartsWith(prefix, StringComparison.Ordinal) && (path.Length == prefix.Length || path[prefix.Length] is '/' or '\\'))
+            {
+                return home + path[prefix.Length..];
+            }
+        }
+        if (windows && path.Length >= 2 && path[0] == '/' && char.IsAsciiLetter(path[1]) && (path.Length == 2 || path[2] == '/'))
+        {
+            return char.ToUpperInvariant(path[1]) + ":" + (path.Length == 2 ? "\\" : path[2..]);
+        }
+        return path;
     }
 
     private static string Merge(string what) =>
@@ -296,6 +317,7 @@ public static partial class MergeGuard
     private static string? PushReason(List<string> args, string folder, GitQuery git)
     {
         var positionals = new List<string>();
+        var tags = false;
         for (var i = 0; i < args.Count; i++)
         {
             var a = args[i];
@@ -303,7 +325,16 @@ public static partial class MergeGuard
             {
                 return Push($"`git push {a}` pushes every branch, the default one among them");
             }
-            if (a is "-o" or "--push-option" or "--repo" or "--receive-pack" or "--exec")
+            if (RedirectionOperator().IsMatch(a))
+            {
+                // A redirection is the shell's, not a refspec (git push origin 2>&1, > /dev/null): a bare operator takes the next word with it.
+                i += Redirects(a) ? 1 : 0;
+            }
+            else if (a == "--tags")
+            {
+                tags = true;
+            }
+            else if (a is "-o" or "--push-option" or "--repo" or "--receive-pack" or "--exec")
             {
                 i++;
             }
@@ -324,9 +355,13 @@ public static partial class MergeGuard
             return set;
         });
 
-        // A remote alone, or nothing: git pushes the current branch.
+        // A remote alone, or nothing: git pushes the current branch, but --tags then pushes the tags alone and moves no branch.
         if (positionals.Count <= 1)
         {
+            if (tags)
+            {
+                return null;
+            }
             return branch.Value is { Length: > 0 } now && protectedRefs.Value.Contains(now)
                 ? Push($"this checkout is on `{now}`, which a plain `git push` pushes to")
                 : null;
@@ -350,6 +385,13 @@ public static partial class MergeGuard
         }
         return null;
     }
+
+    // A word that is a redirection, with a file descriptor in front of it or not: 2>, >, >>, <, 2>/dev/null, >file.
+    [GeneratedRegex(@"^(\d*|&)[<>]")]
+    private static partial Regex RedirectionOperator();
+
+    // Whether a redirection word is the operator alone, whose target is the next word (> /dev/null, 2>, &> out), not one with its target in it (>file, 2>&1, 2>/dev/null).
+    private static bool Redirects(string word) => word.TrimStart("0123456789".ToCharArray()).All(c => c is '<' or '>' or '&');
 
     private static string Push(string what) =>
         $"A push to the default branch goes through a PR, not around it ({what}). Push a flight branch and merge it through the node: `{Instead}`.";
@@ -468,6 +510,18 @@ public static partial class MergeGuard
                 {
                     word.Append(command[++i]);
                 }
+                else if (c == '$' && i + 1 < command.Length && command[i + 1] == '(' && SubstitutionEnd(command, i + 2, powershell) is >= 0 and var close)
+                {
+                    // $(...) inside double quotes runs: its text is commands of their own (a heredoc in it, as in git commit -m "$(cat <<'EOF' ...)", is read as
+                    // one), not characters of this word, so a quote in its body does not end the string.
+                    parts.AddRange(Split(command[(i + 2)..close], powershell));
+                    i = close;
+                }
+                else if (c == '`' && !powershell && command.IndexOf('`', i + 1) is >= 0 and var tick)
+                {
+                    parts.AddRange(Split(command[(i + 1)..tick], powershell));
+                    i = tick;
+                }
                 else
                 {
                     word.Append(c);
@@ -516,6 +570,12 @@ public static partial class MergeGuard
                     inWord = true;
                 }
             }
+            else if (!powershell && c == '&' && (word.Length > 0 && word[^1] is '>' or '<' || i + 1 < command.Length && command[i + 1] == '>'))
+            {
+                // The & of a redirection (2>&1, >&2, &>file) is no separator: the words after it are still this command's.
+                word.Append(c);
+                inWord = true;
+            }
             else if (c is ';' or '|' or '&' or '\n' or '\r' or '(' or ')' || c == '`' && !powershell || powershell && c is '{' or '}')
             {
                 EndPart();
@@ -532,6 +592,91 @@ public static partial class MergeGuard
         }
         EndPart();
         return parts;
+    }
+
+    /// <summary>
+    /// The index of the <c>)</c> that closes the <c>$(</c> whose text starts at <paramref name="from"/>, or -1 when none does. Quotes,
+    /// a <c>$(</c> in double quotes, heredoc bodies (bash) and here-strings (PowerShell) are skipped over as text, so a parenthesis
+    /// or a quote in a heredoc's body neither ends nor extends it.
+    /// </summary>
+    private static int SubstitutionEnd(string command, int from, bool powershell)
+    {
+        var escape = powershell ? '`' : '\\';
+        var depth = 1;
+        var pending = new List<(string Word, bool Tabs)>();
+        for (var i = from; i < command.Length; i++)
+        {
+            var c = command[i];
+            if (c == escape && i + 1 < command.Length)
+            {
+                i++;
+            }
+            else if (c == '\'')
+            {
+                i = command.IndexOf('\'', i + 1);
+                if (i < 0)
+                {
+                    return -1;
+                }
+            }
+            else if (c == '"')
+            {
+                i = QuotedEnd(command, i + 1, powershell);
+                if (i < 0)
+                {
+                    return -1;
+                }
+            }
+            else if (powershell && c == '@' && HereString(command, i) is { } here)
+            {
+                i = here.End;
+            }
+            else if (!powershell && c == '<' && Heredoc(command, i) is { } heredoc)
+            {
+                pending.Add(heredoc.Delimiter);
+                i = heredoc.End;
+            }
+            else if (c == '\n' && pending.Count > 0)
+            {
+                i = SkipHeredocBodies(command, i + 1, pending) - 1;
+                pending.Clear();
+            }
+            else if (c == '(')
+            {
+                depth++;
+            }
+            else if (c == ')' && --depth == 0)
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    // The index of the double quote that ends the string whose text starts at <from>, skipping a $(...) in it; -1 when unterminated.
+    private static int QuotedEnd(string command, int from, bool powershell)
+    {
+        var escape = powershell ? '`' : '\\';
+        for (var i = from; i < command.Length; i++)
+        {
+            if (command[i] == escape)
+            {
+                i++;
+            }
+            else if (command[i] == '"')
+            {
+                return i;
+            }
+            else if (command[i] == '$' && i + 1 < command.Length && command[i + 1] == '(')
+            {
+                i = SubstitutionEnd(command, i + 2, powershell);
+                if (i < 0)
+                {
+                    return -1;
+                }
+            }
+        }
+        return -1;
     }
 
     /// <summary>How far to advance past the escape character for a line break at <paramref name="at"/> (1 for LF or CR, 2 for CRLF); 0 when none is there.</summary>

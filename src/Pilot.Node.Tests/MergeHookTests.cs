@@ -136,6 +136,99 @@ public sealed class MergeHookTests : IDisposable
     }
 
     [Theory]
+    // Claude's usual commit and PR forms: a command substitution in double quotes with a heredoc in it, whose body has an odd number
+    // of double quotes and lines that quote a merge or a push; none of it is a command.
+    [InlineData("git commit -m \"$(cat <<'EOF'\nUse a 5\" display\nthen run `gh pr merge 1` or git push origin main\nEOF\n)\"")]
+    [InlineData("git commit -m \"$(cat <<'EOF'\nfix (the parser\n\ngh pr merge 1\ngit push origin main\n\nCo-Authored-By: x\nEOF\n)\"")]
+    [InlineData("git add -A && git commit -m \"$(cat <<'EOF'\nA 5\" display\ngh pr merge 1\nEOF\n)\" && git push origin flight/x")]
+    [InlineData("gh pr create --title t --body \"$(cat <<'EOF'\nA 5\" display\n`gh pr merge 1` and `git push origin main`\nEOF\n)\"")]
+    [InlineData("gh pr create --body \"$(cat <<EOF\nhe said \"hi\n$ gh pr merge 1\nEOF\n)\"")]
+    // Backticks in double quotes hold text of their own the same way.
+    [InlineData("git commit -m \"a 5\\\" display `echo ok`\"")]
+    public void ACommitOrPrBodyInACommandSubstitutionIsNotCommands(string command)
+    {
+        Decide(command).ShouldBeNull();
+    }
+
+    [Theory]
+    // What runs in a command substitution in double quotes is still read.
+    [InlineData("echo \"$(gh pr merge 1)\"")]
+    [InlineData("echo \"done: $(git push origin main)\"")]
+    [InlineData("echo \"`gh pr merge 1`\"")]
+    [InlineData("git commit -m \"$(cat <<'EOF'\nbody\nEOF\n)\" && gh pr merge 1")]
+    [InlineData("git commit -m \"$(cat <<'EOF'\nA 5\" display\nEOF\n)\"; git push origin main")]
+    [InlineData("echo \"$(cat <<'EOF'\nbody\nEOF\ngh pr merge 1\n)\"")]
+    public void ACommandRunInsideDoubleQuotesIsRefused(string command)
+    {
+        Decide(command).ShouldNotBeNull().ShouldContain("pilot flight merge");
+    }
+
+    [Fact]
+    public void ARedirectionIsNotARefspecSoAPlainPushFromMainIsStillRefused()
+    {
+        foreach (var command in new[] { "git push origin 2>&1", "git push origin > /dev/null", "git push origin >/dev/null 2>&1", "git push origin 2> err.txt", "git push origin &> out.log", "git push origin >> log", "git push > /dev/null", "git push 2>&1 | tail -3" })
+        {
+            Decide(command, branch: "main").ShouldNotBeNull($"{command} from main").ShouldContain("pilot flight merge");
+            Decide(command, branch: "flight/x").ShouldBeNull($"{command} from a flight branch");
+        }
+        // The refspec after a redirection still counts.
+        Decide("git push origin 2>&1 main", branch: "flight/x").ShouldNotBeNull();
+        Decide("git push origin > log main", branch: "flight/x").ShouldNotBeNull();
+        Decide("git push origin 2>&1 flight/x", branch: "main").ShouldBeNull();
+    }
+
+    [Fact]
+    public void ATagsOnlyPushMovesNoBranchSoItPassesFromMain()
+    {
+        foreach (var command in new[] { "git push --tags", "git push origin --tags", "git push --tags origin", "git push origin v1.2.0", "git push origin refs/tags/v1.2.0" })
+        {
+            Decide(command, branch: "main").ShouldBeNull(command);
+        }
+        // A branch refspec beside --tags is still a push to it, and --follow-tags pushes the current branch along with the tags.
+        Decide("git push origin --tags main", branch: "flight/x").ShouldNotBeNull().ShouldContain("pilot flight merge");
+        Decide("git push --tags origin HEAD:master", branch: "flight/x").ShouldNotBeNull();
+        Decide("git push --follow-tags", branch: "main").ShouldNotBeNull().ShouldContain("pilot flight merge");
+        Decide("git push --follow-tags origin", branch: "flight/x").ShouldBeNull();
+    }
+
+    [Fact]
+    public void AGitBashPathAndATildeAreMappedBeforeTheCheckoutIsRead()
+    {
+        // The mapping itself, whatever machine runs the tests.
+        MergeGuard.ShellPath("/c/Users/me/repo", windows: true, @"C:\Users\me").ShouldBe(@"C:/Users/me/repo");
+        MergeGuard.ShellPath("/C", windows: true, @"C:\Users\me").ShouldBe(@"C:\");
+        MergeGuard.ShellPath("/c/Users/me/repo", windows: false, "/home/me").ShouldBe("/c/Users/me/repo");
+        MergeGuard.ShellPath("/cx/y", windows: true, @"C:\Users\me").ShouldBe("/cx/y");
+        MergeGuard.ShellPath("~", windows: false, "/home/me").ShouldBe("/home/me");
+        MergeGuard.ShellPath("~/x", windows: false, "/home/me").ShouldBe("/home/me/x");
+        MergeGuard.ShellPath("$HOME/x", windows: false, "/home/me").ShouldBe("/home/me/x");
+        MergeGuard.ShellPath("${HOME}/x", windows: false, "/home/me").ShouldBe("/home/me/x");
+        MergeGuard.ShellPath("~other/x", windows: false, "/home/me").ShouldBe("~other/x");
+        MergeGuard.ShellPath("../x", windows: true, @"C:\Users\me").ShouldBe("../x");
+
+        // And through the guard: the folder the branch is asked in is the real one.
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var folders = new List<string>();
+        MergeGuard.GitQuery git = (folder, args) =>
+        {
+            folders.Add(folder);
+            return args.Contains("HEAD") && args.Count == 4 ? "main" : null;
+        };
+        MergeGuard.Decide(Input("cd ~/x && git push"), git).ShouldNotBeNull().ShouldContain("pilot flight merge");
+        folders.ShouldAllBe(f => f.StartsWith(Path.GetFullPath(home), StringComparison.OrdinalIgnoreCase) && !f.Contains('~'));
+
+        if (OperatingSystem.IsWindows())
+        {
+            folders.Clear();
+            MergeGuard.Decide(Input("cd /c/Users/me/repo && git push"), git).ShouldNotBeNull().ShouldContain("pilot flight merge");
+            folders.ShouldAllBe(f => f == @"C:\Users\me\repo");
+            folders.Clear();
+            MergeGuard.Decide(Input("git -C /d/work/plane push"), git).ShouldNotBeNull();
+            folders.ShouldAllBe(f => f == @"D:\work\plane");
+        }
+    }
+
+    [Theory]
     [InlineData("git commit -m @'\nDon't\n'@; gh pr merge 1")]
     [InlineData("git commit -m @\"\nDon't\n\"@; git push origin main")]
     public void APowerShellHereStringIsOneWordAndTheCommandAfterItIsRead(string command)

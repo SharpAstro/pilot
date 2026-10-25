@@ -1,4 +1,5 @@
 using Pilot.Contracts;
+using Pilot.Node.Sessions;
 
 namespace Pilot.Node;
 
@@ -97,6 +98,12 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
         if (state.Sessions().FirstOrDefault(s => s.Role is SessionRole.Planner or SessionRole.Worker or SessionRole.Reviewer && s.Flight is not null && string.Equals(s.Name, who, StringComparison.Ordinal)) is { } session)
         {
             return new Standing(StandingKind.FlightSession, session.Flight);
+        }
+        // A session of a new flight is not polled yet, so no row: its name still says whose it is (<machine>-<flight>-plan, -review or -<leg>),
+        // and one that names a flight is that flight's, not an assistant's, whatever autopilot says.
+        if (command.Agent && SessionRoles.Resolve(who, background: false) is { Role: SessionRole.Planner or SessionRole.Worker or SessionRole.Reviewer, Flight: { } named })
+        {
+            return new Standing(StandingKind.FlightSession, named);
         }
         return command.Agent ? new Standing(StandingKind.Assistant) : Person;
     }
