@@ -180,6 +180,31 @@ public sealed class ArmedMergeTests
         arranged.Select(a => a.Node.Tooltip).OfType<string>().ShouldContain(long_);
     }
 
+    [Theory]
+    [InlineData(300f)]
+    [InlineData(340f)]
+    public void ADisarmedDetailOfAFewHundredCharactersInTwoParagraphsCarriesItsWholeTextOnHover(float width)
+    {
+        // Under the old 320-character threshold, yet at a narrow panel's width the first paragraph wraps past the cap and the
+        // second gets one line: both are cut by the line cap with no ellipsis, so the whole text is on hover (ui-changes.md section 3).
+        var detail = "GitHub blocks the merge: a required check has yet to report on 77018f1c, or a branch rule keeps it from merging, and the PR page says which one it is.\n"
+            + "Go around to fix what it found, re-run the checks if it was a flake, or merge again once that is dealt with.";
+        detail.Length.ShouldBeInRange(230, 300);
+        var arranged = Arrange(Disarmed() with { Detail = detail }, width, out var renderer);
+        using var _ = renderer;
+
+        arranged.Select(a => a.Node.Tooltip).OfType<string>().ShouldContain(detail);
+    }
+
+    [Fact]
+    public void AShortOneParagraphMergeDetailNeedsNoHover()
+    {
+        var arranged = Arrange(Armed("merging when checks pass: 6 of 7 done."), 340, out var renderer);
+        using var _ = renderer;
+
+        arranged.Select(a => a.Node.Tooltip).OfType<string>().ShouldNotContain(t => t.StartsWith("merging when", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void ThePanelDoesNotCountAnArmedMergeAsClearedToLand()
     {
