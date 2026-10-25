@@ -187,6 +187,30 @@ internal sealed class FakeGitHub : IGitHub
     public Task<WorkflowRun[]> WorkflowRunsAsync(string repoPath, string commit, CancellationToken cancellationToken) =>
         RunsFail is { } why ? Task.FromException<WorkflowRun[]>(new FlightException(why)) : Task.FromResult(Runs.TryGetValue(commit, out var runs) ? runs : []);
 
+    /// <summary>What MergeStateAsync answers for any PR; null to derive it from <see cref="Summary"/>/<see cref="Checks"/> and <see cref="Queue"/> as GitHub would say it, none with no checks.</summary>
+    public MergeState? Merge { get; set; }
+
+    public Task<MergeState?> MergeStateAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        if (Merge is not null)
+        {
+            return Task.FromResult<MergeState?>(Merge);
+        }
+        if (Queue is { Queued: true } queued)
+        {
+            return Task.FromResult<MergeState?>(new MergeState(MergeKinds.Queued, Position: queued.Position));
+        }
+        var dropped = Queue is { Queued: false, RemovedAt: not null, RemovedReason: { Length: > 0 } reason } && reason != "merged" ? reason : null;
+        var (done, total) = (Summary?.Done ?? 0, Summary?.Total ?? 0);
+        return Task.FromResult<MergeState?>((Summary?.Status ?? Checks) switch
+        {
+            ChoiceStatus.Failing => new MergeState(MergeKinds.Blocked, done, total, Reason: $"{Summary?.FailedName} failed", FailedName: Summary?.FailedName, FailedLink: Summary?.FailedLink, DroppedFromQueue: dropped),
+            ChoiceStatus.Pending => new MergeState(MergeKinds.Pending, done, total, DroppedFromQueue: dropped),
+            ChoiceStatus.Passing => new MergeState(MergeKinds.Ready, done, total, DroppedFromQueue: dropped),
+            _ => null,
+        });
+    }
+
     /// <summary>What MergeQueueAsync answers for any PR: null, a base with no merge queue, unless set.</summary>
     public MergeQueueState? Queue { get; set; }
 

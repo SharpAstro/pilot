@@ -1,0 +1,1 @@
+{"data":{"repository":{"pullRequest":{"state":"OPEN","headRefOid":"abc123","isMergeQueueEnabled":true,"isInMergeQueue":true,"mergeQueueEntry":{"position":2},"timelineItems":{"nodes":[{"__typename":"AddedToMergeQueueEvent","createdAt":"2026-10-26T09:00:00Z"}]}}}}}

@@ -204,9 +204,66 @@ public sealed record MergeQueueState(string State, string Head, bool Queued, int
 /// </summary>
 public sealed record ChecksSummary(string Status, int Done, int Total, string? FailedName = null, string? FailedLink = null);
 
+/// <summary>The one word for where a PR's merge stands on GitHub, as <see cref="MergeState.Kind"/>.</summary>
+public static class MergeKinds
+{
+    /// <summary>Checks still run: the Merge button arms the merge.</summary>
+    public const string Pending = "pending";
+
+    /// <summary>Nothing stands in its way: the Merge button merges, or joins the queue.</summary>
+    public const string Ready = "ready";
+
+    /// <summary>GitHub's auto-merge is armed on it.</summary>
+    public const string Armed = "armed";
+
+    /// <summary>In the base's merge queue.</summary>
+    public const string Queued = "queued";
+
+    /// <summary>It conflicts with its base.</summary>
+    public const string Conflicts = "conflicts";
+
+    /// <summary>Behind its base, which a rule says it must not be to merge.</summary>
+    public const string Behind = "behind";
+
+    /// <summary>A failed check, a review still to come or a draft keeps it from merging; <see cref="MergeState.Reason"/> says which.</summary>
+    public const string Blocked = "blocked";
+
+    /// <summary>A review asks for changes.</summary>
+    public const string ChangesRequested = "changes-requested";
+
+    public const string Merged = "merged";
+
+    public const string Closed = "closed";
+}
+
+/// <summary>
+/// Where a PR's merge stands, as GitHub has it (<c>gh pr view</c>'s mergeStateStatus, mergeable, checks, auto-merge request and
+/// review decision, and the merge queue's entry), never as pilot guesses it: one <see cref="Kind"/> (<see cref="MergeKinds"/>)
+/// the card's Merge button mirrors.
+/// </summary>
+/// <param name="Done">Checks finished (a skipped one is finished), of <paramref name="Total"/>.</param>
+/// <param name="Position">Its place in the merge queue when <see cref="MergeKinds.Queued"/>, when GitHub says.</param>
+/// <param name="Reason">What blocks it, in words, when <see cref="MergeKinds.Blocked"/>.</param>
+/// <param name="FailedName">The first failed check, and <paramref name="FailedLink"/> its page.</param>
+/// <param name="DroppedFromQueue">Why GitHub took it out of the queue unmerged, when it did and it is not queued again.</param>
+public sealed record MergeState(string Kind, int Done = 0, int Total = 0, int? Position = null, string? Reason = null, string? FailedName = null, string? FailedLink = null, string? DroppedFromQueue = null)
+{
+    /// <summary>The checks' progress as the card says it: <c>6 of 7</c>; null with no checks.</summary>
+    public string? Progress => Total > 0 ? ArmedProgress.Say(Done, Total) : null;
+
+    /// <summary>The queue place as the card says it: <c>position 2</c>; null when GitHub did not say.</summary>
+    public string? Place => Position is { } position ? $"position {position}" : null;
+}
+
 /// <summary>The GitHub calls a merge needs, so a test decides what GitHub says.</summary>
 public interface IGitHub
 {
+    /// <summary>
+    /// Where PR <paramref name="number"/>'s merge stands on GitHub (<see cref="MergeState"/>); null when GitHub would not say
+    /// (<c>UNKNOWN</c> while it works the PR out, or no answer).
+    /// </summary>
+    Task<MergeState?> MergeStateAsync(string repoPath, int number, CancellationToken cancellationToken);
+
     /// <summary>The PR whose head is <paramref name="branch"/> in the repo at <paramref name="repoPath"/>, or null without one.</summary>
     Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken);
 
@@ -429,6 +486,110 @@ public sealed class GhCli : IGitHub
         {
             return null;
         }
+    }
+
+    public async Task<MergeState?> MergeStateAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (exit, output, _) = await RunAsync(
+            ["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "state,isDraft,mergeStateStatus,mergeable,reviewDecision,autoMergeRequest,statusCheckRollup"],
+            repoPath, cancellationToken);
+        // gh pr view has no merge queue field: its place in the queue is the GraphQL entry's.
+        return exit == 0 ? ParseMergeState(output, await MergeQueueAsync(repoPath, number, cancellationToken)) : null;
+    }
+
+    /// <summary>
+    /// <c>gh pr view --json state,isDraft,mergeStateStatus,mergeable,reviewDecision,autoMergeRequest,statusCheckRollup</c>'s answer, and
+    /// the merge queue's (<see cref="MergeQueueAsync"/>), as the one <see cref="MergeState"/> they say; null when GitHub has not
+    /// worked it out yet (<c>UNKNOWN</c>) or the answer is no JSON. The order is the order a person reads the PR page: a merged or
+    /// closed PR, then the queue, then what keeps it from merging (conflicts, behind, draft, a failed check, requested changes),
+    /// then what waits (an armed auto-merge, checks running), then ready. A failed check blocks even where GitHub would allow it
+    /// (not a required one): pilot does not merge over a red check.
+    /// </summary>
+    internal static MergeState? ParseMergeState(string json, MergeQueueState? queue = null)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            switch (TextOf(root, "state"))
+            {
+                case "MERGED":
+                    return new MergeState(MergeKinds.Merged);
+                case "CLOSED":
+                    return new MergeState(MergeKinds.Closed);
+            }
+            var checks = RollupChecks(root);
+            var (done, total) = (checks.Count(c => c.Bucket != "pending"), checks.Count);
+            var failed = checks.FirstOrDefault(c => c.Bucket == "fail");
+            var dropped = queue is { Queued: false, RemovedAt: not null, RemovedReason: { Length: > 0 } reason } && !reason.Equals("merged", StringComparison.OrdinalIgnoreCase)
+                ? reason.Replace('_', ' ').ToLowerInvariant() : null;
+            MergeState Say(string kind, string? why = null) => new(kind, done, total, queue is { Queued: true } ? queue.Position : null, why, failed.Name, failed.Link, dropped);
+
+            var mergeState = TextOf(root, "mergeStateStatus");
+            if (queue is { Queued: true })
+            {
+                return Say(MergeKinds.Queued);
+            }
+            if (TextOf(root, "mergeable") == "CONFLICTING" || mergeState == "DIRTY")
+            {
+                return Say(MergeKinds.Conflicts);
+            }
+            if (mergeState == "BEHIND")
+            {
+                return Say(MergeKinds.Behind);
+            }
+            if (mergeState == "DRAFT" || root.TryGetProperty("isDraft", out var draft) && draft.ValueKind == JsonValueKind.True)
+            {
+                return Say(MergeKinds.Blocked, "it is a draft");
+            }
+            if (failed.Name is not null)
+            {
+                return Say(MergeKinds.Blocked, $"{failed.Name} failed");
+            }
+            var review = TextOf(root, "reviewDecision");
+            if (review == "CHANGES_REQUESTED")
+            {
+                return Say(MergeKinds.ChangesRequested);
+            }
+            if (root.TryGetProperty("autoMergeRequest", out var auto) && auto.ValueKind == JsonValueKind.Object)
+            {
+                return Say(MergeKinds.Armed);
+            }
+            if (checks.Any(c => c.Bucket == "pending"))
+            {
+                return Say(MergeKinds.Pending);
+            }
+            return mergeState switch
+            {
+                null or "" or "UNKNOWN" => null,
+                "BLOCKED" => Say(MergeKinds.Blocked, review == "REVIEW_REQUIRED" ? "a review is required" : "a branch rule blocks it: the PR page says which"),
+                _ => Say(MergeKinds.Ready),
+            };
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    // A check run carries name, status, conclusion and detailsUrl; a commit status context, state and targetUrl.
+    private static List<(string Bucket, string? Name, string? Link)> RollupChecks(JsonElement root)
+    {
+        var checks = new List<(string, string?, string?)>();
+        if (!root.TryGetProperty("statusCheckRollup", out var rollup) || rollup.ValueKind != JsonValueKind.Array)
+        {
+            return checks;
+        }
+        foreach (var check in rollup.EnumerateArray())
+        {
+            var conclusion = (TextOf(check, "conclusion") is { Length: > 0 } c ? c : TextOf(check, "state"))?.ToUpperInvariant();
+            var status = TextOf(check, "status")?.ToUpperInvariant();
+            var bucket = conclusion is "FAILURE" or "ERROR" or "CANCELLED" or "TIMED_OUT" or "ACTION_REQUIRED" or "STARTUP_FAILURE" ? "fail"
+                : string.IsNullOrEmpty(conclusion) || conclusion is "PENDING" or "EXPECTED" || status is { Length: > 0 } and not "COMPLETED" ? "pending"
+                : "pass";
+            checks.Add((bucket, TextOf(check, "name") ?? TextOf(check, "context"), TextOf(check, "detailsUrl") ?? TextOf(check, "targetUrl")));
+        }
+        return checks;
     }
 
     public async Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)

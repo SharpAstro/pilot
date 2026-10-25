@@ -11,6 +11,20 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
 {
     public static readonly CardsScreen Empty = new([], []);
 
+    /// <summary>How long a card whose PR merged stays on the panel reading Merged, after the node closed it.</summary>
+    public static readonly TimeSpan MergedLinger = TimeSpan.FromSeconds(6);
+
+    /// <summary>
+    /// The cards that merged within <see cref="MergedLinger"/>: closed by the node, each carrying Merged on its Merge. They are
+    /// shown after the open cards, never counted in the summary, and go once the time is up.
+    /// </summary>
+    public IReadOnlyList<CardRow> Merged { get; init; } = [];
+
+    /// <summary>Whether <paramref name="card"/> is a merge that finished at most <see cref="MergedLinger"/> before <paramref name="now"/>.</summary>
+    public static bool IsLingering(CardRow card, DateTimeOffset now) =>
+        card is { State: CardState.Closed, ClosedAt: { } at } && card.Bin != CardBin.Handled
+        && card.Choices.Any(c => c.Verb == Verbs.Merge && c.Status == ChoiceStatus.Merged) && now - at <= MergedLinger;
+
     // Each card's node, by the card itself (two nodes' cards may share an id); none on a panel of one node.
     private IReadOnlyDictionary<CardRow, NodeMark> _nodes = new Dictionary<CardRow, NodeMark>(ReferenceEqualityComparer.Instance);
 
@@ -26,9 +40,10 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
         var nodes = new Dictionary<CardRow, NodeMark>(ReferenceEqualityComparer.Instance);
         var open = new List<CardRow>();
         var handled = new List<CardRow>();
+        var merged = new List<CardRow>();
         foreach (var (node, screen) in panels)
         {
-            foreach (var card in screen.Open.Concat(screen.Handled))
+            foreach (var card in screen.Open.Concat(screen.Handled).Concat(screen.Merged))
             {
                 if (node is not null)
                 {
@@ -37,14 +52,20 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
             }
             open.AddRange(screen.Open);
             handled.AddRange(screen.Handled);
+            merged.AddRange(screen.Merged);
         }
-        return new CardsScreen([.. open.OrderBy(c => c.Bin).ThenByDescending(c => c.At)], [.. handled.OrderByDescending(c => c.At).Take(5)], watchtower) { _nodes = nodes };
+        return new CardsScreen([.. open.OrderBy(c => c.Bin).ThenByDescending(c => c.At)], [.. handled.OrderByDescending(c => c.At).Take(5)], watchtower)
+        {
+            _nodes = nodes,
+            Merged = [.. merged.OrderByDescending(c => c.ClosedAt)],
+        };
     }
 
     /// <summary>The open cards rings first, newest first within each; the five latest handled lines; the watchtower's row, if any.</summary>
-    public static CardsScreen From(IEnumerable<CardRow> cards, IEnumerable<SessionRow>? sessions = null)
+    public static CardsScreen From(IEnumerable<CardRow> cards, IEnumerable<SessionRow>? sessions = null, DateTimeOffset? now = null)
     {
         var all = cards.ToList();
+        var at = now ?? DateTimeOffset.UtcNow;
         // The node's own (a background session; an interactive one named so is someone's terminal), live first.
         var watchtower = (sessions ?? [])
             .Where(s => s.Role == SessionRole.Watchtower && s.Kind == SessionKind.Background)
@@ -54,7 +75,10 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
         return new CardsScreen(
             [.. all.Where(c => c.State == CardState.Open).OrderBy(c => c.Bin).ThenByDescending(c => c.At)],
             [.. all.Where(c => c.Bin == CardBin.Handled).OrderByDescending(c => c.At).Take(5)],
-            watchtower);
+            watchtower)
+        {
+            Merged = [.. all.Where(c => IsLingering(c, at)).OrderByDescending(c => c.ClosedAt)],
+        };
     }
 
     /// <summary>
@@ -94,14 +118,14 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
                 nodes[card] = node;
             }
         }
-        return (new CardsScreen(open, Handled, Watchtower) { _nodes = nodes, _summary = Summary }, waiting, closed);
+        return (new CardsScreen(open, Handled, Watchtower) { _nodes = nodes, _summary = Summary, Merged = Merged }, waiting, closed);
     }
 
     // A held panel's summary: the cards as they are, not as held.
     private string? _summary;
 
     /// <summary>Whether the panel has anything to show: the watchtower, an open card or a handled line. Empty, it takes no room.</summary>
-    public bool HasAny => Watchtower is not null || Open.Count > 0 || Handled.Count > 0;
+    public bool HasAny => Watchtower is not null || Open.Count > 0 || Handled.Count > 0 || Merged.Count > 0;
 
     /// <summary>The panel's head: <c>2 ringing · 1 for you</c>, or <c>Nothing waits on you</c>.</summary>
     public string Summary
@@ -324,6 +348,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             blocks.Add(Layout.Builder.Spacer().RowH(8f));
             blocks.Add(Card(card, screen.NodeOf(card), _closed.Contains(card)));
         }
+        // A merge that finished a moment ago reads Merged where it was, then goes: closed, so nothing on it can be pressed.
+        foreach (var card in screen.Merged)
+        {
+            blocks.Add(Layout.Builder.Spacer().RowH(8f));
+            blocks.Add(Card(card, screen.NodeOf(card), closed: true, merged: true));
+        }
         if (screen.Handled.Count > 0)
         {
             blocks.Add(Layout.Builder.Spacer().RowH(16f));
@@ -382,12 +412,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             .WithTooltip($"new: {Titled(card)}", Layout.DockSide.Left);
 
     /// <param name="closed">Closed while the panel was held: drawn where and as it was, marked closed, its buttons dead.</param>
-    private Layout.Node Card(CardRow card, NodeMark? node, bool closed = false)
+    /// <param name="merged">A merge that finished a moment ago (<see cref="CardsScreen.Merged"/>): in the live green, marked merged, with only its Merged chip.</param>
+    private Layout.Node Card(CardRow card, NodeMark? node, bool closed = false, bool merged = false)
     {
-        var accent = closed ? Dim : card.Bin == CardBin.Ring ? Ring : ForYou;
+        var accent = merged ? Live : closed ? Dim : card.Bin == CardBin.Ring ? Ring : ForYou;
         var lines = new List<Layout.Node>
         {
-            Layout.Builder.Text($"{(card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}{(closed ? " · closed" : "")}", 10f, accent).RowH(16f),
+            Layout.Builder.Text($"{(merged ? "merged" : card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).RowH(16f),
             // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
             // session's link is its button, Answer in the browser, so its title is no second one.
@@ -426,6 +457,15 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         {
             var number = i + 1;
             var choice = card.Choices[i];
+            if (merged)
+            {
+                // A merge that finished: only what it came to, as the chip it was; nothing else on it is pressed.
+                if (IsChip(choice.Status))
+                {
+                    buttons.Add(ChoiceControl(choice, card.Detail, $"card:{card.Id}:{number}", () => { }));
+                }
+                continue;
+            }
             buttons.Add(closed
                 ? Dead(StatusLabel(choice, card.Detail))
                 : ChoiceControl(choice, card.Detail, $"card:{card.Id}:{number}", () => OnAnswer?.Invoke(card, number)));
@@ -436,7 +476,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             buttons.Add(Button("Answer in the browser" + Followable.Away, $"card:{card.Id}:answer", () => OnOpen?.Invoke(answerUrl)));
         }
         // A card about a leg's worker reads best beside what the worker was doing when it was raised.
-        var session = TranscriptOf?.Invoke(card);
+        var session = merged ? null : TranscriptOf?.Invoke(card);
         if (OnTranscript is { } open && session is not null)
         {
             buttons.Add(Button("Its transcript", $"card:{card.Id}:transcript", () => open(card, session)));
@@ -446,7 +486,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         {
             buttons.Add(Button("Open", $"card:{card.Id}:open", () => show(card, session)));
         }
-        if (watched is null)
+        if (watched is null && !merged)
         {
             // Dismiss (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Button("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
@@ -533,11 +573,45 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// </summary>
     internal static string StatusLabel(CardChoice choice, string? detail = null) => choice.Status switch
     {
-        ChoiceStatus.Pending => $"{choice.Label} · checks running",
+        ChoiceStatus.Pending => choice.Note is { Length: > 0 } running ? $"{choice.Label} · checks running · {running}" : $"{choice.Label} · checks running",
         ChoiceStatus.Failing => $"{choice.Label} · checks failed",
         ChoiceStatus.Conflicting => $"{choice.Label} · conflicts with main",
-        ChoiceStatus.Armed => ArmedProgress.Read(detail) is { } progress ? $"{ArmedLabel} · {progress}" : ArmedLabel,
+        ChoiceStatus.Armed => (choice.Note is { Length: > 0 } note ? note : ArmedProgress.Read(detail)) is { } progress ? $"{ArmedLabel} · {progress}" : ArmedLabel,
+        ChoiceStatus.Queued => choice.Note is { Length: > 0 } place ? $"{QueuedLabel} · {place}" : QueuedLabel,
+        ChoiceStatus.Behind => BehindLabel,
+        ChoiceStatus.Blocked => choice.Note is { Length: > 0 } why ? $"{BlockedLabel} · {Ellipsize(why, NoteFits)}" : BlockedLabel,
+        ChoiceStatus.ChangesRequested => ChangesRequestedLabel,
+        ChoiceStatus.Merged => MergedLabel,
         _ => choice.Label,
+    };
+
+    /// <summary>What each state of GitHub's merge says in place of the Merge verb, where the button is not one.</summary>
+    internal const string QueuedLabel = "In the merge queue";
+    internal const string BehindLabel = "Behind main";
+    internal const string BlockedLabel = "Blocked";
+    internal const string ChangesRequestedLabel = "Changes requested";
+    internal const string MergedLabel = "Merged";
+
+    /// <summary>How much of a note (a failed check's name) a chip shows before it ends in an ellipsis; its tooltip has the whole of it.</summary>
+    internal const int NoteFits = 28;
+
+    internal static string Ellipsize(string text, int fits) => text.Length <= fits ? text : text[..(fits - 1)].TrimEnd() + "…";
+
+    /// <summary>
+    /// The statuses a Merge is not pressed for: it is waited on (armed, queued), blocked by something a press cannot move (a
+    /// failed check, requested changes), or done (merged). Drawn as a chip in the button's size and place, with no hover or click.
+    /// </summary>
+    internal static bool IsChip(string? status) =>
+        status is ChoiceStatus.Armed or ChoiceStatus.Queued or ChoiceStatus.Blocked or ChoiceStatus.ChangesRequested or ChoiceStatus.Merged;
+
+    // What a chip says when hovered: what is going on, and that there is nothing to press; the whole note, uncut.
+    private static string ChipTooltip(CardChoice choice) => choice.Status switch
+    {
+        ChoiceStatus.Armed => "Merges by itself once its checks pass: nothing to press.",
+        ChoiceStatus.Queued => $"In the merge queue{(choice.Note is { Length: > 0 } place ? $", {place}" : "")}: the queue merges it once its checks pass. Nothing to press.",
+        ChoiceStatus.Blocked => $"GitHub blocks the merge{(choice.Note is { Length: > 0 } why ? $": {why}" : "")}. Merging it now would be refused.",
+        ChoiceStatus.ChangesRequested => "A review on GitHub asks for changes. Merging it now would be refused.",
+        _ => "Merged: this card goes in a moment.",
     };
 
     /// <summary>What an armed Merge says in place of its verb: it is not pressed again, it is waited on.</summary>
@@ -551,10 +625,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>The button's colours for a choice's status: green when its checks pass, amber while they run, red when one failed, violet once armed.</summary>
     internal static (RGBAColor32 Bg, RGBAColor32 Hover)? StatusTint(string? status) => status switch
     {
-        ChoiceStatus.Passing => (new RGBAColor32(0x1f, 0x6b, 0x45, 0xff), new RGBAColor32(0x27, 0x85, 0x56, 0xff)),
+        ChoiceStatus.Passing or ChoiceStatus.Merged => (new RGBAColor32(0x1f, 0x6b, 0x45, 0xff), new RGBAColor32(0x27, 0x85, 0x56, 0xff)),
         ChoiceStatus.Pending => (new RGBAColor32(0x6b, 0x52, 0x1c, 0xff), new RGBAColor32(0x85, 0x66, 0x23, 0xff)),
-        ChoiceStatus.Failing or ChoiceStatus.Conflicting => (new RGBAColor32(0x7a, 0x28, 0x28, 0xff), new RGBAColor32(0x96, 0x32, 0x32, 0xff)),
-        ChoiceStatus.Armed => (ArmedBg, ArmedBg),
+        ChoiceStatus.Failing or ChoiceStatus.Conflicting or ChoiceStatus.Behind or ChoiceStatus.Blocked or ChoiceStatus.ChangesRequested => (new RGBAColor32(0x7a, 0x28, 0x28, 0xff), new RGBAColor32(0x96, 0x32, 0x32, 0xff)),
+        ChoiceStatus.Armed or ChoiceStatus.Queued => (ArmedBg, ArmedBg),
         _ => null,
     };
 
@@ -564,11 +638,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// no click. The one place a Merge is drawn, so the card and the flight's page cannot disagree about it.
     /// </summary>
     internal static Layout.Node ChoiceControl(CardChoice choice, string? detail, string action, Action onClick) =>
-        choice.Status == ChoiceStatus.Armed
+        IsChip(choice.Status)
             ? Layout.Builder.Text(StatusLabel(choice, detail), 12f, ArmedText, TextAlign.Center)
                 .Pad(10f, 4f)
                 .WAuto()
-                .Bg(ArmedBg)
-                .WithTooltip("Merges by itself once its checks pass: nothing to press.", Layout.DockSide.Left)
+                .Bg(StatusTint(choice.Status)!.Value.Bg)
+                .WithTooltip(ChipTooltip(choice), Layout.DockSide.Left)
             : Pill(StatusLabel(choice, detail), action, onClick, StatusTint(choice.Status));
 }
