@@ -625,8 +625,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>The button's colours for a choice's status: green when its checks pass, amber while they run, red when one failed, violet once armed.</summary>
     internal static (RGBAColor32 Bg, RGBAColor32 Hover)? StatusTint(string? status) => status switch
     {
-        ChoiceStatus.Passing or ChoiceStatus.Merged => (new RGBAColor32(0x1f, 0x6b, 0x45, 0xff), new RGBAColor32(0x27, 0x85, 0x56, 0xff)),
-        ChoiceStatus.Pending => (new RGBAColor32(0x6b, 0x52, 0x1c, 0xff), new RGBAColor32(0x85, 0x66, 0x23, 0xff)),
+        ChoiceStatus.Passing or ChoiceStatus.Merged => (new RGBAColor32(0x1f, 0x6b, 0x45, 0xff), new RGBAColor32(0x23, 0x74, 0x4c, 0xff)),
+        ChoiceStatus.Pending => (new RGBAColor32(0x6b, 0x52, 0x1c, 0xff), new RGBAColor32(0x78, 0x5c, 0x20, 0xff)),
         ChoiceStatus.Failing or ChoiceStatus.Conflicting or ChoiceStatus.Behind or ChoiceStatus.Blocked or ChoiceStatus.ChangesRequested => (new RGBAColor32(0x7a, 0x28, 0x28, 0xff), new RGBAColor32(0x96, 0x32, 0x32, 0xff)),
         ChoiceStatus.Armed or ChoiceStatus.Queued => (ArmedBg, ArmedBg),
         _ => null,
