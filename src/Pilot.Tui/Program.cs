@@ -11,7 +11,7 @@ using Pilot.Contracts;
 // this machine's node or one on the LAN.
 var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN, host:port; else PILOT_NODE, else this machine's" };
 var socketOption = new Option<string?>("--node-socket") { Description = "This machine's node's socket; else PILOT_NODE_SOCKET, else this user's default" };
-var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 sessions, 3 flights, 4 jobs, 5 fleet, 6 settings, 7 repos, Alt+Left or Backspace back and Alt+Right forward, Ctrl+K the command bar, Ctrl+T the watchtower, q quits")
+var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 sessions, 3 flights, 4 jobs, 5 fleet, 6 settings, 7 repos, 8 chat, Alt+Left or Backspace back and Alt+Right forward, Ctrl+K the command bar, Ctrl+T the chat with the watchtower, q quits")
 {
     Options = { nodeOption, socketOption },
 };
@@ -51,6 +51,7 @@ var home = chrome.Home;
 var fleet = chrome.Fleet;
 var settings = chrome.Settings;
 var cards = chrome.Cards;
+var chat = chrome.Chat;
 var focus = sessions.Ui.Focus;
 var tracker = new BackgroundTaskTracker();
 using var stop = new CancellationTokenSource();
@@ -187,14 +188,24 @@ async Task CardAsync(string verb, CardRow card, string[] cardArgs)
 cards.OnAnswer = (card, number) => _ = CardAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
 cards.OnDismiss = card => _ = CardAsync(Verbs.Dismiss, card, []);
 cards.CanTell = true;
-cards.OnTell = async text =>
-{
-    var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = [text], Who = Who }, stop.Token);
-    var told = envelope.Success && envelope.Response is { Ok: true };
-    cards.NoteTold(text, told, told ? "told" : $"refused: {envelope.Response?.Error ?? envelope.Error}");
-    Redraw();
-};
 cards.OnOpen = url => DashboardCommands.Open(url);
+// The Chat page: the node's chat feed with the box that tells the watchtower; the panel's shortcut opens it with the keyboard in the box.
+chat.Load = async (after, ct) => (await client.GetChatAsync(after, ct)) is { Success: true, Response: { } page }
+    ? page
+    : throw new InvalidOperationException("the node did not send the watchtower's chat");
+chat.OnSend = async text =>
+{
+    var refused = await ChatCommands.TellAsync(client, text, Who, stop.Token);
+    Redraw();
+    return refused;
+};
+chat.Changed = Redraw;
+chat.OpenLink = url => DashboardCommands.Open(url);
+cards.OnChat = () =>
+{
+    chrome.Show(PilotPage.Chat);
+    focus.Focus(chat.Input);
+};
 // The Background tasks page: a job's log followed while it is selected, Cancel a verb on the node.
 jobs.CanCommand = true;
 jobs.LoadLog = async (node, id, ct) => (await (clients.For(node, command: false) ?? throw new InvalidOperationException($"no connection to {node?.Name ?? "this node"}")).GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
@@ -337,6 +348,7 @@ while (!stop.IsCancellationRequested)
         home.Maintenance = flights.Maintenance = feed.Summary(now) is { Connected: true, Node.Maintenance: true };
         var pageTree = page switch
         {
+            PilotPage.Chat => chat.Tree(),
             PilotPage.Sessions => sessions.Tree(pages.Sessions),
             PilotPage.Flights => flights.Tree(pages.Flights),
             PilotPage.Repos => repos.Tree(pages.Repos ?? new ReposScreen([], pages.Sessions.Source, now)),
@@ -381,6 +393,12 @@ void Handle(ConsoleInputEvent raw)
         {
             focus.Focus(field.Input);
         }
+        return;
+    }
+
+    // Shift+Enter (Alt+Enter, where a terminal cannot tell Shift) in the chat's box is a new line, not a send.
+    if (evt is InputEvent.KeyDown && chat.HandleNewLine(evt))
+    {
         return;
     }
 
@@ -433,6 +451,10 @@ void Handle(ConsoleInputEvent raw)
         case InputEvent.KeyDown(InputKey.D7, _):
             chrome.Show(PilotPage.Repos);
             break;
+        case InputEvent.KeyDown(InputKey.D8, _):
+            chrome.Show(PilotPage.Chat);
+            focus.Focus(chat.Input);
+            break;
         case InputEvent.KeyDown(InputKey.K, InputModifier.Ctrl):
             chrome.Show(PilotPage.Flights);
             focus.Focus(flights.CommandInput);
@@ -442,7 +464,8 @@ void Handle(ConsoleInputEvent raw)
             focus.Focus(sessions.SayInput);
             break;
         case InputEvent.KeyDown(InputKey.T, InputModifier.Ctrl):
-            focus.Focus(cards.TellInput);
+            chrome.Show(PilotPage.Chat);
+            focus.Focus(chat.Input);
             break;
         case InputEvent.KeyDown(InputKey.Enter, InputModifier.Ctrl) when page == PilotPage.Flights && flights.Wizard.IsOpen:
             flights.Wizard.GoOn();

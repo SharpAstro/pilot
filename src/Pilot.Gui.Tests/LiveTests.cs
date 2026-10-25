@@ -505,8 +505,8 @@ public sealed class RailTests
         var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = SessionsCapture.FontPath };
         chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 1280, 800));
 
-        PilotChrome<RgbaImage>.Pages.Select(p => p.Label).ShouldBe(["Home", "Sessions", "Flights", "Repos", "Background tasks", "Fleet", "Settings"]);
-        PilotChrome<RgbaImage>.Pages.Where(p => p.Locked is null).Select(p => p.Page).ShouldBe([PilotPage.Home, PilotPage.Sessions, PilotPage.Flights, PilotPage.Repos, PilotPage.Jobs, PilotPage.Fleet, PilotPage.Settings]);
+        PilotChrome<RgbaImage>.Pages.Select(p => p.Label).ShouldBe(["Home", "Chat", "Sessions", "Flights", "Repos", "Background tasks", "Fleet", "Settings"]);
+        PilotChrome<RgbaImage>.Pages.Where(p => p.Locked is null).Select(p => p.Page).ShouldBe([PilotPage.Home, PilotPage.Chat, PilotPage.Sessions, PilotPage.Flights, PilotPage.Repos, PilotPage.Jobs, PilotPage.Fleet, PilotPage.Settings]);
         chrome.Page.ShouldBe(PilotPage.Home);
 
         var regions = new List<ClickableRegion>();

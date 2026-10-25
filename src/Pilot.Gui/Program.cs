@@ -320,19 +320,24 @@ if (feed is not null && client is not null && clients is not null)
         () => CardCommandAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)]), $"answer {card.Id}");
     chrome.Cards.OnDismiss = card => tracker.Run(() => CardCommandAsync(Verbs.Dismiss, card, []), $"dismiss {card.Id}");
 
-    // The watchtower, from its panel: told things through the node, its Remote Control link one click away.
+    // The watchtower, from its panel: its Remote Control link one click away, and a shortcut to the Chat page.
     chrome.Cards.CanTell = true;
-    chrome.Cards.OnTell = async text =>
-    {
-        chrome.Cards.TellStatus = "telling the watchtower…";
-        loop.RequestRedraw();
-        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = [text], Who = GuiSay.Who }, cts.Token);
-        var told = envelope.Success && envelope.Response is { Ok: true };
-        chrome.Cards.NoteTold(text, told, told ? "told" : $"refused: {envelope.Response?.Error ?? envelope.Error}");
-        Console.WriteLine($"pilot-gui: tell watchtower: {chrome.Cards.TellStatus}");
-        loop.RequestRedraw();
-    };
     chrome.Cards.OnOpen = url => OpenAway(url);
+    // The Chat page reads the node's chat feed while it is open; what is typed in its box and a choice button go through the
+    // node's tell, a refusal said in the chat itself.
+    chrome.Chat.Load = async (after, ct) => (await client.GetChatAsync(after, ct)) is { Success: true, Response: { } chat }
+        ? chat
+        : throw new InvalidOperationException("the node did not send the watchtower's chat");
+    chrome.Chat.OnSend = async text =>
+    {
+        var refused = await ChatCommands.TellAsync(client, text, GuiSay.Who, cts.Token);
+        Console.WriteLine($"pilot-gui: tell watchtower: {refused ?? "told"}");
+        return refused;
+    };
+    chrome.Chat.Track = (run, what) => tracker.Run(run, what);
+    chrome.Chat.Changed = loop.RequestRedraw;
+    chrome.Chat.OpenLink = url => OpenAway(url);
+    chrome.Chat.CopyText = text => SetClipboardText(text);
 
     // The Flights page flies a flight from here alone: its buttons are verbs, its command bar the CLI's own commands.
     chrome.Flights.CanCommand = true;

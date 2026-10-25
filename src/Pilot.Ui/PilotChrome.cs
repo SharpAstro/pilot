@@ -15,6 +15,9 @@ internal enum PilotPage
 
     /// <summary>Last in the enum so every other page keeps its number key; the rail lists it after Flights.</summary>
     Repos,
+
+    /// <summary>The conversation with the node's watchtower; last in the enum for the same reason, the rail lists it after Home.</summary>
+    Chat,
 }
 
 /// <summary>
@@ -46,6 +49,7 @@ internal sealed class PilotChrome<TSurface>
     internal static readonly IReadOnlyList<(PilotPage Page, string Icon, string Label, KeyChord Shortcut, string? Locked)> Pages =
     [
         (PilotPage.Home, "\U0001F3E0", "Home", new KeyChord(InputKey.D1, InputModifier.Ctrl), null),
+        (PilotPage.Chat, "\U0001F5FC", "Chat", new KeyChord(InputKey.D8, InputModifier.Ctrl), null),
         (PilotPage.Sessions, "\U0001F4AC", "Sessions", new KeyChord(InputKey.D2, InputModifier.Ctrl), null),
         (PilotPage.Flights, "✈", "Flights", new KeyChord(InputKey.D3, InputModifier.Ctrl), null),
         (PilotPage.Repos, "📁", "Repos", new KeyChord(InputKey.D7, InputModifier.Ctrl), null),
@@ -78,11 +82,14 @@ internal sealed class PilotChrome<TSurface>
         Settings = new SettingsView<TSurface>(renderer);
         Repos = new ReposView<TSurface>(renderer);
         Cards = new CardsView<TSurface>(renderer);
+        Chat = new ChatView<TSurface>(renderer);
         Tooltips = new TooltipLayer<TSurface>(renderer);
         // A flight page's Merge is its card's own choice, run as the panel runs it.
         Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
         Home = new HomeView<TSurface>(renderer);
-        sessions.ShareWith(Flights, Repos, Jobs, Fleet, Settings, Cards);
+        sessions.ShareWith(Flights, Repos, Jobs, Fleet, Settings, Cards, Chat);
+        // The panel's watchtower foot is the way into the chat.
+        Cards.OnChat = () => Show(PilotPage.Chat);
         sessions.About = About;
         Flights.About = About;
         Repos.About = About;
@@ -111,6 +118,7 @@ internal sealed class PilotChrome<TSurface>
         Fleet.Autopilot = Autopilot;
         Settings.Autopilot = Autopilot;
         Home.Autopilot = Autopilot;
+        Chat.Autopilot = Autopilot;
         // A transcript or a flight's page opened from inside a page (Enter, a click on a row) is a move too.
         sessions.Transcript.Opening = RecordOpening;
         Flights.Opening = RecordOpening;
@@ -172,6 +180,9 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>The cards panel down the right, on every page.</summary>
     public CardsView<TSurface> Cards { get; }
 
+    /// <summary>The Chat page: the conversation with the node's watchtower, with the box that tells it things.</summary>
+    public ChatView<TSurface> Chat { get; }
+
     /// <summary>The hover text the router says is due, painted over the window after everything else (<see cref="TooltipLayer{TSurface}"/>).</summary>
     public TooltipLayer<TSurface> Tooltips { get; }
 
@@ -181,6 +192,7 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>The widgets this chrome paints, back to front: what the router asks about input.</summary>
     public IReadOnlyList<IPixelWidget> Widgets => Page switch
     {
+        PilotPage.Chat => [Nav, Rail, Chat, Cards],
         PilotPage.Sessions => [Nav, Rail, Sessions, Cards],
         PilotPage.Flights => [Nav, Rail, Flights, Cards],
         PilotPage.Repos => [Nav, Rail, Repos, Cards],
@@ -191,7 +203,7 @@ internal sealed class PilotChrome<TSurface>
     };
 
     /// <summary>The page shown, as a widget: what takes the keys nothing else did.</summary>
-    public IPixelWidget PageWidget => Page switch { PilotPage.Sessions => Sessions, PilotPage.Flights => Flights, PilotPage.Repos => Repos, PilotPage.Jobs => Jobs, PilotPage.Fleet => Fleet, PilotPage.Settings => Settings, _ => Home };
+    public IPixelWidget PageWidget => Page switch { PilotPage.Chat => Chat, PilotPage.Sessions => Sessions, PilotPage.Flights => Flights, PilotPage.Repos => Repos, PilotPage.Jobs => Jobs, PilotPage.Fleet => Fleet, PilotPage.Settings => Settings, _ => Home };
 
     /// <summary>Whether the last frame drew the cards panel.</summary>
     public bool ShowsCards { get; private set; }
@@ -211,6 +223,15 @@ internal sealed class PilotChrome<TSurface>
         }
         show?.Invoke(page);
         Page = page;
+        // The chat follows its feed while its page is the one shown, and only then.
+        if (page == PilotPage.Chat)
+        {
+            Chat.Open();
+        }
+        else
+        {
+            Chat.Close();
+        }
     }
 
     /// <summary>Whether <see cref="Back"/> has a place to return to.</summary>
@@ -261,6 +282,9 @@ internal sealed class PilotChrome<TSurface>
     {
         switch (evt)
         {
+            // Shift+Enter in the chat's box is a new line: ahead of the router, which would take the Enter as a send.
+            case InputEvent.KeyDown { Key: InputKey.Enter } when Chat.HandleNewLine(evt):
+                return true;
             case InputEvent.KeyDown { Key: InputKey.Left, Modifiers: var mods } when mods == InputModifier.Alt:
             case InputEvent.MouseDown { Button: MouseButton.Back }:
                 Back();
@@ -536,6 +560,7 @@ internal sealed class PilotChrome<TSurface>
             Fleet.DpiScale = value;
             Settings.DpiScale = value;
             Cards.DpiScale = value;
+            Chat.DpiScale = value;
             Tooltips.DpiScale = value;
             Rail.DpiScale = value;
             Nav.DpiScale = value;
@@ -555,6 +580,7 @@ internal sealed class PilotChrome<TSurface>
             Fleet.FontPath = value;
             Settings.FontPath = value;
             Cards.FontPath = value;
+            Chat.FontPath = value;
             Tooltips.FontPath = value;
             Rail.FontPath = value;
             Nav.FontPath = value;
@@ -654,6 +680,9 @@ internal sealed class PilotChrome<TSurface>
                     break;
                 case CardsKey:
                     Cards.Render(cards!, rect);
+                    break;
+                case PageKey when Page == PilotPage.Chat:
+                    Chat.Render(rect);
                     break;
                 case PageKey when Page == PilotPage.Settings:
                     Settings.Render(DateTimeOffset.UtcNow, rect);

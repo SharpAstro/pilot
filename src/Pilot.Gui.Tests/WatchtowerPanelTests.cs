@@ -7,7 +7,7 @@ using Xunit;
 
 namespace Pilot.Gui.Tests;
 
-/// <summary>The right panel as the watchtower's: its head, For you, Handled, and the box pinned at the foot.</summary>
+/// <summary>The right panel as the watchtower's: its head, For you, Handled, and the shortcut to the Chat pinned at the foot.</summary>
 public sealed class WatchtowerPanelTests
 {
     private static SessionRow Tower() => new()
@@ -34,31 +34,43 @@ public sealed class WatchtowerPanelTests
     }
 
     [Fact]
-    public void TheBlocksComeInOrderHeadForYouHandledThenTheBox()
+    public void TheBlocksComeInOrderHeadForYouHandledThenTheChatShortcut()
     {
         var view = NewView(out var renderer);
         using var _ = renderer;
-        view.NoteTold("hello", true, "told");
         var screen = CardsScreen.From([Card("c1"), Card("c2", CardState.Closed, CardBin.Handled)], [Tower()]);
 
         var text = Describe(view, screen);
 
-        var order = new[] { "Watchtower", "For you", "card c1", "Handled", "card c2", "told · hello" }.Select(s => text.IndexOf(s, StringComparison.Ordinal)).ToArray();
+        var order = new[] { "Watchtower", "For you", "card c1", "Handled", "card c2", "Chat with the watchtower" }.Select(s => text.IndexOf(s, StringComparison.Ordinal)).ToArray();
         order.ShouldAllBe(i => i >= 0);
         order.ShouldBe([.. order.OrderBy(i => i)]);
     }
 
     [Fact]
-    public void TheBoxShowsWithoutAWatchtowerAndSaysSo()
+    public void TheChatShortcutShowsWithoutAWatchtowerAndSaysSo()
     {
         var view = NewView(out var renderer);
         using var _ = renderer;
         var text = Describe(view, CardsScreen.From([], []));
 
-        text.ShouldContain("no watchtower session is running");
-        view.NoteTold("anyone?", false, "refused: the watchtower is not running; the node is starting one");
-        Describe(view, CardsScreen.From([], [])).ShouldContain("refused · anyone?");
-        view.TellStatus.ShouldBe("refused: the watchtower is not running; the node is starting one");
+        text.ShouldContain("no watchtower is running");
+        text.ShouldContain("Chat with the watchtower");
+    }
+
+    [Fact]
+    public void AClickOnTheShortcutOpensTheChat()
+    {
+        var view = NewView(out var renderer);
+        using var _ = renderer;
+        var opened = 0;
+        view.OnChat = () => opened++;
+
+        var arranged = Layout.Engine.Arrange(view.Tree(CardsScreen.From([Card("c1")], [Tower()])), new Rect<int>(0, 0, 38, 40), CellMeasureContext.PixelAuthored);
+        var shortcut = arranged.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "cards:chat" });
+        CellLayout.HitTest(arranged, shortcut.Bounds.X + 1, shortcut.Bounds.Y);
+
+        opened.ShouldBe(1);
     }
 
     [Fact]
@@ -138,58 +150,36 @@ public sealed class WatchtowerPanelTests
     }
 
     [Fact]
-    public void TheTellBoxFillsThePanelsWidthLessItsPadding()
+    public void ThePanelHoldsNoTextBoxItsMessagesAreTypedInTheChat()
     {
         var view = NewView(out var renderer);
         using var _ = renderer;
 
         var arranged = Layout.Engine.Arrange(view.Tree(CardsScreen.From([Card("c1")], [Tower()])), new Rect<int>(0, 0, 38, 40), CellMeasureContext.PixelAuthored);
-        var input = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput });
 
-        // Padded the same on both sides, and the padding is not the whole panel: the box is the panel less it.
-        input.Bounds.X.ShouldBeGreaterThan(0);
-        (input.Bounds.X * 2 + input.Bounds.Width).ShouldBe(38);
+        arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).ShouldBeFalse();
     }
 
     [Fact]
-    public void ASnapshotHasNoBox()
+    public void ASnapshotHasNoChatShortcut()
     {
         var view = NewView(out var renderer, canTell: false);
         using var _ = renderer;
-        Describe(view, CardsScreen.From([Card("c1")], [Tower()])).ShouldNotContain("no watchtower session");
+        Describe(view, CardsScreen.From([Card("c1")], [Tower()])).ShouldNotContain("Chat with the watchtower");
     }
 
     [Fact]
-    public void OnlyTheLastFewTellsAreKept()
+    public void TheChatShortcutStaysInViewUnderALongList()
     {
         var view = NewView(out var renderer);
         using var _ = renderer;
-        for (var i = 0; i < 7; i++)
-        {
-            view.NoteTold($"t{i}", i % 2 == 0, "x");
-        }
-
-        view.Told.Select(t => t.Text).ShouldBe(["t3", "t4", "t5", "t6"]);
-        view.Told.Select(t => t.Told).ShouldBe([false, true, false, true]);
-    }
-
-    [Fact]
-    public void TheBoxStaysInViewUnderALongList()
-    {
-        var view = NewView(out var renderer);
-        using var _ = renderer;
-        view.NoteTold("still here", true, "told");
         var cards = Enumerable.Range(0, 40).Select(i => Card($"c{i}")).ToList();
 
         var arranged = Layout.Engine.Arrange(view.Tree(CardsScreen.From(cards, [Tower()])), new Rect<int>(0, 0, 38, 30), CellMeasureContext.PixelAuthored);
 
-        // Arranged inside the 30-row viewport, so the box is pinned and not scrolled out with the cards.
-        var told = arranged.First(a => CellLayout.Describe([a]).Contains("told · still here", StringComparison.Ordinal));
-        (told.Bounds.Y + told.Bounds.Height).ShouldBeLessThanOrEqualTo(30);
-        // The text input is the row right under the told line, in view too.
-        var input = arranged.Where(a => a.Bounds.Y == told.Bounds.Bottom && a.Bounds.Width > 0).ToList();
-        input.ShouldNotBeEmpty();
-        input.ShouldAllBe(a => a.Bounds.Bottom <= 30);
+        // Arranged inside the 30-row viewport, so the shortcut is pinned and not scrolled out with the cards.
+        var shortcut = arranged.First(a => CellLayout.Describe([a]).Contains("Chat with the watchtower", StringComparison.Ordinal));
+        (shortcut.Bounds.Y + shortcut.Bounds.Height).ShouldBeLessThanOrEqualTo(30);
         arranged.Any(a => CellLayout.Describe([a]).Contains("card c39", StringComparison.Ordinal) && a.Bounds.Y + a.Bounds.Height <= 30).ShouldBeFalse();
     }
 
@@ -225,12 +215,11 @@ public sealed class WatchtowerPanelTests
     }
 
     [Fact]
-    public void ACpuRenderPaintsTheBox()
+    public void ACpuRenderPaintsTheFootWithTheChatShortcut()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Cards.CanTell = true;
-        chrome.Cards.NoteTold("hello", true, "told");
 
         chrome.Render(new SessionsScreen([], "test", Live.At), null, CardsScreen.From([Card("c1")], [Tower()]), new RectF32(0, 0, 1280, 800));
 
@@ -238,11 +227,13 @@ public sealed class WatchtowerPanelTests
         FootRows(renderer).ShouldBeGreaterThan(1000);
         var regions = new List<ClickableRegion>();
         chrome.Cards.CollectPaintedRegions(regions);
-        regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).ShouldContain("watchtower:rc");
+        var actions = regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).ToList();
+        actions.ShouldContain("watchtower:rc");
+        actions.ShouldContain("cards:chat");
     }
 
     [Fact]
-    public void ASnapshotRenderPaintsNoBox()
+    public void ASnapshotRenderPaintsNoFoot()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
