@@ -392,7 +392,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private const float AccentBar = 3f;
 
     /// <summary>The cap on a card's detail: more for a card that offers a merge.</summary>
-    internal static int DetailLinesOf(CardRow card) => card.Choices.Any(c => c.Verb == Verbs.Merge) ? MergeDetailLines : DetailLines;
+    internal static int DetailLinesOf(CardRow card) =>
+        card.Choices.Any(c => c.Verb == Verbs.Merge) || card.Kind is "pr-ready" or "merge-failed" ? MergeDetailLines : DetailLines;
 
     // Past these a card's title or detail may well be cut in the panel (a title is one line, a detail three), so it carries
     // its whole text as hover text, opening to the left, into the window rather than off its edge. DIR.Lib's capped wrap
@@ -593,7 +594,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     internal const string MergedLabel = "Merged";
 
     /// <summary>How much of a note (a failed check's name) a chip shows before it ends in an ellipsis; its tooltip has the whole of it.</summary>
-    internal const int NoteFits = 28;
+    internal const int NoteFits = 16;
 
     internal static string Ellipsize(string text, int fits) => text.Length <= fits ? text : text[..(fits - 1)].TrimEnd() + "…";
 

@@ -140,6 +140,30 @@ public sealed class MergeMirrorTests
         Words(arranged).ShouldNotContain("Merge");
     }
 
+    [Theory]
+    [InlineData(300f)]
+    [InlineData(520f)]
+    public void ABlockedChipAndAGoAroundCardsDetailStayInsideTheCardAndAreNeverCutSilently(float width)
+    {
+        var conflict = "GitHub cannot merge it until the conflict is resolved. The node rebases it by itself, once a head; one that conflicts is a go-around: the last leg resolves it.";
+        var cards = new[]
+        {
+            Card([Merge(ChoiceStatus.Blocked, LongCheck)], detail: $"GitHub blocks the merge: {LongCheck} failed."),
+            Card([new CardChoice { Label = "Go around armed-in-gui", Verb = Verbs.GoAround, Target = "flight/PIL244/armed-in-gui", Args = ["rebase"] }], "conflicts", conflict, id: "c2"),
+        };
+        foreach (var card in cards)
+        {
+            var arranged = Arrange(CardsScreen.From([card]), width, out var renderer);
+            using var _ = renderer;
+            var drawn = string.Concat(arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value));
+            foreach (var word in card.Detail!.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                drawn.Contains(word, StringComparison.Ordinal).ShouldBeTrue($"'{word}' of {card.Id}'s detail at {width}");
+            }
+            arranged.Where(a => a.Bounds.X + a.Bounds.Width > width + 1).ShouldBeEmpty();
+        }
+    }
+
     [Fact]
     public void AMergedCardLingersOnThePanelForAFewSecondsAndIsNeverCountedAsWaiting()
     {
