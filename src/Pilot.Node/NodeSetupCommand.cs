@@ -43,6 +43,7 @@ public static class NodeSetupCommand
         var setup = new NodeSetup(options, nodePath, SessionTrackerOptions.FromEnvironment().Profile.Root);
 
         await Step(NodeSetup.HooksKey, "hooks installed");
+        await Step(NodeSetup.MergeGuardKey, "merge guard installed");
         // A node already running started before these settings: ask it to restart with them (a set it runs already is a no-op).
         var running = await NodeSocket.IsListeningAsync(socketPath, cancellationToken);
         await Step(NodeSetup.AutostartKey, running ? "starts at logon" : "starts at logon, and started now");

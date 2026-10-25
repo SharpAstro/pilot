@@ -30,6 +30,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     public const string TrustKey = "trust";
     public const string GhKey = "gh";
     public const string UsageKey = "usage";
+    public const string MergeGuardKey = "merge-guard";
     public const string GuardHooksKey = "guard-hooks";
     public const string BuildRspKey = "build-rsp";
 
@@ -83,6 +84,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             Line = hooks ? $"in {SettingsFile}" : $"pilot's hooks are not in {SettingsFile} for {nodePath}: sessions are seen late and without their state",
             Fix = hooks ? null : "Install hooks",
         });
+        checks.Add(MergeGuardCheck());
         checks.Add(GuardHooksCheck());
         checks.Add(BuildRspCheck());
 
@@ -153,6 +155,8 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                 var output = new StringWriter();
                 return HookCommands.Hooks(install: true, SettingsFile, HookSocket(), nodePath, output, output) == 0 ? null : output.ToString().Trim();
             }
+            case MergeGuardKey:
+                return InstallMergeGuard();
             case GuardHooksKey:
                 return InstallGuardHooks();
             case BuildRspKey:
@@ -186,7 +190,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                     ? null
                     : $"no window opened: run claude in {options.WatchtowerFolder} and accept its trust prompt";
             default:
-                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, HooksKey, GuardHooksKey, BuildRspKey, LanKey, FirewallKey, TrustKey })}, not {key}";
+                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, HooksKey, MergeGuardKey, GuardHooksKey, BuildRspKey, LanKey, FirewallKey, TrustKey })}, not {key}";
         }
     }
 
@@ -203,6 +207,49 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Whether the merge guard (<see cref="MergeGuard"/>) is in Claude Code's user-wide settings for this node's binary: a
+    /// PreToolUse hook on Bash that refuses a merge made around the node. Not optional: without it a session can merge a
+    /// PR the node never guarded. A guard for another path (the node moved) fails it too, and the fix replaces it.
+    /// </summary>
+    private SetupCheck MergeGuardCheck()
+    {
+        const string Title = "Merge guard";
+        try
+        {
+            var text = File.Exists(SettingsFile) ? File.ReadAllText(SettingsFile) : "";
+            return MergeGuard.Installed(text, nodePath)
+                ? new SetupCheck { Key = MergeGuardKey, Title = Title, Ok = true, Line = $"in {SettingsFile}: gh pr merge, a merge by gh api and a push to a default branch are refused, pointing at pilot flight merge" }
+                : new SetupCheck { Key = MergeGuardKey, Title = Title, Ok = false, Line = $"not in {SettingsFile} for {nodePath}: a session can merge a PR, or push to main, around the node", Fix = "Install merge guard" };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return new SetupCheck { Key = MergeGuardKey, Title = Title, Ok = false, Line = $"{SettingsFile}: {ex.Message}" };
+        }
+    }
+
+    /// <summary>Wires the merge guard in Claude Code's settings; null when done, else why not. A second run changes nothing.</summary>
+    private string? InstallMergeGuard()
+    {
+        try
+        {
+            var text = File.Exists(SettingsFile) ? File.ReadAllText(SettingsFile) : "";
+            var updated = MergeGuard.Install(text, nodePath);
+            if (updated != text)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(SettingsFile))!);
+                var temp = SettingsFile + ".pilot.tmp";
+                File.WriteAllText(temp, updated, new System.Text.UTF8Encoding(false));
+                File.Move(temp, SettingsFile, overwrite: true);
+            }
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return $"{SettingsFile}: {ex.Message}";
         }
     }
 
