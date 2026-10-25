@@ -16,6 +16,9 @@ internal sealed partial class FlightsView<TSurface>
 
     private RGBAColor32 GhostBg => P.GhostBg;
 
+    // The picked flight's chain on the canvas, its arrows lit and its cards marked: what it waits on and what waits on it.
+    private IReadOnlySet<string> _chain = new HashSet<string>();
+
     /// <summary>Whether this host can paint the canvas: pilot-tui cannot draw lines, so it sets this false and keeps the list.</summary>
     public bool CanvasAvailable { get; set; } = true;
 
@@ -77,6 +80,7 @@ internal sealed partial class FlightsView<TSurface>
     private Layout.Node CanvasBody(FlightsScreen screen)
     {
         _canvas = FlightCanvas.Build(screen.Lines);
+        _chain = Selected >= 0 && Selected < screen.Lines.Count ? _canvas.Chain(screen.Lines[Selected].Code) : new HashSet<string>();
         var columns = _canvas.Cards.GroupBy(c => c.Column).OrderBy(g => g.Key)
             .Select(g => Layout.Builder.VStack([.. g.OrderBy(c => c.Row).Select(c => c.Line is { } l ? Card(l, c.Index, FlightCanvas.CardHeight, grid: false) : Ghost(c))])
                 .WithGap(FlightCanvas.GapY)
@@ -131,7 +135,7 @@ internal sealed partial class FlightsView<TSurface>
             .Pad(10f, 8f)
             .Stretch();
         return Layout.Builder.HStack(Layout.Builder.Spacer().Bg(color).WFixed(ListTable.StripeWidth).HStar(), body)
-            .Bg(index == Selected ? RowFocusBg : PanelBg)
+            .Bg(index == Selected ? RowFocusBg : !grid && _chain.Contains(line.Code) ? P.LinkedBg : PanelBg)
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index))
@@ -153,9 +157,11 @@ internal sealed partial class FlightsView<TSurface>
             return;
         }
         var s = rect.Width / _canvas.Width;
-        var thick = Math.Max(1, (int)MathF.Round(2f * s));
+        var thin = Math.Max(1, (int)MathF.Round(2f * s));
         var head = ArrowHead * s;
-        for (var edgeIndex = 0; edgeIndex < _canvas.Edges.Count; edgeIndex++)
+        // The picked flight's chain last, so its arrows lie over the rest where they cross.
+        var order = Enumerable.Range(0, _canvas.Edges.Count).OrderBy(i => InChain(_canvas.Edges[i]));
+        foreach (var edgeIndex in order)
         {
             var edge = _canvas.Edges[edgeIndex];
             var x0 = rect.X + edge.X0 * s;
@@ -163,7 +169,9 @@ internal sealed partial class FlightsView<TSurface>
             var x1 = rect.X + edge.X1 * s;
             var y1 = rect.Y + edge.Y1 * s;
             var held = _canvas.Cards[edge.ToCard].Line?.Row.State == FlightState.Held;
-            var color = held ? Held : Dim;
+            var lit = InChain(edge);
+            var color = held ? Held : lit ? Bright : Dim;
+            var thick = lit ? Math.Max(2, (int)MathF.Round(3f * s)) : thin;
             DrawDashedRun(x0, y0, x1, y1, color, thick, ArrowDashes.Phase(edgeIndex), DashLength * s, GapLength * s);
             // Two strokes back from the tip, a spread either side of the line.
             var angle = MathF.Atan2(y1 - y0, x1 - x0);
@@ -173,6 +181,8 @@ internal sealed partial class FlightsView<TSurface>
             }
         }
     }
+
+    private bool InChain(CanvasEdge edge) => _chain.Contains(edge.From) && _chain.Contains(edge.To);
 
     // DrawLineDashed always starts a dash at the line's start, so the phase is made by hand: the pattern is entered `phase`
     // (0..1 of a period) in, so the run opens with the rest of a dash or of a gap, and the dashed line starts after that.

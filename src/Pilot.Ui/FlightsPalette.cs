@@ -33,7 +33,8 @@ internal sealed record FlightsPalette(
     RGBAColor32 ButtonHover,
     RGBAColor32 Failed,
     RGBAColor32 MenuBg,
-    RGBAColor32 GhostBg)
+    RGBAColor32 GhostBg,
+    RGBAColor32 LinkedBg)
 {
     public static FlightsPalette Standard { get; } = new(
         Ground: new(0x12, 0x12, 0x18, 0xff),
@@ -53,7 +54,8 @@ internal sealed record FlightsPalette(
         ButtonHover: new(0x35, 0x4a, 0x70, 0xff),
         Failed: new(0xe0, 0x5a, 0x5a, 0xff),
         MenuBg: new(0x1f, 0x21, 0x2b, 0xff),
-        GhostBg: new(0x14, 0x15, 0x1c, 0xff));
+        GhostBg: new(0x14, 0x15, 0x1c, 0xff),
+        LinkedBg: new(0x20, 0x27, 0x36, 0xff));
 
     /// <summary>Dim reds on black and nothing else: no green or blue in any channel, so the eye stays dark-adapted.</summary>
     public static FlightsPalette Night { get; } = new(
@@ -74,5 +76,6 @@ internal sealed record FlightsPalette(
         ButtonHover: new(0x44, 0x00, 0x00, 0xff),
         Failed: new(0xf0, 0x00, 0x00, 0xff),
         MenuBg: new(0x18, 0x00, 0x00, 0xff),
-        GhostBg: new(0x08, 0x00, 0x00, 0xff));
+        GhostBg: new(0x08, 0x00, 0x00, 0xff),
+        LinkedBg: new(0x1e, 0x00, 0x00, 0xff));
 }
