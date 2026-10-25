@@ -150,6 +150,34 @@ public sealed class FlightDetailTests
     }
 
     [Fact]
+    public void AFlightReadyToMergeSaysSoAtTheTopOfItsPageAndItsMergeAnswersTheCardWhichThePanelLights()
+    {
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        var flights = chrome.Flights;
+        flights.CanCommand = true;
+        var ready = new CardRow
+        {
+            Id = "c9", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/TIA1611", Title = "TIA1611's PR #7 is ready to merge",
+            At = Now, State = CardState.Open, Choices = [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/TIA1611", Args = ["abc1234"] }],
+        };
+        var other = ready with { Id = "c8", Subject = "flight/TIA9", Title = "TIA9's PR #3 is ready to merge" };
+        (CardRow Card, int Number)? answered = null;
+        chrome.Cards.OnAnswer = (card, number) => answered = (card, number);
+        chrome.Show(PilotPage.Flights);
+        flights.OpenDetail("TIA1611");
+
+        chrome.Render(new SessionsScreen([], "test", Now), new FlightsScreen([Line()], "test", Now), CardsScreen.From([ready, other]), new RectF32(0, 0, 1600, 900));
+
+        // The panel lights the open flight's card, not the other's.
+        chrome.Cards.Focus.ShouldBe("TIA1611");
+        var regions = new List<ClickableRegion>();
+        flights.CollectPaintedRegions(regions);
+        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:merge-card" }).OnClick!.Invoke(InputModifier.None);
+        answered.ShouldBe((ready, 1));
+    }
+
+    [Fact]
     public void TheArrowAndPageKeysScrollAnOpenPageAndHomeGoesBackToTheTop()
     {
         using var renderer = new RgbaImageRenderer(1280, 260);

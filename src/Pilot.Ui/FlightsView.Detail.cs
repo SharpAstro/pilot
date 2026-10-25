@@ -16,6 +16,15 @@ internal sealed partial class FlightsView<TSurface>
     /// <summary>The open page's flight code, or null.</summary>
     public string? OpenCode => _openCode;
 
+    /// <summary>The flight the page is about: the one open, else the one selected; the cards panel lights its cards.</summary>
+    public string? FocusCode => _openCode ?? (Selected >= 0 && Selected < _screen.Lines.Count ? _screen.Lines[Selected].Code : null);
+
+    /// <summary>The cards panel as this frame shows it: the open page finds its flight's card that offers the merge.</summary>
+    public CardsScreen? Cards { get; set; }
+
+    /// <summary>Runs a card's choice, as the panel's button does, so the card closes once it is done.</summary>
+    public Action<CardRow, int>? OnAnswerCard { get; set; }
+
     /// <summary>Called as a flight's page is about to open, before what the window shows changes: the chrome records the place being left.</summary>
     public Action? Opening { get; set; }
 
@@ -163,13 +172,48 @@ internal sealed partial class FlightsView<TSurface>
             ? [Layout.Builder.Text("no legs yet: Plan a leg", 13f, Dim).RowH(24f)]
             : detail.Legs.Select(l => LegBlock(line.Code, l)).ToList();
 
+        List<Layout.Node> page =
+        [
+            Layout.Builder.HStack([.. head]).WithGap(10f).RowH(32f),
+        ];
+        if (ReadyToMerge(line) is { } ready)
+        {
+            page.Add(ready);
+        }
         return Layout.Builder.VStack(
-                Layout.Builder.HStack([.. head]).WithGap(10f).RowH(32f),
+                [.. page,
                 Layout.Builder.HStack([.. facts]).WithGap(14f).RowH(22f),
                 Layout.Builder.HStack([.. WhoWorks(line)]).WithGap(10f).RowH(26f),
-                Layout.Builder.VStack([.. legs]).WithGap(10f).WithScroll(_detailScroll).Stretch())
+                Layout.Builder.VStack([.. legs]).WithGap(10f).WithScroll(_detailScroll).Stretch()])
             .Pad(Gutter, 8f)
             .Stretch();
+    }
+
+    /// <summary>
+    /// A flight whose PR waits on the person, said at the top of its page and not only in the panel: the card that offers
+    /// the merge, its title, and its Merge, which runs the card's own choice, so the card closes as it would from the panel
+    /// (SE1, 2026-10-25). Null when no such card is open.
+    /// </summary>
+    private Layout.Node? ReadyToMerge(FlightLine line)
+    {
+        if (Cards is not { } cards
+            || cards.Open.FirstOrDefault(c => c.Subject == Verbs.FlightTarget(line.Code) && c.Choices.Any(ch => ch.Verb == Verbs.Merge)
+                && (line.Node is null || cards.NodeOf(c) is not { } node || node.Key == line.Node.Key)) is not { } card)
+        {
+            return null;
+        }
+        var number = Array.FindIndex(card.Choices, ch => ch.Verb == Verbs.Merge) + 1;
+        var choice = card.Choices[number - 1];
+        var cells = new List<Layout.Node>
+        {
+            Layout.Builder.Spacer().Bg(Flying).WFixed(4f).HStar(),
+            Layout.Builder.Text(card.Title, 14f, Bright).WStar(),
+        };
+        if (CanCommand && OnAnswerCard is { } answer)
+        {
+            cells.Add(Pill(CardsView<TSurface>.StatusLabel(choice), $"flight:{line.Code}:merge-card", () => answer(card, number)));
+        }
+        return Layout.Builder.HStack([.. cells]).WithGap(12f).Pad(0f, 6f).Bg(RowFocusBg).RowH(40f);
     }
 
     /// <summary>

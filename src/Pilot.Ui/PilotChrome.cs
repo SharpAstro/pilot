@@ -79,6 +79,8 @@ internal sealed class PilotChrome<TSurface>
         Repos = new ReposView<TSurface>(renderer);
         Cards = new CardsView<TSurface>(renderer);
         Tooltips = new TooltipLayer<TSurface>(renderer);
+        // A flight page's Merge is its card's own choice, run as the panel runs it.
+        Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
         Home = new HomeView<TSurface>(renderer);
         sessions.ShareWith(Flights, Repos, Jobs, Fleet, Settings, Cards);
         sessions.About = About;
@@ -618,6 +620,14 @@ internal sealed class PilotChrome<TSurface>
         // (the sessions table needs the width more than an empty "nothing waits on you"). The engine places them at the
         // window's scale; each is painted into its own leaf.
         ShowsCards = cards is { HasAny: true } || (cards is not null && Cards.CanTell);
+        // The page's flight lights its cards in the panel, and the flight's own page offers the merge its card does.
+        Flights.Cards = cards;
+        Cards.Focus = Page switch
+        {
+            PilotPage.Flights => Flights.FocusCode,
+            PilotPage.Sessions => Sessions.FocusFlight,
+            _ => null,
+        };
         var tree = ShowsCards
             ? Layout.Builder.HStack(Layout.Builder.Fill(key: RailKey).ColW(RailWidth), Layout.Builder.Fill(key: PageKey).Stretch(),
                 Layout.Builder.Fill(key: CardsKey).ColW(CardsView<TSurface>.Width))
