@@ -63,11 +63,47 @@ internal sealed class AboutCard
 
     public void Close() => IsOpen = false;
 
-    /// <summary>The header's button. Stays a word for want of a help glyph: SharpAstro/DIR.Lib#151.</summary>
-    public Layout.Node Button(FlightsPalette? night = null) =>
-        Layout.Builder.Text("?", 14f, night?.Bright ?? Bright, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(night?.Button ?? ButtonBg).BgHover(night?.ButtonHover ?? ButtonHover)
+    /// <summary>
+    /// The newer pilot this machine has installed than the window runs (<c>2.0.4-beta.297</c>), or null: the node updates
+    /// itself and the window runs on from its old binary. While set, a light pulses beside the button on every page.
+    /// </summary>
+    public Func<string?>? Newer { get; set; }
+
+    /// <summary>Starts the window again on the installed binary: the light's click. Null where the host cannot; the light then only says it.</summary>
+    public Action? Restart { get; set; }
+
+    /// <summary>What the light's pulse counts in, milliseconds; a test sets it to see each phase.</summary>
+    internal Func<long> Clock { get; set; } = () => Environment.TickCount64;
+
+    private static readonly RGBAColor32 LightOn = new(0xf0, 0xb4, 0x3c, 0xff);
+    private static readonly RGBAColor32 LightOff = new(0x5c, 0x48, 0x22, 0xff);
+    private static readonly RGBAColor32 LightText = new(0x1a, 0x14, 0x08, 0xff);
+
+    /// <summary>
+    /// The header's button, and while a newer pilot is installed the update light before it. The "?" stays a word for want
+    /// of a help glyph: SharpAstro/DIR.Lib#151.
+    /// </summary>
+    public Layout.Node Button(FlightsPalette? night = null)
+    {
+        var help = Layout.Builder.Text("?", 14f, night?.Bright ?? Bright, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(night?.Button ?? ButtonBg).BgHover(night?.ButtonHover ?? ButtonHover)
             .Follows(new HitResult.ButtonHit("about:toggle"), _ => Toggle())
             .WithTooltip("Which pilot this is, where its things are, and the keys");
+        return Newer?.Invoke() is { } newer ? Layout.Builder.HStack(Light(newer), help).WithGap(8f).WAuto() : help;
+    }
+
+    /// <summary>Whether the light is lit at this moment: on and off a second each, redrawn at least once a second.</summary>
+    internal bool Lit => Clock() / 1000 % 2 == 0;
+
+    // A pill in amber that pulses, saying what is installed; a click restarts the window on it.
+    private Layout.Node Light(string newer)
+    {
+        var lit = Lit;
+        var label = newer.LastIndexOf('-') is var dash and >= 0 ? newer[(dash + 1)..] : newer;
+        var light = Layout.Builder.Text(Restart is null ? $"{label} installed" : $"Restart for {label}", 13f, lit ? LightText : LightOn, TextAlign.Center)
+            .Pad(10f, 4f).WAuto().Bg(lit ? LightOn : LightOff)
+            .WithTooltip($"pilot {newer} is installed; this window runs {NodeFeed.ClientVersion}." + (Restart is null ? " Restart it to use the new one." : " A click starts it again on the new one."));
+        return Restart is { } restart ? light.Follows(new HitResult.ButtonHit("about:restart"), _ => restart()) : light;
+    }
 
     /// <summary><paramref name="page"/>, with the card over its top right while it is open.</summary>
     public Layout.Node Over(Layout.Node page, FlightsPalette? night = null) => IsOpen

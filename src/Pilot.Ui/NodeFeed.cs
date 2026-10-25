@@ -117,6 +117,9 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// </summary>
     public string UpdateNote => UpdateNoteOf(Volatile.Read(ref _view));
 
+    /// <summary>The release the node runs when it is newer than this window's (<c>2.0.4-beta.297</c>), else null: what the update light offers.</summary>
+    public string? NewerInstalled => NewerOf(Volatile.Read(ref _view));
+
     /// <summary>Moves on every applied event and every change of connection, so the loop knows to draw again.</summary>
     public long Version => Interlocked.Read(ref _version);
 
@@ -319,15 +322,53 @@ internal sealed class NodeFeed : IAsyncDisposable
     }
 
     private static string UpdateNoteOf(View view) =>
-        view.NodeVersion is { } node && IsNewer(ClientVersion, Plain(node))
-            ? $" · pilot {Plain(node)} is installed: restart to use it"
-            : "";
+        NewerOf(view) is { } newer ? $" · pilot {newer} is installed: restart to use it" : "";
+
+    private static string? NewerOf(View view) =>
+        view.NodeVersion is { } node && IsNewer(ClientVersion, Plain(node)) ? Plain(node) : null;
 
     // A version as people read it: no commit after it (2.0.12+3969354…).
     private static string Plain(string version) => version.Split('+')[0].Trim();
 
-    private static bool IsNewer(string current, string latest)
-        => System.Version.TryParse(current.Split('-')[0], out var have) && System.Version.TryParse(latest.Split('-')[0], out var offered) && offered > have;
+    /// <summary>
+    /// Whether <paramref name="latest"/> is a newer release than <paramref name="current"/>: by major.minor.patch, then a
+    /// release above its own betas and a beta by its number. Betas share their patch (2.0.4-beta.296, 2.0.4-beta.297), and
+    /// compared by the patch alone a beta never saw the next one, so a beta window never said one was installed.
+    /// </summary>
+    internal static bool IsNewer(string current, string latest)
+    {
+        var (have, haveBeta) = Release(current);
+        var (offered, offeredBeta) = Release(latest);
+        if (have is null || offered is null)
+        {
+            return false;
+        }
+        if (offered != have)
+        {
+            return offered > have;
+        }
+        return (haveBeta, offeredBeta) switch
+        {
+            (not null, null) => true,
+            ({ } h, { } o) => o > h,
+            _ => false,
+        };
+    }
+
+    // 2.0.4-beta.297+abc as (2.0.4, 297), 2.0.4 as (2.0.4, null); a prerelease with no number counts as 0.
+    private static (System.Version? Core, int? Beta) Release(string version)
+    {
+        var plain = Plain(version);
+        var dash = plain.IndexOf('-');
+        var core = System.Version.TryParse(dash < 0 ? plain : plain[..dash], out var parsed) ? parsed : null;
+        if (dash < 0)
+        {
+            return (core, null);
+        }
+        var tail = plain[(dash + 1)..];
+        var dot = tail.LastIndexOf('.');
+        return (core, dot >= 0 && int.TryParse(tail[(dot + 1)..], System.Globalization.CultureInfo.InvariantCulture, out var number) ? number : 0);
+    }
 
     // On the feed thread: the event goes into the mirror, and the mirror out as the next View.
     private void Apply(NodeEvent next)

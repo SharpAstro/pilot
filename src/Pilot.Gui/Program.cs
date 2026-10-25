@@ -124,6 +124,8 @@ if (options.Capture is { } capturePath)
 
 // One window per user and node: a second launch on the same node raises the first one and leaves; a window on another
 // node (--node) is a window of its own, saying whose it is. The Fleet page opens none.
+// Set by the update light: the window closes, then starts again on the binary the node installed.
+var restarting = false;
 var gateChannel = InstanceGate.ChannelFor("pilot-v2-gui", remoteEndpoint?.ToLowerInvariant() ?? "");
 using var gate = InstanceGate.TryClaim(gateChannel);
 if (gate is null)
@@ -267,6 +269,18 @@ if (feed is not null && client is not null && clients is not null)
         nodeInfo = await client.GetNodeAsync(cts.Token);
         loop.RequestRedraw();
     }, "the ? card's node");
+    // The update light: this machine's node runs a newer pilot than this window, which it installed beside it. A window on
+    // another node (--node) is told nothing: that node's install is not this machine's.
+    if (remoteEndpoint is null)
+    {
+        chrome.About.Newer = () => feed.NewerInstalled;
+        chrome.About.Restart = () =>
+        {
+            restarting = true;
+            // Cancelling runs the loop's own wind-down, off this thread: the window closes as it would, then starts again below.
+            _ = cts.CancelAsync();
+        };
+    }
     view.OnNewFlight = repo =>
     {
         chrome.Show(PilotPage.Flights);
@@ -720,6 +734,15 @@ if (options.ExitAfter is { } after)
 
 loop.Run(cts.Token);
 ShutdownDrain.PumpUntilComplete(loop, ShutDownAsync(), Console.Error);
+if (restarting && Environment.ProcessPath is { } self)
+{
+    // The gate first: held, the new window would hand off to this one and leave. The binary at this path is the new one,
+    // the node's update having moved the running one aside.
+    gate?.Dispose();
+    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(self, args) { UseShellExecute = false });
+    Console.WriteLine($"pilot-gui: window closed; started again on {self}.");
+    return 0;
+}
 Console.WriteLine(cts.IsCancellationRequested ? "pilot-gui: --exit-after reached; window closed." : "pilot-gui: window closed.");
 return 0;
 
