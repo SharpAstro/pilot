@@ -338,7 +338,16 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             .RowH(RowHeight)
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
-            .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index));
+            .Clickable(new HitResult.ListItemHit(ListId, index), _ =>
+            {
+                ListCursor.MoveTo(index);
+                // The row's own click does what its triangle does, when it has one: the row has no other action of its own,
+                // and the triangle is a small target (SE1, 2026-10-25). Its New flight and triangle keep their clicks.
+                if (line.Worktrees.Count > 0)
+                {
+                    Toggle(line);
+                }
+            });
         // The selection stated as a background too: a terminal paints no focus of its own, and on pixels it is the focus colour.
         return index == Selected ? row.Bg(RowFocusBg) : (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }
