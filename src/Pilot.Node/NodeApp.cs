@@ -296,6 +296,7 @@ public static class NodeApp
                 SocketPath = options.SocketPath,
                 Stream = state.Stream,
                 Maintenance = models.Maintenance,
+                Autopilot = models.Autopilot,
                 AcceptsFleetFlights = models.AcceptsFleetFlights,
                 Account = state.Usage()?.Account,
             }),
@@ -412,7 +413,7 @@ public static class NodeApp
                 {
                     return Refuse($"{command.Verb} is for this machine only");
                 }
-                command = command with { Who = $"{grant}/{command.Who}" };
+                command = command with { Who = $"{grant}/{command.Who}", Grant = grant, Agent = false };
             }
 
             // A say takes seconds and runs off the state's lock. It is not cut short when its client goes: a session

@@ -48,6 +48,12 @@ public sealed record NodeInfo
     /// <summary>Whether the node is in maintenance (<c>pilot settings set maintenance on</c>): it takes no new flight, and says so to a create-flight; what is already flying carries on.</summary>
     public bool Maintenance { get; init; }
 
+    /// <summary>
+    /// Whether the node's autopilot is on (<c>pilot settings set autopilot on</c>): an assistant's your-only requests (merge,
+    /// land, settings…) run directly when the person asked, instead of raising a confirm card. Off unless the person saved it on.
+    /// </summary>
+    public bool Autopilot { get; init; }
+
     /// <summary>Whether the node is willing to take a flight another node of the fleet routes to it (<c>accept-fleet-flights</c>); off unless set.</summary>
     public bool AcceptsFleetFlights { get; init; }
 

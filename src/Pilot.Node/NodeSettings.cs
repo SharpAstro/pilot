@@ -32,6 +32,7 @@ public sealed record NodeSettings
     public const string WeekLimitKey = "week-limit";
     public const string MaintenanceKey = "maintenance";
     public const string AcceptFleetFlightsKey = "accept-fleet-flights";
+    public const string AutopilotKey = "autopilot";
 
     /// <summary>How a flight's PR is merged when the merge names no method: rebase keeps every commit's subject, which a
     /// repo's docs may cite (tianwen's rule); squash makes one commit of them; merge adds a merge commit.</summary>
@@ -39,7 +40,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey,
          .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey)];
 
     /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
@@ -52,6 +53,9 @@ public sealed record NodeSettings
 
     /// <summary>Whether the node is willing to take a flight another node of the fleet routes to it (<see cref="AcceptFleetFlightsKey"/>); off unless set.</summary>
     public bool? AcceptFleetFlights { get; init; }
+
+    /// <summary>Whether an assistant's your-only requests run directly (<see cref="AutopilotKey"/>) rather than raising a confirm card; off unless the person saved it on, and only the person may.</summary>
+    public bool? Autopilot { get; init; }
 
     public int? LanPort { get; init; }
 
@@ -126,6 +130,7 @@ public sealed record NodeSettings
                     LanKey => JsonValue.Create(Lan),
                     MaintenanceKey => JsonValue.Create(Maintenance),
                     AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
+                    AutopilotKey => JsonValue.Create(Autopilot),
                     LanPortKey => JsonValue.Create(LanPort),
                     MaxJobsKey => JsonValue.Create(MaxJobs),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
@@ -150,6 +155,7 @@ public sealed record NodeSettings
         LanKey => Lan is { } lan ? [lan ? "on" : "off"] : null,
         MaintenanceKey => Maintenance is { } maintenance ? [maintenance ? "on" : "off"] : null,
         AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
+        AutopilotKey => Autopilot is { } autopilot ? [autopilot ? "on" : "off"] : null,
         LanPortKey => LanPort is { } port ? [port.ToString(CultureInfo.InvariantCulture)] : null,
         MachineKey => Machine is { } machine ? [machine] : null,
         RepoRootsKey => RepoRoots,
@@ -204,6 +210,14 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } accept
                     ? (settings with { AcceptFleetFlights = accept }, null)
                     : (null, "accept-fleet-flights takes on or off");
+            case AutopilotKey:
+                if (clear)
+                {
+                    return (settings with { Autopilot = null }, null);
+                }
+                return OnOff(One()) is { } autopilot
+                    ? (settings with { Autopilot = autopilot }, null)
+                    : (null, "autopilot takes on or off");
             case LanPortKey:
                 if (clear)
                 {

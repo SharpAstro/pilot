@@ -160,6 +160,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>Whether the autopilot is on (<see cref="NodeSettings.AutopilotKey"/>): in force at once, and off unless the person saved it on.</summary>
+    public bool Autopilot
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.Autopilot ?? false;
+            }
+        }
+    }
+
     /// <summary>Whether the node is willing to take a flight another node routes to it (<see cref="NodeSettings.AcceptFleetFlightsKey"/>); off unless set.</summary>
     public bool AcceptsFleetFlights
     {
