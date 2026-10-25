@@ -414,7 +414,7 @@ The cache is read every three minutes once something has asked (a node nobody as
 pilot status                                   # flights, their legs and artifacts, and the live sessions
 pilot status --output-format markdown          # the same as Markdown (see Output formats)
 pilot sessions
-pilot repos [--all] [--refresh]                # each tracked repo: branch, worktrees (flight, diff stat) and open PRs; --all adds untracked ones
+pilot repos [--all] [--refresh] [--output-format markdown]   # each tracked repo: branch, worktrees (flight, diff stat) and open PRs; --all adds untracked ones
 pilot repos sync                               # fetch -p --all, then fast-forward each tracked repo's default branch; prints each repo's outcome
 pilot issue create <title> [--body <text>] [--repo <path>]   # a new issue through gh; prints its number
 pilot flight create <issue> [title…] [--repo <path>]
@@ -458,9 +458,9 @@ when its node is not on the default socket. Exit codes: 0 done, 1 refused by the
 
 ### Output formats
 
-`--output-format auto|rich|markdown|plain` is taken on any command, and `status` reads it. `plain` is the text above.
+`--output-format auto|rich|markdown|plain` is taken on any command, and `status`, `cards` and `repos` read it. `plain` is the text above.
 `markdown` is the Markdown source: the issue and PR as links, each flight's legs in a table, and a leg's screenshot as an
-image. `rich` is that Markdown rendered for the terminal by Console.Lib's `MarkdownOutput`, as `mdcat` renders it: colour,
+image; for `cards` a heading per card, for `repos` a heading per repo with its worktrees and open PRs as tables. `rich` is that Markdown rendered for the terminal by Console.Lib's `MarkdownOutput`, as `mdcat` renders it: colour,
 clickable links, and the screenshot itself on a terminal that can show it. `auto`, the default, is rich only when
 standard output is a terminal, `NO_COLOR` is unset and the terminal answers that it shows Sixel. Anything else (a pipe,
 a script, an agent's shell) is plain, and the terminal is not asked. Only the CLI renders, through the `RichOutput` it
