@@ -129,6 +129,13 @@ public static class Briefs
         text.AppendLine("  runs it as a job and wakes you with how it ended and its last lines; do not wait for it or poll it. The machine");
         text.AppendLine("  is shared with other flights, so it may wait its turn first; that costs you nothing. Short commands (one test,"
             + " a quick build of one project) you run yourself, as usual."); 
+        // Claude Code isolates a -w session in its worktree and refuses a command it cannot prove stays inside: a git in a
+        // loop, a pilot run handed a shell's -Command string. The worker recovers by splitting it, a turn lost each time
+        // (TIA1781's cross-structure, SE1 2026-10-25).
+        text.AppendLine("- This session is held to the plane, and Claude Code refuses a command it cannot read as staying inside it.");
+        text.AppendLine($"  Give `{run} run --` the command itself (`{run} run -- dotnet test ...`); the node runs it in its own shell, so");
+        text.AppendLine("  never wrap it in `pwsh` or `bash -c`, which is refused: several steps are a job each, one after the other. Run");
+        text.AppendLine($"  git plainly, one command or a few joined by `&&`, never inside a loop: tick steps as `{run} check 1 && {run} check 2`.");
         text.AppendLine();
         text.AppendLine("## When you stop");
         text.AppendLine("End your turn with a short report: what you did, how you checked it (the Done-when, rerun), and anything");

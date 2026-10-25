@@ -1045,6 +1045,10 @@ public sealed class LegCommanderTests : IDisposable
         Briefs.For(flight, leg, [leg], cli: @"C:\Program Files\pilot\pilot.exe", socket: @"D:\sockets\pilot.sock")
             .ShouldContain(@"`""C:\Program Files\pilot\pilot.exe"" --node-socket ""D:\sockets\pilot.sock"" check <step number>`");
         Briefs.For(flight, leg, [leg], cli: "pilot").ShouldContain("`pilot check <step number>`");
+        // Claude Code refuses, in a -w session, a pilot run wrapped in a shell and a git in a loop: the brief says so up front.
+        var brief = Briefs.For(flight, leg, [leg], cli: "pilot");
+        brief.ShouldContain("never wrap it in `pwsh` or `bash -c`");
+        brief.ShouldContain("`pilot check 1 && pilot check 2`");
     }
 
     [Fact]
