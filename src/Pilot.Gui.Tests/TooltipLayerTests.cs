@@ -12,6 +12,10 @@ namespace Pilot.Gui.Tests;
 /// </summary>
 public sealed class TooltipLayerTests
 {
+    private const string Detail = "By sebgod, reviewed at 9e1efa84.\nPosts as COMMENT under sebgod, 3 inline comments.\n"
+        + "The draft: C:\\Users\\SebastianGodelet\\AppData\\Local\\pilot2\\reviews\\SharpAstro\\pilot-230.json\n"
+        + "Does what it says, and the LegWatchTests, FlightDetailTests and MergedFleetTests suites pass here (11 + 50). Three small things to look at before it lands.";
+
     private static int Lit(RgbaImage image) => Enumerable.Range(0, image.Pixels.Length / 4).Count(p => image.Pixels[p * 4 + 3] != 0);
 
     [Fact]
@@ -25,5 +29,41 @@ public sealed class TooltipLayerTests
 
         chrome.Tooltips.Render(new TooltipRequest("COD42's PR #43 is ready to merge", new RectF32(20, 20, 120, 20)) { Side = Layout.DockSide.Bottom }, new RectF32(0, 0, 400, 200));
         Lit(renderer.Surface).ShouldBeGreaterThan(500);
+    }
+
+    [Fact]
+    public void ALongTooltipWrapsInABoxNoWiderThanItsMaximumAndAShortOneIsItsOwnWidth()
+    {
+        // A card's whole detail, docked left of the panel, was a box as wide as the window with its end cut off (SE1, 2026-10-25).
+        var window = new Rect<float>(0, 0, 2000, 1000);
+        var anchor = new RectF32(1700, 200, 280, 40);
+
+        var whole = Box(new TooltipRequest(Detail, anchor) { Side = Layout.DockSide.Left }, window);
+        whole.Width.ShouldBeLessThanOrEqualTo(TooltipLayer<RgbaImage>.MaxWidth + 20f);
+        // Wrapped, not cut: taller than its four source lines.
+        whole.Height.ShouldBeGreaterThan(5 * 14f);
+        (whole.X + whole.Width).ShouldBeLessThanOrEqualTo(anchor.X);
+
+        Box(new TooltipRequest("Home (Ctrl+1)", anchor) { Side = Layout.DockSide.Left }, window).Width.ShouldBeLessThan(150f);
+
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 } capture)
+        {
+            using var renderer = new RgbaImageRenderer(2000, 500);
+            var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+            chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 2000, 500));
+            chrome.Tooltips.Render(new TooltipRequest(Detail, anchor) { Side = Layout.DockSide.Left }, new RectF32(0, 0, 2000, 500));
+            File.WriteAllBytes(capture, SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, 2000, 500));
+        }
+    }
+
+    // The box the tooltip is drawn in: the arranged node with its background, the widest one.
+    private static Rect<float> Box(TooltipRequest request, Rect<float> window)
+    {
+        using var renderer = new RgbaImageRenderer(1, 1);
+        return Layout.Engine.Arrange(TooltipLayer<RgbaImage>.Tree(request), window, new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f))
+            .Where(a => a.Node.Background is not null)
+            .Select(a => a.Bounds)
+            .OrderByDescending(b => b.Width * b.Height)
+            .First();
     }
 }
