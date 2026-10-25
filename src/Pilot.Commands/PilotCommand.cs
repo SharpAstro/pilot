@@ -159,7 +159,8 @@ public static class PilotCommand
         }
 
         // status, sessions
-        var status = Action(new Command("status", "Flights, their legs and artifacts, open cards, and live sessions"), async (parseResult, client, ct) =>
+        var allFlights = new Option<bool>("--all") { Description = "Landed flights too, not only the ones in the air" };
+        var status = Action(new Command("status", "Flights in the air, their legs and artifacts, open cards, and live sessions") { Options = { allFlights } }, async (parseResult, client, ct) =>
         {
             var snapshot = await SnapshotAsync(client, ct);
             var maintenance = false;
@@ -174,8 +175,9 @@ public static class PilotCommand
             {
                 // The node's own word on itself is a line more: the flights and sessions are what status is for.
             }
-            await WriteAsync(parseResult.GetValue(outputFormat), () => Status(snapshot, maintenance: maintenance, autopilot: autopilot),
-                () => StatusMarkdown.Build(snapshot, maintenance, autopilot));
+            var everyFlight = parseResult.GetValue(allFlights);
+            await WriteAsync(parseResult.GetValue(outputFormat), () => Status(snapshot, maintenance: maintenance, autopilot: autopilot, all: everyFlight),
+                () => StatusMarkdown.Build(snapshot, maintenance, autopilot, everyFlight));
             return 0;
         });
         var sessions = Action(new Command("sessions", "Every Claude session on the machine"), async (_, client, ct) =>
@@ -965,8 +967,18 @@ public static class PilotCommand
             ?? throw new IOException("the node's stream did not start with a snapshot");
     }
 
-    /// <summary>The flights and their legs, a line each, and the live sessions.</summary>
-    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false, bool? autopilot = null)
+    /// <summary>The flights not landed, and how many landed ones that leaves out.</summary>
+    internal static (List<FlightRow> Flights, int Landed) InTheAir(List<FlightRow> flights) =>
+        ([.. flights.Where(f => f.State != FlightState.Landed)], flights.Count(f => f.State == FlightState.Landed));
+
+    internal static string LandedHidden(int landed, string command = "pilot status --all") =>
+        $"{landed} landed {(landed == 1 ? "flight" : "flights")} not shown: {command}";
+
+    /// <summary>
+    /// The flights and their legs, a line each, and the live sessions. Landed flights are left out unless <paramref name="all"/>,
+    /// with a line saying how many; a flight asked for by <paramref name="code"/>, or the newest, shows whatever its state.
+    /// </summary>
+    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false, bool? autopilot = null, bool all = false)
     {
         var text = new System.Text.StringBuilder();
         if (!newestOnly && code is null && maintenance)
@@ -996,6 +1008,11 @@ public static class PilotCommand
         {
             flights = [.. flights.Where(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase))];
         }
+        var landed = 0;
+        if (!newestOnly && code is null && !all)
+        {
+            (flights, landed) = InTheAir(flights);
+        }
         foreach (var flight in flights)
         {
             var state = flight.State switch
@@ -1021,7 +1038,11 @@ public static class PilotCommand
         {
             if (flights.Count == 0)
             {
-                text.AppendLine("No flights.");
+                text.AppendLine(landed > 0 ? "No flights in the air." : "No flights.");
+            }
+            if (landed > 0)
+            {
+                text.AppendLine(LandedHidden(landed));
             }
             foreach (var review in snapshot.PrReviews.Where(r => r.State != PrReviewState.Closed).OrderBy(r => r.StartedAt))
             {

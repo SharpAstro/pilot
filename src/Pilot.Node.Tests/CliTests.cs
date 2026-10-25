@@ -151,10 +151,18 @@ public sealed class CliTests : IAsyncLifetime
         after.Single(c => c.Id == "c1").Outcome.ShouldBe("Merge");
         after.Single(c => c.Kind == "landed").Bin.ShouldBe(CardBin.ForYou);
 
-        var (_, status, _) = await Pilot(_root, "status");
+        // Landed, it leaves status, which says how many it left out; --all shows it with its legs.
+        var (_, inTheAir, _) = await Pilot(_root, "status");
+        inTheAir.ShouldNotContain("TIA1611");
+        inTheAir.ShouldContain("No flights in the air.");
+        inTheAir.ShouldContain("1 landed flight not shown: pilot status --all");
+        (await Pilot(_root, "status", "--output-format", "markdown")).Output.ShouldContain("_1 landed flight not shown: `pilot status --all`_");
+        var (_, status, _) = await Pilot(_root, "status", "--all");
         status.ShouldContain("TIA1611  Planets on the GPU  (tianwen #1611, landed)");
         status.ShouldContain("1. gpu: done, 2/2 steps");
         status.ShouldContain("artifact The planets:");
+        status.ShouldNotContain("not shown");
+        (await Pilot(_root, "status", "--all", "--output-format", "markdown")).Output.ShouldContain("### TIA1611 · Planets on the GPU");
     }
 
     [Fact]
