@@ -25,7 +25,7 @@ public sealed record RepoSyncOutcome
     public required string Status { get; init; }
 
     /// <summary>What happened, in a line: the commits taken, or why the checkout was left alone.</summary>
-    public string Detail { get; init; } = "";
+    public string Detail { get; init => field = value ?? ""; } = "";
 
     /// <summary>The line a command result carries: name, status and detail, tab-separated.</summary>
     public string Line() => $"{Clean(Name)}\t{Status}\t{Clean(Detail)}";

@@ -16,7 +16,7 @@ public sealed record CommandRequest
     public required string Target { get; init; }
 
     /// <summary>The verb's words, in order, as a CLI would pass them. Empty when it takes none.</summary>
-    public string[] Args { get; init; } = [];
+    public string[] Args { get; init => field = value ?? []; } = [];
 
     /// <summary>Who sends it: a client (<c>gui</c>, <c>cli</c>) or a session's name. Required, for the black box.</summary>
     public required string Who { get; init; }

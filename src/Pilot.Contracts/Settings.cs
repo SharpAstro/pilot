@@ -38,7 +38,7 @@ public sealed record SettingRow
     public required string Source { get; init; }
 
     /// <summary>The values it takes, for a setting that takes one of a few; empty for a free one (a prefix, folders).</summary>
-    public string[] Choices { get; init; } = [];
+    public string[] Choices { get; init => field = value ?? []; } = [];
 
     /// <summary>Whether it is a list (repo roots): <c>set node &lt;key&gt;</c> takes every value at once.</summary>
     public bool Many { get; init; }

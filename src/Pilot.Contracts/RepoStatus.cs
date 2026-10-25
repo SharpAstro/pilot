@@ -40,13 +40,13 @@ public sealed record RepoStatus
     public int? Behind { get; init; }
 
     /// <summary>Its other worktrees: the flights' planes, a PR review's pinned checkout, any made by hand.</summary>
-    public WorktreeStatus[] Worktrees { get; init; } = [];
+    public WorktreeStatus[] Worktrees { get; init => field = value ?? []; } = [];
 
     /// <summary>Its open PRs.</summary>
-    public PullRequestStatus[] PullRequests { get; init; } = [];
+    public PullRequestStatus[] PullRequests { get; init => field = value ?? []; } = [];
 
     /// <summary>What could not be read, a note each (gh offline, git refusing): that part is empty or null above.</summary>
-    public string[] Errors { get; init; } = [];
+    public string[] Errors { get; init => field = value ?? []; } = [];
 
     /// <summary>When the node read it.</summary>
     public DateTimeOffset UpdatedAt { get; init; }

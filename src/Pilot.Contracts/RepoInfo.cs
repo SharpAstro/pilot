@@ -23,7 +23,7 @@ public sealed record IssueInfo
 
     public required string Title { get; init; }
 
-    public string[] Labels { get; init; } = [];
+    public string[] Labels { get; init => field = value ?? []; } = [];
 
     public DateTimeOffset? UpdatedAt { get; init; }
 }

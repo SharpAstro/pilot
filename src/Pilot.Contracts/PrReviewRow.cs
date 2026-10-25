@@ -51,7 +51,7 @@ public sealed record PrReviewRow
     public string? Report { get; init; }
 
     /// <summary>Its findings on a line, each an inline comment when its line is in the PR's diff.</summary>
-    public PrFinding[] Findings { get; init; } = [];
+    public PrFinding[] Findings { get; init => field = value ?? []; } = [];
 
     /// <summary>The card that carries the verdict; the worktree goes when it closes.</summary>
     public string? Card { get; init; }

@@ -30,7 +30,7 @@ public sealed record NodeInfo
     /// The machine's prefix in session names: two letters and a number (<c>DU1</c>), so its watchtower is
     /// <c>du1-watchtower</c> and a worker <c>du1-tia1611-parser</c>.
     /// </summary>
-    public string MachinePrefix { get; init; } = "";
+    public string MachinePrefix { get; init => field = value ?? ""; } = "";
 
     public required int ProcessId { get; init; }
 
