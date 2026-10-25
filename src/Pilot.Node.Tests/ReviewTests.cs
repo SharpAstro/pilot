@@ -580,6 +580,24 @@ public sealed class ReviewTests : IDisposable
         (await Run(Verbs.GoAround, "flight/TIA7/parser", "controller", "fix the checks")).Error.ShouldBeNull();
     }
 
+    [Fact]
+    public async Task PastThreeReviewGoAroundsTheWatchtowerMayNotSendTheLegRoundAgainButThePersonMay()
+    {
+        // TIA1241 went round six times overnight on review findings the worker could not act on (SE1, 2026-10-26).
+        var flight = await NewFlight("40", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA40"), "controller");
+        var leg = _state.Legs("TIA40").Single();
+        _state.PutLeg(leg with { GoArounds = LegCommander.MaxReviewGoArounds });
+        (await Run(Verbs.Review, "flight/TIA40", Reviewer("TIA40"), "changes", "the PR's body closes the round's issue")).Ok.ShouldBeTrue();
+
+        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
+        card.Detail.ShouldNotBeNull().ShouldContain("this is yours to decide");
+
+        (await Run(Verbs.GoAround, "flight/TIA40/parser", "du1-watchtower", "the review asked for changes")).Error.ShouldNotBeNull().ShouldContain("the person's call");
+        (await Run(Verbs.GoAround, "flight/TIA40/parser", "controller", "once more, with the PR edited")).Error.ShouldBeNull();
+    }
+
     private void Window(double used, TimeSpan resetsIn) =>
         _state.PutUsage(new UsageRow { ReadAt = DateTimeOffset.UtcNow, FiveHour = new UsageWindow { UsedPercent = used, ResetsAt = DateTimeOffset.UtcNow + resetsIn } });
 
