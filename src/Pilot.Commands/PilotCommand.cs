@@ -18,8 +18,9 @@ public static class PilotCommand
     /// <c>CLAUDE_CODE_SESSION_ID</c>), or the host's own name, as the GUI's command bar sends <c>gui</c>.</param>
     /// <param name="console">The console host, pilot itself: only it has standard streams of its own for <c>pilot mcp</c> to serve on.</param>
     /// <param name="agent">Whether the commands are a Claude session's, where the caller knows; null reads it from the environment (<see cref="IsAgent(bool, bool?)"/>).</param>
-    public static Task<int> RunAsync(string[] args, string cwd, TextWriter output, TextWriter error, CancellationToken cancellationToken, string who = "cli", bool console = false, bool? agent = null) =>
-        InvokeAsync(args, cwd, output, error, who, bySession: who == "cli", console, cancellationToken, agent);
+    /// <param name="sessionId">The Claude session running the commands, where the caller knows; null reads <c>CLAUDE_CODE_SESSION_ID</c> from the environment.</param>
+    public static Task<int> RunAsync(string[] args, string cwd, TextWriter output, TextWriter error, CancellationToken cancellationToken, string who = "cli", bool console = false, bool? agent = null, string? sessionId = null) =>
+        InvokeAsync(args, cwd, output, error, who, bySession: who == "cli", console, cancellationToken, agent, sessionId);
 
     /// <summary>
     /// Whether a command sent from here is a Claude session's (<see cref="CommandRequest.Agent"/>): Claude Code puts
@@ -37,9 +38,10 @@ public static class PilotCommand
     /// <param name="bySession">Whether a command is from the Claude session running this host, where one is (the CLI's and
     /// the MCP server's are), before <paramref name="who"/>.</param>
     /// <param name="agent">Whether the commands are a Claude session's, where the host knows; null reads it from the environment (<see cref="IsAgent"/>).</param>
-    internal static async Task<int> InvokeAsync(string[] args, string cwd, TextWriter output, TextWriter error, string who, bool bySession, bool console, CancellationToken cancellationToken, bool? agent = null)
+    /// <param name="sessionId">The Claude session running the commands, where the caller knows; null reads <c>CLAUDE_CODE_SESSION_ID</c> from the environment.</param>
+    internal static async Task<int> InvokeAsync(string[] args, string cwd, TextWriter output, TextWriter error, string who, bool bySession, bool console, CancellationToken cancellationToken, bool? agent = null, string? sessionId = null)
     {
-        var root = Build(cwd, output, error, who, bySession, console, agent);
+        var root = Build(cwd, output, error, who, bySession, console, agent, sessionId);
         var parsed = root.Parse(args);
         if (args.Length == 0)
         {
@@ -60,9 +62,10 @@ public static class PilotCommand
     }
 
     /// <summary>The command tree; actions write to <paramref name="output"/> and <paramref name="error"/>, and resolve folders against <paramref name="cwd"/>.</summary>
-    internal static RootCommand Build(string cwd, TextWriter output, TextWriter error, string who = "cli", bool bySession = true, bool console = false, bool? agent = null)
+    internal static RootCommand Build(string cwd, TextWriter output, TextWriter error, string who = "cli", bool bySession = true, bool console = false, bool? agent = null, string? sessionId = null)
     {
         var byAgent = IsAgent(bySession, agent);
+        sessionId ??= Environment.GetEnvironmentVariable("CLAUDE_CODE_SESSION_ID");
         var socket = new Option<string?>("--node-socket")
         {
             Description = "The node's socket; else PILOT_NODE_SOCKET, else this user's default",
@@ -101,7 +104,7 @@ public static class PilotCommand
         // Who a command is from: the Claude session running this host when it may be one, else the host; a leg's worker
         // or a flight's reviewer when the plane says so, as they are named already.
         Task<int> Send(NodeClient client, string verb, string target, string[] args, string sender, CancellationToken ct, string? why = null) =>
-            SendAsync(client, verb, target, args, sender, bySession && sender == who, byAgent, why, output, ct);
+            SendAsync(client, verb, target, args, sender, bySession && sender == who, byAgent, why, cwd, sessionId, output, ct);
 
         // What an assistant says it acted on, for the commands that are the person's alone (merge, land, a setting, setup, an
         // update): the node keeps it in the black box and on the card it raises (autopilot off) or the Handled line it leaves (on).
@@ -495,8 +498,8 @@ public static class PilotCommand
                 }
 
                 // Never to itself: a relayed say to the session running this would come back as a message to act on.
-                var self = bySession ? Environment.GetEnvironmentVariable("CLAUDE_CODE_SESSION_ID") : null;
-                var sender = await SenderAsync(client, who, bySession, ct);
+                var self = bySession ? sessionId : null;
+                var sender = await SenderAsync(client, who, bySession, byAgent, cwd, sessionId, ct);
                 var failed = 0;
                 foreach (var row in picked)
                 {
@@ -823,19 +826,52 @@ public static class PilotCommand
     /// watchtower's; else <paramref name="fallback"/>, the CLI for a person at a terminal or an MCP client by its name.
     /// </summary>
     internal static string Caller(SnapshotEvent snapshot, string? sessionId, string fallback = "cli") =>
-        sessionId is { Length: > 0 } id && snapshot.Sessions.FirstOrDefault(s => string.Equals(s.SessionId, id, StringComparison.OrdinalIgnoreCase)) is { } row
-            ? row.Name
-            : fallback;
+        SessionNamed(snapshot, sessionId) ?? fallback;
+
+    /// <summary>
+    /// A session's name on the node by its Claude session id: its current one or one it had before the node resumed it into a
+    /// new id (<see cref="SessionRow.EarlierSessionIds"/>), as a worker's tools may still carry the old one.
+    /// </summary>
+    private static string? SessionNamed(SnapshotEvent snapshot, string? sessionId) =>
+        sessionId is { Length: > 0 } id
+            ? snapshot.Sessions.FirstOrDefault(s => string.Equals(s.SessionId, id, StringComparison.OrdinalIgnoreCase)
+                || s.EarlierSessionIds is { } earlier && earlier.Any(e => string.Equals(e, id, StringComparison.OrdinalIgnoreCase)))?.Name
+            : null;
+
+    /// <summary>
+    /// Who a Claude session's command is from: its name on the node (<see cref="Caller"/>), and when the node knows no such
+    /// session (not polled yet) but the command is agent-run inside a flight's plane, that plane's own session (its flying leg's
+    /// worker, a validator waiting, the review's reviewer, else a planner or worker row of the flight), since a session working
+    /// in a plane is that flight's and must not be taken for an assistant. Otherwise <paramref name="fallback"/>.
+    /// </summary>
+    internal static string Sender(SnapshotEvent snapshot, string? sessionId, string cwd, bool agent, string fallback = "cli") =>
+        SessionNamed(snapshot, sessionId) ?? (agent ? PlaneSession(snapshot, cwd) : null) ?? fallback;
+
+    /// <summary>The name of the session the plane (or PR review worktree) holding <paramref name="cwd"/> belongs to, or null outside every one or when none is named.</summary>
+    internal static string? PlaneSession(SnapshotEvent snapshot, string cwd)
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(cwd)) + Path.DirectorySeparatorChar;
+        if (snapshot.Flights.FirstOrDefault(f => f.State != FlightState.Landed
+            && folder.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(f.Worktree)) + Path.DirectorySeparatorChar, comparison)) is { } flight)
+        {
+            return snapshot.Legs.FirstOrDefault(l => l.Flight == flight.Code && l.State == LegState.Flying)?.Worker
+                ?? snapshot.Legs.FirstOrDefault(l => l.Flight == flight.Code && l.State == LegState.Planned && l.Validation == LegValidation.Pending)?.Validator
+                ?? (flight.Review is { State: ReviewState.Reviewing } review ? review.Reviewer : null)
+                ?? snapshot.Sessions.FirstOrDefault(s => s.Flight == flight.Code && s.Role is SessionRole.Planner or SessionRole.Worker or SessionRole.Reviewer)?.Name;
+        }
+        return PrHere(snapshot, cwd) is { Who: not "cli" } pr ? pr.Who : null;
+    }
 
     /// <summary>Who a command is from: the Claude session running this host by its name on the node, where there is one, else <paramref name="who"/>.</summary>
-    private static async Task<string> SenderAsync(NodeClient client, string who, bool bySession, CancellationToken cancellationToken) =>
-        bySession && Environment.GetEnvironmentVariable("CLAUDE_CODE_SESSION_ID") is { Length: > 0 } sessionId
-            ? Caller(await SnapshotAsync(client, cancellationToken), sessionId, who)
+    private static async Task<string> SenderAsync(NodeClient client, string who, bool bySession, bool agent, string cwd, string? sessionId, CancellationToken cancellationToken) =>
+        bySession && (sessionId is { Length: > 0 } || agent)
+            ? Sender(await SnapshotAsync(client, cancellationToken), sessionId, cwd, agent, who)
             : who;
 
-    private static async Task<int> SendAsync(NodeClient client, string verb, string target, string[] args, string who, bool bySession, bool agent, string? why, TextWriter output, CancellationToken cancellationToken)
+    private static async Task<int> SendAsync(NodeClient client, string verb, string target, string[] args, string who, bool bySession, bool agent, string? why, string cwd, string? sessionId, TextWriter output, CancellationToken cancellationToken)
     {
-        who = await SenderAsync(client, who, bySession, cancellationToken);
+        who = await SenderAsync(client, who, bySession, agent, cwd, sessionId, cancellationToken);
         var envelope = await client.SendAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who, Agent = agent, Why = why }, cancellationToken);
         if (envelope.Success && envelope.Response is { Ok: true } result)
         {

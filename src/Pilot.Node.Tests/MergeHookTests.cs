@@ -121,12 +121,91 @@ public sealed class MergeHookTests : IDisposable
         folders.ShouldAllBe(f => f.Replace('\\', '/').EndsWith("/work/other", StringComparison.Ordinal));
     }
 
+    private static string? DecidePs(string command, string? branch = "flight/x", string? defaultBranch = "origin/main") =>
+        MergeGuard.Decide(Input(command, "PowerShell"), Git(branch, defaultBranch));
+
+    [Theory]
+    [InlineData("gh pr merge 1")]
+    [InlineData("gh pr merge 12 --squash --auto")]
+    [InlineData("gh pr -R o/r merge 3")]
+    [InlineData("GH.EXE pr merge 1")]
+    [InlineData("& gh pr merge 1")]
+    [InlineData("& \"C:\\Program Files\\GitHub CLI\\gh.exe\" pr merge 1")]
+    [InlineData("gh api graphql -f query='mutation{enqueuePullRequest(input:{pullRequestId:\"X\"}){clientMutationId}}'")]
+    [InlineData("gh api graphql -f query=\"mutation { mergePullRequest(input:{pullRequestId:`\"X`\"}) { clientMutationId } }\"")]
+    [InlineData("gh api -X PUT repos/o/r/pulls/3/merge")]
+    [InlineData("gh api --method PUT /repos/o/r/pulls/3/merge -f merge_method=squash")]
+    [InlineData("git push origin main")]
+    [InlineData("git push origin HEAD:master")]
+    [InlineData("git push origin 'HEAD:master'")]
+    [InlineData("git push -u origin +main")]
+    [InlineData("git push origin HEAD:refs/heads/main")]
+    [InlineData("git push --all")]
+    [InlineData("git -C C:\\work\\plane push origin main")]
+    // Compound lines, sub-expressions, script blocks, nested shells: each part is read.
+    [InlineData("cd C:\\work\\plane; gh pr merge 1")]
+    [InlineData("gh pr view 1; gh pr merge 1")]
+    [InlineData("gh pr view 1 && gh pr merge 1")]
+    [InlineData("gh pr view 1 || gh pr merge 1")]
+    [InlineData("gh pr view 1\r\ngh pr merge 1")]
+    [InlineData("gh pr view 1 `\n| gh pr merge 1")]
+    [InlineData("echo done | gh pr merge 1")]
+    [InlineData("$env:GH_TOKEN = 'x'; gh pr merge 1")]
+    [InlineData("echo $(gh pr merge 1)")]
+    [InlineData("& { gh pr merge 1 }")]
+    [InlineData("foreach ($n in 1,2) { gh pr merge $n }")]
+    [InlineData("Invoke-Expression 'gh pr merge 1'")]
+    [InlineData("iex \"git push origin main\"")]
+    [InlineData("pwsh -NoProfile -Command \"gh pr merge 1\"")]
+    [InlineData("powershell -c 'git push origin main'")]
+    [InlineData("bash -c 'gh pr merge 1'")]
+    public void PowerShellIsReadToo(string command)
+    {
+        DecidePs(command).ShouldNotBeNull().ShouldContain("pilot flight merge");
+    }
+
+    [Theory]
+    [InlineData("gh pr view 1")]
+    [InlineData("gh pr create --fill")]
+    [InlineData("gh api repos/o/r/pulls/3")]
+    [InlineData("gh api -X PUT repos/o/r/pulls/3/reviews")]
+    [InlineData("gh api graphql -f query='query{viewer{login}}'")]
+    [InlineData("git push origin flight/x")]
+    [InlineData("git push")]
+    [InlineData("git status; git log main..HEAD")]
+    [InlineData("Write-Output 'gh pr merge 1'")]
+    [InlineData("Select-String -Path docs -Pattern \"git push origin main\"")]
+    [InlineData("dotnet test src\\Pilot.Node.Tests")]
+    // A backslash is a path's in PowerShell, not an escape that would hide the next character.
+    [InlineData("cd C:\\work\\main; gh pr view 1")]
+    public void PowerShellEverythingElsePasses(string command)
+    {
+        DecidePs(command).ShouldBeNull();
+    }
+
+    [Fact]
+    public void APlainPushFromPowerShellIsRefusedOnlyOnTheDefaultBranch()
+    {
+        DecidePs("git push", branch: "flight/x").ShouldBeNull();
+        DecidePs("git push", branch: "main").ShouldNotBeNull().ShouldContain("pilot flight merge");
+        DecidePs("Set-Location ../other; git push", branch: "master").ShouldNotBeNull();
+    }
+
     [Theory]
     [InlineData("gh pr merge 1", "Read")]
-    [InlineData("gh pr merge 1", "PowerShell")]
-    public void OnlyABashCallIsRead(string command, string tool)
+    [InlineData("gh pr merge 1", "Edit")]
+    [InlineData("gh pr merge 1", "bash")]
+    public void OnlyABashOrPowerShellCallIsRead(string command, string tool)
     {
         MergeGuard.Decide(Input(command, tool), Git("main")).ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("Bash")]
+    [InlineData("PowerShell")]
+    public void BothShellToolsAreRefused(string tool)
+    {
+        MergeGuard.Decide(Input("gh pr merge 1", tool), Git("flight/x")).ShouldNotBeNull().ShouldContain("pilot flight merge");
     }
 
     [Theory]
@@ -195,7 +274,7 @@ public sealed class MergeHookTests : IDisposable
         JsonNode.Parse(settings)!["hooks"]![name]!.AsArray().SelectMany(e => e!["hooks"]!.AsArray()).Select(h => h!);
 
     [Fact]
-    public void InstallAddsOneBashHandlerBesideTheOthersAndASecondInstallChangesNothing()
+    public void InstallAddsOneBashAndPowerShellHandlerBesideTheOthersAndASecondInstallChangesNothing()
     {
         var once = MergeGuard.Install(Other, "/opt/pilot/pilot-node");
 
@@ -205,7 +284,7 @@ public sealed class MergeHookTests : IDisposable
         var pre = root["hooks"]!["PreToolUse"]!.AsArray();
         pre.Count.ShouldBe(2);
         pre[0]!["matcher"]!.GetValue<string>().ShouldBe("Edit");
-        pre[1]!["matcher"]!.GetValue<string>().ShouldBe("Bash");
+        pre[1]!["matcher"]!.GetValue<string>().ShouldBe("Bash|PowerShell");
         var handler = pre[1]!["hooks"]![0]!;
         (handler["command"]!.GetValue<string>(), handler["args"]![0]!.GetValue<string>(), handler["async"]).ShouldBe(("/opt/pilot/pilot-node", "merge-guard", null));
         MergeGuard.Installed(once, "/opt/pilot/pilot-node").ShouldBeTrue();
@@ -313,6 +392,26 @@ public sealed class MergeHookTests : IDisposable
 
         GuardCheck(setup).Ok.ShouldBeTrue();
         Handlers(File.ReadAllText(settings), "PreToolUse").Count(h => h["args"]?[0]?.GetValue<string>() == "merge-guard").ShouldBe(1);
+    }
+
+    private const string BashOnly = """
+        { "hooks": { "PreToolUse": [ { "matcher": "Bash", "hooks": [ { "type": "command", "command": "/n/pilot-node", "args": ["merge-guard"], "timeout": 10 } ] } ] } }
+        """;
+
+    [Fact]
+    public async Task AnOlderGuardOnBashAloneIsStaleUntilTheFixWidensItToPowerShellWithNoSecondEntry()
+    {
+        MergeGuard.Installed(BashOnly, "/n/pilot-node").ShouldBeFalse();
+        var (setup, settings) = Setup(BashOnly);
+        var stale = GuardCheck(setup);
+        (stale.Ok, stale.Fix).ShouldBe((false, "Install merge guard"));
+
+        (await setup.FixAsync(NodeSetup.MergeGuardKey, Ct)).ShouldBeNull();
+
+        GuardCheck(setup).Ok.ShouldBeTrue();
+        var pre = JsonNode.Parse(File.ReadAllText(settings))!["hooks"]!["PreToolUse"]!.AsArray();
+        pre.Count.ShouldBe(1);
+        pre[0]!["matcher"]!.GetValue<string>().ShouldBe("Bash|PowerShell");
     }
 
     [Fact]

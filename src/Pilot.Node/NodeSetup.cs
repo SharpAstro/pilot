@@ -212,8 +212,9 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
 
     /// <summary>
     /// Whether the merge guard (<see cref="MergeGuard"/>) is in Claude Code's user-wide settings for this node's binary: a
-    /// PreToolUse hook on Bash that refuses a merge made around the node. Not optional: without it a session can merge a
-    /// PR the node never guarded. A guard for another path (the node moved) fails it too, and the fix replaces it.
+    /// PreToolUse hook on Bash and PowerShell that refuses a merge made around the node. Not optional: without it a session
+    /// can merge a PR the node never guarded. A guard for another path (the node moved), or an older one on Bash alone, fails
+    /// it too, and the fix replaces it.
     /// </summary>
     private SetupCheck MergeGuardCheck()
     {

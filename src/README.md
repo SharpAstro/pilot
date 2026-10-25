@@ -500,7 +500,9 @@ array of words, a flag a boolean, a choice an enum). A call is spelled back into
 own handler, from the folder the server was started in, so inside a plane the leg tools need no leg named. The result
 is what the command printed; a refusal (with the node's reason), a usage error and no node are results with
 `isError`, as exit codes 1, 2 and 3 are on the CLI. A call is from the Claude session running the server where the node
-knows it (`CLAUDE_CODE_SESSION_ID`), as a CLI command is, so the watchtower's own merge or land is still refused;
+knows it (`CLAUDE_CODE_SESSION_ID`, matched against its current id and the ones before the node resumed it), as a CLI
+command is, and a session the node does not know yet, run inside a flight's plane, is that plane's own session (its leg's
+worker, a validator, the reviewer), so the watchtower's own merge or land is still refused and a flight's is never an assistant's;
 else from the client by the name it gave in `initialize`; else `mcp`. Every call carries the `Agent` flag (an MCP
 client is a Claude session), so it is an assistant's unless a session the node knows for a flight or the lookout says otherwise
 (**Who may do what**).
@@ -814,9 +816,10 @@ prints both. The route and both verbs are this machine's only: a grant from the 
 the watchtower.
 
 The **Merge guard** check (`setup node merge-guard`, not optional) says whether `~/.claude/settings.json` has the merge
-guard for this binary: a user-wide `PreToolUse` hook on `Bash` running `pilot-node merge-guard` (see Hooks). It is TODO
-until its button (or `pilot-node setup`, or `pilot settings setup merge-guard`) installs it; a guard for another path of
-the binary fails it until the fix replaces it, and a second install changes nothing.
+guard for this binary: a user-wide `PreToolUse` hook on `Bash` and `PowerShell` (matcher `Bash|PowerShell`) running
+`pilot-node merge-guard` (see Hooks). It is TODO until its button (or `pilot-node setup`, or `pilot settings setup
+merge-guard`) installs it; a guard for another path of the binary, or an older one on `Bash` alone, fails it until the
+fix replaces it, and a second install changes nothing.
 
 One more optional check is **Guard hooks** (`setup node guard-hooks`): it says whether three generic guard hooks
 are in `~/.claude/settings.json`: `big_read_guard.sh` (refuses a whole-file `Read` and a bare `cat`),
@@ -945,7 +948,8 @@ node, a slow one or a hook it cannot read prints nothing, which lets the stop th
 
 **The merge guard: merges lead back to the node.** `pilot-node merge-guard` is a second hook, installed user-wide by
 `pilot-node setup` (the **Merge guard** check; `pilot-node hooks remove` takes it out with the others) as a `PreToolUse`
-handler on `Bash`, in step with the session since a deny is never read from an async hook. It reads the hook's JSON and
+handler on `Bash` and `PowerShell` (the sessions' main shell on Windows), in step with the session since a deny is never
+read from an async hook. It reads the hook's JSON and
 refuses, naming `pilot flight merge <code> <head>` (or the Merge button on the flight's card), a command with a part
 that is `gh pr merge`, `gh api graphql` with `enqueuePullRequest` or `mergePullRequest`, `gh api -X PUT
 repos/.../pulls/N/merge`, or a `git push` whose destination is `main`, `master` or the repo's default branch
@@ -953,7 +957,10 @@ repos/.../pulls/N/merge`, or a `git push` whose destination is `main`, `master` 
 `--all` and `--mirror`, and a bare `git push` (or one naming only a remote) from a checkout on the default branch. A line is
 split on `&&`, `||`, `;`, `|`, `&`, newlines, backticks and parentheses outside quotes and each part is matched, after
 leading `VAR=x` and `sudo`/`env`/`command`; `cd` and `git -C` move where the checkout is read, and `bash -c '…'` and
-`eval` are read inside. Everything else, a push of a flight branch included, passes untouched. Like `pilot-node hook` it
+`eval` are read inside. A `PowerShell` call is read with PowerShell's own quoting (the backtick is the escape, a
+backslash is a path's, `''` and `""` are literal quotes), split on `{` and `}` too, and `Set-Location`, `iex` /
+`Invoke-Expression` and `pwsh -Command '…'` are followed as `cd`, `eval` and `bash -c` are. Everything else, a push of a
+flight branch included, passes untouched. Like `pilot-node hook` it
 is fail-open (input it cannot read passes, exit 0 always) and never calls the node; the node's own merge
 (`pilot flight merge` runs `gh pr merge` itself) is not a session's tool call, so the hook never sees it.
 
