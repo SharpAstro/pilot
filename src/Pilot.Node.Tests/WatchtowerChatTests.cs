@@ -218,6 +218,22 @@ public sealed class WatchtowerChatTests : IDisposable
         _profile.Append(_profile.TranscriptPath(First), Asked("m1", AskReply), Said("user", "[node] A card opened: c1 rings"));
 
         _chat.Page(-1).PendingQuestion.ShouldBe("Which repo should the flight fly in?");
+
+        // The card resumed the watchtower and it acts on it (a new message id: a tool call, then its words): the question still waits for the person.
+        _profile.Append(_profile.TranscriptPath(First),
+            """{"type":"assistant","message":{"id":"m2","role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"pilot cards"}}]}}""",
+            """{"type":"assistant","message":{"id":"m2","role":"assistant","content":[{"type":"text","text":"Noted the card."}]}}""");
+
+        var afterTheCard = _chat.Page(-1);
+        afterTheCard.PendingQuestion.ShouldBe("Which repo should the flight fly in?");
+        afterTheCard.Choices.ShouldBe(["tianwen", "pilot"]);
+
+        // The person saying something is what ends it.
+        _profile.Append(_profile.TranscriptPath(First), Said("user", "pilot"));
+
+        var answered = _chat.Page(-1);
+        answered.PendingQuestion.ShouldBeNull();
+        answered.Choices.ShouldBeNull();
     }
 
     [Fact]

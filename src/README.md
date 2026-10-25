@@ -697,8 +697,10 @@ with no history of its own, so the feed is the transcript of every watchtower th
   `</ask>`. The watchtower is a background session, whose `AskUserQuestion` blocks until someone answers it in `claude agents`
   (a say is read only between tool calls, so never answers it), so the node starts it with that tool denied and its brief has it
   end its turn on the block instead. The question is answered by the person saying anything but the node's own `[node]`
-  messages, or by the session's next reply; the person's answer is a say to the watchtower (`tell`), a choice's label or their
-  own words, and it resumes the idle session like any say to an idle background session.
+  messages, or by a later `<ask>` replacing it, or, when no `[node]` message has come since the question, by the session's
+  next reply in the same turn. A card the node says resumes the watchtower and its reply to the card does not drop the
+  question: the buttons stay until the person says something. The person's answer is a say to the watchtower (`tell`), a
+  choice's label or their own words, and it resumes the idle session like any say to an idle background session.
 - **`Queued`** is what was said to it that it has not taken yet.
 - **Notes.** What the node says to the watchtower in its own name (a card it says, a nudge, a wake-up: a `say` whose `Who` is
   `node`) begins `[node] ` (`NodeVoice.Prefix`), and a compaction is its `/compact`; both come back as entries with `Note` set
