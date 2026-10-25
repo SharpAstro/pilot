@@ -378,6 +378,178 @@ public sealed class MergeArmTests
     }
 
     [Fact]
+    public async Task ANativelyArmedMergeWhoseAutoMergeWasTurnedOffOnGitHubNoLongerSaysGitHubMergesIt()
+    {
+        var (node, ready) = await ArmedNatively(Pending(1));
+        await using var _ = node;
+
+        // Checks pass, but somebody switched auto-merge off on the PR page: GitHub says ready, not armed.
+        node.GitHub.Summary = Passing();
+        node.GitHub.Merge = new MergeState(MergeKinds.Ready, 3, 3);
+        await Look(node);
+
+        node.State.Flights().Single().MergeWhenGreen.ShouldBeNull();
+        var card = Card(node, ready);
+        card.State.ShouldBe(CardState.Open);
+        card.Detail.ShouldNotBeNull().ShouldNotContain("GitHub merges it");
+        card.Detail.ShouldContain("not armed any more");
+        var merge = card.Choices.Single(c => c.Verb == Verbs.Merge);
+        merge.Status.ShouldBe(ChoiceStatus.Passing);
+        merge.Label.ShouldBe("Merge");
+        node.GitHub.Merged.ShouldBeEmpty();
+
+        // And it stays that way: the card is no longer an armed one, so the next look leaves it as GitHub shows it.
+        await Look(node);
+        Card(node, ready).Choices.Single(c => c.Verb == Verbs.Merge).Status.ShouldBe(ChoiceStatus.Passing);
+    }
+
+    [Fact]
+    public async Task ANativelyArmedMergeGitHubBlocksOnRequestedChangesShowsThemOnTheSameCard()
+    {
+        var (node, ready) = await ArmedNatively(Pending(1));
+        await using var _ = node;
+
+        node.GitHub.Summary = Passing();
+        node.GitHub.Merge = new MergeState(MergeKinds.ChangesRequested, 3, 3);
+        await Look(node);
+
+        node.State.Flights().Single().MergeWhenGreen.ShouldBeNull();
+        var card = Card(node, ready);
+        card.State.ShouldBe(CardState.Open);
+        card.Title.ShouldContain("changes requested");
+        card.Choices.Single(c => c.Verb == Verbs.Merge).Status.ShouldBe(ChoiceStatus.ChangesRequested);
+        card.Detail.ShouldNotBeNull().ShouldNotContain("GitHub merges it");
+        node.State.Cards().ShouldHaveSingleItem();
+    }
+
+    [Theory]
+    [InlineData(MergeKinds.Conflicts)]
+    [InlineData(MergeKinds.Behind)]
+    public async Task ANativelyArmedMergeThatConflictsOrFallsBehindIsDisarmedBeforeTheNodeRebasesIt(string kind)
+    {
+        var (node, ready) = await ArmedNatively(Pending(1));
+        await using var _ = node;
+
+        // Its review is not a passed one now, so the node cannot send it back by itself and the card is where the person acts.
+        var flight = node.State.Flights().Single();
+        node.State.PutFlight(flight with { Review = flight.Review! with { State = ReviewState.Changes } });
+        node.GitHub.Summary = Passing();
+        node.GitHub.Merge = new MergeState(kind, 3, 3);
+        await Look(node);
+
+        node.GitHub.AutoMergeDisarmed.ShouldBe([63]);
+        node.State.Flights().Single().MergeWhenGreen.ShouldBeNull();
+        // The card loop took over: a go-around that rebases, no Merge, and no card of a dropped merge beside it.
+        var card = Card(node, ready);
+        card.Choices.Select(c => c.Verb).ShouldBe([Verbs.GoAround]);
+        node.State.Cards().Where(c => c.Kind == PrChecks.MergeDropped).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ACardNeverPublishesClosedWhileAMergeOnItOnlyArmsOrQueues()
+    {
+        foreach (var queues in new[] { false, true })
+        {
+            await using var node = await NodeHarness.StartAsync(Ct);
+            var ready = Ready(node);
+            node.GitHub.Summary = queues ? Passing() : Pending(1);
+            node.GitHub.Queues = queues;
+            var closed = new List<string>();
+            using var _ = node.State.Subscribe(null, null, new ClosedCards(closed));
+            closed.Clear();
+
+            (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
+
+            closed.ShouldBeEmpty();
+            Card(node, ready).State.ShouldBe(CardState.Open);
+        }
+    }
+
+    [Fact]
+    public async Task AMergeThatIsRefusedLeavesTheCardOpenAndNeverClosesIt()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var ready = Ready(node);
+        node.GitHub.Summary = Passing();
+        node.GitHub.Merge = new MergeState(MergeKinds.ChangesRequested, 3, 3);
+        var closed = new List<string>();
+        using var _ = node.State.Subscribe(null, null, new ClosedCards(closed));
+        closed.Clear();
+
+        (await Answer(node, ready, "Merge")).Error.ShouldNotBeNull().ShouldContain("changes requested");
+
+        closed.ShouldBeEmpty();
+        Card(node, ready).State.ShouldBe(CardState.Open);
+    }
+
+    // Notes the id of every card the state publishes closed.
+    private sealed class ClosedCards(List<string> closed) : INodeEventSink
+    {
+        public int Capacity => 10_000;
+
+        public bool TryWrite(byte[] message)
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(message);
+            if (doc.RootElement.TryGetProperty("card", out var card) && card.TryGetProperty("state", out var state) && state.ValueKind == System.Text.Json.JsonValueKind.String
+                && string.Equals(state.GetString(), "closed", StringComparison.OrdinalIgnoreCase))
+            {
+                closed.Add(card.GetProperty("id").GetString()!);
+            }
+            return true;
+        }
+
+        public void Overflowed()
+        {
+        }
+    }
+
+    [Fact]
+    public async Task AFailedCardTurnsBackToAMergeWhenGitHubSaysItsCheckWasReRunGreen()
+    {
+        var (node, ready) = await Armed(Pending(1));
+        await using var _ = node;
+        node.GitHub.Summary = Failing();
+        await Look(node);
+        Card(node, ready).Kind.ShouldBe(LegCommander.MergeFailed);
+
+        // Still red on GitHub: the card says so and keeps its go-around and re-run.
+        await Look(node);
+        Card(node, ready).Choices.Select(c => c.Verb).ShouldBe([Verbs.GoAround, Verbs.RerunChecks, Verbs.Merge]);
+
+        // The check was re-run green on the PR page.
+        node.GitHub.Summary = Passing();
+        await Look(node);
+
+        var card = Card(node, ready);
+        card.State.ShouldBe(CardState.Open);
+        card.Kind.ShouldBe(LegCommander.PrReady);
+        card.Title.ShouldContain("ready to merge");
+        card.Detail.ShouldNotBeNull().ShouldNotContain("failed");
+        var merge = card.Choices.ShouldHaveSingleItem();
+        (merge.Verb, merge.Label, merge.Status).ShouldBe((Verbs.Merge, "Merge", ChoiceStatus.Passing));
+        merge.Args[0].ShouldBe(PrHead);
+        node.State.Cards().ShouldHaveSingleItem();
+        node.GitHub.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AFailedCardTurnsBackWhileItsChecksRunAgain()
+    {
+        var (node, ready) = await Armed(Pending(1));
+        await using var _ = node;
+        node.GitHub.Summary = Failing();
+        await Look(node);
+
+        node.GitHub.Summary = Pending(1, 4);
+        await Look(node);
+
+        var card = Card(node, ready);
+        card.Kind.ShouldBe(LegCommander.PrReady);
+        var merge = card.Choices.ShouldHaveSingleItem();
+        (merge.Status, merge.Note).ShouldBe((ChoiceStatus.Pending, "1 of 4"));
+    }
+
+    [Fact]
     public async Task AMergeThatOnlyJoinedTheQueueLeavesTheCardOpenSayingSo()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

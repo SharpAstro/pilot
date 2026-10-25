@@ -202,9 +202,14 @@ internal sealed class FakeGitHub : IGitHub
         }
         var dropped = Queue is { Queued: false, RemovedAt: not null, RemovedReason: { Length: > 0 } reason } && reason != "merged" ? reason : null;
         var (done, total) = (Summary?.Done ?? 0, Summary?.Total ?? 0);
+        // GitHub says armed for as long as its auto-merge request is on the PR, whatever the checks (a failed one is blocked first).
+        if ((Summary?.Status ?? Checks) is not ChoiceStatus.Failing && AutoMergeArmed.Any(a => a.Number == number) && !AutoMergeDisarmed.Contains(number))
+        {
+            return Task.FromResult<MergeState?>(new MergeState(MergeKinds.Armed, done, total));
+        }
         return Task.FromResult<MergeState?>((Summary?.Status ?? Checks) switch
         {
-            ChoiceStatus.Failing => new MergeState(MergeKinds.Blocked, done, total, Reason: $"{Summary?.FailedName} failed", FailedName: Summary?.FailedName, FailedLink: Summary?.FailedLink, DroppedFromQueue: dropped),
+            ChoiceStatus.Failing => new MergeState(MergeKinds.Blocked, done, total, Reason: $"{Summary?.FailedName ?? "build"} failed", FailedName: Summary?.FailedName ?? "build", FailedLink: Summary?.FailedLink, DroppedFromQueue: dropped),
             ChoiceStatus.Pending => new MergeState(MergeKinds.Pending, done, total, DroppedFromQueue: dropped),
             ChoiceStatus.Passing => new MergeState(MergeKinds.Ready, done, total, DroppedFromQueue: dropped),
             _ => null,
