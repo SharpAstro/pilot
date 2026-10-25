@@ -138,6 +138,11 @@ public sealed class CliTests : IAsyncLifetime
         var (_, cards, _) = await Pilot(_root, "cards");
         cards.ShouldContain("c1  RING  TIA1611's PR #71 is ready to merge");
         cards.ShouldContain("1. Merge: pilot answer c1 1");
+        var (_, cardsMarkdown, _) = await Pilot(_root, "cards", "--output-format", "markdown");
+        cardsMarkdown.ShouldContain("## c1 · RING · TIA1611's PR #71 is ready to merge");
+        cardsMarkdown.ShouldContain("`pilot answer c1 1`");
+        (await Pilot(_root, "cards", "--output-format", "rich")).Output.ShouldBe(cardsMarkdown);
+        (await Pilot(_root, "cards", "--output-format", "auto")).Output.ShouldBe(cards);
         await Ok(_root, "answer", "c1", "1");
         // By rebase, the node's default merge method, so every commit's subject reaches main (tianwen#1783 was squashed).
         _node.GitHub.Merged.ShouldBe([(71, "cafe0000cafe0000", "rebase")]);
@@ -356,5 +361,42 @@ public sealed class CliTests : IAsyncLifetime
     [InlineData("snake_case *x* [y] <z> `q`", @"snake\_case \*x\* \[y\] \<z\> \`q\`")]
     [InlineData("issue #12", "issue #12")]
     public void StatusMarkdownEscapesWhatMarkdownWouldActOn(string text, string escaped) =>
-        StatusMarkdown.Text(text).ShouldBe(escaped);
+        Markdown.Text(text).ShouldBe(escaped);
+
+    [Fact]
+    public async Task CardsWriteMarkdownForOutputFormatMarkdownAndPlainTextWhenNoHostCanRenderAuto()
+    {
+        (await Pilot(_root, "cards", "--output-format", "markdown")).Output.ShouldBe("No open cards.\n");
+
+        var snapshot = new SnapshotEvent { Seq = 1, At = DateTimeOffset.UnixEpoch, Stream = "s", Notes = [], Cards =
+        [
+            new CardRow
+            {
+                Id = "c1", Bin = CardBin.ForYou, Kind = "landed", Subject = "flight/X1", Title = "older", At = DateTimeOffset.UnixEpoch,
+                State = CardState.Open,
+            },
+            new CardRow
+            {
+                Id = "c2", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/X1", Title = "A|B is *ready*", Detail = "first\nsecond",
+                Link = "https://example.com/pull/7", At = DateTimeOffset.UnixEpoch.AddHours(1), State = CardState.Open,
+                Choices = [new CardChoice { Label = "Merge", Verb = "merge", Target = "flight/X1", Status = "passing" }],
+            },
+            new CardRow
+            {
+                Id = "c3", Bin = CardBin.ForYou, Kind = "landed", Subject = "flight/X0", Title = "done", At = DateTimeOffset.UnixEpoch,
+                State = CardState.Closed, Outcome = "dismissed", ClosedBy = "cli",
+            },
+        ]};
+
+        var markdown = CardsMarkdown.Build(snapshot);
+        markdown.ShouldContain(@"## c2 · RING · A\|B is \*ready\*");
+        markdown.ShouldContain("first\\\nsecond");
+        markdown.ShouldContain("[https://example.com/pull/7](https://example.com/pull/7)");
+        markdown.ShouldContain("1. Merge (checks passing): `pilot answer c2 1`");
+        markdown.ShouldContain("or: `pilot dismiss c2`");
+        markdown.IndexOf("## c2", StringComparison.Ordinal).ShouldBeLessThan(markdown.IndexOf("## c1", StringComparison.Ordinal));
+        markdown.ShouldNotContain("c3");
+        CardsMarkdown.Build(snapshot, all: true).ShouldContain("**closed**: dismissed, by cli");
+        PilotCommand.Cards(snapshot).ShouldContain("c2  RING  A|B is *ready*");
+    }
 }
