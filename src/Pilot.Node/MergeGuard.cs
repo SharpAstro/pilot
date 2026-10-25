@@ -34,7 +34,13 @@ public static partial class MergeGuard
     /// <summary>Runs git in a folder and gives its trimmed output, or null when it failed; a test replaces it.</summary>
     public delegate string? GitQuery(string folder, IReadOnlyList<string> args);
 
-    private static readonly string[] Wrappers = ["sudo", "command", "env", "time", "nohup", "exec", "builtin", "nice"];
+    private static readonly string[] Wrappers = ["sudo", "command", "env", "time", "nohup", "exec", "builtin", "nice", "timeout", "xargs"];
+
+    /// <summary>The words of shell syntax that can stand in front of a command (<c>if gh pr checks 1; then gh pr merge 1; fi</c>, <c>! cmd</c>, <c>{ cmd; }</c>) and are not the program.</summary>
+    private static readonly string[] Keywords = ["if", "then", "else", "elif", "while", "until", "do", "!", "{"];
+
+    /// <summary>How many words a wrapper takes of its own after its flags and before the program (<c>timeout 60 gh ...</c>: the duration).</summary>
+    private static readonly Dictionary<string, int> WrapperPositionals = new(StringComparer.Ordinal) { ["timeout"] = 1 };
 
     /// <summary>The flags of a wrapper that take a value in the next word, so the value is skipped with the flag.</summary>
     private static readonly Dictionary<string, string[]> WrapperValueFlags = new(StringComparer.Ordinal)
@@ -42,6 +48,8 @@ public static partial class MergeGuard
         ["sudo"] = ["-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "--user", "--group", "--host", "--prompt", "--close-from", "--chdir", "--chroot", "--command-timeout", "--other-user"],
         ["env"] = ["-u", "-C", "--unset", "--chdir"],
         ["nice"] = ["-n", "--adjustment"],
+        ["timeout"] = ["-k", "-s", "--kill-after", "--signal"],
+        ["xargs"] = ["-I", "-n", "-L", "-P", "-s", "-d", "-E", "-a", "--max-args", "--max-procs", "--max-lines", "--max-chars", "--delimiter", "--eof", "--arg-file"],
     };
 
     private static readonly string[] Shells =["bash", "sh", "zsh", "dash"];
@@ -188,14 +196,14 @@ public static partial class MergeGuard
 
     private static string? GhReason(List<string> args)
     {
-        var sub = args.Where(a => !a.StartsWith('-')).Take(2).ToList();
-        if (sub is ["pr", ..] && Subcommand(args, "pr") == "merge")
+        var at = Group(args, out var group);
+        if (group == "pr" && Subcommand(args, at + 1) == "merge")
         {
             return Merge("`gh pr merge`");
         }
-        if (sub is ["api", ..])
+        if (group == "api")
         {
-            var rest = args[(args.IndexOf("api") + 1)..];
+            var rest = args[(at + 1)..];
             if (rest.Contains("graphql") && rest.Any(a => a.Contains("enqueuePullRequest", StringComparison.OrdinalIgnoreCase) || a.Contains("mergePullRequest", StringComparison.OrdinalIgnoreCase)))
             {
                 return Merge("A GraphQL `enqueuePullRequest` or `mergePullRequest`");
@@ -208,10 +216,29 @@ public static partial class MergeGuard
         return null;
     }
 
-    // The word after "pr" that is not a flag; -R and --repo take a value ("gh pr -R o/r merge 1" is a merge).
-    private static string? Subcommand(List<string> args, string group)
+    // gh's -R and --repo take a value: the group word ("pr", "api") is the first word that is neither a flag nor that value.
+    private static int Group(List<string> args, out string? group)
     {
-        for (var i = args.IndexOf(group) + 1; i < args.Count; i++)
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (args[i] is "-R" or "--repo")
+            {
+                i++;
+            }
+            else if (!args[i].StartsWith('-'))
+            {
+                group = args[i];
+                return i;
+            }
+        }
+        group = null;
+        return -1;
+    }
+
+    // The word from <from> on that is not a flag; -R and --repo take a value ("gh pr -R o/r merge 1" is a merge).
+    private static string? Subcommand(List<string> args, int from)
+    {
+        for (var i = from; i < args.Count; i++)
         {
             if (args[i] is "-R" or "--repo")
             {
@@ -327,7 +354,7 @@ public static partial class MergeGuard
     private static string Push(string what) =>
         $"A push to the default branch goes through a PR, not around it ({what}). Push a flight branch and merge it through the node: `{Instead}`.";
 
-    /// <summary>The program's words with leading <c>VAR=x</c> assignments and wrappers (<c>sudo</c>, <c>env</c>...) taken off.</summary>
+    /// <summary>The program's words with leading <c>VAR=x</c> assignments, shell keywords (<c>then</c>, <c>do</c>, <c>!</c>...) and wrappers (<c>sudo</c>, <c>env</c>, <c>timeout 60</c>, <c>xargs</c>...) taken off.</summary>
     private static List<string> Strip(List<string> words)
     {
         var i = 0;
@@ -337,15 +364,21 @@ public static partial class MergeGuard
             {
                 i++;
             }
+            else if (Keywords.Contains(words[i]))
+            {
+                i++;
+            }
             else if (Wrappers.Contains(Name(words[i])))
             {
-                var valued = WrapperValueFlags.GetValueOrDefault(Name(words[i]), []);
+                var wrapper = Name(words[i]);
+                var valued = WrapperValueFlags.GetValueOrDefault(wrapper, []);
                 i++;
                 while (i < words.Count && words[i].StartsWith('-'))
                 {
                     // A flag that takes a value (sudo -u root, env -u NAME, nice -n 5) takes the next word too: it is not the program.
                     i += valued.Contains(words[i]) ? 2 : 1;
                 }
+                i += WrapperPositionals.GetValueOrDefault(wrapper);
             }
             else
             {
@@ -377,6 +410,7 @@ public static partial class MergeGuard
         var word = new StringBuilder();
         var inWord = false;
         char quote = '\0';
+        var pending = new List<(string Word, bool Tabs)>();
 
         void EndWord()
         {
@@ -425,6 +459,11 @@ public static partial class MergeGuard
                 {
                     quote = '\0';
                 }
+                else if (!powershell && c == '\\' && NewlineAt(command, i + 1) is > 0 and var lineBreak)
+                {
+                    // Bash drops a backslash-newline, inside double quotes as outside.
+                    i += lineBreak;
+                }
                 else if (c == escape && i + 1 < command.Length && (powershell || command[i + 1] is '"' or '\\' or '$' or '`'))
                 {
                     word.Append(command[++i]);
@@ -434,6 +473,26 @@ public static partial class MergeGuard
                     word.Append(c);
                 }
             }
+            else if (powershell && c == '@' && HereString(command, i) is { } here)
+            {
+                // A PowerShell here-string is one quoted word, whatever quotes or lines are in it.
+                word.Append(here.Text);
+                inWord = true;
+                i = here.End;
+            }
+            else if (!powershell && c == '<' && Heredoc(command, i) is { } heredoc)
+            {
+                EndWord();
+                pending.Add(heredoc.Delimiter);
+                i = heredoc.End;
+            }
+            else if (c == '\n' && pending.Count > 0)
+            {
+                // The body of a heredoc is text for the program's stdin, not commands: skip to the line that ends it.
+                EndPart();
+                i = SkipHeredocBodies(command, i + 1, pending) - 1;
+                pending.Clear();
+            }
             else if (c is '\'' or '"')
             {
                 quote = c;
@@ -441,11 +500,15 @@ public static partial class MergeGuard
             }
             else if (c == escape && i + 1 < command.Length)
             {
-                if (powershell && command[i + 1] is '\r' or '\n')
+                if (NewlineAt(command, i + 1) is > 0 and var lineBreak)
                 {
-                    // A backtick at the end of a line continues the command on the next.
-                    EndWord();
-                    i += command[i + 1] == '\r' && i + 2 < command.Length && command[i + 2] == '\n' ? 2 : 1;
+                    // A backtick at the end of a line continues the command on the next (PowerShell: a word break); bash
+                    // drops a backslash-newline altogether, so "pr\<newline>merge" is one word.
+                    if (powershell)
+                    {
+                        EndWord();
+                    }
+                    i += lineBreak;
                 }
                 else
                 {
@@ -469,6 +532,120 @@ public static partial class MergeGuard
         }
         EndPart();
         return parts;
+    }
+
+    /// <summary>How far to advance past the escape character for a line break at <paramref name="at"/> (1 for LF or CR, 2 for CRLF); 0 when none is there.</summary>
+    private static int NewlineAt(string command, int at)
+    {
+        if (at >= command.Length || command[at] is not ('\n' or '\r'))
+        {
+            return 0;
+        }
+        return command[at] == '\r' && at + 1 < command.Length && command[at + 1] == '\n' ? 2 : 1;
+    }
+
+    // <<WORD, <<-WORD, <<'WORD', <<"WORD" or <<\WORD at <at>: the delimiter, and the index of the last character the operator and delimiter take. Not <<<, not an unfinished one.
+    private static ((string Word, bool Tabs) Delimiter, int End)? Heredoc(string command, int at)
+    {
+        if (at + 2 >= command.Length || command[at + 1] != '<' || command[at + 2] == '<')
+        {
+            return null;
+        }
+        var j = at + 2;
+        var tabs = command[j] == '-';
+        if (tabs)
+        {
+            j++;
+        }
+        while (j < command.Length && command[j] is ' ' or '\t')
+        {
+            j++;
+        }
+        var word = new StringBuilder();
+        while (j < command.Length && !char.IsWhiteSpace(command[j]) && command[j] is not (';' or '|' or '&' or '(' or ')' or '<' or '>'))
+        {
+            if (command[j] is '\'' or '"' && command.IndexOf(command[j], j + 1) is >= 0 and var close)
+            {
+                word.Append(command, j + 1, close - j - 1);
+                j = close + 1;
+            }
+            else if (command[j] == '\\' && j + 1 < command.Length)
+            {
+                word.Append(command[j + 1]);
+                j += 2;
+            }
+            else
+            {
+                word.Append(command[j++]);
+            }
+        }
+        return word.Length > 0 ? ((word.ToString(), tabs), j - 1) : null;
+    }
+
+    /// <summary>
+    /// The index after the bodies of the <paramref name="heredocs"/> whose first body line starts at <paramref name="from"/>, each
+    /// ending at a line that is its delimiter alone. A heredoc with no such line is not skipped (bash would read the rest
+    /// of the line as its body, but a <c>1&lt;&lt;2</c> in arithmetic is no heredoc, so the cautious reading is to look at the text).
+    /// </summary>
+    private static int SkipHeredocBodies(string command, int from, List<(string Word, bool Tabs)> heredocs)
+    {
+        var at = from;
+        foreach (var (word, tabs) in heredocs)
+        {
+            var line = at;
+            var end = -1;
+            while (line < command.Length)
+            {
+                var stop = command.IndexOf('\n', line);
+                var text = (stop < 0 ? command[line..] : command[line..stop]).TrimEnd('\r');
+                if ((tabs ? text.TrimStart('\t') : text) == word)
+                {
+                    end = stop < 0 ? command.Length : stop + 1;
+                    break;
+                }
+                if (stop < 0)
+                {
+                    break;
+                }
+                line = stop + 1;
+            }
+            if (end < 0)
+            {
+                return at;
+            }
+            at = end;
+        }
+        return at;
+    }
+
+    // @'...'@ and @"..."@ at <at>: the text between and the index of the closing quote's last character. The opener ends its line and the closer starts one.
+    private static (string Text, int End)? HereString(string command, int at)
+    {
+        if (at + 1 >= command.Length || command[at + 1] is not ('\'' or '"'))
+        {
+            return null;
+        }
+        var quote = command[at + 1];
+        var bodyStart = at + 2;
+        while (bodyStart < command.Length && command[bodyStart] is ' ' or '\t')
+        {
+            bodyStart++;
+        }
+        var lead = NewlineAt(command, bodyStart);
+        if (lead == 0)
+        {
+            return null;
+        }
+        bodyStart += lead;
+        var closer = new string([quote, '@']);
+        for (var close = command.IndexOf(closer, bodyStart - 1, StringComparison.Ordinal); close >= 0; close = command.IndexOf(closer, close + 1, StringComparison.Ordinal))
+        {
+            if (close > 0 && command[close - 1] == '\n')
+            {
+                return (command[bodyStart..Math.Max(bodyStart, close)], close + 1);
+            }
+        }
+        return null;
     }
 
     private static string? RunGit(string folder, IReadOnlyList<string> args)
