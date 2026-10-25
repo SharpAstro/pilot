@@ -140,6 +140,23 @@ internal sealed partial class FlightsView<TSurface>
             facts.Add(Layout.Builder.Text($"review {review.State.ToString().ToLowerInvariant()}", 12f,
                 review.State == ReviewState.Passed ? Flying : review.State == ReviewState.Changes ? Held : Dim).WAuto());
         }
+        var marks = FlightMarks.From(flight);
+        if (marks.Line is { } markLine)
+        {
+            facts.Add(Layout.Builder.Text(markLine, 12f, MarksColor(flight)).WAuto());
+        }
+        if (marks.ReviewUrl is { } reviewUrl)
+        {
+            facts.Add(Link("review comment", reviewUrl, $"review:{line.Code}").WAuto());
+        }
+        if (marks.Warning is { } warning)
+        {
+            facts.Add(Layout.Builder.Text($"⚠ GitHub: {warning}", 12f, Held).WAuto());
+        }
+        if (marks.Pending is { } pending)
+        {
+            facts.Add(Layout.Builder.Text(pending, 12f, Held).WAuto());
+        }
         facts.Add(Layout.Builder.Spacer().WStar());
 
         var legs = detail.Legs.Count == 0

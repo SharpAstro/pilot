@@ -322,4 +322,129 @@ public sealed class FlightDetailTests
 
         flights.IsDetailOpen.ShouldBeFalse();
     }
+
+    private static ReviewRow Reviewed(string status, string label, string? url = "https://github.com/x/tianwen/pull/7#pullrequestreview-1") => new()
+    {
+        State = status == "failure" ? ReviewState.Changes : ReviewState.Passed,
+        Reviewer = "r",
+        StartedAt = Live.At,
+        ReviewedHead = "cafe0000aaaa",
+        StatusState = status,
+        Label = label,
+        ReviewUrl = url,
+    };
+
+    // The page's texts and clickable regions: the flight's own page when open, else the table with the selected flight's panel.
+    private static (List<string> Texts, List<ClickableRegion> Regions) PageOf(FlightRow flight, bool open, Action<string>? onOpen = null)
+    {
+        using var vessel = new RgbaImageRenderer(1600, 800);
+        var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Flights;
+        flights.OnOpen = onOpen;
+        var screen = new FlightsScreen([FlightLine.Build([flight], [], Now, Legs()).Single()], "test", Now);
+        flights.Render(screen, new RectF32(0, 0, 1600, 800));
+        if (open)
+        {
+            flights.OpenDetail("TIA1611");
+        }
+        flights.Render(screen, new RectF32(0, 0, 1600, 800));
+        var texts = Layout.Engine.Arrange(flights.Tree(screen), new Rect<float>(0, 0, 1600, 800), new PixelMeasureContext<RgbaImage>(vessel, SessionsCapture.FontPath, 1f))
+            .Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value).ToList();
+        var regions = new List<ClickableRegion>();
+        flights.CollectPaintedRegions(regions);
+        return (texts, regions);
+    }
+
+    /// <summary>The page and the selected flight's panel both say the pilot/review status and the pilot: label as the node set them, and link the review comment (#222).</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void APassedReviewShowsItsStatusItsLabelAndALinkToTheComment(bool page)
+    {
+        var flight = Flight() with { Review = Reviewed("success", "pilot: passed"), GitHubHead = "cafe0000aaaa", GitHubLabel = "pilot: passed" };
+        var opened = new List<string>();
+
+        var (texts, regions) = PageOf(flight, page, opened.Add);
+
+        texts.ShouldContain("pilot/review passed · pilot: passed");
+        texts.ShouldNotContain(t => t.Contains("GitHub:", StringComparison.Ordinal));
+        // The comment's page opens as the PR's does: through the host's opener.
+        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "review:TIA1611" }).OnClick!.Invoke(InputModifier.None);
+        opened.ShouldBe(["https://github.com/x/tianwen/pull/7#pullrequestreview-1"]);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AReviewWithChangesShowsItsFailureAsChanges(bool page)
+    {
+        var (texts, _) = PageOf(Flight() with { Review = Reviewed("failure", "pilot: changes") }, page);
+
+        texts.ShouldContain("pilot/review changes · pilot: changes");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AHeadThatMovedSinceTheReviewIsFlaggedInWords(bool page)
+    {
+        var flight = Flight() with
+        {
+            Review = Reviewed("success", "pilot: passed"),
+            GitHubHead = "beef1111bbbb",
+            GitHubDisagrees = "the head moved to beef111 since the review read cafe000",
+        };
+
+        var (texts, _) = PageOf(flight, page);
+
+        texts.ShouldContain("⚠ GitHub: the head moved to beef111 since the review read cafe000");
+    }
+
+    [Fact]
+    public void AMovedHeadIsFlaggedFromTheTwoHeadsWhenTheNodeHasNotSaidWhy()
+    {
+        var flight = Flight() with { Review = Reviewed("success", "pilot: passed"), GitHubHead = "beef1111bbbb" };
+
+        FlightMarks.From(flight).Warning.ShouldBe("the head moved to beef111 since the review read cafe000");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ALabelRemovedByHandIsFlaggedInWordsAndTheNodesLabelStillShows(bool page)
+    {
+        var flight = Flight() with
+        {
+            Review = Reviewed("success", "pilot: passed"),
+            GitHubHead = "cafe0000aaaa",
+            GitHubLabel = null,
+            GitHubDisagrees = "pilot: passed was removed on GitHub",
+        };
+
+        var (texts, _) = PageOf(flight, page);
+
+        texts.ShouldContain("pilot/review passed · pilot: passed");
+        texts.ShouldContain("⚠ GitHub: pilot: passed was removed on GitHub");
+    }
+
+    [Fact]
+    public void AConflictOrQueueLabelShowsInPlaceOfTheReviewsAndARefusedWriteIsSaid()
+    {
+        var review = Reviewed("success", "pilot: passed") with { LabelOverride = "pilot: conflicts", MarksWhy = "the label: 403" };
+
+        var marks = FlightMarks.From(Flight() with { Review = review });
+
+        marks.Line.ShouldBe("pilot/review passed · pilot: conflicts");
+        marks.Pending.ShouldBe("still to set on GitHub: the label: 403");
+    }
+
+    [Fact]
+    public void AFlightWithNoMarksSaysNothingOfThem()
+    {
+        var review = Reviewed("success", "pilot: passed") with { StatusState = null, Label = null, ReviewUrl = null };
+
+        var (texts, regions) = PageOf(Flight() with { Review = review }, true);
+
+        texts.ShouldNotContain(t => t.Contains("pilot/review", StringComparison.Ordinal));
+        regions.Any(r => r.Result is HitResult.ButtonHit { Action: "review:TIA1611" }).ShouldBeFalse();
+    }
 }

@@ -563,6 +563,20 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                 review.State == ReviewState.Passed ? Flying : review.State == ReviewState.Changes ? Held : Dim).RowH(20f));
         }
 
+        var marks = FlightMarks.From(flight);
+        if (marks.Line is { } markLine)
+        {
+            legs.Add(Layout.Builder.Text(markLine, 12f, MarksColor(flight)).RowH(20f));
+        }
+        if (marks.Warning is { } warning)
+        {
+            legs.Add(Layout.Builder.Text($"⚠ GitHub: {warning}", 12f, Held).RowH(20f));
+        }
+        if (marks.Pending is { } pending)
+        {
+            legs.Add(Layout.Builder.Text(pending, 12f, Held).RowH(20f));
+        }
+
         // Its jobs: the long runs its workers handed to the node, running first.
         foreach (var job in Jobs.Where(j => j.Flight == flight.Code).OrderBy(j => j.State switch { JobState.Running => 0, JobState.Queued => 1, _ => 2 })
             .ThenByDescending(j => j.StartedAt).Take(2))
@@ -578,11 +592,15 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             artifacts.Add(Link($"PR #{flight.PullRequest}", url, $"pr:{line.Code}"));
         }
+        if (marks.ReviewUrl is { } reviewUrl)
+        {
+            artifacts.Add(Link("review comment", reviewUrl, $"review:{line.Code}"));
+        }
         foreach (var (leg, artifact) in all)
         {
             artifacts.Add(Link($"{artifact.Title} ({leg})", artifact.Location, $"artifact:{line.Code}:{artifact.Title}"));
         }
-        if (all.Count == 0 && flight.PullRequestUrl is null)
+        if (all.Count == 0 && flight.PullRequestUrl is null && marks.ReviewUrl is null)
         {
             artifacts.Add(Layout.Builder.Text("nothing to look at yet", 12f, Dim).RowH(20f));
         }
@@ -624,6 +642,13 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             .Bg(PanelBg)
             .RowH(DetailHeight);
     }
+
+    // The marks' colour: amber for changes, a disagreement or a write still to do, green for a pass, dim otherwise.
+    private RGBAColor32 MarksColor(FlightRow flight) => FlightMarks.From(flight) switch
+    {
+        { Warning: not null } or { Pending: not null } => Held,
+        _ => flight.Review?.StatusState switch { "success" => Flying, "failure" => Held, _ => Dim },
+    };
 
     private Layout.Node Link(string text, string location, string action) =>
         Layout.Builder.Text(text + Followable.Away, 12f, Landed)
