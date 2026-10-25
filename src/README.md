@@ -651,6 +651,41 @@ pilot handled <subject> <line>                 # a Handled line
 
 `pilot-node --no-watchtower` keeps none.
 
+### The chat (#207)
+
+The conversation with the watchtower is one chat, and the node serves it as one feed (`GET /api/v1/chat?after=<n>`, a
+`ChatPage`; `NodeClient.GetChatAsync(after)`; a grant's on the LAN, as a transcript is). A fresh watchtower is a new session
+with no history of its own, so the feed is the transcript of every watchtower there has been, oldest first, as one run:
+
+- **Entries** are the transcript page's `TranscriptEntry` (a prompt, the assistant's words, a tool call and its result, an
+  error), their `Index` counting across all the watchtowers, so a client asks for what came after the last index it has
+  whichever watchtower said it. Without `after` it gives the last 300; later reads give at most 500. Where a fresh watchtower
+  began there is a `divider` entry (its text says why: `A fresh watchtower started: its brief changed`, its time the start's).
+  An `AskUserQuestion` call shows as its question.
+- **`Working`** is whether the watchtower is on a turn now (the chat's "typing").
+- **`PendingQuestion`** and **`Choices`** are the question of an `AskUserQuestion` it has asked that nothing answered, and its
+  choice labels in the order it gave them. The call is answered by its result, by the person saying something else, or by the
+  session's next message; the person's answer to it is a say to the watchtower (`tell`), a choice's label or their own words.
+- **`Queued`** is what was said to it that it has not taken yet.
+- **Notes.** What the node says to the watchtower in its own name (a card it says, a nudge, a wake-up: a `say` whose `Who` is
+  `node`) begins `[node] ` (`NodeVoice.Prefix`), and a compaction is its `/compact`; both come back as entries with `Note` set
+  (the prefix cut off) so a client shows them dim, apart from the person's words. The closing line a relayed message carries
+  is cut off every prompt.
+
+Which watchtowers there have been is kept in `watchtower-sessions` in the node's data folder: a line each (the row it ran as,
+its latest Claude session id, when it began, why), written when the node starts one and kept current as the row's session id
+moves (a say resumes a session under a new id, whose transcript holds the earlier history). Rows of the watchtower's name the
+node has seen are folded in, so one an older node started is in the chat too. After a restart, or once the rows are archived,
+the earlier conversations stay readable. A watchtower that never said anything has no transcript and no divider.
+
+The brief makes the watchtower the person's assistant in the window as well as the fleet's lookout: it answers in plain
+words, asks with `AskUserQuestion` when a choice is the person's, tells the node's `[node]` messages from theirs, and
+carries out "let's launch a flight for X" as `pilot issue create`, then `pilot flight create`, then `pilot flight plan` (the
+planner's own overlap check covers "already flying"), saying back what it made with links. "Plan a leg on <code>: …" is
+`pilot leg plan` then `pilot flight planned`, so the plan card comes back. What is the person's alone (merge, land, the
+settings, grants, updates) it asks for as its command, which the node turns into the Allow card (see **Who may do what**),
+and never does silently.
+
 ### Compaction
 
 Claude Code's prompt cache lives an hour, and a session woken after that reads its whole context again at full price.
@@ -1002,6 +1037,7 @@ A session the API stopped (its transcript's `apiError`, `usage_limit_reached` wi
 | `POST /api/v1/commands` | Every command, `{verb, target, args, who}`. The result is the response and a `commandResult` event on the stream. Verbs: `note node <text>`, `say session/<id> <text>`, `compact session/<id> [focus]`, and the flight and review verbs above. |
 | (cards) | `answer card/<id> <choice>`, `dismiss card/<id> [why]`: verbs on `POST /api/v1/commands`. |
 | `GET /api/v1/sessions/<id>/transcript?after=<n>` | A session's transcript as entries after the n-th (its last 300 without one); a grant's on the LAN. |
+| `GET /api/v1/chat?after=<n>` | The watchtower's conversation as one feed across every watchtower there has been: a `ChatPage` of entries after the n-th (the last 300 without one) with a `divider` entry where a fresh watchtower began, whether it is working, its pending `AskUserQuestion` and choices, and what is queued for it (see The chat); a grant's on the LAN. |
 | `GET /api/v1/jobs/<id>/log` | The end of a job's output: its last 200 lines from its last 64 KiB, the log's length, and whether it was clipped; a grant's on the LAN. |
 | `GET /api/v1/repos` | The repos a flight can be made in, with their GitHub names; a grant's on the LAN. |
 | `GET /api/v1/repos/status` | Each repo's state, a `RepoStatus[]` from the node's cache (see Repo status); `?refresh=true` waits for a fresh read. A grant's on the LAN. |

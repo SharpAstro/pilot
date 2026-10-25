@@ -35,6 +35,13 @@ public static class NodeWire
     /// <summary>The route pattern of <see cref="TranscriptRoute"/>, as the node maps it.</summary>
     public const string TranscriptPattern = SessionsRoute + "/{id}/transcript";
 
+    /// <summary>
+    /// The conversation with the watchtower as one feed, a <see cref="ChatPage"/>: <c>/api/v1/chat</c>, <c>?after=&lt;index&gt;</c>
+    /// for what came after (else its last entries). The entries run across the current watchtower and every earlier one.
+    /// A grant's on the LAN, as a transcript is: it is the session's words.
+    /// </summary>
+    public const string ChatRoute = "/api/v1/chat";
+
     /// <summary>The node's jobs: <c>/api/v1/jobs/&lt;id&gt;/log</c> is one's output, its end, as a <see cref="JobLog"/>.</summary>
     public const string JobsRoute = "/api/v1/jobs";
 

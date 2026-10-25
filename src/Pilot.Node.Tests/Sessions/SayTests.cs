@@ -148,6 +148,17 @@ public sealed class SayTests : IDisposable
     }
 
     [Fact]
+    public async Task TheNodesOwnSayIsMarkedAsTheNodesWhereAPersonsIsSentAsItIs()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "done", pid: 4343, status: "idle", cwd: Cwd));
+        _delivery.ListingAfterStop = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "done", cwd: Cwd, startedAt: Recent));
+        await _tracker.PollAsync(Ct);
+
+        (await _messenger.SayAsync(Say("b2c3d4e5", "a card opened") with { Who = "node" }, Ct)).Ok.ShouldBeTrue();
+        _delivery.Resumes.Single().Text.ShouldBe("[node] a card opened");
+    }
+
+    [Fact]
     public async Task ACompactionResumesAnIdleBackgroundSessionWithSlashCompactAndItsFocus()
     {
         _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "done", pid: 4343, status: "idle", cwd: Cwd));

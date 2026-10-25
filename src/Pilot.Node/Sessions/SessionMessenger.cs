@@ -107,6 +107,12 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             throw new SessionDeliveryException("say session needs the text to say");
         }
+        else if (command.Who == Flights.LegWatch.Who)
+        {
+            // The node's own words (a card it says, a nudge, a wake-up) are marked, so the recipient and a reader of its transcript
+            // take them for the node's and not a person's (NodeVoice).
+            text = NodeVoice.Prefix + text;
+        }
 
         var gate = _busy.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken);

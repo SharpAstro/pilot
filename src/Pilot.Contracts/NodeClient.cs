@@ -101,6 +101,11 @@ public sealed class NodeClient : IDisposable
         GetEnvelopeAsync($"{NodeWire.TranscriptRoute(rowId)}?after={after.ToString(System.Globalization.CultureInfo.InvariantCulture)}{(agent is null ? "" : $"&agent={Uri.EscapeDataString(agent)}")}",
             PilotJsonContext.Default.ResponseEnvelopeTranscriptPage, cancellationToken);
 
+    /// <summary>The watchtower's chat: the entries after <paramref name="after"/>, or the last ones for a negative one, across every watchtower there has been.</summary>
+    public Task<ResponseEnvelope<ChatPage>> GetChatAsync(int after, CancellationToken cancellationToken) =>
+        GetEnvelopeAsync($"{NodeWire.ChatRoute}?after={after.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+            PilotJsonContext.Default.ResponseEnvelopeChatPage, cancellationToken);
+
     /// <summary>The end of a job's output: its last lines, and how long the whole of it is.</summary>
     public Task<ResponseEnvelope<JobLog>> GetJobLogAsync(string jobId, CancellationToken cancellationToken) =>
         GetEnvelopeAsync(NodeWire.JobLogRoute(jobId), PilotJsonContext.Default.ResponseEnvelopeJobLog, cancellationToken);
