@@ -220,15 +220,19 @@ internal sealed class PlayFilter
 internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights, JobsScreen Jobs, IReadOnlyList<JobRow> JobRows, CardsScreen Cards, ReposScreen? Repos = null)
 {
     /// <summary>
-    /// Merges <paramref name="feeds"/> (this window's node first, then the others, each node once). A single node's rows
-    /// stay unmarked, as they were before there was a fleet. The header's source is this window's node's.
+    /// Merges <paramref name="feeds"/> (this window's node first, then the others, each node once). This window's node's
+    /// rows stay unmarked while it is the only node to choose, as they were before there was a fleet; another node's rows are
+    /// marked always. The header's source is this window's node's.
     /// </summary>
     public static FleetPages Merge(IReadOnlyList<(NodeMark Mark, NodeFeed Feed)> feeds, NodeFilter filter, DateTimeOffset now, bool reposWanted = false)
     {
         filter.Choices = [.. feeds.Where(f => f.Mark.Here || f.Feed.Connected).Select(f => f.Mark)];
         var several = filter.Choices.Count > 1;
         var shown = feeds.Where(f => !several || filter.Shows(f.Mark)).ToList();
-        NodeMark? Mark(NodeMark mark) => several ? mark : null;
+        // Another node's rows keep their mark while its stream is down: its last rows are still shown, and unmarked they
+        // were taken for this node's, so a card's Its transcript asked this node for DE1's worker ("There is no session
+        // b87bef5d", SE1 2026-10-25) and any command on such a row went to the wrong node.
+        NodeMark? Mark(NodeMark mark) => several || !mark.Here ? mark : null;
 
         var here = feeds[0].Feed;
         var hereSessions = here.Screen(now);
