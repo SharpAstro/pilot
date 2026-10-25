@@ -55,6 +55,17 @@ public sealed class FlightsCanvasTests
     }
 
     [Fact]
+    public void APickedFlightsChainIsEveryFlightItWaitsOnOrIsWaitedOnByAndNoOther()
+    {
+        // TIA1827 waits for TIA1774; PIL207 waits for TIA1827; TIA1781 stands alone.
+        var canvas = Canvas(Flight("TIA1774"), Flight("TIA1827", FlightState.Held, "TIA1774"), Flight("PIL207", FlightState.Held, "TIA1827"), Flight("TIA1781"));
+
+        canvas.Chain("TIA1827").ShouldBe(["TIA1774", "TIA1827", "PIL207"], ignoreOrder: true);
+        canvas.Chain("TIA1774").ShouldBe(["TIA1774", "TIA1827", "PIL207"], ignoreOrder: true);
+        canvas.Chain("TIA1781").ShouldBeEmpty();
+    }
+
+    [Fact]
     public void ADiamondPutsTheTwoMiddlesInOneColumnAndTheJoinAfterBoth()
     {
         var canvas = Canvas(Flight("A"), Flight("B", FlightState.Held, "A"), Flight("C", FlightState.Held, "A"), Flight("D", FlightState.Held, "B", "C"));

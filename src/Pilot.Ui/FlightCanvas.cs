@@ -46,6 +46,27 @@ internal sealed class FlightCanvas
 
     public float Height { get; private init; }
 
+    /// <summary>
+    /// Every flight <paramref name="code"/> waits on or is waited on by, through any number of arrows, itself among them
+    /// when it has any: what the canvas lights when its card is picked.
+    /// </summary>
+    public IReadOnlySet<string> Chain(string code)
+    {
+        var chain = new HashSet<string>(StringComparer.Ordinal) { code };
+        var next = new Queue<string>([code]);
+        while (next.TryDequeue(out var at))
+        {
+            foreach (var edge in Edges)
+            {
+                if ((edge.From == at ? edge.To : edge.To == at ? edge.From : null) is { } other && chain.Add(other))
+                {
+                    next.Enqueue(other);
+                }
+            }
+        }
+        return chain.Count > 1 ? chain : new HashSet<string>();
+    }
+
     public CanvasCard? Find(string code) => Cards.Cast<CanvasCard?>().FirstOrDefault(c => c!.Value.Code == code);
 
     /// <summary>The card at a canvas point, or null.</summary>
