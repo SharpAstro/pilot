@@ -247,6 +247,23 @@ public interface IGitHub
     /// </summary>
     Task<ChecksSummary?> ChecksSummaryAsync(string repoPath, int number, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Whether the repo at <paramref name="repoPath"/> allows GitHub's auto-merge (<c>allow_auto_merge</c>), which GitHub then
+    /// waits on and does itself, node up or not. False when it is off or GitHub would not say. Kept for a while per repo.
+    /// </summary>
+    Task<bool> AutoMergeAllowedAsync(string repoPath, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Arms GitHub's auto-merge on PR <paramref name="number"/> (<c>gh pr merge --auto</c>): it merges by
+    /// <paramref name="method"/> once its checks pass, refused unless its head is still <paramref name="head"/>.
+    /// </summary>
+    /// <exception cref="FlightException">GitHub would not arm it (a PR with nothing to wait for, a repo without auto-merge).</exception>
+    Task ArmAutoMergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken);
+
+    /// <summary>Disarms GitHub's auto-merge on PR <paramref name="number"/> (<c>gh pr merge --disable-auto</c>); no error when it was not armed.</summary>
+    /// <exception cref="FlightException">gh could not turn it off.</exception>
+    Task DisarmAutoMergeAsync(string repoPath, int number, CancellationToken cancellationToken);
+
     /// <summary>Runs PR <paramref name="number"/>'s failed workflow runs again (<c>gh run rerun --failed</c>); how many runs it asked for.</summary>
     /// <exception cref="FlightException">The PR has no failed run, or gh could not rerun one.</exception>
     Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken);
@@ -468,7 +485,51 @@ public sealed class GhCli : IGitHub
         return false;
     }
 
-    private const string QueueStateQuery = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){"
+    private static readonly TimeSpan AutoMergeAllowedFor = TimeSpan.FromMinutes(10);
+
+    // Per repo folder: what GitHub said and when, so a Merge pressed twice does not ask twice.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (bool Allowed, DateTimeOffset At)> _autoMerge = new(StringComparer.OrdinalIgnoreCase);
+
+    public async Task<bool> AutoMergeAllowedAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        if (_autoMerge.TryGetValue(repoPath, out var known) && DateTimeOffset.UtcNow - known.At < AutoMergeAllowedFor)
+        {
+            return known.Allowed;
+        }
+        var (exit, output, _) = await RunAsync(["api", "repos/{owner}/{repo}", "--jq", ".allow_auto_merge"], repoPath, cancellationToken);
+        var allowed = exit == 0 && ParseAllowAutoMerge(output);
+        // A call that failed is no answer: not kept, so the next Merge asks again.
+        if (exit == 0)
+        {
+            _autoMerge[repoPath] = (allowed, DateTimeOffset.UtcNow);
+        }
+        return allowed;
+    }
+
+    /// <summary><c>gh api repos/{owner}/{repo} --jq .allow_auto_merge</c>'s output: true only for <c>true</c>; <c>false</c>, <c>null</c> (a token that cannot see the setting) and nothing are off.</summary>
+    internal static bool ParseAllowAutoMerge(string output) => output.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
+
+    public async Task ArmAutoMergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(
+            ["pr", "merge", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--auto", $"--{method}", "--match-head-commit", head], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not arm auto-merge on #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+    }
+
+    public async Task DisarmAutoMergeAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["pr", "merge", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--disable-auto"], repoPath, cancellationToken);
+        // Not armed (or merged, or closed) already is the state wanted.
+        if (exit != 0 && !(error + output).Contains("not enabled", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException($"gh could not turn auto-merge off on #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+    }
+
+    private const string QueueStateQuery ="query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){"
         + "state headRefOid isMergeQueueEnabled isInMergeQueue mergeQueueEntry{position} "
         + "timelineItems(last:10,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT]){nodes{__typename ... on AddedToMergeQueueEvent{createdAt} ... on RemovedFromMergeQueueEvent{createdAt reason}}}}}}";
 

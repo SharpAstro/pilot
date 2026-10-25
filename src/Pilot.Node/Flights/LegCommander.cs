@@ -835,7 +835,7 @@ public sealed partial class LegCommander(
         }
         if (checks?.Status == ChoiceStatus.Pending)
         {
-            return Arm(flight, pr, method, ArmedLine(checks));
+            return await ArmAsync(flight, pr, method, checks, null, cancellationToken);
         }
         if (flight.MergeWhenGreen is not null)
         {
@@ -846,19 +846,65 @@ public sealed partial class LegCommander(
             : (true, null, null);
     }
 
-    /// <summary>What a merge waiting for its checks shows: how many are done.</summary>
-    public static string ArmedLine(ChecksSummary? checks) =>
-        checks is { Total: > 0 } ? $"merging when checks pass: {checks.Done} of {checks.Total} done" : "merging when checks pass";
+    /// <summary>The third element of <see cref="FlightRow.MergeWhenGreen"/> when GitHub's own auto-merge waits for the checks.</summary>
+    public const string ArmedByGitHub = "github";
+
+    /// <summary>The third element of <see cref="FlightRow.MergeWhenGreen"/> when the node polls and has nothing to add about it.</summary>
+    public const string ArmedByNode = "node";
+
+    /// <summary>The how-to the card gives while the node polls because the repo has auto-merge off.</summary>
+    public const string SwitchOnAutoMerge = "Switch on GitHub's auto-merge to let GitHub wait instead: gh repo edit --enable-auto-merge, or the repo's Settings > General > Allow auto-merge.";
+
+    /// <summary>
+    /// What a merge waiting for its checks shows: how many are done (or <paramref name="progress"/> in their place), and who
+    /// waits (<paramref name="how"/>, the third element of <see cref="FlightRow.MergeWhenGreen"/>).
+    /// </summary>
+    public static string ArmedLine(ChecksSummary? checks, string? how = null, string? progress = null)
+    {
+        var line = progress ?? (checks is { Total: > 0 } ? $"merging when checks pass: {checks.Done} of {checks.Total} done" : "merging when checks pass");
+        return how switch
+        {
+            ArmedByGitHub => $"{line}. GitHub merges it, with the node up or not.",
+            ArmedByNode => line,
+            _ => $"{line}. The node waits for them. {SwitchOnAutoMerge}",
+        };
+    }
 
     /// <summary>What a merge that joined its base's merge queue shows, at its place in it when known.</summary>
     public static string QueuedLine(string code, string where = "in the merge queue") =>
         $"{where}: {code} lands once the queue merges it";
 
-    // The merge waits on the flight for its checks, on the head reviewed.
-    private (bool Merged, string? Made, string? Way) Arm(FlightRow flight, PullRequest pr, string method, string line)
+    // The merge waits on the flight for its checks, on the head reviewed: GitHub's auto-merge where the repo allows it, else
+    // the node's polling (PrChecks). A merge queue base keeps joining the queue once the checks pass, as before.
+    private async Task<(bool Merged, string? Made, string? Way)> ArmAsync(FlightRow flight, PullRequest pr, string method, ChecksSummary? checks, string? progress, CancellationToken cancellationToken)
     {
-        state.PutFlight(flight with { MergeWhenGreen = [pr.Head, method] });
-        return (false, line, MergeWays.Armed);
+        var how = await ArmHowAsync(flight, pr, method, cancellationToken);
+        state.PutFlight(flight with { MergeWhenGreen = how is null ? [pr.Head, method] : [pr.Head, method, how] });
+        return (false, ArmedLine(checks, how, progress), MergeWays.Armed);
+    }
+
+    // Who waits: GitHub when it takes the arm, the node (no word of it) on a merge queue base or a PR GitHub would not arm, and
+    // null, the node with the how-to, where the repo has auto-merge off.
+    private async Task<string?> ArmHowAsync(FlightRow flight, PullRequest pr, string method, CancellationToken cancellationToken)
+    {
+        if (await github.MergeQueueAsync(flight.RepoPath, pr.Number, cancellationToken) is not null)
+        {
+            return ArmedByNode;
+        }
+        if (!await github.AutoMergeAllowedAsync(flight.RepoPath, cancellationToken))
+        {
+            return null;
+        }
+        try
+        {
+            await github.ArmAutoMergeAsync(flight.RepoPath, pr.Number, pr.Head, method, cancellationToken);
+            return ArmedByGitHub;
+        }
+        catch (FlightException)
+        {
+            // Allowed, but this PR has nothing for GitHub to wait on (no required checks, say): the node waits, as it would.
+            return ArmedByNode;
+        }
     }
 
     /// <summary>
@@ -869,7 +915,7 @@ public sealed partial class LegCommander(
     {
         var (flight, pr, method) = await MergeableAsync(command, cancellationToken);
         var runs = await github.RerunFailedChecksAsync(flight.RepoPath, pr.Number, cancellationToken);
-        var (_, made, way) = Arm(flight, pr, method, $"merging when checks pass: {runs} failed {(runs == 1 ? "run" : "runs")} running again");
+        var (_, made, way) = await ArmAsync(flight, pr, method, null, $"merging when checks pass: {runs} failed {(runs == 1 ? "run" : "runs")} running again", cancellationToken);
         return (made, way);
     }
 
