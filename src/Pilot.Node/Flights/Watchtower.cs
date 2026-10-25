@@ -126,6 +126,96 @@ public sealed class Watchtower(
             ?? rows.OrderByDescending(Live).ThenByDescending(r => r.StartedAt).FirstOrDefault();
     }
 
+    /// <summary>Where the watchtower sessions there have been are kept, in the node's data folder: a line each (<see cref="Generation"/>).</summary>
+    public string SessionsFile => Path.Combine(options.DataFolder, "watchtower-sessions");
+
+    /// <summary>One watchtower the node has had: the row it ran as, its latest Claude session (a say resumes it under a new id that holds the history), when it began and why.</summary>
+    public sealed record Generation(string Job, string? SessionId, DateTimeOffset StartedAt, string? Why);
+
+    private readonly Lock _generationsLock = new();
+    private List<Generation>? _generations;
+
+    /// <summary>
+    /// Every watchtower there has been, oldest first: each start the node made (kept in <see cref="SessionsFile"/>, so a restarted
+    /// node knows them and the chat reads the earlier conversations after the rows are archived) and any row of the watchtower's
+    /// name the node has seen, which brings in one an older node started. Each one's latest session id follows its row.
+    /// </summary>
+    public IReadOnlyList<Generation> Generations()
+    {
+        lock (_generationsLock)
+        {
+            _generations ??= LoadGenerations();
+            var changed = false;
+            foreach (var row in state.Sessions().Where(s => s.Name == Name))
+            {
+                var at = _generations.FindIndex(g => g.Job == row.Id);
+                if (at < 0)
+                {
+                    _generations.Add(new Generation(row.Id, row.SessionId, row.StartedAt, null));
+                    changed = true;
+                }
+                else if (_generations[at].SessionId != row.SessionId)
+                {
+                    _generations[at] = _generations[at] with { SessionId = row.SessionId };
+                    changed = true;
+                }
+            }
+            if (changed)
+            {
+                _generations = [.. _generations.OrderBy(g => g.StartedAt)];
+                SaveGenerations(_generations);
+            }
+            return [.. _generations];
+        }
+    }
+
+    private void RememberStart(string job, string why)
+    {
+        lock (_generationsLock)
+        {
+            _generations ??= LoadGenerations();
+            _generations.RemoveAll(g => g.Job == job);
+            _generations.Add(new Generation(job, null, time.GetUtcNow(), why));
+            _generations = [.. _generations.OrderBy(g => g.StartedAt)];
+            SaveGenerations(_generations);
+        }
+    }
+
+    private List<Generation> LoadGenerations()
+    {
+        var found = new List<Generation>();
+        try
+        {
+            foreach (var line in File.Exists(SessionsFile) ? File.ReadAllLines(SessionsFile) : [])
+            {
+                var parts = line.Split('\t');
+                if (parts.Length >= 3 && DateTimeOffset.TryParse(parts[2], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var at))
+                {
+                    found.Add(new Generation(parts[0], parts[1].Length == 0 ? null : parts[1], at, parts.Length > 3 && parts[3].Length > 0 ? parts[3] : null));
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Unreadable counts as none kept: the rows of its name still bring back the sessions the node knows.
+        }
+        return found;
+    }
+
+    private void SaveGenerations(List<Generation> generations)
+    {
+        try
+        {
+            Directory.CreateDirectory(options.DataFolder);
+            File.WriteAllLines(SessionsFile, generations.Select(g =>
+                string.Join('\t', g.Job, g.SessionId ?? "", g.StartedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture), (g.Why ?? "").ReplaceLineEndings(" ").Replace('\t', ' '))));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Kept in memory all the same; the rows of its name bring back what a restart loses.
+        }
+    }
+
     private volatile bool _lastFromPerson;
 
     /// <summary>
@@ -174,6 +264,8 @@ public sealed class Watchtower(
         {
             var now = time.GetUtcNow();
             var row = Current();
+            // Kept every look, so a row archived before anyone asked for the chat is still known by its session.
+            Generations();
             var watching = Watching();
             if (watching is not null || _watchingAt is null)
             {
@@ -341,6 +433,7 @@ public sealed class Watchtower(
 
         _startedAt = time.GetUtcNow();
         _resumedAfter = null;
+        RememberStart(_job, why);
         RecordBrief(fingerprint);
         TellAllOpen();
         state.CloseCardsAbout(Verbs.WatchtowerTarget, "a fresh one started", Down, Stopped);

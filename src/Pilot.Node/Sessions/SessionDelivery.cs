@@ -232,8 +232,10 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, string relay
     /// asked for a reply, and the recipient SendMessage'd it back to the relay, which failed, instead of answering in
     /// its own turn, where the GUI reads it.
     /// </summary>
-    public static string RelayText(string text) =>
-        text.Trim() + "\n\n(Sent through the pilot node. The sender cannot be messaged back: answer in your own reply, not with SendMessage.)";
+    public static string RelayText(string text) => text.Trim() + "\n\n" + RelayNote;
+
+    /// <summary>The closing line <see cref="RelayText"/> adds; the transcript page leaves it off what a person reads.</summary>
+    public const string RelayNote = "(Sent through the pilot node. The sender cannot be messaged back: answer in your own reply, not with SendMessage.)";
 
     public async Task<string> RelayAsync(RelayRequest request, CancellationToken cancellationToken)
     {

@@ -48,6 +48,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(ResponseEnvelope<RepoStatus[]>))]
 [JsonSerializable(typeof(ResponseEnvelope<IssueInfo[]>))]
 [JsonSerializable(typeof(ResponseEnvelope<TranscriptPage>))]
+[JsonSerializable(typeof(ResponseEnvelope<ChatPage>))]
 [JsonSerializable(typeof(ResponseEnvelope<JobLog>))]
 [JsonSerializable(typeof(ResponseEnvelope<SettingsPage>))]
 public sealed partial class PilotJsonContext : JsonSerializerContext;

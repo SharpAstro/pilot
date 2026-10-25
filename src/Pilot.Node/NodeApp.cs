@@ -134,6 +134,7 @@ public static class NodeApp
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());
+        builder.Services.AddSingleton(services => new WatchtowerChat(services.GetRequiredService<Watchtower>(), services.GetRequiredService<TranscriptBook>()));
         builder.Services.AddSingleton(services => new Compactor(services.GetRequiredService<NodeState>(), services.GetRequiredService<Watchtower>(),
             services.GetRequiredService<NodeCommands>().RunAsync, services.GetRequiredService<TimeProvider>())
         {
@@ -225,7 +226,7 @@ public static class NodeApp
             var watching = get && (path is NodeWire.NodeRoute or NodeWire.SessionsRoute or NodeWire.EventsRoute || path.StartsWith(NodeWire.GrantsRoute + "/", StringComparison.Ordinal));
             // The repos and their issues name this machine's folders, and a transcript is a session's words: read for a
             // grant, as a command is made with one.
-            var granted = get && (path is NodeWire.ReposRoute or NodeWire.RepoStatusRoute or NodeWire.IssuesRoute
+            var granted = get && (path is NodeWire.ReposRoute or NodeWire.RepoStatusRoute or NodeWire.IssuesRoute or NodeWire.ChatRoute
                 || path.StartsWith(NodeWire.SessionsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/transcript", StringComparison.Ordinal)
                 || path.StartsWith(NodeWire.JobsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/log", StringComparison.Ordinal));
             return watching || (post && path == NodeWire.GrantsRoute) ? NodeRouteAccess.Open
@@ -356,6 +357,10 @@ public static class NodeApp
                 : transcripts.Read(row.SessionId, after ?? -1, agent) is { } page
                     ? Results.Json(ResponseEnvelope<TranscriptPage>.Ok(page), PilotJsonContext.Default.ResponseEnvelopeTranscriptPage)
                     : Results.Json(ResponseEnvelope<TranscriptPage>.Fail($"{row.Name} has no transcript yet", 404), PilotJsonContext.Default.ResponseEnvelopeTranscriptPage, statusCode: 404));
+
+        // The conversation with the watchtower as one feed, across every watchtower there has been, read on from where the last read stopped.
+        app.MapGet(NodeWire.ChatRoute, (int? after, WatchtowerChat chat) =>
+            Results.Json(ResponseEnvelope<ChatPage>.Ok(chat.Page(after ?? -1)), PilotJsonContext.Default.ResponseEnvelopeChatPage));
 
         // A job's output, its end, for the Background tasks page; the whole is in its log, on this machine.
         app.MapGet(NodeWire.JobLogPattern, (string id, NodeState state) =>

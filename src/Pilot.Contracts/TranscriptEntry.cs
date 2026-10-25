@@ -35,8 +35,8 @@ public sealed record TranscriptEntry
     public string? Description { get; init; }
 
     /// <summary>
-    /// A prompt Claude Code wrote rather than a person: a background task finishing, a command's output. Shown dim, as a
-    /// note.
+    /// A prompt Claude Code or the node wrote rather than a person: a background task finishing, a command's output, a card
+    /// the node said to the watchtower, a nudge, a compaction. Shown dim, as a note.
     /// </summary>
     public bool Note { get; init; }
 
@@ -51,6 +51,18 @@ public sealed record TranscriptEntry
     /// check</c>, <c>don't-ask mode</c>, <c>permissions</c> or <c>you said no</c>.
     /// </summary>
     public string? Denied { get; init; }
+}
+
+/// <summary>
+/// How the node's own words to a session are told from a person's in its transcript: the node says them with
+/// <see cref="Prefix"/> in front, and a reader of the transcript takes such a prompt as a <see cref="TranscriptEntry.Note"/>
+/// (the prefix cut off), so a client shows a card the node said, a nudge or a wake-up dim, apart from what the person said.
+/// The watchtower's brief tells it the same.
+/// </summary>
+public static class NodeVoice
+{
+    /// <summary>What a message from the node begins with.</summary>
+    public const string Prefix = "[node] ";
 }
 
 /// <summary>What a transcript entry is.</summary>
@@ -78,6 +90,10 @@ public enum TranscriptKind
     /// <summary>A tool that failed, or the API stopping the session.</summary>
     [JsonStringEnumMemberName("error")]
     Error,
+
+    /// <summary>Where a fresh session began in the watchtower's chat (<see cref="ChatPage"/>); its text says so, and when.</summary>
+    [JsonStringEnumMemberName("divider")]
+    Divider,
 }
 
 /// <summary>A run of a session's transcript: the entries after the one asked for (or its last ones), and how many it has.</summary>
