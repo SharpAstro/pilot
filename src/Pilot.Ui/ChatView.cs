@@ -112,6 +112,18 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// </summary>
     public bool HandleNewLine(InputEvent evt) => _composer.HandleKey(evt, Ui.Focus);
 
+    /// <summary>
+    /// Puts <paramref name="text"/> in the box, the caret at its end and the keyboard in it, for the person to finish and send:
+    /// what was there is replaced (Plan a leg's start of a message).
+    /// </summary>
+    public void Prefill(string text)
+    {
+        _composer.Clear();
+        Input.Text = text;
+        Input.CursorPos = text.Length;
+        Ui.Focus.Focus(Input);
+    }
+
     /// <summary>Starts following the feed (after what it already holds) until <see cref="Close"/>; does nothing while it already is.</summary>
     public void Open()
     {

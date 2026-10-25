@@ -6,12 +6,12 @@ using Pilot.Commands;
 using Pilot.Contracts;
 
 // pilot-tui: the dashboard in a terminal. The GUI's own pages and panels (Pilot.Ui), their trees arranged in cells by
-// Console.Lib rather than painted on pixels: the Sessions page (1), the Flights page (2) with its command bar and
+// Console.Lib rather than painted on pixels: the Sessions page (1), the Flights page (2) with its
 // buttons, the Background tasks page (3), the Fleet page (4), and the watchtower's panel with its cards, all live from
 // this machine's node or one on the LAN.
 var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN, host:port; else PILOT_NODE, else this machine's" };
 var socketOption = new Option<string?>("--node-socket") { Description = "This machine's node's socket; else PILOT_NODE_SOCKET, else this user's default" };
-var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 sessions, 3 flights, 4 jobs, 5 fleet, 6 settings, 7 repos, 8 chat, Alt+Left or Backspace back and Alt+Right forward, Ctrl+K the command bar, Ctrl+T the chat with the watchtower, q quits")
+var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 sessions, 3 flights, 4 jobs, 5 fleet, 6 settings, 7 repos, 8 chat, Alt+Left or Backspace back and Alt+Right forward, Ctrl+T the chat with the watchtower, q quits")
 {
     Options = { nodeOption, socketOption },
 };
@@ -58,32 +58,8 @@ using var stop = new CancellationTokenSource();
 var dirty = true;
 void Redraw() => dirty = true;
 
-// The same wiring as the window's: a verb on the node for each button, the CLI's own tree for the command bar.
+// The same wiring as the window's: a verb on the node for each button, and Plan a leg said in the chat.
 flights.CanCommand = true;
-flights.OnCommand = async (line, row) =>
-{
-    flights.Say($"> {line}");
-    // A line an action on a flight row prefilled goes to that row's node, not this terminal's unless it is the same.
-    var target = DashboardCommands.NodeArgsFor(row, nodeArgs, clients.CanSteer);
-    if (target is null)
-    {
-        flights.Say(FleetClients.WatchOnly(row));
-        Redraw();
-        return;
-    }
-    // A connect waits on the other machine's person; the LAN line says so while it does.
-    var asking = DashboardCommands.ConnectTarget(line);
-    if (asking is not null)
-    {
-        flights.Lan?.Asking(asking, DateTimeOffset.UtcNow);
-    }
-    flights.Say(await DashboardCommands.RunAsync(line, target, Who, stop.Token, overrideNode: row is { Here: false }));
-    if (asking is not null)
-    {
-        flights.Lan?.Answered(asking);
-    }
-    Redraw();
-};
 // The LAN as the dashboard sees it, discovering from the start.
 _ = Task.Run(async () =>
 {
@@ -454,10 +430,6 @@ void Handle(ConsoleInputEvent raw)
         case InputEvent.KeyDown(InputKey.D8, _):
             chrome.Show(PilotPage.Chat);
             focus.Focus(chat.Input);
-            break;
-        case InputEvent.KeyDown(InputKey.K, InputModifier.Ctrl):
-            chrome.Show(PilotPage.Flights);
-            focus.Focus(flights.CommandInput);
             break;
         case InputEvent.KeyDown(InputKey.S, InputModifier.Ctrl):
             chrome.Show(PilotPage.Sessions);

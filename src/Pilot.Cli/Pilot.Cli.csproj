@@ -12,7 +12,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The command tree is Pilot.Commands', shared with the GUI's command bar; this is its console host. -->
+    <!-- The command tree is Pilot.Commands', shared with the GUI's Connect; this is its console host. -->
     <ProjectReference Include="..\Pilot.Commands\Pilot.Commands.csproj" />
   </ItemGroup>
 

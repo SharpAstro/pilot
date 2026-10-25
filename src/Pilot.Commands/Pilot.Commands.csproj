@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
-    <!-- The pilot command tree, on System.CommandLine: one surface for the CLI (pilot), the GUI's command bar and,
+    <!-- The pilot command tree, on System.CommandLine: one surface for the CLI (pilot), the GUI's Connect and,
          later, an MCP server (#70), so a new verb reaches all of them at once. AOT-published inside each host. -->
     <IsAotCompatible>true</IsAotCompatible>
     <RootNamespace>Pilot.Commands</RootNamespace>

@@ -15,7 +15,7 @@ namespace Pilot.Commands;
 public static class PilotCommand
 {
     /// <param name="who">Who the commands are from: <c>cli</c> for a terminal (a Claude session running it is named by its
-    /// <c>CLAUDE_CODE_SESSION_ID</c>), or the host's own name, as the GUI's command bar sends <c>gui</c>.</param>
+    /// <c>CLAUDE_CODE_SESSION_ID</c>), or the host's own name, as the GUI's Connect sends <c>gui</c>.</param>
     /// <param name="console">The console host, pilot itself: only it has standard streams of its own for <c>pilot mcp</c> to serve on.</param>
     /// <param name="agent">Whether the commands are a Claude session's, where the caller knows; null reads it from the environment (<see cref="IsAgent(bool, bool?)"/>).</param>
     /// <param name="sessionId">The Claude session running the commands, where the caller knows; null reads <c>CLAUDE_CODE_SESSION_ID</c> from the environment.</param>
@@ -755,7 +755,7 @@ public static class PilotCommand
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
-        // has them; the GUI's command bar does not, nor the server's own tree, so it is never a tool of itself.
+        // has them; the GUI's Connect does not, nor the server's own tree, so it is never a tool of itself.
         if (console)
         {
             var mcp = new Command("mcp", "Serve these commands as MCP tools, and the node's flights, legs, cards and sessions as resources, over stdio: claude mcp add pilot -- pilot mcp");

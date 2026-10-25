@@ -179,7 +179,7 @@ public sealed class FlightsViewsTests
     [Fact]
     public void NightPaintsNothingButRedOnBlack()
     {
-        // As the window draws it: the About button and card, two nodes' pills, the command bar and a selected flight's strip.
+        // As the window draws it: the About button and card, two nodes' pills and a selected flight's strip.
         var (renderer, view) = Page(FlightsViewMode.Night, 1280,
             v =>
             {
