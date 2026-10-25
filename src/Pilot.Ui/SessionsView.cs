@@ -557,8 +557,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private Layout.Node Header(SessionsScreen screen) =>
         Layout.Builder.VStack(
                 Layout.Builder.HStack([
-                        Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
-                        Layout.Builder.Text("sessions", 20f, Dim).WAuto(),
+                        Layout.Builder.Text("pilot v2", 20f, Bright, TextAlign.Near, TextAlign.Far).WAuto(),
+                        Layout.Builder.Text("sessions", 20f, Dim, TextAlign.Near, TextAlign.Far).WAuto(),
                         .. (Nodes?.Pills() ?? []),
                         .. (Play?.Pills() ?? []),
                         Layout.Builder.Spacer().WStar(),

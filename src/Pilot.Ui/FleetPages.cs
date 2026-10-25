@@ -202,10 +202,12 @@ internal sealed class PlayFilter
     /// </summary>
     public static IEnumerable<Layout.Node> Summary(PlayFilter? play, string counts, string? hidden, string action, RGBAColor32 body, RGBAColor32 hover, FlightsPalette? night = null)
     {
-        yield return Layout.Builder.Text(hidden is null ? counts : counts + " · ", 15f, body, TextAlign.Far).WAuto();
+        // Bottom-aligned as the page's title is: its 20 and these 15 design units then share a baseline, where centred
+        // boxes of two sizes do not.
+        yield return Layout.Builder.Text(hidden is null ? counts : counts + " · ", 15f, body, TextAlign.Far, TextAlign.Far).WAuto();
         if (hidden is not null)
         {
-            yield return Layout.Builder.Text(hidden, 15f, night?.Bright ?? ClauseColor, TextAlign.Far)
+            yield return Layout.Builder.Text(hidden, 15f, night?.Bright ?? ClauseColor, TextAlign.Far, TextAlign.Far)
                 .WAuto()
                 .BgHover(hover)
                 .Follows(new HitResult.ButtonHit(action), _ => play?.ShowEverything());

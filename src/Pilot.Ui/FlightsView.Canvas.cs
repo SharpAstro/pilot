@@ -49,8 +49,12 @@ internal sealed partial class FlightsView<TSurface>
             SegmentWidth = ViewSwitchSegment,
         };
         var group = Layout.Builder.ButtonGroup(options, Mode, mode => Mode = mode, style, 12f);
+        // Its height given, as the header's buttons have theirs: the group's segments are height-star (an inset band between
+        // star spacers), and under a row sized by its content they got none, so the switch drew its words at the top and
+        // its icons and fills not at all (SE1, 2026-10-25).
         return (group is Layout.Node.Stack stack ? stack with { Children = [.. stack.Children.Select(c => c.WithCursor(CursorKind.Pointer))] } : group)
-            .WFixed(ViewSwitchWidth);
+            .WFixed(ViewSwitchWidth)
+            .HFixed(AboutCard.HeaderButton);
     }
 
     private const float ViewSwitchSegment = 60f;

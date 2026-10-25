@@ -193,8 +193,8 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         var rows = new List<Layout.Node>
         {
             Layout.Builder.HStack([
-                    Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
-                    Layout.Builder.Text("repos", 20f, Dim).WAuto(),
+                    Layout.Builder.Text("pilot v2", 20f, Bright, TextAlign.Near, TextAlign.Far).WAuto(),
+                    Layout.Builder.Text("repos", 20f, Dim, TextAlign.Near, TextAlign.Far).WAuto(),
                     .. (Nodes?.Pills() ?? []),
                     Layout.Builder.Spacer().WStar(),
                     // Sync stays a word for want of a glyph (a refresh mark): SharpAstro/DIR.Lib#151.

@@ -669,15 +669,15 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         var rows = new List<Layout.Node>
         {
             Layout.Builder.HStack([
-                    Layout.Builder.Text("pilot v2", 20f, Bright).WAuto(),
-                    Layout.Builder.Text("flights", 20f, Dim).WAuto(),
+                    Layout.Builder.Text("pilot v2", 20f, Bright, TextAlign.Near, TextAlign.Far).WAuto(),
+                    Layout.Builder.Text("flights", 20f, Dim, TextAlign.Near, TextAlign.Far).WAuto(),
                     .. (Nodes?.Pills(NightOrNull) ?? []),
                     .. (Play?.Pills(NightOrNull) ?? []),
                     Layout.Builder.Spacer().WStar(),
                     .. PlayFilter.Summary(Play, screen.Counts, screen.Hidden, "flights:play-all", Body, RowHoverBg, NightOrNull),
                     CanvasAvailable && screen.Lines.Count > 0 ? ViewSwitch() : Layout.Builder.Spacer().WFixed(0f),
                     CanCommand && !Wizard.IsOpen && Wizard.LoadRepos is not null
-                        ? CardsView<TSurface>.IconPill(Layout.IconKind.Plus, "New flight", "flights:new", () => Wizard.Open())
+                        ? CardsView<TSurface>.IconPill(Layout.IconKind.Plus, "New flight", "flights:new", () => Wizard.Open(), square: AboutCard.HeaderButton)
                         : Layout.Builder.Spacer().WFixed(0f),
                     About is { } about ? about.Button(NightOrNull) : Layout.Builder.Spacer().WFixed(0f)])
                 .WithGap(12f)
