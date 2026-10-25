@@ -59,6 +59,9 @@ public sealed class AutopilotTests
         return card;
     }
 
+    /// <summary>The one assistant's ask among the open cards, with other cards (a ring) open beside it.</summary>
+    private static CardRow AskAmong(NodeHarness node) => node.State.Cards(openOnly: true).Single(c => c.Kind == CardKinds.AssistantAsk);
+
     private static BlackBoxLine[] BlackBox(NodeHarness node)
     {
         using var box = new StreamReader(new FileStream(Path.Combine(node.Options.DataFolder, "store", FileJournal.BlackBoxFile), FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
@@ -144,6 +147,57 @@ public sealed class AutopilotTests
 
         node.GitHub.Merged.ShouldBeEmpty();
         node.Delivery.Relays.ShouldHaveSingleItem().Text.ShouldContain("denied");
+    }
+
+    [Fact]
+    public async Task AnAssistantsAskToDismissARingCardIsAllowedByAllowAndLeavesTheRingOpenOnDeny()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        await ListAssistantAsync(node);
+        var ring = node.State.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1's PR is ready");
+
+        // Autopilot off: the assistant's dismissal of a ring card is asked, not done.
+        (await Send(node, Command(Verbs.Dismiss, Verbs.CardTarget(ring.Id), Assistant, agent: true, Why))).Error.ShouldNotBeNull().ShouldContain("waits on their card");
+        node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
+        var denied = AskAmong(node);
+        // Allow is the dismissal of the ring card, Deny the dismissal of the ask itself: the verb is the same, the target is not.
+        denied.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe([("Allow", Verbs.Dismiss, Verbs.CardTarget(ring.Id)), ("Deny", Verbs.Dismiss, Verbs.CardTarget(denied.Id))]);
+
+        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(denied.Id), "gui", args: "Deny"))).Error.ShouldBeNull();
+        node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
+        node.Delivery.Relays.ShouldHaveSingleItem().Text.ShouldContain("gui denied your request to dismiss");
+
+        // Asked again and allowed: the ring card is closed, and the session is told it was done.
+        await Send(node, Command(Verbs.Dismiss, Verbs.CardTarget(ring.Id), Assistant, agent: true, Why));
+        var allowed = AskAmong(node);
+        allowed.Id.ShouldNotBe(denied.Id);
+        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(allowed.Id), "gui", args: "Allow"))).Error.ShouldBeNull();
+
+        node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
+        node.State.Cards().Single(c => c.Id == allowed.Id).Outcome.ShouldBe("Allow");
+        var told = node.Delivery.Relays.Last();
+        told.Text.ShouldContain("gui allowed your request to dismiss");
+        told.Text.ShouldContain("done");
+    }
+
+    [Fact]
+    public async Task AnAssistantsAnswerToARingCardIsAskedAndRunsTheChosenButtonOnAllow()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        await ListAssistantAsync(node);
+        var ring = node.State.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1 stalled", null,
+            [new CardChoice { Label = "Retry", Verb = Verbs.Raise, Target = "flight/TIA1", Args = ["for-you", "retried"] }]);
+
+        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(ring.Id), Assistant, agent: true, Why, "Retry"))).Error.ShouldNotBeNull().ShouldContain("waits on their card");
+        node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
+        node.State.Cards(openOnly: true).ShouldNotContain(c => c.Title == "retried");
+        var ask = AskAmong(node);
+        ask.Title.ShouldContain("asks to answer");
+
+        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(ask.Id), "gui", args: "Allow"))).Error.ShouldBeNull();
+        node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
+        node.State.Cards(openOnly: true).ShouldContain(c => c.Title == "retried");
+        node.Delivery.Relays.ShouldHaveSingleItem().Text.ShouldContain("allowed your request to answer");
     }
 
     [Fact]

@@ -188,8 +188,9 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
                 : $"card {card.Id} offers {string.Join(", ", card.Choices.Select((c, i) => $"{i + 1} {c.Label}"))}, not '{which}'");
         }
 
-        // An assistant's ask denied: closed with who said so, and the session that asked is told it was not done.
-        if (card.Kind == CardKinds.AssistantAsk && choice.Verb == Verbs.Dismiss)
+        // An assistant's ask denied: closed with who said so, and the session that asked is told it was not done. Deny is the
+        // choice that dismisses the ask card itself; an Allow can be a dismissal too (of a ring card), so the verb alone cannot tell them apart.
+        if (card.Kind == CardKinds.AssistantAsk && choice.Verb == Verbs.Dismiss && choice.Target == Verbs.CardTarget(card.Id))
         {
             state.CloseCard(card.Id, choice.Label, command.Who);
             await Get<Autopilot>().TellAsync(card, allowed: false, command.Who, cancellationToken);

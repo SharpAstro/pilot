@@ -35,7 +35,16 @@ public static partial class MergeGuard
     public delegate string? GitQuery(string folder, IReadOnlyList<string> args);
 
     private static readonly string[] Wrappers = ["sudo", "command", "env", "time", "nohup", "exec", "builtin", "nice"];
-    private static readonly string[] Shells = ["bash", "sh", "zsh", "dash"];
+
+    /// <summary>The flags of a wrapper that take a value in the next word, so the value is skipped with the flag.</summary>
+    private static readonly Dictionary<string, string[]> WrapperValueFlags = new(StringComparer.Ordinal)
+    {
+        ["sudo"] = ["-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "--user", "--group", "--host", "--prompt", "--close-from", "--chdir", "--chroot", "--command-timeout", "--other-user"],
+        ["env"] = ["-u", "-C", "--unset", "--chdir"],
+        ["nice"] = ["-n", "--adjustment"],
+    };
+
+    private static readonly string[] Shells =["bash", "sh", "zsh", "dash"];
 
     // gh api's merge endpoint: PUT repos/{owner}/{repo}/pulls/{n}/merge, with or without a leading slash or host.
     [GeneratedRegex(@"(^|/)pulls/\d+/merge/?($|\?)", RegexOptions.IgnoreCase)]
@@ -330,10 +339,12 @@ public static partial class MergeGuard
             }
             else if (Wrappers.Contains(Name(words[i])))
             {
+                var valued = WrapperValueFlags.GetValueOrDefault(Name(words[i]), []);
                 i++;
                 while (i < words.Count && words[i].StartsWith('-'))
                 {
-                    i++;
+                    // A flag that takes a value (sudo -u root, env -u NAME, nice -n 5) takes the next word too: it is not the program.
+                    i += valued.Contains(words[i]) ? 2 : 1;
                 }
             }
             else

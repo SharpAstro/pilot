@@ -95,12 +95,12 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     }
 
     /// <summary>
-    /// Whether <paramref name="command"/> is the person's alone: a <see cref="YourOnlyVerbs"/> verb, or the dismissal of a
-    /// card in the ring bin, which is the person's to close. (A card's answer is its chosen button's command, so is your-only
-    /// exactly when that is.)
+    /// Whether <paramref name="command"/> is the person's alone: a <see cref="YourOnlyVerbs"/> verb, or the dismissal or the
+    /// answer of an open card in the ring bin, which is the person's to close. (The answer to any other card is its chosen
+    /// button's command, so is your-only exactly when that is.)
     /// </summary>
     public static bool YourOnly(CommandRequest command, NodeState state) =>
-        YourOnlyVerbs.Contains(command.Verb) || command.Verb == Verbs.Dismiss && IsRing(command, state) || IsAsk(command, state);
+        YourOnlyVerbs.Contains(command.Verb) || command.Verb is Verbs.Dismiss or Verbs.Answer && IsRing(command, state) || IsAsk(command, state);
 
     private static bool IsRing(CommandRequest command, NodeState state) =>
         CardOf(command, state) is { State: CardState.Open, Bin: CardBin.Ring };
