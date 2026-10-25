@@ -565,7 +565,7 @@ row): a button that says *Autopilot*, plain while the node in view has its autop
 is on (`AutopilotSwitch`, shared by every page through `PilotChrome.Autopilot`). It follows the node's own answer
 (`NodeInfo.Autopilot`, read with the other node facts every few seconds), never the click. A click sends `set node autopilot
 on|off` to this window's node as `gui`, which is the person (the node takes the setting from the person only), and the status
-line says what became of it, a refusal included. Its tooltip says what the state means. The **Fleet** page says it per node:
+line says what became of it, a refusal included. Over a remote node (`--node`) it shows that node's state and does not click: the node keeps the setting for its own machine, as the Settings page is gated. Its tooltip says what the state means. The **Fleet** page says it per node:
 `autopilot on` or `autopilot off` on each row that answers (nothing for a node not reached, whose last word would read as
 now), beside the maintenance mark, and the row's dump line ends in it.
 
@@ -870,7 +870,7 @@ session); the GUI and the TUI never set it. One place, `Standing.Of` on the node
 
 The **your-only** commands are `merge`, `land`, `set`, `setup`, `answer-grant`, `revoke-grant`, `update`,
 `restart-watchtower`, and dismissing or answering an open card in the ring bin (the answer to any other card is its chosen button's
-command, so it is your-only exactly when that is). Every route runs them through `NodeCommands.RunAsync`, so a card's button is fenced like the
+command, so it is your-only exactly when that is). `update --check` only says whether a release is out, so it is nobody's alone. Every route runs them through `NodeCommands.RunAsync`, so a card's button is fenced like the
 command by hand, and an answer keeps the answerer's standing. A refused command says why and leaves its card open.
 `connect flight/<code> <other>` is a flight's dependency, not a grant's, and is not your-only.
 
@@ -888,8 +888,8 @@ sorted by the `autopilot` setting (`Autopilot` on the node):
   target), `<session> asks to merge #63 (TIA1)`, with the message the assistant acted on as its detail and two choices:
   **Allow**, which is the original command, run as whoever presses it (the person), and **Deny**, which closes the ask. The
   command's own result is a refusal saying it waits on that card, so the assistant knows to wait; the same command asked
-  again is the same card, and another your-only command about the same flight replaces it. When the card is answered,
-  the node says the outcome to the asking session through `say` (found by `Who` in the session rows: an MCP client with no
+  again is the same card (a second session asking it is added to the card's `AlsoAskedBy`), and another your-only command about the same flight replaces it. When the card is answered,
+  the node says the outcome to each asking session through `say` (found by `Who` in the session rows: an MCP client with no
   row of its name cannot be told, and the card says so) and closes the card with who answered. `dismiss` on the card is a
   Deny. An Allow the command refuses (a merge past the head, say) leaves the ask open and tells no one.
 - **On.** The command runs at once. The command's result and its black-box line carry `Autopilot` and the message (`Why`)
@@ -967,9 +967,13 @@ leading `VAR=x`, shell keywords (`if`, `then`, `do`, `!`, `{`…) and wrappers (
 heredoc's body (`<<EOF` … `EOF`) and a PowerShell here-string (`@'`…`'@`) are text, not commands; a `$(…)` or backticks inside double quotes are commands of their own
 (so `git commit -m "$(cat <<'EOF' … EOF)"` is a commit whatever quotes its body holds, and a merge inside one is still refused); a redirection (`2>&1`, `> /dev/null`) is not a refspec, and
 `git push --tags` alone moves no branch and passes (`--follow-tags` pushes the branch too); `cd` and `git -C` move where the checkout is read, with `~`, `$HOME` and Git Bash's `/c/…` mapped to
-real paths, and `bash -c '…'` and `eval` are read inside. A `PowerShell` call is read with PowerShell's own quoting (the backtick is the escape, a
+real paths (a `cd`, `pushd` or `Set-Location` inside `( … )`, `$( … )` or backticks is gone when they end, and `popd` / `Pop-Location` undoes a
+`pushd` / `Push-Location`, so the push after `(cd ../main && git fetch)` is read where the session is), and `bash -c '…'` (also in combined flags, `-lc`, `-ec`) and `eval` are read inside.
+A `#` that starts a word outside quotes is a comment to the end of the line (in PowerShell `<# … #>` too), so a merge or an apostrophe in
+one is no code. A `PowerShell` call is read with PowerShell's own quoting (the backtick is the escape, a
 backslash is a path's, `''` and `""` are literal quotes), split on `{` and `}` too, and `Set-Location`, `iex` /
-`Invoke-Expression` and `pwsh -Command '…'` are followed as `cd`, `eval` and `bash -c` are. Everything else, a push of a
+`Invoke-Expression` and `pwsh -Command '…'` are followed as `cd`, `eval` and `bash -c` are, and a leading `$name =` assignment is skipped
+(`$out = gh pr merge 1` is a merge). Everything else, a push of a
 flight branch included, passes untouched. Like `pilot-node hook` it
 is fail-open (input it cannot read passes, exit 0 always) and never calls the node; the node's own merge
 (`pilot flight merge` runs `gh pr merge` itself) is not a session's tool call, so the hook never sees it.

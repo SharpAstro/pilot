@@ -119,9 +119,25 @@ public static partial class MergeGuard
 
     private static string? Check(string command, string folder, GitQuery git, int depth, bool powershell)
     {
-        foreach (var segment in Split(command, powershell))
+        // pushd / Push-Location's stack, and the folder and stack a ( ... ) or $( ... ) was entered with: a subshell's cd is gone when it ends.
+        var dirs = new List<string>();
+        var scopes = new Stack<(string Folder, List<string> Dirs)>();
+        foreach (var segment in Parse(command, powershell))
         {
-            var words = Strip(segment);
+            if (segment is [ScopeOpen])
+            {
+                scopes.Push((folder, new List<string>(dirs)));
+                continue;
+            }
+            if (segment is [ScopeClose])
+            {
+                if (scopes.Count > 0)
+                {
+                    (folder, dirs) = scopes.Pop();
+                }
+                continue;
+            }
+            var words = Strip(segment, powershell);
             if (words.Count == 0)
             {
                 continue;
@@ -129,8 +145,20 @@ public static partial class MergeGuard
             // PowerShell's commands and parameters are not case-sensitive, nor are the names of the programs it runs on Windows.
             var program = powershell ? Name(words[0]).ToLowerInvariant() : Name(words[0]);
             var args = words.Skip(1).ToList();
-            if (program is "cd" or "chdir" or "pushd" or "set-location" or "sl" && args.Where(a => !a.StartsWith('-')).FirstOrDefault() is { } to)
+            if (program is "popd" or "pop-location")
             {
+                if (dirs.Count > 0)
+                {
+                    folder = dirs[^1];
+                    dirs.RemoveAt(dirs.Count - 1);
+                }
+            }
+            else if (program is "cd" or "chdir" or "pushd" or "set-location" or "sl" or "push-location" && args.Where(a => !a.StartsWith('-')).FirstOrDefault() is { } to)
+            {
+                if (program is "pushd" or "push-location")
+                {
+                    dirs.Add(folder);
+                }
                 folder = Resolve(folder, to);
             }
             else if (program == "gh")
@@ -147,9 +175,9 @@ public static partial class MergeGuard
                     return why;
                 }
             }
-            else if (depth < 3 && Shells.Contains(program) && args.IndexOf("-c") is >= 0 and var at && at + 1 < args.Count)
+            else if (depth < 3 && Shells.Contains(program) && ShellScript(args) is { } shellScript)
             {
-                if (Check(args[at + 1], folder, git, depth + 1, powershell: false) is { } why)
+                if (Check(shellScript, folder, git, depth + 1, powershell: false) is { } why)
                 {
                     return why;
                 }
@@ -170,6 +198,13 @@ public static partial class MergeGuard
             }
         }
         return null;
+    }
+
+    // bash -c's script: the word after the flag, which may be one of several in a word (-lc, -ec, -xc: login, errexit and so on, then c).
+    private static string? ShellScript(List<string> args)
+    {
+        var at = args.FindIndex(a => a.Length > 1 && a[0] == '-' && a[1..].All(char.IsAsciiLetter) && a.Contains('c'));
+        return at >= 0 && at + 1 < args.Count ? args[at + 1] : null;
     }
 
     // pwsh -c / -Command / -EncodedCommand's script: the word after the flag, or everything after it (-Command takes the rest of the line).
@@ -397,12 +432,25 @@ public static partial class MergeGuard
         $"A push to the default branch goes through a PR, not around it ({what}). Push a flight branch and merge it through the node: `{Instead}`.";
 
     /// <summary>The program's words with leading <c>VAR=x</c> assignments, shell keywords (<c>then</c>, <c>do</c>, <c>!</c>...) and wrappers (<c>sudo</c>, <c>env</c>, <c>timeout 60</c>, <c>xargs</c>...) taken off.</summary>
-    private static List<string> Strip(List<string> words)
+    private static List<string> Strip(List<string> segment, bool powershell = false)
     {
+        var words = segment;
         var i = 0;
         while (i < words.Count)
         {
-            if (words[i].Contains('=') && !words[i].StartsWith('=') && words[i].IndexOf('=') is var eq && words[i][..eq].All(c => char.IsLetterOrDigit(c) || c == '_'))
+            if (powershell && PowerShellAssignment(words, i) is { } skip)
+            {
+                // $out = gh pr merge 1: the variable and the = are no program; "$out=gh" is one word with the program in its tail.
+                if (skip.Tail.Length > 0)
+                {
+                    words = [.. words[..i], skip.Tail, .. words[(i + 1)..]];
+                }
+                else
+                {
+                    i += skip.Words;
+                }
+            }
+            else if (words[i].Contains('=') && !words[i].StartsWith('=') && words[i].IndexOf('=') is var eq && words[i][..eq].All(c => char.IsLetterOrDigit(c) || c == '_'))
             {
                 i++;
             }
@@ -430,6 +478,29 @@ public static partial class MergeGuard
         return words[i..];
     }
 
+    // $name =, $name=, $env:NAME += and the like at <i>: how many words the assignment's variable and operator take (the text after the = in the same word is the program's, in Tail).
+    private static (int Words, string Tail)? PowerShellAssignment(List<string> words, int i)
+    {
+        if (!words[i].StartsWith('$'))
+        {
+            return null;
+        }
+        if (AssignmentTarget().Match(words[i]) is { Success: true } same)
+        {
+            return (1, same.Groups["rest"].Value);
+        }
+        return i + 1 < words.Count && AssignmentVariable().IsMatch(words[i]) && AssignmentOperator().IsMatch(words[i + 1]) ? (2, "") : null;
+    }
+
+    [GeneratedRegex(@"^\$\{?[\w:.]+\}?(\[[^\]]*\])?[+\-*/%]?=(?<rest>.*)$", RegexOptions.Singleline)]
+    private static partial Regex AssignmentTarget();
+
+    [GeneratedRegex(@"^\$\{?[\w:.]+\}?(\[[^\]]*\])?$")]
+    private static partial Regex AssignmentVariable();
+
+    [GeneratedRegex(@"^[+\-*/%]?=$")]
+    private static partial Regex AssignmentOperator();
+
     /// <summary>A program's name: no folder, no <c>.exe</c>.</summary>
     private static string Name(string program)
     {
@@ -443,14 +514,24 @@ public static partial class MergeGuard
     /// character outside single quotes). Inside quotes nothing splits, so a GraphQL query with a <c>;</c> in it stays one word.
     /// With <paramref name="powershell"/> the words are read as PowerShell reads them: the backtick is the escape (a backslash
     /// is a path's), a single quote doubled is a literal one, a double quote doubled likewise, and braces split as parentheses do.
+    /// A <c>#</c> that starts a word, outside quotes, is a comment to the end of the line (in PowerShell <c>&lt;# ... #&gt;</c> too).
     /// </summary>
-    internal static List<List<string>> Split(string command, bool powershell = false)
+    internal static List<List<string>> Split(string command, bool powershell = false) =>
+        Parse(command, powershell).Where(part => part is not ([ScopeOpen] or [ScopeClose])).ToList();
+
+    /// <summary>The one-word parts <see cref="Parse"/> puts where a <c>( ... )</c>, <c>$( ... )</c> or backtick pair opens and closes: a <c>cd</c> inside does not move the folder outside.</summary>
+    private const string ScopeOpen = "\0(";
+    private const string ScopeClose = "\0)";
+
+    /// <summary><see cref="Split"/> with <see cref="ScopeOpen"/> and <see cref="ScopeClose"/> parts where a subshell or command substitution starts and ends.</summary>
+    private static List<List<string>> Parse(string command, bool powershell)
     {
         var escape = powershell ? '`' : '\\';
         var parts = new List<List<string>>();
         var words = new List<string>();
         var word = new StringBuilder();
         var inWord = false;
+        var tickOpen = false;
         char quote = '\0';
         var pending = new List<(string Word, bool Tabs)>();
 
@@ -514,18 +595,35 @@ public static partial class MergeGuard
                 {
                     // $(...) inside double quotes runs: its text is commands of their own (a heredoc in it, as in git commit -m "$(cat <<'EOF' ...)", is read as
                     // one), not characters of this word, so a quote in its body does not end the string.
-                    parts.AddRange(Split(command[(i + 2)..close], powershell));
+                    parts.Add([ScopeOpen]);
+                    parts.AddRange(Parse(command[(i + 2)..close], powershell));
+                    parts.Add([ScopeClose]);
                     i = close;
                 }
                 else if (c == '`' && !powershell && command.IndexOf('`', i + 1) is >= 0 and var tick)
                 {
-                    parts.AddRange(Split(command[(i + 1)..tick], powershell));
+                    parts.Add([ScopeOpen]);
+                    parts.AddRange(Parse(command[(i + 1)..tick], powershell));
+                    parts.Add([ScopeClose]);
                     i = tick;
                 }
                 else
                 {
                     word.Append(c);
                 }
+            }
+            else if (c == '#' && !inWord)
+            {
+                // A comment runs to the end of the line (the line break itself is still the command's end), so a quote or a ; in it is no code.
+                var stop = command.IndexOfAny(['\n', '\r'], i);
+                i = stop < 0 ? command.Length : stop - 1;
+            }
+            else if (powershell && c == '<' && i + 1 < command.Length && command[i + 1] == '#')
+            {
+                // <# ... #> is a PowerShell block comment, anywhere outside quotes.
+                EndWord();
+                var close = command.IndexOf("#>", i + 2, StringComparison.Ordinal);
+                i = close < 0 ? command.Length : close + 1;
             }
             else if (powershell && c == '@' && HereString(command, i) is { } here)
             {
@@ -576,7 +674,19 @@ public static partial class MergeGuard
                 word.Append(c);
                 inWord = true;
             }
-            else if (c is ';' or '|' or '&' or '\n' or '\r' or '(' or ')' || c == '`' && !powershell || powershell && c is '{' or '}')
+            else if (c is '(' or ')')
+            {
+                EndPart();
+                parts.Add([c == '(' ? ScopeOpen : ScopeClose]);
+            }
+            else if (c == '`' && !powershell)
+            {
+                // A backtick pair is a command substitution: the first opens it, the next closes it.
+                EndPart();
+                parts.Add([tickOpen ? ScopeClose : ScopeOpen]);
+                tickOpen = !tickOpen;
+            }
+            else if (c is ';' or '|' or '&' or '\n' or '\r' || powershell && c is '{' or '}')
             {
                 EndPart();
             }

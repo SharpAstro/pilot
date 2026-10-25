@@ -136,6 +136,35 @@ public sealed class AutopilotTests
     }
 
     [Fact]
+    public async Task ASecondSessionAskingTheSameThingWhileTheCardIsOpenIsToldWhatTheyAnswerToo()
+    {
+        const string Other = "pilot-34";
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Ready(node);
+        node.Agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, Assistant), AgentRows.Interactive(AgentRows.SessionB, 4243, Other));
+        for (var i = 0; i < 100 && (await node.Client.GetSessionsAsync(Ct)).Length < 2; i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        await Send(node, Command(Verbs.Merge, "flight/TIA1", Assistant, agent: true, Why, Head));
+        var card = Ask(node);
+
+        // The second asks the same command and gets the first's card, and is on it.
+        (await Send(node, Command(Verbs.Merge, "flight/TIA1", Other, agent: true, Why, Head))).Error.ShouldNotBeNull().ShouldContain($"card {card.Id}");
+        // Asking again from the same session adds nobody.
+        await Send(node, Command(Verbs.Merge, "flight/TIA1", Other, agent: true, Why, Head));
+        var open = Ask(node);
+        open.Id.ShouldBe(card.Id);
+        open.AskedBy.ShouldBe(Assistant);
+        open.AlsoAskedBy.ShouldBe([Other]);
+
+        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Deny"))).Error.ShouldBeNull();
+
+        node.Delivery.Relays.Select(r => r.Name).ShouldBe([Assistant, Other], ignoreOrder: true);
+        node.Delivery.Relays.ShouldAllBe(r => r.Text.Contains("gui denied your request to merge #63 (TIA1)"));
+    }
+
+    [Fact]
     public async Task DismissingTheAskIsDenyingIt()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

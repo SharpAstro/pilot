@@ -152,6 +152,27 @@ public sealed class StandingTests
         (await Error(node, Command(Verbs.Dismiss, Verbs.CardTarget(around.Id), lookout, true))).ShouldNotBeNull().ShouldContain("dismiss is the controller's, not the watchtower's");
     }
 
+    [Fact]
+    public async Task AnUpdateCheckOnlyReadsSoNoSessionIsRefusedItAndAnAssistantsRaisesNoCard()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        const string worker = "du1-tia1-parser";
+        Fly(node, "TIA1", worker);
+
+        // Whatever the updater answers (a test node runs from a build of its own), it is not the standing's refusal, and no card waits.
+        foreach (var (who, agent) in new[] { (Lookout(node), true), (worker, true), ("pilot-33", true), ("gui", false) })
+        {
+            (await Error(node, Command(Verbs.Update, Verbs.NodeTarget, who, agent, "check"))).ShouldNotBeNull().ShouldNotContain("controller's");
+            node.State.Cards(openOnly: true).ShouldBeEmpty($"{who}'s update --check");
+        }
+
+        // An install is still the person's: the lookout and a flight's session are refused, and an assistant's waits on a card.
+        (await Error(node, Command(Verbs.Update, Verbs.NodeTarget, Lookout(node), true, "install"))).ShouldNotBeNull().ShouldContain("controller's");
+        (await Error(node, Command(Verbs.Update, Verbs.NodeTarget, worker, true, "install"))).ShouldNotBeNull().ShouldContain("controller's");
+        (await Error(node, Command(Verbs.Update, Verbs.NodeTarget, "pilot-33", true, "install"))).ShouldNotBeNull().ShouldContain("waits on their card");
+        node.State.Cards(openOnly: true).ShouldHaveSingleItem().Kind.ShouldBe(CardKinds.AssistantAsk);
+    }
+
     private static async Task<SessionRow> Listed(NodeHarness node, string name)
     {
         for (var i = 0; i < 100 && !node.State.Sessions().Any(s => s.Name == name); i++)

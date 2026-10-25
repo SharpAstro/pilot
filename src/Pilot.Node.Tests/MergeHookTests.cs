@@ -280,6 +280,139 @@ public sealed class MergeHookTests : IDisposable
         folders.ShouldAllBe(f => f.Replace('\\', '/').EndsWith("/work/other", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("gh pr checks 1  # wait; then gh pr merge 1 via the node")]
+    [InlineData("gh pr checks 1 # gh pr merge 1")]
+    [InlineData("# gh pr merge 1\ngh pr view 1")]
+    [InlineData("git push origin flight/x # not main; git push origin main would be refused")]
+    public void ACommentIsNotCode(string command)
+    {
+        Decide(command).ShouldBeNull();
+        DecidePs(command).ShouldBeNull();
+    }
+
+    [Fact]
+    public void AnApostropheInACommentDoesNotOpenAQuote()
+    {
+        Decide("# don't\ngit push origin main").ShouldNotBeNull().ShouldContain("pilot flight merge");
+        Decide("git status # don't\ngit push", branch: "main").ShouldNotBeNull().ShouldContain("pilot flight merge");
+        DecidePs("# don't\ngit push origin main").ShouldNotBeNull().ShouldContain("pilot flight merge");
+        DecidePs("git status # don't\r\ngit push", branch: "main").ShouldNotBeNull();
+        // And a comment ends at its line: the next line's merge is still one.
+        Decide("gh pr view 1 # look\ngh pr merge 1").ShouldNotBeNull();
+        // A # inside a word, a quote or an expansion is no comment.
+        Decide("gh pr view 1 && echo a#b; gh pr merge 1").ShouldNotBeNull();
+        Decide("echo '#' ; gh pr merge 1").ShouldNotBeNull();
+        Decide("echo $# ; gh pr merge 1").ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void APowerShellBlockCommentIsNotCode()
+    {
+        DecidePs("gh pr view 1 <# gh pr merge 1; git push origin main #>").ShouldBeNull();
+        DecidePs("<# note #> gh pr merge 1").ShouldNotBeNull().ShouldContain("pilot flight merge");
+        DecidePs("<#\ngit push origin main\n#>\ngit push origin flight/x").ShouldBeNull();
+    }
+
+    /// <summary>A repo per folder: the checkout is on main in a folder named onmain, and on a feature branch anywhere else.</summary>
+    private static MergeGuard.GitQuery PerFolderGit() => (folder, args) =>
+        args.Contains("HEAD") && args.Count == 4
+            ? folder.Replace('\\', '/').EndsWith("/onmain", StringComparison.Ordinal) ? "main" : "feature/x"
+            : args.Contains("refs/remotes/origin/HEAD") ? "origin/main" : null;
+
+    private static string? DecideFolders(string command, string tool = "Bash") => MergeGuard.Decide(Input(command, tool), PerFolderGit());
+
+    [Theory]
+    [InlineData("(cd ../onmain && git fetch) && git push -u origin HEAD")]
+    [InlineData("MAINSHA=$(cd ../onmain && git rev-parse HEAD); git push -u origin HEAD")]
+    [InlineData("pushd ../onmain && git pull && popd && git push -u origin HEAD")]
+    [InlineData("echo \"$(cd ../onmain && git rev-parse HEAD)\" && git push")]
+    [InlineData("echo `cd ../onmain && pwd`; git push")]
+    [InlineData("(cd ../onmain; git status); git push")]
+    [InlineData("(pushd ../onmain; git status); git push")]
+    public void ASubshellsOrAPoppedCdLeavesTheFolderAsItWas(string command)
+    {
+        DecideFolders(command).ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("(cd ../onmain && git push)")]
+    [InlineData("(cd ../onmain && git status) ; cd ../onmain && git push")]
+    [InlineData("cd ../onmain && (git status) && git push")]
+    [InlineData("pushd ../onmain && git push")]
+    [InlineData("pushd ../onmain && popd && pushd ../onmain && git push")]
+    [InlineData("pushd ../a && pushd ../onmain && popd && popd && cd ../onmain && git push")]
+    [InlineData("$(cd ../onmain && git push)")]
+    public void AnUnscopedCdStillMovesTheFolder(string command)
+    {
+        DecideFolders(command).ShouldNotBeNull().ShouldContain("pilot flight merge");
+    }
+
+    [Theory]
+    [InlineData("(Set-Location ../onmain; git fetch); git push -u origin HEAD")]
+    [InlineData("$sha = (Set-Location ../onmain; git rev-parse HEAD); git push -u origin HEAD")]
+    [InlineData("Push-Location ../onmain; git pull; Pop-Location; git push -u origin HEAD")]
+    [InlineData("pushd ../onmain; git pull; popd; git push -u origin HEAD")]
+    public void PowerShellScopesAndPopsTheFolderToo(string command)
+    {
+        DecideFolders(command, "PowerShell").ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("Push-Location ../onmain; git push")]
+    [InlineData("Push-Location ../onmain; Push-Location ..; Pop-Location; git push")]
+    [InlineData("(Set-Location ../onmain; git push)")]
+    public void PowerShellsPushLocationMovesTheFolder(string command)
+    {
+        DecideFolders(command, "PowerShell").ShouldNotBeNull().ShouldContain("pilot flight merge");
+    }
+
+    [Theory]
+    [InlineData("$out = gh pr merge 1 --squash 2>&1")]
+    [InlineData("$out=gh pr merge 1")]
+    [InlineData("$out= gh pr merge 1")]
+    [InlineData("$null = git push origin main")]
+    [InlineData("$env:X = 'y'; $r = gh api -X PUT repos/o/r/pulls/3/merge")]
+    [InlineData("$n += git push origin main")]
+    [InlineData("$a = $b = gh pr merge 1")]
+    [InlineData("$out = & gh pr merge 1")]
+    public void APowerShellAssignmentsCommandIsRead(string command)
+    {
+        DecidePs(command).ShouldNotBeNull().ShouldContain("pilot flight merge");
+    }
+
+    [Theory]
+    [InlineData("$out = gh pr view 1 2>&1")]
+    [InlineData("$null = git push origin flight/x")]
+    [InlineData("$x = 'gh pr merge 1'")]
+    [InlineData("$x = 1")]
+    public void APowerShellAssignmentOfSomethingElsePasses(string command)
+    {
+        DecidePs(command).ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("bash -lc 'gh pr merge 1'")]
+    [InlineData("bash -ec \"git push origin main\"")]
+    [InlineData("sh -xc 'gh pr merge 1'")]
+    [InlineData("bash -l -c 'gh pr merge 1'")]
+    [InlineData("zsh -ic 'gh pr merge 1'")]
+    [InlineData("bash -c 'gh pr merge 1'")]
+    public void AShellsCombinedFlagsAreFoundToo(string command)
+    {
+        Decide(command).ShouldNotBeNull().ShouldContain("pilot flight merge");
+    }
+
+    [Theory]
+    [InlineData("bash -lc 'gh pr view 1'")]
+    [InlineData("bash -l script.sh")]
+    [InlineData("bash --login -c 'git status'")]
+    [InlineData("bash -lc")]
+    public void AShellWithNothingToRefusePasses(string command)
+    {
+        Decide(command).ShouldBeNull();
+    }
+
     private static string? DecidePs(string command, string? branch = "flight/x", string? defaultBranch = "origin/main") =>
         MergeGuard.Decide(Input(command, "PowerShell"), Git(branch, defaultBranch));
 

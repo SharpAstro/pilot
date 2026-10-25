@@ -486,13 +486,17 @@ if (feed is not null && client is not null && clients is not null)
         loop.RequestRedraw();
     }, $"maintenance {(on ? "on" : "off")} on {line.Where}");
     // The header's Autopilot switch: this window's node, set as the person (only the person may; the node refuses anyone else).
-    // The switch follows the node's own answer on the next look, never the click, so a refusal leaves it as it was.
-    chrome.Autopilot.OnToggle = on => tracker.Run(async () =>
+    // The switch follows the node's own answer on the next look, never the click, so a refusal leaves it as it was. On a remote node
+    // it shows the state and does not click: the node keeps autopilot "for this machine only", as the Settings page is gated.
+    if (remoteEndpoint is null)
     {
-        view.SayStatus = await AutopilotCommands.SetAsync(client, on, GuiSay.Who, cts.Token);
-        Console.WriteLine($"pilot-gui: {view.SayStatus}");
-        loop.RequestRedraw();
-    }, $"autopilot {(on ? "on" : "off")}");
+        chrome.Autopilot.OnToggle = on => tracker.Run(async () =>
+        {
+            view.SayStatus = await AutopilotCommands.SetAsync(client, on, GuiSay.Who, cts.Token);
+            Console.WriteLine($"pilot-gui: {view.SayStatus}");
+            loop.RequestRedraw();
+        }, $"autopilot {(on ? "on" : "off")}");
+    }
     // The Settings page: this machine's node only, as its route is (a node on the LAN keeps its settings to itself).
     if (remoteEndpoint is null)
     {
