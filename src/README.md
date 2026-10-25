@@ -217,7 +217,7 @@ an answer that is not coming.
 
 | Command | What it does |
 | --- | --- |
-| `plan-leg flight/<code> name=… goal=… done-when=… [check=…] [budget=…] [model=…] [effort=…] [item=…]…` | A leg at the end of the order, or a planned one replaced. |
+| `plan-leg flight/<code> name=… goal=… done-when=… [check=…] [ci-differs=…] [budget=…] [model=…] [effort=…] [item=…]…` | A leg at the end of the order, or a planned one replaced. A `check` running `dotnet build`/`dotnet test` without the `-c` the repo's `.github/workflows` build with (Release, in SharpAstro repos) is refused, naming the workflow, unless `ci-differs` says why it cannot match CI; the reason is kept in the Done-when. |
 | `remove-leg flight/<code>/<leg> [why…]` | Takes a planned leg out of the flight; refused, with the leg's state, for one flying, done or failed. |
 | `start-leg flight/<code>/<leg>` | Its worker: `claude --bg -w <plane> -n <name> --permission-mode auto` from the repo's main checkout (a plane git made is not a trusted folder of its own; `-w` enters it under the repo's trust). |
 | `validate-leg flight/<code>/<leg> go\|no-go [report…]` | A validator's answer: go starts the leg's worker; no-go keeps the leg planned and rings. |
@@ -427,7 +427,7 @@ pilot flight connect <code> <other>
 pilot flight pr <code> [title…]                # pushes the plane, opens its PR (body: the legs, Closes #<issue>)
 pilot flight merge <code> <head> [--method squash|rebase|merge]   # or --squash, --rebase, --merge
 pilot flight land <code>
-pilot leg plan <code> <name> --goal … --done-when … [--check …] [--budget …] [--model …] [--effort …] [--item …]…
+pilot leg plan <code> <name> --goal … --done-when … [--check …] [--ci-differs …] [--budget …] [--model …] [--effort …] [--item …]…
 pilot leg remove <code> <leg> [why…]           # takes a planned leg out of the flight
 pilot leg start <code> <leg>
 pilot leg validate go|no-go [report…]          # a leg's validator, from its plane (--leg <code>/<leg> elsewhere)

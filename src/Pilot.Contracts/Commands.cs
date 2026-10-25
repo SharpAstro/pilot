@@ -130,7 +130,7 @@ public static class Verbs
     public const string Land = "land";
 
     /// <summary>
-    /// <c>plan-leg flight/&lt;code&gt; name=… goal=… done-when=… [check=…] [budget=…] [model=…] [effort=…] [item=…]…</c>:
+    /// <c>plan-leg flight/&lt;code&gt; name=… goal=… done-when=… [check=…] [ci-differs=…] [budget=…] [model=…] [effort=…] [item=…]…</c>:
     /// a leg at the end of the flight's order, or a planned leg of that name replaced.
     /// </summary>
     public const string PlanLeg = "plan-leg";

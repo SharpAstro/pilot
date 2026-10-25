@@ -93,6 +93,12 @@ public static class Briefs
             text.AppendLine();
             text.AppendLine($"The node reruns `{check}` in this folder before it takes the leg as done; it must exit 0. Run it yourself first.");
         }
+        text.AppendLine();
+        text.AppendLine(CiRule);
+        if (CiShape.Of(flight.Worktree) is { } ci)
+        {
+            text.AppendLine($"This repo's CI ({ci.Workflow}) builds {ci.Configuration}: run your own `dotnet build` and `dotnet test` with `-c {ci.Configuration}`, never a bare or Debug one.");
+        }
 
         if (why is not null || resumed is not null)
         {
@@ -168,6 +174,14 @@ public static class Briefs
         text.AppendLine("left. Start it with DONE when every step is done and the Done-when holds, or BLOCKED: and why.");
         return text.ToString();
     }
+
+    /// <summary>
+    /// The line both the planner and the worker are told: build as CI does. A published package is built Release, so a Debug
+    /// build on a worktree meets <c>#if DEBUG</c> types it never carries (SDL144) and fails for no reason of the change's.
+    /// </summary>
+    internal const string CiRule =
+        "Checks, and your own builds and test runs, build as the repo's CI does: for a SharpAstro dotnet repo that is `-c Release`, not the Debug a bare\n" +
+        "`dotnet build` gives. A check that cannot match CI says why in the Done-when, before it fails.";
 
     /// <summary>
     /// The org's UI checklist beside the flight's clone (<c>.github/docs/ui-changes.md</c> in the folder holding its repo,
@@ -320,6 +334,13 @@ public static class Briefs
         text.AppendLine("only when a leg needs more (or less) than the default.");
         text.AppendLine("The check runs as written in pwsh on Windows (sh elsewhere): quote anything holding a |, as a test filter");
         text.AppendLine("(`--filter 'FullyQualifiedName~A|FullyQualifiedName~B'`). A bare | is refused, since it would pipe.");
+        // SDL144: a Debug check on a worktree needed what the Release package never carries, and failed for nothing of the leg's.
+        text.AppendLine(CiRule);
+        if (CiShape.Of(flight.Worktree) is { } ci)
+        {
+            text.AppendLine($"This repo's CI ({ci.Workflow}) builds {ci.Configuration}: give every `dotnet build` and `dotnet test` in a check `-c {ci.Configuration}`. " +
+                "`leg plan` refuses one that does not, unless it is given `--ci-differs \"<why>\"`.");
+        }
         text.AppendLine();
         text.AppendLine("## When the legs are planned");
         text.AppendLine($"`{run} flight planned {flight.Code} \"<the plan in a line or two: why these legs, in this order>\"`. It shows the");
