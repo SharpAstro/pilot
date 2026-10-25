@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.RegularExpressions;
 using Pilot.Contracts;
 
 namespace Pilot.Commands;
@@ -9,7 +8,7 @@ namespace Pilot.Commands;
 /// <c>MarkdownOutput</c>, for <c>rich</c>: the same facts as <see cref="PilotCommand.Status"/>, with the issue and PR as
 /// links, each flight's legs in a table, and a leg's screenshot shown where the terminal can show it.
 /// </summary>
-internal static partial class StatusMarkdown
+internal static class StatusMarkdown
 {
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
 
@@ -131,14 +130,7 @@ internal static partial class StatusMarkdown
         return text.ToString();
     }
 
-    /// <summary>
-    /// Text taken as it is: the characters Markdown would act on, a table's pipe among them, escaped. A <c>#</c> is left,
-    /// as this text never starts a line, where alone it would make a heading.
-    /// </summary>
-    internal static string Text(string value) => MarkdownPunctuation().Replace(value, @"\$0");
-
-    [GeneratedRegex(@"[\\`*_\[\]<>|]")]
-    private static partial Regex MarkdownPunctuation();
+    private static string Text(string value) => Markdown.Text(value);
 
     /// <summary>The issue's page, from the PR's URL on the same repo; null with no PR yet, as the flight knows only the repo's folder.</summary>
     private static string? IssueUrl(FlightRow flight) =>

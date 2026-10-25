@@ -403,7 +403,9 @@ public static class PilotCommand
         var all = new Option<bool>("--all") { Description = "Closed cards and Handled lines too" };
         var cards = Action(new Command("cards", "Open cards, rings first") { Options = { all } }, async (p, client, ct) =>
         {
-            await output.WriteAsync(Cards(await SnapshotAsync(client, ct), all: p.GetValue(all)));
+            var snapshot = await SnapshotAsync(client, ct);
+            var everything = p.GetValue(all);
+            await WriteAsync(p.GetValue(outputFormat), () => Cards(snapshot, all: everything), () => CardsMarkdown.Build(snapshot, everything));
             return 0;
         });
         var card = Arg("card", "The card's id, as c3");
