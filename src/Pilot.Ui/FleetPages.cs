@@ -72,6 +72,21 @@ internal sealed class NodeFilter
         Interlocked.Increment(ref _revision);
     }
 
+    /// <summary>
+    /// A click on a node's pill: that node alone, as a pick of one; with Shift held, it is added to the pick or taken out of
+    /// it, so several are shown (SE1, 2026-10-25: a plain click added to the pick, so narrowing to one took two clicks).
+    /// </summary>
+    public void Pick(string key, InputModifier modifiers)
+    {
+        if ((modifiers & InputModifier.Shift) != 0)
+        {
+            Toggle(key);
+            return;
+        }
+        Volatile.Write(ref _picked, _picked.Clear().Add(key));
+        Interlocked.Increment(ref _revision);
+    }
+
     /// <summary>The header's pills: All nodes, then each node, the shown ones lit; nothing while there is one node.</summary>
     public IEnumerable<Layout.Node> Pills(FlightsPalette? night = null)
     {
@@ -86,7 +101,7 @@ internal sealed class NodeFilter
         foreach (var choice in Choices)
         {
             var key = choice.Key;
-            yield return CardsView<RgbaImage>.HeaderPill(choice.Name, $"nodes:{key}", () => Toggle(key), !all && _picked.Contains(key) ? lit : plain, night?.Bright);
+            yield return CardsView<RgbaImage>.HeaderPill(choice.Name, $"nodes:{key}", modifiers => Pick(key, modifiers), !all && _picked.Contains(key) ? lit : plain, night?.Bright);
         }
     }
 

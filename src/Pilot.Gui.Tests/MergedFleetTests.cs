@@ -173,6 +173,26 @@ public sealed class MergedFleetTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task APlainClickOnANodeShowsItAloneAndShiftAddsOrTakesOne()
+    {
+        var filter = new NodeFilter();
+        await TwoNodes(filter);
+        var se1 = filter.Choices.Single(c => c.Name == "SE1").Key;
+        var le1 = filter.Choices.Single(c => c.Name == "LE1").Key;
+
+        filter.Pick(se1, InputModifier.None);
+        filter.Line().ShouldBe("All nodes [SE1] LE1");
+        // A plain click on the other is that one alone, not both.
+        filter.Pick(le1, InputModifier.None);
+        filter.Line().ShouldBe("All nodes SE1 [LE1]");
+        // Shift adds it to the pick, and takes it out again.
+        filter.Pick(se1, InputModifier.Shift);
+        filter.Line().ShouldBe("All nodes [SE1] [LE1]");
+        filter.Pick(le1, InputModifier.Shift);
+        filter.Line().ShouldBe("All nodes [SE1] LE1");
+    }
+
+    [Fact]
     public async Task ANodeHeardAtTwoAddressesIsCountedOnce()
     {
         var filter = new NodeFilter();

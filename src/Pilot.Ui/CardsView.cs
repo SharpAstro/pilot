@@ -480,13 +480,17 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// the row shares one height and one middle (SE1, 2026-10-25: Sync, All repos and Autopilot each stood their own height).
     /// </summary>
     internal static Layout.Node HeaderPill(string label, string action, Action onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null, RGBAColor32? textColor = null) =>
+        HeaderPill(label, action, _ => onClick(), tint, textColor);
+
+    /// <summary>A header button whose click is told which modifier keys were held: the node pills' Shift adds to the pick.</summary>
+    internal static Layout.Node HeaderPill(string label, string action, Action<InputModifier> onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null, RGBAColor32? textColor = null) =>
         Layout.Builder.Text(label, 12f, textColor ?? Bright, TextAlign.Center, TextAlign.Center)
             .Pad(10f, 0f)
             .WAuto()
             .HFixed(AboutCard.HeaderButton)
             .Bg(tint?.Bg ?? Button)
             .BgHover(tint?.Hover ?? ButtonHover)
-            .Follows(new HitResult.ButtonHit(action), _ => onClick());
+            .Follows(new HitResult.ButtonHit(action), onClick);
 
     /// <summary>A small button: what the cards' choices are, and what the Sessions page's archive buttons borrow.</summary>
     internal static Layout.Node Pill(string label, string action, Action onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null, RGBAColor32? textColor = null) =>
