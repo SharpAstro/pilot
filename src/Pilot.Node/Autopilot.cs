@@ -122,6 +122,7 @@ public sealed class Autopilot(NodeState state, IServiceProvider services)
             Verbs.AnswerGrant => ($"answer a LAN ask ({words})", $"answered a LAN ask ({words})"),
             Verbs.RevokeGrant => ($"revoke the LAN grant {words}", $"revoked the LAN grant {words}"),
             Verbs.Dismiss => ($"dismiss {target}", $"dismissed {target}"),
+            Verbs.Answer => ($"answer {target}{(words.Length > 0 ? $" with '{words}'" : "")}", $"answered {target}{(words.Length > 0 ? $" with '{words}'" : "")}"),
             _ => ($"{verb} {target}", $"did {verb} {target}"),
         };
     }

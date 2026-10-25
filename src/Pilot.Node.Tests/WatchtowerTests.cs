@@ -324,7 +324,7 @@ public sealed class WatchtowerRouteTests
         var answered = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = "card/c1", Args = ["1"], Who = watchtower }, Ct);
         var landed = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Land, Target = "flight/TIA1", Who = watchtower }, Ct);
 
-        answered.Response.ShouldNotBeNull().Error.ShouldBe("Merge was refused: merge is the controller's, not the watchtower's: leave its card open for them");
+        answered.Response.ShouldNotBeNull().Error.ShouldBe("answer is the controller's, not the watchtower's: leave its card open for them");
         landed.Response.ShouldNotBeNull().Error.ShouldStartWith("land is the controller's");
         node.State.Cards(openOnly: true).ShouldHaveSingleItem();
     }
@@ -354,8 +354,8 @@ public sealed class WatchtowerRouteTests
         var direct = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Fold, Target = "flight/TIA2", Args = ["TIA1"], Who = watchtower }, Ct);
         var directSeparate = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Separate, Target = "flight/TIA2", Args = ["TIA1"], Who = watchtower }, Ct);
 
-        folded.Response.ShouldNotBeNull().Error.ShouldBe("Fold into TIA1 was refused: fold is the controller's, not the watchtower's: leave its card open for them");
-        separated.Response.ShouldNotBeNull().Error.ShouldBe("Plan separately was refused: separate is the controller's, not the watchtower's: leave its card open for them");
+        folded.Response.ShouldNotBeNull().Error.ShouldBe("answer is the controller's, not the watchtower's: leave its card open for them");
+        separated.Response.ShouldNotBeNull().Error.ShouldBe("answer is the controller's, not the watchtower's: leave its card open for them");
         direct.Response.ShouldNotBeNull().Error.ShouldStartWith("fold is the controller's");
         directSeparate.Response.ShouldNotBeNull().Error.ShouldStartWith("separate is the controller's");
         node.State.Cards(openOnly: true).ShouldHaveSingleItem();

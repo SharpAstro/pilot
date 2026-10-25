@@ -868,8 +868,8 @@ session); the GUI and the TUI never set it. One place, `Standing.Of` on the node
 | **Person** | the rest: a GUI click, a human-run CLI (no `CLAUDECODE`), the node's own steps (`Who` is `node`) | everything |
 
 The **your-only** commands are `merge`, `land`, `set`, `setup`, `answer-grant`, `revoke-grant`, `update`,
-`restart-watchtower`, and dismissing a card in the ring bin (answering one is its chosen button's command, so it is your-only
-exactly when that is). Every route runs them through `NodeCommands.RunAsync`, so a card's button is fenced like the
+`restart-watchtower`, and dismissing or answering an open card in the ring bin (the answer to any other card is its chosen button's
+command, so it is your-only exactly when that is). Every route runs them through `NodeCommands.RunAsync`, so a card's button is fenced like the
 command by hand, and an answer keeps the answerer's standing. A refused command says why and leaves its card open.
 `connect flight/<code> <other>` is a flight's dependency, not a grant's, and is not your-only.
 

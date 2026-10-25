@@ -88,6 +88,28 @@ public sealed class StandingTests
     }
 
     [Fact]
+    public async Task AnAnswerToARingCardIsTheControllersToo()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        const string worker = "du1-tia1-parser";
+        var lookout = Lookout(node);
+        Fly(node, "TIA1", worker);
+        var choices = new[] { new CardChoice { Label = "Retry", Verb = Verbs.Raise, Target = "flight/TIA1", Args = ["for-you", "retried"] } };
+        var ring = node.State.RaiseCard(CardBin.Ring, "stalled", "flight/TIA1", "TIA1 stalled", null, choices);
+        var forYou = node.State.RaiseCard(CardBin.ForYou, "landed", "flight/TIA1", "TIA1 landed", null, choices);
+
+        // The lookout and a flight's session may not answer the ring, however the choice reads; any other card they may.
+        (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(ring.Id), lookout, false, "Retry"))).ShouldNotBeNull().ShouldContain("answer is the controller's, not the watchtower's");
+        (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(ring.Id), worker, false, "Retry"))).ShouldNotBeNull().ShouldContain("answer is the controller's, not a flight session's");
+        node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
+        (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(forYou.Id), lookout, false, "Retry"))).ShouldBeNull();
+
+        // The person may.
+        (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(ring.Id), "gui", false, "Retry"))).ShouldBeNull();
+        node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
+    }
+
+    [Fact]
     public async Task AWorkersPlannersAndReviewersMergeIsRefusedWhateverAutopilotSays()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
