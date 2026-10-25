@@ -48,6 +48,9 @@ public sealed record CardRow
     /// <summary>The assistant's session that asked for what the card confirms (<see cref="CardKinds.AssistantAsk"/>), told what became of it; null for any other card.</summary>
     public string? AskedBy { get; init; }
 
+    /// <summary>Other sessions that asked the same thing while the card was open: told what became of it as <see cref="AskedBy"/> is.</summary>
+    public string[] AlsoAskedBy { get; init; } = [];
+
     /// <summary>The message that assistant said it acted on (<see cref="CommandRequest.Why"/>), when it gave one.</summary>
     public string? Why { get; init; }
 }

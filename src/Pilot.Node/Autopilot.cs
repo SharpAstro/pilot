@@ -41,6 +41,11 @@ public sealed class Autopilot(NodeState state, IServiceProvider services)
             state.UpdateChoices(card.Id, [.. card.Choices, new CardChoice { Label = DenyLabel, Verb = Verbs.Dismiss, Target = Verbs.CardTarget(card.Id), Args = ["denied"] }]);
             open = card;
         }
+        else
+        {
+            // Another session asking the same thing is told what the person answers too, not only the first to ask.
+            state.AddAsker(open.Id, command.Who);
+        }
         return state.Complete(command, $"{command.Verb} is the person's: it waits on their card {open.Id} ('{open.Title}'), and you are told what they answer");
     }
 
@@ -58,14 +63,18 @@ public sealed class Autopilot(NodeState state, IServiceProvider services)
     /// </summary>
     public async Task TellAsync(CardRow card, bool allowed, string answeredBy, CancellationToken cancellationToken)
     {
-        if (card.AskedBy is not { Length: > 0 } asker)
-        {
-            return;
-        }
         var what = card.Choices.FirstOrDefault(c => c.Label == AllowLabel) is { } allow ? Describe(allow.Verb, allow.Target, allow.Args).Ask : card.Title;
         var text = allowed
             ? $"{answeredBy} allowed your request to {what}, and it is done. Carry on from here."
             : $"{answeredBy} denied your request to {what}. It was not done: do not ask again unless they say so.";
+        foreach (var asker in new[] { card.AskedBy }.Concat(card.AlsoAskedBy).OfType<string>().Where(a => a.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            await TellOneAsync(card, asker, text, allowed, cancellationToken);
+        }
+    }
+
+    private async Task TellOneAsync(CardRow card, string asker, string text, bool allowed, CancellationToken cancellationToken)
+    {
         var session = state.Sessions()
             .Where(s => s.State != SessionState.Ended && string.Equals(s.Name, asker, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(s => s.StartedAt).FirstOrDefault();

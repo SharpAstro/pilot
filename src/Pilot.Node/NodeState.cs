@@ -381,6 +381,21 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>Adds <paramref name="who"/> to the sessions an open ask card tells what became of it; false when it is not open or they are on it.</summary>
+    public bool AddAsker(string id, string who)
+    {
+        lock (_gate)
+        {
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open
+                || string.Equals(card.AskedBy, who, StringComparison.OrdinalIgnoreCase) || card.AlsoAskedBy.Contains(who, StringComparer.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { AlsoAskedBy = [.. card.AlsoAskedBy, who] } });
+            return true;
+        }
+    }
+
     /// <summary>Opens a closed card again, as it was before: an answer whose choice was refused.</summary>
     public void ReopenCard(string id)
     {

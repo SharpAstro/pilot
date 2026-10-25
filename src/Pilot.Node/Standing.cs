@@ -1,5 +1,6 @@
 using Pilot.Contracts;
 using Pilot.Node.Sessions;
+using Pilot.Node.Updates;
 
 namespace Pilot.Node;
 
@@ -114,7 +115,14 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// button's command, so is your-only exactly when that is.)
     /// </summary>
     public static bool YourOnly(CommandRequest command, NodeState state) =>
-        YourOnlyVerbs.Contains(command.Verb) || command.Verb is Verbs.Dismiss or Verbs.Answer && IsRing(command, state) || IsAsk(command, state);
+        YourOnlyVerbs.Contains(command.Verb) && !OnlyReads(command) || command.Verb is Verbs.Dismiss or Verbs.Answer && IsRing(command, state) || IsAsk(command, state);
+
+    /// <summary>
+    /// Whether <paramref name="command"/> only reads, though its verb is one of <see cref="YourOnlyVerbs"/>: <c>update --check</c> says
+    /// whether a release is out and installs nothing (as the updater reads it, <c>check</c> anywhere in the arguments), so anyone may ask.
+    /// </summary>
+    private static bool OnlyReads(CommandRequest command) =>
+        command.Verb == Verbs.Update && command.Args.Contains(UpdateArgs.Check);
 
     private static bool IsRing(CommandRequest command, NodeState state) =>
         CardOf(command, state) is { State: CardState.Open, Bin: CardBin.Ring };
