@@ -57,10 +57,31 @@ public sealed class TooltipLayerTests
     }
 
     // The box the tooltip is drawn in: the arranged node with its background, the widest one.
+    // A line's width in design units by the test font, as the layer measures it from the window's.
+    private static float Measure(string text)
+    {
+        using var renderer = new RgbaImageRenderer(1, 1);
+        return renderer.MeasureText(text.AsSpan(), SessionsCapture.FontPath, 12f).Width;
+    }
+
+    [Fact]
+    public void AWideLineIsMeasuredNotCountedAndABlankLineStaysAGap()
+    {
+        var window = new Rect<float>(0, 0, 2000, 1000);
+        var anchor = new RectF32(1700, 200, 280, 40);
+        // 58 capitals are far wider than 58 average glyphs: counted by characters, this line overran the box.
+        var wide = string.Join(" ", Enumerable.Repeat("WMWMWMWMW", 12));
+
+        Box(new TooltipRequest(wide, anchor) { Side = Layout.DockSide.Left }, window).Width.ShouldBeLessThanOrEqualTo(TooltipLayer<RgbaImage>.MaxWidth + 20f);
+        TooltipLayer<RgbaImage>.Lines(wide, Measure).ShouldAllBe(l => Measure(l) <= TooltipLayer<RgbaImage>.MaxWidth);
+
+        TooltipLayer<RgbaImage>.Lines("first paragraph\n\n\nsecond paragraph\n", Measure).ShouldBe(["first paragraph", "", "second paragraph"]);
+    }
+
     private static Rect<float> Box(TooltipRequest request, Rect<float> window)
     {
         using var renderer = new RgbaImageRenderer(1, 1);
-        return Layout.Engine.Arrange(TooltipLayer<RgbaImage>.Tree(request), window, new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f))
+        return Layout.Engine.Arrange(TooltipLayer<RgbaImage>.Tree(request, Measure), window, new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f))
             .Where(a => a.Node.Background is not null)
             .Select(a => a.Bounds)
             .OrderByDescending(b => b.Width * b.Height)
