@@ -39,7 +39,7 @@ public sealed record FlightRow
     public required FlightState State { get; init; }
 
     /// <summary>The flights it waits for: it holds until each of them has landed. Across repos.</summary>
-    public string[] Connections { get; init; } = [];
+    public string[] Connections { get; init => field = value ?? []; } = [];
 
     public required DateTimeOffset CreatedAt { get; init; }
 

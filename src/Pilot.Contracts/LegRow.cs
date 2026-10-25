@@ -21,7 +21,7 @@ public sealed record LegRow
     public required string Goal { get; init; }
 
     /// <summary>The steps, each ticked by the worker as it goes.</summary>
-    public CheckItem[] Checklist { get; init; } = [];
+    public CheckItem[] Checklist { get; init => field = value ?? []; } = [];
 
     /// <summary>When it is done, in words: what the checker reruns and what it must show.</summary>
     public required string DoneWhen { get; init; }
@@ -56,7 +56,7 @@ public sealed record LegRow
     public string? Report { get; init; }
 
     /// <summary>What its workers produced to be looked at: screenshots, captures, published pages, at their latest.</summary>
-    public Artifact[] Artifacts { get; init; } = [];
+    public Artifact[] Artifacts { get; init => field = value ?? []; } = [];
 
     /// <summary>Where its validation is: none for a first leg or one not yet asked, else pending, go or no-go.</summary>
     public LegValidation Validation { get; init; }

@@ -557,3 +557,23 @@ public sealed class FileJournalTests : IDisposable
         }
     }
 }
+
+/// <summary>A store written by an older node reads back under a newer contract: a field it never wrote takes its default.</summary>
+public sealed class OlderStoreTests
+{
+    /// <summary>
+    /// beta.312 (c15db83) added <see cref="CardRow.AlsoAskedBy"/>, and every node with an older card in its journal
+    /// crashed on start: the source generator sets every init property from the JSON, an absent one to null, and
+    /// writing the card back refused the null (both nodes, 2026-10-25).
+    /// </summary>
+    [Fact]
+    public void ACardWrittenBeforeAlsoAskedByReadsBackAndWritesAgain()
+    {
+        const string older = """{"kind":"cardChanged","seq":7,"at":"2026-10-24T01:00:00+00:00","card":{"id":"c1","bin":"ring","kind":"pr-ready","subject":"flight/PIL1","title":"PIL1's PR #1 is ready to merge","at":"2026-10-24T01:00:00+00:00","state":"open"}}""";
+
+        var read = JsonSerializer.Deserialize(older, PilotJsonContext.Default.NodeEvent).ShouldBeOfType<CardChangedEvent>();
+
+        read.Card.AlsoAskedBy.ShouldBeEmpty();
+        Should.NotThrow(() => JsonSerializer.SerializeToUtf8Bytes<NodeEvent>(read, PilotJsonContext.Default.NodeEvent));
+    }
+}

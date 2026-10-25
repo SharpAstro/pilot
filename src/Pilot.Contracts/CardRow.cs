@@ -28,7 +28,7 @@ public sealed record CardRow
     public string? Detail { get; init; }
 
     /// <summary>What can be done about it, each a command the node runs when the card is answered with it.</summary>
-    public CardChoice[] Choices { get; init; } = [];
+    public CardChoice[] Choices { get; init => field = value ?? []; } = [];
 
     /// <summary>The page the card is about, one click away on every client: a flight's PR; null when there is none.</summary>
     public string? Link { get; init; }
@@ -49,7 +49,7 @@ public sealed record CardRow
     public string? AskedBy { get; init; }
 
     /// <summary>Other sessions that asked the same thing while the card was open: told what became of it as <see cref="AskedBy"/> is.</summary>
-    public string[] AlsoAskedBy { get; init; } = [];
+    public string[] AlsoAskedBy { get; init => field = value ?? []; } = [];
 
     /// <summary>The message that assistant said it acted on (<see cref="CommandRequest.Why"/>), when it gave one.</summary>
     public string? Why { get; init; }
@@ -64,7 +64,7 @@ public sealed record CardChoice
 
     public required string Target { get; init; }
 
-    public string[] Args { get; init; } = [];
+    public string[] Args { get; init => field = value ?? []; } = [];
 
     /// <summary>
     /// How ready the choice is, where the node can tell: a merge's PR checks, <c>passing</c>, <c>pending</c> or <c>failing</c>,
