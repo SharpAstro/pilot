@@ -12,7 +12,7 @@ internal static class StatusMarkdown
 {
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
 
-    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool? autopilot = null)
+    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool? autopilot = null, bool all = false)
     {
         var text = new StringBuilder();
         text.AppendLine("# pilot status").AppendLine();
@@ -46,9 +46,18 @@ internal static class StatusMarkdown
 
         text.AppendLine("## Flights").AppendLine();
         var flights = snapshot.Flights.OrderBy(f => f.State == FlightState.Landed).ThenByDescending(f => f.CreatedAt).ToList();
+        var landed = 0;
+        if (!all)
+        {
+            (flights, landed) = PilotCommand.InTheAir(flights);
+        }
         if (flights.Count == 0)
         {
-            text.AppendLine("No flights.").AppendLine();
+            text.AppendLine(landed > 0 ? "No flights in the air." : "No flights.").AppendLine();
+        }
+        if (landed > 0)
+        {
+            text.AppendLine($"_{PilotCommand.LandedHidden(landed, "`pilot status --all`")}_").AppendLine();
         }
         foreach (var flight in flights)
         {

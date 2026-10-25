@@ -411,7 +411,7 @@ The cache is read every three minutes once something has asked (a node nobody as
 `pilot` (Pilot.Cli, native AOT) spells the node's commands for the controller, the watchtower, workers and scripts. All three binaries parse their command lines with System.CommandLine, as tianwen's CLI does, so `--help` on any command lists its arguments and options:
 
 ```bash
-pilot status                                   # flights, their legs and artifacts, and the live sessions
+pilot status [--all]                           # flights in the air, their legs and artifacts, and the live sessions; --all adds landed ones
 pilot status --output-format markdown          # the same as Markdown (see Output formats)
 pilot sessions
 pilot repos [--all] [--refresh] [--output-format markdown]   # each tracked repo: branch, worktrees (flight, diff stat) and open PRs; --all adds untracked ones

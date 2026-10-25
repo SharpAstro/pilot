@@ -66,7 +66,7 @@ An update swaps the files in place and restarts the node; flights, cards, worker
 ## Use it
 
 ```bash
-pilot status                              # flights, their legs, and the live sessions
+pilot status [--all]                      # flights in the air (--all: landed too), their legs, and the live sessions
 pilot issue create "<title>" --body "<text>" --repo <checkout>
 pilot flight create <issue> --repo <checkout>   # the flight, its plane made
 pilot flight plan <code>                  # a planner plans the legs; then they fly
