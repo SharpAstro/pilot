@@ -115,7 +115,7 @@ internal sealed partial class FlightsView<TSurface>
         {
             Pill("← Back", "flight:back", GoBack),
             Layout.Builder.Text(line.Code, 16f, Bright).WAuto(),
-            Layout.Builder.Text(line.Title, 14f, Body).WStar(),
+            Whole(Layout.Builder.Text(line.Title, 14f, Body).WStar(), line.Title, TitleFits),
             Layout.Builder.Text(line.StateDetail is null ? line.State : $"{line.State} ({line.StateDetail})", 13f, color, TextAlign.Far).WAuto(),
         };
         if (CanCommand)

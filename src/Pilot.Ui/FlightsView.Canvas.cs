@@ -118,19 +118,20 @@ internal sealed partial class FlightsView<TSurface>
         var rows = new List<Layout.Node>
         {
             Layout.Builder.Text(line.Code, 15f, landed ? Dim : Bright).RowH(22f),
-            Layout.Builder.Text(line.Title, 13f, landed ? Dim : Body).RowH(20f),
+            Whole(Layout.Builder.Text(line.Title, 13f, landed ? Dim : Body).RowH(20f), line.Title, CardTitleFits),
             Layout.Builder.Text(line.Where, 12f, Dim).RowH(18f),
         };
         if (grid && line.Row.State == FlightState.Held)
         {
             rows.Add(Layout.Builder.Text(line.State, 12f, color).RowH(18f));
-            rows.Add(Layout.Builder.Text(line.StateDetail ?? "", 12f, Held).RowH(18f));
+            rows.Add(Whole(Layout.Builder.Text(line.StateDetail ?? "", 12f, Held).RowH(18f), line.StateDetail ?? "", CardLineFits));
         }
         else
         {
-            rows.Add(Layout.Builder.Text(line.StateDetail is null ? line.State : $"{line.State} · {line.StateDetail}", 12f, color).RowH(18f));
+            var state = line.StateDetail is null ? line.State : $"{line.State} · {line.StateDetail}";
+            rows.Add(Whole(Layout.Builder.Text(state, 12f, color).RowH(18f), state, CardLineFits));
         }
-        rows.Add(Layout.Builder.Text(line.Legs, 12f, landed ? Dim : Body).RowH(18f));
+        rows.Add(Whole(Layout.Builder.Text(line.Legs, 12f, landed ? Dim : Body).RowH(18f), line.Legs, CardLineFits));
         var body = Layout.Builder.VStack([.. rows])
             .Pad(10f, 8f)
             .Stretch();
