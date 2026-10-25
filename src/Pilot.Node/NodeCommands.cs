@@ -19,10 +19,32 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         // person's alone (a merge or a landing by any route, a card's included; the node's settings and setup; a review posted to
         // GitHub in the person's name; the answer to an overlap), a flight's session from other flights too, and the autopilot
         // setting is the person's to change.
-        if (Standing.Of(command, state, Get<Watchtower>().Name).Refusal(command, state) is { } refused)
+        var standing = Standing.Of(command, state, Get<Watchtower>().Name);
+        if (standing.Refusal(command, state) is { } refused)
         {
             return state.Complete(command, refused);
         }
+        // An assistant's your-only command follows the autopilot rule: off, it waits on the person's card (Allow runs it as
+        // them, Deny closes it); on, it runs at once, recorded with its session and message, and a Handled card says so.
+        var onAutopilot = standing.Kind == StandingKind.Assistant && Standing.YourOnly(command, state);
+        if (onAutopilot)
+        {
+            if (!Get<RoleModels>().Autopilot)
+            {
+                return Get<Autopilot>().Ask(command);
+            }
+            command = command with { Autopilot = true };
+        }
+        var result = await RouteAsync(command, cancellationToken);
+        if (onAutopilot && result.Ok)
+        {
+            Get<Autopilot>().Handled(command);
+        }
+        return result;
+    }
+
+    private async Task<CommandResult> RouteAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
         if (command.Verb == Verbs.Tell)
         {
             var (target, why) = Get<Watchtower>().TellTarget();
@@ -147,6 +169,11 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             {
                 await Get<PrReviews>().SweepAsync(cancellationToken);
             }
+            // An assistant's ask dismissed is denied: the session that asked is told, as with Deny.
+            if (card.Kind == CardKinds.AssistantAsk)
+            {
+                await Get<Autopilot>().TellAsync(card, allowed: false, command.Who, cancellationToken);
+            }
             return state.Complete(command, null);
         }
 
@@ -159,6 +186,14 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             return state.Complete(command, card.Choices.Length == 0
                 ? $"card {card.Id} has no choices; dismiss it"
                 : $"card {card.Id} offers {string.Join(", ", card.Choices.Select((c, i) => $"{i + 1} {c.Label}"))}, not '{which}'");
+        }
+
+        // An assistant's ask denied: closed with who said so, and the session that asked is told it was not done.
+        if (card.Kind == CardKinds.AssistantAsk && choice.Verb == Verbs.Dismiss)
+        {
+            state.CloseCard(card.Id, choice.Label, command.Who);
+            await Get<Autopilot>().TellAsync(card, allowed: false, command.Who, cancellationToken);
+            return state.Complete(command, null);
         }
 
         // Closed by the answer before the choice runs: a merge lands its flight, and landing closes the flight's cards,
@@ -184,6 +219,11 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (card.Kind == PrReviews.ReadyKind)
         {
             await Get<PrReviews>().SweepAsync(cancellationToken);
+        }
+        // An assistant's ask allowed and done: the session that asked is told.
+        if (card.Kind == CardKinds.AssistantAsk)
+        {
+            await Get<Autopilot>().TellAsync(card, allowed: true, command.Who, cancellationToken);
         }
         return state.Complete(command, null);
     }

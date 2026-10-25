@@ -847,7 +847,7 @@ session); the GUI and the TUI never set it. One place, `Standing.Of` on the node
 | **Grant** | the LAN token's grant (never read from the wire) | as before: never the settings, setup or grants of this machine (but `maintenance`) |
 | **Lookout** | `Who` is the watchtower's session name, whatever the flag | watch, ring, nudge, answer; nothing your-only, and not a review's verdict or posting, `sync-repos`, `create-issue`, `fold` or `separate` |
 | **Flight's session** | `Who` is a leg's worker or validator, a flight's reviewer or a PR review's reviewer, or a planner, worker or reviewer session row that names its flight | its own flight's legs, checks, artifacts and reviews, and a PR review its own PR; a `flight/` or `pr/` target that is another's is refused; nothing your-only, nor `post-review`, `fold` or `separate` |
-| **Assistant** | the `Agent` flag, from no session above | everything asked in words; its your-only commands run as before for now (the confirm card and the autopilot rule come next, in #208) |
+| **Assistant** | the `Agent` flag, from no session above | everything asked in words; its your-only commands follow the autopilot rule, below |
 | **Person** | the rest: a GUI click, a human-run CLI (no `CLAUDECODE`), the node's own steps (`Who` is `node`) | everything |
 
 The **your-only** commands are `merge`, `land`, `set`, `setup`, `answer-grant`, `revoke-grant`, `update`,
@@ -855,6 +855,30 @@ The **your-only** commands are `merge`, `land`, `set`, `setup`, `answer-grant`, 
 exactly when that is). Every route runs them through `NodeCommands.RunAsync`, so a card's button is fenced like the
 command by hand, and an answer keeps the answerer's standing. A refused command says why and leaves its card open.
 `connect flight/<code> <other>` is a flight's dependency, not a grant's, and is not your-only.
+
+### An assistant's your-only request: the autopilot rule
+
+What an assistant (a Claude session the person talks to) sends of the your-only list is neither refused nor run blindly, but
+sorted by the `autopilot` setting (`Autopilot` on the node):
+
+- **Off (the default).** The command is not run. The node raises a For-you card (kind `assistant-ask`, about the flight or
+  target), `<session> asks to merge #63 (TIA1)`, with the message the assistant acted on as its detail and two choices:
+  **Allow**, which is the original command, run as whoever presses it (the person), and **Deny**, which closes the ask. The
+  command's own result is a refusal saying it waits on that card, so the assistant knows to wait; the same command asked
+  again is the same card, and another your-only command about the same flight replaces it. When the card is answered,
+  the node says the outcome to the asking session through `say` (found by `Who` in the session rows: an MCP client with no
+  row of its name cannot be told, and the card says so) and closes the card with who answered. `dismiss` on the card is a
+  Deny. An Allow the command refuses (a merge past the head, say) leaves the ask open and tells no one.
+- **On.** The command runs at once. The command's result and its black-box line carry `Autopilot` and the message (`Why`)
+  beside `Who`, which is the session; and a Handled card (`autopilot-ran`) says `<session> merged #63 (TIA1) on autopilot`
+  with that message, or `No message given`. A command the flight then refuses leaves no Handled card, only the black box.
+- **Either way**, answering or dismissing an `assistant-ask` card is itself your-only, and refused to an assistant or the
+  lookout whatever the autopilot says; a flight's session is refused every your-only command, autopilot on or off; and the
+  person, a human-run CLI and a grant are not in the rule at all.
+
+The message is the optional `Why` of a command (`CommandRequest.Why`), filled by `--why "<message>"` on `pilot flight merge`,
+`pilot flight land`, `pilot settings set`, `pilot settings setup` and `pilot update` (and the matching MCP tool inputs); it is
+empty when none is given.
 
 ## Cards
 

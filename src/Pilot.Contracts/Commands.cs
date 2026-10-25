@@ -35,6 +35,20 @@ public sealed record CommandRequest
     /// </summary>
     [JsonIgnore]
     public string? Grant { get; init; }
+
+    /// <summary>
+    /// The message the sender acted on, in its own words (<c>pilot merge … --why "…"</c>): what an assistant says it was
+    /// asked to do. Kept in the black box and on the card an assistant's your-only command raises or leaves behind (#208);
+    /// empty or null when none was given.
+    /// </summary>
+    public string? Why { get; init; }
+
+    /// <summary>
+    /// Set by the node when it let an assistant's your-only command through because the autopilot is on, so the command's
+    /// result and its black-box line say so. Never read from the wire: a client cannot claim it.
+    /// </summary>
+    [JsonIgnore]
+    public bool Autopilot { get; init; }
 }
 
 /// <summary>What became of a command: the response to its post, and a <see cref="CommandResultEvent"/> on the stream.</summary>
@@ -66,6 +80,13 @@ public sealed record CommandResult
 
     /// <summary>What the command made, when it made something with an id of its own: a <c>run</c>'s job (<c>j3</c>).</summary>
     public string? Made { get; init; }
+
+    /// <summary>Whether the node ran it as an assistant's your-only command because the autopilot is on (<see cref="CommandRequest.Autopilot"/>).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Autopilot { get; init; }
+
+    /// <summary>The message the sender acted on (<see cref="CommandRequest.Why"/>), when it gave one.</summary>
+    public string? Why { get; init; }
 
     /// <summary>
     /// The number of the <see cref="CommandResultEvent"/> that carries this result on the stream, so the client that
@@ -394,4 +415,12 @@ public sealed record BlackBoxLine
 
     /// <summary>Why not, when it was refused.</summary>
     public string? Error { get; init; }
+
+    /// <summary>Whether it ran on the autopilot: an assistant's your-only command, done without the person's answer (<see cref="Who"/> is that session).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Autopilot { get; init; }
+
+    /// <summary>The message the sender acted on (<see cref="CommandRequest.Why"/>), when it gave one.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Why { get; init; }
 }

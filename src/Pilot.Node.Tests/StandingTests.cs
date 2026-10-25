@@ -154,17 +154,6 @@ public sealed class StandingTests
     }
 
     [Fact]
-    public async Task AnAssistantsYourOnlyCommandsRunAsToday()
-    {
-        await using var node = await NodeHarness.StartAsync(Ct);
-        node.State.PutFlight(Flight("TIA1"));
-
-        // Known by the flag and by no session: an assistant. This leg leaves its your-only commands running; the next adds the confirm card.
-        (await Error(node, Command(Verbs.Merge, "flight/TIA1", "pilot-33", true, "cafe0000"))).ShouldNotBeNull().ShouldContain(PastTheFence);
-        (await Error(node, Command(Verbs.Merge, "flight/TIA1", "mcp", true, "cafe0000"))).ShouldNotBeNull().ShouldContain(PastTheFence);
-    }
-
-    [Fact]
     public async Task AGrantsCommandsBehaveAsBeforeWhateverItsNameSays()
     {
         var port = FreePort();

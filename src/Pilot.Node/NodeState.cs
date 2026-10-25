@@ -303,7 +303,8 @@ public sealed class NodeState
     /// that card, not a second one: one event, one card. A Handled card is born closed, a line and nothing to answer.
     /// </summary>
     /// <param name="link">The page the card is about (a flight's PR), opened from the card.</param>
-    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null)
+    /// <param name="askedBy">The assistant's session an ask card is about (<see cref="CardKinds.AssistantAsk"/>), and <paramref name="why"/> the message it acted on.</param>
+    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null)
     {
         lock (_gate)
         {
@@ -323,6 +324,8 @@ public sealed class NodeState
                 Detail = detail,
                 Choices = [.. choices ?? []],
                 Link = link,
+                AskedBy = askedBy,
+                Why = why,
                 At = now,
                 State = bin == CardBin.Handled ? CardState.Closed : CardState.Open,
                 Outcome = bin == CardBin.Handled ? "handled" : null,
@@ -576,6 +579,8 @@ public sealed class NodeState
             Way = error is null ? way : null,
             SessionId = error is null ? sessionId : null,
             Made = error is null ? made : null,
+            Autopilot = command.Autopilot,
+            Why = command.Why is { } why && why.Trim().Length > 0 ? why.Trim() : null,
             Seq = _seq + 1,
         };
         Publish(new CommandResultEvent { Seq = result.Seq, At = _time.GetUtcNow(), Result = result });
