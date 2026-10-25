@@ -511,7 +511,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         {
             return;
         }
-        var result = await legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = merge.Target, Args = merge.Args, Who = "node" }, cancellationToken);
+        var result = await legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = merge.Target, Args = merge.Args ?? [], Who = "node" }, cancellationToken);
         if (result.Ok)
         {
             state.CloseCard(card.Id, result.Made is { Length: > 0 } made ? $"on autopilot: {made}" : "merged on autopilot", "node");
