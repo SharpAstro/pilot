@@ -1027,7 +1027,7 @@ public static class PilotCommand
             {
                 var steps = leg.Checklist.Length == 0 ? "" : $", {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";
                 var goArounds = leg.GoArounds > 0 ? $", go-around {leg.GoArounds}" : "";
-                text.AppendLine($"  {leg.Order}. {leg.Name}: {leg.State.ToString().ToLowerInvariant()}{steps}{goArounds}{(leg.Worker is { } w && leg.State == LegState.Flying ? $", worker {w}" : "")}");
+                text.AppendLine($"  {leg.Order}. {leg.Name}: {FlightWaiting.LegState(leg)}{steps}{goArounds}{(leg.Worker is { } w && leg.State == LegState.Flying ? $", worker {w}" : "")}");
                 foreach (var artifact in leg.Artifacts)
                 {
                     text.AppendLine($"     artifact {artifact.Title}: {artifact.Location}");

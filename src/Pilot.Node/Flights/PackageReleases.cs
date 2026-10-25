@@ -87,6 +87,101 @@ public sealed partial class PackageReleases(IGit git, INuGetFeed feed, TimeProvi
         return [.. waits];
     }
 
+    /// <summary>The branches a repo's merged main is looked for on, first to last.</summary>
+    private static readonly string[] MainRefs = ["origin/main", "origin/master", "main", "master"];
+
+    /// <summary>How recently a release must have been recorded for it to still count as being published.</summary>
+    private static readonly TimeSpan RecentRelease = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// Whether <paramref name="miss"/>, a package a restore in <paramref name="flight"/>'s plane could not find, is being
+    /// published, as the wait a leg holds for: by a release a flight recorded (the <see cref="FlightRow.PackageWaits"/> of the
+    /// <paramref name="flights"/>, kept until the package is up), or by a sibling repo of the org whose merged main packs that
+    /// package id in the <c>MAJOR.MINOR</c> line that was asked for. Null when nuget.org already serves it (the failure is then
+    /// not about publishing), when nobody is publishing it, or when nuget.org cannot say: the leg then fails as it always did,
+    /// never held on a guess.
+    /// </summary>
+    public async Task<PackageWait?> PublishingAsync(FlightRow flight, RestoreMiss miss, IReadOnlyList<FlightRow> flights, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<string> versions;
+        try
+        {
+            versions = await feed.VersionsAsync(miss.Id, cancellationToken);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException && !cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+        int[]? wanted = null;
+        if (miss.Version is { } asked && !PackageVersions.TryParse(asked, out wanted))
+        {
+            wanted = null;
+        }
+        // Served already: a version at least the one asked for is listed, or (none asked) the id is known at all.
+        if (wanted is null ? versions.Count > 0 : versions.Any(v => PackageVersions.TryParse(v, out var parts) && PackageVersions.Compare(parts, wanted) >= 0))
+        {
+            return null;
+        }
+
+        bool InLine(string line) => wanted is null || (PackageVersions.TryParse(line, out var l) && l.Length == 2 && wanted.Length >= 2 && l[0] == wanted[0] && l[1] == wanted[1]);
+        var now = time.GetUtcNow();
+        PackageWait Wait(string line, string producer, string? commit, string? repoPath) => new()
+        {
+            Id = miss.Id,
+            Line = line,
+            Wanted = miss.Version,
+            Producer = producer,
+            Since = now,
+            Commit = commit,
+            RepoPath = repoPath,
+        };
+
+        // A release a flight recorded, and its consumers still wait for.
+        if (flights.SelectMany(f => f.PackageWaits)
+                .FirstOrDefault(w => string.Equals(w.Id, miss.Id, StringComparison.OrdinalIgnoreCase) && InLine(w.Line) && now - w.Since < RecentRelease) is { } recorded)
+        {
+            return Wait(recorded.Line, recorded.Producer, recorded.Commit, recorded.RepoPath ?? flights.FirstOrDefault(f => f.Code == recorded.Producer)?.RepoPath);
+        }
+
+        // A sibling repo whose merged main releases it: the org's clones beside the flights' own.
+        var own = Path.GetFullPath(flight.RepoPath);
+        var repos = flights.Select(f => f.RepoPath).Append(flight.RepoPath)
+            .Concat(flights.Select(f => Path.GetDirectoryName(f.RepoPath)).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).SelectMany(SiblingClones))
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(r => !string.Equals(r, own, StringComparison.OrdinalIgnoreCase));
+        foreach (var repo in repos)
+        {
+            foreach (var main in MainRefs)
+            {
+                var head = await git.RunAsync(["rev-parse", "--verify", "--quiet", $"{main}^{{commit}}"], repo, cancellationToken);
+                if (!head.Ok || head.Output.Trim() is not { Length: > 0 } commit)
+                {
+                    continue;
+                }
+                if (await LineAtAsync(repo, commit, cancellationToken) is { } line && InLine(line)
+                    && (await PackageIdsAsync(repo, commit, cancellationToken)).Contains(miss.Id, StringComparer.OrdinalIgnoreCase))
+                {
+                    return Wait(line, Path.GetFileName(repo), commit, repo);
+                }
+                break;
+            }
+        }
+        return null;
+    }
+
+    private static IEnumerable<string> SiblingClones(string root)
+    {
+        try
+        {
+            return Directory.Exists(root) ? [.. Directory.EnumerateDirectories(root).Where(d => Directory.Exists(Path.Combine(d, ".git")))] : [];
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
+
     private async Task<string?> ShowAsync(string cwd, string commit, string path, CancellationToken cancellationToken)
     {
         var run = await git.RunAsync(["show", $"{commit}:{path}"], cwd, cancellationToken);

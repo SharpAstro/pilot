@@ -48,7 +48,7 @@ public static class Briefs
     }
 
     /// <param name="socket">The node's socket when it is not the default one: the CLI is told it, or it would ask another node.</param>
-    public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null)
+    public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null, string? resumed = null)
     {
         var run = Run(cli, socket);
         var text = new StringBuilder();
@@ -94,11 +94,19 @@ public static class Briefs
             text.AppendLine($"The node reruns `{check}` in this folder before it takes the leg as done; it must exit 0. Run it yourself first.");
         }
 
-        if (why is not null)
+        if (why is not null || resumed is not null)
         {
             text.AppendLine();
-            text.AppendLine($"## Go-around {leg.GoArounds}");
-            text.AppendLine($"An earlier worker flew this leg and was stopped: {why}");
+            if (resumed is not null)
+            {
+                text.AppendLine("## Resumed after a hold");
+                text.AppendLine($"An earlier worker flew this leg until its restore failed on a package that was being published, and the node held the leg: {resumed}");
+            }
+            else
+            {
+                text.AppendLine($"## Go-around {leg.GoArounds}");
+                text.AppendLine($"An earlier worker flew this leg and was stopped: {why}");
+            }
             text.AppendLine("You do not have its conversation, and do not need it: start from what the plane holds now.");
             if (plane is not null)
             {
@@ -136,6 +144,13 @@ public static class Briefs
         text.AppendLine($"- When every step is done and the Done-when holds: `{run} leg finish done \"<one-line report>\"`. The node reruns the");
         text.AppendLine("  check itself and refuses while a step is open or the check fails; fix what it says and finish again.");
         text.AppendLine($"- When you cannot go on: `{run} leg finish failed \"<why>\"`.");
+        // A restore that cannot find a sibling's package is the sibling's publish not done yet, not this leg's fault: the node
+        // holds the leg for it and flies it again once nuget.org serves the package. A worker that works around it (a local
+        // feed, a pin moved back) would ship a build that is not what CI restores.
+        text.AppendLine("- A restore that fails NU1101 or NU1102 on a package a sibling repo or a connected flight is publishing is not yours to fix:");
+        text.AppendLine($"  report it with `{run} leg finish failed \"<the NU line, verbatim>\"` and end your turn. The node reads the line, holds the");
+        text.AppendLine("  leg until nuget.org serves that version, and flies it again with a fresh worker. Do not work around it: no local");
+        text.AppendLine("  feed, no pin changed back, no package reference removed.");
         text.AppendLine($"- A full build or test run, or anything else long: `{run} run -- <command>`, then end your turn. The node");
         text.AppendLine("  runs it as a job and wakes you with how it ended and its last lines; do not wait for it or poll it. The machine");
         text.AppendLine("  is shared with other flights, so it may wait its turn first; that costs you nothing. Short commands (one test,"
@@ -459,7 +474,7 @@ public static class Briefs
             foreach (var leg in legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order))
             {
                 var steps = leg.Checklist.Length == 0 ? "" : $", {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";
-                text.AppendLine($"  {leg.Order}. {leg.Name}: {leg.State.ToString().ToLowerInvariant()}{steps}{(leg.State == LegState.Flying && leg.Worker is { } w ? $", worker {w}" : "")}");
+                text.AppendLine($"  {leg.Order}. {leg.Name}: {FlightWaiting.LegState(leg)}{steps}{(leg.State == LegState.Flying && leg.Worker is { } w ? $", worker {w}" : "")}");
             }
         }
         var open = cards.Where(c => c.State == CardState.Open).ToList();

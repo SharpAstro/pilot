@@ -70,6 +70,13 @@ public sealed record LegRow
     /// <summary>What its validator last reported: the stale facts of a no-go, or what a go checked.</summary>
     public string? ValidationReport { get; init; }
 
+    /// <summary>
+    /// The package it holds for: its restore failed on a package a connected flight or a sibling's merged release is publishing,
+    /// so it stays <see cref="LegState.Planned"/> (no worker, nobody rung) and the node starts it afresh once nuget.org serves
+    /// it. Null when it holds for nothing.
+    /// </summary>
+    public PackageWait? Hold { get; init; }
+
     public DateTimeOffset? StartedAt { get; init; }
 
     public DateTimeOffset? FinishedAt { get; init; }

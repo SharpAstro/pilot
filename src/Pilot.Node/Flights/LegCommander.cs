@@ -295,6 +295,11 @@ public sealed partial class LegCommander(
         {
             return null;
         }
+        // A leg held for a package starts when the node finds it on nuget.org, not before: nothing starts while it holds.
+        if (legs.Any(l => l.Hold is not null))
+        {
+            return null;
+        }
         // A next leg whose validator is reading it, or whose validator said no-go, waits for that answer or a person: the
         // sweep starts neither a second validator nor the worker.
         if (legs.FirstOrDefault(l => l.State == LegState.Planned) is { Validation: LegValidation.Pending or LegValidation.NoGo })
@@ -454,11 +459,23 @@ public sealed partial class LegCommander(
         Gate.RingWeek(Models.WeekLimit);
         var anyway = (command.Args ?? []).Contains("anyway", StringComparer.OrdinalIgnoreCase);
         var earlier = legs.Any(l => l.Order < leg.Order);
+        if (leg.Hold is { } hold)
+        {
+            if (!anyway)
+            {
+                throw new FlightException($"{flight.Code}/{leg.Name} {FlightWaiting.HoldText(hold)}: the node starts it once nuget.org serves it, or start it anyway");
+            }
+            leg = leg with { Hold = null, Report = $"resumed: {hold.Id} {hold.Wanted ?? hold.Line} is not up, started anyway by {command.Who}" };
+            state.PutLeg(leg);
+            state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} started anyway", HoldKind, PackageWatch.LateKind);
+        }
+        // A leg that flew before (held, then resumed) was validated or started anyway then: its tree is the one it left.
+        var flown = leg.Worker is not null;
         if (leg.Validation == LegValidation.Pending && !anyway)
         {
             throw new FlightException($"{flight.Code}/{leg.Name} is being validated by {leg.Validator}; wait for its answer, or start it anyway");
         }
-        if (earlier && !anyway && leg.Validation != LegValidation.Go)
+        if (earlier && !anyway && !flown && leg.Validation != LegValidation.Go)
         {
             await StartValidatorAsync(flight, leg, legs, cancellationToken);
             return;
@@ -492,8 +509,17 @@ public sealed partial class LegCommander(
         var worker = WorkerName(flight, leg);
         await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
         await WarnSiblingsBehindAsync(flight, leg, cancellationToken);
-        var job = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), Briefs.For(flight, leg, legs, cli: Cli, socket: Socket), leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), cancellationToken);
-        state.PutLeg(leg with { State = LegState.Flying, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), Report = null });
+        // A leg that flew before and was held for a package is flown again from what the plane holds, as a go-around is.
+        var resumed = leg.Worker is not null && leg.Report?.StartsWith("resumed:", StringComparison.Ordinal) == true ? leg.Report : null;
+        Briefs.PlaneState? plane = null;
+        if (resumed is not null)
+        {
+            var commits = await git.RunAsync(["log", "--oneline", $"{flight.Base}..HEAD"], flight.Worktree, cancellationToken);
+            var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, cancellationToken);
+            plane = new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : "");
+        }
+        var job = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed), leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), cancellationToken);
+        state.PutLeg(leg with { State = LegState.Flying, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), Report = resumed });
         state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} started", NoGoKind, ValidatingKind);
         // A ring that this step could not be taken by itself is moot once it is.
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}/{leg.Name} started", NextStepKind);
@@ -674,6 +700,11 @@ public sealed partial class LegCommander(
                     var run = await checks.RunAsync(check, flight.Worktree, cancellationToken);
                     if (!run.Passed)
                     {
+                        // A restore that fails on a package a sibling is publishing is the leg's to wait out, not to fail.
+                        if (await TryHoldAsync(flight, leg, run.Tail, cancellationToken))
+                        {
+                            break;
+                        }
                         state.PutLeg(leg with { Report = $"check `{check}` failed ({run.ExitCode}):\n{run.Tail}" });
                         throw new FlightException($"{flight.Code}/{leg.Name}'s check `{check}` failed ({run.ExitCode}); it stays flying. Last of its output:\n{run.Tail}");
                     }
@@ -688,6 +719,11 @@ public sealed partial class LegCommander(
                 }
                 break;
             case "failed":
+                // The worker reports the NU line verbatim (its brief says to); the node holds the leg when the package is being published.
+                if (await TryHoldAsync(flight, leg, report, cancellationToken))
+                {
+                    break;
+                }
                 state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "failed" });
                 state.RaiseCard(CardBin.Ring, "leg-failed", Verbs.LegTarget(flight.Code, leg.Name),
                     $"{flight.Code}/{leg.Name} failed", report.Length > 0 ? report : null,

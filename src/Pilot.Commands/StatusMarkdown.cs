@@ -88,7 +88,7 @@ internal static class StatusMarkdown
                 text.AppendLine("|--:|-----|-------|------:|--------|");
                 foreach (var leg in legs)
                 {
-                    var legState = leg.State.ToString().ToLowerInvariant() + (leg.GoArounds > 0 ? $", go-around {leg.GoArounds}" : "");
+                    var legState = FlightWaiting.LegState(leg) + (leg.GoArounds > 0 ? $", go-around {leg.GoArounds}" : "");
                     var steps = leg.Checklist.Length == 0 ? "" : $"{leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length}";
                     var worker = leg.Worker is { } w && leg.State == LegState.Flying ? Text(w) : "";
                     text.AppendLine($"| {leg.Order} | {Text(leg.Name)} | {Text(legState)} | {steps} | {worker} |");

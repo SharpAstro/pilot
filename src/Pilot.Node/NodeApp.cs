@@ -91,6 +91,7 @@ public static class NodeApp
             var legs = ActivatorUtilities.CreateInstance<LegCommander>(services);
             legs.Models = services.GetRequiredService<RoleModels>();
             legs.Gate = services.GetRequiredService<StartGate>();
+            legs.Releases = services.GetRequiredService<PackageReleases>();
             return legs;
         });
         builder.Services.AddSingleton(services =>

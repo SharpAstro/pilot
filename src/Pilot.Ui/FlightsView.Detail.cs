@@ -257,7 +257,7 @@ internal sealed partial class FlightsView<TSurface>
 
     private Layout.Node LegBlock(string code, LegDetail leg)
     {
-        var color = leg.Row.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
+        var color = leg.Row.Hold is not null ? Held : leg.Row.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
         var head = new List<Layout.Node>
         {
             Layout.Builder.Text($"{leg.Order}. {leg.Name}", 15f, Bright).WAuto(),
@@ -286,7 +286,7 @@ internal sealed partial class FlightsView<TSurface>
         }
         if (leg.Report is { } report)
         {
-            rows.Add(Field(leg.Row.State == LegState.Failed ? "Why it failed" : "Report", report, leg.Row.State == LegState.Failed ? Failed : Body));
+            rows.Add(Field(leg.Row.State == LegState.Failed ? "Why it failed" : leg.Row.Hold is not null ? "Holding" : "Report", report, leg.Row.State == LegState.Failed ? Failed : leg.Row.Hold is not null ? Held : Body));
         }
         foreach (var artifact in leg.Artifacts)
         {
