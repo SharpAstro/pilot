@@ -425,7 +425,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         if (line.CanSetMaintenance && OnMaintenance is { } maintenance)
         {
             // The row's menu item: it names what it does, so a node in maintenance offers to end it.
-            buttons.Add(Pill(line.Maintenance ? "Maintenance off" : "Maintenance on", $"fleet:{line.Where}:maintenance", () => maintenance(line, !line.Maintenance)));
+            buttons.Add(Pill(line.Maintenance ? "Take out of maintenance" : "Put into maintenance", $"fleet:{line.Where}:maintenance", () => maintenance(line, !line.Maintenance)));
         }
         var cells = new List<Layout.Node>
         {
