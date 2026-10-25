@@ -161,6 +161,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>Opens the Chat page: what the panel's foot, the watchtower's shortcut, does.</summary>
     public Action? OnChat { get; set; }
 
+    /// <summary>Whether the Chat page is the one shown: the shortcut to it is then left off the panel, and a panel with no card is not drawn.</summary>
+    public bool OnChatPage { get; set; }
+
     /// <summary>Whether this user may command a node's cards (its own, or one it holds a grant for); null: every card.</summary>
     public Func<NodeMark?, bool>? CanSteer { get; set; }
 
@@ -343,7 +346,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             }
         }
         var stack = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).Stretch();
-        return Layout.Builder.VStack(CanTell ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch();
+        return Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch();
     }
 
     /// <summary>How many lines a card's detail may take before it is cut.</summary>

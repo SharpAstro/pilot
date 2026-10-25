@@ -201,7 +201,11 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
         {
             actions.Add(new FlightAction($"Remove {next.Name}", Verbs.RemoveLeg, Verbs.LegTarget(code, next.Name), []) { WhyPrompt = $"why remove {next.Name}?" });
         }
-        actions.Add(new FlightAction("Plan a leg", Verbs.PlanLeg, target, []) { ChatMessage = $"plan a leg on {code}: " });
+        // The chat is with this window's watchtower, whose pilot runs against this window's node: another node's flight is not its to plan on.
+        if (line.Node is null or { Here: true })
+        {
+            actions.Add(new FlightAction("Plan a leg", Verbs.PlanLeg, target, []) { ChatMessage = $"plan a leg on {code}: " });
+        }
         return [.. actions.Select(a => a with { Node = line.Node })];
     }
 }
@@ -601,7 +605,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         }
         if (line.LegRows.Count == 0)
         {
-            legs.Add(Layout.Builder.Text("no legs yet: Plan a leg", 12f, Dim).RowH(20f));
+            legs.Add(Layout.Builder.Text(line.Node is null or { Here: true } ? "no legs yet: Plan a leg" : "no legs yet", 12f, Dim).RowH(20f));
         }
         if (flight.Review is { } review)
         {

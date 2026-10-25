@@ -227,13 +227,19 @@ public sealed class SteerByNodeTests : IAsyncDisposable
         _le1.Commands[0].ShouldContain("it went in circles");
         _se1.Commands.ShouldBeEmpty();
 
-        // Plan a leg is said in the chat, whatever the row's node: nothing is sent to a node.
+        // Plan a leg is said to this window's watchtower, whose pilot runs against this window's node: another node's flight has
+        // no such button, and this node's flight (SE11) has one that goes to the chat and sends nothing to a node.
         chrome.Render(new SessionsScreen([], "test", Live.At), flights, CardsScreen.From([]), new RectF32(0, 0, 1280, 800));
         regions.Clear();
         chrome.Flights.CollectPaintedRegions(regions);
-        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:LE11:plan-leg" }).OnClick!.Invoke(InputModifier.None);
+        regions.Any(r => r.Result is HitResult.ButtonHit { Action: "flight:LE11:plan-leg" }).ShouldBeFalse();
+        chrome.Flights.ListCursor.MoveTo(0);
+        chrome.Render(new SessionsScreen([], "test", Live.At), flights, CardsScreen.From([]), new RectF32(0, 0, 1280, 800));
+        regions.Clear();
+        chrome.Flights.CollectPaintedRegions(regions);
+        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:SE11:plan-leg" }).OnClick!.Invoke(InputModifier.None);
         chrome.Page.ShouldBe(PilotPage.Chat);
-        chrome.Chat.Input.Text.ShouldBe("plan a leg on LE11: ");
+        chrome.Chat.Input.Text.ShouldBe("plan a leg on SE11: ");
         acted.Count.ShouldBe(1);
     }
 

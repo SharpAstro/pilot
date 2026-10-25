@@ -177,49 +177,80 @@ public sealed class WatchtowerChatTests : IDisposable
         ]);
     }
 
+    private const string AskReply = @"Which repo should the flight fly in?\n- tianwen\n- pilot";
+
+    private static string Asked(string id, string reply) =>
+        $$$"""{"type":"assistant","message":{"id":"{{{id}}}","role":"assistant","content":[{"type":"text","text":"On it.\n<ask>\n{{{reply}}}\n</ask>"}]}}""";
+
     [Fact]
-    public async Task ItSaysWhetherItIsWorkingAndWhatItHasAskedAndNobodyHasAnswered()
+    public async Task ItSaysWhetherItIsWorkingAndWhatItHasAskedInAnAskBlockAndNobodyHasAnswered()
     {
         (await _tower.RestartAsync("first", Ct)).ShouldBeNull();
-        Row("job00001", First, SessionState.Working);
+        Row("job00001", First, SessionState.Idle);
         _profile.Append(_profile.TranscriptPath(First),
             Said("user", "launch a flight for the sky map"),
-            """{"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion","input":{"questions":[{"question":"Which repo should the flight fly in?","header":"Repo","options":[{"label":"tianwen","description":"the sky"},{"label":"pilot","description":"the tool"}]}]}}]}}""",
+            Asked("m1", AskReply),
             """{"type":"queue-operation","operation":"enqueue","content":"and tell me when it is up"}""");
 
         var asking = _chat.Page(-1);
 
-        asking.Working.ShouldBeTrue();
         asking.PendingQuestion.ShouldBe("Which repo should the flight fly in?");
         asking.Choices.ShouldBe(["tianwen", "pilot"]);
         asking.Queued.ShouldBe(["and tell me when it is up"]);
-        // The call shows in the feed as the question it asked.
-        asking.Entries.Last().ShouldSatisfyAllConditions(e => e.Kind.ShouldBe(TranscriptKind.ToolUse), e => e.Text.ShouldBe("Which repo should the flight fly in?"));
+        // The reply shows in the feed as what it said and the question, without the block's markup or the choices (they are the buttons).
+        asking.Entries.Last().ShouldSatisfyAllConditions(e => e.Kind.ShouldBe(TranscriptKind.Assistant), e => e.Text.ShouldBe("On it.\nWhich repo should the flight fly in?"));
 
-        // The answer, as the call's result: nothing is pending, and nothing waits.
-        Row("job00001", First, SessionState.Idle);
-        _profile.Append(_profile.TranscriptPath(First),
-            """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"q1","content":"pilot"}]}}""");
+        // A choice's click is a tell: the turn ended on the question, so the row is idle and the tell resumes it, never queues behind a blocked call.
+        SessionMessenger.Choose(_state.Sessions().Single(r => r.Id == "job00001"))
+            .ShouldBe(SayWays.Resumed);
+        _profile.Append(_profile.TranscriptPath(First), Said("user", "pilot"));
 
         var answered = _chat.Page(-1);
-        answered.Working.ShouldBeFalse();
         answered.PendingQuestion.ShouldBeNull();
         answered.Choices.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ACardTheNodeSaysWhileAQuestionWaitsLeavesItPending()
+    {
+        (await _tower.RestartAsync("first", Ct)).ShouldBeNull();
+        Row("job00001", First, SessionState.Idle);
+        _profile.Append(_profile.TranscriptPath(First), Asked("m1", AskReply), Said("user", "[node] A card opened: c1 rings"));
+
+        _chat.Page(-1).PendingQuestion.ShouldBe("Which repo should the flight fly in?");
     }
 
     [Fact]
     public async Task AQuestionTheSessionMovedOnFromIsNoLongerPending()
     {
         (await _tower.RestartAsync("first", Ct)).ShouldBeNull();
-        Row("job00001", First, SessionState.Waiting);
-        _profile.Append(_profile.TranscriptPath(First),
-            """{"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion","input":{"questions":[{"question":"Which?","options":[{"label":"a"}]}]}}]}}""");
-        _chat.Page(-1).PendingQuestion.ShouldBe("Which?");
+        Row("job00001", First, SessionState.Idle);
+        _profile.Append(_profile.TranscriptPath(First), Asked("m1", AskReply));
+        _chat.Page(-1).PendingQuestion.ShouldBe("Which repo should the flight fly in?");
 
         // The person said something else in the chat: that answers or drops the question.
         _profile.Append(_profile.TranscriptPath(First), Said("user", "never mind"));
 
         _chat.Page(-1).PendingQuestion.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ANewReplyAfterTheQuestionMeansTheSessionMovedOn()
+    {
+        (await _tower.RestartAsync("first", Ct)).ShouldBeNull();
+        Row("job00001", First, SessionState.Working);
+        _profile.Append(_profile.TranscriptPath(First), Asked("m1", AskReply),
+            """{"type":"assistant","message":{"id":"m2","role":"assistant","content":[{"type":"text","text":"Never mind, I picked tianwen."}]}}""");
+
+        _chat.Page(-1).PendingQuestion.ShouldBeNull();
+    }
+
+    [Fact]
+    public void TheWatchtowerIsStartedWithoutAskUserQuestionWhichWouldBlockABackgroundSession()
+    {
+        var args = ClaudeWorkerLauncher.Arguments(new WorkerStart("w", "/r", null, "brief", null, null, RemoteControl: true, DisallowedTools: ["AskUserQuestion"]));
+
+        args.SkipWhile(a => a != "--disallowedTools").Skip(1).First().ShouldBe("AskUserQuestion");
     }
 
     [Fact]
@@ -276,7 +307,9 @@ public sealed class WatchtowerChatTests : IDisposable
         brief.ShouldContain("`pilot flight planned <code> \"<the plan in a line>\"`");
         brief.ShouldContain("plan card comes back");
         // A choice that is theirs is asked as one; what is theirs alone comes back as the Allow card, never silently.
-        brief.ShouldContain("AskUserQuestion");
+        // The tool blocks a background session, so it is asked in an ask block instead.
+        brief.ShouldContain("Never use the AskUserQuestion tool");
+        brief.ShouldContain("<ask>");
         brief.ShouldContain("Allow card");
         brief.ShouldContain("Never go round it with gh or git directly");
     }

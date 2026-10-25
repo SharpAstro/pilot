@@ -233,6 +233,30 @@ public sealed class WatchtowerPanelTests
     }
 
     [Fact]
+    public void TheChatPageHasNoShortcutToItselfInThePanel()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Cards.CanTell = true;
+        chrome.Show(PilotPage.Chat);
+
+        chrome.Render(new SessionsScreen([], "test", Live.At), null, CardsScreen.From([Card("c1")], [Tower()]), new RectF32(0, 0, 1280, 800));
+
+        var regions = new List<ClickableRegion>();
+        chrome.Cards.CollectPaintedRegions(regions);
+        var actions = regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).ToList();
+        actions.ShouldContain("watchtower:rc");
+        actions.ShouldNotContain("cards:chat");
+
+        // Elsewhere it is there again.
+        chrome.Show(PilotPage.Home);
+        chrome.Render(new SessionsScreen([], "test", Live.At), null, CardsScreen.From([Card("c1")], [Tower()]), new RectF32(0, 0, 1280, 800));
+        regions.Clear();
+        chrome.Cards.CollectPaintedRegions(regions);
+        regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).ShouldContain("cards:chat");
+    }
+
+    [Fact]
     public void ASnapshotRenderPaintsNoFoot()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
