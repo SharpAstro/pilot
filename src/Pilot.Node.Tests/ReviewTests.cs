@@ -347,6 +347,28 @@ public sealed class ReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task APrDroppedFromTheQueueOnAConflictIsRebasedAndReviewedAfreshNotOfferedMergeAgain()
+    {
+        // PIL207's #238 left the queue on merge_conflict and its card offered Merge, which could only be refused again (SE1, 2026-10-25).
+        var flight = await NewFlight("21", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA21"), "controller");
+        (await Run(Verbs.Review, "flight/TIA21", Reviewer("TIA21"), "pass", "fine")).Ok.ShouldBeTrue();
+        _state.CloseCard(Open().ShouldHaveSingleItem().Id, "done", "controller").ShouldBeTrue();
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: false, RemovedAt: DateTimeOffset.UtcNow.AddSeconds(-5), RemovedReason: "merge_conflict");
+        await checks.LookAsync(Ct);
+
+        Open().ShouldNotContain(c => c.Choices.Any(ch => ch.Verb == Verbs.Merge));
+        _state.Cards().ShouldContain(c => c.Subject == "flight/TIA21" && c.Title.Contains("on a conflict", StringComparison.Ordinal));
+        // Once a removal, as for any other.
+        var count = _state.Cards().Length;
+        await checks.LookAsync(Ct);
+        _state.Cards().Length.ShouldBe(count);
+    }
+
+    [Fact]
     public async Task AQueuedPrIsLabelledQueuedAndItsRefusedLabelIsSetAtTheNextLookClosingItsCardThenPassedAgainOnceItLeaves()
     {
         var (flight, number) = await Passed("31");
