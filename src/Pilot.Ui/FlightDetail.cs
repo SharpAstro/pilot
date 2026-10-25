@@ -20,7 +20,7 @@ internal sealed record LegDetail
 
     public required int Order { get; init; }
 
-    /// <summary>planned, flying, done, failed.</summary>
+    /// <summary>planned, holding (for a package, said in full by the report), flying, done, failed.</summary>
     public required string State { get; init; }
 
     /// <summary>Its go-arounds when it had any (<c>go-around 2</c>); null otherwise.</summary>
@@ -49,7 +49,7 @@ internal sealed record LegDetail
         Row = leg,
         Name = leg.Name,
         Order = leg.Order,
-        State = leg.State.ToString().ToLowerInvariant(),
+        State = leg.Hold is not null ? "holding" : leg.State.ToString().ToLowerInvariant(),
         GoArounds = leg.GoArounds > 0 ? $"go-around {leg.GoArounds}" : null,
         Goal = leg.Goal,
         DoneWhen = leg.DoneWhen,

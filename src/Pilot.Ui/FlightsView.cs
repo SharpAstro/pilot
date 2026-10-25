@@ -76,6 +76,7 @@ internal sealed record FlightLine
         var text = $"{legs.Count} {(legs.Count == 1 ? "leg" : "legs")} · {legs.Count(l => l.State == LegState.Done)} done";
         return legs.FirstOrDefault(l => l.State == LegState.Failed) is { } failed ? $"{text} · {failed.Name} failed"
             : legs.FirstOrDefault(l => l.State == LegState.Flying) is { } flying ? $"{text} · {flying.Name} flying{(flying.GoArounds > 0 ? $" (go-around {flying.GoArounds})" : "")}"
+            : legs.FirstOrDefault(l => l.Hold is not null) is { } held ? $"{text} · {held.Name} {FlightWaiting.LegState(held)}"
             : text;
     }
 
@@ -180,7 +181,10 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
         var next = legs.FirstOrDefault(l => l.State == LegState.Planned);
         if (flight.State == FlightState.Flying && flying is null && failed is null && next is not null && legs.Where(l => l.Order < next.Order).All(l => l.State == LegState.Done))
         {
-            actions.Add(new FlightAction($"Start {next.Name}", Verbs.StartLeg, Verbs.LegTarget(code, next.Name), []));
+            // A leg held for a package starts by itself once nuget.org serves it; a person may still send it before.
+            actions.Add(next.Hold is null
+                ? new FlightAction($"Start {next.Name}", Verbs.StartLeg, Verbs.LegTarget(code, next.Name), [])
+                : new FlightAction($"Start {next.Name} anyway", Verbs.StartLeg, Verbs.LegTarget(code, next.Name), ["anyway"]));
         }
         if ((flying ?? failed) is { } stuck)
         {
@@ -597,10 +601,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         foreach (var leg in line.LegRows.Take(5))
         {
             var steps = leg.Checklist.Length == 0 ? "" : $" · {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";
-            var color = leg.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
+            var color = leg.Hold is not null ? Held : leg.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
             legs.Add(Layout.Builder.HStack(
                     Layout.Builder.Text($"{leg.Order}. {leg.Name}", 13f, Body).WFixed(150f),
-                    Layout.Builder.Text($"{leg.State.ToString().ToLowerInvariant()}{steps}{(leg.GoArounds > 0 ? $" · go-around {leg.GoArounds}" : "")}", 12f, color).WStar())
+                    Layout.Builder.Text($"{FlightWaiting.LegState(leg)}{steps}{(leg.GoArounds > 0 ? $" · go-around {leg.GoArounds}" : "")}", 12f, color).WStar())
                 .RowH(20f));
         }
         if (line.LegRows.Count == 0)

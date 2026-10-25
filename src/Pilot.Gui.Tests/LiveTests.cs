@@ -568,6 +568,9 @@ public sealed class FlightsPageTests
         FlightLine.LegsText([Leg("parser", 1, LegState.Done), Leg("render", 2, LegState.Flying, goArounds: 1), Leg("docs", 3, LegState.Planned)])
             .ShouldBe("3 legs · 1 done · render flying (go-around 1)");
         FlightLine.LegsText([Leg("parser", 1, LegState.Failed)]).ShouldBe("1 leg · 0 done · parser failed");
+        // A leg held for a package says what it holds for, not that it merely waits.
+        var held = Leg("parser", 1, LegState.Planned) with { Hold = new PackageWait { Id = "Drawboard.Core", Line = "1.2", Wanted = "1.2.7", Producer = "Core", Since = DateTimeOffset.UnixEpoch } };
+        FlightLine.LegsText([held]).ShouldBe("1 leg · 0 done · parser holding for Drawboard.Core 1.2.7");
     }
 
     [Fact]

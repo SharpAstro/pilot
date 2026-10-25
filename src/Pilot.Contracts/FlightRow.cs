@@ -163,6 +163,16 @@ public sealed record PackageWait
 
     /// <summary>Whether a card has said the package is late: one per wait, never a second.</summary>
     public bool Escalated { get; init; }
+
+    /// <summary>
+    /// The version a restore asked for, for the wait of a leg held by one (<see cref="LegRow.Hold"/>): a version of
+    /// <see cref="Line"/> at least this one is what is waited for. Null for a flight's wait, which waits for a version above
+    /// <see cref="Above"/>.
+    /// </summary>
+    public string? Wanted { get; init; }
+
+    /// <summary>The producer's clone, for a producer that is a repo and no flight (<see cref="Producer"/> is then its name); null otherwise.</summary>
+    public string? RepoPath { get; init; }
 }
 
 /// <summary>What a held flight waits for, in one place for every client's <c>held, waiting for …</c>.</summary>
@@ -170,6 +180,13 @@ public static class FlightWaiting
 {
     /// <summary>A wait as a status line says it: <c>Drawboard.Core 1.2 on nuget.org</c>.</summary>
     public static string Text(PackageWait wait) => $"{wait.Id} {wait.Line} on nuget.org";
+
+    /// <summary>What a leg held for a package says: <c>holding: Drawboard.Core 1.2.7 not on nuget.org yet</c>.</summary>
+    public static string HoldText(PackageWait wait) => $"holding: {wait.Id} {wait.Wanted ?? wait.Line} not on nuget.org yet";
+
+    /// <summary>Where a leg is in a line of words: its state, or what it holds for (<c>holding for Drawboard.Core 1.2.7</c>).</summary>
+    public static string LegState(LegRow leg) =>
+        leg.Hold is { } hold ? $"holding for {hold.Id} {hold.Wanted ?? hold.Line}" : leg.State.ToString().ToLowerInvariant();
 
     /// <summary>
     /// Its connections, then its packages (each once), joined by a comma. A flight that has landed and left packages to wait
