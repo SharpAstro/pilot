@@ -556,7 +556,7 @@ public sealed class PrReviewCliTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task APrIsReviewedFromItsLinkAndItsVerdictComesBackAsACard()
+    public async Task APrIsReviewedFromItsLinkAndItsVerdictIsPostedByTheNodeWhileThePrIsOpen()
     {
         var started = await Pilot(_root, "review", "pr", "https://github.com/acme/gadget/pull/9");
         started.Exit.ShouldBe(0, started.Output + started.Error);
@@ -572,14 +572,13 @@ public sealed class PrReviewCliTests : IAsyncLifetime
         verdict.Exit.ShouldBe(0, verdict.Output + verdict.Error);
         Directory.Delete(folder);
 
-        var (_, cards, _) = await Pilot(_root, "cards");
-        var card = _node.State.Cards(openOnly: true).ShouldHaveSingleItem();
-        cards.ShouldContain($"{card.Id}  RING  acme/gadget#9: review ready, changes (Gadgets)");
-        cards.ShouldContain("README.md:1 greets no one");
-
-        (await Pilot(_root, "dismiss", card.Id, "read it")).Exit.ShouldBe(0);
-        Directory.Exists(review.Worktree).ShouldBeFalse();
-        _node.State.PrReviews().Single().State.ShouldBe(PrReviewState.Closed);
+        // The PR is open, so the node posts it at once: nothing rings, a Handled card says what went out.
+        var (number, payload) = (_node.GitHub.Posted.ShouldHaveSingleItem().Number, _node.GitHub.Posted[0].Payload);
+        number.ShouldBe(9);
+        payload.ShouldContain("README.md:1");
+        _node.State.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.ReadyKind);
+        _node.State.Cards().ShouldContain(c => c.Kind == PrReviews.PostedKind && c.Bin == CardBin.Handled);
+        _node.State.PrReviews().Single().PostedId.ShouldNotBeNull();
     }
 
     [Fact]
@@ -592,6 +591,8 @@ public sealed class PrReviewCliTests : IAsyncLifetime
         // A finding that is no path and line is the reviewer's mistake, caught before it reaches the node.
         var wrong = await Pilot(review.Worktree, "review", "changes", "One defect.", "--finding", "the change is wrong");
         (wrong.Exit, wrong.Error.Contains("a finding is path:line")).ShouldBe((2, true));
+        // Merged meanwhile: the node does not post a review to a PR no longer open, so it waits on its card's Post.
+        _node.GitHub.Prs["acme/gadget#9"] = _node.GitHub.Prs["acme/gadget#9"] with { State = "MERGED" };
         var verdict = await Pilot(review.Worktree, "review", "changes", "One defect.", "--finding", $"{added}:1 says only the change", "--finding", "README.md:1 greets no one");
         verdict.Exit.ShouldBe(0, verdict.Output + verdict.Error);
         var card = _node.State.Cards(openOnly: true).ShouldHaveSingleItem();
