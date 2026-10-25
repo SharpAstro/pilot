@@ -13,10 +13,38 @@ internal static class WrappedProse
     public static Layout.Node Of(string text, float size, RGBAColor32 color, int maxLines = 0)
     {
         var words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
-            .Select(w => Layout.Builder.Text(w + " ", size, color).WAuto())
+            .SelectMany(Pieces)
+            .Select(piece => Layout.Builder.Text(piece, size, color).WAuto())
             .ToArray();
         var wrap = Layout.Builder.WrapH(words).WithLineGap(size * 0.2f);
         return (maxLines > 0 ? wrap.WithMaxLines(maxLines) : wrap).WStar();
+    }
+
+    /// <summary>A word this long may not fit a line of its own: a check's name, a path, a URL.</summary>
+    internal const int LongWord = 24;
+
+    /// <summary>
+    /// A word as the leaves that draw it, each ending in its space as Markdown's paragraphs are, except that a long one is
+    /// broken after its separators (<c>, + / \ . : _ -</c>), the leaves of a piece running on without a space, so a long check
+    /// name or path wraps instead of running past the box (ui-changes.md section 3).
+    /// </summary>
+    private static IEnumerable<string> Pieces(string word)
+    {
+        if (word.Length < LongWord)
+        {
+            yield return word + " ";
+            yield break;
+        }
+        var start = 0;
+        for (var i = 0; i < word.Length; i++)
+        {
+            if (word[i] is ',' or '+' or '/' or '\\' or '.' or ':' or '_' or '-' && i + 1 < word.Length)
+            {
+                yield return word[start..(i + 1)];
+                start = i + 1;
+            }
+        }
+        yield return word[start..] + " ";
     }
 
     /// <summary>

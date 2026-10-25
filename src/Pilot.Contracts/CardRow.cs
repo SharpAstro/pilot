@@ -124,6 +124,23 @@ public static class ChoiceStatus
     public const string Armed = "armed";
 }
 
+/// <summary>
+/// How far an armed merge's checks are, said in one form for the node to write into a card's detail and for a client to read
+/// back for the Merge button (<c>Merging when checks pass · 6 of 7</c>): the format lives here, in one place.
+/// </summary>
+public static partial class ArmedProgress
+{
+    /// <summary><c>6 of 7</c>.</summary>
+    public static string Say(int done, int total) => $"{done} of {total}";
+
+    /// <summary>The <c>6 of 7</c> a card's detail says, or null when it says none (a re-run's detail, a card that is not armed).</summary>
+    public static string? Read(string? detail) =>
+        detail is { Length: > 0 } && Progress().Match(detail) is { Success: true } m ? Say(int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value)) : null;
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\b(\d{1,4}) of (\d{1,4})\b")]
+    private static partial System.Text.RegularExpressions.Regex Progress();
+}
+
 /// <summary>Which of the bins a card is in, and so how it reaches the controller.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<CardBin>))]
 public enum CardBin

@@ -203,7 +203,7 @@ internal sealed partial class FlightsView<TSurface>
         };
         if (CanCommand && OnAnswerCard is { } answer)
         {
-            cells.Add(Pill(CardsView<TSurface>.StatusLabel(choice), $"flight:{line.Code}:merge-card", () => answer(card, number)));
+            cells.Add(CardsView<TSurface>.ChoiceControl(choice, card.Detail, $"flight:{line.Code}:merge-card", () => answer(card, number)));
         }
         return Layout.Builder.HStack([.. cells]).WithGap(12f).Pad(0f, 6f).Bg(RowFocusBg).RowH(40f);
     }
