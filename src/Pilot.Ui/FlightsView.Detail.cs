@@ -165,18 +165,22 @@ internal sealed partial class FlightsView<TSurface>
         {
             foreach (var session in line.Working.Take(3))
             {
-                var doing = session.Role switch
+                // A leg's validator is a worker session whose leg is the leg's name and "-validator".
+                var validated = session.Leg is { } named && named.EndsWith(ValidatorSuffix, StringComparison.Ordinal) ? named[..^ValidatorSuffix.Length] : null;
+                var (doing, who) = session.Role switch
                 {
-                    SessionRole.Planner => "planning",
-                    SessionRole.Reviewer => "reviewing",
-                    _ => session.Leg is { } leg ? $"flying {leg}" : "working",
+                    SessionRole.Planner => ("planning", "Planner"),
+                    SessionRole.Reviewer => ("reviewing", "Reviewer"),
+                    _ when validated is not null => ($"validating {validated}", "Validator"),
+                    _ => (session.Leg is { } leg ? $"flying {leg}" : "working", "Worker"),
                 };
-                var color = session.State == SessionState.Idle ? Dim : Flying;
+                var color = session.State == SessionState.Waiting ? Held : Flying;
                 yield return Layout.Builder.Text($"{doing} · {session.Name} · {session.State.ToString().ToLowerInvariant()}", 12f, color).WAuto();
                 if (OnSession is { } open)
                 {
+                    // Named for whose it is: beside two sessions, two "Its transcript" said nothing of which was which.
                     var row = session;
-                    yield return Pill("Its transcript", $"flight:{line.Code}:session:{row.Id}", () => open(row, line.Node));
+                    yield return Pill($"{who}'s transcript", $"flight:{line.Code}:session:{row.Id}", () => open(row, line.Node));
                 }
             }
         }
@@ -195,6 +199,8 @@ internal sealed partial class FlightsView<TSurface>
         }
         yield return Layout.Builder.Spacer().WStar();
     }
+
+    private const string ValidatorSuffix = "-validator";
 
     private Layout.Node LegBlock(string code, LegDetail leg)
     {
