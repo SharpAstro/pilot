@@ -37,14 +37,15 @@ internal sealed class TranscriptPane
     internal static readonly RGBAColor32 OutputFailed = new(0xf0, 0x7a, 0x7a, 0xff);
 
     // The assistant's words and a subagent's report as Markdown at full contrast: they are the body of the page, the tool
-    // lines around them are the furniture. Its thinking the same, dimmed.
+    // lines around them are the furniture. Its thinking is read as much as its words (what it is about to do and why), so
+    // it is body text a step below them, not furniture: it was the faintest grey, below the tool lines (DE1, 2026-10-25).
     internal static readonly Layout.MarkdownStyle Prose = new()
     {
         Text = Bright, Strong = new(0xff, 0xff, 0xff, 0xff), Link = new(0x8f, 0xb8, 0xf0, 0xff), Muted = Body, Code = OutputText, CodeBackground = OutputShade,
     };
-    private static readonly Layout.MarkdownStyle Thought = new()
+    internal static readonly Layout.MarkdownStyle Thought = new()
     {
-        Text = Faint, Strong = Dim, Emphasis = Faint, Code = Dim, Link = Dim, Muted = Faint, CodeBackground = new(0x18, 0x19, 0x20, 0xff),
+        Text = Body, Strong = Bright, Emphasis = Body, Code = OutputText, Link = new(0x8f, 0xb8, 0xf0, 0xff), Muted = Dim, CodeBackground = OutputShade,
     };
     private static readonly RGBAColor32 Button = new(0x2c, 0x35, 0x4a, 0xff);
     private static readonly RGBAColor32 ButtonHover = new(0x3a, 0x46, 0x62, 0xff);
@@ -593,9 +594,11 @@ internal sealed class TranscriptPane
             body.Add(Layout.Builder.VStack([.. block]).Pad(8f, 6f).Bg(OutputShade).WStar());
         }
         var row = Layout.Builder.TreeRow(0, hasChildren: true, open, () => Toggle(call.Index), line, new Layout.TreeRowStyle(Dim));
+        // Under a line of its own (a read's count) the call's line is stretched across: left at its natural width in the
+        // stack, it took the caret's, its text none, and the time was painted over the path (DE1, 2026-10-25).
         return body.Count == 0
             ? row
-            : Layout.Builder.VStack(row, Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(CaretWidth), Layout.Builder.VStack([.. body]).WStar())).WithGap(2f);
+            : Layout.Builder.VStack(row.WStar(), Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(CaretWidth), Layout.Builder.VStack([.. body]).WStar())).WithGap(2f);
     }
 
     // When an entry was written, in this machine's time, the day and zone on hover; blank for one the transcript gave no
@@ -619,7 +622,7 @@ internal sealed class TranscriptPane
             { Kind: TranscriptKind.User, Note: true } => ("", Faint, Faint, 2),
             { Kind: TranscriptKind.User } => ("prompt", Prompt, Bright, 12),
             { Kind: TranscriptKind.Assistant } => ("claude", Bright, Bright, 40),
-            { Kind: TranscriptKind.Thinking } => ("thinking", Faint, Faint, 2),
+            { Kind: TranscriptKind.Thinking } => ("thinking", Dim, Body, 8),
             { Kind: TranscriptKind.ToolUse } => (entry.Tool ?? "tool", Tool, Dim, 1),
             { Kind: TranscriptKind.ToolResult } => ("└", Faint, Faint, 3),
             _ => ("error", Failed, Failed, 4),
@@ -644,8 +647,8 @@ internal sealed class TranscriptPane
                 Layout.Builder.VStack([.. body]).WStar(),
                 ListTable.Top(Stamp(entry.At)).WFixed(TimeWidth))
             .WithGap(10f);
-        // Claude's words and a prompt stand apart from the tool lines around them.
-        return entry.Kind is TranscriptKind.Assistant or TranscriptKind.User ? row.Pad(0f, ProseSpace) : row;
+        // Claude's words, its thinking and a prompt stand apart from the tool lines around them.
+        return entry.Kind is TranscriptKind.Assistant or TranscriptKind.Thinking or TranscriptKind.User ? row.Pad(0f, ProseSpace) : row;
     }
 
     // An entry's text, its first lines only until it is opened: the line saying how many more is what opens it, and

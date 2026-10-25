@@ -49,8 +49,9 @@ public sealed class TranscriptPaneTests
     private static Layout.Content.Text TextOf(ImmutableArray<Layout.ArrangedNode<int>> arranged, string value) =>
         arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().First(t => t.Value.TrimEnd() == value);
 
-    private static async Task<(SessionsView<RgbaImage> View, SessionsScreen Screen, RgbaImageRenderer Renderer)> Open(SubagentRow[]? subagents = null)
+    private static async Task<(SessionsView<RgbaImage> View, SessionsScreen Screen, RgbaImageRenderer Renderer)> Open(SubagentRow[]? subagents = null, TranscriptEntry[]? entries = null)
     {
+        entries ??= Entries();
         var renderer = new RgbaImageRenderer(1280, 800);
         var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
         var screen = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
@@ -59,11 +60,11 @@ public sealed class TranscriptPaneTests
             screen = screen with { Lines = [screen.Lines[0] with { Row = screen.Lines[0].Row with { Subagents = subagents } }, .. screen.Lines.Skip(1)] };
         }
         view.Transcript.Load = (_, _, after, _) => Task.FromResult(after < 0
-            ? new TranscriptPage { Total = 6, Entries = Entries() }
-            : new TranscriptPage { Total = 6, Entries = [] });
+            ? new TranscriptPage { Total = entries.Length, Entries = entries }
+            : new TranscriptPage { Total = entries.Length, Entries = [] });
         view.Tree(screen);
         view.HandleInput(new InputEvent.KeyDown(InputKey.Enter)).ShouldBeTrue();
-        for (var i = 0; i < 100 && view.Transcript.Entries.Count < 6; i++)
+        for (var i = 0; i < 100 && view.Transcript.Entries.Count < entries.Length; i++)
         {
             await Task.Delay(50, TestContext.Current.CancellationToken);
         }
@@ -88,6 +89,40 @@ public sealed class TranscriptPaneTests
         var regions = new List<ClickableRegion>();
         view.CollectPaintedRegions(regions);
         regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == action).OnClick!.Invoke(InputModifier.None);
+    }
+
+    [Fact]
+    public async Task AReadsTimeStandsAfterItsPathNotOverIt()
+    {
+        const string path = @"C:\Users\someone\repos\pilot\src\Pilot.Ui\TranscriptPane.cs";
+        TranscriptEntry[] read =
+        [
+            new() { Index = 0, Kind = TranscriptKind.ToolUse, Tool = "Read", Text = path, ToolUseId = "r1", At = Called },
+            new() { Index = 1, Kind = TranscriptKind.ToolResult, Text = "one\ntwo\nthree", ToolUseId = "r1" },
+        ];
+        var (view, screen, renderer) = await Open(entries: read);
+        using var _ = renderer;
+
+        // The count under it ("└ Read 3 lines") once left the call's line at its natural width: the path got none, and the
+        // time was painted over it.
+        var arranged = Layout.Engine.Arrange(view.Tree(screen), new Rect<int>(0, 0, 160, 80), CellMeasureContext.PixelAuthored);
+        var at = Called.ToLocalTime().ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
+        var said = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: path } }).Bounds;
+        var time = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == at && a.Bounds.Y == said.Y).Bounds;
+        said.Width.ShouldBeGreaterThanOrEqualTo(path.Length);
+        time.X.ShouldBeGreaterThanOrEqualTo(said.X + said.Width);
+        view.Transcript.Close();
+    }
+
+    [Fact]
+    public void ThinkingIsBodyTextNotFurniture()
+    {
+        // Read as much as the words: at the body text's contrast (WCAG AA for normal text, above AAA here), not the faint grey
+        // of the tool lines' furniture, and still a step below the words themselves.
+        Contrast(TranscriptPane.Thought.Text, TranscriptPane.Ground).ShouldBeGreaterThanOrEqualTo(7.0);
+        Contrast(TranscriptPane.Thought.Link, TranscriptPane.Ground).ShouldBeGreaterThanOrEqualTo(4.5);
+        Contrast(TranscriptPane.Thought.Code, TranscriptPane.Thought.CodeBackground).ShouldBeGreaterThanOrEqualTo(4.5);
+        Contrast(TranscriptPane.Thought.Text, TranscriptPane.Ground).ShouldBeLessThan(Contrast(TranscriptPane.Prose.Text, TranscriptPane.Ground));
     }
 
     [Fact]
