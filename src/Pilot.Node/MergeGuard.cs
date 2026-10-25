@@ -8,7 +8,7 @@ using System.Text.RegularExpressions;
 namespace Pilot.Node;
 
 /// <summary>
-/// The merge guard: a <c>PreToolUse</c> hook on <c>Bash</c>, installed user-wide, that sends a session's merges back to the
+/// The merge guard: a <c>PreToolUse</c> hook on <c>Bash</c> and <c>PowerShell</c>, installed user-wide, that sends a session's merges back to the
 /// node. A merge a session makes by hand (<c>gh pr merge</c>, the GraphQL <c>enqueuePullRequest</c> / <c>mergePullRequest</c>,
 /// the REST <c>PUT repos/.../pulls/N/merge</c>) or a push to a default branch lands code no one reviewed on the head the node
 /// would have guarded; <c>pilot flight merge</c> is the way, and the hook says so. <c>pilot-node merge-guard</c> reads the
@@ -23,6 +23,13 @@ public static partial class MergeGuard
 
     /// <summary>What a refusal points at.</summary>
     public const string Instead = "pilot flight merge <code> <head>";
+
+    /// <summary>The two shell tools the guard reads (<c>tool_name</c>); the matcher it installs names both.</summary>
+    private const string Bash = "Bash";
+    private const string PowerShell = "PowerShell";
+
+    /// <summary>The <c>PreToolUse</c> matcher the guard is installed under.</summary>
+    internal const string Matcher = Bash + "|" + PowerShell;
 
     /// <summary>Runs git in a folder and gives its trimmed output, or null when it failed; a test replaces it.</summary>
     public delegate string? GitQuery(string folder, IReadOnlyList<string> args);
@@ -66,8 +73,9 @@ public static partial class MergeGuard
         });
 
     /// <summary>
-    /// Why the PreToolUse input <paramref name="hookJson"/> is refused, or null to let it through: only a <c>Bash</c> call
-    /// whose command line has a part that merges, or pushes to a default branch. A line that is not JSON, or no Bash
+    /// Why the PreToolUse input <paramref name="hookJson"/> is refused, or null to let it through: only a <c>Bash</c> or
+    /// <c>PowerShell</c> call whose command line has a part that merges, or pushes to a default branch (PowerShell is a
+    /// session's main shell on Windows, so it is read, with its own quoting). A line that is not JSON, or any other tool's
     /// call, passes.
     /// </summary>
     public static string? Decide(string hookJson, GitQuery? git = null)
@@ -75,14 +83,14 @@ public static partial class MergeGuard
         try
         {
             if (JsonNode.Parse(hookJson) is not JsonObject root
-                || Text(root["tool_name"]) != "Bash"
+                || Text(root["tool_name"]) is not (Bash or PowerShell)
                 || root["tool_input"] is not JsonObject input
                 || Text(input["command"]) is not { Length: > 0 } command)
             {
                 return null;
             }
             var folder = Text(root["cwd"]) is { Length: > 0 } cwd ? cwd : Environment.CurrentDirectory;
-            return Check(command, folder, git ?? RunGit, depth: 0);
+            return Check(command, folder, git ?? RunGit, depth: 0, powershell: Text(root["tool_name"]) == PowerShell);
         }
         catch (JsonException)
         {
@@ -92,20 +100,21 @@ public static partial class MergeGuard
 
     private static string? Text(JsonNode? node) => node?.GetValueKind() == JsonValueKind.String ? node.GetValue<string>() : null;
 
-    private static string? Check(string command, string folder, GitQuery git, int depth)
+    private static string? Check(string command, string folder, GitQuery git, int depth, bool powershell)
     {
-        foreach (var segment in Split(command))
+        foreach (var segment in Split(command, powershell))
         {
             var words = Strip(segment);
             if (words.Count == 0)
             {
                 continue;
             }
-            var program = Name(words[0]);
+            // PowerShell's commands and parameters are not case-sensitive, nor are the names of the programs it runs on Windows.
+            var program = powershell ? Name(words[0]).ToLowerInvariant() : Name(words[0]);
             var args = words.Skip(1).ToList();
-            if (program == "cd" && args.Count > 0)
+            if (program is "cd" or "chdir" or "pushd" or "set-location" or "sl" && args.Where(a => !a.StartsWith('-')).FirstOrDefault() is { } to)
             {
-                folder = Resolve(folder, args[0]);
+                folder = Resolve(folder, to);
             }
             else if (program == "gh")
             {
@@ -123,20 +132,34 @@ public static partial class MergeGuard
             }
             else if (depth < 3 && Shells.Contains(program) && args.IndexOf("-c") is >= 0 and var at && at + 1 < args.Count)
             {
-                if (Check(args[at + 1], folder, git, depth + 1) is { } why)
+                if (Check(args[at + 1], folder, git, depth + 1, powershell: false) is { } why)
                 {
                     return why;
                 }
             }
-            else if (depth < 3 && program == "eval" && args.Count > 0)
+            else if (depth < 3 && program is "pwsh" or "powershell" && NestedPowerShell(args) is { } script)
             {
-                if (Check(string.Join(' ', args), folder, git, depth + 1) is { } why)
+                if (Check(script, folder, git, depth + 1, powershell: true) is { } why)
+                {
+                    return why;
+                }
+            }
+            else if (depth < 3 && (powershell ? program is "iex" or "invoke-expression" : program == "eval") && args.Count > 0)
+            {
+                if (Check(string.Join(' ', args), folder, git, depth + 1, powershell) is { } why)
                 {
                     return why;
                 }
             }
         }
         return null;
+    }
+
+    // pwsh -c / -Command / -EncodedCommand's script: the word after the flag, or everything after it (-Command takes the rest of the line).
+    private static string? NestedPowerShell(List<string> args)
+    {
+        var at = args.FindIndex(a => a.StartsWith('-') && a.Length > 1 && ("command".StartsWith(a[1..], StringComparison.OrdinalIgnoreCase) && a.Length <= 8 || a.Equals("-c", StringComparison.OrdinalIgnoreCase)));
+        return at >= 0 && at + 1 < args.Count ? string.Join(' ', args.Skip(at + 1)) : null;
     }
 
     private static string Resolve(string folder, string to)
@@ -332,9 +355,12 @@ public static partial class MergeGuard
     /// The command line as the words of each of its parts: split on <c>&amp;&amp; || ; | &amp;</c>, a newline, a backtick and
     /// parentheses outside quotes, the words read as a shell reads them (quotes taken off, a backslash escaping the next
     /// character outside single quotes). Inside quotes nothing splits, so a GraphQL query with a <c>;</c> in it stays one word.
+    /// With <paramref name="powershell"/> the words are read as PowerShell reads them: the backtick is the escape (a backslash
+    /// is a path's), a single quote doubled is a literal one, a double quote doubled likewise, and braces split as parentheses do.
     /// </summary>
-    internal static List<List<string>> Split(string command)
+    internal static List<List<string>> Split(string command, bool powershell = false)
     {
+        var escape = powershell ? '`' : '\\';
         var parts = new List<List<string>>();
         var words = new List<string>();
         var word = new StringBuilder();
@@ -365,7 +391,11 @@ public static partial class MergeGuard
             var c = command[i];
             if (quote == '\'')
             {
-                if (c == '\'')
+                if (c == '\'' && powershell && i + 1 < command.Length && command[i + 1] == '\'')
+                {
+                    word.Append(command[++i]);
+                }
+                else if (c == '\'')
                 {
                     quote = '\0';
                 }
@@ -376,11 +406,15 @@ public static partial class MergeGuard
             }
             else if (quote == '"')
             {
-                if (c == '"')
+                if (c == '"' && powershell && i + 1 < command.Length && command[i + 1] == '"')
+                {
+                    word.Append(command[++i]);
+                }
+                else if (c == '"')
                 {
                     quote = '\0';
                 }
-                else if (c == '\\' && i + 1 < command.Length && command[i + 1] is '"' or '\\' or '$' or '`')
+                else if (c == escape && i + 1 < command.Length && (powershell || command[i + 1] is '"' or '\\' or '$' or '`'))
                 {
                     word.Append(command[++i]);
                 }
@@ -394,12 +428,21 @@ public static partial class MergeGuard
                 quote = c;
                 inWord = true;
             }
-            else if (c == '\\' && i + 1 < command.Length)
+            else if (c == escape && i + 1 < command.Length)
             {
-                word.Append(command[++i]);
-                inWord = true;
+                if (powershell && command[i + 1] is '\r' or '\n')
+                {
+                    // A backtick at the end of a line continues the command on the next.
+                    EndWord();
+                    i += command[i + 1] == '\r' && i + 2 < command.Length && command[i + 2] == '\n' ? 2 : 1;
+                }
+                else
+                {
+                    word.Append(command[++i]);
+                    inWord = true;
+                }
             }
-            else if (c is ';' or '|' or '&' or '\n' or '\r' or '`' or '(' or ')')
+            else if (c is ';' or '|' or '&' or '\n' or '\r' or '(' or ')' || c == '`' && !powershell || powershell && c is '{' or '}')
             {
                 EndPart();
             }
@@ -451,7 +494,7 @@ public static partial class MergeGuard
         ["timeout"] = 10,
     };
 
-    private static JsonObject Entry(string nodePath) => new() { ["matcher"] = "Bash", ["hooks"] = new JsonArray(Handler(nodePath)) };
+    private static JsonObject Entry(string nodePath) => new() { ["matcher"] = Matcher, ["hooks"] = new JsonArray(Handler(nodePath)) };
 
     /// <summary>A handler this installs: a <c>pilot-node</c> binary run with <c>merge-guard</c> first.</summary>
     internal static bool IsOurs(JsonNode? handler) =>
@@ -463,8 +506,9 @@ public static partial class MergeGuard
         && args[0]!.GetValue<string>() == Argument;
 
     /// <summary>
-    /// <paramref name="settings"/> with the guard on <c>PreToolUse</c> for <c>Bash</c>, running <paramref name="nodePath"/>:
-    /// added when missing and replaced when it is another path's, and nothing else touched (the entry stays where it is,
+    /// <paramref name="settings"/> with the guard on <c>PreToolUse</c> for <c>Bash</c> and <c>PowerShell</c>, running
+    /// <paramref name="nodePath"/>: added when missing and replaced when it is another path's or an older, Bash-only entry
+    /// (so the fix of a stale guard widens it), and nothing else touched (the entry stays where it is,
     /// so it does not trade places with pilot's own PreToolUse hook on each install). The same text back when it is in
     /// already, so a second install changes nothing.
     /// </summary>

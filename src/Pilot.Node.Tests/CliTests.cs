@@ -271,4 +271,28 @@ public sealed class CliTests : IAsyncLifetime
         PilotCommand.Caller(snapshot, "ffffffff-0000-4000-8000-000000000000").ShouldBe("cli");
         PilotCommand.Caller(snapshot, null).ShouldBe("cli");
     }
+
+    [Fact]
+    public void ACommandFromASessionIdTheNodeResumedPastIsStillThatSession()
+    {
+        var snapshot = new SnapshotEvent
+        {
+            Seq = 1,
+            At = DateTimeOffset.UnixEpoch,
+            Stream = "s",
+            Notes = [],
+            Sessions =
+            [
+                new SessionRow
+                {
+                    Id = "b1b2b3b4", SessionId = "b1b2b3b4-0000-4000-8000-000000000000", EarlierSessionIds = ["A1A2A3A4-0000-4000-8000-000000000000"],
+                    Name = "du1-tia1-parser", Kind = SessionKind.Background, Cwd = "/w", Role = SessionRole.Worker, ContextTokens = 0, ContextWindow = 1,
+                    State = SessionState.Idle, SpendWeighted = 0, StartedAt = DateTimeOffset.UnixEpoch,
+                },
+            ],
+        };
+
+        PilotCommand.Caller(snapshot, "b1b2b3b4-0000-4000-8000-000000000000").ShouldBe("du1-tia1-parser");
+        PilotCommand.Caller(snapshot, "a1a2a3a4-0000-4000-8000-000000000000").ShouldBe("du1-tia1-parser");
+    }
 }

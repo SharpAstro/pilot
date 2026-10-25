@@ -256,12 +256,61 @@ public sealed class StandingTests
         PilotCommand.IsAgent(bySession: true, agent: true, claudeCode: null).ShouldBeTrue();
     }
 
+    private static SessionRow Session(string name, string sessionId, string[]? earlier = null) => new()
+    {
+        Id = sessionId[..8], SessionId = sessionId, EarlierSessionIds = earlier, Name = name, Kind = SessionKind.Background, Cwd = "/r/TIA1",
+        Role = SessionRole.Worker, Flight = "TIA1", ContextTokens = 0, ContextWindow = 1, State = SessionState.Idle, SpendWeighted = 0, StartedAt = DateTimeOffset.UnixEpoch,
+    };
+
+    [Fact]
+    public async Task AWorkerTheNodeResumedMergesAsItselfNotAnAssistantWithAutopilotOn()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        const string worker = "du1-tia1-parser";
+        const string current = "b1b2b3b4-0000-4000-8000-000000000000";
+        const string earlier = "a1a2a3a4-0000-4000-8000-000000000000";
+        Fly(node, "TIA1", worker);
+        node.State.PutSession(Session(worker, current, [earlier]));
+        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "on"))).ShouldBeNull();
+
+        // Through the real CLI sender path: the session id its tools carry, the id it has now or the one before the resume.
+        foreach (var id in new[] { current, earlier })
+        {
+            var said = await CliIn(node, agent: true, id, node.Folder, "flight", "merge", "TIA1", "cafe0000");
+            said.ShouldContain("merge is the controller's, not a flight session's");
+        }
+        node.State.Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AnAgentInAFlightsPlaneTheNodeHasNotPolledYetIsThatFlightsSessionNotAnAssistant()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        const string worker = "du1-tia1-parser";
+        var plane = Directory.CreateDirectory(Path.Combine(node.Folder, "TIA1")).FullName;
+        node.State.PutFlight(Flight("TIA1") with { Worktree = plane });
+        node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, Worker = worker });
+        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "on"))).ShouldBeNull();
+
+        // No session row matches the id, so the plane says who is asking: the leg's worker.
+        (await CliIn(node, agent: true, "ffffffff-0000-4000-8000-000000000000", plane, "flight", "merge", "TIA1", "cafe0000"))
+            .ShouldContain("merge is the controller's, not a flight session's");
+        (await CliIn(node, agent: true, null, Path.Combine(plane, "sub"), "flight", "land", "TIA1"))
+            .ShouldContain("land is the controller's, not a flight session's");
+
+        // The same command from outside every plane is an assistant's, and runs at once with autopilot on; a human's CLI in the plane is the person's.
+        (await CliIn(node, agent: true, null, node.Folder, "flight", "merge", "TIA1", "cafe0000")).ShouldNotContain("not a flight session's");
+        (await CliIn(node, agent: false, null, plane, "flight", "merge", "TIA1", "cafe0000")).ShouldNotContain("not a flight session's");
+    }
+
     private static Task<string> Cli(NodeHarness node, params string[] args) => Cli(node, agent: false, args);
 
-    private static async Task<string> Cli(NodeHarness node, bool agent, params string[] args)
+    private static Task<string> Cli(NodeHarness node, bool agent, params string[] args) => CliIn(node, agent, sessionId: null, node.Folder, args);
+
+    private static async Task<string> CliIn(NodeHarness node, bool agent, string? sessionId, string cwd, params string[] args)
     {
         var output = new StringWriter();
-        await PilotCommand.RunAsync(["--node-socket", node.SocketPath, .. args], node.Folder, output, output, Ct, agent: agent);
+        await PilotCommand.RunAsync(["--node-socket", node.SocketPath, .. args], cwd, output, output, Ct, agent: agent, sessionId: sessionId);
         return output.ToString();
     }
 
