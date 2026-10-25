@@ -136,6 +136,24 @@ public sealed class LegWatchTests
     }
 
     [Fact]
+    public async Task AWorkerThatAnsweredOnlyItsFirstNudgeIsSaidToHaveAnsweredOneOfThem()
+    {
+        Worker(SessionState.Idle);
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        // It answers the first nudge.
+        _time.Advance(TimeSpan.FromSeconds(30));
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow());
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        // Not the second.
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldHaveSingleItem().Detail.ShouldNotBeNull().ShouldContain("it answered 1 of them");
+    }
+
+    [Fact]
     public async Task AnIdleWorkerIsLeftItsGraceThenNudgedTwiceThenRungFor()
     {
         Worker(SessionState.Idle);

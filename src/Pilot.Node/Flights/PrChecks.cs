@@ -89,8 +89,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         var carded = state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady).Select(c => c.Subject).ToHashSet(StringComparer.Ordinal);
         foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null }))
         {
-            var legs = state.Legs(flight.Code);
-            if (legs.Length == 0 || legs.Any(l => l.State != LegState.Done))
+            var flown = state.Legs(flight.Code);
+            if (flown.Length == 0 || flown.Any(l => l.State != LegState.Done))
             {
                 continue;
             }
@@ -116,6 +116,26 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             if (queue.RemovedAt is not { } removedAt || string.Equals(queue.RemovedReason, "merged", StringComparison.OrdinalIgnoreCase) || carded.Contains(subject)
                 || state.Cards().Any(c => c.Kind == QueueDropped && c.Subject == subject && c.At >= removedAt))
             {
+                continue;
+            }
+            // Taken out for a conflict with its base (main moved while it waited): Merge would only be refused again. The
+            // plane is rebased and reviewed afresh, which offers the merge again, as a PR found conflicting is (PIL207's
+            // #238, SE1 2026-10-25: a For-you card offered Merge on a merge_conflict).
+            if (queue.RemovedReason?.Contains("conflict", StringComparison.OrdinalIgnoreCase) == true && legs is not null)
+            {
+                if (_rebased.Add($"{flight.Code} {queue.Head}"))
+                {
+                    if (await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } notRebased)
+                    {
+                        state.RaiseCard(CardBin.Ring, "pr-conflicts", subject, $"{flight.Code}'s PR #{number} left the merge queue on a conflict with its base",
+                            $"{notRebased}{(await legs.ConflictsAsync(flight.Code, notRebased, cancellationToken) is { } notSent ? $" ({notSent})" : ": its last leg goes around to resolve it")}",
+                            link: flight.PullRequestUrl);
+                    }
+                    else
+                    {
+                        state.RaiseCard(CardBin.Handled, QueueDropped, subject, $"{flight.Code}'s PR #{number} left the merge queue on a conflict: rebased onto its base and reviewed afresh");
+                    }
+                }
                 continue;
             }
             var why = queue.RemovedReason is { Length: > 0 } reason ? reason : "no reason given";
