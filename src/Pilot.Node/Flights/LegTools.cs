@@ -177,7 +177,16 @@ public sealed class ShellCheckRunner : ICheckRunner
 /// <param name="Author">Its author's login, as read by repo and number; empty otherwise.</param>
 /// <param name="Base">The branch it goes into, as read by repo and number; empty otherwise.</param>
 /// <param name="Labels">The labels it carries, as read by branch; null when the read did not ask for them.</param>
-public sealed record PullRequest(int Number, string State, string Head, string Url, string Mergeable = "", string Title = "", string Author = "", string Base = "", IReadOnlyList<string>? Labels = null);
+/// <param name="MergeCommit">The commit it merged as on its base, as read by branch; empty before it merges or when not read.</param>
+public sealed record PullRequest(int Number, string State, string Head, string Url, string Mergeable = "", string Title = "", string Author = "", string Base = "", IReadOnlyList<string>? Labels = null, string MergeCommit = "");
+
+/// <summary>
+/// A GitHub Actions run on a commit: <paramref name="Status"/> is <c>queued</c>, <c>in_progress</c> or <c>completed</c>, and
+/// <paramref name="Conclusion"/> (<c>success</c>, <c>failure</c>, <c>cancelled</c>…) is null until it has completed.
+/// </summary>
+/// <param name="Event">What started it (<c>push</c>, <c>pull_request</c>…).</param>
+/// <param name="CompletedAt">When it completed; null while it runs.</param>
+public sealed record WorkflowRun(long Id, string Name, string Status, string? Conclusion, string Url, string Event, DateTimeOffset? CompletedAt);
 
 /// <summary>
 /// Where a PR stands in its base's merge queue. <paramref name="State"/> and <paramref name="Head"/> are the PR's own
@@ -216,6 +225,13 @@ public interface IGitHub
     /// aside), null with no checks or when GitHub would not say.
     /// </summary>
     Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The workflow runs GitHub Actions made for <paramref name="commit"/> in the repo at <paramref name="repoPath"/>, newest
+    /// first; none when it made none (yet). A run the commit's push started is the one that publishes its packages.
+    /// </summary>
+    /// <exception cref="FlightException">gh could not list them.</exception>
+    Task<WorkflowRun[]> WorkflowRunsAsync(string repoPath, string commit, CancellationToken cancellationToken);
 
     /// <summary>Where PR <paramref name="number"/> stands in its base's merge queue; null when its base has none, or GitHub would not say.</summary>
     Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken);
@@ -308,7 +324,7 @@ public sealed class GhCli : IGitHub
 
     public async Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(["pr", "view", branch, "--json", "number,state,headRefOid,url,mergeable,labels"], repoPath, cancellationToken);
+        var (exit, output, error) = await RunAsync(["pr", "view", branch, "--json", "number,state,headRefOid,url,mergeable,labels,mergeCommit"], repoPath, cancellationToken);
         if (exit != 0)
         {
             return error.Contains("no pull requests found", StringComparison.OrdinalIgnoreCase)
@@ -322,7 +338,30 @@ public sealed class GhCli : IGitHub
             root.TryGetProperty("mergeable", out var mergeable) ? mergeable.GetString() ?? "" : "",
             Labels: root.TryGetProperty("labels", out var labels) && labels.ValueKind == JsonValueKind.Array
                 ? [.. labels.EnumerateArray().Select(l => TextOf(l, "name")).OfType<string>()]
-                : null);
+                : null,
+            MergeCommit: root.TryGetProperty("mergeCommit", out var merge) ? TextOf(merge, "oid") ?? "" : "");
+    }
+
+    public async Task<WorkflowRun[]> WorkflowRunsAsync(string repoPath, string commit, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(
+            ["run", "list", "--commit", commit, "--limit", "30", "--json", "databaseId,workflowName,status,conclusion,url,event,updatedAt"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not list the workflow runs of {commit[..Math.Min(8, commit.Length)]}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        using var doc = JsonDocument.Parse(output);
+        return [.. doc.RootElement.EnumerateArray()
+            .Select(r => new WorkflowRun(
+                r.TryGetProperty("databaseId", out var id) && id.TryGetInt64(out var number) ? number : 0,
+                TextOf(r, "workflowName") ?? "",
+                TextOf(r, "status") ?? "",
+                TextOf(r, "conclusion") is { Length: > 0 } conclusion ? conclusion : null,
+                TextOf(r, "url") ?? "",
+                TextOf(r, "event") ?? "",
+                TextOf(r, "status") == "completed" && TextOf(r, "updatedAt") is { } stamp
+                    && DateTimeOffset.TryParse(stamp, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var when) ? when : null))
+            .OrderByDescending(r => r.Id)];
     }
 
     public async Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken)

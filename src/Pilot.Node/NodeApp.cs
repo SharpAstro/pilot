@@ -59,6 +59,11 @@ public static class NodeApp
         builder.Services.AddSingleton<IGit, GitCli>();
         builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>()));
         builder.Services.AddSingleton<StopGate>();
+        // nuget.org's public flat container: what a flight connected to a releasing flight waits for.
+        builder.Services.AddSingleton<INuGetFeed>(_ => new NuGetOrgFeed(new HttpClient { Timeout = TimeSpan.FromSeconds(30) }));
+        builder.Services.AddSingleton<PackageReleases>();
+        builder.Services.AddSingleton<PackageWatch>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<PackageWatch>());
         builder.Services.AddSingleton(services =>
         {
             var flights = ActivatorUtilities.CreateInstance<FlightCommander>(services);

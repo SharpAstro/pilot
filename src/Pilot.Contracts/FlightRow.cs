@@ -117,6 +117,67 @@ public sealed record FlightRow
     /// with no work of its own, keeping its code and branch. Null for a flight that flew or is flying.
     /// </summary>
     public string? FoldedInto { get; init; }
+
+    /// <summary>
+    /// The packages it still waits for after the flights it connects from have landed: a flight that lands with a release
+    /// is not done for its consumers until the release's package can be fetched from nuget.org. The flight stays
+    /// <see cref="FlightState.Held"/> while any is here; the node drops each as its package appears. Null-safe for the
+    /// reason <see cref="Overlaps"/> is.
+    /// </summary>
+    public PackageWait[] PackageWaits
+    {
+        get => _packageWaits ?? [];
+        init => _packageWaits = value;
+    }
+
+    private readonly PackageWait[]? _packageWaits;
+}
+
+/// <summary>
+/// A package a flight waits for on nuget.org, because the flight it connects from landed with a release of it: any version of
+/// <see cref="Line"/> (<c>MAJOR.MINOR</c>) newer than <see cref="Above"/>, fetchable as its .nupkg.
+/// </summary>
+public sealed record PackageWait
+{
+    /// <summary>The package id, as its project names it.</summary>
+    public required string Id { get; init; }
+
+    /// <summary>The <c>MAJOR.MINOR</c> the producer releases (its <c>VersionMajorMinor</c> at the merged head).</summary>
+    public required string Line { get; init; }
+
+    /// <summary>
+    /// The latest version published within <see cref="Line"/> when the producer landed, when the producer did not bump the line
+    /// (so its release is the next one after it); null when it did, or when the line had no version yet: any version of the
+    /// line will do.
+    /// </summary>
+    public string? Above { get; init; }
+
+    /// <summary>The code of the flight whose land it is.</summary>
+    public required string Producer { get; init; }
+
+    /// <summary>When the producer landed.</summary>
+    public required DateTimeOffset Since { get; init; }
+
+    /// <summary>The commit the producer's PR merged as, whose publish run the node reads; null when GitHub did not say.</summary>
+    public string? Commit { get; init; }
+
+    /// <summary>Whether a card has said the package is late: one per wait, never a second.</summary>
+    public bool Escalated { get; init; }
+}
+
+/// <summary>What a held flight waits for, in one place for every client's <c>held, waiting for …</c>.</summary>
+public static class FlightWaiting
+{
+    /// <summary>A wait as a status line says it: <c>Drawboard.Core 1.2 on nuget.org</c>.</summary>
+    public static string Text(PackageWait wait) => $"{wait.Id} {wait.Line} on nuget.org";
+
+    /// <summary>
+    /// Its connections, then its packages (each once), joined by a comma. A flight that has landed and left packages to wait
+    /// for is no longer waited for itself: the package is what is awaited.
+    /// </summary>
+    public static string For(FlightRow flight) =>
+        string.Join(", ", flight.Connections.Where(c => !flight.PackageWaits.Any(w => w.Producer == c))
+            .Concat(flight.PackageWaits.Select(Text).Distinct(StringComparer.Ordinal)));
 }
 
 /// <summary>An issue folded into a flight, and the flight it came from.</summary>

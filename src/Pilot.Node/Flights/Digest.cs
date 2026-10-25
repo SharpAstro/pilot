@@ -106,7 +106,7 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
             text.AppendLine("Parked:");
             foreach (var flight in held)
             {
-                text.AppendLine($"- {flight.Code} held, waiting for {string.Join(", ", flight.Connections)}");
+                text.AppendLine($"- {flight.Code} held, waiting for {FlightWaiting.For(flight)}");
             }
             foreach (var leg in failed)
             {

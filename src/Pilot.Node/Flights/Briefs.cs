@@ -454,7 +454,7 @@ public static class Briefs
         }
         foreach (var flight in flying)
         {
-            var state = flight.State == FlightState.Held ? $"held, waiting for {string.Join(", ", flight.Connections)}" : "flying";
+            var state = flight.State == FlightState.Held ? $"held, waiting for {FlightWaiting.For(flight)}" : "flying";
             text.AppendLine($"- {flight.Code}: {flight.Title ?? $"issue #{flight.Issue}"} ({flight.Repo} #{flight.Issue}, {state}){(flight.PullRequestUrl is { } url ? $", PR {url}" : "")}");
             foreach (var leg in legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order))
             {

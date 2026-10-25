@@ -91,7 +91,7 @@ internal sealed record FlightLine
             State = flight.State switch { FlightState.Flying => "flying", FlightState.Held => "held", _ => "landed" },
             StateDetail = flight.State switch
             {
-                FlightState.Held => $"waiting for {string.Join(", ", flight.Connections)}",
+                FlightState.Held => $"waiting for {FlightWaiting.For(flight)}",
                 FlightState.Landed when flight.LandedAt is { } at => SessionLine.Ago(now - at),
                 // Merged through a queue is not landed yet: it waits for the queue's checks.
                 FlightState.Flying when flight.MergeQueue is { } queue => queue,

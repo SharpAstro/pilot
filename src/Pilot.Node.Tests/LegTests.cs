@@ -126,6 +126,15 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult(Checks);
 
+    /// <summary>The workflow runs each commit has, by commit; a commit with none listed has none.</summary>
+    public Dictionary<string, WorkflowRun[]> Runs { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>When set, listing runs fails with it, as a gh that could not reach GitHub.</summary>
+    public string? RunsFail { get; set; }
+
+    public Task<WorkflowRun[]> WorkflowRunsAsync(string repoPath, string commit, CancellationToken cancellationToken) =>
+        RunsFail is { } why ? Task.FromException<WorkflowRun[]>(new FlightException(why)) : Task.FromResult(Runs.TryGetValue(commit, out var runs) ? runs : []);
+
     /// <summary>What MergeQueueAsync answers for any PR: null, a base with no merge queue, unless set.</summary>
     public MergeQueueState? Queue { get; set; }
 
