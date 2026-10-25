@@ -215,9 +215,9 @@ public sealed class MergeArmTests
         var (node, ready) = await ArmedNatively(Pending(1));
         await using var _ = node;
 
-        node.GitHub.AutoMergeArmed.ShouldBe([(63, PrHead, "squash")]);
+        node.GitHub.AutoMergeArmed.ShouldBe([(63, PrHead, "rebase")]);
         node.GitHub.Merged.ShouldBeEmpty();
-        node.State.Flights().Single().MergeWhenGreen.ShouldBe([PrHead, "squash", LegCommander.ArmedByGitHub]);
+        node.State.Flights().Single().MergeWhenGreen.ShouldBe([PrHead, "rebase", LegCommander.ArmedByGitHub]);
         var card = Card(node, ready);
         card.State.ShouldBe(CardState.Open);
         card.Choices.Single().Status.ShouldBe(ChoiceStatus.Armed);
@@ -324,7 +324,7 @@ public sealed class MergeArmTests
         await using var _ = node;
 
         node.GitHub.AutoMergeArmed.ShouldBeEmpty();
-        node.State.Flights().Single().MergeWhenGreen.ShouldBe([PrHead, "squash"]);
+        node.State.Flights().Single().MergeWhenGreen.ShouldBe([PrHead, "rebase"]);
         var card = Card(node, ready);
         card.Detail.ShouldNotBeNull().ShouldContain("gh repo edit --enable-auto-merge");
         card.Detail.ShouldContain("Settings > General > Allow auto-merge");
@@ -353,7 +353,7 @@ public sealed class MergeArmTests
 
         (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
 
-        node.State.Flights().Single().MergeWhenGreen.ShouldBe([PrHead, "squash", LegCommander.ArmedByNode]);
+        node.State.Flights().Single().MergeWhenGreen.ShouldBe([PrHead, "rebase", LegCommander.ArmedByNode]);
         Card(node, ready).Detail.ShouldNotBeNull().ShouldNotContain("enable-auto-merge");
     }
 
@@ -369,7 +369,7 @@ public sealed class MergeArmTests
 
         (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
         node.GitHub.AutoMergeArmed.ShouldBeEmpty();
-        node.State.Flights().Single().MergeWhenGreen.ShouldBe([PrHead, "squash", LegCommander.ArmedByNode]);
+        node.State.Flights().Single().MergeWhenGreen.ShouldBe([PrHead, "rebase", LegCommander.ArmedByNode]);
 
         node.GitHub.Summary = Passing();
         await Look(node);
