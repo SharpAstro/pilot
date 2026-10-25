@@ -96,7 +96,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             var number = flight.PullRequest!.Value;
             var queue = await github.MergeQueueAsync(flight.RepoPath, number, cancellationToken);
-            var said = queue is { State: "OPEN", Queued: true } ? queue.Position is { } position ? $"in the merge queue, position {position}" : "in the merge queue" : null;
+            var said = queue is { State: "OPEN", Queued: true } ? queue.Position is { } position ? $"in the merge queue, position {position}" : "in the merge queue"
+                : state.Flights().FirstOrDefault(f => f.Code == flight.Code)?.MergeWhenGreen is not null ? "merges once its checks pass" : null;
             if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is { } now && now.MergeQueue != said)
             {
                 state.PutFlight(now with { MergeQueue = said });
@@ -151,7 +152,49 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             if (pr is not null && pr.Number == flight.PullRequest)
             {
-                await legs.NoteGitHubAsync(flight.Code, pr, state.Flights().FirstOrDefault(f => f.Code == flight.Code)?.MergeQueue is not null, cancellationToken);
+                await legs.NoteGitHubAsync(flight.Code, pr, state.Flights().FirstOrDefault(f => f.Code == flight.Code)?.MergeQueue?.StartsWith("in the merge queue", StringComparison.Ordinal) == true, cancellationToken);
+            }
+        }
+    }
+
+    /// <summary>The card of a flight whose merge waited for its checks and was dropped: why, and Merge to ask again.</summary>
+    public const string MergeDropped = "merge-dropped";
+
+    /// <summary>
+    /// Each merge pressed while its PR's checks ran (<see cref="FlightRow.MergeWhenGreen"/>): merged, or queued, once they pass on
+    /// the head reviewed, as the person asked; dropped with a For-you card saying why when they fail, the head moves or the PR
+    /// closes, so a merge never waits on what will not come.
+    /// </summary>
+    private async Task MergeWhenGreenAsync(CancellationToken cancellationToken)
+    {
+        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, MergeWhenGreen: [_, _], PullRequest: not null }))
+        {
+            var (head, method) = (flight.MergeWhenGreen![0], flight.MergeWhenGreen[1]);
+            var number = flight.PullRequest!.Value;
+            var subject = Verbs.FlightTarget(flight.Code);
+            var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+            string? dropped = pr is null || pr.Number != number || pr.State != "OPEN" ? $"#{number} is no longer open"
+                : !string.Equals(pr.Head, head, StringComparison.OrdinalIgnoreCase) ? $"#{number}'s head moved from {head[..Math.Min(8, head.Length)]} to {pr.Head[..Math.Min(8, pr.Head.Length)]} while its checks ran: look at what is new, then merge again"
+                : null;
+            var checks = dropped is null ? await github.ChecksAsync(flight.RepoPath, number, cancellationToken) : null;
+            if (dropped is null && checks == ChoiceStatus.Pending)
+            {
+                continue;
+            }
+            dropped ??= checks == ChoiceStatus.Failing ? $"#{number}'s checks failed: the merge waited for them to pass" : null;
+            if (dropped is null && legs is not null)
+            {
+                var result = await legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = subject, Args = [head, method], Who = "node" }, cancellationToken);
+                dropped = result.Ok ? null : $"its checks passed, but the merge was refused: {result.Error}";
+            }
+            if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is { MergeWhenGreen: not null } now)
+            {
+                state.PutFlight(now with { MergeWhenGreen = null });
+            }
+            if (dropped is not null)
+            {
+                state.RaiseCard(CardBin.ForYou, MergeDropped, subject, $"{flight.Code}'s merge did not go through", dropped,
+                    [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [pr?.Head ?? head] }], link: flight.PullRequestUrl);
             }
         }
     }
@@ -159,6 +202,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <summary>One look at every open PR-ready card's PR.</summary>
     public async Task LookAsync(CancellationToken cancellationToken)
     {
+        await MergeWhenGreenAsync(cancellationToken);
         await LandMergedWithoutCardAsync(cancellationToken);
         await LookAtQueuesAsync(cancellationToken);
         if (legs is not null)

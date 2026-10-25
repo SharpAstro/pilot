@@ -51,6 +51,7 @@ public sealed partial class LegCommander(
         await _one.WaitAsync(cancellationToken);
         string? error = null;
         string? made = null;
+        var merged = false;
         try
         {
             switch (command.Verb)
@@ -86,7 +87,7 @@ public sealed partial class LegCommander(
                     await GoAroundAsync(command, cancellationToken);
                     break;
                 case Verbs.Merge:
-                    await MergeAsync(command, cancellationToken);
+                    (merged, made) = await MergeAsync(command, cancellationToken);
                     break;
                 case Verbs.OpenPr:
                     await OpenPrAsync(command, cancellationToken);
@@ -146,8 +147,9 @@ public sealed partial class LegCommander(
                 : $"{error}: it is being rebased onto its base and reviewed afresh, and the merge is offered again once that passes";
         }
 
-        // A merge lands its flight through the flight verbs' own lock, after this one's is let go.
-        if (error is null && command.Verb == Verbs.Merge)
+        // A merge lands its flight through the flight verbs' own lock, after this one's is let go. One that only joined a
+        // merge queue, or waits for its checks, is no merge yet: the flight flies on, and lands once GitHub says merged.
+        if (error is null && command.Verb == Verbs.Merge && merged)
         {
             try
             {
@@ -753,7 +755,12 @@ public sealed partial class LegCommander(
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around for it", ReviewChanges);
     }
 
-    private async Task MergeAsync(CommandRequest command, CancellationToken cancellationToken)
+    /// <summary>
+    /// <c>merge &lt;head&gt; [method]</c>: merges the flight's PR, or joins its base's merge queue. While its checks still run,
+    /// the merge waits on the flight (<see cref="FlightRow.MergeWhenGreen"/>) and the node takes it once they pass. Whether it
+    /// merged, and what it did when not.
+    /// </summary>
+    private async Task<(bool Merged, string? Made)> MergeAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var flight = FlightOf(command.Target);
         var args = command.Args ?? [];
@@ -804,7 +811,25 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"#{pr.Number} conflicts with its base, so GitHub cannot merge it");
         }
-        await github.MergeAsync(flight.RepoPath, pr.Number, pr.Head, method, cancellationToken);
+        // A merge queue takes no PR whose required checks have not passed, and a plain merge would be refused for the same:
+        // pressed while they run, the merge waits for them on this head (TIA1818's #1826, DE1 2026-10-25).
+        var checks = await github.ChecksAsync(flight.RepoPath, pr.Number, cancellationToken);
+        if (checks == ChoiceStatus.Failing)
+        {
+            throw new FlightException($"#{pr.Number}'s checks fail: it merges once they pass");
+        }
+        if (checks == ChoiceStatus.Pending)
+        {
+            state.PutFlight(flight with { MergeWhenGreen = [pr.Head, method] });
+            return (false, $"#{pr.Number}'s checks are running: it merges once they pass on {pr.Head[..Math.Min(8, pr.Head.Length)]}");
+        }
+        if (flight.MergeWhenGreen is not null)
+        {
+            state.PutFlight(flight with { MergeWhenGreen = null });
+        }
+        return await github.MergeAsync(flight.RepoPath, pr.Number, pr.Head, method, cancellationToken)
+            ? (false, $"#{pr.Number} joined its merge queue: {flight.Code} lands once the queue merges it")
+            : (true, null);
     }
 
     // A merge refused because the PR no longer merges into its base (main moved under it).
