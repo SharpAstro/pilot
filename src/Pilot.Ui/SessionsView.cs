@@ -67,7 +67,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     public const string ListId = "sessions";
 
     // Design units; PaintLayout scales them by DpiScale.
-    private const float HeaderHeight = 64f;
+    private const float HeaderHeight = TopBar.Height;
     private const float SayBarHeight = 52f;
 
     /// <summary>Takes the keyboard to the say bar from anywhere, a row or the list: Ctrl beats a focused field, so it always reaches it.</summary>
@@ -558,22 +558,16 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .RowH(SayBarHeight);
 
     private Layout.Node Header(SessionsScreen screen) =>
-        Layout.Builder.VStack(
-                Layout.Builder.HStack([
-                        Layout.Builder.Text("pilot v2", 20f, Bright, TextAlign.Near, TextAlign.Far).WAuto(),
-                        Layout.Builder.Text("sessions", 20f, Dim, TextAlign.Near, TextAlign.Far).WAuto(),
-                        .. (Nodes?.Pills() ?? []),
-                        .. (Play?.Pills() ?? []),
-                        Layout.Builder.Spacer().WStar(),
-                        .. PlayFilter.Summary(Play, screen.Counts, screen.Hidden, "sessions:play-all", Body, RowHoverBg),
-                        .. HeaderButtons()])
-                    .WithGap(12f)
-                    .RowH(32f),
-                Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC{(screen.Account is { } account ? $" · {account}" : "")}{(screen.Usage is { } usage ? $" · usage {usage}" : "")}{(screen.Outside is { } outside ? $" · {outside}" : "")}", 12f, Dim)
-                    .RowH(20f))
-            .Pad(Gutter, 6f)
-            .Bg(HeaderBg)
-            .RowH(HeaderHeight);
+        TopBar.Build(new PageHeader("sessions")
+        {
+            Counts = screen.Counts,
+            Hidden = screen.Hidden,
+            HiddenAction = "sessions:play-all",
+            Buttons = [.. HeaderButtons()],
+            Source = PageHeader.SourceLine(screen.Source, screen.AsOf,
+                string.Join(" · ", new[] { screen.Account, screen.Usage is { } usage ? $"usage {usage}" : null, screen.Outside }.Where(p => p is not null))
+                    is { Length: > 0 } more ? more : null),
+        }, new TopBarParts(Nodes, Play, Autopilot, About));
 
     // The table, or the open session's transcript in its place.
     private Layout.Node Page(SessionsScreen screen)
@@ -620,14 +614,6 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         {
             yield return CardsView<TSurface>.HeaderPill(ShowArchived ? "Hide archived" : $"Show archived ({_archivedCount})", "sessions:show-archived",
                 () => ShowArchived = !ShowArchived);
-        }
-        if (Autopilot is { } autopilot)
-        {
-            yield return autopilot.Button();
-        }
-        if (About is { } about)
-        {
-            yield return about.Button();
         }
     }
 

@@ -78,6 +78,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
 
+    /// <summary>The window's node selection, whose pills the top bar shows while there is more than one node.</summary>
+    public NodeFilter? Nodes { get; set; }
+
     /// <summary>The page as last read, or null before the first read.</summary>
     public SettingsPage? Page => Volatile.Read(ref _read).Page;
 
@@ -207,23 +210,12 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         });
     }
 
-    private Layout.Node Header(SettingsPage? page, string? problem)
-    {
-        var summary = page is null ? "" : Summary(page);
-        var line = Said ?? page?.Restart ?? (page is null ? (problem ?? "") : $"saved in {page.File} · the command line wins over it");
-        return Layout.Builder.VStack(
-                Layout.Builder.HStack(
-                        Layout.Builder.Text("pilot v2", 20f, Bright, TextAlign.Near, TextAlign.Far).WAuto(),
-                        Layout.Builder.Text("settings", 20f, Dim, TextAlign.Near, TextAlign.Far).WAuto(),
-                        Layout.Builder.Spacer().WStar(),
-                        Layout.Builder.Text(summary, 15f, Body, TextAlign.Far).WAuto(),
-                        AutopilotSwitch.In(Autopilot),
-                        About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f))
-                    .WithGap(12f)
-                    .RowH(32f),
-                Layout.Builder.Text(line, 12f, Dim).RowH(20f))
-            .Pad(Gutter, 6f).Bg(HeaderBg).WStar().HAuto();
-    }
+    private Layout.Node Header(SettingsPage? page, string? problem) =>
+        TopBar.Build(new PageHeader("settings")
+        {
+            Counts = page is null ? "" : Summary(page),
+            Source = Said ?? page?.Restart ?? (page is null ? (problem ?? "") : $"saved in {page.File} · the command line wins over it"),
+        }, new TopBarParts(Nodes, null, Autopilot, About));
 
     internal static string Summary(SettingsPage page)
     {

@@ -694,41 +694,36 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     private Layout.Node Header(FlightsScreen screen)
     {
-        var rows = new List<Layout.Node>
+        var buttons = new List<Layout.Node>();
+        if (CanvasAvailable && screen.Lines.Count > 0)
         {
-            Layout.Builder.HStack([
-                    Layout.Builder.Text("pilot v2", 20f, Bright, TextAlign.Near, TextAlign.Far).WAuto(),
-                    Layout.Builder.Text("flights", 20f, Dim, TextAlign.Near, TextAlign.Far).WAuto(),
-                    .. (Nodes?.Pills(NightOrNull) ?? []),
-                    .. (Play?.Pills(NightOrNull) ?? []),
-                    Layout.Builder.Spacer().WStar(),
-                    .. PlayFilter.Summary(Play, screen.Counts, screen.Hidden, "flights:play-all", Body, RowHoverBg, NightOrNull),
-                    CanvasAvailable && screen.Lines.Count > 0 ? ViewSwitch() : Layout.Builder.Spacer().WFixed(0f),
-                    CanCommand && !Wizard.IsOpen && Wizard.LoadRepos is not null
-                        ? CardsView<TSurface>.IconPill(Layout.IconKind.Plus, "New flight", "flights:new", () => Wizard.Open(), square: AboutCard.HeaderButton)
-                        : Layout.Builder.Spacer().WFixed(0f),
-                    AutopilotSwitch.In(Autopilot, NightOrNull),
-                    About is { } about ? about.Button(NightOrNull) : Layout.Builder.Spacer().WFixed(0f)])
-                .WithGap(12f)
-                .RowH(32f),
-            Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC{(screen.Outside is { } outside ? $" · {outside}" : "")}", 12f, Dim).RowH(20f),
-        };
+            buttons.Add(ViewSwitch());
+        }
+        if (CanCommand && !Wizard.IsOpen && Wizard.LoadRepos is not null)
+        {
+            buttons.Add(CardsView<TSurface>.IconPill(Layout.IconKind.Plus, "New flight", "flights:new", () => Wizard.Open(), square: AboutCard.HeaderButton));
+        }
         // Discovering, discovery down, or an ask still waiting: nothing the dashboard waits for is invisible. The nodes heard
         // are not listed here: the node pills above and the Fleet page (with its Connect) show them, and a chip per node here
         // said it twice (SE1, 2026-10-24).
+        var lines = new List<Layout.Node>();
         if (Maintenance)
         {
-            rows.Add(Layout.Builder.Text(MaintenanceNotice.Line, 12f, Held).RowH(20f));
+            lines.Add(Layout.Builder.Text(MaintenanceNotice.Line, 12f, Held).RowH(20f));
         }
         if (Lan is { Quiet: false } lan)
         {
-            rows.Add(Layout.Builder.Text(lan.Line(screen.AsOf), 12f, Held).RowH(LanRowHeight));
+            lines.Add(Layout.Builder.Text(lan.Line(screen.AsOf), 12f, Held).RowH(LanRowHeight));
         }
-        return Layout.Builder.VStack([.. rows])
-            .Pad(Gutter, 6f)
-            .Bg(HeaderBg)
-            .WStar()
-            .HAuto();
+        return TopBar.Build(new PageHeader("flights")
+        {
+            Counts = screen.Counts,
+            Hidden = screen.Hidden,
+            HiddenAction = "flights:play-all",
+            Buttons = buttons,
+            Source = PageHeader.SourceLine(screen.Source, screen.AsOf, screen.Outside),
+            Lines = lines,
+        }, new TopBarParts(Nodes, Play, Autopilot, About, NightOrNull));
     }
 
     private Layout.Node Main(FlightsScreen screen)

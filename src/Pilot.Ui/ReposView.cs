@@ -193,35 +193,19 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     private Layout.Node Header(ReposScreen screen)
     {
-        var rows = new List<Layout.Node>
-        {
-            Layout.Builder.HStack([
-                    Layout.Builder.Text("pilot v2", 20f, Bright, TextAlign.Near, TextAlign.Far).WAuto(),
-                    Layout.Builder.Text("repos", 20f, Dim, TextAlign.Near, TextAlign.Far).WAuto(),
-                    .. (Nodes?.Pills() ?? []),
-                    Layout.Builder.Spacer().WStar(),
-                    // Sync stays a word for want of a glyph (a refresh mark): SharpAstro/DIR.Lib#151.
-                    .. (SyncRepos is null ? (IEnumerable<Layout.Node>)[] : [CardsView<TSurface>.HeaderPill(Syncing ? "Syncing…" : "Sync", "repos:sync", () => _ = SyncAsync(), Syncing ? Lit : null)]),
-                    CardsView<TSurface>.HeaderPill("All repos", "repos:all", () => ShowAll = !ShowAll, ShowAll ? Lit : null),
-                    Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
-                    AutopilotSwitch.In(Autopilot),
-                    About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f)])
-                .WithGap(12f)
-                .RowH(32f),
-            Layout.Builder.Text($"{screen.Source} · as of {screen.AsOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC", 12f, Dim).RowH(20f),
-        };
+        var lines = new List<Layout.Node>();
         if (SyncError is { } error)
         {
-            rows.Add(Layout.Builder.Text($"sync refused: {error}", 12f, Failing).RowH(20f));
+            lines.Add(Layout.Builder.Text($"sync refused: {error}", 12f, Failing).RowH(20f));
         }
         else if (SyncOutcomes.Count > 0)
         {
-            rows.Add(Layout.Builder.HStack(
+            lines.Add(Layout.Builder.HStack(
                     Layout.Builder.Text(SyncSummary(SyncOutcomes), 12f, Body).WStar(),
                     Layout.Builder.Text("×", 14f, Dim).WAuto().BgHover(RowHoverBg).Follows(new HitResult.ButtonHit("repos:sync-clear"), _ => ClearSync())
                         .WithTooltip("Put the sync's outcome away"))
                 .RowH(20f));
-            rows.AddRange(SyncOutcomes.Select(o => Layout.Builder.Text($"{o.Name}  {o.Status}  {o.Detail}", 12f, o.Status switch
+            lines.AddRange(SyncOutcomes.Select(o => Layout.Builder.Text($"{o.Name}  {o.Status}  {o.Detail}", 12f, o.Status switch
             {
                 RepoSyncStatus.Updated => Working,
                 RepoSyncStatus.Failed => Failing,
@@ -229,7 +213,18 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 _ => Dim,
             }).RowH(18f)));
         }
-        return Layout.Builder.VStack([.. rows]).Pad(Gutter, 6f).Bg(HeaderBg).WStar().HAuto();
+        return TopBar.Build(new PageHeader("repos")
+        {
+            Counts = screen.Summary,
+            Source = PageHeader.SourceLine(screen.Source, screen.AsOf),
+            // Sync stays a word for want of a glyph (a refresh mark): SharpAstro/DIR.Lib#151.
+            Buttons =
+            [
+                .. (SyncRepos is null ? (IEnumerable<Layout.Node>)[] : [CardsView<TSurface>.HeaderPill(Syncing ? "Syncing…" : "Sync", "repos:sync", () => _ = SyncAsync(), Syncing ? Lit : null)]),
+                CardsView<TSurface>.HeaderPill("All repos", "repos:all", () => ShowAll = !ShowAll, ShowAll ? Lit : null),
+            ],
+            Lines = lines,
+        }, new TopBarParts(Nodes, null, Autopilot, About));
     }
 
     /// <summary><c>sync: 2 updated, 1 skipped</c>: what the outcome list adds up to.</summary>

@@ -369,24 +369,12 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     public override bool HandleInput(InputEvent evt) => evt is InputEvent.KeyDown key && HandleListKey(key.Key, key.Modifiers);
 
-    private Layout.Node Header(FleetScreen screen)
-    {
-        var rows = new List<Layout.Node>
+    private Layout.Node Header(FleetScreen screen) =>
+        TopBar.Build(new PageHeader("fleet")
         {
-            Layout.Builder.HStack([
-                    Layout.Builder.Text("pilot v2", 20f, Bright, TextAlign.Near, TextAlign.Far).WAuto(),
-                    Layout.Builder.Text("fleet", 20f, Dim, TextAlign.Near, TextAlign.Far).WAuto(),
-                    .. (Nodes?.Pills() ?? []),
-                    Layout.Builder.Spacer().WStar(),
-                    Layout.Builder.Text(screen.Summary, 15f, Body, TextAlign.Far).WAuto(),
-                    AutopilotSwitch.In(Autopilot),
-                    About is { } about ? about.Button() : Layout.Builder.Spacer().WFixed(0f)])
-                .WithGap(12f)
-                .RowH(32f),
-            Layout.Builder.Text(Said ?? "every node heard on the LAN or granted to you, each on its own account · watching needs no grant, commanding one does", 12f, Dim).RowH(20f),
-        };
-        return Layout.Builder.VStack([.. rows]).Pad(Gutter, 6f).Bg(HeaderBg).WStar().HAuto();
-    }
+            Counts = screen.Summary,
+            Source = Said ?? "every node heard on the LAN or granted to you, each on its own account · watching needs no grant, commanding one does",
+        }, new TopBarParts(Nodes, null, Autopilot, About));
 
     private Layout.Node Main(FleetScreen screen)
     {

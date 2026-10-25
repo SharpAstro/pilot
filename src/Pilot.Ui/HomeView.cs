@@ -128,8 +128,14 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>Whether this window's node is in maintenance: the page says so, under the two verdicts. Set by the host from the node's <see cref="NodeInfo.Maintenance"/>.</summary>
     public bool Maintenance { get; set; }
 
-    /// <summary>The header's Autopilot switch, the same on every page; Home's title row carries it.</summary>
+    /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+
+    /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
+    public AboutCard? About { get; set; }
+
+    /// <summary>The window's node selection: its pills in the top bar, and the nodes picked are the things shown.</summary>
+    public NodeFilter? Nodes { get; set; }
 
     /// <summary>Opens a flight's page on Flights.</summary>
     public Action<FlightLine>? OnFlight { get; set; }
@@ -149,21 +155,36 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
     internal Layout.Node Tree(HomeScreen screen)
     {
+        // The node selection holds here as on every page; the pills above bring the others back.
+        if (Nodes is { All: false } nodes)
+        {
+            screen = screen with
+            {
+                Flights = screen.Flights with { Lines = [.. screen.Flights.Lines.Where(l => nodes.Shows(l.Node))] },
+                Sessions = screen.Sessions with { Lines = [.. screen.Sessions.Lines.Where(l => nodes.Shows(l.Node))] },
+                Jobs = screen.Jobs with { Lines = [.. screen.Jobs.Lines.Where(l => nodes.Shows(l.Node))] },
+                Cards = screen.Cards with { Open = [.. screen.Cards.Open.Where(c => nodes.Shows(screen.Cards.NodeOf(c)))] },
+            };
+        }
         var blocks = new List<Layout.Node>
         {
-            Layout.Builder.HStack(Layout.Builder.Text("Home", 22f, Bright).WStar(), AutopilotSwitch.In(Autopilot)).WithGap(12f).RowH(36f),
             Layout.Builder.Text(screen.Flying, 16f, screen.Flying == "Nothing is flying" ? Dim : Live).RowH(28f),
             Layout.Builder.Text(screen.Waiting, 16f, screen.Waiting == "Nothing waits on you" ? Dim : Ring).RowH(28f),
         };
-        if (Maintenance)
-        {
-            blocks.Add(Layout.Builder.Text(MaintenanceNotice.Line, 13f, Ring).RowH(24f));
-        }
         Section(blocks, "Flights", screen.FlightChips, "no flight is flying or held");
         Section(blocks, "Sessions", screen.SessionChips, "no live session");
         Section(blocks, "Background tasks", screen.JobChips, "no job running or queued");
-        return Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 14f).Bg(PageBg).Stretch();
+        var body = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 14f).Stretch();
+        var page = Layout.Builder.VStack(Header(screen), body.HStar()).Bg(PageBg).Stretch();
+        return About?.Over(page) ?? page;
     }
+
+    private Layout.Node Header(HomeScreen screen) =>
+        TopBar.Build(new PageHeader("home")
+        {
+            Source = PageHeader.SourceLine(screen.Flights.Source, screen.Flights.AsOf),
+            Lines = Maintenance ? [Layout.Builder.Text(MaintenanceNotice.Line, 12f, Ring).RowH(20f)] : [],
+        }, new TopBarParts(Nodes, null, Autopilot, About));
 
     private void Section(List<Layout.Node> blocks, string title, IReadOnlyList<HomeChip> chips, string none)
     {
