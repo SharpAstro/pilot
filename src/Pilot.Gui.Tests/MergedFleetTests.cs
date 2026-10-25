@@ -124,6 +124,29 @@ public sealed class MergedFleetTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task AnotherNodesRowsKeepTheirMarkWhileItsStreamIsDown()
+    {
+        var filter = new NodeFilter();
+        await TwoNodes(filter);
+
+        // LE1's stream drops: it is no choice in the header until it is back, but its last rows are still shown.
+        _le1.Close();
+        var pages = _watch.Pages("node.sock", _here, filter, Live.At);
+        for (var i = 0; i < 500 && filter.Choices.Count != 1; i++)
+        {
+            await Task.Delay(10, Ct);
+            pages = _watch.Pages("node.sock", _here, filter, Live.At);
+        }
+        filter.Choices.ShouldHaveSingleItem().Name.ShouldBe("SE1");
+
+        // This node's rows unmarked, as with no fleet; LE1's still LE1's, so a transcript or a command goes to LE1.
+        pages.Sessions.Lines.Where(l => l.Node is null).Select(l => l.Name).ShouldBe(["se1-watchtower", "se1-tia1-gpu"], ignoreOrder: true);
+        pages.Sessions.Lines.Where(l => l.Node is not null).ShouldAllBe(l => l.Node!.Name == "LE1");
+        pages.Flights.Lines.Single(l => l.Code == "ORB2").Node.ShouldNotBeNull().Name.ShouldBe("LE1");
+        pages.Cards.Open.Single(c => c.Title == "ORB2's PR is ready").ShouldSatisfyAllConditions(c => pages.Cards.NodeOf(c).ShouldNotBeNull().Name.ShouldBe("LE1"));
+    }
+
+    [Fact]
     public async Task FlightsJobsAndCardsMergeAndFilterTheSameWay()
     {
         var filter = new NodeFilter();
