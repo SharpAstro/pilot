@@ -35,17 +35,31 @@ public sealed class ClaudeTrustTests : IDisposable
     }
 
     [Fact]
-    public void AFolderUnderATrustedOneIsLeftAlone()
+    public void AFolderUnderATrustedOneIsTrustedItselfSinceClaudeCodeAsksPerFolder()
     {
+        // The org root trusted, a repo under it not: Claude Code refused the repo's background session all the same.
         var org = Directory.CreateDirectory(Path.Combine(_root, "repos")).FullName;
-        var repo = Directory.CreateDirectory(Path.Combine(org, "pilot")).FullName;
+        var repo = Directory.CreateDirectory(Path.Combine(org, "tianwen")).FullName;
         System.IO.File.WriteAllText(File, $$"""{ "projects": { "{{ClaudeTrust.Key(org)}}": { "hasTrustDialogAccepted": true } } }""");
+        var trust = new ClaudeTrust(File);
+        trust.Trusted(repo).ShouldBeNull();
+
+        trust.Ensure(repo).ShouldBeNull();
+
+        trust.Trusted(repo).ShouldBe(repo);
+        trust.Trusted(org).ShouldBe(org);
+    }
+
+    [Fact]
+    public void AFolderTrustedAlreadyIsNotWrittenAgain()
+    {
+        var repo = Directory.CreateDirectory(Path.Combine(_root, "pilot")).FullName;
+        System.IO.File.WriteAllText(File, $$"""{ "projects": { "{{ClaudeTrust.Key(repo)}}": { "hasTrustDialogAccepted": true } } }""");
         var before = System.IO.File.ReadAllText(File);
 
         new ClaudeTrust(File).Ensure(repo).ShouldBeNull();
 
         System.IO.File.ReadAllText(File).ShouldBe(before, "nothing was written");
-        new ClaudeTrust(File).Trusted(repo).ShouldBe(org);
     }
 
     [Fact]
