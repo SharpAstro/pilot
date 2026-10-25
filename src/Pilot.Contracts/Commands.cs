@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Pilot.Contracts;
 
 /// <summary>
@@ -18,6 +20,21 @@ public sealed record CommandRequest
 
     /// <summary>Who sends it: a client (<c>gui</c>, <c>cli</c>) or a session's name. Required, for the black box.</summary>
     public required string Who { get; init; }
+
+    /// <summary>
+    /// Whether a Claude session sent it: the <c>pilot</c> CLI sets it when <c>CLAUDECODE</c> is in its environment, and
+    /// <c>pilot mcp</c> always does (an MCP client is a Claude session). A GUI click never does. With <see cref="Who"/> it
+    /// tells the node who is asking (the person, an assistant, the lookout, a flight's session): see <c>Standing</c> on the node.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Agent { get; init; }
+
+    /// <summary>
+    /// The label of the LAN grant the command came in under, set by the node's route and never read from the wire (a
+    /// client cannot name itself a grant, or pass for one): null for a command from this machine.
+    /// </summary>
+    [JsonIgnore]
+    public string? Grant { get; init; }
 }
 
 /// <summary>What became of a command: the response to its post, and a <see cref="CommandResultEvent"/> on the stream.</summary>

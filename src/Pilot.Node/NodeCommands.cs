@@ -15,12 +15,13 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
     /// <summary>Runs <paramref name="command"/>; its result is on the stream too. Long work (a say, git, a merge) runs off the state's lock.</summary>
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
-        // The watchtower handles what it may; a merge or a landing is the controller's, by any route, a card's included,
-        // and so are the node's settings and setup, and a review posted to GitHub in the controller's name; so is the answer
-        // to an overlap (fold retires a flight the way a landing does, separate restarts a planner on the controller's answer).
-        if (command.Verb is Verbs.Merge or Verbs.Land or Verbs.Review or Verbs.PostReview or Verbs.Set or Verbs.Setup or Verbs.SyncRepos or Verbs.CreateIssue or Verbs.Fold or Verbs.Separate && string.Equals(command.Who, Get<Watchtower>().Name, StringComparison.Ordinal))
+        // Who sends it decides what it may do (Standing): the lookout and a flight's session are fenced from what is the
+        // person's alone (a merge or a landing by any route, a card's included; the node's settings and setup; a review posted to
+        // GitHub in the person's name; the answer to an overlap), a flight's session from other flights too, and the autopilot
+        // setting is the person's to change.
+        if (Standing.Of(command, state, Get<Watchtower>().Name).Refusal(command, state) is { } refused)
         {
-            return state.Complete(command, $"{command.Verb} is the controller's, not the watchtower's: leave its card open for them");
+            return state.Complete(command, refused);
         }
         if (command.Verb == Verbs.Tell)
         {
@@ -166,7 +167,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         CommandResult result;
         try
         {
-            result = await RunAsync(new CommandRequest { Verb = choice.Verb, Target = choice.Target, Args = choice.Args, Who = command.Who }, cancellationToken);
+            result = await RunAsync(command with { Verb = choice.Verb, Target = choice.Target, Args = choice.Args }, cancellationToken);
         }
         catch
         {

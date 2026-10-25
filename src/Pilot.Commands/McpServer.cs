@@ -61,7 +61,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         new("pilot://sessions", "sessions", "Every Claude session the node knows", Json),
     ];
 
-    private readonly Dictionary<string, (string[] Path, Command Command)> _tools = Tools(PilotCommand.Build(cwd, TextWriter.Null, TextWriter.Null, "mcp"));
+    private readonly Dictionary<string, (string[] Path, Command Command)> _tools = Tools(PilotCommand.Build(cwd, TextWriter.Null, TextWriter.Null, "mcp", agent: true));
 
     /// <summary>Who the calls are from: the client by its name from <c>initialize</c>, until then <c>mcp</c>.</summary>
     internal string Who { get; private set; } = "mcp";
@@ -217,7 +217,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         }
         var output = new StringWriter();
         var error = new StringWriter();
-        var exit = await PilotCommand.InvokeAsync([.. NodeArgs(), .. args], cwd, output, error, Who, bySession: true, console: false, cancellationToken);
+        var exit = await PilotCommand.InvokeAsync([.. NodeArgs(), .. args], cwd, output, error, Who, bySession: true, console: false, cancellationToken, agent: true);
         var said = (output.ToString() + error.ToString()).TrimEnd();
         return new ToolCallResult([new TextContent(said.Length > 0 ? said : exit == 0 ? "ok" : $"exit {exit}")], IsError: exit != 0);
     }

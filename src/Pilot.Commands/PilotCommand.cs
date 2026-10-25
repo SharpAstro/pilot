@@ -20,11 +20,22 @@ public static class PilotCommand
     public static Task<int> RunAsync(string[] args, string cwd, TextWriter output, TextWriter error, CancellationToken cancellationToken, string who = "cli", bool console = false) =>
         InvokeAsync(args, cwd, output, error, who, bySession: who == "cli", console, cancellationToken);
 
+    /// <summary>
+    /// Whether a command sent from here is a Claude session's (<see cref="CommandRequest.Agent"/>): Claude Code puts
+    /// <c>CLAUDECODE</c> in the environment of everything its sessions run, so a <c>pilot</c> a human runs at their own
+    /// terminal does not have it. Only a host that may be a session's (<paramref name="bySession"/>: the CLI and the MCP
+    /// server, not the GUI or the TUI) is asked; <paramref name="agent"/> settles it for a host that knows (the MCP server's
+    /// client always is a session).
+    /// </summary>
+    internal static bool IsAgent(bool bySession, bool? agent) =>
+        agent ?? (bySession && Environment.GetEnvironmentVariable("CLAUDECODE") is { Length: > 0 });
+
     /// <param name="bySession">Whether a command is from the Claude session running this host, where one is (the CLI's and
     /// the MCP server's are), before <paramref name="who"/>.</param>
-    internal static async Task<int> InvokeAsync(string[] args, string cwd, TextWriter output, TextWriter error, string who, bool bySession, bool console, CancellationToken cancellationToken)
+    /// <param name="agent">Whether the commands are a Claude session's, where the host knows; null reads it from the environment (<see cref="IsAgent"/>).</param>
+    internal static async Task<int> InvokeAsync(string[] args, string cwd, TextWriter output, TextWriter error, string who, bool bySession, bool console, CancellationToken cancellationToken, bool? agent = null)
     {
-        var root = Build(cwd, output, error, who, bySession, console);
+        var root = Build(cwd, output, error, who, bySession, console, agent);
         var parsed = root.Parse(args);
         if (args.Length == 0)
         {
@@ -45,8 +56,9 @@ public static class PilotCommand
     }
 
     /// <summary>The command tree; actions write to <paramref name="output"/> and <paramref name="error"/>, and resolve folders against <paramref name="cwd"/>.</summary>
-    internal static RootCommand Build(string cwd, TextWriter output, TextWriter error, string who = "cli", bool bySession = true, bool console = false)
+    internal static RootCommand Build(string cwd, TextWriter output, TextWriter error, string who = "cli", bool bySession = true, bool console = false, bool? agent = null)
     {
+        var byAgent = IsAgent(bySession, agent);
         var socket = new Option<string?>("--node-socket")
         {
             Description = "The node's socket; else PILOT_NODE_SOCKET, else this user's default",
@@ -85,7 +97,7 @@ public static class PilotCommand
         // Who a command is from: the Claude session running this host when it may be one, else the host; a leg's worker
         // or a flight's reviewer when the plane says so, as they are named already.
         Task<int> Send(NodeClient client, string verb, string target, string[] args, string sender, CancellationToken ct) =>
-            SendAsync(client, verb, target, args, sender, bySession && sender == who, output, ct);
+            SendAsync(client, verb, target, args, sender, bySession && sender == who, byAgent, output, ct);
 
         Argument<string> Arg(string name, string description) => new(name) { Description = description };
 
@@ -109,15 +121,18 @@ public static class PilotCommand
         {
             var snapshot = await SnapshotAsync(client, ct);
             var maintenance = false;
+            bool? autopilot = null;
             try
             {
-                maintenance = (await client.GetNodeAsync(ct)).Maintenance;
+                var info = await client.GetNodeAsync(ct);
+                maintenance = info.Maintenance;
+                autopilot = info.Autopilot;
             }
             catch (HttpRequestException)
             {
                 // The node's own word on itself is a line more: the flights and sessions are what status is for.
             }
-            await output.WriteAsync(Status(snapshot, maintenance: maintenance));
+            await output.WriteAsync(Status(snapshot, maintenance: maintenance, autopilot: autopilot));
             return 0;
         });
         var sessions = Action(new Command("sessions", "Every Claude session on the machine"), async (_, client, ct) =>
@@ -380,6 +395,7 @@ public static class PilotCommand
                     Target = target,
                     Args = [cwd, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
                     Who = owner?.Name ?? who,
+                    Agent = byAgent,
                 }, ct);
                 if (sent is not { Success: true, Response: { Ok: true, Made: { } job } })
                 {
@@ -488,7 +504,7 @@ public static class PilotCommand
                     }
                     else
                     {
-                        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Say, Target = target, Args = [words], Who = sender }, ct);
+                        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Say, Target = target, Args = [words], Who = sender, Agent = byAgent }, ct);
                         if (envelope.Success && envelope.Response is { Ok: true } result)
                         {
                             await output.WriteLineAsync($"ok {target}{(result.Way is { } way ? $" ({way})" : "")}  {label}");
@@ -809,10 +825,10 @@ public static class PilotCommand
             ? Caller(await SnapshotAsync(client, cancellationToken), sessionId, who)
             : who;
 
-    private static async Task<int> SendAsync(NodeClient client, string verb, string target, string[] args, string who, bool bySession, TextWriter output, CancellationToken cancellationToken)
+    private static async Task<int> SendAsync(NodeClient client, string verb, string target, string[] args, string who, bool bySession, bool agent, TextWriter output, CancellationToken cancellationToken)
     {
         who = await SenderAsync(client, who, bySession, cancellationToken);
-        var envelope = await client.SendAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, cancellationToken);
+        var envelope = await client.SendAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who, Agent = agent }, cancellationToken);
         if (envelope.Success && envelope.Response is { Ok: true } result)
         {
             await output.WriteLineAsync($"ok: {verb} {target}{(result.Way is { } way ? $" ({way})" : "")}");
@@ -855,12 +871,18 @@ public static class PilotCommand
     }
 
     /// <summary>The flights and their legs, a line each, and the live sessions.</summary>
-    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false)
+    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false, bool? autopilot = null)
     {
         var text = new System.Text.StringBuilder();
         if (!newestOnly && code is null && maintenance)
         {
             text.AppendLine("maintenance  on: this node takes no new flights (pilot settings set maintenance off)");
+        }
+        if (!newestOnly && code is null && autopilot is { } piloting)
+        {
+            text.AppendLine(piloting
+                ? "autopilot  on (only the person changes it: pilot settings set autopilot off)"
+                : "autopilot  off (only the person changes it: pilot settings set autopilot on)");
         }
         if (!newestOnly && code is null && snapshot.Usage?.Account is { } account)
         {

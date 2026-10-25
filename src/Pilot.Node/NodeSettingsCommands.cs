@@ -65,11 +65,11 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         }
         // A role's model and effort are read when a session of it starts: in force for the next one, no restart.
         if (NodeSettings.IsRoleKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey
-            or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey)
+            or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey)
         {
             roles.Apply(updated);
             return state.Complete(command, null, way: key == NodeSettings.MergeMethodKey ? $"{key} saved as {value}; the next merge uses it"
-                : key is NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey ? $"{key} saved as {value}, and in force now"
+                : key is NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey ? $"{key} saved as {value}, and in force now"
                 : key is NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey ? $"{key} saved as {value}; the next start the node makes by itself weighs it"
                 : $"{key} saved as {value}; the next session of that kind starts with it");
         }
@@ -146,6 +146,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.LanKey => options.Lan ? "on" : "off",
         NodeSettings.MaintenanceKey => roles.Maintenance ? "on" : "off",
         NodeSettings.AcceptFleetFlightsKey => roles.AcceptsFleetFlights ? "on" : "off",
+        NodeSettings.AutopilotKey => roles.Autopilot ? "on" : "off",
         NodeSettings.LanPortKey => options.LanPort.ToString(CultureInfo.InvariantCulture),
         NodeSettings.MachineKey => options.Machine,
         NodeSettings.RepoRootsKey => Join(key, options.RepoRoots),
@@ -173,7 +174,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     /// method, the start limits, the priority repos, the job limits, maintenance and whether fleet flights are accepted.</summary>
     private static bool Live(string key) => NodeSettings.IsRoleKey(key)
         || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey
-            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey;
+            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey;
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
     private static string Join(string key, IReadOnlyList<string> values) => string.Join(key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey ? '\n' : ' ', values);
@@ -184,6 +185,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.LanKey => "off",
         NodeSettings.MaintenanceKey => "off",
         NodeSettings.AcceptFleetFlightsKey => "off",
+        NodeSettings.AutopilotKey => "off",
         NodeSettings.LanPortKey => NodeWire.DefaultLanPort.ToString(CultureInfo.InvariantCulture),
         NodeSettings.MachineKey => (MachinePrefixes.Normalise(Environment.GetEnvironmentVariable("PILOT_MACHINE")) ?? MachinePrefixes.FromName(Environment.MachineName)),
         NodeSettings.RepoRootsKey => "",
@@ -206,6 +208,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.LanKey => ("On the LAN", "Listen on the LAN and announce it: anyone there may watch, a command needs a grant you allow", ["on", "off"]),
         NodeSettings.MaintenanceKey => ("Maintenance", "While on, this node takes no new flight: a create-flight is refused with the reason; flights in the air, held ones, legs, reviews, landings and jobs carry on", ["on", "off"]),
         NodeSettings.AcceptFleetFlightsKey => ("Accept fleet flights", "Whether this node is willing to take a flight another node of the fleet routes to it, when a new flight is made", ["on", "off"]),
+        NodeSettings.AutopilotKey => ("Autopilot", "While on, an assistant (a session you talk to) does your-only things (merge, land, settings, grants, update) directly when you asked; off, each raises a card for you to allow. Only you can change it, never an assistant", ["on", "off"]),
         NodeSettings.LanPortKey => ("LAN port", "The TCP port other machines reach this node on", []),
         NodeSettings.MachineKey => ("Machine prefix", "Two letters and a number, at the front of this machine's session names (DE1-watchtower)", []),
         NodeSettings.RepoRootsKey => ("Repo roots", "Folders of git clones the new-flight wizard offers, beside the flights' own repos", []),

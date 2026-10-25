@@ -501,7 +501,9 @@ own handler, from the folder the server was started in, so inside a plane the le
 is what the command printed; a refusal (with the node's reason), a usage error and no node are results with
 `isError`, as exit codes 1, 2 and 3 are on the CLI. A call is from the Claude session running the server where the node
 knows it (`CLAUDE_CODE_SESSION_ID`), as a CLI command is, so the watchtower's own merge or land is still refused;
-else from the client by the name it gave in `initialize`; else `mcp`.
+else from the client by the name it gave in `initialize`; else `mcp`. Every call carries the `Agent` flag (an MCP
+client is a Claude session), so it is an assistant's unless a session the node knows for a flight or the lookout says otherwise
+(**Who may do what**).
 
 The **resources** are the snapshot's pieces as JSON, each row as the node's wire writes it: `pilot://flights`,
 `pilot://legs`, `pilot://cards`, `pilot://sessions`. The server is a hand-written JSON-RPC 2.0 loop (`initialize`,
@@ -769,6 +771,11 @@ take a flight another node of the fleet routes to it. Both are in `GET /api/v1/n
 `AcceptsFleetFlights`), and `pilot status` prints a `maintenance` line while it is on. `set node maintenance on|off` is
 the one setting a LAN grant may change (the Fleet row menu's way); every other `set` and `setup` stays this machine's.
 
+`autopilot` (#208, `on` or `off`, off unless saved on) is in force at once too, in `GET /api/v1/node` as `Autopilot`, and
+`pilot status` prints an `autopilot` line, on or off. Only the person changes it (see **Who may do what**): a `set` of it
+from an assistant, the lookout, a flight's session or a grant is refused, taking it out (`set autopilot` with no value)
+included.
+
 A `create-flight` that reaches a node in maintenance goes to a willing node instead (#177). The candidates are the
 nodes this node holds a grant for (`client-grants.json` beside its data, the tokens `pilot connect` saved; the
 `PILOT_CLIENT_GRANTS` file in a test). A node qualifies when it is reachable, accepts the grant, is not in maintenance,
@@ -827,6 +834,27 @@ that machine back to watch-only at once (the list reads again after it, and on o
 user holds a token for (the token file `pilot connect` writes) each with **Forget**, which drops the token: that node's
 rows in the merged lists turn watch-only with Connect offered, from the next fleet tick (Forget asks for it at once).
 `pilot grants` and `pilot revoke` do as before.
+
+## Who may do what
+
+The node cannot tell its person from any Claude session on the machine by the socket alone, so a command says who sends it
+(#208): `Who` (`gui`, `cli`, a session's name, an MCP client's name), and `Agent`, set by the CLI when `CLAUDECODE` is in
+its environment (Claude Code puts it in everything its sessions run) and always by `pilot mcp` (an MCP client is a Claude
+session); the GUI and the TUI never set it. One place, `Standing.Of` on the node, sorts the sender, first match wins:
+
+| Standing | Known by | May do |
+|---|---|---|
+| **Grant** | the LAN token's grant (never read from the wire) | as before: never the settings, setup or grants of this machine (but `maintenance`) |
+| **Lookout** | `Who` is the watchtower's session name, whatever the flag | watch, ring, nudge, answer; nothing your-only, and not a review's verdict or posting, `sync-repos`, `create-issue`, `fold` or `separate` |
+| **Flight's session** | `Who` is a leg's worker or validator, a flight's reviewer or a PR review's reviewer, or a planner, worker or reviewer session row that names its flight | its own flight's legs, checks, artifacts and reviews, and a PR review its own PR; a `flight/` or `pr/` target that is another's is refused; nothing your-only, nor `post-review`, `fold` or `separate` |
+| **Assistant** | the `Agent` flag, from no session above | everything asked in words; its your-only commands run as before for now (the confirm card and the autopilot rule come next, in #208) |
+| **Person** | the rest: a GUI click, a human-run CLI (no `CLAUDECODE`), the node's own steps (`Who` is `node`) | everything |
+
+The **your-only** commands are `merge`, `land`, `set`, `setup`, `answer-grant`, `revoke-grant`, `update`,
+`restart-watchtower`, and dismissing a card in the ring bin (answering one is its chosen button's command, so it is your-only
+exactly when that is). Every route runs them through `NodeCommands.RunAsync`, so a card's button is fenced like the
+command by hand, and an answer keeps the answerer's standing. A refused command says why and leaves its card open.
+`connect flight/<code> <other>` is a flight's dependency, not a grant's, and is not your-only.
 
 ## Cards
 
