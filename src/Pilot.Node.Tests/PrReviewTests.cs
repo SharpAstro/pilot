@@ -112,6 +112,8 @@ public sealed class PrReviewTests : IDisposable
         _reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, _options), _options, TimeProvider.System)
         {
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),
+            // The Post path is what these tests are about; PostsItselfOnAnOpenPr covers the node posting it.
+            PostsItself = false,
         };
     }
 
@@ -197,6 +199,29 @@ public sealed class PrReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task PostsItselfOnAnOpenPr()
+    {
+        // #241's review rang with a Post button all night; on an open PR pilot posts its review itself (SE1, 2026-10-26).
+        var git = new GitCli();
+        var reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, _options), _options, TimeProvider.System)
+        {
+            SelfFinishGrace = TimeSpan.FromMilliseconds(1),
+        };
+        Task<CommandResult> Ask(string verb, string who, params string[] args) =>
+            reviews.RunAsync(new CommandRequest { Verb = verb, Target = "pr/acme/widget#7", Args = args, Who = who }, Ct);
+        (await Ask(Verbs.ReviewPr, "controller")).Error.ShouldBeNull();
+        var reviewer = Row("acme/widget", 7).Reviewer;
+
+        (await Ask(Verbs.PrVerdict, reviewer, "comment", "Reads well.")).Error.ShouldBeNull();
+
+        _github.Posted.ShouldHaveSingleItem().Number.ShouldBe(7);
+        Row("acme/widget", 7).PostedId.ShouldNotBeNull();
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.ReadyKind);
+        _state.Cards().ShouldContain(c => c.Kind == PrReviews.PostedKind && c.Bin == CardBin.Handled);
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+    }
+
+    [Fact]
     public async Task OnlyTheReviewersVerdictRaisesTheCardAndTheWorktreeGoesWhenTheCardCloses()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
@@ -212,7 +237,7 @@ public sealed class PrReviewTests : IDisposable
         var row = Row("acme/widget", 7);
         (row.State, row.Verdict, row.Report).ShouldBe((PrReviewState.Reviewed, "changes", "One defect.\nREADME.md:1 says hello to no one"));
         var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
-        (card.Id, card.Bin, card.Kind, card.Subject).ShouldBe((row.Card, CardBin.Ring, PrReviews.ReadyKind, "pr/acme/widget#7"));
+        (card.Id, card.Bin, card.Kind, card.Subject).ShouldBe((row.Card, CardBin.ForYou, PrReviews.ReadyKind, "pr/acme/widget#7"));
         card.Title.ShouldBe("acme/widget#7: review ready, changes (PR 7 of acme/widget)");
         card.Detail.ShouldBe($"By ada, reviewed at {_widgetHead[..8]}.\nPosts as REQUEST_CHANGES under controller, 0 inline comments.\n"
             + $"The draft: {_reviews.DraftOf(new PrRef("acme", "widget", 7))}\nOne defect.\nREADME.md:1 says hello to no one");
