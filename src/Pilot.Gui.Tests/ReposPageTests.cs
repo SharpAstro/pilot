@@ -151,6 +151,13 @@ public sealed class ReposPageTests
         CellLayout.HitTest(arranged, toggle.Bounds.X, toggle.Bounds.Y);
         CellLayout.Describe(Arrange(repos, screen)).ShouldContain("↳ flight/orb204");
 
+        // A click anywhere on the repo's row does it too: here it folds the worktrees away again.
+        arranged = Arrange(repos, screen);
+        var first = arranged.First(a => a.Node.Hit is HitResult.ListItemHit { Index: 0 });
+        CellLayout.HitTest(arranged, first.Bounds.X + 1, first.Bounds.Y);
+        CellLayout.Describe(Arrange(repos, screen)).ShouldNotContain("flight/orb204");
+        repos.Selected.ShouldBe(0);
+
         // A click on the next repo's row selects it.
         arranged = Arrange(repos, screen);
         var second = arranged.First(a => a.Node.Hit is HitResult.ListItemHit { Index: 1 });
