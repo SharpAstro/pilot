@@ -35,7 +35,11 @@ internal sealed record FlightLine
     /// <summary>Its sessions: <c>2 sessions · 1 live</c>, or <c>no session</c>.</summary>
     public required string Sessions { get; init; }
 
-    /// <summary>The sessions working on it now (its planner, a leg's worker, its reviewer), the one to watch first.</summary>
+    /// <summary>
+    /// The sessions working on it now, or waiting on you for it (its planner, a leg's worker or validator, its reviewer), the
+    /// one to watch first. An idle one is not: a planner long done and a validator between runs keep their process, and
+    /// listed they read as three sessions at it (PIL208's page, 2026-10-25).
+    /// </summary>
     public IReadOnlyList<SessionRow> Working { get; init; } = [];
 
     /// <summary>The node it flies on, when the page merges several; null on a page of one node, this window's.</summary>
@@ -97,8 +101,8 @@ internal sealed record FlightLine
             Sessions = sessions.Count == 0 ? "no session" : $"{sessions.Count} {(sessions.Count == 1 ? "session" : "sessions")} · {live} live",
             Working = [.. sessions
                 .Where(s => s.Role is SessionRole.Planner or SessionRole.Worker or SessionRole.Reviewer
-                    && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle)
-                .OrderBy(s => s.State == SessionState.Idle)
+                    && s.State is SessionState.Working or SessionState.Waiting)
+                .OrderBy(s => s.State == SessionState.Waiting)
                 .ThenByDescending(s => s.LastResponseAt)],
         };
     }

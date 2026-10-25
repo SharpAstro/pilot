@@ -210,10 +210,38 @@ public sealed class FlightDetailTests
 
         flights.CloseDetail();
         var worker = Live.Row("wwww0001", "du1-tia1611-render", SessionState.Working) with { Role = SessionRole.Worker, Flight = "TIA1611", Leg = "render" };
-        var flying = Open(new FlightsScreen([FlightLine.Build([Flight()], [worker], Now, Legs()).Single()], "live", Now));
+        // Idle beside it: the planner long done and a validator between runs, neither working on it now (PIL208's page).
+        var planner = Live.Row("pppp0001", "du1-tia1611-plan", SessionState.Idle) with { Role = SessionRole.Planner, Flight = "TIA1611" };
+        var idleValidator = Live.Row("vvvv0001", "du1-tia1611-render-validator", SessionState.Idle) with { Role = SessionRole.Worker, Flight = "TIA1611", Leg = "render-validator" };
+        var line = FlightLine.Build([Flight()], [worker, planner, idleValidator], Now, Legs()).Single();
+        line.Working.Select(s => s.Id).ShouldBe(["wwww0001"]);
+        var flying = Open(new FlightsScreen([line], "live", Now));
         flying.Any(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:plan" }).ShouldBeFalse();
+        flying.Count(r => r.Result is HitResult.ButtonHit { Action: var action } && action.Contains(":session:", StringComparison.Ordinal)).ShouldBe(1);
         flying.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:session:wwww0001" }).OnClick!.Invoke(InputModifier.None);
         opened.ShouldBe(["wwww0001"]);
+    }
+
+    [Fact]
+    public void AValidatorAtWorkSaysWhatItValidatesAndEachTranscriptButtonSaysWhose()
+    {
+        using var vessel = new RgbaImageRenderer(1280, 800);
+        var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Flights;
+        flights.OnSession = (_, _) => { };
+        var worker = Live.Row("wwww0001", "du1-tia1611-render", SessionState.Waiting) with { Role = SessionRole.Worker, Flight = "TIA1611", Leg = "render" };
+        var validator = Live.Row("vvvv0001", "du1-tia1611-render-validator", SessionState.Working) with { Role = SessionRole.Worker, Flight = "TIA1611", Leg = "render-validator" };
+        var screen = new FlightsScreen([FlightLine.Build([Flight()], [worker, validator], Now, Legs()).Single()], "live", Now);
+
+        flights.Tree(screen);
+        flights.OpenDetail("TIA1611");
+        var texts = Layout.Engine.Arrange(flights.Tree(screen), new Rect<float>(0, 0, 1280, 800), new PixelMeasureContext<RgbaImage>(vessel, SessionsCapture.FontPath, 1f))
+            .Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value).ToList();
+
+        texts.ShouldContain("validating render · du1-tia1611-render-validator · working");
+        texts.ShouldContain("flying render · du1-tia1611-render · waiting");
+        texts.ShouldContain("Validator's transcript");
+        texts.ShouldContain("Worker's transcript");
+        texts.ShouldNotContain("Its transcript");
     }
 
     /// <summary>
