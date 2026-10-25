@@ -89,6 +89,69 @@ public sealed class MergeHookTests : IDisposable
         Decide(command).ShouldBeNull();
     }
 
+    [Theory]
+    // gh's -R / --repo value is not the group word.
+    [InlineData("gh -R o/r pr merge 1")]
+    [InlineData("gh --repo o/r pr merge 1")]
+    [InlineData("gh -R o/r api -X PUT repos/o/r/pulls/3/merge")]
+    [InlineData("gh --repo o/r api graphql -f query='mutation{enqueuePullRequest(input:{}){x}}'")]
+    // Shell keywords in front of the command.
+    [InlineData("if gh pr checks 1; then gh pr merge 1; fi")]
+    [InlineData("for p in 1 2; do gh pr merge $p; done")]
+    [InlineData("while true; do git push origin main; done")]
+    [InlineData("{ gh pr merge 1; }")]
+    [InlineData("! gh pr merge 1")]
+    [InlineData("if false; then :; elif true; then gh pr merge 1; else :; fi")]
+    // Wrappers with a word of their own.
+    [InlineData("timeout 60 gh pr merge 1")]
+    [InlineData("timeout -k 5 60 gh pr merge 1")]
+    [InlineData("timeout 60 git push origin main")]
+    [InlineData("echo 1 | xargs gh pr merge")]
+    [InlineData("echo 1 | xargs -I{} gh pr merge {}")]
+    [InlineData("echo 1 | xargs -n 1 gh pr merge")]
+    // A heredoc's body is not commands, but the line after it is.
+    [InlineData("cat > x.md <<EOF\nnotes\nEOF\ngh pr merge 1")]
+    [InlineData("cat <<'EOF' | cat\nDon't\nEOF\ngit push origin main")]
+    [InlineData("cat <<-EOF\n\tbody\n\tEOF\ngh pr merge 1")]
+    // Backslash-newline continues the line.
+    [InlineData("gh pr \\\n merge 1")]
+    [InlineData("gh pr \\\r\n  merge 1")]
+    [InlineData("git push \\\n  origin main")]
+    [InlineData("gh pr mer\\\nge 1")]
+    public void AMergeHiddenBehindOtherShellSyntaxIsStillRefused(string command)
+    {
+        Decide(command).ShouldNotBeNull().ShouldContain("pilot flight merge");
+    }
+
+    [Theory]
+    [InlineData("cat > x.md <<EOF\ngh pr merge 1\nEOF")]
+    [InlineData("cat > x.md <<'EOF'\ngit push origin main\nEOF\n")]
+    [InlineData("gh pr create --body-file - <<EOF\ntitle\ngh pr merge 1\nEOF")]
+    [InlineData("git commit -F - <<-EOF\n\tgit push origin main\n\tEOF")]
+    [InlineData("cat <<A <<B\ngh pr merge 1\nA\ngit push origin main\nB")]
+    [InlineData("echo $((1<<2))")]
+    public void AHeredocBodyIsNotACommand(string command)
+    {
+        Decide(command).ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("git commit -m @'\nDon't\n'@; gh pr merge 1")]
+    [InlineData("git commit -m @\"\nDon't\n\"@; git push origin main")]
+    public void APowerShellHereStringIsOneWordAndTheCommandAfterItIsRead(string command)
+    {
+        DecidePs(command).ShouldNotBeNull().ShouldContain("pilot flight merge");
+    }
+
+    [Theory]
+    [InlineData("git commit -m @'\ngh pr merge 1\n'@")]
+    [InlineData("git commit -m @'\nDon't; gh pr merge 1\n'@")]
+    [InlineData("git commit -m @\"\ngit push origin main\n\"@")]
+    public void APowerShellHereStringsBodyIsNotACommand(string command)
+    {
+        DecidePs(command).ShouldBeNull();
+    }
+
     [Fact]
     public void APlainPushIsRefusedOnlyWhenTheCheckoutIsOnTheDefaultBranch()
     {
