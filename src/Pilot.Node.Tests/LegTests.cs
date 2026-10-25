@@ -747,6 +747,32 @@ public sealed class LegCommanderTests : IDisposable
     }
 
     [Fact]
+    public async Task AFolderGitLeavesAfterRemovingThePlaneGoesToo()
+    {
+        var flight = await FlightWithTwoLegs();
+
+        (await new Planes(new FolderKeepingGit()).RemoveAsync(Repo, flight.Worktree, Ct)).ShouldBeNull();
+
+        Directory.Exists(flight.Worktree).ShouldBeFalse();
+    }
+
+    /// <summary>git as on Windows with a process sitting in the worktree: the remove succeeds and the empty folder stays.</summary>
+    private sealed class FolderKeepingGit : IGit
+    {
+        private readonly GitCli _git = new();
+
+        public async Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
+        {
+            var run = await _git.RunAsync(args, cwd, cancellationToken);
+            if (run.Ok && args is ["worktree", "remove", .., var worktree])
+            {
+                Directory.CreateDirectory(worktree);
+            }
+            return run;
+        }
+    }
+
+    [Fact]
     public async Task APlaneWhoseGitFileWentIsPrunableAndStillLands()
     {
         var flight = await FlightWithTwoLegs();

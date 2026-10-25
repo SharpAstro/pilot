@@ -419,6 +419,16 @@ public sealed class Planes(IGit git)
             }
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
         }
+        // git removed the worktree but, on Windows, leaves its folder when a process still sits in it (a session's
+        // working folder): empty and unregistered, it would stay for good (pil173, pil187, SE1 2026-10-25).
+        try
+        {
+            DeleteLeftover(worktree);
+        }
+        catch (FlightException ex)
+        {
+            return ex.Message;
+        }
         return null;
     }
 }
