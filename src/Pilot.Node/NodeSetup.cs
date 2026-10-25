@@ -162,23 +162,27 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             case BuildRspKey:
                 return InstallBuildRsp();
             case FirewallKey:
+            {
                 if (!OperatingSystem.IsWindows())
                 {
                     return "the node makes a firewall rule on Windows only";
                 }
-                // One elevated cmd for all, so one prompt: the old rules out (an earlier install's paths) and these in. The
-                // node takes anything in; a listener only the discovery port's beacons.
-                var add = $"netsh advfirewall firewall add rule name={FirewallRule} dir=in action=allow profile=private enable=yes";
-                var netsh = string.Join(" & ", FirewallPrograms().Select((program, i) => i == 0
+                // One elevated pwsh script for all, so one prompt: the old rules out (an earlier install's paths) and these
+                // in. The node takes anything in; a listener only the discovery port's beacons. --% hands netsh the rest of
+                // its line as written, so program="<path>" reaches it with its quotes.
+                var add = $"netsh --% advfirewall firewall add rule name={FirewallRule} dir=in action=allow profile=private enable=yes";
+                var netsh = string.Join('\n', FirewallPrograms().Select((program, i) => i == 0
                         ? $"{add} program=\"{program}\""
                         : $"{add} program=\"{program}\" protocol=udp localport={LAN.Lib.LanProtocol.DiscoveryPort}")
-                    .Prepend($"netsh advfirewall firewall delete rule name={FirewallRule} >nul"));
-                // A command line by hand: cmd reads its own quoting, which ArgumentList's escaped quotes would break.
-                if (!RunElevated(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe"), $"--headless cmd.exe /d /c \"{netsh}\""))
+                    .Prepend($"netsh advfirewall firewall delete rule name={FirewallRule} | Out-Null"));
+                using var script = Flights.ShellScript.For(netsh, Path.GetTempPath());
+                if (!RunElevated(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe"),
+                        $"--headless pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{script.Script}\""))
                 {
                     return "the elevation prompt was refused or did not open";
                 }
                 return FirewallAllows() is (true, _) ? null : "the rule is still not there";
+            }
             case TrustKey:
                 // Recorded in Claude Code's file, carefully (ClaudeTrust); the prompt in a window only when that cannot be.
                 Directory.CreateDirectory(options.WatchtowerFolder);
@@ -560,9 +564,15 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         }
         try
         {
-            var start = new ProcessStartInfo("cmd.exe") { UseShellExecute = true, WorkingDirectory = folder };
-            start.ArgumentList.Add("/k");
-            start.ArgumentList.Add($"title {title} & echo pilot's node opened this so its watchtower can run here. & echo Accept Claude Code's trust prompt, then type /exit and close this window. & claude");
+            var start = new ProcessStartInfo("pwsh") { UseShellExecute = true, WorkingDirectory = folder };
+            foreach (var arg in new[] { "-NoLogo", "-NoProfile", "-NoExit", "-Command" })
+            {
+                start.ArgumentList.Add(arg);
+            }
+            start.ArgumentList.Add(
+                $"$Host.UI.RawUI.WindowTitle = '{title.Replace("'", "''")}';" +
+                "Write-Host 'pilot''s node opened this so its watchtower can run here.'; " +
+                "Write-Host 'Accept Claude Code''s trust prompt, then type /exit and close this window.'; claude");
             using var process = Process.Start(start);
             return process is not null;
         }

@@ -108,8 +108,9 @@ public interface ICheckRunner
 }
 
 /// <summary>
-/// <see cref="ICheckRunner"/> by the platform's shell (<c>cmd /c</c> on Windows, <c>/bin/sh -c</c> elsewhere). Bounded: a
-/// check that takes longer than <see cref="Timeout"/> fails, and a run that long belongs to a job (phase 2, #47).
+/// <see cref="ICheckRunner"/> by the node's shell (<see cref="ShellScript"/>: pwsh on Windows, <c>/bin/sh -c</c>
+/// elsewhere). Bounded: a check that takes longer than <see cref="Timeout"/> fails, and a run that long belongs to a job
+/// (phase 2, #47).
 /// </summary>
 public sealed class ShellCheckRunner : ICheckRunner
 {
@@ -119,13 +120,8 @@ public sealed class ShellCheckRunner : ICheckRunner
 
     public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken)
     {
-        // On Windows the command goes to cmd verbatim, inside the one pair of quotes /s strips: through ArgumentList .NET
-        // escaped its own quotes as \", which cmd does not read, so the | in a test filter ("A|B") was piped on and every
-        // such check failed (PIL170, PIL188, PIL189, 2026-10-24).
-        var start = OperatingSystem.IsWindows()
-            ? new ProcessStartInfo("cmd.exe") { Arguments = $"/d /s /c \"{command}\"" }
-            : new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", command } };
-        start.WorkingDirectory = cwd;
+        using var shell = ShellScript.For(command, cwd);
+        var start = shell.Start;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
         start.UseShellExecute = false;

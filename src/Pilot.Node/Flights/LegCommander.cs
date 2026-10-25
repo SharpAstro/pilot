@@ -340,6 +340,11 @@ public sealed partial class LegCommander(
         {
             throw new FlightException("a leg needs a goal and a done-when (goal=… done-when=…)");
         }
+        if (check is not null && ShellScript.BarePipe(check) is { } pipe)
+        {
+            throw new FlightException(
+                $"the check pipes on the | at column {pipe + 1}, outside quotes: the shell would run what follows it as a program. Quote it, as in --filter 'A|B'");
+        }
 
         var legs = state.Legs(flight.Code);
         var known = legs.FirstOrDefault(l => l.Name == name);

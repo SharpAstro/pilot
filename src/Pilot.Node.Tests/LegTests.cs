@@ -384,6 +384,10 @@ public sealed class LegCommanderTests : IDisposable
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=Bad Name", "goal=g", "done-when=d")).Error.ShouldNotBeNull().ShouldContain("lower-case");
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=x")).Error.ShouldNotBeNull().ShouldContain("goal and a done-when");
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "oops")).Error.ShouldNotBeNull().ShouldContain("key=value");
+        // TIA1818's check, 2026-10-25: a bare | in a test filter pipes in every shell, so it is refused when planned.
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=filter", "goal=g", "done-when=d", "check=dotnet test --filter A|B"))
+            .Error.ShouldNotBeNull().ShouldContain("--filter 'A|B'");
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=filter", "goal=g", "done-when=d", "check=dotnet test --filter 'A|B'")).Ok.ShouldBeTrue();
     }
 
     [Fact]

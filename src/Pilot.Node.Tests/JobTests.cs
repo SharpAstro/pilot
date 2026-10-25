@@ -59,9 +59,10 @@ public sealed class JobTests : IDisposable
         }
     }
 
-    private static string Echo(string text, int exit = 0) => OperatingSystem.IsWindows() ? $"echo {text}& exit /b {exit}" : $"echo {text}; exit {exit}";
+    // The same line in pwsh and sh: the node runs no cmd. Quoted, since pwsh's echo writes each word on a line of its own.
+    private static string Echo(string text, int exit = 0) => $"echo '{text}'; exit {exit}";
 
-    private static string Sleep(int seconds) => OperatingSystem.IsWindows() ? $"ping -n {seconds + 1} 127.0.0.1 >nul" : $"sleep {seconds}";
+    private static string Sleep(int seconds) => $"sleep {seconds}";
 
     private CommandResult Run(string command, string target = "session/a1b2c3d4", long timeoutSeconds = 0, string? cwd = null) =>
         _jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = target, Args = [cwd ?? _root, timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture), command], Who = "se1-tia1-parser" });
@@ -368,10 +369,11 @@ public sealed class ShellLineTests
         string[] words = ["dotnet", "test", "-c", "Release", "--filter", "FullyQualifiedName~A|FullyQualifiedName~B", "2>&1"];
 
         Pilot.Node.Flights.ShellLine.Join(words, windows: true)
-            .ShouldBe("dotnet test -c Release --filter \"FullyQualifiedName~A|FullyQualifiedName~B\" 2>&1");
+            .ShouldBe("dotnet test -c Release --filter 'FullyQualifiedName~A|FullyQualifiedName~B' 2>&1");
         Pilot.Node.Flights.ShellLine.Join(words, windows: false)
             .ShouldBe("dotnet test -c Release --filter 'FullyQualifiedName~A|FullyQualifiedName~B' 2>&1");
-        Pilot.Node.Flights.ShellLine.Join(["pwsh", "-File", "C:/temp/a b/run.ps1"], windows: true).ShouldBe("pwsh -File \"C:/temp/a b/run.ps1\"");
+        Pilot.Node.Flights.ShellLine.Join(["pwsh", "-File", "C:/temp/a b/run.ps1"], windows: true).ShouldBe("pwsh -File 'C:/temp/a b/run.ps1'");
+        Pilot.Node.Flights.ShellLine.Join(["echo", "it's"], windows: true).ShouldBe("echo 'it''s'");
         Pilot.Node.Flights.ShellLine.Join(["echo", "it's"], windows: false).ShouldBe(@"echo 'it'\''s'");
     }
 
