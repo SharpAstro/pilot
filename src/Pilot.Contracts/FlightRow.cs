@@ -56,6 +56,12 @@ public sealed record FlightRow
     public ReviewRow? Review { get; init; }
 
     /// <summary>
+    /// Where its PR waits in its base's merge queue while it does (<c>in the merge queue, position 2</c>), as the node last
+    /// read it; null while it is in none. A merge through a queue is not a merge yet: it lands once the queue's checks pass.
+    /// </summary>
+    public string? MergeQueue { get; init; }
+
+    /// <summary>
     /// The other flights the planner found this one overlapping, each with the answer to it: a pair is asked once, so
     /// a recorded answer is never asked about again. Not required, and null-safe: a flight journaled before overlaps has
     /// no such property, and the generated reader leaves a missing property's initialiser out, so the getter stands in

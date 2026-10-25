@@ -113,6 +113,11 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult(Checks);
 
+    /// <summary>What MergeQueueAsync answers for any PR: null, a base with no merge queue, unless set.</summary>
+    public MergeQueueState? Queue { get; set; }
+
+    public Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult(Queue);
+
     /// <summary>Every draft (true) or ready (false) the node asked for, by PR number.</summary>
     public List<(int Number, bool Draft)> DraftCalls { get; } = [];
 

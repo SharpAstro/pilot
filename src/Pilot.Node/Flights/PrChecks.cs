@@ -18,6 +18,9 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
 
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(30);
 
+    /// <summary>The card of a flight whose PR left its merge queue unmerged: why, and Merge to queue it again.</summary>
+    public const string QueueDropped = "queue-dropped";
+
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         while (!stopping.IsCancellationRequested)
@@ -74,10 +77,58 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         }
     }
 
+    /// <summary>
+    /// Every flight whose PR is done and open, as its merge queue has it. A merge through a queue only queues the PR, and the
+    /// merge card closes then: the flight lands when the queue's checks pass, and when they fail GitHub takes the PR out of
+    /// the queue and nothing said so (#214). Its place in the queue is kept on the flight for every client to show, and a PR
+    /// that left the queue unmerged is a For-you card saying why, with Merge to queue it again; once a removal, and closed when
+    /// it is queued again or lands.
+    /// </summary>
+    private async Task LookAtQueuesAsync(CancellationToken cancellationToken)
+    {
+        var carded = state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady).Select(c => c.Subject).ToHashSet(StringComparer.Ordinal);
+        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null }))
+        {
+            var legs = state.Legs(flight.Code);
+            if (legs.Length == 0 || legs.Any(l => l.State != LegState.Done))
+            {
+                continue;
+            }
+            var number = flight.PullRequest!.Value;
+            var queue = await github.MergeQueueAsync(flight.RepoPath, number, cancellationToken);
+            var said = queue is { State: "OPEN", Queued: true } ? queue.Position is { } position ? $"in the merge queue, position {position}" : "in the merge queue" : null;
+            if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is { } now && now.MergeQueue != said)
+            {
+                state.PutFlight(now with { MergeQueue = said });
+            }
+            if (queue is not { State: "OPEN" })
+            {
+                continue;
+            }
+            var subject = Verbs.FlightTarget(flight.Code);
+            if (queue.Queued)
+            {
+                state.CloseCardsAbout(subject, "queued again", QueueDropped);
+                continue;
+            }
+            // Its PR-ready card offers the merge already; a removal it has been carded for is not carded again.
+            if (queue.RemovedAt is not { } removedAt || queue.RemovedReason is "merged" || carded.Contains(subject)
+                || state.Cards().Any(c => c.Kind == QueueDropped && c.Subject == subject && c.At >= removedAt))
+            {
+                continue;
+            }
+            var why = queue.RemovedReason is { Length: > 0 } reason ? reason : "no reason given";
+            state.RaiseCard(CardBin.ForYou, QueueDropped, subject, $"{flight.Code}'s PR #{number} left the merge queue unmerged",
+                $"GitHub took it out of the queue: {why}. The PR page says which check failed, or what the queue met. Merge queues it again once that is fixed.",
+                [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [queue.Head] }], link: flight.PullRequestUrl);
+        }
+    }
+
     /// <summary>One look at every open PR-ready card's PR.</summary>
     public async Task LookAsync(CancellationToken cancellationToken)
     {
         await LandMergedWithoutCardAsync(cancellationToken);
+        await LookAtQueuesAsync(cancellationToken);
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady))
         {
             var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : null;

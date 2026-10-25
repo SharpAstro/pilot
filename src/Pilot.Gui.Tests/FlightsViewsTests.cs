@@ -121,6 +121,19 @@ public sealed class FlightsViewsTests
     }
 
     [Fact]
+    public void AFlightInTheMergeQueueSaysWhereItWaits()
+    {
+        var queued = Flight("Q", minutes: 1) with { MergeQueue = "in the merge queue, position 2" };
+
+        var line = FlightLine.Build([queued], [], Live.At).Single();
+
+        (line.State, line.StateDetail).ShouldBe(("flying", "in the merge queue, position 2"));
+        // Landed, it says when, whatever the queue said last.
+        FlightLine.Build([queued with { State = FlightState.Landed, LandedAt = Live.At.AddMinutes(-3) }], [], Live.At).Single()
+            .StateDetail.ShouldNotBe("in the merge queue, position 2");
+    }
+
+    [Fact]
     public void TheModeIsKeptAndTheSwitchOffersFourViews()
     {
         var (renderer, view) = Page(FlightsViewMode.Night, 1280, Six());

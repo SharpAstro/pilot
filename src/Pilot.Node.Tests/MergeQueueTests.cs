@@ -28,4 +28,36 @@ public sealed class MergeQueueTests
     [InlineData("")]
     public void AnAnswerThatSaysNothingIsNoQueue(string json) =>
         GhCli.QueuedPullRequest(json).ShouldBeNull();
+
+    [Fact]
+    public void APullRequestInTheQueueSaysItsPosition() =>
+        GhCli.ParseMergeQueue("""
+            {"data":{"repository":{"pullRequest":{"state":"OPEN","headRefOid":"abc123","isMergeQueueEnabled":true,"isInMergeQueue":true,
+             "mergeQueueEntry":{"position":2},"timelineItems":{"nodes":[{"__typename":"AddedToMergeQueueEvent","createdAt":"2026-10-24T10:17:23Z"}]}}}}}
+            """).ShouldBe(new MergeQueueState("OPEN", "abc123", Queued: true, Position: 2));
+
+    [Fact]
+    public void AMergeThroughTheQueueIsARemovalForTheReasonMerged()
+    {
+        // pilot#213's answer, the first PR through pilot's queue.
+        var queue = GhCli.ParseMergeQueue("""
+            {"data":{"repository":{"pullRequest":{"state":"MERGED","headRefOid":"3021bcecd64a831400e54f191a11274ab26597a6","isMergeQueueEnabled":true,"isInMergeQueue":false,"mergeQueueEntry":null,
+             "timelineItems":{"nodes":[{"__typename":"AddedToMergeQueueEvent","createdAt":"2026-10-24T10:17:23Z"},{"__typename":"RemovedFromMergeQueueEvent","createdAt":"2026-10-24T10:21:25Z","reason":"merged"}]}}}}}
+            """).ShouldNotBeNull();
+
+        (queue.State, queue.Queued, queue.Position, queue.RemovedReason).ShouldBe(("MERGED", false, null as int?, "merged"));
+        queue.RemovedAt.ShouldBe(DateTimeOffset.Parse("2026-10-24T10:21:25Z", System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public void ARemovalFollowedByJoiningAgainIsNoRemoval() =>
+        GhCli.ParseMergeQueue("""
+            {"data":{"repository":{"pullRequest":{"state":"OPEN","headRefOid":"abc123","isMergeQueueEnabled":true,"isInMergeQueue":true,"mergeQueueEntry":{"position":1},
+             "timelineItems":{"nodes":[{"__typename":"RemovedFromMergeQueueEvent","createdAt":"2026-10-24T10:00:00Z","reason":"failed checks"},{"__typename":"AddedToMergeQueueEvent","createdAt":"2026-10-24T10:05:00Z"}]}}}}}
+            """).ShouldBe(new MergeQueueState("OPEN", "abc123", Queued: true, Position: 1));
+
+    [Fact]
+    public void ABaseWithNoQueueIsNull() =>
+        GhCli.ParseMergeQueue("""{"data":{"repository":{"pullRequest":{"state":"OPEN","headRefOid":"abc123","isMergeQueueEnabled":false,"isInMergeQueue":false}}}}""")
+            .ShouldBeNull();
 }
