@@ -41,8 +41,9 @@ pilot-gui --snapshot <file.json> [--capture out.png]         # a snapshot file i
 - **Node:** with no node on the default socket, the GUI starts one (`pilot-node` beside it, or the source tree's
   build of the same configuration), detached so it outlives the window; a socket named with `--node-socket` or
   `PILOT_NODE_SOCKET` is only connected to.
-- **Rail:** the left rail, as tianwen's: Home (Ctrl+1), Sessions (Ctrl+2), Flights (Ctrl+3), Repos (Ctrl+7, listed after
-  Flights so the other chords keep their keys), Background tasks (Ctrl+4), Fleet (Ctrl+5) and Settings (Ctrl+6).
+- **Rail:** the left rail, as tianwen's: Home (Ctrl+1), Chat (Ctrl+8, listed after Home so the other chords keep their
+  keys), Sessions (Ctrl+2), Flights (Ctrl+3), Repos (Ctrl+7, listed after Flights for the same reason), Background tasks
+  (Ctrl+4), Fleet (Ctrl+5) and Settings (Ctrl+6).
 - **Back:** one Back and Forward for the whole window: **←** and **→** at the top of the rail (disabled when there is nothing to
   go back or forward to), Alt+Left and Alt+Right, and the mouse's back and forward buttons. Every move between places (a
   rail page, a transcript or a flight's page, a link from Home, Fleet, a card, Jobs or Repos) is recorded with the page,
@@ -569,8 +570,33 @@ wizard on that repo, at its issue step. There **New issue** (the footer; Ctrl+En
 text, makes the issue through gh (`create-issue`) and picks it, so the review and Create (which makes the flight and starts
 its planner) follow with no command typed; Escape closes the form first.
 
-The right panel is the watchtower's: its state and context, its Remote Control link, a box to tell it things, then the
-cards with their buttons (Merge is a card's) and what was handled.
+The right panel is the watchtower's: its state and context, its Remote Control link, then the cards with their buttons
+(Merge is a card's) and what was handled, and at its foot a **Chat with the watchtower** shortcut to the Chat page (the
+panel once had a box to tell it things; that box is the chat's now).
+
+**The Chat page** (#207, Ctrl+8) is the conversation with the node's watchtower, in the window in place of a command bar.
+It is a page of the rail, not a dock under the right panel: the panel is 300 units wide, a conversation with tables of
+output and Markdown replies wants the page's width, and a page keeps its own scroll and the keyboard the way Sessions' say
+bar does. It reads the chat feed (`NodeClient.GetChatAsync`, above) while it is the page shown, pinned to its end until
+scrolled up (**Jump to end** returns), reading only what came after the last entry it holds every 2 s (a message just sent
+asks for a read at once); leaving the page stops the reads and coming back resumes after what it kept. What it shows:
+
+- the person's messages (`you`) and the watchtower's replies in full Markdown, never folded at 40 lines as the Sessions
+  page's are; the node's own notes dim;
+- each tool call as one folded line (check, tool, what it does, when), a click unfolding the command and its output: the
+  Sessions page's own rows, through one `TranscriptEntryView` that both pages build their rows from;
+- **● working…** while the watchtower is on a turn, **● sending…** while a message is on its way;
+- a rule where a fresh watchtower began (`A fresh watchtower started: its brief changed`);
+- what was said and not yet taken, dim under the messages (`queued · not read yet`);
+- a question it asked, with its choices as buttons: a click says the choice to the watchtower, as typing it would.
+
+The box at the foot sends through the node's `tell` (`ChatCommands.TellAsync`, as the panel's box did): **Enter** sends,
+**Shift+Enter** (Alt+Enter, for a terminal that cannot tell Shift) starts a new line. DIR.Lib's text field is a single
+line, so `ChatComposer` keeps the lines before the one being typed and shows them above the field, read-only: Backspace
+on an empty line takes the line before back into the field, and a paste of several lines lands as several. Moving the
+caret up into an earlier line waits for a multi-line field in DIR.Lib. A refusal (`refused: …`, the message clipped)
+is said in the chat itself, in red, until the next send goes through. A snapshot or capture has no node to tell, so the
+page shows no box and no buttons there.
 
 **The Autopilot switch** (#208) stands at the top right of every page's header, beside the **?** (on Home, on the title
 row): a button that says *Autopilot*, plain while the node in view has its autopilot off and lit (the accent blue) while it
@@ -612,8 +638,8 @@ node's. pilot-tui shows the same merged pages.
 
 `pilot-tui` is the same dashboard in a terminal, over SSH as well as locally: the GUI's own pages and panels
 (`Pilot.Ui`), their DIR.Lib trees arranged in terminal cells by Console.Lib (`CellMeasureContext.PixelAuthored`)
-instead of painted on pixels, so a row, a button or the command bar is the same node on both. **1** Sessions, **2**
-Flights, **3** Background tasks, **4** Fleet, **5** Settings, **6** Repos, **Ctrl+K** the command bar, **Ctrl+S** the say bar, **Ctrl+T** the watchtower's box, Up/Down to select, a
+instead of painted on pixels, so a row, a button or the command bar is the same node on both. **1** Home, **2** Sessions,
+**3** Flights, **4** Background tasks, **5** Fleet, **6** Settings, **7** Repos, **8** Chat, **Ctrl+K** the command bar, **Ctrl+S** the say bar, **Ctrl+T** the chat with the watchtower (the box focused), Up/Down to select, a
 click on a cell runs what a click on the pixels would, **q** quits. The watchtower and cards panel shows beside the page
 from 120 columns. `--node host:port` flies a node on the LAN, as everywhere.
 
