@@ -56,14 +56,21 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
         Verbs.Review, Verbs.PostReview, Verbs.SyncRepos, Verbs.CreateIssue, Verbs.Fold, Verbs.Separate,
     };
 
-    /// <summary>What a flight's session may not do beyond <see cref="YourOnlyVerbs"/>: the person's answers to an overlap and a review posted in their name.</summary>
+    /// <summary>
+    /// What a flight's session may not do beyond <see cref="YourOnlyVerbs"/>: the person's answers to an overlap, a review
+    /// posted in their name, and what reaches outside its flight whatever the target (an issue, a new flight, the repos' sync).
+    /// </summary>
     private static readonly IReadOnlySet<string> FlightSessionNever = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.PostReview, Verbs.Fold, Verbs.Separate,
+        Verbs.PostReview, Verbs.Fold, Verbs.Separate, Verbs.CreateIssue, Verbs.CreateFlight, Verbs.SyncRepos,
     };
 
-    /// <summary>Sorts <paramref name="command"/>'s sender; <paramref name="lookout"/> is the watchtower's session name.</summary>
-    public static Standing Of(CommandRequest command, NodeState state, string lookout)
+    /// <summary>
+    /// Sorts <paramref name="command"/>'s sender; <paramref name="lookout"/> is the watchtower's session name. The watchtower
+    /// is the lookout on its own and an assistant while it acts on a message the person sent it (<paramref name="lookoutForPerson"/>,
+    /// from <see cref="Flights.Watchtower.ActingForPerson"/>): their words in its chat are theirs to have done, by the autopilot rule.
+    /// </summary>
+    public static Standing Of(CommandRequest command, NodeState state, string lookout, bool lookoutForPerson = false)
     {
         if (command.Grant is not null)
         {
@@ -71,7 +78,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
         }
         if (string.Equals(command.Who, lookout, StringComparison.Ordinal))
         {
-            return new Standing(StandingKind.Lookout);
+            return new Standing(lookoutForPerson ? StandingKind.Assistant : StandingKind.Lookout);
         }
         var who = command.Who;
         if (state.Legs().FirstOrDefault(l => string.Equals(l.Worker, who, StringComparison.Ordinal) || string.Equals(l.Validator, who, StringComparison.Ordinal)) is { } leg)
@@ -129,7 +136,9 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
         }
         switch (Kind)
         {
-            case StandingKind.Lookout when yourOnly || LookoutNever.Contains(command.Verb):
+            // The lookout may answer a ring card (a stall's Resume, Nudge or Go around): the chosen button's command is run again
+            // under its own standing, so one that is the person's (Merge, Fold, Post) is refused there and the card stays open.
+            case StandingKind.Lookout when yourOnly && !AnswersRing(command, state) || LookoutNever.Contains(command.Verb):
                 return $"{command.Verb} is the controller's, not the watchtower's: leave its card open for them";
             case StandingKind.FlightSession when yourOnly || FlightSessionNever.Contains(command.Verb):
                 return $"{command.Verb} is the controller's, not a flight session's: leave it to them";
@@ -137,6 +146,10 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
                 return Flight is { } code
                     ? $"{command.Target} is not {code}'s: a flight's session acts on its own flight only"
                     : $"{command.Target} is not the PR this review is of ({Pr}): a review acts on its own PR only";
+            case StandingKind.FlightSession when command.Verb is Verbs.Stop or Verbs.Compact && !OwnsSession(command, state):
+                return $"{command.Target} is not {OwnerName()} session: a flight's session stops and compacts its own flight's only";
+            case StandingKind.FlightSession when command.Verb == Verbs.CancelJob && !OwnsJob(command, state):
+                return $"{command.Target} is not {OwnerName()} job: a flight's session cancels its own flight's only";
             case StandingKind.Assistant when IsAsk(command, state):
                 return "answering an assistant's ask is the person's: Allow and Deny are theirs to press, on the card";
             default:
@@ -144,6 +157,28 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
                 // NodeCommands.RunAsync: a confirm card with it off, a direct run recorded as such with it on (see Autopilot).
                 return null;
         }
+    }
+
+    /// <summary>Whether <paramref name="command"/> answers (any choice) an open card in the ring bin that is no assistant's ask.</summary>
+    private static bool AnswersRing(CommandRequest command, NodeState state) => command.Verb == Verbs.Answer && IsRing(command, state) && !IsAsk(command, state);
+
+    private string OwnerName() => Flight is { } code ? $"{code}'s" : "this review's";
+
+    private bool Owns(string? flight, string? name, string who) =>
+        string.Equals(name, who, StringComparison.OrdinalIgnoreCase) || Flight is not null && string.Equals(flight, Flight, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Whether the session <paramref name="command"/> targets is one of this flight's (or this very session).</summary>
+    private bool OwnsSession(CommandRequest command, NodeState state)
+    {
+        var id = command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.SessionTargetPrefix.Length..] : command.Target;
+        return state.Sessions().FirstOrDefault(s => s.Id == id) is { } row && Owns(row.Flight, row.Name, command.Who);
+    }
+
+    /// <summary>Whether the job <paramref name="command"/> targets was started by this session or by one of this flight's.</summary>
+    private bool OwnsJob(CommandRequest command, NodeState state)
+    {
+        var id = command.Target.StartsWith(Verbs.JobTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.JobTargetPrefix.Length..] : command.Target;
+        return state.Jobs().FirstOrDefault(j => j.Id == id) is { } job && Owns(job.Flight, job.OwnerName, command.Who);
     }
 
     /// <summary>Whether <paramref name="target"/> is a flight or a PR other than the one this session is for.</summary>

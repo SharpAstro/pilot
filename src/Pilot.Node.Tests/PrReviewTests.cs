@@ -535,7 +535,7 @@ public sealed class PrReviewCliTests : IAsyncLifetime
         // Posting is the controller's: the watchtower's answer is refused and the card stays.
         var watchtower = $"{_node.Options.Machine.ToLowerInvariant()}-watchtower";
         var refused = await _node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = $"card/{card.Id}", Args = ["Post"], Who = watchtower }, Ct);
-        refused.Response.ShouldNotBeNull().Error.ShouldBe("answer is the controller's, not the watchtower's: leave its card open for them");
+        refused.Response.ShouldNotBeNull().Error.ShouldBe("Post was refused: post-review is the controller's, not the watchtower's: leave its card open for them");
         _node.GitHub.Posted.ShouldBeEmpty();
 
         var post = await Pilot(_root, "answer", card.Id, "Post");

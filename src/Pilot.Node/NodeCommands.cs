@@ -19,10 +19,17 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         // person's alone (a merge or a landing by any route, a card's included; the node's settings and setup; a review posted to
         // GitHub in the person's name; the answer to an overlap), a flight's session from other flights too, and the autopilot
         // setting is the person's to change.
-        var standing = Standing.Of(command, state, Get<Watchtower>().Name);
+        // The watchtower is the lookout on its own, and an assistant while it acts on a message the person sent it in its chat.
+        var watchtower = Get<Watchtower>();
+        var standing = Standing.Of(command, state, watchtower.Name, watchtower.ActingForPerson);
         if (standing.Refusal(command, state) is { } refused)
         {
             return state.Complete(command, refused);
+        }
+        // What the watchtower is told starts its next turn: the person's words make it theirs, the node's cards and nudges do not.
+        if (command.Verb == Verbs.Tell || command.Verb == Verbs.Say && watchtower.Current() is { } row && command.Target == Verbs.SessionTarget(row.Id))
+        {
+            watchtower.NoteMessage(fromPerson: standing.Kind == StandingKind.Person && command.Who != LegWatch.Who);
         }
         // An assistant's your-only command follows the autopilot rule: off, it waits on the person's card (Allow runs it as
         // them, Deny closes it); on, it runs at once, recorded with its session and message, and a Handled card says so.
