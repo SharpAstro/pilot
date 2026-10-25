@@ -1037,6 +1037,31 @@ public sealed class LegCommanderTests : IDisposable
     }
 
     [Fact]
+    public void ALegInAnOrgWithAUiChecklistIsToldToWorkByItAndShowACapture()
+    {
+        var root = Directory.CreateTempSubdirectory("pilot-org-").FullName;
+        try
+        {
+            var repo = Directory.CreateDirectory(Path.Combine(root, "tianwen")).FullName;
+            var flight = new FlightRow { Code = "TIA1", Repo = "tianwen", RepoPath = repo, Issue = 1, Branch = "flight/tia1", Worktree = Path.Combine(repo, "w"), Base = "main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch };
+            var leg = new LegRow { Flight = "TIA1", Name = "header", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Planned, Checklist = [new CheckItem { Text = "a" }] };
+
+            // No checklist beside the clones: nothing said.
+            Briefs.For(flight, leg, [leg], cli: "pilot").ShouldNotContain("UI checklist");
+
+            var checklist = Path.Combine(Directory.CreateDirectory(Path.Combine(root, ".github", "docs")).FullName, "ui-changes.md");
+            File.WriteAllText(checklist, "# UI changes\n");
+            var brief = Briefs.For(flight, leg, [leg], cli: "pilot");
+            brief.ShouldContain($"Read the UI checklist, {checklist}");
+            brief.ShouldContain("`pilot artifact <path> <title>`");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void ANodeOnItsOwnSocketTellsItsWorkersCliWhichOne()
     {
         var flight = new FlightRow { Code = "TIA1", Repo = "tianwen", RepoPath = "/r", Issue = 1, Branch = "flight/tia1", Worktree = "/r/w", Base = "main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch };
