@@ -60,7 +60,7 @@ internal sealed class PilotChrome<TSurface>
 
     /// <summary>
     /// The Background tasks page's glyph on the rail, and what it says on hover: a job that failed in play (the last
-    /// <see cref="PlayFilter.JobsFinished"/>) is a stop sign, one running the arrows going round, one only waiting its turn
+    /// <see cref="PlayFilter.JobsFinished"/>) is a red dot, one running the arrows going round, one only waiting its turn
     /// a clock, and none of those the clipboard. The rail showed the same hammer and pick whatever its jobs did (SE1,
     /// 2026-10-25). Each glyph is one the rail's emoji face draws: an hourglass, a stopwatch and a red exclamation drew
     /// nothing. A badge on the glyph itself waits for DIR.Lib's tab items to carry one.
@@ -73,7 +73,7 @@ internal sealed class PilotChrome<TSurface>
         var failed = rows.Count(r => r.State == JobState.Failed && r.EndedAt is { } ended && now - ended <= PlayFilter.JobsFinished);
         var parts = new[] { running > 0 ? $"{running} running" : null, waiting > 0 ? $"{waiting} waiting" : null, failed > 0 ? $"{failed} failed just now" : null }
             .OfType<string>().ToList();
-        var glyph = failed > 0 ? "🛑" : running > 0 ? "🔄" : waiting > 0 ? "🕓" : "📋";
+        var glyph = failed > 0 ? "🔴" : running > 0 ? "🔄" : waiting > 0 ? "🕓" : "📋";
         return (glyph, parts.Count == 0 ? null : string.Join(", ", parts));
     }
 
