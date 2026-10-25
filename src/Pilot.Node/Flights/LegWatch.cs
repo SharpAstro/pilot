@@ -66,6 +66,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     private readonly Dictionary<string, DateTimeOffset> _resumedAfter = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _nudges = new Dictionary<string, int>(StringComparer.Ordinal);
 
+    // By worker job: when it was last nudged, so a ring can say whether it answered.
+    private readonly Dictionary<string, DateTimeOffset> _nudgedAt = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         while (!stopping.IsCancellationRequested)
@@ -193,12 +196,22 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         var nudges = _nudges.GetValueOrDefault(job);
         if (nudges >= MaxNudges)
         {
-            Ring(leg, Idle, $"{Name(leg)}'s worker stopped with the leg unfinished",
-                $"idle for {Ago(now, since)}, nudged {nudges} {(nudges == 1 ? "time" : "times")} to no avail{(leg.Report is { Length: > 0 } r ? $"; last report: {r.Split('\n')[0]}" : "")}", worker);
+            // A worker that answered its nudges and went idle again is waiting on something the node cannot see (a job it
+            // handed to another node), not deaf: said so. The leg's report is said only when it is this go-around's own, not
+            // the go-around's reason (TIA1241's domain-instruments, SE1 2026-10-25: rung as nudged to no avail while it
+            // answered each nudge, under the last worker's stall).
+            var answered = _nudgedAt.TryGetValue(job, out var nudgedAt) && worker.LastResponseAt > nudgedAt;
+            var report = leg.Report is { Length: > 0 } r && !r.StartsWith("go-around:", StringComparison.Ordinal) ? $"; leg's report: {r.Split('\n')[0]}" : "";
+            Ring(leg, Idle, answered ? $"{Name(leg)}'s worker answers its nudges but stays idle with the leg unfinished" : $"{Name(leg)}'s worker stopped with the leg unfinished",
+                answered
+                    ? $"idle for {Ago(now, since)}; nudged {nudges} {(nudges == 1 ? "time" : "times")} and it answered each, then went idle again: its transcript says what it waits on{report}"
+                    : $"idle for {Ago(now, since)}, nudged {nudges} {(nudges == 1 ? "time" : "times")} with no answer{report}",
+                worker);
             return;
         }
 
         _nudges[job] = nudges + 1;
+        _nudgedAt[job] = now;
         var result = await SayAsync(worker, Nudge(leg), cancellationToken);
         if (result.Ok)
         {

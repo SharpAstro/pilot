@@ -112,6 +112,30 @@ public sealed class LegWatchTests
     }
 
     [Fact]
+    public async Task AWorkerThatAnswersEachNudgeAndIdlesAgainIsRungAsAnsweringNotAsDeaf()
+    {
+        // TIA1241's worker waited on jobs it had handed to another node: it answered both nudges, and the ring said "to no
+        // avail" under the last go-around's reason as its report (SE1, 2026-10-25).
+        Worker(SessionState.Idle);
+        foreach (var _ in Enumerable.Range(0, 2))
+        {
+            _time.Advance(TimeSpan.FromMinutes(4));
+            await _watch.LookAsync(Ct);
+            _time.Advance(TimeSpan.FromSeconds(30));
+            Worker(SessionState.Idle, lastResponse: _time.GetUtcNow());
+        }
+        _said.Count.ShouldBe(2);
+
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+
+        var card = Open().ShouldHaveSingleItem();
+        card.Title.ShouldContain("answers its nudges but stays idle");
+        card.Detail.ShouldNotBeNull().ShouldContain("it answered each");
+        card.Detail.ShouldNotContain("to no avail");
+    }
+
+    [Fact]
     public async Task AnIdleWorkerIsLeftItsGraceThenNudgedTwiceThenRungFor()
     {
         Worker(SessionState.Idle);
