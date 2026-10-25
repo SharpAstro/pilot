@@ -300,6 +300,15 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>How many lines a card's detail may take before it is cut.</summary>
     internal const int DetailLines = 3;
 
+    // Past these a card's title or detail may well be cut in the panel (a title is one line, a detail three), so it carries
+    // its whole text as hover text, opening to the left, into the window rather than off its edge. DIR.Lib's capped wrap
+    // drops the words past its last line with no "…" (SharpAstro/DIR.Lib#155), so the hover text is the only way to read
+    // the rest (TIA1818's ring, SE1 2026-10-25).
+    private const int TitleFits = 34;
+    private const int DetailFits = 120;
+
+    private static Layout.Node Whole(Layout.Node node, string text, bool cut) => cut ? node.WithTooltip(text, Layout.DockSide.Left) : node;
+
     /// <summary>The card's title as shown: a landed flight's starts with 🛬. The node's title is left as it raised it.</summary>
     internal static string Titled(CardRow card) => card.Kind == "landed" ? "🛬 " + card.Title : card.Title;
 
@@ -313,16 +322,17 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
             // session's link is its button, Answer in the browser, so its title is no second one.
             card.Link is { } titleLink && card.Kind != CardKinds.SessionWaiting
-                ? Layout.Builder.Text(Titled(card) + Followable.Away, 14f, Link)
+                ? Whole(Layout.Builder.Text(Titled(card) + Followable.Away, 14f, Link)
                     .BgHover(CardHover)
                     .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => OnOpen?.Invoke(titleLink))
-                    .RowH(22f)
-                : Layout.Builder.Text(Titled(card), 14f, Bright).RowH(22f),
+                    .RowH(22f), card.Title, card.Title.Length > TitleFits)
+                : Whole(Layout.Builder.Text(Titled(card), 14f, Bright).RowH(22f), card.Title, card.Title.Length > TitleFits),
         };
         if (card.Detail is { Length: > 0 } detail)
         {
             // Wraps within the panel, three lines at most; an explicit newline stays a break.
-            lines.Add(WrappedProse.Paragraphs(detail, 11f, Body, DetailLines));
+            lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, DetailLines), detail,
+                detail.Length > DetailFits || detail.Count(c => c == '\n') >= DetailLines));
         }
         // What the node said to the last button pressed here, when it refused: on the card, never only in a log.
         if (Volatile.Read(ref _refused).TryGetValue(card.Id, out var refused))
