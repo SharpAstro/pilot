@@ -254,6 +254,8 @@ public sealed class LegHoldTests : IDisposable
         await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", Nu1102);
         var started = _workers.Started.Count;
         _legs.Models = new RoleModels(null);
+        // The sibling's publish run is still going, so the package is not yet late.
+        _github.Runs[L("parser").Hold!.Commit!] = [new WorkflowRun(4711, "CI/CD", "in_progress", null, "https://github.com/x/core/actions/runs/4711", "push", null)];
 
         // The sweep: the held leg is not started, and neither is the leg after it.
         await _legs.AdvanceAllAsync(Ct);
@@ -311,6 +313,7 @@ public sealed class LegHoldTests : IDisposable
         _feed.Publish("Drawboard.Core", "1.2.5");
         await FlyingParser();
         await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", Nu1102);
+        _legs.Models = new RoleModels(null);
         var commit = L("parser").Hold!.Commit!;
         _github.Runs[commit] = [new WorkflowRun(4711, "CI/CD", "completed", "failure", "https://github.com/x/core/actions/runs/4711", "push", Start.AddMinutes(3))];
 
