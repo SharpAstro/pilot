@@ -607,9 +607,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             var steps = leg.Checklist.Length == 0 ? "" : $" · {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";
             var color = leg.Hold is not null ? Held : leg.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
+            var legState = $"{FlightWaiting.LegState(leg)}{steps}{(leg.GoArounds > 0 ? $" · go-around {leg.GoArounds}" : "")}";
             legs.Add(Layout.Builder.HStack(
                     Layout.Builder.Text($"{leg.Order}. {leg.Name}", 13f, Body).WFixed(150f),
-                    Layout.Builder.Text($"{FlightWaiting.LegState(leg)}{steps}{(leg.GoArounds > 0 ? $" · go-around {leg.GoArounds}" : "")}", 12f, color).WStar())
+                    Whole(Layout.Builder.Text(legState, 12f, color).WStar(), legState, DetailLegFits))
                 .RowH(20f));
         }
         if (line.LegRows.Count == 0)
@@ -810,6 +811,17 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     private Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);
 
+    // Past these a text may well be cut by its column's ellipsis, so it carries its whole text as hover text: what a flight or leg
+    // is held for runs past a column ("waiting for PNG243, SharpAstro.Png.Extensions.Experimental 3.23 on nuget.org").
+    private const int TitleFits = 40;
+    private const int StateDetailFits = 24;
+    private const int LegsFits = 28;
+    private const int DetailLegFits = 28;
+    private const int CardTitleFits = 26;
+    private const int CardLineFits = 30;
+
+    private static Layout.Node Whole(Layout.Node node, string text, int fits) => text.Length > fits ? node.WithTooltip(text) : node;
+
     private Layout.Node Row(FlightLine line, int index, bool marked, IReadOnlyList<ListColumn> columns)
     {
         var landed = line.Row.State == FlightState.Landed;
@@ -818,12 +830,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         var cells = new List<Layout.Node>
         {
             ListTable.Top(Layout.Builder.Text(line.Code, 15f, text)),
-            ListTable.Top(Layout.Builder.Text(line.Title, 14f, landed ? Dim : Body)),
+            ListTable.Top(Whole(Layout.Builder.Text(line.Title, 14f, landed ? Dim : Body), line.Title, TitleFits)),
             ListTable.Top(Layout.Builder.Text(line.Where, 13f, Dim)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.State, 14f, color).RowH(22f),
-                Layout.Builder.Text(line.StateDetail ?? "", 11f, Dim).RowH(18f)),
-            ListTable.Top(Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body)),
+                Whole(Layout.Builder.Text(line.StateDetail ?? "", 11f, line.Row.State == FlightState.Held ? Body : Dim).RowH(18f), line.StateDetail ?? "", StateDetailFits)),
+            ListTable.Top(Whole(Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body), line.Legs, LegsFits)),
             ListTable.Top(Layout.Builder.Text(line.Branch, 12f, Dim)),
             ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body)),
         };
