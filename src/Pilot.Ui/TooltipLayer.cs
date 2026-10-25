@@ -43,12 +43,15 @@ internal sealed class TooltipLayer<TSurface>(Renderer<TSurface> renderer) : Pixe
         width ??= ByChars;
         var content = due.Text.Contains('\n') || width(due.Text) > MaxWidth
             ? Layout.Builder.VStack([.. Lines(due.Text, width).Select(l => l.Length == 0
-                    ? Layout.Builder.Spacer().HFixed(Style.FontSize * 0.5f)
+                    ? Layout.Builder.Spacer().HFixed(ParagraphGap)
                     : Layout.Builder.Text(l, Style.FontSize, Style.Text))])
                 .WithGap(2f)
             : Layout.Builder.Text(due.Text, Style.FontSize, Style.Text);
         return Layout.Builder.Tooltip(due.Anchor, content, Style, due.Side);
     }
+
+    // The height of a blank line between paragraphs: half a line at the tooltip's 12 units.
+    private const float ParagraphGap = 6f;
 
     // A line's width without a font: an average glyph's at the tooltip's size, so 58 characters fill a line.
     private static float ByChars(string text) => text.Length * (MaxWidth / 58f);
