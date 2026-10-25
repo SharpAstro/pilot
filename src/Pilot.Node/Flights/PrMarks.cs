@@ -84,7 +84,9 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
 
         var review = Of(code)?.Review ?? started;
         var (statusState, label) = Intended(review);
-        if (head is not null && review.StatusState != statusState)
+        // A comment posted only now is what the status links to: it is set again with the link, whatever state it stands at.
+        var linked = started.ReviewUrl is null && review.ReviewUrl is not null;
+        if (head is not null && (review.StatusState != statusState || linked))
         {
             await Try($"the {PilotMarks.StatusContext} status", async () =>
             {

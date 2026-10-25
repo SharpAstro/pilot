@@ -332,6 +332,8 @@ public sealed class PrReviewTests : IDisposable
         (await Run(Verbs.PrVerdict, "pr/acme/gadget#9", Row("acme/gadget", 9).Reviewer, "approve", "fine")).Error.ShouldBeNull();
 
         Row("acme/gadget", 9).State.ShouldBe(PrReviewState.Reviewed);
+        // The status went through, so the refusal it left is over.
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrMarks.RefusedKind);
         _github.Statuses.ShouldHaveSingleItem().ShouldBe((_gadgetHead, "success", $"approved at {_gadgetHead[..8]}", "https://github.com/acme/gadget/pull/9"));
     }
 
