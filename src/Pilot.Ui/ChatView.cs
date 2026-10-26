@@ -26,13 +26,24 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     // The question's card is at most this share of the page's height, and never under this many design units, so a long
     // question with many choices on a short window cannot squeeze the feed to nothing or push the box off the page: past it
-    // the card's body scrolls on its own, the choices at its end still reachable.
-    private const float AskShare = 0.3f;
+    // the question's text scrolls on its own, the choices under it always in view.
+    private const float AskShare = 0.35f;
     private const float AskMinHeight = 96f;
     private const float AskPadY = 6f;
 
-    // The page's height in design units as of the last render, for the card's cap; what the page is assumed to be before one.
+    // The choices under the question's text: a pill's height, the gaps between pills and between rows, an average glyph's
+    // width and a pill's padding, for reckoning how tall the wrapped choices will be before they are laid out; and the least
+    // the text keeps, a header and a line.
+    private const float ChoiceHeight = 24f;
+    private const float ChoiceGap = 8f;
+    private const float ChoiceLineGap = 4f;
+    private const float ChoiceGlyphWidth = 7f;
+    private const float ChoicePadX = 20f;
+    private const float AskTextMinHeight = 40f;
+
+    // The page's size in design units as of the last render, for the card's cap; what the page is assumed to be before one.
     private const float AssumedPageHeight = 600f;
+    private const float AssumedPageWidth = 1200f;
 
     private static readonly RGBAColor32 PageBg = TranscriptPane.Ground;
     private static readonly RGBAColor32 FootBg = new(0x16, 0x17, 0x1e, 0xff);
@@ -59,6 +70,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private ListScrollController _askScroll = NewAskScroll();
     private string? _askedKey;
     private float _pageHeight = AssumedPageHeight;
+    private float _pageWidth = AssumedPageWidth;
 
     // A message that was refused or a choice that did not go, said in the chat in red until the next one goes; and how many
     // are on their way. Swapped whole from the pool.
@@ -272,6 +284,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     {
         BeginFrame();
         _pageHeight = bounds.Height / DpiScale;
+        _pageWidth = bounds.Width / DpiScale;
         RenderLayout(Tree(), bounds);
     }
 
@@ -363,16 +376,12 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             // Whole, never cut: a long question scrolls inside the capped card instead.
             body.Add(WrappedProse.Of(question, 14f, Bright));
         }
-        if (choices.Length > 0)
-        {
-            body.Add(Layout.Builder.Spacer().RowH(4f));
-            body.Add(Layout.Builder.WrapH([.. choices.Select((choice, i) => CardsView<TSurface>.Pill(choice, $"chat:choice:{i + 1}", () => Choose(choice)))])
-                .WithGap(8f).WithLineGap(4f).WStar());
-        }
-        // The body alone scrolls, capped so the card leaves the feed its room and ends above the box; the bar beside it and the
+        // The text alone scrolls, capped so the card leaves the feed its room and ends above the box; the bar beside it and the
         // card's padding stay put. A gutter keeps the text clear of the scrollbar drawn over its right edge.
         var cap = Math.Max(AskMinHeight, _pageHeight * AskShare) - 2 * AskPadY;
-        var scrolling = Layout.Builder.VStack(
+        var choicesHeight = ChoicesHeight(choices);
+        var textCap = Math.Max(AskTextMinHeight, cap - choicesHeight - (choicesHeight > 0f ? ChoiceGap : 0f));
+        var text = Layout.Builder.VStack(
                 Layout.Builder.HStack(
                         Layout.Builder.VStack([.. body]).WithGap(4f).WStar(),
                         Layout.Builder.Spacer().WFixed(TranscriptEntryView.ScrollGutter))
@@ -380,7 +389,15 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                     .HAuto())
             .WithScroll(_askScroll)
             .WStar()
-            .HClamp(0f, cap);
+            .HClamp(0f, textCap);
+        var parts = new List<Layout.Node> { text };
+        if (choices.Length > 0)
+        {
+            // The choices stay under the text, outside its scroll, so they are always in view and reachable.
+            parts.Add(Layout.Builder.WrapH([.. choices.Select((choice, i) => CardsView<TSurface>.Pill(choice, $"chat:choice:{i + 1}", () => Choose(choice)))])
+                .WithGap(8f).WithLineGap(4f).WStar());
+        }
+        var scrolling = Layout.Builder.VStack([.. parts]).WithGap(ChoiceGap).WStar().HAuto();
         return Layout.Builder.HStack(
                 Layout.Builder.Spacer().Bg(Prompt).WFixed(3f).HStar(),
                 scrolling)
@@ -389,6 +406,34 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             .Bg(Marked)
             .WStar()
             .HAuto();
+    }
+
+    // How tall the wrapped choices come out, reckoned from their labels and the card's width: the pills wrap as laid out, so
+    // this is a close guess that errs tall (the glyph's width is generous), leaving the card a little under its cap.
+    private float ChoicesHeight(string[] choices)
+    {
+        if (choices.Length == 0)
+        {
+            return 0f;
+        }
+        // The card's inner width: the page less its gutters, the card's padding, the bar's stripe and the gap after it.
+        var width = _pageWidth - 2 * Gutter - 16f - 3f - 8f;
+        var rows = 1;
+        var used = 0f;
+        foreach (var choice in choices)
+        {
+            var pill = choice.Length * ChoiceGlyphWidth + ChoicePadX;
+            if (used > 0f && used + ChoiceGap + pill > width)
+            {
+                rows++;
+                used = pill;
+            }
+            else
+            {
+                used += (used > 0f ? ChoiceGap : 0f) + pill;
+            }
+        }
+        return rows * ChoiceHeight + (rows - 1) * ChoiceLineGap;
     }
 
     // A choice answers the question: said to the watchtower as the person's message, through the same send as a typed one.
