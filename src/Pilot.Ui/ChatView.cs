@@ -24,6 +24,16 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     private const float Gutter = 16f;
 
+    // The question's card is at most this share of the page's height, and never under this many design units, so a long
+    // question with many choices on a short window cannot squeeze the feed to nothing or push the box off the page: past it
+    // the card's body scrolls on its own, the choices at its end still reachable.
+    private const float AskShare = 0.3f;
+    private const float AskMinHeight = 96f;
+    private const float AskPadY = 6f;
+
+    // The page's height in design units as of the last render, for the card's cap; what the page is assumed to be before one.
+    private const float AssumedPageHeight = 600f;
+
     private static readonly RGBAColor32 PageBg = TranscriptPane.Ground;
     private static readonly RGBAColor32 FootBg = new(0x16, 0x17, 0x1e, 0xff);
     private static readonly RGBAColor32 Marked = new(0x2a, 0x24, 0x18, 0xff);
@@ -45,12 +55,19 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private readonly TranscriptEntryView _entries = new() { PromptLabel = "you", AssistantLabel = "watchtower", AssistantLines = int.MaxValue };
     private readonly ChatComposer _composer = new();
 
+    // The question card's own scroll, fresh for each question so a new one starts at its top; and the page height it is capped by.
+    private ListScrollController _askScroll = NewAskScroll();
+    private string? _askedKey;
+    private float _pageHeight = AssumedPageHeight;
+
     // A message that was refused or a choice that did not go, said in the chat in red until the next one goes; and how many
     // are on their way. Swapped whole from the pool.
     private ImmutableList<string> _notices = [];
     private int _sending;
 
     private static TaskCompletionSource NewNudge() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private static ListScrollController NewAskScroll() => new() { Mode = ScrollBarMode.None };
 
     /// <summary>
     /// Reads the chat feed after an entry (its last entries, for -1): the node's chat route. Null leaves the page empty and
@@ -254,6 +271,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     public void Render(RectF32 bounds)
     {
         BeginFrame();
+        _pageHeight = bounds.Height / DpiScale;
         RenderLayout(Tree(), bounds);
     }
 
@@ -293,6 +311,15 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         {
             // The reply the question ends already says it in the feed: the card then holds only the choices.
             var said = held.Entries.LastOrDefault(e => e.Kind == TranscriptKind.Assistant)?.Text;
+            if (_askedKey != question)
+            {
+                _askedKey = question;
+                _askScroll = NewAskScroll();
+            }
+            // A card whose body fits its viewport still reads one atom of overflow when the body's height is fractional (the
+            // list counts whole surface units, the content rounded up and the viewport down), which drew a full-height
+            // thumb on every card. The bar waits until the body overflows by more than that, as of the last frame.
+            _askScroll.Mode = _askScroll.MaxOffset > 1f ? ScrollBarMode.Interactive : ScrollBarMode.None;
             asked = Question(question, said is not null && said.Contains(question, StringComparison.Ordinal), held.Choices);
         }
         var sending = Volatile.Read(ref _sending) > 0;
@@ -333,7 +360,8 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         else
         {
             body.Add(Layout.Builder.Text("The watchtower asks", 11f, Dim));
-            body.Add(WrappedProse.Of(question, 14f, Bright, 8));
+            // Whole, never cut: a long question scrolls inside the capped card instead.
+            body.Add(WrappedProse.Of(question, 14f, Bright));
         }
         if (choices.Length > 0)
         {
@@ -341,11 +369,23 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             body.Add(Layout.Builder.WrapH([.. choices.Select((choice, i) => CardsView<TSurface>.Pill(choice, $"chat:choice:{i + 1}", () => Choose(choice)))])
                 .WithGap(8f).WithLineGap(4f).WStar());
         }
+        // The body alone scrolls, capped so the card leaves the feed its room and ends above the box; the bar beside it and the
+        // card's padding stay put. A gutter keeps the text clear of the scrollbar drawn over its right edge.
+        var cap = Math.Max(AskMinHeight, _pageHeight * AskShare) - 2 * AskPadY;
+        var scrolling = Layout.Builder.VStack(
+                Layout.Builder.HStack(
+                        Layout.Builder.VStack([.. body]).WithGap(4f).WStar(),
+                        Layout.Builder.Spacer().WFixed(TranscriptEntryView.ScrollGutter))
+                    .WStar()
+                    .HAuto())
+            .WithScroll(_askScroll)
+            .WStar()
+            .HClamp(0f, cap);
         return Layout.Builder.HStack(
                 Layout.Builder.Spacer().Bg(Prompt).WFixed(3f).HStar(),
-                Layout.Builder.VStack([.. body]).WithGap(4f).WStar())
+                scrolling)
             .WithGap(8f)
-            .Pad(8f, 6f)
+            .Pad(8f, AskPadY)
             .Bg(Marked)
             .WStar()
             .HAuto();
