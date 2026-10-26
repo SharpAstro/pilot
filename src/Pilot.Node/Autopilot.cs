@@ -122,6 +122,7 @@ public sealed class Autopilot(NodeState state, IServiceProvider services)
         var words = string.Join(' ', args).Trim();
         return verb switch
         {
+            Verbs.Merge when PrRef.Parse(target) is { } pr && target.StartsWith(Verbs.PrTargetPrefix, StringComparison.Ordinal) => ($"merge {pr}", $"merged {pr}"),
             Verbs.Merge => ($"merge {Flight()}", $"merged {Flight()}"),
             Verbs.Land => ($"land {Flight()}", $"landed {Flight()}"),
             Verbs.Set => ($"set {words}", $"set {words}"),

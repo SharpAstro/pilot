@@ -51,11 +51,19 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         return result;
     }
 
-    // Whether a merge's flight is in a repo whose PRs the node never merges by itself (no-auto-merge-repos).
-    private bool NoAutoMerge(CommandRequest command) =>
-        command.Target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal)
-        && state.Flights().FirstOrDefault(f => f.Code == command.Target[Verbs.FlightTargetPrefix.Length..]) is { } flight
-        && Get<RoleModels>().NoAutoMerge(flight.Repo);
+    // Whether a merge's flight or PR is in a repo whose PRs the node never merges by itself (no-auto-merge-repos).
+    private bool NoAutoMerge(CommandRequest command)
+    {
+        if (command.Target.StartsWith(Verbs.PrTargetPrefix, StringComparison.Ordinal))
+        {
+            return PrRef.Parse(command.Target) is { } pr
+                && (Get<RoleModels>().NoAutoMerge(pr.Name)
+                    || Get<PrReviews>().Of(pr) is { } review && Get<RoleModels>().NoAutoMerge(Path.GetFileName(review.ClonePath.TrimEnd('\\', '/'))));
+        }
+        return command.Target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal)
+            && state.Flights().FirstOrDefault(f => f.Code == command.Target[Verbs.FlightTargetPrefix.Length..]) is { } flight
+            && Get<RoleModels>().NoAutoMerge(flight.Repo);
+    }
 
     private async Task<CommandResult> RouteAsync(CommandRequest command, CancellationToken cancellationToken)
     {
