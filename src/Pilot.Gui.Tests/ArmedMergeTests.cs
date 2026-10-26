@@ -21,7 +21,7 @@ public sealed class ArmedMergeTests
     private const string ArmedDetail = "merging when checks pass: 6 of 7 done. GitHub merges it, with the node up or not.";
 
     private const string NodeWaitsDetail = "merging when checks pass: 6 of 7 done. The node waits for them. "
-        + "Switch on GitHub's auto-merge to let GitHub wait instead: gh repo edit --enable-auto-merge, or the repo's Settings > General > Allow auto-merge.";
+        + "Switch on GitHub's auto-merge to let GitHub wait instead: gh repo edit --enable-auto-merge, or the repo's Settings > General > Allow auto-merge. GitHub waits only for required checks, so make them required too (a branch protection rule or a ruleset).";
 
     private static readonly string FailedDetail = $"The merge waited for the checks to pass, and {LongCheck} failed on 77018f1c. "
         + "Go around to fix what it found, re-run the checks if it was a flake, or merge again. GitHub's auto-merge is turned off.";

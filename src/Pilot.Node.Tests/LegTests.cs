@@ -149,11 +149,22 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task<bool> AutoMergeAllowedAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(AutoMergeAllowed);
 
+    /// <summary>
+    /// The mergeStateStatus GitHub gives the PR when auto-merge is armed on it: BLOCKED (a required check pending) by default;
+    /// CLEAN, HAS_HOOKS and UNSTABLE are immediately mergeable, which gh's own <c>pr merge --auto</c> merges at once instead of
+    /// arming (gh 2.86 merge.go), so the real arm refuses them and this fake does, merging nothing.
+    /// </summary>
+    public string MergeStateStatus { get; set; } = "BLOCKED";
+
     public Task ArmAutoMergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
         if (ArmFails is { } why)
         {
             return Task.FromException(new FlightException(why));
+        }
+        if (GhCli.ImmediatelyMergeable(MergeStateStatus))
+        {
+            return Task.FromException(new FlightException($"GitHub will not arm auto-merge on #{number}: it is in {MergeStateStatus.ToLowerInvariant()} status, so it has no required check to wait for"));
         }
         AutoMergeArmed.Add((number, head, method));
         return Task.CompletedTask;

@@ -166,8 +166,8 @@ public sealed partial class LegCommander(
                 error = $"merged, but the flight did not land: {ex.Message}";
             }
         }
-        // A merge armed or queued is no merge yet: any card of the flight offering it says where it stands. The card an answer
-        // runs it from is closed meanwhile, and is shown by the answer (NodeCommands.AnswerAsync) once it opens again.
+        // A merge armed or queued is no merge yet: any card of the flight offering it says where it stands, the one an answer
+        // runs it from included: NodeCommands.AnswerAsync keeps that card open while the command runs.
         if (error is null && way is not null)
         {
             ShowMerge(command.Target, made, way);
@@ -914,7 +914,7 @@ public sealed partial class LegCommander(
     public const string ArmedByNode = "node";
 
     /// <summary>The how-to the card gives while the node polls because the repo has auto-merge off.</summary>
-    public const string SwitchOnAutoMerge = "Switch on GitHub's auto-merge to let GitHub wait instead: gh repo edit --enable-auto-merge, or the repo's Settings > General > Allow auto-merge.";
+    public const string SwitchOnAutoMerge = "Switch on GitHub's auto-merge to let GitHub wait instead: gh repo edit --enable-auto-merge, or the repo's Settings > General > Allow auto-merge. GitHub waits only for required checks, so make them required too (a branch protection rule or a ruleset).";
 
     /// <summary>
     /// What a merge waiting for its checks shows: how many are done (or <paramref name="progress"/> in their place), and who
@@ -963,7 +963,8 @@ public sealed partial class LegCommander(
         }
         catch (FlightException)
         {
-            // Allowed, but this PR has nothing for GitHub to wait on (no required checks, say): the node waits, as it would.
+            // Allowed, but GitHub refused: the PR is mergeable already (running checks that are not required leave it so), or has
+            // nothing for GitHub to wait on. Nothing was merged or armed: the node waits and merges at green, as it would.
             return ArmedByNode;
         }
     }
