@@ -175,19 +175,41 @@ public static class PilotCommand
             var snapshot = await SnapshotAsync(client, ct);
             var maintenance = false;
             bool? autopilot = null;
+            string? dataFolder = null;
             try
             {
                 var info = await client.GetNodeAsync(ct);
                 maintenance = info.Maintenance;
                 autopilot = info.Autopilot;
+                dataFolder = info.DataFolder;
             }
             catch (HttpRequestException)
             {
                 // The node's own word on itself is a line more: the flights and sessions are what status is for.
             }
             var everyFlight = parseResult.GetValue(allFlights);
-            await WriteAsync(parseResult.GetValue(outputFormat), () => Status(snapshot, maintenance: maintenance, autopilot: autopilot, all: everyFlight),
-                () => StatusMarkdown.Build(snapshot, maintenance, autopilot, everyFlight));
+            var format = parseResult.GetValue(outputFormat);
+            var copies = format is "plain" or "text" ? new Dictionary<string, string>() : await AttachmentCopies.ResolveAsync(AttachmentCopies.Of(snapshot), client, dataFolder, ct);
+            await WriteAsync(format, () => Status(snapshot, maintenance: maintenance, autopilot: autopilot, all: everyFlight),
+                () => StatusMarkdown.Build(snapshot, maintenance, autopilot, everyFlight, copies));
+            return 0;
+        });
+        var attachmentsOwner = new Argument<string?>("flight-or-session") { Description = "A flight's code or a session's name; none lists every one", Arity = ArgumentArity.ZeroOrOne };
+        var attachments = Action(new Command("attachments", "The images the node keeps copies of, with where each is") { Arguments = { attachmentsOwner } }, async (p, client, ct) =>
+        {
+            var snapshot = await SnapshotAsync(client, ct);
+            var owner = p.GetValue(attachmentsOwner);
+            string? dataFolder = null;
+            try
+            {
+                dataFolder = (await client.GetNodeAsync(ct)).DataFolder;
+            }
+            catch (HttpRequestException)
+            {
+                // The paths then fall back to the default data folder's layout; a copy not found there is shown missing.
+            }
+            var copies = AttachmentCopies.Of(snapshot, owner);
+            await output.WriteAsync(AttachmentCopies.List(copies, await AttachmentCopies.ResolveAsync(copies, client, dataFolder, ct), client, dataFolder, owner));
             return 0;
         });
         var sessions = Action(new Command("sessions", "Every Claude session on the machine"), async (_, client, ct) =>
@@ -803,7 +825,7 @@ public static class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, archive, ring, flag, handled, nodes, connectNode, grants, settings },
+            Subcommands = { status, attachments, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, archive, ring, flag, handled, nodes, connectNode, grants, settings },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
