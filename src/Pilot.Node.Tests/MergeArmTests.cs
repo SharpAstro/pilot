@@ -374,6 +374,67 @@ public sealed class MergeArmTests
         Card(node, ready).Detail.ShouldNotBeNull().ShouldNotContain("enable-auto-merge");
     }
 
+    [Theory]
+    [InlineData("UNSTABLE")]
+    [InlineData("CLEAN")]
+    [InlineData("HAS_HOOKS")]
+    public async Task AutoMergeAllowedButTheChecksNotRequiredMergesNothingAndTheNodePollsWithoutSayingGitHubMergesIt(string status)
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        node.GitHub.AutoMergeAllowed = true;
+        // Running checks that are not required leave the PR immediately mergeable: gh's own --auto would merge it here and now.
+        node.GitHub.MergeStateStatus = status;
+        var ready = Ready(node);
+        node.GitHub.Summary = Pending(1);
+
+        (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
+
+        node.GitHub.Merged.ShouldBeEmpty();
+        node.GitHub.AutoMergeArmed.ShouldBeEmpty();
+        node.State.Flights().Single().MergeWhenGreen.ShouldBe([PrHead, "rebase", LegCommander.ArmedByNode]);
+        var card = Card(node, ready);
+        card.State.ShouldBe(CardState.Open);
+        card.Choices.Single().Status.ShouldBe(ChoiceStatus.Armed);
+        card.Detail.ShouldNotBeNull().ShouldContain("1 of 3 done");
+        card.Detail.ShouldNotContain("GitHub merges it");
+
+        // The node waits for the checks and merges at green itself.
+        node.GitHub.Summary = Pending(2);
+        await Look(node);
+        node.GitHub.Merged.ShouldBeEmpty();
+        node.GitHub.Summary = Passing();
+        await Look(node);
+        node.GitHub.Merged.Select(m => m.Number).ShouldBe([63]);
+    }
+
+    [Theory]
+    [InlineData("CLEAN", true)]
+    [InlineData("HAS_HOOKS", true)]
+    [InlineData("UNSTABLE", true)]
+    [InlineData("unstable", true)]
+    [InlineData("BLOCKED", false)]
+    [InlineData("BEHIND", false)]
+    [InlineData("DIRTY", false)]
+    [InlineData(null, false)]
+    public void GhCliCountsCleanHasHooksAndUnstableAsImmediatelyMergeable(string? status, bool immediately) =>
+        GhCli.ImmediatelyMergeable(status).ShouldBe(immediately);
+
+    [Fact]
+    public void GhCliReadsAPrsIdAndMergeStateStatusToArm()
+    {
+        GhCli.ParseArmable("""{"id":"PR_kwDOAbc","mergeStateStatus":"BLOCKED"}""").ShouldBe(("PR_kwDOAbc", "BLOCKED"));
+        GhCli.ParseArmable("not json").ShouldBe((null, null));
+    }
+
+    [Fact]
+    public async Task TheSwitchHintSaysTheChecksMustBeRequiredForGitHubToWait()
+    {
+        var (node, ready) = await Armed(Pending(1));
+        await using var _ = node;
+
+        Card(node, ready).Detail.ShouldNotBeNull().ShouldContain("required");
+    }
+
     private static MergeState GateAbsent() => GhCli.ParseMergeState(
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "gh", "gate-absent.json"))).ShouldNotBeNull();
 

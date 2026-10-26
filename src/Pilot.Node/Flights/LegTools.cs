@@ -312,8 +312,9 @@ public interface IGitHub
     Task<bool> AutoMergeAllowedAsync(string repoPath, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Arms GitHub's auto-merge on PR <paramref name="number"/> (<c>gh pr merge --auto</c>): it merges by
-    /// <paramref name="method"/> once its checks pass, refused unless its head is still <paramref name="head"/>.
+    /// Arms GitHub's auto-merge on PR <paramref name="number"/>: it merges by <paramref name="method"/> once its required checks
+    /// pass, refused unless its head is still <paramref name="head"/>. Never merges: a PR GitHub would merge now (CLEAN, HAS_HOOKS,
+    /// UNSTABLE: its running checks are not required) is refused, and the caller waits for it itself.
     /// </summary>
     /// <exception cref="FlightException">GitHub would not arm it (a PR with nothing to wait for, a repo without auto-merge).</exception>
     Task ArmAutoMergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken);
@@ -707,13 +708,53 @@ public sealed class GhCli : IGitHub
     /// <summary><c>gh api repos/{owner}/{repo} --jq .allow_auto_merge</c>'s output: true only for <c>true</c>; <c>false</c>, <c>null</c> (a token that cannot see the setting) and nothing are off.</summary>
     internal static bool ParseAllowAutoMerge(string output) => output.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
 
+    // Not `gh pr merge --auto`: gh merges at once, arming nothing, when GitHub calls the PR immediately mergeable (CLEAN, HAS_HOOKS
+    // or UNSTABLE: running checks that are not required leave it so). enablePullRequestAutoMerge refuses such a PR instead, and
+    // the state is read first so a refusal is said in the words GitHub uses for it.
     public async Task ArmAutoMergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(
-            ["pr", "merge", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--auto", $"--{method}", "--match-head-commit", head], repoPath, cancellationToken);
+        var numberText = number.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var (exit, output, error) = await RunAsync(["pr", "view", numberText, "--json", "id,mergeStateStatus"], repoPath, cancellationToken);
         if (exit != 0)
         {
+            throw new FlightException($"gh could not read #{number} to arm auto-merge: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        var (id, status) = ParseArmable(output);
+        if (id is null)
+        {
+            throw new FlightException($"gh could not read #{number}'s id to arm auto-merge");
+        }
+        if (ImmediatelyMergeable(status))
+        {
+            throw new FlightException($"GitHub will not arm auto-merge on #{number}: it is in {status?.ToLowerInvariant()} status, so it has no required check to wait for");
+        }
+        (exit, output, error) = await RunAsync(
+            ["api", "graphql", "-f", $"query={EnableAutoMergeMutation}", "-f", $"id={id}", "-f", $"method={method.ToUpperInvariant()}", "-f", $"head={head}"], repoPath, cancellationToken);
+        if (exit != 0 || output.Contains("\"errors\"", StringComparison.Ordinal))
+        {
             throw new FlightException($"gh could not arm auto-merge on #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+    }
+
+    private const string EnableAutoMergeMutation =
+        "mutation($id: ID!, $method: PullRequestMergeMethod!, $head: GitObjectID!) { enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: $method, expectedHeadOid: $head}) { pullRequest { number } } }";
+
+    /// <summary>Whether <c>mergeStateStatus</c> says GitHub would merge the PR this moment (what <c>gh pr merge --auto</c> then does, instead of arming).</summary>
+    internal static bool ImmediatelyMergeable(string? mergeStateStatus) =>
+        mergeStateStatus is not null && mergeStateStatus.ToUpperInvariant() is "CLEAN" or "HAS_HOOKS" or "UNSTABLE";
+
+    /// <summary><c>gh pr view --json id,mergeStateStatus</c>'s answer: the PR's node id and its merge state status; nulls when it is no JSON.</summary>
+    internal static (string? Id, string? Status) ParseArmable(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            string? Read(string name) => doc.RootElement.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            return (Read("id"), Read("mergeStateStatus"));
+        }
+        catch (JsonException)
+        {
+            return (null, null);
         }
     }
 
