@@ -32,6 +32,8 @@ public sealed class SessionTracker : BackgroundService
     private readonly Dictionary<string, DateTimeOffset> _stale = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
     // The role the node gave each session it started (seen from a name that said so), by row id, with its machine prefix.
     private readonly Dictionary<string, (SessionRoleInfo Role, string? Prefix)> _given = new Dictionary<string, (SessionRoleInfo, string?)>(StringComparer.Ordinal);
+    // The name each session is listed under, by row id: a row renamed away from the node's naming shows another one, but is resumed under this.
+    private readonly Dictionary<string, string> _listedNames = new Dictionary<string, string>(StringComparer.Ordinal);
     private readonly Dictionary<string, string?> _repos =new Dictionary<string, string?>(StringComparer.Ordinal);
 
     // A resumed session continues under a new session id; its row keeps its id and follows it there. By session id:
@@ -159,16 +161,27 @@ public sealed class SessionTracker : BackgroundService
     /// </summary>
     public IDisposable BeginResume(SessionRow row)
     {
+        var name = ListedName(row);
         _gate.Wait();
         try
         {
-            _resuming[row.Id] = (row.Name == row.Id ? null : row.Name, row.Cwd);
+            _resuming[row.Id] = (name, row.Cwd);
         }
         finally
         {
             _gate.Release();
         }
         return new Resuming(this, row.Id);
+    }
+
+    /// <summary>
+    /// The name a row's session is resumed under, and listed by: its own, not the one its row shows (a renamed session's row
+    /// carries the node's prefix before it). Null for a session with no name.
+    /// </summary>
+    public string? ListedName(SessionRow row)
+    {
+        var name = _listedNames.TryGetValue(row.Id, out var listed) ? listed : row.Name;
+        return name == row.Id ? null : name;
     }
 
     /// <summary>
@@ -374,6 +387,10 @@ public sealed class SessionTracker : BackgroundService
                 renamed = $"{prefix}-{agent.Name}";
             }
         }
+        if (agent.Name is { Length: > 0 })
+        {
+            _listedNames[id] = agent.Name;
+        }
         var built = SessionRowBuilder.Build(agent, facts, record, repo, JoinFlight(role, agent.Cwd), Hooks.Of(agent.SessionId));
         if (renamed is not null)
         {
@@ -476,6 +493,8 @@ public sealed class SessionTracker : BackgroundService
         _rows.Remove(id);
         Attachments?.Remove(id);
         _endedAt.Remove(id);
+        _given.Remove(id);
+        _listedNames.Remove(id);
         _transcripts.Remove(sessionId);
         foreach (var copy in _rowOf.Where(c => c.Value == id).Select(c => c.Key).ToList())
         {

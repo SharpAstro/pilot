@@ -124,6 +124,29 @@ public sealed class MergedFleetTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task AnUnprefixedSessionShowsItsOwnNodesCodeAndAPrefixedOneIsAsItWas()
+    {
+        var filter = new NodeFilter();
+        await TwoNodes(filter);
+        // SE1 gains an unprefixed session of its own, as LE1 already has ("scratch"): each is told by its own node's code.
+        _se1.Send(Live.Snapshot(2, "s-se1", Live.Row("aaaa0001", "se1-watchtower", SessionState.Working), Live.Row("bbbb0002", "se1-tia1-gpu"), Live.Row("gggg0007", "stargazer")));
+        var pages = _watch.Pages("node.sock", _here, filter, Live.At);
+        for (var i = 0; i < 500 && !pages.Sessions.Lines.Any(l => l.Name == "stargazer"); i++)
+        {
+            await Task.Delay(10, Ct);
+            pages = _watch.Pages("node.sock", _here, filter, Live.At);
+        }
+
+        string Shown(string name) => pages.Sessions.Lines.Single(l => l.Name == name).ShownName;
+        Shown("stargazer").ShouldBe("se1-stargazer");
+        Shown("scratch").ShouldBe("le1-scratch");
+        Shown("le1-orb2-parser").ShouldBe("le1-orb2-parser");
+        Shown("se1-tia1-gpu").ShouldBe("se1-tia1-gpu");
+        // This node's own page too, which is where the GUI's single-node list comes from.
+        _here.Screen(Live.At).Lines.Single(l => l.Name == "stargazer").ShownName.ShouldBe("se1-stargazer");
+    }
+
+    [Fact]
     public async Task AnotherNodesRowsKeepTheirMarkWhileItsStreamIsDown()
     {
         var filter = new NodeFilter();
