@@ -161,7 +161,7 @@ public sealed class FlightCommanderTests : IDisposable
     public async Task ABadTargetOrIssueIsRefusedWithWhy()
     {
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Path.Combine(_root, "nowhere")), "1")).Error.ShouldNotBeNull().ShouldContain("no git checkout");
-        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "abc")).Error.ShouldNotBeNull().ShouldContain("issue number first");
+        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "abc")).Error.ShouldNotBeNull().ShouldContain("not a work item");
         (await Run(Verbs.CreateFlight, "node", "1")).Error.ShouldNotBeNull().ShouldContain("repo target");
         (await Run(Verbs.Land, Verbs.FlightTarget("TIA9"))).Error.ShouldBe("There is no flight TIA9");
     }
