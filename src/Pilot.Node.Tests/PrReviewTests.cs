@@ -353,6 +353,93 @@ public sealed class PrReviewTests : IDisposable
         _github.LabelCalls.ShouldBe([(7, PilotMarks.Passed)]);
     }
 
+    /// <summary>Reviews the widget PR with <paramref name="verdict"/> on a base with a merge queue and checks as <paramref name="checks"/>.</summary>
+    private async Task ReviewedWidget(string verdict, string checks = ChoiceStatus.Passing, bool queue = true)
+    {
+        _github.Login = "ada";
+        _github.Queue = queue ? new MergeQueueState("OPEN", _widgetHead, false) : null;
+        _github.Summary = new ChecksSummary(checks, 1, 1);
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", Row("acme/widget", 7).Reviewer, verdict, "Fine.")).Error.ShouldBeNull();
+        await _reviews.SweepAsync(Ct);
+    }
+
+    [Fact]
+    public async Task ACleanCommentOnOnesOwnPrQueuesItAtTheReviewedHeadOnceAndSaysSo()
+    {
+        await ReviewedWidget("comment");
+        _github.Merged.ShouldBe([(7, _widgetHead, "squash")]);
+        Row("acme/widget", 7).QueuedAt.ShouldNotBeNull();
+        _state.Cards().ShouldContain(c => c.Kind == PrReviews.QueuedKind && c.Title.Contains("Queued acme/widget#7") && c.Detail!.Contains("Reviewed comment, checks green"));
+
+        await _reviews.SweepAsync(Ct);
+        _github.Merged.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AChangesVerdictQueuesNothing()
+    {
+        await ReviewedWidget("changes");
+        _github.Merged.ShouldBeEmpty();
+        Row("acme/widget", 7).QueuedAt.ShouldBeNull();
+        _state.Cards().ShouldContain(c => c.Kind == PrReviews.ReadyKind);
+    }
+
+    [Fact]
+    public async Task ANewHeadAfterTheReviewQueuesNothing()
+    {
+        await ReviewedWidget("approve", checks: ChoiceStatus.Pending);
+        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Head = new string('a', 40) };
+        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
+        await _reviews.SweepAsync(Ct);
+        _github.Merged.ShouldBeEmpty();
+        Row("acme/widget", 7).QueueNote.ShouldNotBeNull().ShouldContain("head moved");
+    }
+
+    [Fact]
+    public async Task PendingChecksWaitThenQueueOnceGreenEvenAfterTheCardClosed()
+    {
+        await ReviewedWidget("approve", checks: ChoiceStatus.Pending);
+        _github.Merged.ShouldBeEmpty();
+        _state.CloseCard(Row("acme/widget", 7).Card!, "dismissed", "controller");
+        await _reviews.SweepAsync(Ct);
+        _github.Merged.ShouldBeEmpty();
+        Row("acme/widget", 7).State.ShouldBe(PrReviewState.Closed);
+
+        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
+        await _reviews.SweepAsync(Ct);
+        _github.Merged.ShouldBe([(7, _widgetHead, "squash")]);
+        await _reviews.SweepAsync(Ct);
+        _github.Merged.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task FailedChecksQueueNothing()
+    {
+        await ReviewedWidget("approve", checks: ChoiceStatus.Failing);
+        _github.Merged.ShouldBeEmpty();
+        Row("acme/widget", 7).QueueNote.ShouldNotBeNull().ShouldContain("checks fail");
+    }
+
+    [Fact]
+    public async Task ADraftQueuesNothing()
+    {
+        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Draft = true };
+        await ReviewedWidget("approve");
+        _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ABaseWithoutAMergeQueueRaisesTheMergeCard()
+    {
+        await ReviewedWidget("approve", queue: false);
+        _github.Merged.ShouldBeEmpty();
+        var card = _state.Cards().Single(c => c.Kind == PrReviews.MergeKind);
+        card.Choices.ShouldHaveSingleItem().ShouldSatisfyAllConditions(c => c.Verb.ShouldBe(Verbs.Merge), c => c.Args.ShouldBe([_widgetHead]));
+        await _reviews.SweepAsync(Ct);
+        _state.Cards().Count(c => c.Kind == PrReviews.MergeKind).ShouldBe(1);
+    }
+
     /// <summary>The file the widget PR adds, the one file in its diff, one line long.</summary>
     private string Added() => PrOrigins.Git(WidgetClone, "show", "--name-only", "--format=", _widgetHead);
 

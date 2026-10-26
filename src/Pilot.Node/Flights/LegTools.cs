@@ -179,7 +179,7 @@ public sealed class ShellCheckRunner : ICheckRunner
 /// <param name="Labels">The labels it carries, as read by branch; null when the read did not ask for them.</param>
 /// <param name="MergeCommit">The commit it merged as on its base, as read by branch; empty before it merges or when not read.</param>
 /// <param name="MergedAt">When it merged, as read by branch; null before it merges or when not read.</param>
-public sealed record PullRequest(int Number, string State, string Head, string Url, string Mergeable = "", string Title = "", string Author = "", string Base = "", IReadOnlyList<string>? Labels = null, string MergeCommit = "", DateTimeOffset? MergedAt = null);
+public sealed record PullRequest(int Number, string State, string Head, string Url, string Mergeable = "", string Title = "", string Author = "", string Base = "", IReadOnlyList<string>? Labels = null, string MergeCommit = "", DateTimeOffset? MergedAt = null, bool Draft = false);
 
 /// <summary>
 /// A GitHub Actions run on a commit: <paramref name="Status"/> is <c>queued</c>, <c>in_progress</c> or <c>completed</c>, and
@@ -1014,7 +1014,7 @@ public sealed class GhCli : IGitHub
     public async Task<PullRequest> PullRequestOfAsync(string repo, int number, CancellationToken cancellationToken)
     {
         var (exit, output, error) = await RunAsync(
-            ["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "-R", repo, "--json", "number,state,headRefOid,url,title,author,baseRefName"],
+            ["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "-R", repo, "--json", "number,state,headRefOid,url,title,author,baseRefName,isDraft"],
             Path.GetTempPath(), cancellationToken);
         if (exit != 0)
         {
@@ -1026,7 +1026,8 @@ public sealed class GhCli : IGitHub
             root.GetProperty("headRefOid").GetString() ?? "", root.GetProperty("url").GetString() ?? "",
             Title: root.TryGetProperty("title", out var title) ? title.GetString() ?? "" : "",
             Author: root.TryGetProperty("author", out var author) && author.ValueKind == JsonValueKind.Object && author.TryGetProperty("login", out var login) ? login.GetString() ?? "" : "",
-            Base: root.TryGetProperty("baseRefName", out var baseRef) ? baseRef.GetString() ?? "" : "");
+            Base: root.TryGetProperty("baseRefName", out var baseRef) ? baseRef.GetString() ?? "" : "",
+            Draft: root.TryGetProperty("isDraft", out var draft) && draft.ValueKind == JsonValueKind.True);
     }
 
     public async Task CloneAsync(string repo, string path, CancellationToken cancellationToken)
