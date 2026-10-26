@@ -28,19 +28,8 @@ public sealed class PrMarksTests : IDisposable
 
     public PrMarksTests()
     {
-        // A repo with a bare origin, so a flight's push is a real one.
-        var origin = Path.Combine(_root, "origin.git");
-        Directory.CreateDirectory(Repo);
-        Git(_root, "init", "-q", "--bare", "-b", "main", origin);
-        Git(Repo, "init", "-q", "-b", "main");
-        Git(Repo, "config", "user.email", "t@example.com");
-        Git(Repo, "config", "user.name", "t");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        Git(Repo, "remote", "add", "origin", origin);
-        Git(Repo, "push", "-q", "-u", "origin", "main");
-        Git(Repo, "remote", "set-head", "origin", "main");
+        // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
+        SeedRepo.Make(_root);
         var git = new GitCli();
         _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
