@@ -488,8 +488,16 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             if (merge is null || legs is null)
             {
-                var choices = card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = status } : c).ToList();
-                state.UpdateChoices(card.Id, choices);
+                // Read again after the awaits above: a Merge pressed meanwhile armed or queued it, and writing the choices read
+                // before that back with the checks' status turned "armed" into "pending" (MergeArmTests, flaky in CI).
+                if (state.Cards(openOnly: true).FirstOrDefault(c => c.Id == card.Id) is not { } current
+                    || current.Choices.Any(c => c.Verb == Verbs.Merge && c.Status is ChoiceStatus.Armed or ChoiceStatus.Queued)
+                    || state.Flights().FirstOrDefault(f => f.Code == flight.Code)?.MergeWhenGreen is not null)
+                {
+                    continue;
+                }
+                var choices = current.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = status } : c).ToList();
+                state.UpdateChoices(current.Id, choices);
             }
         }
     }
