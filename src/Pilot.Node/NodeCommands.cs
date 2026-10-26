@@ -153,6 +153,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return await Get<RepoCommander>().RunAsync(command, cancellationToken);
         }
+        if (command.Verb == Verbs.AddArtifact && command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal))
+        {
+            return AddSessionArtifact(command);
+        }
         if (LegCommander.Handles(command.Verb))
         {
             return await Get<LegCommander>().RunAsync(command, cancellationToken);
@@ -276,6 +280,32 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (card.Kind == CardKinds.AssistantAsk)
         {
             await Get<Autopilot>().TellAsync(card, allowed: true, command.Who, cancellationToken);
+        }
+        return state.Complete(command, null);
+    }
+
+    /// <summary><c>add-artifact session/&lt;id&gt; &lt;path or URL&gt; [title…]</c>: something to look at on a session in no flight.</summary>
+    private CommandResult AddSessionArtifact(CommandRequest command)
+    {
+        var args = command.Args ?? [];
+        if (args.Length == 0 || args[0].Trim().Length == 0)
+        {
+            return state.Complete(command, "add-artifact needs the path or URL of what to look at");
+        }
+        var location = args[0].Trim();
+        var title = string.Join(' ', args.Skip(1)).Trim();
+        if (title.Length == 0)
+        {
+            title = Uri.TryCreate(location, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? location : Path.GetFileName(location);
+        }
+        try
+        {
+            Get<SessionTracker>().AddArtifact(command.Target[Verbs.SessionTargetPrefix.Length..],
+                new Artifact { Title = title, Location = location, At = Get<TimeProvider>().GetUtcNow() });
+        }
+        catch (FlightException ex)
+        {
+            return state.Complete(command, ex.Message);
         }
         return state.Complete(command, null);
     }

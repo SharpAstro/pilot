@@ -62,6 +62,7 @@ public static class NodeApp
         builder.Services.AddHostedService(services => new RemovalQueueStart(services.GetRequiredService<RemovalQueue>(), services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>(), services.GetRequiredService<RemovalQueue>()));
         builder.Services.AddSingleton<StopGate>();
+        builder.Services.AddSingleton(new Attachments(options.DataFolder));
         // nuget.org's public flat container: what a flight connected to a releasing flight waits for.
         builder.Services.AddSingleton<INuGetFeed>(_ => new NuGetOrgFeed(new HttpClient(new HttpClientHandler { AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate }) { Timeout = TimeSpan.FromSeconds(30) }));
         builder.Services.AddSingleton<PackageReleases>();
@@ -72,6 +73,7 @@ public static class NodeApp
             var flights = ActivatorUtilities.CreateInstance<FlightCommander>(services);
             flights.Models = services.GetRequiredService<RoleModels>();
             flights.Machine = options.Machine;
+            flights.Attachments = services.GetRequiredService<Attachments>();
             var models = services.GetRequiredService<RoleModels>();
             var trackers = new List<ITracker> { new ShortcutTracker(new HttpClient { Timeout = TimeSpan.FromSeconds(30) }, () => ShortcutTracker.TokenFrom(models.ShortcutToken)) };
             if (services.GetService<IGitHub>() is { } gitHub)
@@ -101,6 +103,7 @@ public static class NodeApp
             var legs = ActivatorUtilities.CreateInstance<LegCommander>(services);
             legs.Models = services.GetRequiredService<RoleModels>();
             legs.Gate = services.GetRequiredService<StartGate>();
+            legs.Attachments = services.GetRequiredService<Attachments>();
             legs.Releases = services.GetRequiredService<PackageReleases>();
             legs.SiblingSync = services.GetRequiredService<RepoSync>();
             return legs;
@@ -210,6 +213,7 @@ public static class NodeApp
             services.GetRequiredService<ILogger<SessionTracker>>())
         {
             Hooks = services.GetRequiredService<HookBook>(),
+            Attachments = services.GetRequiredService<Attachments>(),
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.
@@ -248,6 +252,7 @@ public static class NodeApp
             // grant, as a command is made with one.
             var granted = get && (path is NodeWire.ReposRoute or NodeWire.RepoStatusRoute or NodeWire.IssuesRoute or NodeWire.ChatRoute
                 || path.StartsWith(NodeWire.SessionsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/transcript", StringComparison.Ordinal)
+                || path.StartsWith(NodeWire.AttachmentsRoute + "/", StringComparison.Ordinal)
                 || path.StartsWith(NodeWire.JobsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/log", StringComparison.Ordinal));
             return watching || (post && path == NodeWire.GrantsRoute) ? NodeRouteAccess.Open
                 : (post && path == NodeWire.CommandsRoute) || granted ? NodeRouteAccess.Command
@@ -377,6 +382,19 @@ public static class NodeApp
                 : transcripts.Read(row.SessionId, after ?? -1, agent) is { } page
                     ? Results.Json(ResponseEnvelope<TranscriptPage>.Ok(page), PilotJsonContext.Default.ResponseEnvelopeTranscriptPage)
                     : Results.Json(ResponseEnvelope<TranscriptPage>.Fail($"{row.Name} has no transcript yet", 404), PilotJsonContext.Default.ResponseEnvelopeTranscriptPage, statusCode: 404));
+
+        // The copy of an image an artifact names, as the file; the artifact (a leg's or a session's) says whose it is.
+        app.MapGet(NodeWire.AttachmentPattern, (string id, NodeState state, Attachments attachments) =>
+        {
+            var found = state.Flights().SelectMany(f => state.Legs(f.Code).SelectMany(l => l.Artifacts).Select(a => (Owner: f.Code, Artifact: a)))
+                .Concat(state.Sessions().SelectMany(s => (s.Artifacts ?? []).Select(a => (Owner: s.Id, Artifact: a))))
+                .FirstOrDefault(x => x.Artifact?.Attachment == id);
+            if (found.Artifact?.AttachmentExt is not { } ext || attachments.PathOf(found.Owner, id, ext) is not { } path || !File.Exists(path))
+            {
+                return Results.NotFound();
+            }
+            return Results.File(path, Attachments.ContentType(ext));
+        });
 
         // The conversation with the watchtower as one feed, across every watchtower there has been, read on from where the last read stopped.
         app.MapGet(NodeWire.ChatRoute, (int? after, WatchtowerChat chat) =>

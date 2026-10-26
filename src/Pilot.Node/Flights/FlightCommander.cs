@@ -17,6 +17,9 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
     /// <summary>The settings in force: whether the node is in maintenance. A test's commander takes every flight.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
 
+    /// <summary>Where the images its legs' artifacts name are kept; a landed flight's copies go. Null keeps none.</summary>
+    public Attachments? Attachments { get; set; }
+
     /// <summary>The trackers a work item's title is read from; null reads GitHub issues only, through <c>github</c>, and refuses any other tracker's item given without a title.</summary>
     public Trackers? Trackers
     {
@@ -352,6 +355,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             state.RaiseCard(CardBin.ForYou, "plane-left", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed, but its plane folder is still there",
                 $"{leftover}; nothing of git's is in it, so delete it by hand once whatever holds it lets go");
         }
+        Attachments?.Remove(flight.Code);
         state.PutFlight(flight with { State = FlightState.Landed, LandedAt = time.GetUtcNow(), FoldedInto = foldedInto ?? flight.FoldedInto });
 
         // Its cards leave with it, and a quiet one says it is in; a folded one says where its work went.

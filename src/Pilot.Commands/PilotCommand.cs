@@ -370,11 +370,25 @@ public static class PilotCommand
         var location = Arg("location", "A path or a URL");
         var artifactTitle = Words("title", "What it shows", required: false);
         var artifact = Action(new Command("artifact", "Record something to look at on the leg") { Arguments = { location, artifactTitle }, Options = { leg } },
-            (p, client, ct) =>
+            async (p, client, ct) =>
             {
                 var where = p.GetValue(location)!;
                 var full = Path.IsPathRooted(where) || where.Contains("://", StringComparison.Ordinal) ? where : Path.GetFullPath(where, cwd);
-                return OnLeg(p, client, Verbs.AddArtifact, _ => [full, .. p.GetValue(artifactTitle) ?? []], ct);
+                if (p.GetValue(leg) is null)
+                {
+                    // Outside every plane the artifact goes on the Claude session running this, which a flight's leg would not be.
+                    var snapshot = await SnapshotAsync(client, ct);
+                    var here = Path.TrimEndingDirectorySeparator(Path.GetFullPath(cwd)) + Path.DirectorySeparatorChar;
+                    var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                    var inPlane = snapshot.Flights.Any(f => f.State != FlightState.Landed
+                        && here.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(f.Worktree)) + Path.DirectorySeparatorChar, comparison));
+                    if (!inPlane && sessionId is { Length: > 0 }
+                        && snapshot.Sessions.FirstOrDefault(s => string.Equals(s.SessionId, sessionId, StringComparison.OrdinalIgnoreCase)) is { } session)
+                    {
+                        return await Send(client, Verbs.AddArtifact, Verbs.SessionTarget(session.Id), [full, .. p.GetValue(artifactTitle) ?? []], who, ct);
+                    }
+                }
+                return await OnLeg(p, client, Verbs.AddArtifact, _ => [full, .. p.GetValue(artifactTitle) ?? []], ct);
             });
 
         // review: the reviewer's verdict, from its plane (or a PR review's worktree); or the controller's "ready anyway" with --flight
