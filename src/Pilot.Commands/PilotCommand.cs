@@ -214,7 +214,7 @@ public static class PilotCommand
         });
         var sessions = Action(new Command("sessions", "Every Claude session on the machine"), async (_, client, ct) =>
         {
-            await output.WriteAsync(Sessions(await client.GetSessionsAsync(ct)));
+            await output.WriteAsync(Sessions(await client.GetSessionsAsync(ct), await MachineAsync(client, ct)));
             return 0;
         });
 
@@ -1197,14 +1197,14 @@ public static class PilotCommand
     }
 
     /// <summary>Every session, a line each: name, role and flight, state, model, context and spend.</summary>
-    internal static string Sessions(IReadOnlyList<SessionRow> rows)
+    internal static string Sessions(IReadOnlyList<SessionRow> rows, string? machine = null)
     {
         var text = new System.Text.StringBuilder();
         foreach (var row in rows)
         {
             var flight = row.Flight is null ? "" : $" {row.Flight}{(row.Leg is { } leg ? "/" + leg : "")}";
             var budget = row.Budget is { } b ? $" of {b.ToString("N0", CultureInfo.InvariantCulture)}" : "";
-            text.AppendLine($"{row.Id}  {row.Name}  {row.Role.ToString().ToLowerInvariant()}{flight}  {row.State.ToString().ToLowerInvariant()}  {row.Model ?? "-"}  {row.ContextTokens.ToString("N0", CultureInfo.InvariantCulture)}/{row.ContextWindow.ToString("N0", CultureInfo.InvariantCulture)}  {row.SpendWeighted.ToString("N0", CultureInfo.InvariantCulture)}{budget}");
+            text.AppendLine($"{row.Id}  {MachineName.Shown(row.Name, machine)}  {row.Role.ToString().ToLowerInvariant()}{flight}  {row.State.ToString().ToLowerInvariant()}  {row.Model ?? "-"}  {row.ContextTokens.ToString("N0", CultureInfo.InvariantCulture)}/{row.ContextWindow.ToString("N0", CultureInfo.InvariantCulture)}  {row.SpendWeighted.ToString("N0", CultureInfo.InvariantCulture)}{budget}");
         }
         return text.Length == 0 ? "No sessions.\n" : text.ToString();
     }

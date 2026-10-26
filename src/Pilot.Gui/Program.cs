@@ -91,7 +91,8 @@ else if (options.Capture is not null)
     {
         var rows = await oneShot.GetSessionsAsync(CancellationToken.None);
         var now = DateTimeOffset.UtcNow;
-        screen = new SessionsScreen(SessionLine.Build(rows, now), $"live from the node on {nodeWhere}", now);
+        var code = (await oneShot.GetNodeAsync(CancellationToken.None)).MachinePrefix is { Length: > 0 } prefix ? prefix : null;
+        screen = new SessionsScreen([.. SessionLine.Build(rows, now).Select(l => l with { NodeCode = code })], $"live from the node on {nodeWhere}", now);
         // The flights and the cards are on the stream's snapshot, which a capture reads once.
         await using (var events = await oneShot.OpenEventsAsync(since: null, stream: null, CancellationToken.None))
         {

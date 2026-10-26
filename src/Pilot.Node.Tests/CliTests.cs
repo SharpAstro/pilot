@@ -71,6 +71,40 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TheSessionsListShowsTheNodesCodeBeforeANameWithoutAMachinePrefix()
+    {
+        var code = _node.Options.Machine.ToLowerInvariant();
+        SessionRow Row(string id, string name) => new()
+        {
+            Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = _root,
+            Role = SessionRole.AdHoc, ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Idle, SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
+        };
+        _node.State.PutSession(Row("a1b2c3d4", "stargazer"));
+        _node.State.PutSession(Row("b2c3d4e5", "zz9-other-worker"));
+
+        var (exit, output, error) = await Pilot(_root, "sessions");
+
+        exit.ShouldBe(0, error);
+        output.ShouldContain($"a1b2c3d4  {code}-stargazer  ");
+        output.ShouldContain("b2c3d4e5  zz9-other-worker  ");
+        output.ShouldNotContain($"{code}-zz9");
+    }
+
+    [Fact]
+    public void TheSessionsTextLeavesAPrefixedNameAsItIsAndAnUnprefixedOneAsItIsWithoutACode()
+    {
+        SessionRow Row(string name) => new()
+        {
+            Id = "a1b2c3d4", SessionId = "a1b2c3d4-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = "/r",
+            Role = SessionRole.AdHoc, ContextTokens = 0, ContextWindow = 1, State = SessionState.Idle, SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
+        };
+
+        PilotCommand.Sessions([Row("stargazer")], "SE1").ShouldStartWith("a1b2c3d4  se1-stargazer  ");
+        PilotCommand.Sessions([Row("de1-stargazer")], "SE1").ShouldStartWith("a1b2c3d4  de1-stargazer  ");
+        PilotCommand.Sessions([Row("stargazer")]).ShouldStartWith("a1b2c3d4  stargazer  ");
+    }
+
+    [Fact]
     public async Task ADirectFlightIsFlownFromTheCliAloneUpToItsLanding()
     {
         // The controller, in the repo: a flight and its one leg.
