@@ -84,4 +84,14 @@ public sealed class CheckRunnerTests
     [InlineData("dotnet build || exit 1", null)]
     [InlineData("dotnet test", null)]
     public void ABarePipeIsFound(string check, int? at) => ShellScript.BarePipe(check).ShouldBe(at);
+
+    [Fact]
+    public void AJobOrCheckRunsWithNoBuildServerLeftBehindToHoldItsOutput()
+    {
+        // MSBuild's reused worker nodes outlived a job's dotnet test, kept its pipe open, and held the node's one job slot.
+        using var shell = ShellScript.For("dotnet test", Path.GetTempPath());
+        shell.Start.Environment["MSBUILDDISABLENODEREUSE"].ShouldBe("1");
+        shell.Start.Environment["DOTNET_CLI_USE_MSBUILD_SERVER"].ShouldBe("0");
+        shell.Start.Environment["UseSharedCompilation"].ShouldBe("false");
+    }
 }
