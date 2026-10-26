@@ -89,7 +89,13 @@ public static class PilotCommand
         {
             command.SetAction(async (parseResult, ct) =>
             {
-                using var client = NodeTargets.Connect(parseResult.GetValue(node), parseResult.GetValue(socket));
+                var (target, unknown) = await NodeTargets.ResolveAsync(parseResult.GetValue(node), ct);
+                if (unknown is not null)
+                {
+                    await error.WriteLineAsync($"pilot: {unknown}");
+                    return 2;
+                }
+                using var client = NodeTargets.Connect(target, parseResult.GetValue(socket));
                 try
                 {
                     return await run(parseResult, client, ct);
