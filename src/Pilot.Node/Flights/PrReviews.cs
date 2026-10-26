@@ -169,26 +169,28 @@ public sealed class PrReviews(
         state.PutPrReview(row with { ReviewerJob = job });
         state.RaiseCard(CardBin.Handled, StartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {reviewer} on {pr} at {read.Head[..Math.Min(8, read.Head.Length)]}", $"in {worktree}");
-        await SetStatusAsync(row, "pending", "reviewing", read.Url, cancellationToken);
+        await SetStatusAsync(row, "pending", "reviewing", PilotMarks.Reviewing, read.Url, cancellationToken);
     }
 
     /// <summary>
-    /// Sets the <see cref="PilotMarks.StatusContext"/> status on the head the review read (#222), as a flight's review does on
-    /// its PR. GitHub refusing it is a For-you card, never a failed review: the status is a mark, the review stands without it.
+    /// Sets the <see cref="PilotMarks.StatusContext"/> status on the head the review read (#222), and the one <c>pilot:</c>
+    /// label, as a flight's review does on its PR: a review of anyone's PR shows in GitHub's list as a flight's does. GitHub
+    /// refusing either is a For-you card, never a failed review: they are marks, the review stands without them.
     /// </summary>
-    private async Task SetStatusAsync(PrReviewRow review, string status, string description, string? link, CancellationToken cancellationToken)
+    private async Task SetStatusAsync(PrReviewRow review, string status, string description, string label, string? link, CancellationToken cancellationToken)
     {
         var subject = Verbs.PrTarget(review.Repo, review.Number);
         try
         {
             await github.SetCommitStatusAsync(review.ClonePath, review.Head, status, description, link, cancellationToken);
+            await github.SetPilotLabelAsync(review.ClonePath, review.Number, label, cancellationToken);
             // A refusal an earlier write left is over once one goes through.
             state.CloseCardsAbout(subject, "set on GitHub", PrMarks.RefusedKind);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             state.CloseCardsAbout(subject, "refused again", PrMarks.RefusedKind);
-            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused the {PilotMarks.StatusContext} status on {review.Repo}#{review.Number}",
+            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused pilot's marks on {review.Repo}#{review.Number}",
                 $"{ex.Message}. The review itself stands.", link: review.Url);
         }
     }
@@ -204,6 +206,14 @@ public sealed class PrReviews(
             _ => ("success", $"commented at {at}"),
         };
     }
+
+    /// <summary>The <c>pilot:</c> label a verdict leaves: changes, passed for an approval, commented for a comment.</summary>
+    internal static string LabelOf(PrReviewRow review) => review.Verdict switch
+    {
+        "changes" => PilotMarks.Changes,
+        "approve" => PilotMarks.Passed,
+        _ => PilotMarks.Commented,
+    };
 
     private static string Clip(string text) => text.Length <= 140 ? text : text[..139] + "…";
 
@@ -317,7 +327,7 @@ public sealed class PrReviews(
             link: review.Url);
         state.PutPrReview(reviewed with { Card = card.Id });
         var (verdictStatus, verdictDescription) = StatusOf(reviewed);
-        await SetStatusAsync(reviewed, verdictStatus, verdictDescription, review.Url, cancellationToken);
+        await SetStatusAsync(reviewed, verdictStatus, verdictDescription, LabelOf(reviewed), review.Url, cancellationToken);
 
         // A reviewer that gave its verdict is done with, after a grace to end its turn, as a flight's is.
         if (review.ReviewerJob is { } job)
@@ -385,7 +395,7 @@ public sealed class PrReviews(
         state.PutPrReview(posting with { PostedId = made.Id, PostedState = made.State, PostedUrl = made.Url });
         // The status links the review now it is there, as a flight's does.
         var (postedStatus, postedDescription) = StatusOf(review);
-        await SetStatusAsync(review, postedStatus, postedDescription, made.Url, cancellationToken);
+        await SetStatusAsync(review, postedStatus, postedDescription, LabelOf(review), made.Url, cancellationToken);
         if (review.Card is { } card)
         {
             var outcome = $"{PostLabel}: review {made.Id}, {made.State}, under {login}";

@@ -313,8 +313,8 @@ public sealed class PrReviewTests : IDisposable
         _github.Statuses.Count.ShouldBe(3);
         _github.Statuses.Last().ShouldBe((_widgetHead, "failure", "changes: One defect.", "https://github.com/acme/widget/pull/7#pullrequestreview-9001"));
         _github.Statuses.ShouldAllBe(s => s.Sha == _widgetHead);
-        // The PR's labels are a flight's: a review of any PR leaves them alone.
-        _github.LabelCalls.ShouldBeEmpty();
+        // The one pilot: label follows the status, so GitHub's PR list shows the review as it shows a flight's.
+        _github.LabelCalls.ShouldBe([(7, "pilot: reviewing"), (7, "pilot: changes"), (7, "pilot: changes")]);
     }
 
     [Fact]
@@ -323,7 +323,7 @@ public sealed class PrReviewTests : IDisposable
         _github.StatusFails = "GitHub refused the status: no permission";
         (await Run(Verbs.ReviewPr, "pr/acme/gadget#9", "controller")).Error.ShouldBeNull();
         var started = _state.Cards(openOnly: true).Single(c => c.Kind == PrMarks.RefusedKind);
-        (started.Bin, started.Title, started.Subject).ShouldBe((CardBin.ForYou, "GitHub refused the pilot/review status on acme/gadget#9", "pr/acme/gadget#9"));
+        (started.Bin, started.Title, started.Subject).ShouldBe((CardBin.ForYou, "GitHub refused pilot's marks on acme/gadget#9", "pr/acme/gadget#9"));
         started.Detail.ShouldNotBeNull().ShouldContain("no permission");
         Row("acme/gadget", 9).State.ShouldBe(PrReviewState.Reviewing);
         _github.Statuses.ShouldBeEmpty();
