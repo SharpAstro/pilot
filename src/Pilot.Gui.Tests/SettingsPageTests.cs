@@ -86,7 +86,7 @@ public sealed class SettingsPageTests
         }
     }
 
-    private const string DefenderLong = @"not excluded: C:\src\sharpastro\pilot, C:\src\sharpastro\tianwen, C:\src\sharpastro\DIR.Lib, C:\src\sharpastro\Console.Lib, C:\src\sharpastro\SdlVulkan.Renderer, C:\Users\ada\.nuget\packages, C:\Program Files\dotnet: every file a build and its tests write is scanned";
+    private const string DefenderLong = @"not excluded, as recorded at the last fix on 2026-10-20: C:\src\sharpastro\pilot, C:\src\sharpastro\tianwen, C:\src\sharpastro\DIR.Lib, C:\src\sharpastro\Console.Lib, C:\src\sharpastro\SdlVulkan.Renderer, C:\Users\ada\.nuget\packages, C:\Program Files\dotnet: every file a build and its tests write is scanned";
 
     /// <summary>A failing defender check shows its Fix button, which sends the node's setup verb; its long list of missing folders wraps and keeps the whole text on hover.</summary>
     [Theory]
@@ -97,7 +97,7 @@ public sealed class SettingsPageTests
     public async Task AFailingDefenderCheckShowsItsFixAndSendsSetupDefender(int width, bool ok)
     {
         var defender = ok
-            ? new SetupCheck { Key = "defender", Title = "Windows Defender exclusions", Ok = true, Optional = true, Line = "7 folders excluded" }
+            ? new SetupCheck { Key = "defender", Title = "Windows Defender exclusions", Ok = true, Optional = true, Line = "7 folders excluded, as recorded at the last fix on 2026-10-27" }
             : new SetupCheck { Key = "defender", Title = "Windows Defender exclusions", Ok = false, Optional = true, Line = DefenderLong, Fix = "Exclude (asks for elevation)" };
         var page = Sample with { Checks = [.. Sample.Checks.Where(c => c.Key != "defender"), defender] };
         using var renderer = new RgbaImageRenderer((uint)width, 900);
