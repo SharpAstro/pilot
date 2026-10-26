@@ -501,7 +501,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     continue;
                 }
                 var choices = current.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = status } : c).ToList();
-                state.UpdateChoices(current.Id, choices);
+                state.UpdateChoices(current.Id, choices, ifStill: current.Choices);
             }
         }
     }
