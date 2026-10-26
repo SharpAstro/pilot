@@ -379,6 +379,25 @@ A PR pilot did not make, in a repo it may not fly, is reviewed from its link (#1
 `pilot status` lists the reviews not over, and under a review whose fixer is on, `fixing, <fixer>, round <n>`; such a
 review stays listed after it closed.
 
+### The `pilot: recheck` label
+
+The node sets one `pilot:` label on a PR to say where it stands (`reviewing`, `changes`, `passed`, `conflicts`, `queued`).
+`pilot: recheck` runs the other way (#286): a person puts it on any open PR of a repo the node tracks to have pilot look
+at it again, whoever worked on it. Every 30 s the node lists each tracked GitHub repo's open PRs (`PrRecheck`) and takes
+a labelled one when it is its own: it holds the flight on that PR, else its own review of it, else no peer node it holds a
+grant for does (a peer that does not answer holds nothing). A PR a peer holds is left to that peer, label and all.
+
+- One recheck of a PR runs at a time, keyed by repo and number, in memory. A label put back while one runs (seen gone,
+  then seen again) runs it once more after it, never beside it; one seen again after the recheck consumed it runs it again.
+- A PR pilot never touched starts a review as `pilot review pr` does, and its label becomes `pilot: reviewing`. One
+  merged or closed meanwhile loses the label; one already in the merge queue is left with `pilot: queued`; each leaves a
+  Handled line (*recheck of pilot#253: already queued*).
+- A recheck that cannot run (gh cannot read the PR or the review cannot start) keeps the label and raises a For-you
+  `pr-recheck-failed` card. It is not tried again until the label has been seen gone, so a PR that cannot be rechecked is
+  not tried at every look: take it off and put it back to try again.
+- A flight's PR and a PR pilot reviewed route to two methods of their own, which for now leave a Handled line saying so and
+  take the label off; later legs of #286 fill them.
+
 ### Liveness: no flight derails silently
 
 The node watches every flying leg's worker (`LegWatch`, every 30 s) and never leaves a stalled one unnoticed:

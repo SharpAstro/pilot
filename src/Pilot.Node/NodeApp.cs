@@ -182,6 +182,13 @@ public static class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<JobRunner>());
         builder.Services.AddSingleton<FlightAdvance>();
         builder.Services.AddHostedService(services => services.GetRequiredService<FlightAdvance>());
+        builder.Services.AddSingleton(services =>
+        {
+            var recheck = ActivatorUtilities.CreateInstance<PrRecheck>(services);
+            recheck.Fleet = services.GetRequiredService<FlightCommander>().Fleet;
+            return recheck;
+        });
+        builder.Services.AddHostedService(services => services.GetRequiredService<PrRecheck>());
         builder.Services.AddSingleton<PrChecks>();
         builder.Services.AddHostedService(services => services.GetRequiredService<PrChecks>());
         builder.Services.AddSingleton<Digest>();

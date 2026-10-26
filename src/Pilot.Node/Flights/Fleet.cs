@@ -35,7 +35,8 @@ public interface IFleetPeer
 /// <summary>How loaded a peer is: its 5-hour window and its flights.</summary>
 /// <param name="Usage">The account's usage as the peer last read it; null before it has read any.</param>
 /// <param name="Flights">Every flight the peer has, landed ones included.</param>
-public sealed record FleetLoad(UsageRow? Usage, FlightRow[] Flights);
+/// <param name="PrReviews">Every PR review the peer has, closed ones included; none when it did not say.</param>
+public sealed record FleetLoad(UsageRow? Usage, FlightRow[] Flights, PrReviewRow[]? PrReviews = null);
 
 /// <summary>Everything judging a peer takes, read of it; null where it could not be read.</summary>
 /// <param name="Name">The peer's machine prefix, or its endpoint when it was not reached.</param>
@@ -126,7 +127,7 @@ public sealed class HeldTokenFleet(string tokenFile) : IFleet
             await using var events = await client.OpenEventsAsync(since: null, stream: null, ct).ConfigureAwait(false);
             var snapshot = await events.ReadAsync(ct).ConfigureAwait(false) as SnapshotEvent
                 ?? throw new IOException($"{Endpoint}'s stream did not start with a snapshot");
-            return new FleetLoad(snapshot.Usage, snapshot.Flights);
+            return new FleetLoad(snapshot.Usage, snapshot.Flights, snapshot.PrReviews);
         }, cancellationToken);
 
         public async Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken)
