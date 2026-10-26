@@ -70,6 +70,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     private readonly Dictionary<string, DateTimeOffset> _nudgedAt = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _answered = new Dictionary<string, int>(StringComparer.Ordinal);
 
+    // By worker job: when a leg's wait ended and the worker was woken for it. The wake counts as the worker's last word, so
+    // the idle grace runs from it and the same worker is not nudged on top of its wake.
+    private readonly Dictionary<string, DateTimeOffset> _wokenAt = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         while (!stopping.IsCancellationRequested)
@@ -178,6 +182,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             {
                 continue;
             }
+            _wokenAt[job] = now;
             var result = await SayAsync(job, $"What you waited for has come: {came}.{(wait.Why.Length > 0 ? $" You waited because: {wait.Why}." : "")} Carry on with your leg `{leg.Name}` of {leg.Flight}.", cancellationToken);
             if (!result.Ok)
             {
@@ -229,6 +234,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             return;
         }
         var since = worker.LastResponseAt ?? worker.StartedAt;
+        if (_wokenAt.TryGetValue(leg.WorkerJob!, out var woken) && woken > since)
+        {
+            since = woken;
+        }
         // A worker idle while a job of its own runs or waits its turn is waiting, as it was told to: the job wakes it, so it
         // is not stalled. Its own by row, or by name: a worker Claude Code continued as a copy is a row of its own, while
         // the job it handed over is still the first row's (TIA1739's j13 rang c205 to c207 as stalls, 2026-10-23).

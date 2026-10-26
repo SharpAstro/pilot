@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using System.Diagnostics;
 using Pilot.Commands;
 using Pilot.Contracts;
@@ -193,6 +194,8 @@ public sealed class CliTests : IAsyncLifetime
             Id = id, Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = state,
             LogPath = Path.Combine(_root, id + ".log"), Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
         };
+        // Recovery runs in the background and fails any Running or Queued row it finds as left behind: let it finish first.
+        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         _node.State.PutJob(Job("j1", JobState.Running));
 
         (await Pilot(_root, "jobs")).Output.ShouldNotContain("holds the queue");

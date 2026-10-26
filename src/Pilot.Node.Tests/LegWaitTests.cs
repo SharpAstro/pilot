@@ -184,6 +184,27 @@ public sealed class LegWaitTests : IDisposable
     }
 
     [Fact]
+    public async Task AnIdleWorkerWhoseLongWaitEndsIsWokenOnceAndNotNudgedOnTopOfIt()
+    {
+        (await Leg(Verbs.WaitLeg, "flight/TIA1/parser", $"path={Flag}")).Ok.ShouldBeTrue();
+        Idle();
+        _time.Advance(TimeSpan.FromMinutes(10));
+        await _watch.LookAsync(Ct);
+        _said.ShouldBeEmpty();
+
+        await File.WriteAllTextAsync(Flag, "x", Ct);
+        _time.Advance(TimeSpan.FromMinutes(1));
+        await _watch.LookAsync(Ct);
+        _said.ShouldHaveSingleItem();
+        Open().Concat(_state.Cards()).Where(c => c.Kind == "worker-nudged").ShouldBeEmpty();
+
+        _time.Advance(TimeSpan.FromMinutes(1));
+        await _watch.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+        _state.Cards().Where(c => c.Kind == "worker-nudged").ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task AnIdleWorkerOnALegThatWaitsIsNotNudgedOrRungFor()
     {
         (await Leg(Verbs.WaitLeg, "flight/TIA1/parser", $"path={Flag}")).Ok.ShouldBeTrue();
