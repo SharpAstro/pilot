@@ -256,7 +256,15 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
         var sessions = SessionLine.Order(shown.SelectMany(f => f.Feed.Screen(now).Lines.Select(l => l with { Node = Mark(f.Mark) })));
         var flights = FlightLine.Order(shown.SelectMany(f => f.Feed.Flights(now).Lines.Select(l => l with { Node = Mark(f.Mark) })));
         var jobs = JobLine.Order(shown.SelectMany(f => f.Feed.JobsPage(now).Lines.Select(l => l with { Node = Mark(f.Mark) })));
-        var cards = CardsScreen.Merge(shown.Select(f => (Mark(f.Mark), f.Feed.Cards())), feeds[0].Feed.Cards().Watchtower);
+        // A node the window cannot reach gives the panel none of its cards, which may be long answered and cannot be commanded
+        // now (DE1, 2026-10-26: its stale copy stood on the panel and in its counts for hours). One line each says how many it
+        // held, and the node's own answer fills the panel again when it is back. Read once per node, so a node that answers
+        // between two reads is not both.
+        var reach = shown.Select(f => (f.Mark, f.Feed, f.Feed.Reach)).ToList();
+        var cards = CardsScreen.Merge(
+            reach.Where(f => f.Reach.Connected).Select(f => (Mark(f.Mark), f.Feed.Cards())),
+            feeds[0].Feed.Cards().Watchtower,
+            reach.Where(f => !f.Reach.Connected && f.Reach.DownSince is not null).Select(f => HeldNode.Of(f.Mark, f.Reach.DownSince!.Value, f.Feed.Cards(), now)));
         var repos = RepoLine.Order(shown.SelectMany(f => f.Feed.Repos(now, reposWanted).Lines.Select(l => l.Marked(Mark(f.Mark)))));
         var source = several ? $"{hereSessions.Source} · {filter.Choices.Count} nodes{(filter.All ? "" : $", showing {string.Join(", ", filter.Choices.Where(c => filter.Shows(c)).Select(c => c.Name))}")}" : hereSessions.Source;
         return new FleetPages(

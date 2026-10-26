@@ -668,6 +668,14 @@ The right panel is the watchtower's: its state and context, its Remote Control l
 (Merge is a card's) and what was handled, and at its foot a **Chat with the watchtower** shortcut to the Chat page (the
 panel once had a box to tell it things; that box is the chat's now).
 
+A node the window cannot reach (its stream is down: the same `Connected` the Fleet page shows) leaves the panel with its
+cards, which may be long answered and cannot be commanded now (#325). In their place, at the foot of **For you**, one dim
+line per such node reads `DE1 is unreachable since 10:31 · 3 ringing, 2 for you held` (the time is today's clock, or the
+day before it; `NodeFeed` stamps `DownSince` on its first failed open or drop, and clears it when the node answers). The
+counts are those of its last-known open cards. The panel's own summary and Home's **Waiting** count the nodes that answer
+only. A long node name is cut with an ellipsis, the whole line on hover; a click opens the Fleet page with that node's row
+selected. When the node answers again its cards come back from what it reports, and the line goes.
+
 **The Chat page** (#207, Ctrl+2) is the conversation with the node's watchtower, in the window, where a command bar once was.
 It is a page of the rail, not a dock under the right panel: the panel is 300 units wide, a conversation with tables of
 output and Markdown replies wants the page's width, and a page keeps its own scroll and the keyboard the way Sessions' say

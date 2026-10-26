@@ -4,6 +4,60 @@ using Pilot.Contracts;
 namespace Pilot.Ui;
 
 /// <summary>
+/// A node the window cannot reach, as the panel holds it in place of its cards: its last-known open cards are left off the
+/// panel (they may be long answered, and a click on one would command a node that is not there), and one line says how many it
+/// held, until the node answers again and its cards come back from what it reports.
+/// </summary>
+/// <param name="Node">The node, as its cards were marked.</param>
+/// <param name="Since">When its stream went down.</param>
+/// <param name="Rings">How many of its last-known open cards ring.</param>
+/// <param name="ForYou">How many of its last-known open cards are for you.</param>
+/// <param name="Now">The moment the panel was merged, which says whether <paramref name="Since"/> is today.</param>
+internal sealed record HeldNode(NodeMark Node, DateTimeOffset Since, int Rings, int ForYou, DateTimeOffset Now)
+{
+    /// <summary>The node's last-known open cards, counted from <paramref name="lastKnown"/>.</summary>
+    public static HeldNode Of(NodeMark node, DateTimeOffset since, CardsScreen lastKnown, DateTimeOffset now) =>
+        new(node, since, lastKnown.Open.Count(c => c.Bin == CardBin.Ring), lastKnown.Open.Count(c => c.Bin == CardBin.ForYou), now);
+
+    /// <summary>The longest a node's name is in the line before it ends in an ellipsis (the line has the whole of it on hover).</summary>
+    internal const int NameFits = 16;
+
+    /// <summary>The most the line says before it ends in an ellipsis; its two lines in the panel hold about this much.</summary>
+    internal const int LineFits = 84;
+
+    /// <summary>When it went down in the reader's own time: the clock alone today, with the day before it on another.</summary>
+    public string When
+    {
+        get
+        {
+            var at = Since.ToLocalTime();
+            return at.Date == Now.ToLocalTime().Date ? at.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture) : at.ToString("ddd d MMM HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+        }
+    }
+
+    /// <summary>What it held, <c>3 ringing, 2 for you held</c>; empty when it held nothing.</summary>
+    public string Counts
+    {
+        get
+        {
+            var parts = new[] { Rings > 0 ? $"{Rings} ringing" : null, ForYou > 0 ? $"{ForYou} for you" : null }.Where(s => s is not null).ToList();
+            return parts.Count == 0 ? "" : string.Join(", ", parts) + " held";
+        }
+    }
+
+    /// <summary>The whole line: <c>DE1 is unreachable since 10:31 · 3 ringing, 2 for you held</c>.</summary>
+    public string Line => Say(Node.Name);
+
+    /// <summary>The line as the panel shows it: a long name, then a long line, ended in an ellipsis, so the counts stay in sight.</summary>
+    public string Shown => CardsView<RgbaImage>.Ellipsize(Say(CardsView<RgbaImage>.Ellipsize(Node.Name, NameFits)), LineFits);
+
+    private string Say(string name) => $"{name} is unreachable since {When}{(Counts.Length > 0 ? " · " + Counts : "")}";
+
+    /// <summary>Whether <see cref="Shown"/> is less than <see cref="Line"/>: the whole line is then the hover text.</summary>
+    public bool Cut => Shown != Line;
+}
+
+/// <summary>
 /// What the right panel shows: the watchtower (its state and Remote Control link, when the node keeps one), the open
 /// cards, rings first, and the latest handled lines.
 /// </summary>
@@ -28,14 +82,21 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
     // Each card's node, by the card itself (two nodes' cards may share an id); none on a panel of one node.
     private IReadOnlyDictionary<CardRow, NodeMark> _nodes = new Dictionary<CardRow, NodeMark>(ReferenceEqualityComparer.Instance);
 
+    /// <summary>
+    /// The nodes the window cannot reach, each in place of its cards: after the open cards, one line each. Never counted in the
+    /// summary, which reads the nodes that answer.
+    /// </summary>
+    public IReadOnlyList<HeldNode> Held { get; init; } = [];
+
     /// <summary>The node <paramref name="card"/> was raised on, when the panel merges several; null for this window's alone.</summary>
     public NodeMark? NodeOf(CardRow card) => _nodes.GetValueOrDefault(card);
 
     /// <summary>
     /// Several nodes' panels as one: every open card, rings first and newest first, each with its node; the five latest
     /// handled lines of them all; and <paramref name="watchtower"/>, this window's node's, whose box tells it things.
+    /// <paramref name="held"/> are the nodes left out for being out of reach, whose panels are not among <paramref name="panels"/>.
     /// </summary>
-    public static CardsScreen Merge(IEnumerable<(NodeMark? Node, CardsScreen Screen)> panels, SessionRow? watchtower)
+    public static CardsScreen Merge(IEnumerable<(NodeMark? Node, CardsScreen Screen)> panels, SessionRow? watchtower, IEnumerable<HeldNode>? held = null)
     {
         var nodes = new Dictionary<CardRow, NodeMark>(ReferenceEqualityComparer.Instance);
         var open = new List<CardRow>();
@@ -58,6 +119,7 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
         {
             _nodes = nodes,
             Merged = [.. merged.OrderByDescending(c => c.ClosedAt)],
+            Held = [.. held ?? []],
         };
     }
 
@@ -118,14 +180,14 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
                 nodes[card] = node;
             }
         }
-        return (new CardsScreen(open, Handled, Watchtower) { _nodes = nodes, _summary = Summary, Merged = Merged }, waiting, closed);
+        return (new CardsScreen(open, Handled, Watchtower) { _nodes = nodes, _summary = Summary, Merged = Merged, Held = Held }, waiting, closed);
     }
 
     // A held panel's summary: the cards as they are, not as held.
     private string? _summary;
 
     /// <summary>Whether the panel has anything to show: the watchtower, an open card or a handled line. Empty, it takes no room.</summary>
-    public bool HasAny => Watchtower is not null || Open.Count > 0 || Handled.Count > 0 || Merged.Count > 0;
+    public bool HasAny => Watchtower is not null || Open.Count > 0 || Handled.Count > 0 || Merged.Count > 0 || Held.Count > 0;
 
     /// <summary>The panel's head: <c>2 ringing · 1 for you</c>, or <c>Nothing waits on you</c>.</summary>
     public string Summary
@@ -193,6 +255,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     /// <summary>Asks a node for a grant, as the Fleet page's Connect does: the pill on a watch-only card.</summary>
     public Action<NodeMark>? OnConnect { get; set; }
+
+    /// <summary>Opens the Fleet page on <paramref name="node"/>'s row: what a click on its held line (a node out of reach) does.</summary>
+    public Action<NodeMark>? OnFleet { get; set; }
 
     /// <summary>Opens the watchtower's Remote Control link.</summary>
     public Action<string>? OnOpen { get; set; }
@@ -367,6 +432,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             blocks.Add(Layout.Builder.Spacer().RowH(8f));
             blocks.Add(Card(card, screen.NodeOf(card), closed: true, merged: true));
         }
+        // A node out of reach leaves the panel, one dim line each at the foot of For you: a click opens its row on the Fleet page.
+        foreach (var held in screen.Held)
+        {
+            blocks.Add(Layout.Builder.Spacer().RowH(8f));
+            blocks.Add(HeldLine(held));
+        }
         if (screen.Handled.Count > 0)
         {
             blocks.Add(Layout.Builder.Spacer().RowH(16f));
@@ -391,6 +462,25 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         var stack = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).Stretch();
         return Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch();
     }
+
+    /// <summary>The panel's line for a node out of reach: dim, two lines at most, the whole text on hover once it is cut.</summary>
+    private Layout.Node HeldLine(HeldNode held)
+    {
+        var line = WrappedProse.Of(held.Shown, 11f, HeldText, HeldLines)
+            .BgHover(CardHover)
+            .Follows(new HitResult.ButtonHit($"cards:node:{held.Node.Key}"), _ => OnFleet?.Invoke(held.Node));
+        // Also on hover when it is not cut: the click's way, which the dim line alone does not say.
+        return line.WithTooltip(held.Cut ? held.Line : $"{held.Line}. Open {held.Node.Name} on the Fleet page.", Layout.DockSide.Left);
+    }
+
+    /// <summary>
+    /// The held line's words: dim, but a step up from <see cref="Dim"/>, whose 3.9:1 on <see cref="CardHover"/> is short of 4.5:1 where the
+    /// line, a click, is lit under the pointer. 6.6:1 on the panel and 5.1:1 on the hover.
+    /// </summary>
+    private static readonly RGBAColor32 HeldText = new(0x9a, 0x9d, 0xac, 0xff);
+
+    /// <summary>How many lines a node's held line may take: its counts are what it is for, so it wraps rather than hides them.</summary>
+    internal const int HeldLines = 2;
 
     /// <summary>How many lines a card's detail may take before it is cut.</summary>
     internal const int DetailLines = 3;
