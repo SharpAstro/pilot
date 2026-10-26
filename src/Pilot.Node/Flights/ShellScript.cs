@@ -27,7 +27,7 @@ public sealed class ShellScript : IDisposable
     {
         if (!OperatingSystem.IsWindows())
         {
-            return new ShellScript(new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", command }, WorkingDirectory = cwd }, null);
+            return new ShellScript(Quiet(new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", command }, WorkingDirectory = cwd }), null);
         }
         var script = Path.Combine(Path.GetTempPath(), $"pilot-{Guid.NewGuid():N}.ps1");
         File.WriteAllText(script, Body(command), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
@@ -36,7 +36,20 @@ public sealed class ShellScript : IDisposable
         {
             start.ArgumentList.Add(arg);
         }
-        return new ShellScript(start, script);
+        return new ShellScript(Quiet(start), script);
+    }
+
+    /// <summary>
+    /// The build servers a dotnet build leaves running are switched off for the line: MSBuild's reused worker nodes and the
+    /// compiler server outlive the build, inherit its output, and kept a job's pipe open after its tests had finished, so the
+    /// job read as running and the node's one slot stayed taken (DE1's j302 and SE1's j122, 2026-10-26).
+    /// </summary>
+    private static ProcessStartInfo Quiet(ProcessStartInfo start)
+    {
+        start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
+        start.Environment["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0";
+        start.Environment["UseSharedCompilation"] = "false";
+        return start;
     }
 
     /// <summary>
