@@ -62,6 +62,10 @@ public sealed record SessionRow
     /// <summary>The flight code the session flies in (<c>TIA1611</c>), or null for the watchtower and ad hoc sessions.</summary>
     public string? Flight { get; init; }
 
+    /// <summary>What the session recorded to be looked at while in no flight (<c>pilot artifact</c>); null when nothing.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Artifact[]? Artifacts { get; init; }
+
     /// <summary>The leg the session flies (<c>node</c>), or null when it flies none.</summary>
     public string? Leg { get; init; }
 

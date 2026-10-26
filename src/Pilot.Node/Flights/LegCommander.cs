@@ -37,6 +37,9 @@ public sealed partial class LegCommander(
     public RepoSync? SiblingSync { get; set; }
 
     /// <summary>The CLI workers are told to run, found once.</summary>
+    /// <summary>Where the images an artifact names are kept; null keeps none (a test's commander).</summary>
+    public Attachments? Attachments { get; set; }
+
     public string Cli { get; init; } = Briefs.PilotCli();
 
     /// <summary>The node's socket when it is not the default one, so a worker's CLI reaches this node; null otherwise.</summary>
@@ -1791,6 +1794,10 @@ public sealed partial class LegCommander(
             title = Uri.TryCreate(location, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? location : Path.GetFileName(location);
         }
         var artifact = new Artifact { Title = title, Location = location, At = time.GetUtcNow() };
+        if (Attachments is not null)
+        {
+            artifact = Attachments.Keep(flight.Code, artifact, leg.Artifacts.FirstOrDefault(a => a.Title == title));
+        }
         state.PutLeg(leg with { Artifacts = [.. leg.Artifacts.Where(a => a.Title != title), artifact] });
     }
 

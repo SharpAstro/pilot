@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Pilot.Contracts;
+using Pilot.Node.Flights;
 
 namespace Pilot.Node.Sessions;
 
@@ -47,6 +48,9 @@ public sealed class SessionTracker : BackgroundService
 
     /// <summary>The hooks sessions post: a row follows its session's latest one while the session runs.</summary>
     public HookBook Hooks { get; init; } = new();
+
+    /// <summary>Where the images a session's artifacts name are kept; an archived session's copies go. Null keeps none.</summary>
+    public Attachments? Attachments { get; init; }
 
     /// <summary>
     /// A session working in a flight's worktree belongs to that flight, however it was started: an ad hoc session opened
@@ -359,6 +363,7 @@ public sealed class SessionTracker : BackgroundService
             EarlierSessionIds = _rows.TryGetValue(id, out var known) ? known.EarlierSessionIds : null,
             // Put away stays put away while it stays ended; running again brings it back.
             Archived = known is { Archived: true } && ended,
+            Artifacts = known?.Artifacts,
             // The same subagents as before are the same array, or the row would differ on every poll.
             Subagents = known?.Subagents is { } were && built.Subagents is { } are && were.SequenceEqual(are) ? were : built.Subagents,
         });
@@ -395,9 +400,42 @@ public sealed class SessionTracker : BackgroundService
 
             foreach (var archived in rows)
             {
+                // Its copies go with it: the artifacts stay listed, without what they kept.
+                if (!undo && archived.Artifacts is { Length: > 0 } kept && kept.Any(a => a.Attachment is not null))
+                {
+                    Attachments?.Remove(archived.Id);
+                    Put(archived with { Archived = true, Artifacts = [.. kept.Select(a => a with { Attachment = null, AttachmentExt = null })] });
+                    continue;
+                }
                 Put(archived with { Archived = !undo });
             }
             return _state.Complete(command, null, way: $"{rows.Count} {(rows.Count == 1 ? "session" : "sessions")} {(undo ? "back" : "archived")}");
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Records an artifact on a session outside any flight, its image copied under the session's own folder; a second of the
+    /// same title replaces the first. A <see cref="FlightException"/> says why not: no such session, or an image that is not there.
+    /// </summary>
+    public void AddArtifact(string id, Artifact artifact)
+    {
+        _gate.Wait();
+        try
+        {
+            if (!_rows.TryGetValue(id, out var row))
+            {
+                throw new FlightException($"there is no session {id}");
+            }
+            var had = row.Artifacts ?? [];
+            if (Attachments is not null)
+            {
+                artifact = Attachments.Keep(row.Id, artifact, had.FirstOrDefault(a => a.Title == artifact.Title));
+            }
+            Put(row with { Artifacts = [.. had.Where(a => a.Title != artifact.Title), artifact] });
         }
         finally
         {

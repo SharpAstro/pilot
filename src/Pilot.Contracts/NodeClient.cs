@@ -88,6 +88,14 @@ public sealed class NodeClient : IDisposable
             ?? throw new HttpRequestException($"The node answered with an empty body ({(int)response.StatusCode})");
     }
 
+    /// <summary><c>GET /api/v1/attachments/&lt;id&gt;</c>: the copy the node keeps of an image: its status, content type and bytes (none unless 200).</summary>
+    public async Task<(System.Net.HttpStatusCode Status, string? ContentType, byte[] Bytes)> GetAttachmentAsync(string id, CancellationToken cancellationToken)
+    {
+        using var response = await _http.GetAsync(NodeWire.AttachmentRoute(id), cancellationToken).ConfigureAwait(false);
+        var bytes = response.IsSuccessStatusCode ? await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false) : [];
+        return (response.StatusCode, response.Content.Headers.ContentType?.MediaType, bytes);
+    }
+
     /// <summary><c>GET /api/v1/node</c>: which node this is.</summary>
     public async Task<NodeInfo> GetNodeAsync(CancellationToken cancellationToken)
     {

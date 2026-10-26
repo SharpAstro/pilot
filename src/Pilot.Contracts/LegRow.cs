@@ -127,6 +127,17 @@ public sealed record Artifact
     public required string Location { get; init; }
 
     public required DateTimeOffset At { get; init; }
+
+    /// <summary>
+    /// The id of the copy the node keeps of an image (<see cref="NodeWire.AttachmentRoute"/> serves it), which outlives the
+    /// file at <see cref="Location"/>; null for a URL, a file that is not an image, or an artifact recorded before copies.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Attachment { get; init; }
+
+    /// <summary>The copy's extension without the dot (<c>png</c>); null when there is no <see cref="Attachment"/>.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? AttachmentExt { get; init; }
 }
 
 /// <summary>One step of a leg's checklist.</summary>
