@@ -334,6 +334,14 @@ A PR pilot did not make, in a repo it may not fly, is reviewed from its link (#1
   linking to the review), and a second post is refused, as is one after a call that went and never said back (it may
   be on the PR; look there). Only a post GitHub refused outright may go again. Posting is a write to GitHub in the
   controller's name, a gate like a merge: refused from the watchtower, and from the reviewer.
+- **Queued when green.** A review whose verdict is approve or comment puts its PR in the base's merge queue by itself,
+  at the reviewed head (`IGitHub.MergeAsync`, `expectedHeadOid`), once the PR is open and not a draft, its head is
+  still the reviewed head and its checks pass; the sweep polls, also after the card closed, and a Handled
+  `pr-review-queued` card says it (*reviewed <verdict>, checks green*). Pending checks wait; failed checks, a new
+  head, a closed PR or a changes verdict queue nothing, and the review is decided once (`QueuedAt` or `QueueNote` on
+  it, so a restart does not redo it). A base with no merge queue raises a For-you `pr-review-merge` card with a
+  **Merge** choice (`merge pr/<owner>/<repo>#<n> <head>`); GitHub refusing to queue is a `pr-review-queue-refused`
+  card with the same choice.
 - **Nothing left behind.** Once that card closes (dismissed, or answered), the reviewer is stopped if it still runs and
   the worktree is removed, whatever it holds (a build's output is nobody's work), at once and by a sweep every 30 s
   that a node restart cannot skip. One held open is said on a For-you `pr-review-left` card and tried again. A fresh

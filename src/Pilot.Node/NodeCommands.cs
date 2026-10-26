@@ -133,6 +133,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return await Get<SessionMessenger>().CompactAsync(command, cancellationToken);
         }
+        if (command.Verb == Verbs.Merge && command.Target.StartsWith(Verbs.PrTargetPrefix, StringComparison.Ordinal))
+        {
+            return await Get<PrReviews>().RunAsync(command, cancellationToken);
+        }
         if (FlightCommander.Handles(command.Verb))
         {
             return await Get<FlightCommander>().RunAsync(command, cancellationToken);

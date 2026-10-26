@@ -84,6 +84,9 @@ public sealed class PrReviews(
                 case Verbs.PostReview:
                     await PostAsync(pr, command, cancellationToken);
                     break;
+                case Verbs.Merge:
+                    await MergeAsync(pr, command, cancellationToken);
+                    break;
             }
         }
         catch (FlightException ex)
@@ -628,11 +631,117 @@ public sealed class PrReviews(
             {
                 await EndAsync(review, "its card closed", cancellationToken);
             }
+            // Also a review whose card closed: the queue watch goes on until the review is decided.
+            foreach (var review in state.PrReviews().Where(r => r is { Verdict: "approve" or "comment", QueuedAt: null, QueueNote: null, State: not PrReviewState.Reviewing }))
+            {
+                await QueueWhenGreenAsync(review, cancellationToken);
+            }
         }
         finally
         {
             _one.Release();
         }
+    }
+
+    /// <summary>The Handled line a queued review leaves.</summary>
+    public const string QueuedKind = "pr-review-queued";
+
+    /// <summary>The card of a reviewed PR whose base has no merge queue: its Merge choice is a flight's.</summary>
+    public const string MergeKind = "pr-review-merge";
+
+    /// <summary>The card said when GitHub refused to queue a reviewed PR.</summary>
+    public const string QueueRefusedKind = "pr-review-queue-refused";
+
+    /// <summary>
+    /// A reviewed PR whose verdict is approve or comment goes in its base's merge queue at the reviewed head once its checks
+    /// are green (#279). Pending checks and a draft wait for the next sweep; anything else decides the review once and for all.
+    /// </summary>
+    private async Task QueueWhenGreenAsync(PrReviewRow review, CancellationToken cancellationToken)
+    {
+        var subject = Verbs.PrTarget(review.Repo, review.Number);
+        PullRequest read;
+        try
+        {
+            read = await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken);
+        }
+        catch (FlightException)
+        {
+            return;
+        }
+        var at = review.Head[..Math.Min(8, review.Head.Length)];
+        if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
+        {
+            state.PutPrReview(review with { QueueNote = $"the PR is {read.State.ToLowerInvariant()}" });
+            return;
+        }
+        if (read.Draft)
+        {
+            return;
+        }
+        if (!string.Equals(read.Head, review.Head, StringComparison.OrdinalIgnoreCase))
+        {
+            state.PutPrReview(review with { QueueNote = $"its head moved to {read.Head[..Math.Min(8, read.Head.Length)]} after the review of {at}" });
+            return;
+        }
+        var checks = await github.ChecksSummaryAsync(review.ClonePath, review.Number, cancellationToken);
+        if (checks?.Status == ChoiceStatus.Failing)
+        {
+            state.PutPrReview(review with { QueueNote = $"its checks fail{(checks.FailedName is { } name ? $" ({name})" : "")}" });
+            return;
+        }
+        if (checks?.Status != ChoiceStatus.Passing)
+        {
+            return;
+        }
+        if (await github.MergeQueueAsync(review.ClonePath, review.Number, cancellationToken) is null)
+        {
+            state.PutPrReview(review with { QueueNote = $"{read.Base} has no merge queue" });
+            state.RaiseCard(CardBin.ForYou, MergeKind, subject, $"{review.Repo}#{review.Number} is reviewed {review.Verdict} and green, but {read.Base} has no merge queue",
+                $"Reviewed {review.Verdict} at {at}, checks green. Merge it when you are ready.",
+                [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
+            return;
+        }
+        try
+        {
+            await github.MergeAsync(review.ClonePath, review.Number, review.Head, Models.MergeMethod, cancellationToken);
+        }
+        catch (FlightException ex)
+        {
+            state.PutPrReview(review with { QueueNote = $"GitHub refused to queue it: {ex.Message}" });
+            state.RaiseCard(CardBin.ForYou, QueueRefusedKind, subject, $"GitHub refused to queue {review.Repo}#{review.Number}", ex.Message,
+                [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
+            return;
+        }
+        state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });
+        state.RaiseCard(CardBin.Handled, QueuedKind, subject, $"Queued {review.Repo}#{review.Number} in {read.Base}'s merge queue at {at}",
+            $"Reviewed {review.Verdict}, checks green.", link: review.Url);
+    }
+
+    /// <summary>The Merge choice of a reviewed PR's card: the PR joins its base's merge queue, or merges, at the head the card named.</summary>
+    private async Task MergeAsync(PrRef pr, CommandRequest command, CancellationToken cancellationToken)
+    {
+        if (Of(pr) is not { } review)
+        {
+            throw new FlightException($"{pr} has no review; review-pr starts one");
+        }
+        var head = (command.Args ?? []).FirstOrDefault()?.Trim() ?? "";
+        if (head.Length < 7)
+        {
+            throw new FlightException("merge needs the head commit you reviewed (7 characters at least)");
+        }
+        var read = await github.PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken);
+        if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException($"{pr} is {read.State.ToLowerInvariant()}, not open");
+        }
+        if (!read.Head.StartsWith(head, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException($"{pr}'s head moved to {read.Head[..Math.Min(8, read.Head.Length)]} past the {head[..7]} reviewed: review it again");
+        }
+        var queued = await github.MergeAsync(review.ClonePath, pr.Number, read.Head, Models.MergeMethod, cancellationToken);
+        state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });
+        state.RaiseCard(CardBin.Handled, QueuedKind, Verbs.PrTarget(pr.Repo, pr.Number),
+            queued ? $"Queued {pr} in {read.Base}'s merge queue" : $"Merged {pr}", $"{command.Who} chose Merge at {head[..7]}.", link: review.Url);
     }
 
     /// <summary>Ends a review: its reviewer stopped, its worktree removed, its open cards closed. A worktree held open is said on a card and tried again.</summary>
@@ -658,7 +767,8 @@ public sealed class PrReviews(
             return;
         }
         state.PutPrReview(review with { State = PrReviewState.Closed, ClosedAt = time.GetUtcNow() });
-        state.CloseCardsAbout(subject, why);
+        // The Merge card of a reviewed PR outlives the verdict card; a fresh review of the PR is the one thing that retires it.
+        state.CloseCardsAbout(subject, why, [ReadyKind, LegWatch.ReviewStalled, PrMarks.RefusedKind, LeftKind, .. why == "a fresh review started" ? new[] { MergeKind, QueueRefusedKind } : []]);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stopping)

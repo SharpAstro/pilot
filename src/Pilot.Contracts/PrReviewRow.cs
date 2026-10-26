@@ -71,6 +71,12 @@ public sealed record PrReviewRow
     /// <summary>The posted review's page.</summary>
     public string? PostedUrl { get; init; }
 
+    /// <summary>When the node put the PR in its base's merge queue after an approve or comment verdict (#279); a review is decided once.</summary>
+    public DateTimeOffset? QueuedAt { get; init; }
+
+    /// <summary>Why the node did not queue it, and never will for this review: a changes-free PR that moved, failed, closed, or has no queue.</summary>
+    public string? QueueNote { get; init; }
+
     public required DateTimeOffset StartedAt { get; init; }
 
     public DateTimeOffset? FinishedAt { get; init; }
