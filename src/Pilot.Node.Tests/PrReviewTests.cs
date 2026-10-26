@@ -446,6 +446,37 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
+    public async Task AHeldReviewWorktreeIsSaidOnceAndAgainWhenItGoesNotAtEverySweep()
+    {
+        // A file held open keeps a folder only on Windows; elsewhere the removal goes through and there is nothing to hold.
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        await ReviewedWidget("approve");
+        var row = Row("acme/widget", 7);
+        _state.CloseCard(row.Card!, "dismissed", "controller");
+        var held = new FileStream(Path.Combine(row.Worktree, "held.txt"), FileMode.Create, FileAccess.ReadWrite, FileShare.None);
+        try
+        {
+            for (var i = 0; i < 3; i++)
+            {
+                await _reviews.SweepAsync(Ct);
+            }
+            Row("acme/widget", 7).State.ShouldBe(PrReviewState.Reviewed);
+            _state.Cards().Where(c => c.Kind == PrReviews.LeftKind).Select(c => c.Title).ShouldBe(["acme/widget#7's review worktree is still held; the node removes it when it is let go"]);
+        }
+        finally
+        {
+            held.Dispose();
+        }
+
+        await _reviews.SweepAsync(Ct);
+        Row("acme/widget", 7).State.ShouldBe(PrReviewState.Closed);
+        _state.Cards().Where(c => c.Kind == PrReviews.LeftKind).Select(c => c.Title).ShouldContain("acme/widget#7's review worktree is removed, let go at last");
+    }
+
+    [Fact]
     public async Task FailedChecksQueueNothing()
     {
         await ReviewedWidget("approve", checks: ChoiceStatus.Failing);
