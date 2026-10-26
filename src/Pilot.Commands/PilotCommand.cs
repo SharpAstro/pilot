@@ -1025,7 +1025,7 @@ public static class PilotCommand
                 FlightState.Landed => "landed",
                 _ => "flying",
             };
-            text.AppendLine($"{flight.Code}  {flight.Title ?? $"issue #{flight.Issue}"}  ({flight.Repo} #{flight.Issue}, {state})");
+            text.AppendLine($"{flight.Code}  {flight.Title ?? flight.Item.Noun}  ({flight.Repo} {flight.Item.Display}, {state})");
             text.AppendLine($"  plane {flight.Worktree} on {flight.Branch}{(flight.PullRequestUrl is { } url ? $", PR {url}" : "")}");
             foreach (var leg in snapshot.Legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order))
             {

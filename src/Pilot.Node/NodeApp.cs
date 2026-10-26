@@ -69,6 +69,13 @@ public static class NodeApp
             var flights = ActivatorUtilities.CreateInstance<FlightCommander>(services);
             flights.Models = services.GetRequiredService<RoleModels>();
             flights.Machine = options.Machine;
+            var models = services.GetRequiredService<RoleModels>();
+            var trackers = new List<ITracker> { new ShortcutTracker(new HttpClient { Timeout = TimeSpan.FromSeconds(30) }, () => ShortcutTracker.TokenFrom(models.ShortcutToken)) };
+            if (services.GetService<IGitHub>() is { } gitHub)
+            {
+                trackers.Add(new GitHubTracker(gitHub));
+            }
+            flights.Trackers = new Trackers(trackers);
             // The nodes this user's own grants reach (pilot connect): the file beside the node's data, as the clients keep it.
             flights.Fleet = new HeldTokenFleet(Environment.GetEnvironmentVariable("PILOT_CLIENT_GRANTS") is { Length: > 0 } grants
                 ? grants

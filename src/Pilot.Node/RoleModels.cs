@@ -160,6 +160,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>The Shortcut token the settings hold (<see cref="NodeSettings.ShortcutTokenKey"/>), in force at once; null when none is saved.</summary>
+    public string? ShortcutToken
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.ShortcutToken;
+            }
+        }
+    }
+
     /// <summary>Whether the autopilot is on (<see cref="NodeSettings.AutopilotKey"/>): in force at once, and off unless the person saved it on.</summary>
     public bool Autopilot
     {

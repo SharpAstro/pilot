@@ -917,7 +917,7 @@ public sealed partial class LegCommander(
         if (pr is null || !string.Equals(pr.State, "OPEN", StringComparison.OrdinalIgnoreCase))
         {
             var title = string.Join(' ', command.Args ?? []).Trim();
-            pr = await github.CreateAsync(flight.RepoPath, flight.Branch, BaseBranch(flight), $"{flight.Code}: {(title.Length > 0 ? title : flight.Title ?? $"issue #{flight.Issue}")}", PrBody(flight, legs), cancellationToken);
+            pr = await github.CreateAsync(flight.RepoPath, flight.Branch, BaseBranch(flight), $"{flight.Code}: {(title.Length > 0 ? title : flight.Title ?? flight.Item.Noun)}", PrBody(flight, legs), cancellationToken);
         }
         state.PutFlight(flight with { PullRequest = pr.Number, PullRequestUrl = pr.Url });
 
@@ -1227,7 +1227,7 @@ public sealed partial class LegCommander(
         var legs = state.Legs(flight.Code);
         state.RaiseCard(CardBin.Ring, PrReady, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}'s PR #{pr.Number} is ready to merge",
-            $"{flight.Title ?? $"issue #{flight.Issue}"}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {pr.Head[..Math.Min(8, pr.Head.Length)]}. {reviewed}: {review}.",
+            $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {pr.Head[..Math.Min(8, pr.Head.Length)]}. {reviewed}: {review}.",
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url);
     }
 
@@ -1293,7 +1293,7 @@ public sealed partial class LegCommander(
             }
         }
         body.AppendLine();
-        body.AppendLine($"Closes #{flight.Issue}.");
+        body.AppendLine(flight.Tracker == TrackerKind.GitHub ? $"Closes {flight.Item.Display}." : $"Shortcut story [{flight.Item.Display}].");
         foreach (var folded in flight.FoldedIn)
         {
             body.AppendLine($"Closes #{folded.Number} (folded in from {folded.From}).");

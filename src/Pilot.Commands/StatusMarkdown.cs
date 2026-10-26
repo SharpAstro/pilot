@@ -67,8 +67,8 @@ internal static class StatusMarkdown
                 FlightState.Landed => "landed",
                 _ => "flying",
             };
-            text.AppendLine($"### {flight.Code} · {Text(flight.Title ?? $"issue #{flight.Issue}")}").AppendLine();
-            var issue = $"{flight.Repo} #{flight.Issue}";
+            text.AppendLine($"### {flight.Code} · {Text(flight.Title ?? flight.Item.Noun)}").AppendLine();
+            var issue = $"{flight.Repo} {flight.Item.Display}";
             var line = new List<string>
             {
                 $"**{Text(state)}**",

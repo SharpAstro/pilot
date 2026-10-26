@@ -17,6 +17,15 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
     /// <summary>The settings in force: whether the node is in maintenance. A test's commander takes every flight.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
 
+    /// <summary>The trackers a work item's title is read from; null reads GitHub issues only, through <c>github</c>, and refuses any other tracker's item given without a title.</summary>
+    public Trackers? Trackers
+    {
+        get => _trackers ?? (github is null ? null : _trackers = new Trackers([new GitHubTracker(github)]));
+        set => _trackers = value;
+    }
+
+    private Trackers? _trackers;
+
     /// <summary>The machine's prefix, as a refusal names it.</summary>
     public string Machine { get; set; } = "this node";
 
@@ -81,16 +90,21 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             throw new FlightException($"create-flight takes a repo target, {Verbs.RepoTargetPrefix}<path to its checkout>, not {command.Target}");
         }
         var args = command.Args ?? [];
-        if (args.Length == 0 || !int.TryParse(args[0].TrimStart('#'), NumberStyles.None, CultureInfo.InvariantCulture, out var issue) || issue <= 0)
+        if (args.Length == 0)
         {
-            throw new FlightException("create-flight needs the issue number first, as in create-flight repo/<path> 1611 [title]");
+            throw new FlightException("create-flight needs the work item first (an issue number, sc-N or a Shortcut story URL), as in create-flight repo/<path> 1611 [title]");
+        }
+        var (parsed, parseError) = WorkItem.Parse(args[0]);
+        if (parsed is not { } item)
+        {
+            throw new FlightException($"create-flight: {parseError}");
         }
 
         // Only a new flight is refused here: flying and held flights, legs, reviews and landings never come through here. In
         // maintenance a node takes none of its own, and sends this one to a node of the fleet that takes it.
         if (Models.Maintenance)
         {
-            return await RouteAsync(command, issue, cancellationToken);
+            return await RouteAsync(command, item, cancellationToken);
         }
 
         var path = command.Target[Verbs.RepoTargetPrefix.Length..];
@@ -99,22 +113,33 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         var repo = Path.GetFileName(repoPath);
         var flights = state.Flights();
         var prefix = FlightCodes.PrefixFor(repo, flights);
-        var code = FlightCodes.Next(prefix, issue, flights)
-            ?? throw new FlightException($"{prefix}{issue} and its suffixes {FlightCodes.Suffixes} are all taken");
+        var code = FlightCodes.Next(prefix, item.Id, flights)
+            ?? throw new FlightException($"{prefix}{item.Id} and its suffixes {FlightCodes.Suffixes} are all taken");
+
+        var title = string.Join(' ', args.Skip(1)).Trim();
+        if (title.Length == 0 && Trackers?.Of(item.Tracker) is { } tracker)
+        {
+            // No title given: the item's own, so the flight reads as what it is about. Asked before the plane is made, so a
+            // refusal for want of one leaves nothing behind.
+            title = (await tracker.TitleAsync(repoPath, item.Id, cancellationToken))?.Trim() ?? "";
+            if (title.Length == 0 && tracker.MissingTitle(item) is { } missing)
+            {
+                throw new FlightException(missing);
+            }
+        }
+        if (title.Length == 0 && item.Tracker != TrackerKind.GitHub && Trackers?.Of(item.Tracker) is null)
+        {
+            throw new FlightException($"{item.Display} needs a title: this node cannot read a {item.Tracker} item's, so give one as in create-flight repo/<path> {item.Display} <title>");
+        }
 
         var plane = await planes.MakeAsync(repoPath, code, cancellationToken);
-        var title = string.Join(' ', args.Skip(1)).Trim();
-        if (title.Length == 0 && github is not null)
-        {
-            // No title given: the issue's own, so the flight reads as what it is about.
-            title = (await github.IssueTitleAsync(plane.RepoPath, issue, cancellationToken))?.Trim() ?? "";
-        }
         state.PutFlight(new FlightRow
         {
             Code = code,
             Repo = repo,
             RepoPath = plane.RepoPath,
-            Issue = issue,
+            Issue = item.Id,
+            Tracker = item.Tracker,
             Title = title.Length > 0 ? title : null,
             Branch = plane.Branch,
             Worktree = plane.Worktree,
@@ -130,7 +155,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
     /// (<see cref="FleetChoice"/>), through that node's own create-flight with its own checkout of the repo. Says where it went
     /// on a Handled card and in the result's way; with none willing, refuses naming each node and why it did not qualify.
     /// </summary>
-    private async Task<(string Code, string? Way)> RouteAsync(CommandRequest command, int issue, CancellationToken cancellationToken)
+    private async Task<(string Code, string? Way)> RouteAsync(CommandRequest command, WorkItem item, CancellationToken cancellationToken)
     {
         var refusal = $"{Machine} is in maintenance: it takes no new flights";
         var peers = Fleet?.Peers() ?? [];
@@ -168,7 +193,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             }
             var way = $"{code} is flying on {verdict.Name}: {Machine} is in maintenance";
             state.RaiseCard(CardBin.Handled, RoutedKind, Verbs.NodeTarget, way,
-                $"{Machine} is in maintenance, so issue #{issue} of {gitHub ?? path} went to {verdict.Name}, which has {checkout}");
+                $"{Machine} is in maintenance, so {item.Noun} of {gitHub ?? path} went to {verdict.Name}, which has {checkout}");
             return (code, way);
         }
 
@@ -322,12 +347,12 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         if (foldedInto is null)
         {
             state.RaiseCard(CardBin.ForYou, "landed", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed",
-                $"{flight.Title ?? $"issue #{flight.Issue}"}{(flight.PullRequest is { } number ? $", PR #{number}" : "")}", link: flight.PullRequestUrl);
+                $"{flight.Title ?? flight.Item.Noun}{(flight.PullRequest is { } number ? $", PR #{number}" : "")}", link: flight.PullRequestUrl);
         }
         else
         {
             state.RaiseCard(CardBin.Handled, FoldedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} folded into {foldedInto}",
-                $"{flight.Title ?? $"issue #{flight.Issue}"} (#{flight.Issue}) is now {foldedInto}'s: its PR closes it, and {foldedInto}'s planner plans its points");
+                $"{flight.Title ?? flight.Item.Noun} ({flight.Item.Display}) is now {foldedInto}'s: its PR closes it, and {foldedInto}'s planner plans its points");
         }
 
         // Flights that waited for it may leave now. A folded flight's issue is the other flight's work and has not landed, so

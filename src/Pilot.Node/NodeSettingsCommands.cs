@@ -52,13 +52,18 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         {
             return state.Complete(command, $"{options.SettingsFile} could not be written: {ex.Message}");
         }
-        var value = updated.Get(key) is { } values ? string.Join(' ', values) : "the default";
+        var value = updated.Get(key) is { } values ? (key == NodeSettings.ShortcutTokenKey ? "set" : string.Join(' ', values)) : "the default";
         if (options.CommandLineKeys?.Contains(key) == true)
         {
             return state.Complete(command, null, way: $"{key} saved as {value}, but this node's command line gives it, and wins: take it off the command line (pilot-node autostart install) for the setting to count");
         }
         // A live setting is applied below whatever it read before: its running value may be read from the very file just
         // written (priority-repos was, and was taken as in force while the node still ran without it).
+        if (key == NodeSettings.ShortcutTokenKey)
+        {
+            roles.Apply(updated);
+            return state.Complete(command, null, way: $"{key} saved as {value}, and in force now");
+        }
         if (!Live(key) && Running(key) == (updated.Get(key) is { } now ? Join(key, now) : Default(key)))
         {
             return state.Complete(command, null, way: $"{key} saved as {value}; the node runs with it already");
@@ -121,9 +126,9 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     private SettingRow Row(string key, NodeSettings saved)
     {
         var running = Running(key);
-        var file = saved.Get(key) is { } values ? Join(key, values) : null;
+        var file = saved.Get(key) is { } values ? (key == NodeSettings.ShortcutTokenKey ? "set" : Join(key, values)) : null;
         var pinned = options.CommandLineKeys?.Contains(key) == true;
-        var started = options.Saved?.Get(key) is { } before ? Join(key, before) : null;
+        var started = options.Saved?.Get(key) is { } before ? (key == NodeSettings.ShortcutTokenKey ? "set" : Join(key, before)) : null;
         var (label, detail, choices) = Describe(key);
         return new SettingRow
         {
@@ -147,6 +152,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.MaintenanceKey => roles.Maintenance ? "on" : "off",
         NodeSettings.AcceptFleetFlightsKey => roles.AcceptsFleetFlights ? "on" : "off",
         NodeSettings.AutopilotKey => roles.Autopilot ? "on" : "off",
+        // Never the token itself: present or absent.
+        NodeSettings.ShortcutTokenKey => roles.ShortcutToken is { Length: > 0 } ? "set" : "",
         NodeSettings.LanPortKey => options.LanPort.ToString(CultureInfo.InvariantCulture),
         NodeSettings.MachineKey => options.Machine,
         NodeSettings.RepoRootsKey => Join(key, options.RepoRoots),
@@ -174,7 +181,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     /// method, the start limits, the priority repos, the job limits, maintenance and whether fleet flights are accepted.</summary>
     private static bool Live(string key) => NodeSettings.IsRoleKey(key)
         || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey
-            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey;
+            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ShortcutTokenKey;
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
     private static string Join(string key, IReadOnlyList<string> values) => string.Join(key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey ? '\n' : ' ', values);
@@ -186,6 +193,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.MaintenanceKey => "off",
         NodeSettings.AcceptFleetFlightsKey => "off",
         NodeSettings.AutopilotKey => "off",
+        NodeSettings.ShortcutTokenKey => "",
         NodeSettings.LanPortKey => NodeWire.DefaultLanPort.ToString(CultureInfo.InvariantCulture),
         NodeSettings.MachineKey => (MachinePrefixes.Normalise(Environment.GetEnvironmentVariable("PILOT_MACHINE")) ?? MachinePrefixes.FromName(Environment.MachineName)),
         NodeSettings.RepoRootsKey => "",
@@ -209,6 +217,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.MaintenanceKey => ("Maintenance", "While on, this node takes no new flight: a create-flight is refused with the reason; flights in the air, held ones, legs, reviews, landings and jobs carry on", ["on", "off"]),
         NodeSettings.AcceptFleetFlightsKey => ("Accept fleet flights", "Whether this node is willing to take a flight another node of the fleet routes to it, when a new flight is made", ["on", "off"]),
         NodeSettings.AutopilotKey => ("Autopilot", "While on, an assistant (a session you talk to) does your-only things (merge, land, settings, grants, update) directly when you asked; off, each raises a card for you to allow. Only you can change it, never an assistant", ["on", "off"]),
+        NodeSettings.ShortcutTokenKey => ("Shortcut token", "The Shortcut API token that reads a story's title when a flight is made on one (sc-N); the SHORTCUT_API_TOKEN variable wins over it. Only whether it is set is shown", []),
         NodeSettings.LanPortKey => ("LAN port", "The TCP port other machines reach this node on", []),
         NodeSettings.MachineKey => ("Machine prefix", "Two letters and a number, at the front of this machine's session names (DE1-watchtower)", []),
         NodeSettings.RepoRootsKey => ("Repo roots", "Folders of git clones the new-flight wizard offers, beside the flights' own repos", []),

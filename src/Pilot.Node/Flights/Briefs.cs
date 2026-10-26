@@ -53,7 +53,7 @@ public static class Briefs
         var run = Run(cli, socket);
         var text = new StringBuilder();
         var title = flight.Title is { Length: > 0 } t ? $": {t}" : "";
-        text.AppendLine($"You are the worker for leg `{leg.Name}` of flight {flight.Code} ({flight.Repo} #{flight.Issue}{title}).");
+        text.AppendLine($"You are the worker for leg `{leg.Name}` of flight {flight.Code} ({flight.Repo} {flight.Item.Display}{title}).");
         text.AppendLine();
         text.AppendLine($"Work only in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`. Every leg of the");
         text.AppendLine("flight flies on this branch in order, so the work of the legs before yours is already here. Commit as you go,");
@@ -201,7 +201,7 @@ public static class Briefs
     {
         var text = new StringBuilder();
         var title = flight.Title is { Length: > 0 } t ? $": {t}" : "";
-        text.AppendLine($"You are the validator of leg `{leg.Name}` of flight {flight.Code} ({flight.Repo} #{flight.Issue}{title}). A few minutes, one answer:");
+        text.AppendLine($"You are the validator of leg `{leg.Name}` of flight {flight.Code} ({flight.Repo} {flight.Item.Display}{title}). A few minutes, one answer:");
         text.AppendLine("is the leg's brief still true of the tree the earlier legs left? You do not do the leg.");
         text.AppendLine();
         text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`. Read only: change, commit,");
@@ -264,7 +264,7 @@ public static class Briefs
     {
         var text = new StringBuilder();
         var title = flight.Title is { Length: > 0 } t ? $": {t}" : "";
-        text.AppendLine($"You plan flight {flight.Code} ({flight.Repo} #{flight.Issue}{title}): the legs that will do its issue.");
+        text.AppendLine($"You plan flight {flight.Code} ({flight.Repo} {flight.Item.Display}{title}): the legs that will do its issue.");
         text.AppendLine();
         text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`. Read the issue");
         text.AppendLine($"(`gh issue view {flight.Issue} --comments`), the repo's CLAUDE.md, and the code it touches. Do not edit, commit or push");
@@ -354,7 +354,7 @@ public static class Briefs
         var depth = plan?.Depth ?? ReviewDepth.Standard;
         var text = new StringBuilder();
         var title = flight.Title is { Length: > 0 } t ? $": {t}" : "";
-        text.AppendLine($"You review flight {flight.Code} ({flight.Repo} #{flight.Issue}{title}) before it is offered for merging.");
+        text.AppendLine($"You review flight {flight.Code} ({flight.Repo} {flight.Item.Display}{title}) before it is offered for merging.");
         text.AppendLine();
         text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`, against `{flight.Base}`.");
         text.AppendLine("Read the whole diff (`git diff " + flight.Base + "...HEAD`), and rerun what proves each leg's Done-when. Do not edit,");
@@ -491,7 +491,7 @@ public static class Briefs
         foreach (var flight in flying)
         {
             var state = flight.State == FlightState.Held ? $"held, waiting for {FlightWaiting.For(flight)}" : "flying";
-            text.AppendLine($"- {flight.Code}: {flight.Title ?? $"issue #{flight.Issue}"} ({flight.Repo} #{flight.Issue}, {state}){(flight.PullRequestUrl is { } url ? $", PR {url}" : "")}");
+            text.AppendLine($"- {flight.Code}: {flight.Title ?? flight.Item.Noun} ({flight.Repo} {flight.Item.Display}, {state}){(flight.PullRequestUrl is { } url ? $", PR {url}" : "")}");
             foreach (var leg in legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order))
             {
                 var steps = leg.Checklist.Length == 0 ? "" : $", {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";
