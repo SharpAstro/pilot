@@ -810,10 +810,6 @@ public static class PilotCommand
         return root;
     }
 
-    /// <summary>
-    /// The leg the folder <paramref name="cwd"/> works on: the flying leg of the flight whose plane holds it, and who is
-    /// asking, its worker by name, so the black box says which worker ticked what.
-    /// </summary>
     /// <summary>A time as typed: a full date and time, or a clock time (<c>14:30</c>), which is the next such time from <paramref name="now"/>.</summary>
     internal static DateTimeOffset ParseUntil(string text, DateTimeOffset now)
     {
@@ -824,6 +820,10 @@ public static class PilotCommand
         return TimeSpan.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, out _) && at <= now ? at.AddDays(1) : at;
     }
 
+    /// <summary>
+    /// The leg the folder <paramref name="cwd"/> works on: the flying leg of the flight whose plane holds it, and who is
+    /// asking, its worker by name, so the black box says which worker ticked what.
+    /// </summary>
     internal static (string Target, string Who) LegHere(SnapshotEvent snapshot, string cwd, string fallback = "cli", bool validating = false)
     {
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;

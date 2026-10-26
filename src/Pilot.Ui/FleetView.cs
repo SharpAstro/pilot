@@ -288,7 +288,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private const float MachineWidth = 190f;
     private const float AccountWidth = 280f;
     private const float SessionsWidth = 170f;
-    private const float WorkWidth = 300f;
+    private const float WorkWidth = 170f;
     private const float RingsWidth = 80f;
     private const float ButtonsWidth = 180f;
 
