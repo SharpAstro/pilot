@@ -6,7 +6,7 @@ public static class RepoSyncStatus
     /// <summary>The default branch was fast-forwarded.</summary>
     public const string Updated = "updated";
 
-    /// <summary>Fetched, and the default branch had nothing to take.</summary>
+    /// <summary>Nothing to take: the default branch was already up to date (no pull happened, so a caller reports none).</summary>
     public const string Current = "current";
 
     /// <summary>Fetched, but the main checkout was left alone; the detail says why.</summary>
