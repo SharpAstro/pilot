@@ -344,7 +344,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         var open = leg.Checklist.Count(i => !i.Done);
         var steps = leg.Checklist.Length == 0 ? "" : open == 0 ? " Every step is ticked." : $" {open} of {leg.Checklist.Length} steps are not ticked yet.";
         return $"Your leg `{leg.Name}` of {leg.Flight} is not finished yet.{steps} If there is more to do, carry on. When every step is done and "
-            + $"the Done-when holds, run `{Pilot} leg finish done \"<one-line report>\"`; if you cannot go on, run `{Pilot} leg finish failed \"<why>\"`.";
+            + $"the Done-when holds, run `{Pilot} leg finish done \"<one-line report>\"`; if something stops the Done-when, run `{Pilot} leg finish failed \"<why>\"`; anything else you could not do goes in the report of a done leg.";
     }
 
     private Task<CommandResult> SayAsync(SessionRow worker, string text, CancellationToken cancellationToken) =>

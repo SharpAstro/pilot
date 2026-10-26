@@ -149,6 +149,8 @@ public sealed class LegWatchTests
         var nudge = _said.ShouldHaveSingleItem().Args[0];
         nudge.ShouldContain("1 of 2 steps are not ticked yet");
         nudge.ShouldContain("pilot --node-socket \"/tmp/n.sock\" leg finish done");
+        // The same limit the brief gives: failed only for what stops the Done-when.
+        nudge.ShouldContain("if something stops the Done-when");
 
         await _watch.LookAsync(Ct);
         _said.Count.ShouldBe(2);
