@@ -95,7 +95,7 @@ internal sealed class PilotChrome<TSurface>
         _renderer = renderer;
         Play = new PlayFilter(playFile);
         Sessions = sessions;
-        Flights = new FlightsView<TSurface>(renderer);
+        Flights = new FlightsView<TSurface>(renderer) { Gallery = sessions.Gallery };
         Jobs = new JobsView<TSurface>(renderer);
         Fleet = new FleetView<TSurface>(renderer);
         Settings = new SettingsView<TSurface>(renderer);
@@ -192,6 +192,9 @@ internal sealed class PilotChrome<TSurface>
     public SessionsView<TSurface> Sessions { get; }
 
     public FlightsView<TSurface> Flights { get; }
+
+    /// <summary>The attachments the Flights and Sessions pages show: the host gives it a lookup that fetches and decodes, and a painter.</summary>
+    public AttachmentGallery Gallery => Sessions.Gallery;
 
     /// <summary>The Repos page: every tracked repo with its worktrees and PRs.</summary>
     public ReposView<TSurface> Repos { get; }
