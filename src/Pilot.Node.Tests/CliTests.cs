@@ -198,12 +198,15 @@ public sealed class CliTests : IAsyncLifetime
     [Fact]
     public async Task PilotJobCancelForceSendsCancelJobWithForceAndTheJobEndsForced()
     {
-        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        runner.MinFreeMemory = 0;
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         // Not a bare sleep, which the node refuses: the echo makes it a job.
         await Ok(_root, "run", "--", "sleep 30; echo slept");
         var id = _node.State.Jobs().Single().Id;
-        for (var i = 0; i < 300 && _node.State.Jobs().Single().State != JobState.Running; i++)
+        for (var i = 0; _node.State.Jobs().Single().State != JobState.Running; i++)
         {
+            i.ShouldBeLessThan(500, "the job did not start");
             await Task.Delay(20, Ct);
         }
 
@@ -223,11 +226,14 @@ public sealed class CliTests : IAsyncLifetime
     [Fact]
     public async Task PilotJobCancelWithoutForceIsAPlainCancel()
     {
-        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        runner.MinFreeMemory = 0;
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         await Ok(_root, "run", "--", "sleep 30; echo slept");
         var id = _node.State.Jobs().Single().Id;
-        for (var i = 0; i < 300 && _node.State.Jobs().Single().State != JobState.Running; i++)
+        for (var i = 0; _node.State.Jobs().Single().State != JobState.Running; i++)
         {
+            i.ShouldBeLessThan(500, "the job did not start");
             await Task.Delay(20, Ct);
         }
 
