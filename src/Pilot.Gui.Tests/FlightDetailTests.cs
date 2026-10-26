@@ -186,6 +186,35 @@ public sealed class FlightDetailTests
     }
 
     [Fact]
+    public void CapturesOfTheFlightPagesMergeIdleAndPendingAtNarrowAndWideWindows()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var dir = Path.GetDirectoryName(capture) ?? ".";
+        var ready = new CardRow
+        {
+            Id = "c9", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/TIA1611", Title = "TIA1611's PR #7 is ready to merge",
+            At = Now, State = CardState.Open, Choices = [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/TIA1611", Args = ["abc1234"], Status = ChoiceStatus.Passing }],
+        };
+        foreach (var (width, height) in new[] { (900, 900), (1800, 900) })
+        {
+            foreach (var pending in new[] { false, true })
+            {
+                using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+                var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+                chrome.Flights.CanCommand = true;
+                chrome.Show(PilotPage.Flights);
+                chrome.Flights.OpenDetail("TIA1611");
+                chrome.Cards.NoteWorking("c9", pending ? "card:c9:1" : null);
+                chrome.Render(new SessionsScreen([], "test", Now), new FlightsScreen([Line()], "test", Now), CardsScreen.From([ready]), new RectF32(0, 0, width, height));
+                File.WriteAllBytes(Path.Combine(dir, $"flight-merge-{(pending ? "pending" : "idle")}-{width}.png"), SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, height));
+            }
+        }
+    }
+
+    [Fact]
     public void TheArrowAndPageKeysScrollAnOpenPageAndHomeGoesBackToTheTop()
     {
         using var renderer = new RgbaImageRenderer(1280, 260);
