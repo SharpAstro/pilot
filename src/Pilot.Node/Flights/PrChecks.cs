@@ -194,7 +194,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, MergeWhenGreen: [_, _, ..], PullRequest: not null }))
         {
             var (head, method) = (flight.MergeWhenGreen![0], flight.MergeWhenGreen[1]);
-            var how = flight.MergeWhenGreen.ElementAtOrDefault(2);
+            var how = flight.MergeWhenGreen.ElementAtOrDefault(2) is { Length: > 0 } who ? who : null;
+            var byAutopilot = flight.MergeWhenGreen[^1] == LegCommander.ArmedByAutopilot;
             var native = how == LegCommander.ArmedByGitHub;
             var number = flight.PullRequest!.Value;
             var subject = Verbs.FlightTarget(flight.Code);
@@ -241,6 +242,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             var failed = checks?.Status == ChoiceStatus.Failing;
+            var checksFailed = dropped is null && failed;
             dropped ??= failed ? $"#{number}'s checks failed: the merge waited for them to pass" : null;
             if (native && dropped is null)
             {
@@ -267,6 +269,17 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 {
                     autoMergeNote = $" GitHub's auto-merge could not be turned off ({ex.Message}): switch it off on the PR page, or it merges once the checks pass.";
                 }
+            }
+            if (checksFailed && byAutopilot && legs is not null)
+            {
+                // The node armed this merge itself, so no person is waiting on a card for it: its failed checks send the leg
+                // round as they do with the autopilot off and the PR-ready card open, not onto a For-you card the leg never reads.
+                state.PutFlight(flight with { MergeWhenGreen = null });
+                if (_failed.Add($"{flight.Code} {head}") && await legs.ChecksFailedAsync(flight.Code, head, cancellationToken) is { } why)
+                {
+                    state.RaiseCard(CardBin.Ring, "pr-checks-failed", subject, $"{flight.Code}'s PR #{number} fails its checks", why + autoMergeNote, link: pr!.Url);
+                }
+                continue;
             }
             var armed = state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady && c.Subject == subject && c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Status == ChoiceStatus.Armed)).Select(c => c.Id).ToList();
             if (dropped is null && legs is not null)
@@ -409,7 +422,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     // Merged reads on the card for the few seconds before it goes.
                     state.MarkMerged(card.Subject);
                 }
-                state.CloseCard(card.Id, merged ? $"merged on GitHub as #{number}" : $"#{number} closed on GitHub without a merge", "github");
+                var outcome = merged ? $"merged on GitHub as #{number}" : $"#{number} closed on GitHub without a merge";
+                state.CloseCard(card.Id, outcome, "github");
+                // The autopilot's refused merge of this PR has nothing left to offer.
+                state.CloseCardsAbout(card.Subject, outcome, AutopilotMergeRefused);
                 if (merged && flights is not null)
                 {
                     try
