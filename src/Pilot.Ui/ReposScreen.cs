@@ -16,7 +16,10 @@ internal sealed record PullLine
     /// <summary>The checks: <c>passing</c>, <c>pending</c>, <c>failing</c>, or <c>no checks</c>.</summary>
     public string Checks => Pr.Checks ?? "no checks";
 
-    public string ToDumpLine() => $"#{Pr.Number} | {Pr.Title} | {Readiness} | {Checks}";
+    /// <summary>Its labels in a line (<c>pilot node: SE1, bug</c>); empty with none.</summary>
+    public string Labels => string.Join(", ", Pr.Labels);
+
+    public string ToDumpLine() => $"#{Pr.Number} | {Pr.Title} | {Readiness} | {Checks}" + (Pr.Labels.Length > 0 ? $" | {Labels}" : "");
 
     public static PullLine From(PullRequestStatus pr) => new() { Pr = pr };
 }

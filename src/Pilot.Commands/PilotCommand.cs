@@ -1232,7 +1232,7 @@ public static class PilotCommand
             }
             foreach (var pr in repo.PullRequests)
             {
-                text.AppendLine($"    PR #{pr.Number} {pr.Title}  {pr.Head}{(pr.Flight is { } f ? $"  {f}" : "")}  {(pr.Draft ? "draft" : "ready")}{(pr.Checks is { } checks ? $"  checks {checks}" : "")}");
+                text.AppendLine($"    PR #{pr.Number} {pr.Title}  {pr.Head}{(pr.Flight is { } f ? $"  {f}" : "")}  {(pr.Draft ? "draft" : "ready")}{(pr.Checks is { } checks ? $"  checks {checks}" : "")}{(pr.Labels.Length > 0 ? $"  labels {string.Join(", ", pr.Labels)}" : "")}");
             }
             foreach (var problem in repo.Errors)
             {

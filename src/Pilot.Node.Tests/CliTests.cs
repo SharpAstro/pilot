@@ -482,7 +482,7 @@ public sealed class CliTests : IAsyncLifetime
                 Worktrees = [new WorktreeStatus { Path = "C:/r/pilot/.claude/worktrees/x", Branch = "flight/X1", Flight = "X1", Dirty = true, Files = 2, Added = 5, Removed = 1 }],
                 PullRequests =
                 [
-                    new PullRequestStatus { Number = 7, Title = "A|B is *ready*", Head = "flight/X1", Url = "https://example.com/pull/7", Flight = "X1", Checks = "passing" },
+                    new PullRequestStatus { Number = 7, Title = "A|B is *ready*", Head = "flight/X1", Url = "https://example.com/pull/7", Flight = "X1", Checks = "passing", Labels = ["pilot node: SE1", "bug"] },
                     new PullRequestStatus { Number = 8, Title = "wip", Head = "wip", Draft = true },
                 ],
                 Errors = ["gh offline"],
@@ -494,12 +494,13 @@ public sealed class CliTests : IAsyncLifetime
         markdown.ShouldContain("## pilot");
         markdown.ShouldContain("main, clean, ahead 1, behind 3 of main, 2 flights");
         markdown.ShouldContain("| flight/X1 | X1 | dirty | 2 | +5 -1 |");
-        markdown.ShouldContain(@"| [#7 A\|B is \*ready\*](https://example.com/pull/7) | flight/X1 | X1 | ready | passing |");
-        markdown.ShouldContain("| #8 wip | wip |  | draft |  |");
+        markdown.ShouldContain(@"| [#7 A\|B is \*ready\*](https://example.com/pull/7) | flight/X1 | X1 | ready | passing | pilot node: SE1, bug |");
+        markdown.ShouldContain("| #8 wip | wip |  | draft |  |  |");
         markdown.ShouldContain("- gh offline");
         markdown.ShouldNotContain("other");
         ReposMarkdown.Build(rows, all: true).ShouldContain("(detached), clean, 0 flights, untracked");
         ReposMarkdown.Build([], all: false).ShouldBe(PilotCommand.Repos([], all: false));
-        PilotCommand.Repos(rows, all: false).ShouldContain("PR #7 A|B is *ready*  flight/X1  X1  ready  checks passing");
+        PilotCommand.Repos(rows, all: false).ShouldContain("PR #7 A|B is *ready*  flight/X1  X1  ready  checks passing  labels pilot node: SE1, bug");
+        PilotCommand.Repos(rows, all: false).ShouldNotContain("draft  labels");
     }
 }

@@ -96,4 +96,7 @@ public sealed record PullRequestStatus
 
     /// <summary>The code of the flight whose branch it is; null for any other PR.</summary>
     public string? Flight { get; init; }
+
+    /// <summary>Its labels, the <c>pilot node: &lt;code&gt;</c> and <c>pilot: ...</c> ones included.</summary>
+    public string[] Labels { get; init => field = value ?? []; } = [];
 }

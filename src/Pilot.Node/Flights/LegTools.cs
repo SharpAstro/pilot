@@ -978,7 +978,7 @@ public sealed class GhCli : IGitHub
 
     public async Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(["pr", "list", "--state", "open", "--limit", "100", "--json", "number,title,isDraft,headRefName,url,statusCheckRollup"], repoPath, cancellationToken);
+        var (exit, output, error) = await RunAsync(["pr", "list", "--state", "open", "--limit", "100", "--json", "number,title,isDraft,headRefName,url,statusCheckRollup,labels"], repoPath, cancellationToken);
         if (exit != 0)
         {
             throw new FlightException($"gh could not list the PRs: {(error.Trim().Length > 0 ? error : output).Trim()}");
@@ -993,6 +993,9 @@ public sealed class GhCli : IGitHub
                 Url = p.TryGetProperty("url", out var url) ? url.GetString() : null,
                 Draft = p.TryGetProperty("isDraft", out var draft) && draft.ValueKind == JsonValueKind.True,
                 Checks = p.TryGetProperty("statusCheckRollup", out var rollup) ? RollupStatus(rollup) : null,
+                Labels = p.TryGetProperty("labels", out var labels) && labels.ValueKind == JsonValueKind.Array
+                    ? [.. labels.EnumerateArray().Select(l => l.TryGetProperty("name", out var n) ? n.GetString() : null).OfType<string>()]
+                    : [],
             })
             .OrderByDescending(p => p.Number)];
     }

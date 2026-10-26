@@ -350,12 +350,19 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     // An open PR: its number and title (a click opens it), then draft or ready and where its checks stand.
     private Layout.Node PullText(PullLine pull)
     {
-        var text = Layout.Builder.HStack(
+        var cells = new List<Layout.Node>
+        {
             Layout.Builder.Text(pull.Text + Followable.Away, 12f, Link).WStar().BgHover(RowHoverBg)
                 .Follows(new HitResult.ButtonHit($"pr:{pull.Pr.Number}"), _ => OpenUrl(pull)),
-            Layout.Builder.Text(pull.Readiness, 11f, Dim).WAuto(),
-            Layout.Builder.Text(pull.Checks, 11f, ChecksColor(pull.Checks)).WAuto()).WithGap(8f);
-        return text.RowH(18f);
+        };
+        // Labels as the wizard shows an issue's: dim, after the title; a fixed share so a long list cannot push the checks off.
+        if (pull.Pr.Labels.Length > 0)
+        {
+            cells.Add(Layout.Builder.Text(pull.Labels, 11f, Dim, TextAlign.Far).WFixed(110f).WithTooltip(pull.Labels));
+        }
+        cells.Add(Layout.Builder.Text(pull.Readiness, 11f, Dim).WAuto());
+        cells.Add(Layout.Builder.Text(pull.Checks, 11f, ChecksColor(pull.Checks)).WAuto());
+        return Layout.Builder.HStack([.. cells]).WithGap(8f).RowH(18f);
     }
 
     private void OpenUrl(PullLine pull)
