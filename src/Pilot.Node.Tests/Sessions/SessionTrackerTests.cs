@@ -251,7 +251,7 @@ public sealed class SessionTrackerTests : IDisposable
         await PollAsync();
 
         var rows = _state.Sessions();
-        rows.Count.ShouldBe(2);
+        rows.Count().ShouldBe(2);
         var after = rows.Single(s => s.Id == "a1b2c3d4");
         (after.Role, after.Name).ShouldBe((SessionRole.Watchtower, "du1-pil269-stale-2"));
         var worker = rows.Single(s => s.Id == "b2c3d4e5");
