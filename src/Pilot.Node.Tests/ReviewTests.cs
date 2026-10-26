@@ -615,14 +615,65 @@ public sealed class ReviewTests : IDisposable
         await Fly(flight, "parser");
         await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA40"), "controller");
         var leg = _state.Legs("TIA40").Single();
-        _state.PutLeg(leg with { GoArounds = LegCommander.MaxReviewGoArounds });
+        _state.PutLeg(leg with { GoArounds = LegCommander.MaxReviewGoArounds, ReviewGoArounds = LegCommander.MaxReviewGoArounds });
         (await Run(Verbs.Review, "flight/TIA40", Reviewer("TIA40"), "changes", "the PR's body closes the round's issue")).Ok.ShouldBeTrue();
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
         card.Detail.ShouldNotBeNull().ShouldContain("this is yours to decide");
 
+        // The note is for the person: the go-around's args become the next worker's brief, which is told what the review asked.
+        card.Choices.Single(c => c.Verb == Verbs.GoAround).Args.ShouldNotBeNull().ShouldAllBe(a => !a.Contains("yours to decide"));
+
         (await Run(Verbs.GoAround, "flight/TIA40/parser", "du1-watchtower", "the review asked for changes")).Error.ShouldNotBeNull().ShouldContain("the person's call");
+        // "Ready anyway" is the same way round the person, so the watchtower may not take it either.
+        (await Run(Verbs.Review, "flight/TIA40", "du1-watchtower", "pass", "ready anyway")).Error.ShouldNotBeNull().ShouldContain("the person's call");
+        F("TIA40").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
         (await Run(Verbs.GoAround, "flight/TIA40/parser", "controller", "once more, with the PR edited")).Error.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task PastThreeReviewGoAroundsThePersonMayPassTheReviewReadyAnyway()
+    {
+        var flight = await NewFlight("41", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA41"), "controller");
+        var leg = _state.Legs("TIA41").Single();
+        _state.PutLeg(leg with { GoArounds = LegCommander.MaxReviewGoArounds, ReviewGoArounds = LegCommander.MaxReviewGoArounds });
+        (await Run(Verbs.Review, "flight/TIA41", Reviewer("TIA41"), "changes", "the PR's body closes the round's issue")).Ok.ShouldBeTrue();
+
+        (await Run(Verbs.Review, "flight/TIA41", "controller", "pass", "ready anyway")).Error.ShouldBeNull();
+
+        F("TIA41").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+    }
+
+    [Fact]
+    public async Task GoAroundsOfALegThatFailedOrStalledDoNotCountTowardsTheReviewCap()
+    {
+        var flight = await NewFlight("42", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA42"), "controller");
+        // Three go-arounds, none of them on the review: the leg went round for its own failures before it was done.
+        var leg = _state.Legs("TIA42").Single();
+        _state.PutLeg(leg with { GoArounds = LegCommander.MaxReviewGoArounds, ReviewGoArounds = 0 });
+        (await Run(Verbs.Review, "flight/TIA42", Reviewer("TIA42"), "changes", "a test is missing")).Ok.ShouldBeTrue();
+
+        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
+        card.Detail.ShouldNotBeNull().ShouldNotContain("yours to decide");
+        (await Run(Verbs.Review, "flight/TIA42", "du1-watchtower", "pass", "ready anyway")).Error.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AGoAroundOnAReviewsChangesIsCountedApartFromOneOnAFailedLeg()
+    {
+        var flight = await NewFlight("43", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA43"), "controller");
+        (await Run(Verbs.Review, "flight/TIA43", Reviewer("TIA43"), "changes", "a test is missing")).Ok.ShouldBeTrue();
+
+        (await Run(Verbs.GoAround, "flight/TIA43/parser", "du1-watchtower", "the review asked for changes")).Error.ShouldBeNull();
+
+        var gone = _state.Legs("TIA43").Single();
+        (gone.GoArounds, gone.ReviewGoArounds).ShouldBe((1, 1));
     }
 
     private void Window(double used, TimeSpan resetsIn) =>

@@ -865,13 +865,13 @@ public sealed partial class LegCommander(
             throw new FlightException($"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}");
         }
         // A review that keeps asking may be asking for what no worker can do (an edit to the PR itself, a decision): past
-        // MaxReviewGoArounds the watchtower sends the leg round no more, and the card is the person's. TIA1241 went round
-        // six times overnight on review findings, the last ones about its PR's body and milestone (SE1, 2026-10-26).
-        if (leg.State == LegState.Done && leg.GoArounds >= MaxReviewGoArounds
-            && string.Equals(command.Who, $"{options.Machine.ToLowerInvariant()}-watchtower", StringComparison.Ordinal))
+        // MaxReviewGoArounds the watchtower sends the leg round no more, and the card is the person's. Only the go-arounds
+        // the review asked for count: a leg that failed and went round again says nothing about what its review wants.
+        // TIA1241 went round six times overnight on review findings, the last ones about its PR's body and milestone (SE1, 2026-10-26).
+        if (leg.State == LegState.Done && leg.ReviewGoArounds >= MaxReviewGoArounds && IsWatchtower(command.Who))
         {
             throw new FlightException(
-                $"{flight.Code}/{leg.Name} has gone around {leg.GoArounds} times on its review's findings: another is the person's call, as the review may want what no worker can do. Leave the card open for them");
+                $"{flight.Code}/{leg.Name} has gone around {leg.ReviewGoArounds} times on its review's findings: another is the person's call, as the review may want what no worker can do. Leave the card open for them");
         }
 
         // A done leg that goes around from the merge card (a failed check, conflicts, behind) sits under a review that passed: it is
@@ -890,7 +890,8 @@ public sealed partial class LegCommander(
         await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
         var commits = await git.RunAsync(["log", "--oneline", $"{flight.Base}..HEAD"], flight.Worktree, cancellationToken);
         var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, cancellationToken);
-        var next = leg with { GoArounds = leg.GoArounds + 1 };
+        // Counted apart when it answers the review, as that is the count the watchtower is capped by.
+        var next = leg with { GoArounds = leg.GoArounds + 1, ReviewGoArounds = leg.ReviewGoArounds + (leg.State == LegState.Done ? 1 : 0) };
         var worker = WorkerName(flight, leg);
         var brief = Briefs.For(flight, next, state.Legs(flight.Code), why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket);
         var started = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), cancellationToken);
@@ -1449,6 +1450,12 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"only {review.Reviewer} gives {flight.Code}'s verdict; the controller may only pass one that asked for changes");
         }
+        // The watchtower's "ready anyway" is as much a way round the person as its go-around: past the cap the card is theirs.
+        if (!fromReviewer && IsWatchtower(command.Who) && state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault() is { ReviewGoArounds: >= MaxReviewGoArounds } capped)
+        {
+            throw new FlightException(
+                $"{flight.Code}/{capped.Name} has gone around {capped.ReviewGoArounds} times on its review's findings: passing it over them is the person's call. Leave the card open for them");
+        }
         if (report.Length == 0)
         {
             throw new FlightException("a verdict needs its report: what was checked, or the changes asked for");
@@ -1585,16 +1592,22 @@ public sealed partial class LegCommander(
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url);
     }
 
+    /// <summary>Whether a command comes from this node's watchtower, which the person's own words are not.</summary>
+    private bool IsWatchtower(string? who) =>
+        string.Equals(who, $"{options.Machine.ToLowerInvariant()}-watchtower", StringComparison.Ordinal);
+
     /// <summary>How many times the watchtower may send a done leg round on its review's findings before the card is the person's.</summary>
     public const int MaxReviewGoArounds = 3;
 
     private void RaiseReviewChanges(FlightRow flight, string changes)
     {
         var last = state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault();
-        // Said on the card once the watchtower may no longer answer it, so the person sees why it waits on them.
-        if (last is { GoArounds: >= MaxReviewGoArounds })
+        // Said on the card's detail once the watchtower may no longer answer it, so the person sees why it waits on them. Not in
+        // the go-around's args, which become the next worker's brief: that worker is told what the review asked, not who decides.
+        var detail = changes;
+        if (last is { ReviewGoArounds: >= MaxReviewGoArounds })
         {
-            changes = $"{last.Name} has gone around {last.GoArounds} times on review findings: this is yours to decide (go around once more, mark it ready, or change what the review asks).\n{changes}";
+            detail = $"{last.Name} has gone around {last.ReviewGoArounds} times on review findings: this is yours to decide (go around once more, mark it ready, or change what the review asks).\n{changes}";
         }
         var choices = new List<CardChoice>();
         if (last is not null)
@@ -1602,7 +1615,7 @@ public sealed partial class LegCommander(
             choices.Add(new CardChoice { Label = $"Go around {last.Name}", Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [$"the review asked for changes: {changes}"] });
         }
         choices.Add(new CardChoice { Label = "Ready anyway", Verb = Verbs.Review, Target = Verbs.FlightTarget(flight.Code), Args = ["pass", "ready anyway"] });
-        state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review asks for changes", changes, choices, link: flight.PullRequestUrl);
+        state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review asks for changes", detail, choices, link: flight.PullRequestUrl);
     }
 
     /// <summary>

@@ -52,6 +52,12 @@ public sealed record LegRow
     /// <summary>How many fresh workers it took after the first: each go-around starts one, briefed anew.</summary>
     public int GoArounds { get; init; }
 
+    /// <summary>
+    /// How many of those <see cref="GoArounds"/> were a done leg sent round on its review's findings: the count the node caps,
+    /// as a leg that failed or stalled and went round again is not a review asking for what no worker can do.
+    /// </summary>
+    public int ReviewGoArounds { get; init; }
+
     /// <summary>What the last <c>finish-leg</c> or check said: the worker's report, or why the check failed.</summary>
     public string? Report { get; init; }
 
