@@ -2,13 +2,18 @@ namespace Pilot.Contracts;
 
 /// <summary>
 /// The Settings page (<c>GET /api/v1/settings</c>, this machine only): the node's settings, each with where its value
-/// comes from, and the setup checklist, each item with how it stands and what fixes it.
+/// comes from. It is read from <c>settings.json</c> alone, so it answers at once; the setup checklist is apart, in
+/// <see cref="SetupChecks"/> (<c>GET /api/v1/settings/checks</c>), as it runs programs.
 /// </summary>
 public sealed record SettingsPage
 {
     public required SettingRow[] Settings { get; init; }
 
-    public required SetupCheck[] Checks { get; init; }
+    /// <summary>
+    /// The setup checklist. The node does not send it with the page: a host that shows both fills it from
+    /// <see cref="SetupChecks"/>.
+    /// </summary>
+    public SetupCheck[] Checks { get; init => field = value ?? []; } = [];
 
     /// <summary>Why the node has not yet restarted for a saved change (a job running), or null when none waits.</summary>
     public string? Restart { get; init; }
@@ -58,6 +63,18 @@ public static class SettingSources
     public const string CommandLine = "command line";
 }
 
+/// <summary>
+/// The setup checklist (<c>GET /api/v1/settings/checks</c>, this machine only): the node's cache of the checks, with
+/// when they were measured; <c>?refresh=true</c> runs them again.
+/// </summary>
+public sealed record SetupChecks
+{
+    public required SetupCheck[] Checks { get; init; }
+
+    /// <summary>When the checks were measured.</summary>
+    public required DateTimeOffset CheckedAt { get; init; }
+}
+
 /// <summary>One item of the setup checklist: whether it is done, in a line, and the fix the node can make, if any.</summary>
 public sealed record SetupCheck
 {
@@ -76,4 +93,7 @@ public sealed record SetupCheck
 
     /// <summary>Whether it is nice to have rather than needed.</summary>
     public bool Optional { get; init; }
+
+    /// <summary>What reading it runs or asks (<c>runs netsh</c>, <c>asks GitHub</c>), for a page's "checking…" line; null when it only reads files.</summary>
+    public string? Runs { get; init; }
 }

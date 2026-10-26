@@ -963,6 +963,17 @@ file (an autostart entry made before the file existed still pins what it names),
 the default; a value it cannot read is passed over, never fatal. `pilot-node setup` writes it, and so does the
 **Settings** page (Ctrl+8 in the GUI, 6 in the TUI), or `pilot settings set <key> [value…]`.
 
+The node answers the settings and the setup checks apart (#331). `GET /api/v1/settings` reads `settings.json` and the
+node's own state alone, so it answers at once: the settings rows, `Restart` and `File`, and no process runs. The setup
+checks run programs (`netsh`, `gh`), so they have their own route, `GET /api/v1/settings/checks`: `SetupChecks`, the
+checks as the node last measured them with `CheckedAt`, the time they were measured, and per check `Runs`, what reading it
+runs (`runs netsh`, `runs gh, which asks GitHub`) for a page's "checking…" line. They are cached for 10 seconds;
+`?refresh=true` runs them again, and `setup node <check>` refreshes them after its fix. Both routes are this machine's
+alone. `set node <key> …` answers with the changed setting's new row in `CommandResult.Setting` (a `SettingRow`, as the page
+would show it after the change, on every path that saved it, the command-line-wins one included), so a page shows the new
+value from the answer and need not read the page again. `pilot settings` reads both routes and prints the checklist and
+the settings as before.
+
 A role's model and effort, and the job limits, are in force at once (the next session of that kind starts with
 them; a waiting job starts as soon as the new limit allows). So are `maintenance` and `accept-fleet-flights` (#177),
 two switches, `on` or `off`. While `maintenance` is on the node takes no new flight: a `create-flight` is refused with

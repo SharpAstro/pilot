@@ -521,7 +521,7 @@ if (feed is not null && client is not null && clients is not null)
     // The Settings page: this machine's node only, as its route is (a node on the LAN keeps its settings to itself).
     if (remoteEndpoint is null)
     {
-        chrome.Settings.Load = async ct => (await client.GetSettingsAsync(ct)) is { Success: true, Response: { } page }
+        chrome.Settings.Load = async ct => (await client.GetSettingsWithChecksAsync(ct)) is { Success: true, Response: { } page }
             ? page
             : throw new InvalidOperationException("the node did not send its settings");
         chrome.Settings.Send = (verb, args, ct) => SettingsCommands.SendAsync(client, verb, args, GuiSay.Who, ct);

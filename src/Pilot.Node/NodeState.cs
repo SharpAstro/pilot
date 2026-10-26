@@ -627,15 +627,15 @@ public sealed class NodeState
     /// <param name="error">Why it was not done, or null when it was.</param>
     /// <param name="way">Which way it went (<see cref="CommandResult.Way"/>).</param>
     /// <param name="sessionId">The target's new session id (<see cref="CommandResult.SessionId"/>).</param>
-    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null)
+    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null)
     {
         lock (_gate)
         {
-            return CompleteLocked(command, error, way, sessionId, made);
+            return CompleteLocked(command, error, way, sessionId, made, setting);
         }
     }
 
-    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null)
+    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null)
     {
         var result = new CommandResult
         {
@@ -647,6 +647,7 @@ public sealed class NodeState
             Way = error is null ? way : null,
             SessionId = error is null ? sessionId : null,
             Made = error is null ? made : null,
+            Setting = error is null ? setting : null,
             Autopilot = command.Autopilot,
             Why = command.Why is { } why && why.Trim().Length > 0 ? why.Trim() : null,
             Seq = _seq + 1,

@@ -77,6 +77,14 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     /// <summary>The Shortcut token in force (the environment's, else the saved one); the node gives the live setting, a test replaces it.</summary>
     public Func<string?> ShortcutToken { get; init; } = () => Flights.ShortcutTracker.TokenFrom(NodeSettings.Read(options.SettingsFile).ShortcutToken);
 
+    /// <summary>What reading the check <paramref name="key"/> runs or asks, for a page's "checking…" line; null when it only reads files.</summary>
+    public static string? RunsOf(string key) => key switch
+    {
+        FirewallKey => "runs netsh",
+        GhKey => "runs gh, which asks GitHub",
+        _ => null,
+    };
+
     /// <summary>The checklist as it stands now.</summary>
     public IReadOnlyList<SetupCheck> Checks()
     {

@@ -18,16 +18,23 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     private readonly SemaphoreSlim _checking = new(1, 1);
     private (DateTimeOffset At, SetupCheck[] Checks)? _checks;
 
-    public async Task<SettingsPage> PageAsync(CancellationToken cancellationToken)
+    /// <summary>The settings page: <c>settings.json</c> and the node's own state, no setup check (they run programs).</summary>
+    public Task<SettingsPage> PageAsync(CancellationToken cancellationToken)
     {
         var saved = NodeSettings.Read(options.SettingsFile);
-        return new SettingsPage
+        return Task.FromResult(new SettingsPage
         {
             Settings = [.. NodeSettings.Keys.Select(key => Row(key, saved))],
-            Checks = await ChecksAsync(fresh: false, cancellationToken),
             Restart = restarter.Waiting,
             File = options.SettingsFile,
-        };
+        });
+    }
+
+    /// <summary>The setup checks as last measured, run again once they are older than the cache age or when <paramref name="refresh"/> asks.</summary>
+    public async Task<SetupChecks> SetupChecksAsync(bool refresh, CancellationToken cancellationToken)
+    {
+        var (at, checks) = await ChecksAsync(refresh, cancellationToken);
+        return new SetupChecks { Checks = checks, CheckedAt = at };
     }
 
     /// <summary><c>set node &lt;key&gt; [value…]</c>: saves it, then restarts the node to run with it.</summary>
@@ -55,25 +62,25 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         var value = updated.Get(key) is { } values ? (key == NodeSettings.ShortcutTokenKey ? "set" : string.Join(' ', values)) : "the default";
         if (options.CommandLineKeys?.Contains(key) == true)
         {
-            return state.Complete(command, null, way: $"{key} saved as {value}, but this node's command line gives it, and wins: take it off the command line (pilot-node autostart install) for the setting to count");
+            return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, but this node's command line gives it, and wins: take it off the command line (pilot-node autostart install) for the setting to count");
         }
         // A live setting is applied below whatever it read before: its running value may be read from the very file just
         // written (priority-repos was, and was taken as in force while the node still ran without it).
         if (key == NodeSettings.ShortcutTokenKey)
         {
             roles.Apply(updated);
-            return state.Complete(command, null, way: $"{key} saved as {value}, and in force now");
+            return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now");
         }
         if (!Live(key) && Running(key) == (updated.Get(key) is { } now ? Join(key, now) : Default(key)))
         {
-            return state.Complete(command, null, way: $"{key} saved as {value}; the node runs with it already");
+            return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}; the node runs with it already");
         }
         // A role's model and effort are read when a session of it starts: in force for the next one, no restart.
         if (NodeSettings.IsRoleKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey
             or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey)
         {
             roles.Apply(updated);
-            return state.Complete(command, null, way: key == NodeSettings.MergeMethodKey ? $"{key} saved as {value}; the next merge uses it"
+            return state.Complete(command, null, setting: Row(key, updated), way: key == NodeSettings.MergeMethodKey ? $"{key} saved as {value}; the next merge uses it"
                 : key is NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey ? $"{key} saved as {value}, and in force now"
                 : key is NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey ? $"{key} saved as {value}, and in force now"
                 : key is NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey ? $"{key} saved as {value}; the next start the node makes by itself weighs it"
@@ -85,10 +92,10 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             jobs.MaxRunning = updated.MaxJobs ?? options.MaxJobs;
             jobs.MinFreeMemory = (long)((updated.JobMemoryGigabytes ?? options.JobMemoryGigabytes) * (1L << 30));
             jobs.Pump();
-            return state.Complete(command, null, way: $"{key} saved as {value}, and in force now");
+            return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now");
         }
         var restart = restarter.Request($"{key} = {value}");
-        return state.Complete(command, null, way: restart ?? $"{key} saved as {value}; the node restarts to run with it");
+        return state.Complete(command, null, setting: Row(key, updated), way: restart ?? $"{key} saved as {value}; the node restarts to run with it");
     }
 
     /// <summary><c>setup node &lt;check&gt;</c>: the fix the checklist offers for it.</summary>
@@ -104,7 +111,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         return state.Complete(command, error, way: error is null ? $"{key}: done" : null);
     }
 
-    private async Task<SetupCheck[]> ChecksAsync(bool fresh, CancellationToken cancellationToken)
+    private async Task<(DateTimeOffset At, SetupCheck[] Checks)> ChecksAsync(bool fresh, CancellationToken cancellationToken)
     {
         await _checking.WaitAsync(cancellationToken);
         try
@@ -112,11 +119,11 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             var now = time.GetUtcNow();
             if (!fresh && _checks is { } cached && now - cached.At < ChecksFor)
             {
-                return cached.Checks;
+                return cached;
             }
-            var checks = await Task.Run(() => setup.Checks().ToArray(), cancellationToken);
+            var checks = await Task.Run(() => setup.Checks().Select(check => check with { Runs = NodeSetup.RunsOf(check.Key) }).ToArray(), cancellationToken);
             _checks = (now, checks);
-            return checks;
+            return _checks.Value;
         }
         finally
         {

@@ -119,9 +119,27 @@ public sealed class NodeClient : IDisposable
     public Task<ResponseEnvelope<JobLog>> GetJobLogAsync(string jobId, CancellationToken cancellationToken) =>
         GetEnvelopeAsync(NodeWire.JobLogRoute(jobId), PilotJsonContext.Default.ResponseEnvelopeJobLog, cancellationToken);
 
-    /// <summary><c>GET /api/v1/settings</c>: the node's settings and its setup checklist; this machine only.</summary>
+    /// <summary><c>GET /api/v1/settings</c>: the node's settings, from its file alone; this machine only.</summary>
     public Task<ResponseEnvelope<SettingsPage>> GetSettingsAsync(CancellationToken cancellationToken) =>
         GetEnvelopeAsync(NodeWire.SettingsRoute, PilotJsonContext.Default.ResponseEnvelopeSettingsPage, cancellationToken);
+
+    /// <summary><c>GET /api/v1/settings/checks</c>: the setup checklist as the node last measured it; <paramref name="refresh"/> runs the checks again. This machine only.</summary>
+    public Task<ResponseEnvelope<SetupChecks>> GetSetupChecksAsync(CancellationToken cancellationToken, bool refresh = false) =>
+        GetEnvelopeAsync(refresh ? $"{NodeWire.SettingsChecksRoute}?refresh=true" : NodeWire.SettingsChecksRoute, PilotJsonContext.Default.ResponseEnvelopeSetupChecks, cancellationToken);
+
+    /// <summary>The settings page with the setup checklist filled in from its own route, for a host that shows both.</summary>
+    public async Task<ResponseEnvelope<SettingsPage>> GetSettingsWithChecksAsync(CancellationToken cancellationToken)
+    {
+        var page = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        if (page is not { Success: true, Response: { } settings })
+        {
+            return page;
+        }
+        var checks = await GetSetupChecksAsync(cancellationToken).ConfigureAwait(false);
+        return checks is { Success: true, Response: { } measured }
+            ? ResponseEnvelope<SettingsPage>.Ok(settings with { Checks = measured.Checks })
+            : ResponseEnvelope<SettingsPage>.Fail(checks.Error ?? "the node did not send its setup checks", 502);
+    }
 
     /// <summary><c>GET /api/v1/repos</c>: the repos a flight can be made in.</summary>
     public Task<ResponseEnvelope<RepoInfo[]>> GetReposAsync(CancellationToken cancellationToken) =>
