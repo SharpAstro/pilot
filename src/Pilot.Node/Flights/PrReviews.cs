@@ -203,6 +203,25 @@ public sealed class PrReviews(
         }
     }
 
+    /// <summary>
+    /// Sets the <c>pilot:</c> label a verdict calls for on the PR: changes is <see cref="PilotMarks.Changes"/>, approve and comment
+    /// <see cref="PilotMarks.Passed"/>. Refused, it is a For-you card as the status is, never a failed review.
+    /// </summary>
+    private async Task SetLabelAsync(PrReviewRow review, CancellationToken cancellationToken)
+    {
+        var subject = Verbs.PrTarget(review.Repo, review.Number);
+        var label = review.Verdict == "changes" ? PilotMarks.Changes : PilotMarks.Passed;
+        try
+        {
+            await github.SetPilotLabelAsync(review.ClonePath, review.Number, label, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused the {label} label on {review.Repo}#{review.Number}",
+                $"{ex.Message}. The review itself stands.", link: review.Url);
+        }
+    }
+
     /// <summary>The status a verdict leaves: approve and comment block nothing, changes fail; the description says which, at the head it read.</summary>
     internal static (string State, string Description) StatusOf(PrReviewRow review)
     {
@@ -286,12 +305,8 @@ public sealed class PrReviews(
         {
             throw new FlightException("a verdict needs its report: a summary, then any finding on no line");
         }
-        // GitHub refuses an approval or a request for changes on one's own PR; said now, not when it is posted.
+        // The verdict is kept as given, on one's own PR too: only the GitHub event is forced to COMMENT there (see Event).
         var login = await github.LoginAsync(cancellationToken);
-        if (verdict != "comment" && Own(review, login))
-        {
-            throw new FlightException($"{pr} is {login}'s own PR, and its review goes out as {login}: GitHub takes only a comment there; give comment");
-        }
 
         // GitHub refuses a whole review over one comment on a line outside the diff, so only a finding whose line is in it
         // goes inline; the others go in the body. Read now, while the worktree is there to diff.
@@ -312,7 +327,8 @@ public sealed class PrReviews(
         var inline = anchored.Count(f => f.Inline);
         var detail = new System.Text.StringBuilder();
         detail.Append($"{(review.Author is { } by ? $"By {by}, r" : "R")}eviewed at {review.Head[..Math.Min(8, review.Head.Length)]}.\n");
-        detail.Append($"Posts as {Event(verdict, review.Author, login)}{(login is { Length: > 0 } ? $" under {login}" : "")}, {Plural(inline, "inline comment")}");
+        var posts = Event(verdict, review.Author, login);
+        detail.Append($"Verdict {verdict}; posts as {posts}{(login is { Length: > 0 } ? $" under {login}" : "")}, {Plural(inline, "inline comment")}");
         detail.Append(anchored.Length > inline ? $" and {anchored.Length - inline} in its body, their lines not in the diff.\n" : ".\n");
         detail.Append($"The draft: {reviewed.Draft}\n");
         detail.Append(report);
@@ -330,6 +346,7 @@ public sealed class PrReviews(
         state.PutPrReview(reviewed with { Card = card.Id });
         var (verdictStatus, verdictDescription) = StatusOf(reviewed);
         await SetStatusAsync(reviewed, verdictStatus, verdictDescription, review.Url, cancellationToken);
+        await SetLabelAsync(reviewed, cancellationToken);
         var posted = await PostIfOpenAsync(pr, subject, cancellationToken);
 
         // A reviewer that gave its verdict is done with, after a grace to end its turn, as a flight's is.
@@ -449,6 +466,7 @@ public sealed class PrReviews(
         // The status links the review now it is there, as a flight's does.
         var (postedStatus, postedDescription) = StatusOf(review);
         await SetStatusAsync(review, postedStatus, postedDescription, made.Url, cancellationToken);
+        await SetLabelAsync(review, cancellationToken);
         if (review.Card is { } card)
         {
             var outcome = $"{PostLabel}: review {made.Id}, {made.State}, under {login}";

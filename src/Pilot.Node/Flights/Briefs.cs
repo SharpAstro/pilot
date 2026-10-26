@@ -475,8 +475,8 @@ public static class Briefs
         var own = login is { Length: > 0 } && string.Equals(login, review.Author, StringComparison.OrdinalIgnoreCase);
         if (own)
         {
-            text.AppendLine($"This PR is {login}'s own, and the review goes out as {login}: GitHub takes only a comment on one's own PR, so give");
-            text.AppendLine("`comment`, with what you would have asked for in it.");
+            text.AppendLine($"This PR is {login}'s own, and the review goes out as {login}: GitHub posts it as a comment, but give your real");
+            text.AppendLine("verdict all the same: the PR's status and label say it.");
         }
         text.AppendLine("Give it once. Then end your turn with the same verdict.");
         return text.ToString();
