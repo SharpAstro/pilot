@@ -196,17 +196,22 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             var checks = dropped is null ? await github.ChecksSummaryAsync(flight.RepoPath, number, cancellationToken) : null;
+            // Armed, but the merge queue threw it out: GitHub queues it again once the checks pass and throws it out again while
+            // the cause stands, so "merging when checks pass" alone was a merge that never came (tianwen #1846, three times).
+            string Said(string line) => merge?.DroppedFromQueue is { } thrownOut
+                ? $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass, and drops it again until that is fixed; a branch brought up to date by merging its base loses those fixes in a rebase merge, so rebase it."
+                : line;
             if (dropped is null && merge is { AwaitsCheck: true } && checks?.Status != ChoiceStatus.Failing)
             {
                 // Every check shown is green, but one GitHub requires is not there yet (a gate job starts once the builds finish):
                 // the merge keeps waiting for it, and is neither taken nor dropped in that gap.
-                legs?.ShowMerge(subject, LegCommander.ArmedLine(checks, how, LegCommander.AwaitingCheckLine), MergeWays.Armed);
+                legs?.ShowMerge(subject, Said(LegCommander.ArmedLine(checks, how, LegCommander.AwaitingCheckLine)), MergeWays.Armed);
                 continue;
             }
             if (dropped is null && checks?.Status == ChoiceStatus.Pending)
             {
                 // Said on the card as each check finishes.
-                legs?.ShowMerge(subject, LegCommander.ArmedLine(checks, how), MergeWays.Armed);
+                legs?.ShowMerge(subject, Said(LegCommander.ArmedLine(checks, how)), MergeWays.Armed);
                 continue;
             }
             var failed = checks?.Status == ChoiceStatus.Failing;
@@ -218,7 +223,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 // A review GitHub still waits for is said: its merge is not "now".
                 legs?.ShowMerge(subject, checks?.Status == ChoiceStatus.Passing
                     ? merge?.Reason is { } waits ? $"checks passed: GitHub waits for {waits} before it merges" : "checks passed: GitHub merges it now"
-                    : LegCommander.ArmedLine(checks, how), MergeWays.Armed);
+                    : Said(LegCommander.ArmedLine(checks, how)), MergeWays.Armed);
                 continue;
             }
             // GitHub's auto-merge would merge a head that moved, or one whose check was re-run green, on its own: off first.
