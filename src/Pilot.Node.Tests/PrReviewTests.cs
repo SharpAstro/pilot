@@ -527,6 +527,23 @@ public sealed class PrReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task AReviewOfAFlightsPrSetsItsStatusButLeavesTheFlightsLabel()
+    {
+        // acme/widget#7 is a flight's PR: its pilot: label (passed, conflicts, queued) is the flight's, which PrMarks would
+        // not write again over one a review left.
+        _state.PutFlight(new FlightRow
+        {
+            Code = "WID7", Repo = "widget", RepoPath = "/r/widget", Issue = 3, Branch = "flight/wid7", Worktree = "/r/widget/w", Base = "main",
+            State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch, PullRequest = 7, PullRequestUrl = "https://github.com/acme/widget/pull/7",
+        });
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", Row("acme/widget", 7).Reviewer, "changes", "One defect.")).Error.ShouldBeNull();
+
+        _github.Statuses.Last().State.ShouldBe("failure");
+        _github.LabelCalls.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task AnApprovalIsSuccessAndAStatusGitHubRefusesIsACardNotAFailedReview()
     {
         _github.StatusFails = "GitHub refused the status: no permission";

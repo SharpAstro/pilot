@@ -63,6 +63,8 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
 
     private readonly Dictionary<string, (string[] Path, Command Command)> _tools = Tools(PilotCommand.Build(cwd, TextWriter.Null, TextWriter.Null, "mcp", agent: true));
 
+    private (string? Node, bool Here, string? Why)? _resolved;
+
     /// <summary>Who the calls are from: the client by its name from <c>initialize</c>, until then <c>mcp</c>.</summary>
     internal string Who { get; private set; } = "mcp";
 
@@ -229,7 +231,16 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         {
             throw new McpException(ResourceNotFound, $"there is no resource {read.Uri}; resources/list lists them");
         }
-        using var client = NodeTargets.Connect(node, socket);
+        // The node named as the tools resolve it: a name read raw went to this machine's socket, so one server read resources
+        // from this node while its tools ran on another. Resolved once, as it listens on the LAN for a few seconds.
+        _resolved ??= await NodeTargets.ResolveAsync(node, cancellationToken);
+        var (target, here, unknown) = _resolved.Value;
+        if (unknown is not null)
+        {
+            _resolved = null;
+            throw new McpException(InternalError, unknown);
+        }
+        using var client = NodeTargets.Connect(target, socket, here: here);
         SnapshotEvent snapshot;
         try
         {
