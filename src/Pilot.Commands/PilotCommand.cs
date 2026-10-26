@@ -756,9 +756,10 @@ public static class PilotCommand
         var settingValue = Words("value", "Its value (every folder, for repo-roots); none, or default, takes it out", required: false);
         var set = Action(new Command("set", "Save a setting; the node restarts to run with it once no job runs") { Arguments = { settingKey, settingValue }, Options = { actingOn } },
             (p, client, ct) => Send(client, Verbs.Set, Verbs.NodeTarget, [p.GetValue(settingKey)!, .. p.GetValue(settingValue) ?? []], who, ct, p.GetValue(actingOn)));
-        var checkKey = Arg("check", "autostart, no-autostart, hooks, lan, firewall or trust");
-        var setupCommand = Action(new Command("setup", "Make a setup check's fix: the logon entry, the hooks, the LAN, the firewall rule (asks for elevation), the trust prompt") { Arguments = { checkKey }, Options = { actingOn } },
-            (p, client, ct) => Send(client, Verbs.Setup, Verbs.NodeTarget, [p.GetValue(checkKey)!], who, ct, p.GetValue(actingOn)));
+        var checkKey = Arg("check", "autostart, no-autostart, hooks, lan, firewall, defender or trust");
+        var defenderProcesses = new Option<bool>("--processes") { Description = "With defender: exclude pilot-node, dotnet, MSBuild, VBCSCompiler and testhost as processes too, not only the folders" };
+        var setupCommand = Action(new Command("setup", "Make a setup check's fix: the logon entry, the hooks, the LAN, the firewall rule and the Defender exclusions (each asks for elevation), the trust prompt") { Arguments = { checkKey }, Options = { defenderProcesses, actingOn } },
+            (p, client, ct) => Send(client, Verbs.Setup, Verbs.NodeTarget, [p.GetValue(checkKey)!, .. p.GetValue(defenderProcesses) ? new[] { "--processes" } : []], who, ct, p.GetValue(actingOn)));
         settings.Subcommands.Add(set);
         settings.Subcommands.Add(setupCommand);
 

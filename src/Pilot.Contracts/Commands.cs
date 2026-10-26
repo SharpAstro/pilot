@@ -282,7 +282,8 @@ public static class Verbs
 
     /// <summary>
     /// <c>setup node &lt;check&gt;</c>: makes the fix a setup check offers (<c>autostart</c>, <c>hooks</c>, <c>lan</c>,
-    /// <c>firewall</c>, <c>trust</c>); <c>setup node no-autostart</c> takes the logon entry out. This machine only.
+    /// <c>firewall</c>, <c>defender</c>, <c>trust</c>); <c>setup node defender --processes</c> excludes the build processes as well
+    /// as the folders from Windows Defender; <c>setup node no-autostart</c> takes the logon entry out. This machine only.
     /// </summary>
     public const string Setup = "setup";
 

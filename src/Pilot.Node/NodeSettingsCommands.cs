@@ -99,7 +99,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         {
             return Set(command with { Args = [NodeSettings.LanKey, "on"] });
         }
-        var error = await setup.FixAsync(key, cancellationToken);
+        var error = await setup.FixAsync(key, cancellationToken, processes: (command.Args ?? []).Skip(1).Any(a => a.Trim().Equals("--processes", StringComparison.OrdinalIgnoreCase)));
         await ChecksAsync(fresh: true, cancellationToken);
         return state.Complete(command, error, way: error is null ? $"{key}: done" : null);
     }
