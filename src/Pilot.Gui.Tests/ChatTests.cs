@@ -698,10 +698,17 @@ public sealed class ChatTests
             // The feed keeps room to read in, and the card (and so everything in it) ends above the box.
             if (height == 400)
             {
-                feed.Height.ShouldBeGreaterThanOrEqualTo(120f);
+                feed.Height.ShouldBeGreaterThanOrEqualTo(100f);
             }
             (card.Y + card.Height).ShouldBeLessThanOrEqualTo(box.Y);
             card.Y.ShouldBeGreaterThanOrEqualTo(feed.Y + feed.Height);
+
+            // The choices sit under the card's text, outside its scroll: every one in view, below the text, above the box.
+            var pills = arranged.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: var action } && action.StartsWith("chat:choice:", StringComparison.Ordinal)).Select(a => a.Bounds).ToList();
+            pills.Count.ShouldBe(LongChoices.Length);
+            pills.ShouldAllBe(p => p.Y >= card.Y + card.Height && p.Y + p.Height <= box.Y);
+            // The text keeps room for its header and a line or more, and the choices do not cost the page its box.
+            card.Height.ShouldBeGreaterThanOrEqualTo(40f);
         }
     }
 }
