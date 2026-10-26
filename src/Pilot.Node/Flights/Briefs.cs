@@ -137,14 +137,12 @@ public static class Briefs
             text.AppendLine($"Read the UI checklist, {checklist}, and work by it: contrast against the real background, no text cut");
             text.AppendLine("silently, one height and one middle per row, one source for each value and component, the right control, no");
             text.AppendLine("clutter, nothing moving under the pointer. Render a capture at a narrow and a wide size with long content,");
-            text.AppendLine($"look at it yourself, and record it on the leg (`{run} artifact <path> <title>`): the reviewer looks at it.");
-            // gh cannot upload an image the way the browser's drag and drop does, and PIL277 first failed a finished leg over it;
-            // then it committed the PNGs and linked them, which works. Linked by the commit, not the branch, the link outlives the
-            // branch's deletion (GitHub keeps a PR's commits), and removed again, the PNGs never reach main.
-            text.AppendLine("To show it in the PR as well: commit the PNG under docs/captures/, push, link it in the PR body as");
-            text.AppendLine("`![what it shows](https://raw.githubusercontent.com/<owner>/<repo>/<that commit's sha>/docs/captures/<file>.png)`,");
-            text.AppendLine("then delete the file in a later commit so it never reaches main. Push no other branch for it, and never fail or");
-            text.AppendLine("hold a leg over showing a capture: the recorded artifact is enough.");
+            text.AppendLine($"look at it yourself, and record it on the leg (`{run} artifact <path> <title>`): the person sees it on the flight's page.");
+            // gh cannot upload an image the way the browser's drag and drop does, and PIL277 first failed a finished leg over it.
+            // Committing the PNGs to link them keeps every capture in main's history under a rebase merge, and a raw link shows
+            // nothing on a private repo: the artifact the node keeps is the capture's one home.
+            text.AppendLine("The recorded artifact is the capture's whole delivery: commit no image and push no branch for it, embed none in the");
+            text.AppendLine("PR, and never fail or hold a leg over showing a capture.");
             text.AppendLine();
         }
         text.AppendLine("## Keeping the node told");

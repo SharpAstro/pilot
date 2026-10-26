@@ -781,6 +781,8 @@ public sealed class LegCommanderTests : IDisposable
         start.Brief.ShouldContain("The parser tests pass");
         start.Brief.ShouldContain("reruns `dotnet test`");
         start.Brief.ShouldContain(flight.Branch);
+        // A leg fails only for what stops its Done-when (PIL277 failed a finished leg over a capture it could not attach).
+        start.Brief.ShouldContain("Fail only for what stops the Done-when");
         (L("parser").State, L("parser").Worker, L("parser").WorkerJob).ShouldBe((LegState.Flying, "du1-tia1-parser", "job00001"));
         (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Error.ShouldNotBeNull().ShouldContain("a go-around starts it again");
     }
@@ -1199,6 +1201,8 @@ public sealed class LegCommanderTests : IDisposable
             var brief = Briefs.For(flight, leg, [leg], cli: "pilot");
             brief.ShouldContain($"Read the UI checklist, {checklist}");
             brief.ShouldContain("`pilot artifact <path> <title>`");
+            // The artifact is the capture's whole delivery: no PNG committed or pushed for the PR.
+            brief.ShouldContain("The recorded artifact is the capture's whole delivery");
         }
         finally
         {
