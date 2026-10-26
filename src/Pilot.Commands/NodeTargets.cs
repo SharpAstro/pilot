@@ -50,7 +50,15 @@ public static class NodeTargets
         {
             return (target, false, null);
         }
-        return Match(await DiscoverAsync(TimeSpan.FromSeconds(3), cancellationToken), target, Environment.MachineName);
+        // This machine's own host name is its socket, whether or not its node announces itself on the LAN (no --lan).
+        if (string.Equals(target, Environment.MachineName, StringComparison.OrdinalIgnoreCase))
+        {
+            return (null, true, null);
+        }
+        // Listened to until the node named is heard, not the whole window: a name costs a beacon's round, not 3 s a command.
+        var heard = await DiscoverAsync(TimeSpan.FromSeconds(3), cancellationToken,
+            peers => Match(peers, target, Environment.MachineName).Why is null);
+        return Match(heard, target, Environment.MachineName);
     }
 
     /// <summary>
@@ -65,7 +73,7 @@ public static class NodeTargets
         if (match is null)
         {
             var heard = peers.Count > 0 ? $" (heard: {string.Join(", ", peers.Select(p => p.DisplayName))})" : "";
-            return (null, false, $"no node named {target} announced itself on the LAN within 3 s{heard}; give it as host:port");
+            return (null, false, $"no node named {target} announced itself on the LAN within 3 s{heard}; it may not be announcing (pilot-node --lan): give it as host:port");
         }
         return Same(match.MachineName, thisHost) ? (null, true, null) : (match.EndPoint.ToString(), false, null);
     }
@@ -85,14 +93,25 @@ public static class NodeTargets
     /// <summary>Drops the token held for <paramref name="endpoint"/>: that node is watched, not commanded, until connected again. False when none was held.</summary>
     public static bool Forget(string endpoint, string? tokenFile = null) => Held(tokenFile).Forget(endpoint);
 
-    /// <summary>The nodes announcing themselves on the LAN within <paramref name="listen"/>: LAN.Lib's beacon, listened to and never sent.</summary>
-    public static async Task<IReadOnlyList<LanPeer>> DiscoverAsync(TimeSpan listen, CancellationToken cancellationToken)
+    /// <summary>
+    /// The nodes announcing themselves on the LAN within <paramref name="listen"/>: LAN.Lib's beacon, listened to and never
+    /// sent. With <paramref name="enough"/>, it returns as soon as the nodes heard satisfy it.
+    /// </summary>
+    public static async Task<IReadOnlyList<LanPeer>> DiscoverAsync(TimeSpan listen, CancellationToken cancellationToken, Func<IReadOnlyList<LanPeer>, bool>? enough = null)
     {
         var options = new LanDiscoveryOptions { Announce = false, Listen = true };
         await using var transport = new UdpLanTransport(options.DiscoveryPort);
         using var discovery = new LanDiscovery(transport, TimeProvider.System, options, LanIdentity.Create(null));
         await discovery.StartAsync(cancellationToken);
-        await Task.Delay(listen, cancellationToken);
+        var until = DateTimeOffset.UtcNow + listen;
+        while (DateTimeOffset.UtcNow < until)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
+            if (enough is not null && enough(discovery.PeersOf(NodeWire.LanService)))
+            {
+                break;
+            }
+        }
         return discovery.PeersOf(NodeWire.LanService);
     }
 }
