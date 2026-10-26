@@ -59,4 +59,42 @@ public sealed record NodeInfo
 
     /// <summary>The Claude account its sessions run under; null when Claude Code has no login on record.</summary>
     public AccountRow? Account { get; init; }
+
+    /// <summary>How the node's watchtower is doing; null when it keeps none (<c>--no-watchtower</c>) or an older node did not say.</summary>
+    public WatchtowerHealth? Watchtower { get; init; }
+}
+
+/// <summary>How a node's watchtower is doing: its state, how often it has had to be started again, and why the last one ended.</summary>
+public sealed record WatchtowerHealth
+{
+    /// <summary>The current watchtower's state; null when there is none.</summary>
+    public SessionState? State { get; init; }
+
+    /// <summary>The current watchtower's job id.</summary>
+    public string? Id { get; init; }
+
+    /// <summary>When the current one started.</summary>
+    public DateTimeOffset? StartedAt { get; init; }
+
+    public long ContextTokens { get; init; }
+
+    public long ContextWindow { get; init; }
+
+    /// <summary>Watchtowers started in the last hour.</summary>
+    public int StartsLastHour { get; init; }
+
+    /// <summary>Watchtowers started in the last 24 hours.</summary>
+    public int StartsLast24h { get; init; }
+
+    /// <summary>The median time a watchtower lived after its last reply, over those that ended in the last 24 hours; null when none did or none had replied.</summary>
+    public TimeSpan? TypicalLifetimeAfterReply { get; init; }
+
+    /// <summary>Why the latest ended watchtower ended (<see cref="SessionRow.EndedBecause"/>).</summary>
+    public string? LastEndedBecause { get; init; }
+
+    /// <summary>Whether it keeps ending: more started in the hour than the node allows, or they end within minutes of their last reply.</summary>
+    public bool Churning { get; init; }
+
+    /// <summary>The state in a sentence, as the For-you card says it.</summary>
+    public string Summary { get; init; } = "";
 }

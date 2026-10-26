@@ -428,6 +428,80 @@ public sealed class WatchtowerTests : IDisposable
         _workers.Stopped.ShouldBe(["job00001"]);
         _workers.Started.Count.ShouldBe(2);
     }
+
+    /// <summary>Starts a watchtower, lets it reply, and has it end a minute later (reason given); the next look starts another.</summary>
+    private async Task ChurnOnceAsync(int n, string? because = null)
+    {
+        await _tower.LookAsync(Ct);
+        var id = $"job{n:D5}";
+        _time.Advance(TimeSpan.FromSeconds(30));
+        Row(id, SessionState.Idle, lastResponse: _time.GetUtcNow());
+        _time.Advance(TimeSpan.FromSeconds(60));
+        _state.PutSession(_state.Sessions().Single(r => r.Id == id) with { State = SessionState.Ended, EndedBecause = because });
+    }
+
+    [Fact]
+    public async Task ManyShortLivedWatchtowersMarkItChurningAndRaiseOneCardThatIsUpdatedAndClosed()
+    {
+        for (var n = 1; n <= 5; n++)
+        {
+            await ChurnOnceAsync(n, "process gone");
+        }
+        await _tower.LookAsync(Ct);
+
+        var health = _tower.Health().ShouldNotBeNull();
+        (health.StartsLastHour, health.StartsLast24h, health.Churning, health.LastEndedBecause).ShouldBe((6, 6, true, "process gone"));
+        health.TypicalLifetimeAfterReply.ShouldBe(TimeSpan.FromSeconds(60));
+        health.Summary.ShouldStartWith("6 watchtowers in the last hour");
+        var card = Open().Single(c => c.Kind == CardKinds.WatchtowerChurning);
+        (card.Bin, card.Subject, card.Link).ShouldBe((CardBin.ForYou, Verbs.WatchtowerTarget, InAppLinks.Fleet));
+        card.Detail.ShouldStartWith("6 watchtowers");
+
+        // One more start: the same card, its text moved on.
+        Row("job00006", SessionState.Ended);
+        await _tower.LookAsync(Ct);
+        var again = Open().Single(c => c.Kind == CardKinds.WatchtowerChurning);
+        again.Id.ShouldBe(card.Id);
+        again.Detail.ShouldStartWith("7 watchtowers");
+
+        // A quiet spell: nothing in the last hour, so the card closes.
+        _time.Advance(TimeSpan.FromHours(2));
+        Row("job00007", SessionState.Idle);
+        await _tower.LookAsync(Ct);
+        _tower.Health()!.Churning.ShouldBeFalse();
+        Open().ShouldNotContain(c => c.Kind == CardKinds.WatchtowerChurning);
+    }
+
+    [Fact]
+    public async Task ASteadyWatchtowerIsNotChurningAndGetsNoCard()
+    {
+        await _tower.LookAsync(Ct);
+        Row("job00001", SessionState.Idle);
+        await _tower.LookAsync(Ct);
+
+        _tower.Health()!.Churning.ShouldBeFalse();
+        Open().ShouldNotContain(c => c.Kind == CardKinds.WatchtowerChurning);
+    }
+
+    [Fact]
+    public void AnOldSessionsFileWithoutEndedColumnsStillLoads()
+    {
+        Directory.CreateDirectory(_data);
+        File.WriteAllLines(_tower.SessionsFile, [string.Join('\t', "job00009", "sess", "2026-10-20T08:00:00.0000000+00:00", "older why")]);
+
+        var generation = _tower.Generations().ShouldHaveSingleItem();
+        (generation.Job, generation.Why, generation.EndedAt, generation.LastReplyAt, generation.EndedBecause).ShouldBe(("job00009", "older why", null, null, null));
+    }
+
+    [Fact]
+    public async Task WhenAGenerationEndedIsKeptAndSurvivesAReload()
+    {
+        await ChurnOnceAsync(1, "SessionEnd: logout");
+        _tower.Generations();
+
+        var reloaded = new Watchtower(_state, _workers, Run, _options, _time).Generations().Single();
+        (reloaded.EndedBecause, reloaded.EndedAt is not null, reloaded.LastReplyAt is not null).ShouldBe(("SessionEnd: logout", true, true));
+    }
 }
 
 /// <summary>The watchtower's verbs on the node's route, and the controller's gates it cannot pass.</summary>

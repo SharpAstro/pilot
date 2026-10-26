@@ -177,6 +177,7 @@ cards.OnAnswer = (card, number) => _ = CardAsync(Verbs.Answer, card, [number.ToS
 cards.OnDismiss = card => _ = CardAsync(Verbs.Dismiss, card, []);
 cards.CanTell = true;
 cards.OnOpen = url => DashboardCommands.Open(url);
+cards.OnGoTo = link => { if (link == InAppLinks.Fleet) { chrome.Show(PilotPage.Fleet); } };
 // The Chat page: the node's chat feed with the box that tells the watchtower; the panel's shortcut opens it with the keyboard in the box.
 chat.Load = async (after, ct) => (await client.GetChatAsync(after, ct)) is { Success: true, Response: { } page }
     ? page
