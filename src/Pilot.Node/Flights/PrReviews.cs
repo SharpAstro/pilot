@@ -232,8 +232,9 @@ public sealed class PrReviews(
     }
 
     /// <summary>Whether the reviewed PR is a flight's: its PR, on the same repo.</summary>
+    // A landed flight's PR is no longer kept by it: a later review of that PR labels it as any PR's.
     private bool FlightOwns(PrReviewRow review) =>
-        state.Flights().Any(f => f.PullRequest == review.Number && f.PullRequestUrl is { } url
+        state.Flights().Any(f => f.State != FlightState.Landed && f.PullRequest == review.Number && f.PullRequestUrl is { } url
             && url.Contains($"/{review.Repo}/pull/{review.Number}", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>The status a verdict leaves: approve and comment block nothing, changes fail; the description says which, at the head it read.</summary>
