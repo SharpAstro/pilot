@@ -113,8 +113,8 @@ internal sealed partial class FlightsView<TSurface>
     // One flight's card. The grid's is taller by a line of its own for what a held flight waits for.
     private Layout.Node Card(FlightLine line, int index, float height, bool grid)
     {
-        var landed = line.Row.State == FlightState.Landed;
-        var color = line.Row.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
+        var landed = line.Row.State == FlightState.Landed || line.Stale is not null;
+        var color = StateColor(line);
         var rows = new List<Layout.Node>
         {
             Layout.Builder.Text(line.Code, 15f, landed ? Dim : Bright).RowH(22f),
@@ -124,11 +124,11 @@ internal sealed partial class FlightsView<TSurface>
         if (grid && line.Row.State == FlightState.Held)
         {
             rows.Add(Layout.Builder.Text(line.State, 12f, color).RowH(18f));
-            rows.Add(Whole(Layout.Builder.Text(line.StateDetail ?? "", 12f, Held).RowH(18f), line.StateDetail ?? "", CardLineFits));
+            rows.Add(Whole(Layout.Builder.Text(line.ShownDetail ?? "", 12f, line.Stale is null ? Held : Dim).RowH(18f), line.ShownDetail ?? "", CardLineFits));
         }
         else
         {
-            var state = line.StateDetail is null ? line.State : $"{line.State} · {line.StateDetail}";
+            var state = line.ShownDetail is null ? line.State : $"{line.State} · {line.ShownDetail}";
             rows.Add(Whole(Layout.Builder.Text(state, 12f, color).RowH(18f), state, CardLineFits));
         }
         rows.Add(Whole(Layout.Builder.Text(line.Legs, 12f, landed ? Dim : Body).RowH(18f), line.Legs, CardLineFits));
