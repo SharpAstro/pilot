@@ -349,7 +349,18 @@ A PR pilot did not make, in a repo it may not fly, is reviewed from its link (#1
   `review pr` of the same PR ends the last review first. The clone, the cache's or the person's, stays, and so does
   the draft.
 
-`pilot status` lists the reviews not over.
+- **A fixer for a changes verdict** (#290). Once a changes verdict is posted on a PR no flight owns, in a repo the node
+  tracks (a clone under the repo roots, never the clone cache): on the controller's own PR the node starts one fixer,
+  `<machine>-fix-<repo>-<n>`, in a worktree `<clone>/.claude/worktrees/fix-<repo>-<n>` on the PR's own branch, told
+  the report and every finding, the repo's CI build and test (`-c Release` for a SharpAstro repo), and to merge
+  `origin/<base>` in rather than rebase, push without force, comment on the PR once with each finding and its fix, and
+  end its turn. On anyone else's PR a For-you `pr-fix-offer` card has a **Fix it** choice (`fix-pr pr/<owner>/<repo>#<n>`)
+  that starts the same fixer. A finding the reviewer starts with `design:` is a question for the author: it rings a
+  `pr-review-design` card and starts no fixer. An untracked repo gets nothing. One fixer per PR, never a second, and the
+  review ending takes neither the fixer nor its worktree (a fresh review of the PR carries them on).
+
+`pilot status` lists the reviews not over, and under a review whose fixer is on, `fixing, <fixer>, round <n>`; such a
+review stays listed after it closed.
 
 ### Liveness: no flight derails silently
 

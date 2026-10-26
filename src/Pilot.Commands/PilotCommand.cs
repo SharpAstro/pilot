@@ -1058,10 +1058,19 @@ public static class PilotCommand
             {
                 text.AppendLine(LandedHidden(landed));
             }
-            foreach (var review in snapshot.PrReviews.Where(r => r.State != PrReviewState.Closed).OrderBy(r => r.StartedAt))
+            foreach (var review in snapshot.PrReviews.Where(r => r.State != PrReviewState.Closed || r.Fixer is not null).OrderBy(r => r.StartedAt))
             {
-                var how = review.State == PrReviewState.Reviewing ? $"reviewing, {review.Reviewer}" : $"{review.Verdict}, on card {review.Card}";
+                var how = review.State switch
+                {
+                    PrReviewState.Reviewing => $"reviewing, {review.Reviewer}",
+                    PrReviewState.Closed => $"{review.Verdict}, closed",
+                    _ => $"{review.Verdict}, on card {review.Card}",
+                };
                 text.AppendLine($"PR {review.Repo}#{review.Number}  {review.Title ?? review.Url}  ({how}, at {review.Head[..Math.Min(8, review.Head.Length)]})");
+                if (review.Fixer is { } fixer)
+                {
+                    text.AppendLine($"  fixing, {fixer}, round {review.FixRound ?? 1}");
+                }
             }
             var open = snapshot.Cards.Where(c => c.State == CardState.Open).ToList();
             if (open.Count > 0)
