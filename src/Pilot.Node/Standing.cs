@@ -55,7 +55,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// </summary>
     private static readonly IReadOnlySet<string> LookoutNever = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.Review, Verbs.PostReview, Verbs.SyncRepos, Verbs.CreateIssue, Verbs.Fold, Verbs.Separate,
+        Verbs.Review, Verbs.PostReview, Verbs.FixPr, Verbs.SyncRepos, Verbs.CreateIssue, Verbs.Fold, Verbs.Separate,
     };
 
     /// <summary>
@@ -64,7 +64,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// </summary>
     private static readonly IReadOnlySet<string> FlightSessionNever = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.PostReview, Verbs.Fold, Verbs.Separate, Verbs.CreateIssue, Verbs.CreateFlight, Verbs.SyncRepos,
+        Verbs.PostReview, Verbs.FixPr, Verbs.Fold, Verbs.Separate, Verbs.CreateIssue, Verbs.CreateFlight, Verbs.SyncRepos,
     };
 
     /// <summary>

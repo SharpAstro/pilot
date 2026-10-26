@@ -48,7 +48,7 @@ internal sealed record GuiOptions
     {
         var snapshot = new Option<string?>("--snapshot") { Description = "A snapshot file to show instead of the live node" };
         var socket = new Option<string?>("--node-socket") { Description = "The node's socket; else PILOT_NODE_SOCKET, else this user's default" };
-        var node = new Option<string?>("--node") { Description = "A node on the LAN, host:port (pilot nodes finds them; pilot connect gets its grant); else PILOT_NODE" };
+        var node = new Option<string?>("--node") { Description = "A node on the LAN: host:port, or its name (SE1) or host as pilot nodes lists them (pilot connect gets its grant); else PILOT_NODE" };
         var capture = new Option<string?>("--capture") { Description = "Render one frame on the CPU to this PNG (and a .rows.txt beside it), then exit" };
         var size = new Option<string?>("--size") { Description = "The capture's size, <W>x<H>; 1280x800 by default" };
         var page = new Option<string?>("--page") { Description = "The page a capture shows: home, sessions, flights, repos, jobs or chat" };

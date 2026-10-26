@@ -151,11 +151,11 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// <summary>What a watch-only node's disabled actions say.</summary>
     public static string SteerHint(NodeMark node) => $"Connect to {node.Name} to steer";
 
-    /// <summary>The selected session's name, which the say bar names as its target.</summary>
     /// <summary>The flight of the session in front, open as a transcript or else selected: its cards are lit in the panel.</summary>
     public string? FocusFlight =>
         (Transcript.IsOpen ? _lines.FirstOrDefault(l => l.Key == Transcript.Key) : Selected >= 0 && Selected < _lines.Count ? _lines[Selected] : null)?.Row.Flight;
 
+    /// <summary>The selected session's name, which the say bar names as its target.</summary>
     private string? SayTarget => Selected >= 0 && Selected < _lines.Count ? _lines[Selected].Name : null;
 
     /// <summary>The open session's transcript, shown in place of the table: double-click a row, Enter, or Open transcript.</summary>

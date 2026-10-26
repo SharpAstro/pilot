@@ -36,7 +36,7 @@ public sealed partial class LegCommander
             }
             var say = FlightWaiting.HoldText(wait);
             var target = Verbs.LegTarget(flight.Code, leg.Name);
-            state.PutLeg(leg with { State = LegState.Planned, Hold = wait, WorkerJob = null, FinishedAt = null, Report = $"{say}\n{miss.Line}" });
+            state.PutLeg(leg with { State = LegState.Planned, Hold = wait, Wait = null, WorkerJob = null, FinishedAt = null, Report = $"{say}\n{miss.Line}" });
             state.CloseCardsAbout(target, $"{flight.Code}/{leg.Name} holds for a package", NoGoKind, ValidatingKind);
             state.RaiseCard(CardBin.Handled, HoldKind, target, $"{flight.Code}/{leg.Name} {say}",
                 $"{miss.Line}\n{wait.Producer} is publishing it; the leg starts again, with a fresh worker, once nuget.org serves it.");

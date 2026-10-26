@@ -311,6 +311,19 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     public void NoteRefused(string cardId, string? why) =>
         System.Collections.Immutable.ImmutableInterlocked.Update(ref _refused, refused => why is null ? refused.Remove(cardId) : refused.SetItem(cardId, why));
 
+    // The button of each card whose press is with the node now, by its action id (card:c9:1): swapped whole, never waited on.
+    private System.Collections.Immutable.ImmutableDictionary<string, string> _working = System.Collections.Immutable.ImmutableDictionary<string, string>.Empty;
+
+    /// <summary>
+    /// Marks the button <paramref name="action"/> (its hit id, <c>card:c9:1</c>) of card <paramref name="cardId"/> as with the
+    /// node: it reads "…" and the card's buttons take no press until it is cleared (null), when the node has answered.
+    /// </summary>
+    public void NoteWorking(string cardId, string? action) =>
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _working, working => action is null ? working.Remove(cardId) : working.SetItem(cardId, action));
+
+    /// <summary>The button of card <paramref name="cardId"/> whose press is with the node now, or null: the flight page reads it too.</summary>
+    public string? WorkingOn(string cardId) => Volatile.Read(ref _working).GetValueOrDefault(cardId);
+
     /// <summary>The card's refusal as it stands, for a test or a dump; null when none.</summary>
     public string? RefusedOn(string cardId) => Volatile.Read(ref _refused).GetValueOrDefault(cardId);
 
@@ -441,14 +454,18 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
         }
         // What the node said to the last button pressed here, when it refused: on the card, never only in a log.
-        if (Volatile.Read(ref _refused).TryGetValue(card.Id, out var refused))
+        var working = Volatile.Read(ref _working).GetValueOrDefault(card.Id);
+        if (working is null && Volatile.Read(ref _refused).TryGetValue(card.Id, out var refused))
         {
             lines.Add(WrappedProse.Paragraphs(refused, 11f, Ring, DetailLines));
         }
 
         var buttons = new List<Layout.Node>();
+        // While a press is with the node, the card says so on the button pressed and takes no second press: a Merge on a
+        // merge-queue repo is several GitHub calls, seconds in which the button looked dead and was pressed again (SE1,
+        // 2026-10-25).
         Layout.Node Button(string label, string action, Action onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null) =>
-            closed ? Dead(label) : Pill(label, action, onClick, tint);
+            closed ? Dead(label) : working is not null ? Dead(action == working ? $"{label} …" : label) : Pill(label, action, onClick, tint);
         var watched = node is { Here: false } && CanSteer?.Invoke(node) == false ? node : null;
         if (watched is not null)
         {
@@ -470,9 +487,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 }
                 continue;
             }
+            var action = $"card:{card.Id}:{number}";
+            // A choice shown as a chip stays one while a press is with the node; a button is dead, and says "…" if it is the one pressed.
             buttons.Add(closed
                 ? Dead(StatusLabel(choice, card.Detail))
-                : ChoiceControl(choice, card.Detail, $"card:{card.Id}:{number}", () => OnAnswer?.Invoke(card, number)));
+                : working is not null && !IsChip(choice.Status)
+                    ? Dead(action == working ? $"{StatusLabel(choice, card.Detail)} …" : StatusLabel(choice, card.Detail))
+                    : ChoiceControl(choice, card.Detail, action, () => OnAnswer?.Invoke(card, number)));
         }
         // A waiting session is answered where its Remote Control has it: the card's link, one click away.
         if (card.Kind == CardKinds.SessionWaiting && card.Link is { } answerUrl)
@@ -516,7 +537,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     }
 
     // A closed card's button as it was, the same size, answering nothing.
-    private static Layout.Node Dead(string label) =>
+    internal static Layout.Node Dead(string label) =>
         Layout.Builder.Text(label, 12f, Dim, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(CardBg);
 
     /// <summary>

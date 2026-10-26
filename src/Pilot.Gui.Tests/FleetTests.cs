@@ -271,8 +271,8 @@ public sealed class FleetTests
         var described = CellLayout.Describe(arranged);
 
         toggles.ShouldBe(["fleet:node.sock:maintenance", "fleet:10.0.0.7:47731:maintenance"]);
-        described.ShouldContain("Maintenance on");
-        described.ShouldContain("Maintenance off");
+        described.ShouldContain("Put into maintenance");
+        described.ShouldContain("Take out of maintenance");
         foreach (var where in new[] { "node.sock", "10.0.0.7:47731" })
         {
             var pill = arranged.First(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == $"fleet:{where}:maintenance");
@@ -315,5 +315,23 @@ public sealed class FleetTests
         chrome.Fleet.CollectPaintedRegions(regions);
         regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().ShouldNotContain(b => b.Action.EndsWith(":waiting", StringComparison.Ordinal));
         fleet.Lines[0].Sessions.ShouldBe("3 live");
+    }
+
+    [Fact]
+    public void ANodeRowNamesTheJobHoldingItsQueueOnlyWhileAJobWaitsAndTheLegWaitingOnAFile()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var fleet = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)).Fleet;
+        var queued = Summary("laptop", "ada@example.org") with
+        {
+            JobHolder = "j14 holds the queue (xy1-orb204-parser), held for 11m 0s",
+            LegWait = FlightWaiting.WaitText(new LegWait { Path = @"C:\x\done.txt", Since = Live.At }),
+        };
+        string Described(NodeSummary summary) => CellLayout.Describe(Layout.Engine.Arrange(
+            fleet.Tree(new FleetScreen([FleetLine.From("node.sock", here: true, canCommand: true, null, summary)], Live.At)), new Rect<int>(0, 0, 220, 40), CellMeasureContext.PixelAuthored));
+
+        Described(queued).ShouldContain("j14 holds the queue (xy1-orb204-parser), held for 11m 0s");
+        Described(queued).ShouldContain(@"waiting for C:\x\done.txt");
+        Described(Summary("laptop", "ada@example.org")).ShouldNotContain("holds the queue");
     }
 }

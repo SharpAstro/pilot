@@ -63,6 +63,63 @@ public sealed class CardsHoldTests
         view.Steady(CardsScreen.From([Older]), over: false).Open.Select(c => c.Id).ShouldBe(["c1"]);
     }
 
+    [Fact]
+    public void TheFocusedFlightsCardsAndOnlyTheyArePaintedLit()
+    {
+        using var renderer = new RgbaImageRenderer(400, 800);
+        var view = new CardsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Focus = "TIA1818" };
+        var other = Raised with { Subject = "flight/PIL222" };
+
+        var lit = Arrange(view, CardsScreen.From([Older, other])).Count(a => a.Node.Background is { } bg && bg == FocusBg);
+
+        // Older is about TIA1818's leg (flight/TIA1818/web-header): lit; PIL222's card is not.
+        lit.ShouldBe(1);
+        view.Focus = null;
+        Arrange(view, CardsScreen.From([Older, other])).Count(a => a.Node.Background is { } bg && bg == FocusBg).ShouldBe(0);
+    }
+
+    [Fact]
+    public void APressedButtonSaysItIsWorkingAndTheCardTakesNoSecondPressUntilTheNodeAnswers()
+    {
+        // A Merge on a merge-queue repo is several GitHub calls: seconds in which the button looked dead (SE1, 2026-10-25).
+        using var renderer = new RgbaImageRenderer(400, 800);
+        var view = new CardsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        var screen = CardsScreen.From([Ringing]);
+
+        view.NoteWorking("c2", "card:c2:1");
+        var working = Arrange(view, screen);
+        Texts(working).ShouldContain("Start web-header …");
+        Hits(working).ShouldNotContain("card:c2:1");
+        Hits(working).ShouldNotContain("card:c2:dismiss");
+
+        view.NoteWorking("c2", null);
+        Hits(Arrange(view, screen)).ShouldContain("card:c2:1");
+    }
+
+    [Fact]
+    public void TheSessionsPageFocusesTheFlightOfItsOpenTranscriptElseOfItsSelectedRow()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 400);
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        var screen = new SessionsScreen(SessionLine.Build(
+        [
+            Live.Row("a1", "se1-tia1818-web-header", SessionState.Working) with { Flight = "TIA1818", Role = SessionRole.Worker },
+            Live.Row("b2", "pilot-33", SessionState.Idle),
+        ], Live.At), "test", Live.At);
+        view.Render(screen, new RectF32(0, 0, 1280, 400));
+
+        foreach (var i in Enumerable.Range(0, screen.Lines.Count))
+        {
+            while (view.Selected != i)
+            {
+                view.HandleInput(new InputEvent.KeyDown(view.Selected < i ? InputKey.Down : InputKey.Up, InputModifier.None)).ShouldBeTrue();
+            }
+            view.FocusFlight.ShouldBe(screen.Lines[i].Row.Flight);
+        }
+    }
+
+    private static readonly RGBAColor32 FocusBg = new(0x26, 0x33, 0x4a, 0xff);
+
     private static Layout.ArrangedNode<float>[] Arrange(CardsView<RgbaImage> view, CardsScreen screen)
     {
         var renderer = new RgbaImageRenderer(1, 1);

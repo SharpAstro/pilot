@@ -137,7 +137,12 @@ public static class Briefs
             text.AppendLine($"Read the UI checklist, {checklist}, and work by it: contrast against the real background, no text cut");
             text.AppendLine("silently, one height and one middle per row, one source for each value and component, the right control, no");
             text.AppendLine("clutter, nothing moving under the pointer. Render a capture at a narrow and a wide size with long content,");
-            text.AppendLine($"look at it yourself, and record it on the leg (`{run} artifact <path> <title>`): the reviewer looks at it.");
+            text.AppendLine($"look at it yourself, and record it on the leg (`{run} artifact <path> <title>`): the person sees it on the flight's page.");
+            // gh cannot upload an image the way the browser's drag and drop does, and PIL277 first failed a finished leg over it.
+            // Committing the PNGs to link them keeps every capture in main's history under a rebase merge, and a raw link shows
+            // nothing on a private repo: the artifact the node keeps is the capture's one home.
+            text.AppendLine("The recorded artifact is the capture's whole delivery: commit no image and push no branch for it, embed none in the");
+            text.AppendLine("PR, and never fail or hold a leg over showing a capture.");
             text.AppendLine();
         }
         text.AppendLine("## Keeping the node told");
@@ -149,7 +154,9 @@ public static class Briefs
         text.AppendLine($"- Something to look at (a screenshot, a capture, a page): `{run} artifact <path or URL> <title>`.");
         text.AppendLine($"- When every step is done and the Done-when holds: `{run} leg finish done \"<one-line report>\"`. The node reruns the");
         text.AppendLine("  check itself and refuses while a step is open or the check fails; fix what it says and finish again.");
-        text.AppendLine($"- When you cannot go on: `{run} leg finish failed \"<why>\"`.");
+        text.AppendLine($"- When you cannot go on: `{run} leg finish failed \"<why>\"`. Fail only for what stops the Done-when; something");
+        // A leg failed over a nicety the Done-when never asked for rings the person and costs a fresh worker (PIL277, 2026-10-26).
+        text.AppendLine("  else you could not do (a permission refused, an image not attached, a nice-to-have) goes in the report of a done leg.");
         // A restore that cannot find a sibling's package is the sibling's publish not done yet, not this leg's fault: the node
         // holds the leg for it and flies it again once nuget.org serves the package. A worker that works around it (a local
         // feed, a pin moved back) would ship a build that is not what CI restores.
@@ -161,6 +168,7 @@ public static class Briefs
         text.AppendLine("  runs it as a job and wakes you with how it ended and its last lines; do not wait for it or poll it. The machine");
         text.AppendLine("  is shared with other flights, so it may wait its turn first; that costs you nothing. Short commands (one test,"
             + " a quick build of one project) you run yourself, as usual."); 
+        text.AppendLine(WaitRule(run));
         // Claude Code isolates a -w session in its worktree and refuses a command it cannot prove stays inside: a git in a
         // loop, a pilot run handed a shell's -Command string. The worker recovers by splitting it, a turn lost each time
         // (TIA1781's cross-structure, SE1 2026-10-25).
@@ -174,6 +182,15 @@ public static class Briefs
         text.AppendLine("left. Start it with DONE when every step is done and the Done-when holds, or BLOCKED: and why.");
         return text.ToString();
     }
+
+    /// <summary>
+    /// What the worker and the planner (whose legs' Done-when may wait on outside work) are told about waiting: a leg waits on a
+    /// file or a time with <c>leg wait</c>, never with a job that sleeps, which holds a slot of the queue while it does nothing.
+    /// </summary>
+    internal static string WaitRule(string run) =>
+        $"- Outside work to wait for (a file another tool writes, a time of day): `{run} leg wait --for-file <path> [--until <time>] [why...]`, then end\n" +
+        "  your turn; the node wakes you once when the file exists or the time comes. Never wait with a `run` job that sleeps or polls:\n" +
+        "  it holds a slot of the queue and blocks every job behind it.";
 
     /// <summary>
     /// The line both the planner and the worker are told: build as CI does. A published package is built Release, so a Debug
@@ -281,6 +298,8 @@ public static class Briefs
         text.AppendLine("anyone can check, and a check command the node reruns before it counts the leg done (a test filter, a build).");
         text.AppendLine("Prefer few legs: one for a small issue, two to four for a larger one, split where a reviewer would want to");
         text.AppendLine($"see the work land in steps. No leg may be named `{LegCommander.ReviewLeg}` or `{LegCommander.PlanLeg}`.");
+        text.AppendLine("A leg that needs outside work (a file, a time) says so in its steps; its worker waits with `leg wait`, never with a job.");
+        text.AppendLine(WaitRule(run));
         if (legs.Count > 0)
         {
             text.AppendLine();
@@ -411,6 +430,11 @@ public static class Briefs
             text.AppendLine(plane.DiffStat.Trim());
         }
         text.AppendLine();
+        // TIA1814's reviewers ran tianwen's whole suite themselves (10,127 tests, 40 minutes on a busy machine) while CI had it
+        // green, filled their context waiting and reading, and stopped without a verdict three times (2026-10-26).
+        text.AppendLine("Do not run the whole test suite: CI runs it on the PR, and `gh pr checks` says how it went. Rerun only the legs'");
+        text.AppendLine($"checks, each through `{run} run -- <check>` so the node holds the job and wakes you with its end.");
+        text.AppendLine();
         text.AppendLine("Look for: a Done-when that does not hold, bugs and regressions, tests that do not test what they say, and");
         text.AppendLine("anything the issue asked for that is missing. Style alone is no reason for changes.");
         text.AppendLine();
@@ -472,6 +496,9 @@ public static class Briefs
         text.AppendLine("- `approve`: it is right as it is (questions and nits may still go with it).");
         text.AppendLine("- `changes`: a finding you can prove must be fixed before it merges.");
         text.AppendLine("- `comment`: neither: questions, or findings that should not hold it up.");
+        text.AppendLine("A `changes` verdict on the owner's PR starts a session that makes the changes. Start a finding with `design:` when it is");
+        text.AppendLine("a question of design or direction (a choice for the author, not a defect to fix): such a finding goes to the");
+        text.AppendLine("controller and starts no fixer.");
         var own = login is { Length: > 0 } && string.Equals(login, review.Author, StringComparison.OrdinalIgnoreCase);
         if (own)
         {
@@ -479,6 +506,57 @@ public static class Briefs
             text.AppendLine("verdict all the same: the PR's status and label say it.");
         }
         text.AppendLine("Give it once. Then end your turn with the same verdict.");
+        return text.ToString();
+    }
+
+    /// <summary>
+    /// What a PR's fixer is told (#290): the reviewer's report and every finding, the repo's CI build and test, and the
+    /// rules of working on a branch other people read. It starts in a worktree on the PR's own branch.
+    /// </summary>
+    /// <param name="build">How CI builds the repo; null when no workflow says.</param>
+    public static string FixPr(PrReviewRow review, string branch, CiShape.Build? build)
+    {
+        var text = new StringBuilder();
+        var pr = $"{review.Repo}#{review.Number}";
+        var title = review.Title is { Length: > 0 } t ? $": {t}" : "";
+        text.AppendLine($"You fix PR {pr}{title} ({review.Url}).");
+        text.AppendLine();
+        text.AppendLine($"Work in this folder ({review.FixWorktree}), a worktree on the PR's own branch `{branch}`. A reviewer read the PR at");
+        text.AppendLine($"{review.Head[..Math.Min(8, review.Head.Length)]} and asked for changes. Its report:");
+        text.AppendLine();
+        text.AppendLine((review.Report ?? "").Trim());
+        if (review.Findings.Length > 0)
+        {
+            text.AppendLine();
+            text.AppendLine("Its findings, each a place and what is wrong:");
+            foreach (var finding in review.Findings)
+            {
+                text.AppendLine($"- {finding.Path}:{finding.Line} {finding.Body}");
+            }
+        }
+        text.AppendLine();
+        text.AppendLine("Make each change asked for, in the tree as it stands: check a finding against the code before you act on it, and if");
+        text.AppendLine("it does not hold say so in your comment rather than change anything for it. Add or adjust a test where the");
+        text.AppendLine("finding was a behaviour.");
+        text.AppendLine();
+        text.AppendLine("## Build and test");
+        var configuration = build?.Configuration ?? (review.Repo.StartsWith("SharpAstro/", StringComparison.OrdinalIgnoreCase) ? "Release" : null);
+        if (configuration is not null)
+        {
+            text.AppendLine($"The repo's CI{(build is { } b ? $" ({b.Workflow})" : "")} builds {configuration}: run `dotnet build -c {configuration}` and `dotnet test -c {configuration}`,");
+            text.AppendLine("never a bare or Debug one, and have both pass before you push.");
+        }
+        else
+        {
+            text.AppendLine("Build and run the tests the way the repo's CI does, and have both pass before you push.");
+        }
+        text.AppendLine();
+        text.AppendLine("## Rules");
+        text.AppendLine($"- Bring the base in by merging `origin/{review.Base}` into the branch (`git fetch origin` then `git merge origin/{review.Base}`); never rebase it.");
+        text.AppendLine($"- Push plainly (`git push origin HEAD:{branch}`), never with force: other people may have the branch.");
+        text.AppendLine($"- Comment on the PR once (`gh pr comment {review.Number} -R {review.Repo}`) with each finding and what you did about it.");
+        text.AppendLine("- Commit with messages that say what changed and why. Open no PR and merge nothing.");
+        text.AppendLine("- End your turn once the push and the comment are done.");
         return text.ToString();
     }
 

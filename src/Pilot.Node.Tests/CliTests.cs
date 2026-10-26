@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using System.Diagnostics;
 using Pilot.Commands;
 using Pilot.Contracts;
@@ -19,17 +20,8 @@ public sealed class CliTests : IAsyncLifetime
 
     public async ValueTask InitializeAsync()
     {
-        // A repo with a bare origin, so a flight's push is a real one.
-        var origin = Path.Combine(_root, "origin.git");
-        Directory.CreateDirectory(Repo);
-        Git(_root, "init", "-q", "--bare", "-b", "main", origin);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        Git(Repo, "remote", "add", "origin", origin);
-        Git(Repo, "push", "-q", "-u", "origin", "main");
-        Git(Repo, "remote", "set-head", "origin", "main");
+        // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
+        SeedRepo.Make(_root);
         _node = await NodeHarness.StartAsync(Ct);
     }
 
@@ -174,12 +166,33 @@ public sealed class CliTests : IAsyncLifetime
         var outside = await Pilot(_root, "check", "1");
         (outside.Exit, outside.Error).ShouldBe((2, "pilot: this folder is in no flight's plane; name the leg with --leg <code>/<leg>" + Environment.NewLine));
 
+        var outsideWait = await Pilot(_root, "leg", "wait", "--for-file", "x.flag");
+        (outsideWait.Exit, outsideWait.Error).ShouldBe((2, "pilot: this folder is in no flight's plane; name the leg with --leg <code>/<leg>" + Environment.NewLine));
+
         var idle = await Pilot(plane, "leg", "finish", "done");
         idle.Error.ShouldContain("TIA7 has no leg flying");
 
         await Ok(_root, "leg", "plan", "TIA7", "one", "--goal", "g", "--done-when", "d", "--item", "a step");
         (await Pilot(_root, "check", "1", "--leg", "TIA7/one")).Exit.ShouldBe(0);
         _node.State.Legs("TIA7").Single().Checklist.Single().Done.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task PilotJobsNamesTheJobHoldingTheQueueOnlyWhileAJobWaits()
+    {
+        JobRow Job(string id, JobState state) => new()
+        {
+            Id = id, Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = state,
+            LogPath = Path.Combine(_root, id + ".log"), Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+        };
+        // Recovery runs in the background and fails any Running or Queued row it finds as left behind: let it finish first.
+        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        _node.State.PutJob(Job("j1", JobState.Running));
+
+        (await Pilot(_root, "jobs")).Output.ShouldNotContain("holds the queue");
+
+        _node.State.PutJob(Job("j2", JobState.Queued));
+        (await Pilot(_root, "jobs")).Output.ShouldContain("j1 holds the queue (se1-tia1-parser), held for 5m");
     }
 
     /// <summary>A flight whose first leg is done and whose second, render, has started: its validator is flying.</summary>

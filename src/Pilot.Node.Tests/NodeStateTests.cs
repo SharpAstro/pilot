@@ -7,6 +7,21 @@ namespace Pilot.Node.Tests;
 /// <summary>The seam the store leg backs with files: a node restarted over its journal carries on where it stopped.</summary>
 public sealed class NodeStateTests
 {
+
+    [Fact]
+    public void ChoicesWrittenIfStillAsReadAreNotWrittenOverAPressThatCameBetween()
+    {
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var card = state.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "ready",
+            choices: [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/TIA1", Args = ["cafe"] }]);
+        var read = state.Cards(openOnly: true).Single(c => c.Id == card.Id).Choices;
+
+        // A press arms the merge after the look read the card...
+        state.UpdateChoices(card.Id, [read[0] with { Status = ChoiceStatus.Armed }]).ShouldBeTrue();
+        // ...so the look's write of the checks' status, made against what it read, does not undo it.
+        state.UpdateChoices(card.Id, [read[0] with { Status = ChoiceStatus.Pending }], ifStill: read).ShouldBeFalse();
+        state.Cards(openOnly: true).Single(c => c.Id == card.Id).Choices.Single().Status.ShouldBe(ChoiceStatus.Armed);
+    }
     [Fact]
     public void ANodeRestartedOverItsJournalKeepsItsStreamItsNumbersAndItsState()
     {

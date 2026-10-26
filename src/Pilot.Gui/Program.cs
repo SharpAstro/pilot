@@ -22,8 +22,20 @@ var socketPath = NodeSocket.Resolve(options.NodeSocket);
 // A node on the LAN (--node, else PILOT_NODE) is only connected to, with the grant pilot connect saved for it; this
 // machine's node is started when none runs, as before.
 var nodeTarget = options.Node ?? (Environment.GetEnvironmentVariable(Pilot.Commands.NodeTargets.EnvironmentVariable) is { Length: > 0 } fromEnv ? fromEnv : null);
-var remoteEndpoint = nodeTarget is not null && NodeClient.IsEndpoint(nodeTarget, out var endpoint) ? endpoint : null;
-NodeClient NewClient() => Pilot.Commands.NodeTargets.Connect(remoteEndpoint, options.NodeSocket);
+// A name (DE1) is found on the LAN as the CLI finds it; one no node announces is refused, not taken for this machine.
+string? remoteEndpoint = null;
+if (nodeTarget is not null)
+{
+    var (resolved, _, unknown) = await Pilot.Commands.NodeTargets.ResolveAsync(nodeTarget, CancellationToken.None);
+    if (unknown is not null)
+    {
+        Console.Error.WriteLine($"pilot-gui: {unknown}");
+        return 2;
+    }
+    remoteEndpoint = resolved is not null && NodeClient.IsEndpoint(resolved, out var endpoint) ? endpoint : null;
+}
+// No remote is this machine's socket: PILOT_NODE is folded into nodeTarget already, so it is not read again.
+NodeClient NewClient() => Pilot.Commands.NodeTargets.Connect(remoteEndpoint, options.NodeSocket, here: remoteEndpoint is null);
 string[] NodeArgs() => remoteEndpoint is { } remote ? ["--node", remote] : ["--node-socket", socketPath];
 var nodeWhere = remoteEndpoint ?? socketPath;
 // A socket the user named is only connected to; the default one gets a node started on it when none runs.
@@ -295,7 +307,27 @@ if (feed is not null && client is not null && clients is not null)
         loop.RequestRedraw();
     }, "a Sessions action");
     // A card's button is a command on the node, as a click anywhere else is; the stream closes the card.
-    async Task CardCommandAsync(string verb, CardRow card, string[] args)
+    async Task CardCommandAsync(string verb, CardRow card, string[] args, string action)
+    {
+        // One press of a card at a time, from the panel or the flight page: a second would clear the first's working state.
+        if (chrome.Cards.WorkingOn(card.Id) is not null)
+        {
+            return;
+        }
+        // Said on the button at once, cleared when the node has answered, whatever it said.
+        chrome.Cards.NoteWorking(card.Id, action);
+        loop.RequestRedraw();
+        try
+        {
+            await SendCardCommandAsync(verb, card, args);
+        }
+        finally
+        {
+            chrome.Cards.NoteWorking(card.Id, null);
+            loop.RequestRedraw();
+        }
+    }
+    async Task SendCardCommandAsync(string verb, CardRow card, string[] args)
     {
         // A card raised on another node is answered there.
         if (clients.For(chrome.Cards.NodeOf(card)) is not { } to)
@@ -317,8 +349,8 @@ if (feed is not null && client is not null && clients is not null)
     // Every task a click starts goes through the tracker, never `_ =`: it is drained at shutdown and a fault it did not
     // expect is logged (ProcessCompletions, each frame) rather than lost with an unobserved task.
     chrome.Cards.OnAnswer = (card, number) => tracker.Run(
-        () => CardCommandAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)]), $"answer {card.Id}");
-    chrome.Cards.OnDismiss = card => tracker.Run(() => CardCommandAsync(Verbs.Dismiss, card, []), $"dismiss {card.Id}");
+        () => CardCommandAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)], $"card:{card.Id}:{number}"), $"answer {card.Id}");
+    chrome.Cards.OnDismiss = card => tracker.Run(() => CardCommandAsync(Verbs.Dismiss, card, [], $"card:{card.Id}:dismiss"), $"dismiss {card.Id}");
 
     // The watchtower, from its panel: its Remote Control link one click away, and a shortcut to the Chat page.
     chrome.Cards.CanTell = true;

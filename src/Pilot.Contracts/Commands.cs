@@ -171,6 +171,12 @@ public static class Verbs
     public const string FinishLeg = "finish-leg";
 
     /// <summary>
+    /// <c>wait-leg flight/&lt;code&gt;/&lt;leg&gt; [path=&lt;file&gt;] [until=&lt;ISO time&gt;] [why…]</c>: the flying leg's worker waits on a file or a time
+    /// with no job; it ends its turn and the node wakes it once when it comes. Needs a file or a time, and a time not past.
+    /// </summary>
+    public const string WaitLeg = "wait-leg";
+
+    /// <summary>
     /// <c>go-around flight/&lt;code&gt;/&lt;leg&gt; &lt;why…&gt;</c>: its worker stopped and a fresh one started, briefed from the
     /// leg, the plane's diff so far and why; never the last worker's conversation.
     /// </summary>
@@ -255,6 +261,12 @@ public static class Verbs
     /// login, an inline comment on each finding whose line is in the diff; the controller's, as a merge is, and only once.
     /// </summary>
     public const string PostReview = "post-review";
+
+    /// <summary>
+    /// <c>fix-pr pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>: a fixer session on the PR's branch, for what its reviewer's changes verdict found (#290).
+    /// The node starts one itself on the controller's own PR; this is the choice on the card of anyone else's.
+    /// </summary>
+    public const string FixPr = "fix-pr";
 
     /// <summary><c>extend-budget flight/&lt;code&gt;/&lt;leg&gt; &lt;tokens&gt;</c>: raises the leg's budget, in weighted tokens, to the new figure.</summary>
     public const string ExtendBudget = "extend-budget";

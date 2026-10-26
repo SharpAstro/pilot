@@ -36,6 +36,12 @@ internal sealed record NodeSummary
 
     public int JobsQueued { get; init; }
 
+    /// <summary>Who holds the job queue while a job waits (<see cref="JobQueue.HolderLine"/>); null with no queue.</summary>
+    public string? JobHolder { get; init; }
+
+    /// <summary>What a flying leg's worker waits on (<see cref="FlightWaiting.WaitText"/>), the first when several; null with none.</summary>
+    public string? LegWait { get; init; }
+
     public int Rings { get; init; }
 }
 
@@ -101,10 +107,14 @@ internal sealed record FleetLine
     /// <summary><c>1 running · 2 queued</c>, or <c>none</c>.</summary>
     public required string Jobs { get; init; }
 
+    /// <summary>Who holds the job queue and for how long, <c>j12 holds the queue (…), held for 4m 2s</c>; null while no job waits.</summary>
+    public string? JobHolder { get; init; }
+
     public required int Rings { get; init; }
 
     public string ToDumpLine() => string.Join(" | ", Machine, Where + (Here ? " (this window)" : ""), State, Account, Usage.Length == 0 ? "-" : Usage, Sessions, Flights, Jobs,
-        Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : "watch only") + (AutopilotWord is { } autopilot ? " | " + autopilot : "") + (Maintenance ? " | " + MaintenanceMark : "");
+        Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : "watch only") + (AutopilotWord is { } autopilot ? " | " + autopilot : "") + (Maintenance ? " | " + MaintenanceMark : "")
+        + (JobHolder is { } holder ? " | " + holder : "");
 
     public static FleetLine From(string where, bool here, bool canCommand, string? announcedAs, NodeSummary summary)
     {
@@ -127,8 +137,9 @@ internal sealed record FleetLine
             // A node not reached says nothing it last said: its counts would read as now.
             Sessions = !summary.Connected ? "—" : summary.WaitingOnYou > 0 ? $"{summary.LiveSessions} live · {summary.WaitingOnYou} waiting on you" : $"{summary.LiveSessions} live",
             WaitingOnYou = summary.Connected ? summary.WaitingOnYou : 0,
-            Flights = !summary.Connected ? "—" : Counted(summary.Flying, "flying", summary.Held, "held", "none in the air"),
+            Flights = !summary.Connected ? "—" : Counted(summary.Flying, "flying", summary.Held, "held", "none in the air") + (summary.LegWait is { } wait ? $" · {wait}" : ""),
             Jobs = !summary.Connected ? "—" : Counted(summary.JobsRunning, "running", summary.JobsQueued, "queued", "none"),
+            JobHolder = summary.Connected ? summary.JobHolder : null,
             Rings = summary.Connected ? summary.Rings : 0,
         };
     }
@@ -425,7 +436,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         if (line.CanSetMaintenance && OnMaintenance is { } maintenance)
         {
             // The row's menu item: it names what it does, so a node in maintenance offers to end it.
-            buttons.Add(Pill(line.Maintenance ? "Maintenance off" : "Maintenance on", $"fleet:{line.Where}:maintenance", () => maintenance(line, !line.Maintenance)));
+            buttons.Add(Pill(line.Maintenance ? "Take out of maintenance" : "Put into maintenance", $"fleet:{line.Where}:maintenance", () => maintenance(line, !line.Maintenance)));
         }
         var cells = new List<Layout.Node>
         {
@@ -443,7 +454,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             SessionsCell(line),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.Flights, 13f, Body).RowH(22f),
-                Layout.Builder.Text(line.Jobs switch { "—" => "", "none" => "no jobs", var jobs => $"jobs: {jobs}" }, 11f, Dim).RowH(18f)),
+                Layout.Builder.Text(line.JobHolder ?? line.Jobs switch { "—" => "", "none" => "no jobs", var jobs => $"jobs: {jobs}" }, 11f, line.JobHolder is null ? Dim : Ringing).RowH(18f)),
             ListTable.Top(Layout.Builder.Text(line.Rings == 0 ? "—" : $"{line.Rings} ringing", 13f, line.Rings == 0 ? Dim : Ringing)),
             Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f),
         };

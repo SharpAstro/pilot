@@ -28,6 +28,7 @@ public sealed class JobTests : IDisposable
         _jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), TimeProvider.System)
         {
             FreeMemory = () => _free,
+            DrainGrace = TimeSpan.FromSeconds(2),
             Say = (command, _) =>
             {
                 _said.Enqueue(command);
@@ -62,7 +63,8 @@ public sealed class JobTests : IDisposable
     // The same line in pwsh and sh: the node runs no cmd. Quoted, since pwsh's echo writes each word on a line of its own.
     private static string Echo(string text, int exit = 0) => $"echo '{text}'; exit {exit}";
 
-    private static string Sleep(int seconds) => $"sleep {seconds}";
+    // Not a bare sleep, which the node refuses (SleepOnly): the echo is what makes it a job.
+    private static string Sleep(int seconds) => $"sleep {seconds}; echo slept";
 
     /// <summary>The log as it is: the job's wrapper may still hold it open for writing a moment after the exit file shows, and a plain File.ReadAllText then fails on Windows.</summary>
     private static string ReadLog(string path)
@@ -120,6 +122,22 @@ public sealed class JobTests : IDisposable
         say.Args[0].ShouldContain($"Your job {id}");
         say.Args[0].ShouldContain("succeeded");
         say.Args[0].ShouldContain("all 12 tests passed");
+    }
+
+    [Fact]
+    public async Task AJobEndsWhenItsProcessExitsThoughAProcessItStartedStillHoldsItsOutput()
+    {
+        // SE1's j122: the tests passed in 6 minutes, a process they started kept the job's output open, and the job read as
+        // running for four and a half hours with six jobs queued behind it.
+        var leftBehind = OperatingSystem.IsWindows()
+            ? "Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 20' -NoNewWindow; echo 'started'"
+            : "(sleep 20 &); echo 'started'";
+        var started = DateTimeOffset.UtcNow;
+
+        var job = await Ended(Run(leftBehind).Made!);
+
+        job.State.ShouldBe(JobState.Succeeded);
+        (DateTimeOffset.UtcNow - started).ShouldBeLessThan(TimeSpan.FromSeconds(15));
     }
 
     [Fact]
@@ -349,6 +367,172 @@ public sealed class JobTests : IDisposable
         await Ended(id);
 
         answer.ShouldBe("found");
+    }
+
+    [Theory]
+    [InlineData("python -c 'import os,time\nwhile not os.path.exists(\"/tmp/done\"): time.sleep(5)'")]
+    [InlineData("while [ ! -f /tmp/done ]; do sleep 5; done")]
+    [InlineData("while (-not (Test-Path 'C:\\x\\done')) { Start-Sleep -Seconds 5 }")]
+    [InlineData("sleep 600")]
+    public void AJobThatOnlySleepsIsRefusedBeforeItTakesAnId(string command)
+    {
+        var result = Run(command);
+
+        result.Ok.ShouldBeFalse();
+        result.Error.ShouldNotBeNull().ShouldContain("pilot leg wait --for-file");
+        _state.Jobs().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ARealCommandWithASleepAmongOtherWorkIsNotRefused()
+    {
+        var started = Run("echo 'tests passed'; sleep 1");
+
+        started.Ok.ShouldBeTrue();
+        (await Ended(started.Made!)).State.ShouldBe(JobState.Succeeded);
+    }
+
+    /// <summary>A clock the test moves.</summary>
+    private sealed class Clock : TimeProvider
+    {
+        private DateTimeOffset _now = new(2026, 10, 26, 9, 0, 0, TimeSpan.Zero);
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public void Advance(TimeSpan span) => _now += span;
+    }
+
+    // The runner is not started: the test is the dispatcher, so nothing else touches its queue, and the clock and the CPU are the test's.
+    private (JobRunner Jobs, Clock Clock, Dictionary<string, TimeSpan> Cpu, Func<string, Task> Gone) Idle()
+    {
+        var clock = new Clock();
+        var cpu = new Dictionary<string, TimeSpan>();
+        var jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), clock)
+        {
+            FreeMemory = () => null,
+            IdleWindow = TimeSpan.FromMinutes(15),
+            IdleCpu = TimeSpan.FromSeconds(5),
+            JobCpu = id => cpu.TryGetValue(id, out var used) ? used : null,
+        };
+        return (jobs, clock, cpu, async id =>
+        {
+            jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
+            await Until(id, j => j.EndedAt is not null);
+        });
+    }
+
+    private string Hand(JobRunner jobs, string command)
+    {
+        var id = jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = "session/a1b2c3d4", Args = [_root, "0", command], Who = "se1-tia1-parser" }).Made!;
+        jobs.Dispatch(new JobRunner.HandedOver(_state.Jobs().Single(j => j.Id == id)));
+        return id;
+    }
+
+    private CardRow[] IdleCards(bool openOnly = true) => [.. _state.Cards(openOnly).Where(c => c.Kind == JobRunner.IdleKind)];
+
+    [Fact]
+    public async Task ANearIdleJobWithAnotherQueuedBehindItRaisesOneCardNamingJobOwnerAndWaiter()
+    {
+        var (jobs, clock, cpu, gone) = Idle();
+        var first = Hand(jobs, Sleep(60));
+        var second = Hand(jobs, Echo("later"));
+        cpu[first] = TimeSpan.FromSeconds(1);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        IdleCards().ShouldBeEmpty();
+
+        clock.Advance(TimeSpan.FromMinutes(16));
+        cpu[first] = TimeSpan.FromSeconds(2);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+
+        var card = IdleCards().ShouldHaveSingleItem();
+        (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, Verbs.JobTarget(first)));
+        card.Title.ShouldContain(first);
+        (card.Detail ?? "").ShouldContain("se1-tia1-parser");
+        (card.Detail ?? "").ShouldContain(second);
+
+        await gone(first);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        IdleCards().ShouldBeEmpty();
+        await jobs.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ANearIdleJobWithNothingQueuedBehindItRaisesNoCard()
+    {
+        var (jobs, clock, cpu, _) = Idle();
+        var first = Hand(jobs, Sleep(60));
+        cpu[first] = TimeSpan.Zero;
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+
+        clock.Advance(TimeSpan.FromMinutes(16));
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+
+        IdleCards(openOnly: false).ShouldBeEmpty();
+        await jobs.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task AJobThatKeepsWorkingRaisesNoCardAndTheCardClosesWhenTheQueueEmpties()
+    {
+        var (jobs, clock, cpu, _) = Idle();
+        var first = Hand(jobs, Sleep(60));
+        var second = Hand(jobs, Echo("later"));
+        cpu[first] = TimeSpan.Zero;
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+
+        // Busy: 20 s of CPU in each ten minutes, so the window keeps starting again.
+        for (var i = 1; i <= 3; i++)
+        {
+            clock.Advance(TimeSpan.FromMinutes(10));
+            cpu[first] = TimeSpan.FromSeconds(20 * i);
+            jobs.Dispatch(JobRunner.LookAgain.Instance);
+        }
+        IdleCards(openOnly: false).ShouldBeEmpty();
+
+        // Idle now: the card comes, and goes when the waiting job is withdrawn.
+        clock.Advance(TimeSpan.FromMinutes(16));
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        IdleCards().ShouldHaveSingleItem();
+        jobs.Dispatch(new JobRunner.Withdrawn(second, "controller"));
+        IdleCards().ShouldBeEmpty();
+        await jobs.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task AJobWhoseCpuReadingFallsWhenAChildEndsAndRisesAgainRaisesNoCard()
+    {
+        var (jobs, clock, cpu, _) = Idle();
+        var first = Hand(jobs, Sleep(60));
+        Hand(jobs, Echo("later"));
+        double[] sawtooth = [0.8, 2.0, 3.1, 1.2, 2.2, 3.3, 1.4, 2.5, 3.7, 0.0];
+        foreach (var seconds in sawtooth.Concat(sawtooth))
+        {
+            clock.Advance(TimeSpan.FromMinutes(3));
+            cpu[first] = TimeSpan.FromSeconds(seconds);
+            jobs.Dispatch(JobRunner.LookAgain.Instance);
+        }
+        IdleCards(openOnly: false).ShouldBeEmpty();
+        await jobs.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public void TheCpuTallyNeverFallsWhenAProcessEndsAndKeepsWhatAnEndedOneUsed()
+    {
+        var tally = new ProcessTreeCpu.Tally();
+        var started = new DateTime(2026, 10, 26, 9, 0, 0, DateTimeKind.Utc);
+        tally.Note(10, started, TimeSpan.FromSeconds(1));
+        tally.Note(11, started, TimeSpan.FromSeconds(3));
+        tally.Total.ShouldBe(TimeSpan.FromSeconds(4));
+
+        // Pid 11 ended and is not noted again: its 3 s still count, and a new child adds to them.
+        tally.Note(12, started.AddSeconds(5), TimeSpan.FromSeconds(2));
+        tally.Note(10, started, TimeSpan.FromSeconds(1.5));
+        tally.Total.ShouldBe(TimeSpan.FromSeconds(6.5));
+
+        // A reused pid with a later start time is another process.
+        tally.Note(11, started.AddSeconds(9), TimeSpan.FromSeconds(0.5));
+        tally.Total.ShouldBe(TimeSpan.FromSeconds(7));
     }
 
     /// <summary>Calls back, as the state publishes it, when a job's Running row is put.</summary>

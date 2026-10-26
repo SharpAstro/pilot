@@ -73,7 +73,7 @@ public static class PilotCommand
         };
         var node = new Option<string?>("--node")
         {
-            Description = "A node on the LAN, host:port (pilot nodes finds them); else PILOT_NODE, else this machine's. Commands need pilot connect first",
+            Description = "A node on the LAN: host:port, or its name (SE1) or host as pilot nodes lists them; else PILOT_NODE, else this machine's. Commands need pilot connect first",
             Recursive = true,
         };
         var outputFormat = new Option<string>("--output-format")
@@ -89,7 +89,17 @@ public static class PilotCommand
         {
             command.SetAction(async (parseResult, ct) =>
             {
-                using var client = NodeTargets.Connect(parseResult.GetValue(node), parseResult.GetValue(socket));
+                // A socket named and no node is this machine's, whatever PILOT_NODE says: how the MCP server, the GUI and the TUI
+                // hand a command the node they resolved, so the variable cannot send it elsewhere.
+                var (target, here, unknown) = parseResult.GetValue(node) is null && parseResult.GetValue(socket) is not null
+                    ? (null, true, null)
+                    : await NodeTargets.ResolveAsync(parseResult.GetValue(node), ct);
+                if (unknown is not null)
+                {
+                    await error.WriteLineAsync($"pilot: {unknown}");
+                    return 2;
+                }
+                using var client = NodeTargets.Connect(target, parseResult.GetValue(socket), here: here);
                 try
                 {
                     return await run(parseResult, client, ct);
@@ -326,11 +336,30 @@ public static class PilotCommand
         var goAround = Action(new Command("go-around", "Stop the leg's worker and start a fresh one, told why") { Arguments = { why }, Options = { leg } },
             (p, client, ct) => OnLeg(p, client, Verbs.GoAround, _ => [Join(p, why)], ct));
 
+        var forFile = new Option<string?>("--for-file") { Description = "A file whose appearance wakes the worker (a relative path is from here)" };
+        var until = new Option<string?>("--until") { Description = "A time: alone it wakes the worker then; with --for-file it rings once past it and goes on waiting (14:30, or 2026-10-27T09:00)" };
+        var waitWhy = Words("why", "Why it waits: the wake-up says it back", required: false);
+        var wait = Action(new Command("wait", "Wait on a file or a time with no job: end your turn after it, the node wakes you once it comes") { Arguments = { waitWhy }, Options = { forFile, until, leg } },
+            (p, client, ct) =>
+            {
+                var args = new List<string>();
+                if (p.GetValue(forFile) is { Length: > 0 } file)
+                {
+                    args.Add($"path={(Path.IsPathRooted(file) ? file : Path.GetFullPath(file, cwd))}");
+                }
+                if (p.GetValue(until) is { Length: > 0 } at)
+                {
+                    args.Add($"until={ParseUntil(at, DateTimeOffset.Now).ToString("o", System.Globalization.CultureInfo.InvariantCulture)}");
+                }
+                args.AddRange(p.GetValue(waitWhy) ?? []);
+                return OnLeg(p, client, Verbs.WaitLeg, _ => [.. args], ct);
+            });
+
         var tokens = Arg("tokens", "The new budget in weighted tokens, as 6000000");
         var extend = Action(new Command("extend", "Raise the leg's budget") { Arguments = { tokens }, Options = { leg } },
             (p, client, ct) => OnLeg(p, client, Verbs.ExtendBudget, _ => [p.GetValue(tokens)!], ct));
 
-        var legCommand = new Command("leg", "Legs: plan, remove, start, validate, finish, go around, extend") { Subcommands = { plan, remove, start, validate, finish, goAround, extend } };
+        var legCommand = new Command("leg", "Legs: plan, remove, start, validate, finish, wait, go around, extend") { Subcommands = { plan, remove, start, validate, finish, wait, goAround, extend } };
 
         // check, artifact
         var step = Words("step", "The step's number, or the start of its text");
@@ -470,9 +499,14 @@ public static class PilotCommand
             });
         var jobsCommand = Action(new Command("jobs", "The node's jobs, running first"), async (_, client, ct) =>
         {
-            var jobs = (await SnapshotAsync(client, ct)).Jobs.OrderBy(j => j.State switch { JobState.Running => 0, JobState.Queued => 1, _ => 2 })
+            var all = (await SnapshotAsync(client, ct)).Jobs;
+            var jobs = all.OrderBy(j => j.State switch { JobState.Running => 0, JobState.Queued => 1, _ => 2 })
             .ThenByDescending(j => j.StartedAt).Take(20).ToList();
             await output.WriteAsync(jobs.Count == 0 ? "No jobs.\n" : string.Concat(jobs.Select(j => JobLine(j) + "\n")));
+            if (JobQueue.HolderLine(all, DateTimeOffset.UtcNow) is { } holder)
+            {
+                await output.WriteLineAsync(holder);
+            }
             return 0;
         });
         var jobId = Arg("job", "The job's id, as j3");
@@ -776,6 +810,16 @@ public static class PilotCommand
         return root;
     }
 
+    /// <summary>A time as typed: a full date and time, or a clock time (<c>14:30</c>), which is the next such time from <paramref name="now"/>.</summary>
+    internal static DateTimeOffset ParseUntil(string text, DateTimeOffset now)
+    {
+        if (!DateTimeOffset.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeLocal, out var at))
+        {
+            throw new UsageException($"cannot read '{text}' as a time; give 14:30 or 2026-10-27T09:00");
+        }
+        return TimeSpan.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, out _) && at <= now ? at.AddDays(1) : at;
+    }
+
     /// <summary>
     /// The leg the folder <paramref name="cwd"/> works on: the flying leg of the flight whose plane holds it, and who is
     /// asking, its worker by name, so the black box says which worker ticked what.
@@ -944,7 +988,7 @@ public static class PilotCommand
             {
                 await output.WriteLineAsync($"created issue #{issueNumber}");
             }
-            if (verb is Verbs.Overlap or Verbs.Separate && result.Made is { Length: > 0 } told)
+            if (verb is Verbs.Overlap or Verbs.Separate or Verbs.WaitLeg && result.Made is { Length: > 0 } told)
             {
                 await output.WriteLineAsync(told);
             }
@@ -1048,10 +1092,19 @@ public static class PilotCommand
             {
                 text.AppendLine(LandedHidden(landed));
             }
-            foreach (var review in snapshot.PrReviews.Where(r => r.State != PrReviewState.Closed).OrderBy(r => r.StartedAt))
+            foreach (var review in snapshot.PrReviews.Where(r => r.State != PrReviewState.Closed || r.Fixer is not null).OrderBy(r => r.StartedAt))
             {
-                var how = review.State == PrReviewState.Reviewing ? $"reviewing, {review.Reviewer}" : $"{review.Verdict}, on card {review.Card}";
+                var how = review.State switch
+                {
+                    PrReviewState.Reviewing => $"reviewing, {review.Reviewer}",
+                    PrReviewState.Closed => $"{review.Verdict}, closed",
+                    _ => $"{review.Verdict}, on card {review.Card}",
+                };
                 text.AppendLine($"PR {review.Repo}#{review.Number}  {review.Title ?? review.Url}  ({how}, at {review.Head[..Math.Min(8, review.Head.Length)]})");
+                if (review.Fixer is { } fixer)
+                {
+                    text.AppendLine($"  fixing, {fixer}, round {review.FixRound ?? 1}");
+                }
             }
             var open = snapshot.Cards.Where(c => c.State == CardState.Open).ToList();
             if (open.Count > 0)

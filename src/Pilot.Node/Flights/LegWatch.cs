@@ -66,8 +66,13 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     private readonly Dictionary<string, DateTimeOffset> _resumedAfter = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _nudges = new Dictionary<string, int>(StringComparer.Ordinal);
 
-    // By worker job: when it was last nudged, so a ring can say whether it answered.
+    // By worker job: when it was last nudged, and how many of the nudges before that it answered, so a ring can say.
     private readonly Dictionary<string, DateTimeOffset> _nudgedAt = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _answered = new Dictionary<string, int>(StringComparer.Ordinal);
+
+    // By worker job: when a leg's wait ended and the worker was woken for it. The wake counts as the worker's last word, so
+    // the idle grace runs from it and the same worker is not nudged on top of its wake.
+    private readonly Dictionary<string, DateTimeOffset> _wokenAt = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
@@ -98,6 +103,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         LookAtReviews(sessions, now);
         LookAtValidators(sessions, now);
         LookAtWaiting(sessions, now);
+        await LookAtLegWaitsAsync(now, cancellationToken);
         foreach (var leg in state.Legs().Where(l => l.State == LegState.Flying && l.WorkerJob is not null))
         {
             var subject = Verbs.LegTarget(leg.Flight, leg.Name);
@@ -146,6 +152,45 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         }
     }
 
+    /// <summary>
+    /// A flying leg whose worker waits on a file or a time (<see cref="LegRow.Wait"/>): once the file exists or the time comes the
+    /// wait is cleared first, so it fires once, and the worker is woken with a say naming what came. A file wait past its
+    /// <c>--until</c> rings once and goes on waiting.
+    /// </summary>
+    private async Task LookAtLegWaitsAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        foreach (var leg in state.Legs().Where(l => l is { State: LegState.Flying, Wait: not null }))
+        {
+            var wait = leg.Wait!;
+            var came = wait.Path is { } path
+                ? (File.Exists(path) || Directory.Exists(path) ? $"`{path}` now exists" : null)
+                : wait.Until is { } at && now >= at ? $"it is {at.ToLocalTime():HH:mm}, the time you waited until" : null;
+            var subject = Subject(leg);
+            if (came is null)
+            {
+                if (wait.Path is not null && wait.Until is { } limit && now > limit && !wait.Rung)
+                {
+                    state.PutLeg(leg with { Wait = wait with { Rung = true } });
+                    state.RaiseCard(CardBin.Ring, LegCommander.WaitLateKind, subject, $"{Name(leg)} still waits for {wait.Path}, past {limit.ToLocalTime():HH:mm}",
+                        $"waiting since {Ago(now, wait.Since)} ago{(wait.Why.Length > 0 ? $": {wait.Why}" : "")}; it keeps waiting", Choices(leg, null, resumeLabel: "Resume"));
+                }
+                continue;
+            }
+            state.PutLeg(leg with { Wait = null });
+            state.CloseCardsAbout(subject, "the wait is over", LegCommander.WaitLateKind);
+            if (leg.WorkerJob is not { } job)
+            {
+                continue;
+            }
+            _wokenAt[job] = now;
+            var result = await SayAsync(job, $"What you waited for has come: {came}.{(wait.Why.Length > 0 ? $" You waited because: {wait.Why}." : "")} Carry on with your leg `{leg.Name}` of {leg.Flight}.", cancellationToken);
+            if (!result.Ok)
+            {
+                Ring(leg, Idle, $"{Name(leg)}'s wait is over but its worker could not be woken", result.Error);
+            }
+        }
+    }
+
     private async Task StoppedAsync(LegRow leg, SessionRow worker, string error, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var job = leg.WorkerJob!;
@@ -183,7 +228,16 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
 
     private async Task IdleAsync(LegRow leg, SessionRow worker, DateTimeOffset now, CancellationToken cancellationToken)
     {
+        // A worker that ended its turn on a wait it recorded (pilot leg wait) is waiting, as it was told to: the wait wakes it.
+        if (leg.Wait is not null)
+        {
+            return;
+        }
         var since = worker.LastResponseAt ?? worker.StartedAt;
+        if (_wokenAt.TryGetValue(leg.WorkerJob!, out var woken) && woken > since)
+        {
+            since = woken;
+        }
         // A worker idle while a job of its own runs or waits its turn is waiting, as it was told to: the job wakes it, so it
         // is not stalled. Its own by row, or by name: a worker Claude Code continued as a copy is a row of its own, while
         // the job it handed over is still the first row's (TIA1739's j13 rang c205 to c207 as stalls, 2026-10-23).
@@ -200,17 +254,23 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             // handed to another node), not deaf: said so. The leg's report is said only when it is this go-around's own, not
             // the go-around's reason (TIA1241's domain-instruments, SE1 2026-10-25: rung as nudged to no avail while it
             // answered each nudge, under the last worker's stall).
-            var answered = _nudgedAt.TryGetValue(job, out var nudgedAt) && worker.LastResponseAt > nudgedAt;
+            // Each nudge counted as answered when a turn ended after it and before the next: the last one by the response now.
+            var answered = _answered.GetValueOrDefault(job) + (_nudgedAt.TryGetValue(job, out var nudgedAt) && worker.LastResponseAt > nudgedAt ? 1 : 0);
             var report = leg.Report is { Length: > 0 } r && !r.StartsWith("go-around:", StringComparison.Ordinal) ? $"; leg's report: {r.Split('\n')[0]}" : "";
-            Ring(leg, Idle, answered ? $"{Name(leg)}'s worker answers its nudges but stays idle with the leg unfinished" : $"{Name(leg)}'s worker stopped with the leg unfinished",
-                answered
-                    ? $"idle for {Ago(now, since)}; nudged {nudges} {(nudges == 1 ? "time" : "times")} and it answered each, then went idle again: its transcript says what it waits on{report}"
+            Ring(leg, Idle, answered > 0 ? $"{Name(leg)}'s worker answers its nudges but stays idle with the leg unfinished" : $"{Name(leg)}'s worker stopped with the leg unfinished",
+                answered > 0
+                    ? $"idle for {Ago(now, since)}; nudged {nudges} {(nudges == 1 ? "time" : "times")} and it answered {(answered >= nudges ? "each" : $"{answered} of them")}, then went idle again: its transcript says what it waits on{report}"
                     : $"idle for {Ago(now, since)}, nudged {nudges} {(nudges == 1 ? "time" : "times")} with no answer{report}",
                 worker);
             return;
         }
 
         _nudges[job] = nudges + 1;
+        // The nudge before this one was answered if a turn ended since it.
+        if (_nudgedAt.TryGetValue(job, out var before) && worker.LastResponseAt > before)
+        {
+            _answered[job] = _answered.GetValueOrDefault(job) + 1;
+        }
         _nudgedAt[job] = now;
         var result = await SayAsync(worker, Nudge(leg), cancellationToken);
         if (result.Ok)
@@ -344,11 +404,13 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         var open = leg.Checklist.Count(i => !i.Done);
         var steps = leg.Checklist.Length == 0 ? "" : open == 0 ? " Every step is ticked." : $" {open} of {leg.Checklist.Length} steps are not ticked yet.";
         return $"Your leg `{leg.Name}` of {leg.Flight} is not finished yet.{steps} If there is more to do, carry on. When every step is done and "
-            + $"the Done-when holds, run `{Pilot} leg finish done \"<one-line report>\"`; if you cannot go on, run `{Pilot} leg finish failed \"<why>\"`.";
+            + $"the Done-when holds, run `{Pilot} leg finish done \"<one-line report>\"`; if something stops the Done-when, run `{Pilot} leg finish failed \"<why>\"`; anything else you could not do goes in the report of a done leg.";
     }
 
-    private Task<CommandResult> SayAsync(SessionRow worker, string text, CancellationToken cancellationToken) =>
-        run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(worker.Id), Args = [text], Who = Who }, cancellationToken);
+    private Task<CommandResult> SayAsync(SessionRow worker, string text, CancellationToken cancellationToken) => SayAsync(worker.Id, text, cancellationToken);
+
+    private Task<CommandResult> SayAsync(string sessionId, string text, CancellationToken cancellationToken) =>
+        run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(sessionId), Args = [text], Who = Who }, cancellationToken);
 
     private void Ring(LegRow leg, string kind, string title, string? detail, SessionRow? worker = null) =>
         state.RaiseCard(CardBin.Ring, kind, Subject(leg), title, detail, Choices(leg, worker, resumeLabel: kind == Idle ? "Nudge" : "Resume"));

@@ -9,7 +9,7 @@ using Pilot.Contracts;
 // Console.Lib rather than painted on pixels: the Sessions page (1), the Flights page (2) with its
 // buttons, the Background tasks page (3), the Fleet page (4), and the watchtower's panel with its cards, all live from
 // this machine's node or one on the LAN.
-var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN, host:port; else PILOT_NODE, else this machine's" };
+var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN: host:port, or its name (SE1) or host; else PILOT_NODE, else this machine's" };
 var socketOption = new Option<string?>("--node-socket") { Description = "This machine's node's socket; else PILOT_NODE_SOCKET, else this user's default" };
 var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 sessions, 3 flights, 4 jobs, 5 fleet, 6 settings, 7 repos, 8 chat, Alt+Left or Backspace back and Alt+Right forward, Ctrl+T the chat with the watchtower, q quits")
 {
@@ -22,11 +22,23 @@ if (parsed.Errors.Count > 0 || parsed.Action is System.CommandLine.Help.HelpActi
 }
 
 var nodeTarget = parsed.GetValue(nodeOption) ?? (Environment.GetEnvironmentVariable(NodeTargets.EnvironmentVariable) is { Length: > 0 } env ? env : null);
-var remote = nodeTarget is not null && NodeClient.IsEndpoint(nodeTarget, out var endpoint) ? endpoint : null;
+// A name (DE1) is found on the LAN as the CLI finds it; one no node announces is refused, not taken for this machine.
+string? remote = null;
+if (nodeTarget is not null)
+{
+    var (resolved, _, unknown) = await NodeTargets.ResolveAsync(nodeTarget, CancellationToken.None);
+    if (unknown is not null)
+    {
+        System.Console.Error.WriteLine($"pilot-tui: {unknown}");
+        return 2;
+    }
+    remote = resolved is not null && NodeClient.IsEndpoint(resolved, out var endpoint) ? endpoint : null;
+}
 string[] nodeArgs = remote is not null ? ["--node", remote] : ["--node-socket", NodeSocket.Resolve(parsed.GetValue(socketOption))];
 const string Who = "tui";
 
-using var client = NodeTargets.Connect(remote, parsed.GetValue(socketOption));
+// No remote is this machine's socket: PILOT_NODE is folded into nodeTarget already, so it is not read again.
+using var client = NodeTargets.Connect(remote, parsed.GetValue(socketOption), here: remote is null);
 await using var feed = NodeFeed.For(client);
 // The fleet beyond this node: every node heard on the LAN or granted to this user, watched on its own stream, its rows
 // merged into every page.

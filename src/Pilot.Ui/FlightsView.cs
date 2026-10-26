@@ -75,7 +75,7 @@ internal sealed record FlightLine
         }
         var text = $"{legs.Count} {(legs.Count == 1 ? "leg" : "legs")} · {legs.Count(l => l.State == LegState.Done)} done";
         return legs.FirstOrDefault(l => l.State == LegState.Failed) is { } failed ? $"{text} · {failed.Name} failed"
-            : legs.FirstOrDefault(l => l.State == LegState.Flying) is { } flying ? $"{text} · {flying.Name} flying{(flying.GoArounds > 0 ? $" (go-around {flying.GoArounds})" : "")}"
+            : legs.FirstOrDefault(l => l.State == LegState.Flying) is { } flying ? $"{text} · {flying.Name} {(flying.Wait is { } wait ? FlightWaiting.WaitText(wait) : "flying")}{(flying.GoArounds > 0 ? $" (go-around {flying.GoArounds})" : "")}"
             : legs.FirstOrDefault(l => l.Hold is not null) is { } held ? $"{text} · {held.Name} {FlightWaiting.LegState(held)}"
             : text;
     }
@@ -606,7 +606,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         foreach (var leg in line.LegRows.Take(5))
         {
             var steps = leg.Checklist.Length == 0 ? "" : $" · {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";
-            var color = leg.Hold is not null ? Held : leg.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
+            var color = leg.Hold is not null || (leg.Wait is not null && leg.State == LegState.Flying) ? Held : leg.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
             var legState = $"{FlightWaiting.LegState(leg)}{steps}{(leg.GoArounds > 0 ? $" · go-around {leg.GoArounds}" : "")}";
             legs.Add(Layout.Builder.HStack(
                     Layout.Builder.Text($"{leg.Order}. {leg.Name}", 13f, Body).WFixed(150f),

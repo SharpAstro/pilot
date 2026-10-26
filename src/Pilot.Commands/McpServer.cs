@@ -63,6 +63,8 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
 
     private readonly Dictionary<string, (string[] Path, Command Command)> _tools = Tools(PilotCommand.Build(cwd, TextWriter.Null, TextWriter.Null, "mcp", agent: true));
 
+    private (string? Node, bool Here, string? Why)? _resolved;
+
     /// <summary>Who the calls are from: the client by its name from <c>initialize</c>, until then <c>mcp</c>.</summary>
     internal string Who { get; private set; } = "mcp";
 
@@ -217,7 +219,12 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         }
         var output = new StringWriter();
         var error = new StringWriter();
-        var exit = await PilotCommand.InvokeAsync([.. NodeArgs(), .. args], cwd, output, error, Who, bySession: true, console: false, cancellationToken, agent: true);
+        var (target, here, unknown) = await ResolvedAsync(cancellationToken);
+        if (unknown is not null)
+        {
+            return new ToolCallResult([new TextContent($"pilot: {unknown}")], IsError: true);
+        }
+        var exit = await PilotCommand.InvokeAsync([.. NodeArgs(target, here), .. args], cwd, output, error, Who, bySession: true, console: false, cancellationToken, agent: true);
         var said = (output.ToString() + error.ToString()).TrimEnd();
         return new ToolCallResult([new TextContent(said.Length > 0 ? said : exit == 0 ? "ok" : $"exit {exit}")], IsError: exit != 0);
     }
@@ -229,7 +236,14 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         {
             throw new McpException(ResourceNotFound, $"there is no resource {read.Uri}; resources/list lists them");
         }
-        using var client = NodeTargets.Connect(node, socket);
+        // The node named as the tools resolve it: a name read raw went to this machine's socket, so one server read resources
+        // from this node while its tools ran on another. Resolved once, as it listens on the LAN for a few seconds.
+        var (target, here, unknown) = await ResolvedAsync(cancellationToken);
+        if (unknown is not null)
+        {
+            throw new McpException(InternalError, unknown);
+        }
+        using var client = NodeTargets.Connect(target, socket, here: here);
         SnapshotEvent snapshot;
         try
         {
@@ -250,7 +264,25 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
     }
 
     /// <summary>The node this server was started against, passed on to every command it runs.</summary>
-    private string[] NodeArgs() => [.. node is null ? [] : new[] { "--node", node }, .. socket is null ? [] : new[] { "--node-socket", socket }];
+    // The node resolved once, as a host:port or this machine's socket: a name passed on would be looked up again on the LAN
+    // by every tool call, and tools and resources could find different nodes.
+    private static string[] NodeArgs(string? target, bool here, string? socket) => here || target is null
+        ? ["--node-socket", NodeSocket.Resolve(socket)]
+        : ["--node", target, .. socket is null ? [] : new[] { "--node-socket", socket }];
+
+    private string[] NodeArgs(string? target, bool here) => NodeArgs(target, here, socket);
+
+    /// <summary>The node named, resolved on first use and kept; a name not heard is tried again next time.</summary>
+    private async Task<(string? Node, bool Here, string? Why)> ResolvedAsync(CancellationToken cancellationToken)
+    {
+        _resolved ??= await NodeTargets.ResolveAsync(node, cancellationToken);
+        var resolved = _resolved.Value;
+        if (resolved.Why is not null)
+        {
+            _resolved = null;
+        }
+        return resolved;
+    }
 
     /// <summary>Every command with an action, by its tool name: its path from the root, joined with <c>_</c>.</summary>
     internal static Dictionary<string, (string[] Path, Command Command)> Tools(RootCommand root)

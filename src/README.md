@@ -199,6 +199,16 @@ under Hooks). Once
 landed, the plane's worktree is removed and its branch kept. PRs are merged by rebase unless the node's `merge-method`
 says otherwise, so every commit's subject, which a repo's docs may cite, reaches main.
 
+**A folder Windows holds open** (a review's worktree, a landed plane, a cached clone) does not keep its review or flight
+open with a card retried every sweep. It goes in the removal queue, `pending-removals.json` in the node's data folder
+(path, what it belonged to, when queued, why, starts tried), and the review or landing finishes anyway with a Handled
+line. The queue is tried once at the node's start, before anything touches those paths, and again when no session has
+been working for an hour (at most once an hour); the PR review sweep never tries it. A folder queued for more than a day,
+or that has outlasted more than 3 starts, rings once on a For-you card (kind `removal-held`, subject the node) listing
+each such folder with its owner, when it was queued, its starts and the process holding it (Restart Manager over the
+files under it, else `handle.exe` when on PATH, else "holder unknown"). The card is kept, not raised again, while such
+folders stand, and closes when none is left. A new pin at a held queued path is made beside it.
+
 ### Legs
 
 A flight's legs fly in their order on its plane, one at a time, each by a fresh background worker named
@@ -349,7 +359,25 @@ A PR pilot did not make, in a repo it may not fly, is reviewed from its link (#1
   `review pr` of the same PR ends the last review first. The clone, the cache's or the person's, stays, and so does
   the draft.
 
-`pilot status` lists the reviews not over.
+- **A fixer for a changes verdict** (#290). Once a changes verdict is posted on a PR no flight owns, in a repo the node
+  tracks (a clone under the repo roots, never the clone cache): on the controller's own PR the node starts one fixer,
+  `<machine>-fix-<repo>-<n>`, in a worktree `<clone>/.claude/worktrees/fix-<repo>-<n>` on the PR's own branch, told
+  the report and every finding, the repo's CI build and test (`-c Release` for a SharpAstro repo), and to merge
+  `origin/<base>` in rather than rebase, push without force, comment on the PR once with each finding and its fix, and
+  end its turn. On anyone else's PR a For-you `pr-fix-offer` card has a **Fix it** choice (`fix-pr pr/<owner>/<repo>#<n>`)
+  that starts the same fixer. A finding the reviewer starts with `design:` is a question for the author: it rings a
+  `pr-review-design` card and starts no fixer. An untracked repo gets nothing. One fixer per PR, never a second, and the
+  review ending takes neither the fixer nor its worktree (a fresh review of the PR carries them on).
+  **Rounds.** Each sweep looks at a PR a fixer is on. A head past the reviewed one means it pushed: the fixer is stopped,
+  its worktree removed (one held open is a card, tried again) and one fresh review starts at the new head, carrying
+  `FixRound`. That review is queued by the same green-checks path as any approve or comment; a changes verdict starts
+  the next fixer with the round plus one and the new findings, and after round 3 (the same cap as a flight's review
+  go-arounds) rings a `pr-fix-capped` card with the findings and a link instead of starting a fourth. A fixer whose
+  session ended with the head unmoved leaves a For-you `pr-fix-ended` card with **Fix it**; a PR merged or closed
+  ends the fixer and its worktree. A review started by hand keeps the round count rather than resetting it.
+
+`pilot status` lists the reviews not over, and under a review whose fixer is on, `fixing, <fixer>, round <n>`; such a
+review stays listed after it closed.
 
 ### Liveness: no flight derails silently
 
@@ -459,6 +487,7 @@ pilot leg remove <code> <leg> [why…]           # takes a planned leg out of th
 pilot leg start <code> <leg>
 pilot leg validate go|no-go [report…]          # a leg's validator, from its plane (--leg <code>/<leg> elsewhere)
 pilot leg finish done|failed [report…]         # done: the node reruns the check
+pilot leg wait --for-file <path> [--until <time>] [why…]   # wait on outside work without a job (--leg <code>/<leg> elsewhere)
 pilot leg go-around <why…>
 pilot review pass|changes <report…>            # a flight's reviewer, from its plane (--flight <code> elsewhere)
 pilot review pr <owner>/<repo>#<n>|<url>       # a reviewer on any PR, pinned at its head (see Any PR's review)

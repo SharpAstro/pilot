@@ -89,8 +89,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         var carded = state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady).Select(c => c.Subject).ToHashSet(StringComparer.Ordinal);
         foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null }))
         {
-            var legs = state.Legs(flight.Code);
-            if (legs.Length == 0 || legs.Any(l => l.State != LegState.Done))
+            var flown = state.Legs(flight.Code);
+            if (flown.Length == 0 || flown.Any(l => l.State != LegState.Done))
             {
                 continue;
             }
@@ -116,6 +116,26 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             if (queue.RemovedAt is not { } removedAt || string.Equals(queue.RemovedReason, "merged", StringComparison.OrdinalIgnoreCase) || carded.Contains(subject)
                 || state.Cards().Any(c => c.Kind == QueueDropped && c.Subject == subject && c.At >= removedAt))
             {
+                continue;
+            }
+            // Taken out for a conflict with its base (main moved while it waited): Merge would only be refused again. The
+            // plane is rebased and reviewed afresh, which offers the merge again, as a PR found conflicting is (PIL207's
+            // #238, SE1 2026-10-25: a For-you card offered Merge on a merge_conflict).
+            if (queue.RemovedReason?.Contains("conflict", StringComparison.OrdinalIgnoreCase) == true && legs is not null)
+            {
+                if (_rebased.Add($"{flight.Code} {queue.Head}"))
+                {
+                    if (await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } notRebased)
+                    {
+                        state.RaiseCard(CardBin.Ring, "pr-conflicts", subject, $"{flight.Code}'s PR #{number} left the merge queue on a conflict with its base",
+                            $"{notRebased}{(await legs.ConflictsAsync(flight.Code, notRebased, cancellationToken) is { } notSent ? $" ({notSent})" : ": its last leg goes around to resolve it")}",
+                            link: flight.PullRequestUrl);
+                    }
+                    else
+                    {
+                        state.RaiseCard(CardBin.Handled, QueueDropped, subject, $"{flight.Code}'s PR #{number} left the merge queue on a conflict: rebased onto its base and reviewed afresh");
+                    }
+                }
                 continue;
             }
             var why = queue.RemovedReason is { Length: > 0 } reason ? reason : "no reason given";
@@ -196,17 +216,25 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             var checks = dropped is null ? await github.ChecksSummaryAsync(flight.RepoPath, number, cancellationToken) : null;
+            // Armed, but the merge queue threw it out: GitHub queues it again once the checks pass and throws it out again while
+            // the cause stands, so "merging when checks pass" alone was a merge that never came (tianwen #1846, three times).
+            // The rebase advice is for a conflict under a rebase merge only: one dropped for failed checks, by hand or with the
+            // queue cleared is told only that it was.
+            string Said(string line) => merge?.DroppedFromQueue is not { } thrownOut ? line
+                : thrownOut.Contains("conflict", StringComparison.OrdinalIgnoreCase) && method.Equals("rebase", StringComparison.OrdinalIgnoreCase)
+                    ? $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass, and drops it again until the conflict is gone; a branch brought up to date by merging its base loses those fixes in a rebase merge, so rebase it."
+                    : $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass.";
             if (dropped is null && merge is { AwaitsCheck: true } && checks?.Status != ChoiceStatus.Failing)
             {
                 // Every check shown is green, but one GitHub requires is not there yet (a gate job starts once the builds finish):
                 // the merge keeps waiting for it, and is neither taken nor dropped in that gap.
-                legs?.ShowMerge(subject, LegCommander.ArmedLine(checks, how, LegCommander.AwaitingCheckLine), MergeWays.Armed);
+                legs?.ShowMerge(subject, Said(LegCommander.ArmedLine(checks, how, LegCommander.AwaitingCheckLine)), MergeWays.Armed);
                 continue;
             }
             if (dropped is null && checks?.Status == ChoiceStatus.Pending)
             {
                 // Said on the card as each check finishes.
-                legs?.ShowMerge(subject, LegCommander.ArmedLine(checks, how), MergeWays.Armed);
+                legs?.ShowMerge(subject, Said(LegCommander.ArmedLine(checks, how)), MergeWays.Armed);
                 continue;
             }
             var failed = checks?.Status == ChoiceStatus.Failing;
@@ -216,9 +244,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 // GitHub merges it when its checks pass (and its other rules allow): the PR's MERGED, read above on a later look,
                 // is what lands the flight.
                 // A review GitHub still waits for is said: its merge is not "now".
-                legs?.ShowMerge(subject, checks?.Status == ChoiceStatus.Passing
-                    ? merge?.Reason is { } waits ? $"checks passed: GitHub waits for {waits} before it merges" : "checks passed: GitHub merges it now"
-                    : LegCommander.ArmedLine(checks, how), MergeWays.Armed);
+                // Dropped from the queue once, its green checks mean GitHub queues it again, not that it merges now.
+                legs?.ShowMerge(subject, Said(checks?.Status == ChoiceStatus.Passing
+                    ? merge?.Reason is { } waits ? $"checks passed: GitHub waits for {waits} before it merges"
+                        : merge?.DroppedFromQueue is not null ? "checks passed: GitHub queues it again" : "checks passed: GitHub merges it now"
+                    : LegCommander.ArmedLine(checks, how)), MergeWays.Armed);
                 continue;
             }
             // GitHub's auto-merge would merge a head that moved, or one whose check was re-run green, on its own: off first.
@@ -438,7 +468,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             // which check, changes requested, ready.
             if (merge is not null && legs is not null)
             {
-                legs.ShowMergeState(card, merge, head);
+                // Read again after the awaits above, as below: the card's choices as they are now, not as they were.
+                if (state.Cards(openOnly: true).FirstOrDefault(c => c.Id == card.Id) is { } current)
+                {
+                    legs.ShowMergeState(current, merge, head);
+                }
             }
             else if (showsArmed)
             {
@@ -458,8 +492,16 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             if (merge is null || legs is null)
             {
-                var choices = card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = status } : c).ToList();
-                state.UpdateChoices(card.Id, choices);
+                // Read again after the awaits above: a Merge pressed meanwhile armed or queued it, and writing the choices read
+                // before that back with the checks' status turned "armed" into "pending" (MergeArmTests, flaky in CI).
+                if (state.Cards(openOnly: true).FirstOrDefault(c => c.Id == card.Id) is not { } current
+                    || current.Choices.Any(c => c.Verb == Verbs.Merge && c.Status is ChoiceStatus.Armed or ChoiceStatus.Queued)
+                    || state.Flights().FirstOrDefault(f => f.Code == flight.Code)?.MergeWhenGreen is not null)
+                {
+                    continue;
+                }
+                var choices = current.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = status } : c).ToList();
+                state.UpdateChoices(current.Id, choices, ifStill: current.Choices);
             }
         }
     }

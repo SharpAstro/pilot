@@ -75,8 +75,7 @@ internal sealed record JobLine
     };
 
     /// <summary>A run's length as the node's wake says it: <c>45s</c>, <c>12m 4s</c>, <c>2h 5m</c>.</summary>
-    internal static string Duration(TimeSpan span) =>
-        span.TotalHours >= 1 ? $"{(int)span.TotalHours}h {span.Minutes}m" : span.TotalMinutes >= 1 ? $"{(int)span.TotalMinutes}m {span.Seconds}s" : $"{Math.Max(0, (int)span.TotalSeconds)}s";
+    internal static string Duration(TimeSpan span) => JobQueue.Duration(span);
 }
 
 /// <summary>What the Background tasks page shows: the node's jobs, and where they come from.</summary>
@@ -97,6 +96,22 @@ internal sealed record JobsScreen(IReadOnlyList<JobLine> Lines, string Source, D
             var queued = Lines.Count(l => l.Row.State == JobState.Queued);
             var summary = $"{Lines.Count} {(Lines.Count == 1 ? "job" : "jobs")} · {running} running";
             return queued > 0 ? $"{summary} · {queued} queued" : summary;
+        }
+    }
+
+    /// <summary>
+    /// Who holds the queue and for how long, one line per node with a queue (<see cref="JobQueue.HolderLine"/>, the node's name
+    /// first when the page merges several); null while no job waits.
+    /// </summary>
+    public string? Holder
+    {
+        get
+        {
+            var lines = Lines.GroupBy(l => l.Node?.Key)
+                .Select(g => JobQueue.HolderLine(g.Select(l => l.Row), AsOf) is { } line ? (g.First().Node is { } node ? $"{node.Name}: {line}" : line) : null)
+                .OfType<string>()
+                .ToList();
+            return lines.Count == 0 ? null : string.Join(" · ", lines);
         }
     }
 
@@ -160,6 +175,14 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private static readonly RGBAColor32 Failed = new(0xe0, 0x5a, 0x5a, 0xff);
     private static readonly RGBAColor32 Button = new(0x2a, 0x3a, 0x58, 0xff);
     private static readonly RGBAColor32 ButtonHover = new(0x35, 0x4a, 0x70, 0xff);
+
+    /// <summary>
+    /// A button that ends something. Its label is Bright: 5.3:1 on it and 4.8:1 on its hover, both AA (4.5:1) for 12 px text.
+    /// The hover only lightens it a little: a lighter red took the label below AA.
+    /// </summary>
+    internal static readonly RGBAColor32 Danger = new(0xb3, 0x26, 0x1e, 0xff);
+    internal static readonly RGBAColor32 DangerHover = new(0xbd, 0x2c, 0x23, 0xff);
+    internal static readonly RGBAColor32 DangerLabel = Bright;
     private static readonly RGBAColor32 MenuBg = new(0x1f, 0x21, 0x2b, 0xff);
 
     /// <summary>How often the selected job's log is read again.</summary>
@@ -200,6 +223,12 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     /// <summary>Cancels a job: the node's <c>cancel-job</c>.</summary>
     public Action<JobRow>? OnCancel { get; set; }
+
+    /// <summary>
+    /// The job whose Cancel was pressed and waits on its confirm: a cancel ends a run that may have taken hours, so one press
+    /// only asks, and the detail's buttons become the question until it is answered or another job is picked.
+    /// </summary>
+    private string? _confirmCancel;
 
     /// <summary>Opens the session a job wakes (its transcript, on the Sessions page); null where there is none to open.</summary>
     public Action<JobRow>? OnSession { get; set; }
@@ -388,7 +417,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
         else if (CanCommand && line.Live && OnCancel is { } cancel)
         {
-            items.Add(new DropdownItem<string>("Cancel", "cancel") { OnChoose = () => cancel(job) });
+            items.Add(new DropdownItem<string>("Cancel…", "cancel") { OnChoose = () => _confirmCancel = job.Id });
         }
         if (job.Owner is not null && OnSession is { } session)
         {
@@ -420,6 +449,11 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     internal Layout.Node Build(JobsScreen screen, JobLine? selected)
     {
         var parts = new List<Layout.Node> { Header(screen), Main(screen).HStar() };
+        // A question asked about one job does not follow the selection to another, nor outlive the job's run.
+        if (_confirmCancel is { } asked && (selected is not { Live: true } || selected.Row.Id != asked))
+        {
+            _confirmCancel = null;
+        }
         if (selected is not null)
         {
             parts.Add(Details(selected));
@@ -453,9 +487,14 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             rows[i] = Row(screen.Lines[i], i, marked, columns);
         }
 
-        return Layout.Builder.VStack(
-                Table.Header(columns, Scale),
-                Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch())
+        var table = new List<Layout.Node>();
+        if (screen.Holder is { } holder)
+        {
+            table.Add(Layout.Builder.Text(holder, 13f, Queued).RowH(24f));
+        }
+        table.Add(Table.Header(columns, Scale));
+        table.Add(Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch());
+        return Layout.Builder.VStack([.. table])
             .Pad(Gutter, 8f)
             .Stretch();
     }
@@ -544,8 +583,16 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
         else if (CanCommand && line.Live && OnCancel is { } cancel)
         {
+            if (_confirmCancel == job.Id)
+            {
+                // The question replaces the row's buttons, so nothing else can be pressed by a slip while it stands.
+                buttons.Add(Layout.Builder.Text($"Cancel {job.Id}? It stops now; its output so far stays in its log.", 12f, Bright).WAuto());
+                buttons.Add(Pill("Cancel job", $"job:{job.Id}:cancel-yes", () => { _confirmCancel = null; cancel(job); }, Danger, DangerHover));
+                buttons.Add(Pill("Keep running", $"job:{job.Id}:cancel-no", () => _confirmCancel = null));
+                return Panel(facts, line, buttons);
+            }
             // Cancel (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            buttons.Add(Pill("Cancel", $"job:{job.Id}:cancel", () => cancel(job)));
+            buttons.Add(Pill("Cancel…", $"job:{job.Id}:cancel", () => _confirmCancel = job.Id, Danger, DangerHover));
         }
         if (job.Owner is not null && OnSession is { } session)
         {
@@ -558,6 +605,11 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             buttons.Add(Pill("Open log", $"job:{job.Id}:log", () => open(job.LogPath)));
         }
 
+        return Panel(facts, line, buttons);
+    }
+
+    private Layout.Node Panel(List<Layout.Node> facts, JobLine line, List<Layout.Node> buttons)
+    {
         return Layout.Builder.VStack(
                 Layout.Builder.HStack(
                         Layout.Builder.VStack([.. facts]).WFixed(FactsColumn),
@@ -622,11 +674,11 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// </summary>
     private static Layout.Node Optional(Layout.Node cell, float width) => cell.WStar(1f, 0f, width).CollapseBelow(width);
 
-    private static Layout.Node Pill(string label, string action, Action onClick) =>
+    private static Layout.Node Pill(string label, string action, Action onClick, RGBAColor32? bg = null, RGBAColor32? hover = null) =>
         Layout.Builder.Text(label, 12f, Bright, TextAlign.Center)
             .Pad(10f, 4f)
             .WAuto()
-            .Bg(Button)
-            .BgHover(ButtonHover)
+            .Bg(bg ?? Button)
+            .BgHover(hover ?? ButtonHover)
             .Follows(new HitResult.ButtonHit(action), _ => onClick());
 }

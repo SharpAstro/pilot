@@ -53,10 +53,29 @@ internal sealed class PilotChrome<TSurface>
         (PilotPage.Sessions, "\U0001F4AC", "Sessions", new KeyChord(InputKey.D2, InputModifier.Ctrl), null),
         (PilotPage.Flights, "✈", "Flights", new KeyChord(InputKey.D3, InputModifier.Ctrl), null),
         (PilotPage.Repos, "📁", "Repos", new KeyChord(InputKey.D7, InputModifier.Ctrl), null),
-        (PilotPage.Jobs, "⚒", "Background tasks", new KeyChord(InputKey.D4, InputModifier.Ctrl), null),
+        (PilotPage.Jobs, "⏱", "Background tasks", new KeyChord(InputKey.D4, InputModifier.Ctrl), null),
         (PilotPage.Fleet, "\U0001F310", "Fleet", new KeyChord(InputKey.D5, InputModifier.Ctrl), null),
         (PilotPage.Settings, "⚙", "Settings", new KeyChord(InputKey.D6, InputModifier.Ctrl), null),
     ];
+
+    /// <summary>
+    /// The Background tasks page's glyph on the rail, and what it says on hover: a job that failed in play (the last
+    /// <see cref="PlayFilter.JobsFinished"/>) is a red dot, one running the arrows going round, one only waiting its turn
+    /// a clock, and none of those the clipboard. The rail showed the same hammer and pick whatever its jobs did (SE1,
+    /// 2026-10-25). Each glyph is one the rail's emoji face draws: an hourglass, a stopwatch and a red exclamation drew
+    /// nothing. A badge on the glyph itself waits for DIR.Lib's tab items to carry one.
+    /// </summary>
+    internal static (string Glyph, string? Said) JobsGlyph(JobsScreen? jobs, DateTimeOffset now)
+    {
+        var rows = jobs?.Lines.Select(l => l.Row).ToList() ?? [];
+        var running = rows.Count(r => r.State == JobState.Running);
+        var waiting = rows.Count(r => r.State == JobState.Queued);
+        var failed = rows.Count(r => r.State == JobState.Failed && r.EndedAt is { } ended && now - ended <= PlayFilter.JobsFinished);
+        var parts = new[] { running > 0 ? $"{running} running" : null, waiting > 0 ? $"{waiting} waiting" : null, failed > 0 ? $"{failed} failed just now" : null }
+            .OfType<string>().ToList();
+        var glyph = failed > 0 ? "🔴" : running > 0 ? "🔄" : waiting > 0 ? "🕓" : "📋";
+        return (glyph, parts.Count == 0 ? null : string.Join(", ", parts));
+    }
 
     private readonly List<TabItem<PilotPage>> _items = [];
     private Action<PilotPage>? _select;
@@ -86,6 +105,7 @@ internal sealed class PilotChrome<TSurface>
         Tooltips = new TooltipLayer<TSurface>(renderer);
         // A flight page's Merge is its card's own choice, run as the panel runs it.
         Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
+        Flights.CardWorking = Cards.WorkingOn;
         Home = new HomeView<TSurface>(renderer);
         sessions.ShareWith(Flights, Repos, Jobs, Fleet, Settings, Cards, Chat);
         // The panel's watchtower foot is the way into the chat.
@@ -625,14 +645,17 @@ internal sealed class PilotChrome<TSurface>
     public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, ReposScreen? repos, RectF32 bounds)
     {
         _items.Clear();
+        var tasks = JobsGlyph(jobs, screen.AsOf);
         foreach (var (page, icon, label, shortcut, locked) in Pages)
         {
+            var (glyph, said) = page == PilotPage.Jobs ? tasks : (icon, null);
             _items.Add(new TabItem<PilotPage>(label, page)
             {
-                Icon = icon,
+                Icon = glyph,
                 IsEnabled = locked is null,
-                // The rail has room for a glyph only, so the name, the chord and a locked page's reason are the tooltip's.
-                Tooltip = locked is null ? $"{label} (Ctrl+{(int)page + 1})" : $"{label} — {locked}",
+                // The rail has room for a glyph only, so the name, the chord, what the page's things are doing and a locked
+                // page's reason are the tooltip's.
+                Tooltip = locked is null ? $"{label}{(said is null ? "" : $": {said}")} (Ctrl+{(int)page + 1})" : $"{label} — {locked}",
                 Shortcut = shortcut,
                 OnSelect = _select ??= Show,
             });

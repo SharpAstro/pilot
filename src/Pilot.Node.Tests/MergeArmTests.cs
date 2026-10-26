@@ -265,6 +265,40 @@ public sealed class MergeArmTests
     }
 
     [Fact]
+    public async Task AnArmedMergeTheQueueThrewOutSaysSoNotOnlyThatItMergesWhenChecksPass()
+    {
+        // tianwen #1846: thrown out of the merge queue three times for merge_conflict, re-queued by GitHub each time its checks
+        // passed, while its card said only "merging when checks pass".
+        var (node, ready) = await ArmedNatively(Pending(1));
+        await using var _ = node;
+
+        node.GitHub.Summary = Pending(2);
+        node.GitHub.Merge = new MergeState(MergeKinds.Armed, 2, 3, DroppedFromQueue: "merge conflict");
+        await Look(node);
+
+        var detail = Card(node, ready).Detail.ShouldNotBeNull();
+        detail.ShouldContain("Dropped from the merge queue: merge conflict");
+        detail.ShouldContain("rebase it");
+    }
+
+    [Fact]
+    public async Task AnArmedMergeDroppedForAnotherReasonWithGreenChecksSaysGitHubQueuesItAgainNotThatItMergesNow()
+    {
+        var (node, ready) = await ArmedNatively(Pending(1));
+        await using var _ = node;
+
+        node.GitHub.Summary = Passing();
+        node.GitHub.Merge = new MergeState(MergeKinds.Armed, 3, 3, DroppedFromQueue: "failed checks");
+        await Look(node);
+
+        var detail = Card(node, ready).Detail.ShouldNotBeNull();
+        detail.ShouldContain("checks passed: GitHub queues it again");
+        detail.ShouldContain("Dropped from the merge queue: failed checks");
+        detail.ShouldNotContain("merges it now");
+        detail.ShouldNotContain("rebase it");
+    }
+
+    [Fact]
     public async Task ANativelyArmedPrMergedByGitHubClosesTheCardAsMergedAndLandsTheFlight()
     {
         var (node, ready) = await ArmedNatively(Pending(1));

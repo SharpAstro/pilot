@@ -353,11 +353,14 @@ public sealed class NodeState
     }
 
     /// <summary>Gives an open card new choices (a merge's checks turned green, say); false when it is not open or nothing changed.</summary>
-    public bool UpdateChoices(string id, IReadOnlyList<CardChoice> choices)
+    public bool UpdateChoices(string id, IReadOnlyList<CardChoice> choices, IReadOnlyList<CardChoice>? ifStill = null)
     {
         lock (_gate)
         {
-            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open || card.Choices.SequenceEqual(choices))
+            // With ifStill, a compare-and-set: written only while the card still holds the choices the caller read, so a press
+            // that armed the merge between that read and this write is not undone.
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open || card.Choices.SequenceEqual(choices)
+                || ifStill is not null && !card.Choices.SequenceEqual(ifStill))
             {
                 return false;
             }

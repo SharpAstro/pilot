@@ -12,21 +12,21 @@ namespace Pilot.Node.Tests;
 /// release's package is fetchable on nuget.org, then flying; one ring card when it never comes. Real git repos, the real
 /// commander and watch, fakes for GitHub and nuget.org.
 /// </summary>
-public sealed class PackageWaitTests : IDisposable
+public abstract class PackageWaitTestsBase : IDisposable
 {
-    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+    private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static readonly DateTimeOffset Start = new(2026, 10, 26, 9, 0, 0, TimeSpan.Zero);
+    private protected static readonly DateTimeOffset Start = new(2026, 10, 26, 9, 0, 0, TimeSpan.Zero);
 
-    private const string MergeCommit = "feedbeef00000000feedbeef00000000feedbeef";
+    private protected const string MergeCommit = "feedbeef00000000feedbeef00000000feedbeef";
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2w-" + Guid.NewGuid().ToString("N")[..8]);
-    private readonly ManualTime _time = new(Start);
-    private readonly FakeGitHub _github = new();
-    private readonly FakeNuGetFeed _feed = new();
-    private readonly List<IDisposable> _journals = [];
+    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2w-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly ManualTime _time = new(Start);
+    private protected readonly FakeGitHub _github = new();
+    private protected readonly FakeNuGetFeed _feed = new();
+    private protected readonly List<IDisposable> _journals = [];
 
-    public PackageWaitTests()
+    protected PackageWaitTestsBase()
     {
         Directory.CreateDirectory(Repo);
         Git(Repo, "init", "-q", "-b", "main");
@@ -42,13 +42,13 @@ public sealed class PackageWaitTests : IDisposable
         Git(Consumer, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
     }
 
-    private string Repo => Path.Combine(_root, "tianwen");
+    private protected string Repo => Path.Combine(_root, "tianwen");
 
     /// <summary>The repo of the flight that consumes the package: it names Drawboard.Core in a project, and releases nothing itself.</summary>
-    private string Consumer => Path.Combine(_root, "sdlapp");
+    private protected string Consumer => Path.Combine(_root, "sdlapp");
 
     /// <summary>A workflow as the org's repos have it: a build on every push and PR, and a job that pushes the packages on a push to main.</summary>
-    private const string PublishWorkflow = """
+    private protected const string PublishWorkflow = """
         name: CI/CD
         on:
           push:
@@ -68,7 +68,7 @@ public sealed class PackageWaitTests : IDisposable
             - run: dotnet nuget push **/*.nupkg -s nuget.org -k ${{ secrets.NUGET_API_KEY }}
         """;
 
-    private static void WriteWorkflow(string repo, string text, string file = "dotnet.yml")
+    private protected static void WriteWorkflow(string repo, string text, string file = "dotnet.yml")
     {
         Directory.CreateDirectory(Path.Combine(repo, ".github", "workflows"));
         File.WriteAllText(Path.Combine(repo, ".github", "workflows", file), text + "\n");
@@ -94,7 +94,7 @@ public sealed class PackageWaitTests : IDisposable
         Directory.Delete(_root, recursive: true);
     }
 
-    private static string Git(string cwd, params string[] args)
+    private protected static string Git(string cwd, params string[] args)
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
@@ -108,14 +108,14 @@ public sealed class PackageWaitTests : IDisposable
         return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
     }
 
-    private static void Commit(string repo, string message)
+    private protected static void Commit(string repo, string message)
     {
         Git(repo, "add", ".");
         Git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", message);
     }
 
     /// <summary>The repo's releases: a version line in its Directory.Build.props and one packable project, as the org's repos have them.</summary>
-    private void MakeRepoAReleaser(string line = "1.2")
+    private protected void MakeRepoAReleaser(string line = "1.2")
     {
         File.WriteAllText(Path.Combine(Repo, "Directory.Build.props"), $"<Project><PropertyGroup><VersionMajorMinor>{line}</VersionMajorMinor></PropertyGroup></Project>\n");
         Directory.CreateDirectory(Path.Combine(Repo, "src", "Core"));
@@ -128,9 +128,9 @@ public sealed class PackageWaitTests : IDisposable
         Commit(Repo, "releases");
     }
 
-    private sealed record Rig(NodeState State, FlightCommander Flights, PackageWatch Watch);
+    private protected sealed record Rig(NodeState State, FlightCommander Flights, PackageWatch Watch);
 
-    private Rig NewRig(NodeState? state = null)
+    private protected Rig NewRig(NodeState? state = null)
     {
         state ??= new NodeState(new InMemoryJournal(), _time);
         var git = new GitCli();
@@ -140,11 +140,11 @@ public sealed class PackageWaitTests : IDisposable
         return new Rig(state, flights, new PackageWatch(state, flights, _feed, _github, _time));
     }
 
-    private async Task<CommandResult> Drive(Rig node, string verb, string target, params string[] args) =>
+    private protected async Task<CommandResult> Drive(Rig node, string verb, string target, params string[] args) =>
         await node.Flights.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct);
 
     /// <summary>TIA1, the producer, and SDL2, a flight of the repo that uses its package, connected to it.</summary>
-    private async Task TwoConnectedFlights(Rig node, string? consumerRepo = null)
+    private protected async Task TwoConnectedFlights(Rig node, string? consumerRepo = null)
     {
         (await Drive(node, Verbs.CreateFlight, Verbs.RepoTarget(Repo), "1", "Issue 1")).Ok.ShouldBeTrue();
         var second = consumerRepo ?? Consumer;
@@ -155,7 +155,7 @@ public sealed class PackageWaitTests : IDisposable
     }
 
     /// <summary>Lands TIA1 as its PR's merge does: at the head of its plane, GitHub saying which commit it merged as.</summary>
-    private async Task LandProducer(Rig node, bool merged = true, DateTimeOffset? mergedAt = null)
+    private protected async Task LandProducer(Rig node, bool merged = true, DateTimeOffset? mergedAt = null)
     {
         var flight = node.State.Flights().Single(f => f.Code == "TIA1");
         var head = Git(flight.Worktree, "rev-parse", "HEAD");
@@ -167,11 +167,15 @@ public sealed class PackageWaitTests : IDisposable
         node.State.Flights().Single(f => f.Code == "TIA1").State.ShouldBe(FlightState.Landed);
     }
 
-    private FlightRow Flight(Rig node, string code) => node.State.Flights().Single(f => f.Code == code);
+    private protected FlightRow Flight(Rig node, string code) => node.State.Flights().Single(f => f.Code == code);
 
-    private static WorkflowRun RunOf(string conclusion, DateTimeOffset? completedAt, string status = "completed") =>
+    private protected static WorkflowRun RunOf(string conclusion, DateTimeOffset? completedAt, string status = "completed") =>
         new(4711, "CI/CD", status, status == "completed" ? conclusion : null, "https://github.com/x/tianwen/actions/runs/4711", "push", completedAt);
+}
 
+/// <summary>Part 1 of PackageWaitTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class PackageWaitTests1 : PackageWaitTestsBase
+{
     [Fact]
     public async Task AFlightConnectedToAReleasingFlightStaysHeldAfterTheLandAndFliesWhenTheVersionAndItsNupkgAreOnNuGet()
     {
@@ -454,7 +458,11 @@ public sealed class PackageWaitTests : IDisposable
         Flight(node, "SDL2").PackageWaits.ShouldBeEmpty();
         _feed.IndexReads.ShouldBe(0);
     }
+}
 
+/// <summary>Part 2 of PackageWaitTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class PackageWaitTests2 : PackageWaitTestsBase
+{
     [Fact]
     public async Task ACentralPackageVersionFileNamingThePackageIsAReferenceToo()
     {

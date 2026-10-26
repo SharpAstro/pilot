@@ -24,6 +24,21 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     private const float Gutter = 16f;
 
+    // The question's card and the feed share the page's height by these weights, the card taking its content up to its share
+    // and never under AskMinHeight, so a long question with many choices on a short window cannot squeeze the feed to nothing
+    // or push the box off the page: past its share the question's text scrolls on its own, the choices under it always in view.
+    private const float AskWeight = 35f;
+    private const float FeedWeight = 65f;
+    private const float AskPadY = 6f;
+
+    // The choices under the question's text, and the least the text keeps: a header and a line. The card's floor holds those
+    // and two rows of choices, so a short window never draws a row of pills past the card.
+    private const float ChoiceHeight = 24f;
+    private const float ChoiceGap = 8f;
+    private const float ChoiceLineGap = 4f;
+    private const float AskTextMinHeight = 40f;
+    private const float AskMinHeight = 2 * AskPadY + AskTextMinHeight + ChoiceGap + 2 * ChoiceHeight + ChoiceLineGap;
+
     private static readonly RGBAColor32 PageBg = TranscriptPane.Ground;
     private static readonly RGBAColor32 FootBg = new(0x16, 0x17, 0x1e, 0xff);
     private static readonly RGBAColor32 Marked = new(0x2a, 0x24, 0x18, 0xff);
@@ -45,12 +60,18 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private readonly TranscriptEntryView _entries = new() { PromptLabel = "you", AssistantLabel = "watchtower", AssistantLines = int.MaxValue };
     private readonly ChatComposer _composer = new();
 
+    // The question card's own scroll, fresh for each question so a new one starts at its top.
+    private ListScrollController _askScroll = NewAskScroll();
+    private string? _askedKey;
+
     // A message that was refused or a choice that did not go, said in the chat in red until the next one goes; and how many
     // are on their way. Swapped whole from the pool.
     private ImmutableList<string> _notices = [];
     private int _sending;
 
     private static TaskCompletionSource NewNudge() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private static ListScrollController NewAskScroll() => new() { Mode = ScrollBarMode.None };
 
     /// <summary>
     /// Reads the chat feed after an entry (its last entries, for -1): the node's chat route. Null leaves the page empty and
@@ -293,6 +314,15 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         {
             // The reply the question ends already says it in the feed: the card then holds only the choices.
             var said = held.Entries.LastOrDefault(e => e.Kind == TranscriptKind.Assistant)?.Text;
+            if (_askedKey != question)
+            {
+                _askedKey = question;
+                _askScroll = NewAskScroll();
+            }
+            // A card whose body fits its viewport still reads one atom of overflow when the body's height is fractional (the
+            // list counts whole surface units, the content rounded up and the viewport down), which drew a full-height
+            // thumb on every card. The bar waits until the body overflows by more than that, as of the last frame.
+            _askScroll.Mode = _askScroll.MaxOffset > 1f ? ScrollBarMode.Interactive : ScrollBarMode.None;
             asked = Question(question, said is not null && said.Contains(question, StringComparison.Ordinal), held.Choices);
         }
         var sending = Volatile.Read(ref _sending) > 0;
@@ -308,7 +338,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             ? Layout.Builder.VStack(list.HStar())
             : asked is null
                 ? Layout.Builder.VStack(list.HStar(), Foot())
-                : Layout.Builder.VStack(list.HStar(), asked, Foot());
+                // The feed and the card take their content up to their shares; a short feed leaves the room to a spacer, so the
+                // card and the box stay at the page's foot.
+                : Layout.Builder.VStack(list.HStarUpToContent(FeedWeight), Layout.Builder.Spacer().HStar(), asked, Foot());
         var body = page.WithGap(8f).Pad(Gutter, 8f).Stretch();
         var whole = Layout.Builder.VStack(top, body.HStar()).Bg(PageBg).Stretch();
         return About?.Over(whole) ?? whole;
@@ -333,22 +365,36 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         else
         {
             body.Add(Layout.Builder.Text("The watchtower asks", 11f, Dim));
-            body.Add(WrappedProse.Of(question, 14f, Bright, 8));
+            // Whole, never cut: a long question scrolls inside the capped card instead.
+            body.Add(WrappedProse.Of(question, 14f, Bright));
         }
+        // The text alone scrolls, in what the card's share leaves it above the choices; the bar beside it and the card's padding
+        // stay put. A gutter keeps the text clear of the scrollbar drawn over its right edge.
+        var text = Layout.Builder.VStack(
+                Layout.Builder.HStack(
+                        Layout.Builder.VStack([.. body]).WithGap(4f).WStar(),
+                        Layout.Builder.Spacer().WFixed(TranscriptEntryView.ScrollGutter))
+                    .WStar()
+                    .HAuto())
+            .WithScroll(_askScroll)
+            .WStar()
+            .HStarUpToContent(1f, AskTextMinHeight);
+        var parts = new List<Layout.Node> { text };
         if (choices.Length > 0)
         {
-            body.Add(Layout.Builder.Spacer().RowH(4f));
-            body.Add(Layout.Builder.WrapH([.. choices.Select((choice, i) => CardsView<TSurface>.Pill(choice, $"chat:choice:{i + 1}", () => Choose(choice)))])
-                .WithGap(8f).WithLineGap(4f).WStar());
+            // The choices stay under the text, outside its scroll, so they are always in view and reachable.
+            parts.Add(Layout.Builder.WrapH([.. choices.Select((choice, i) => CardsView<TSurface>.Pill(choice, $"chat:choice:{i + 1}", () => Choose(choice)))])
+                .WithGap(ChoiceGap).WithLineGap(ChoiceLineGap).WStar());
         }
+        var scrolling = Layout.Builder.VStack([.. parts]).WithGap(ChoiceGap).WStar().HStar();
         return Layout.Builder.HStack(
                 Layout.Builder.Spacer().Bg(Prompt).WFixed(3f).HStar(),
-                Layout.Builder.VStack([.. body]).WithGap(4f).WStar())
+                scrolling)
             .WithGap(8f)
-            .Pad(8f, 6f)
+            .Pad(8f, AskPadY)
             .Bg(Marked)
             .WStar()
-            .HAuto();
+            .HStarUpToContent(AskWeight, AskMinHeight);
     }
 
     // A choice answers the question: said to the watchtower as the person's message, through the same send as a typed one.
