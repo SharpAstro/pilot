@@ -208,7 +208,6 @@ public sealed class RemovalQueueStart(RemovalQueue queue, NodeState? state = nul
     private readonly TimeProvider _time = clock ?? TimeProvider.System;
     private DateTimeOffset _lastWorking;
     private DateTimeOffset _lastTried;
-    private List<string>? _ringing;
 
     /// <summary>How long no session has been working before the queue is tried again, and the least between two tries.</summary>
     public TimeSpan IdleFor { get; init; } = TimeSpan.FromHours(1);
@@ -290,16 +289,21 @@ public sealed class RemovalQueueStart(RemovalQueue queue, NodeState? state = nul
         if (due.Count == 0)
         {
             state.CloseCardsAbout(Verbs.NodeTarget, "the queued folders are gone or no longer overdue", Kind);
-            _ringing = null;
             return;
         }
         // The card names the folders due when it was raised: a different set closes it and raises it again, the same set leaves it be.
-        var paths = due.Select(e => e.Path).Order(StringComparer.OrdinalIgnoreCase).ToList();
-        if (_ringing is not null && !_ringing.SequenceEqual(paths, StringComparer.OrdinalIgnoreCase))
+        // Read from the open card itself, so a node restarted since it rang compares the same way.
+        var open = state.Cards(openOnly: true).Where(c => c.Kind == Kind).ToList();
+        if (open.Count > 0)
         {
-            state.CloseCardsAbout(Verbs.NodeTarget, "the folders held open changed", Kind);
+            var named = open.SelectMany(c => (c.Detail ?? "").Split('\n')).Where(l => l.Length > 0).ToList();
+            var same = named.Count == due.Count
+                && due.All(e => named.Any(l => l.StartsWith(e.Path + ": ", StringComparison.OrdinalIgnoreCase)));
+            if (!same)
+            {
+                state.CloseCardsAbout(Verbs.NodeTarget, "the folders held open changed", Kind);
+            }
         }
-        _ringing = paths;
         var lines = due.Select(e =>
         {
             var holders = Holders(e.Path);
