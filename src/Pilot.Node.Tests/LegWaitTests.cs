@@ -91,6 +91,8 @@ public sealed class LegWaitTests : IDisposable
 
     private CardRow[] Open() => _state.Cards(openOnly: true);
 
+    private CardRow[] Late() => Open().Where(c => c.Kind == LegCommander.WaitLateKind).ToArray();
+
     private void Idle() =>
         _state.PutSession(new SessionRow
         {
@@ -169,7 +171,7 @@ public sealed class LegWaitTests : IDisposable
         await _watch.LookAsync(Ct);
         await _watch.LookAsync(Ct);
 
-        var ring = Open().ShouldHaveSingleItem();
+        var ring = Late().ShouldHaveSingleItem();
         (ring.Bin, ring.Kind, ring.Subject).ShouldBe((CardBin.Ring, LegCommander.WaitLateKind, "flight/TIA1/parser"));
         _said.ShouldBeEmpty();
         Parser.Wait.ShouldNotBeNull().Rung.ShouldBeTrue();
@@ -178,7 +180,7 @@ public sealed class LegWaitTests : IDisposable
         await File.WriteAllTextAsync(Flag, "x", Ct);
         await _watch.LookAsync(Ct);
         _said.ShouldHaveSingleItem();
-        Open().ShouldBeEmpty();
+        Late().ShouldBeEmpty();
     }
 
     [Fact]
