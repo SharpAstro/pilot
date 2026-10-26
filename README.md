@@ -79,6 +79,10 @@ The GUI has the same with buttons: Home, Sessions, Flights (with a new-flight wi
 Background tasks, Fleet and Settings. A flight's planner, workers, validator and reviewer report back through the same
 CLI, so the black box records who did what.
 
+Every list of sessions (`pilot sessions`, the GUI's Sessions page and Home, merged across nodes in the fleet) shows
+which node a row runs on: a name without a machine prefix (`[a-z]{2}[0-9]+-`) is drawn with its node's code before it,
+`se1-stargazer`, so an unprefixed ad hoc session on SE1 can be told from one on DE1. A prefixed name is shown as it is.
+
 ## Build and test
 
 ```bash
