@@ -110,6 +110,29 @@ public sealed class SessionTrackerTests : IDisposable
     }
 
     [Fact]
+    public async Task ASessionThatAgesOutTakesItsKeptImageCopiesWithIt()
+    {
+        var attachments = new Attachments(Path.Combine(_profile.Folder, "data"));
+        var tracker = new SessionTracker(_state, _agents, _profile.Options(), () => false, _time, NullLogger<SessionTracker>.Instance) { Attachments = attachments };
+        _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "x", status: "busy"));
+        await tracker.PollAsync(Ct);
+        var shot = Path.Combine(_profile.Folder, "shot.png");
+        File.WriteAllBytes(shot, [0x89, 0x50, 0x4E, 0x47]);
+        var kept = attachments.Keep("a1b2c3d4", new Artifact { Title = "shot", Location = shot, At = Start }, null);
+        var copy = attachments.PathOf("a1b2c3d4", kept.Attachment!, "png");
+        File.Exists(copy).ShouldBeTrue();
+
+        _agents.Json = "[]";
+        await tracker.PollAsync(Ct);
+        File.Exists(copy).ShouldBeTrue();
+        _time.Advance(TimeSpan.FromHours(25));
+        await tracker.PollAsync(Ct);
+
+        _state.Sessions().ShouldBeEmpty();
+        Directory.Exists(Path.GetDirectoryName(copy)).ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task EndedAndFailedBackgroundRowsListWhileRecentAndNotOnceTheirTranscriptIsOlderThanTheRetention()
     {
         _agents.Json = AgentRows.List(

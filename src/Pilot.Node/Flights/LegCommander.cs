@@ -36,10 +36,10 @@ public sealed partial class LegCommander(
     /// </summary>
     public RepoSync? SiblingSync { get; set; }
 
-    /// <summary>The CLI workers are told to run, found once.</summary>
     /// <summary>Where the images an artifact names are kept; null keeps none (a test's commander).</summary>
     public Attachments? Attachments { get; set; }
 
+    /// <summary>The CLI workers are told to run, found once.</summary>
     public string Cli { get; init; } = Briefs.PilotCli();
 
     /// <summary>The node's socket when it is not the default one, so a worker's CLI reaches this node; null otherwise.</summary>

@@ -219,7 +219,7 @@ public sealed class AttachmentGalleryTests
 
     // The before and after captures of the leg, written where PIL285_SHOTS says (nothing happens without it).
     [Fact]
-    public void TheCapturesOfAFlightPageBeforeAndAfter()
+    public async Task TheCapturesOfAFlightPageBeforeAndAfter()
     {
         if (Environment.GetEnvironmentVariable("PIL285_SHOTS") is not { Length: > 0 } folder)
         {
@@ -242,5 +242,42 @@ public sealed class AttachmentGalleryTests
         Shoot("flight-without-attachments.png", Line(Shot("Preview", "https://example.org/preview", null)), open: false);
         Shoot("flight-with-attachment.png", Line(Shot("The planets", @"C:\caps\planets.png", "a1b2c3")), open: false);
         Shoot("flight-attachment-full-size.png", Line(Shot("The planets", @"C:\caps\planets.png", "a1b2c3")), open: true);
+
+        var (view, screen, sessionRenderer, _, _) = await OpenSession([Shot("The shot", @"C:\caps\shot.png", "d4e5f6")]);
+        using var __ = sessionRenderer;
+        view.Render(screen, new RectF32(0, 0, 1280, 800));
+        File.WriteAllBytes(Path.Combine(folder, "session-with-attachment.png"), PngWriter.Encode(sessionRenderer.Surface.Pixels, 1280, 800));
+    }
+
+    [Fact]
+    public void AJpegIsDecodedAndAFormatWithNoDecoderIsNot()
+    {
+        var picture = Picture();
+        var jpeg = SharpAstro.Jpeg.JpegEncoder.Encode(picture.Rgba, picture.Width, picture.Height, 4);
+
+        var decoded = AttachmentPictures.Decode("JPG", jpeg).ShouldNotBeNull();
+
+        (decoded.Width, decoded.Height).ShouldBe((200, 100));
+        AttachmentPictures.Decode("jpeg", jpeg).ShouldNotBeNull();
+        AttachmentPictures.Decode("webp", [1, 2, 3]).ShouldBeNull();
+        AttachmentPictures.Decode("gif", [0x47, 0x49, 0x46]).ShouldBeNull();
+        AttachmentPictures.Decode("png", [1, 2, 3]).ShouldBeNull();
+    }
+
+    [Fact]
+    public void ACopyThatCannotBeShownSaysItsExtensionInsteadOfAnEmptyWell()
+    {
+        var line = Line(new Artifact { Title = "Anim", Location = @"C:\capsnim.gif", At = Live.At.AddMinutes(5), Attachment = "g1", AttachmentExt = "gif" });
+        var (chrome, renderer) = FlightPage(line);
+        using var _ = renderer;
+        var painted = Wire(chrome, renderer, picture: false);
+        chrome.Gallery.Failed = _ => true;
+
+        Draw(chrome, line);
+
+        painted.Rects.ShouldBeEmpty();
+        var described = CellLayout.Describe(Layout.Engine.Arrange(chrome.Flights.Tree(new FlightsScreen([line], "test", Now)), new Rect<int>(0, 0, 160, 80), CellMeasureContext.PixelAuthored));
+        described.ShouldContain("GIF");
+        Buttons(chrome).ShouldContain("attachment:flight:TIA1611:g1");
     }
 }
