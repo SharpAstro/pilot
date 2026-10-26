@@ -90,7 +90,7 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
         text.AppendLine(landed.Count == 0 ? "Landed: none." : "Landed:");
         foreach (var flight in landed)
         {
-            text.AppendLine($"- {flight.Code}: {flight.Title ?? $"issue #{flight.Issue}"}{(flight.PullRequestUrl is { } url ? $" ({url})" : "")}");
+            text.AppendLine($"- {flight.Code}: {flight.Title ?? flight.Item.Noun}{(flight.PullRequestUrl is { } url ? $" ({url})" : "")}");
         }
         text.AppendLine(handled.Count == 0 ? "Handled: nothing." : "Handled:");
         foreach (var card in handled.Take(MaxLines))

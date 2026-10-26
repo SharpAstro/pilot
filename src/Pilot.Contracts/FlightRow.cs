@@ -21,8 +21,15 @@ public sealed record FlightRow
     /// <summary>The repo's main checkout, where the plane's worktree is made from.</summary>
     public required string RepoPath { get; init; }
 
-    /// <summary>The issue it flies.</summary>
+    /// <summary>The number of the work item it flies: the issue's, or the Shortcut story's when <see cref="Tracker"/> says so.</summary>
     public required int Issue { get; init; }
+
+    /// <summary>Where the work item lives. State journaled before trackers existed has none, and reads as GitHub.</summary>
+    public TrackerKind Tracker { get; init; }
+
+    /// <summary>The work item: <see cref="Tracker"/> and <see cref="Issue"/> together.</summary>
+    [JsonIgnore]
+    public WorkItem Item => new(Tracker, Issue);
 
     /// <summary>What it is for, in a line: the issue's title, or what the controller called it.</summary>
     public string? Title { get; init; }

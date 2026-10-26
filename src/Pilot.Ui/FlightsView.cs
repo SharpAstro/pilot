@@ -87,8 +87,8 @@ internal sealed record FlightLine
         {
             Row = flight,
             Code = flight.Code,
-            Title = flight.Title ?? $"issue #{flight.Issue}",
-            Where = $"{flight.Repo} #{flight.Issue}",
+            Title = flight.Title ?? flight.Item.Noun,
+            Where = $"{flight.Repo} {flight.Item.Display}",
             State = flight.State switch { FlightState.Flying => "flying", FlightState.Held => "held", _ => "landed" },
             StateDetail = flight.State switch
             {
