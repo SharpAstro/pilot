@@ -61,6 +61,9 @@ internal static class TopBar
     /// <summary>The padding either side of the bar.</summary>
     public const float PadX = 16f;
 
+    /// <summary>The bottom of the bar's row of buttons: what the ? card hangs under.</summary>
+    public const float ButtonsBottom = PadY + RowHeight;
+
     /// <summary>The bar with its source line and no extra lines: what the transcript's overlay starts under.</summary>
     public const float Height = RowHeight + SourceHeight + 2 * PadY;
 
