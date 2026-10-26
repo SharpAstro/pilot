@@ -1053,7 +1053,8 @@ public sealed partial class LegCommander(
         var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : card.Subject;
         var flight = state.Flights().FirstOrDefault(f => f.Code == code);
         var number = flight?.PullRequest;
-        var link = card.Link ?? flight?.PullRequestUrl;
+        // The PR's page, not the card's link: a card that showed a failed check's page turns back to the PR's.
+        var link = flight?.PullRequestUrl ?? card.Link;
         // The card's own words (the review, the head) stay while the Merge only changes its colour; a state that wrote its own
         // words over them (queued, blocked) is replaced by a plain line when the PR is mergeable again.
         var showing = card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge)?.Status;
