@@ -608,6 +608,21 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
     }
 
     [Fact]
+    public async Task AReviewOfALandedFlightsPrLabelsItAsAnyPrs()
+    {
+        // Landed, the flight keeps no label on its PR: a later review's label is the PR's.
+        _state.PutFlight(new FlightRow
+        {
+            Code = "WID7", Repo = "widget", RepoPath = "/r/widget", Issue = 3, Branch = "flight/wid7", Worktree = "/r/widget/w", Base = "main",
+            State = FlightState.Landed, CreatedAt = DateTimeOffset.UnixEpoch, LandedAt = DateTimeOffset.UnixEpoch, PullRequest = 7, PullRequestUrl = "https://github.com/acme/widget/pull/7",
+        });
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", Row("acme/widget", 7).Reviewer, "changes", "One defect.")).Error.ShouldBeNull();
+
+        _github.LabelCalls.ShouldContain((7, PilotMarks.Changes));
+    }
+
+    [Fact]
     public async Task AnApprovalIsSuccessAndAStatusGitHubRefusesIsACardNotAFailedReview()
     {
         _github.StatusFails = "GitHub refused the status: no permission";
