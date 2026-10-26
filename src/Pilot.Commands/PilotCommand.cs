@@ -705,6 +705,7 @@ public static class PilotCommand
             foreach (var peer in peers)
             {
                 await output.WriteLineAsync($"{peer.EndPoint}  {peer.DisplayName}{(peer.Properties.TryGetValue("machine", out var m) ? $"  ({m})" : "")}");
+                await output.WriteLineAsync("  " + await NodeTargets.WatchtowerLineAsync(peer.EndPoint.ToString()!, TimeSpan.FromSeconds(2), ct));
             }
             return 0;
         });
