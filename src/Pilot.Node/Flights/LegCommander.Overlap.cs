@@ -157,6 +157,10 @@ public sealed partial class LegCommander
         {
             throw new FlightException($"{other.Code}'s PR #{open} is open already and would not close #{flight.Issue}; plan {flight.Code} separately");
         }
+        if (other.Tracker != flight.Tracker)
+        {
+            throw new FlightException($"{flight.Code} is on a {flight.Tracker} item ({flight.Item.Display}) and {other.Code} on a {other.Tracker} one ({other.Item.Display}): an item folds only into a flight on the same tracker; plan {flight.Code} separately");
+        }
         if (other.Repo != flight.Repo)
         {
             throw new FlightException($"{flight.Code} is in {flight.Repo} and {other.Code} in {other.Repo}: an issue folds only within one repo");

@@ -207,6 +207,10 @@ public static class Briefs
         text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`. Read only: change, commit,");
         text.AppendLine("push and delete nothing, and keep scratch output outside the plane. Do it yourself, in this session, with no subagents.");
         text.AppendLine("Your ceiling is a few minutes and about thirty tool calls; past it, answer with what you have.");
+        if (Trackers.Reading(flight.Tracker).Reminder(flight.Item) is { } item)
+        {
+            text.AppendLine(item);
+        }
 
         text.AppendLine();
         text.AppendLine("Legs before it, done:");
@@ -266,8 +270,9 @@ public static class Briefs
         var title = flight.Title is { Length: > 0 } t ? $": {t}" : "";
         text.AppendLine($"You plan flight {flight.Code} ({flight.Repo} {flight.Item.Display}{title}): the legs that will do its issue.");
         text.AppendLine();
-        text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`. Read the issue");
-        text.AppendLine($"(`gh issue view {flight.Issue} --comments`), the repo's CLAUDE.md, and the code it touches. Do not edit, commit or push");
+        var words = Trackers.Reading(flight.Tracker);
+        text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`. Read the {words.Noun}");
+        text.AppendLine($"({words.Read(flight.Issue)}), the repo's CLAUDE.md, and the code it touches. Do not edit, commit or push");
         text.AppendLine("anything: you plan, and each leg's worker does the work.");
         text.AppendLine("Do it yourself, in this session: no subagents, or one at most for a single narrow question.");
         text.AppendLine();
@@ -291,8 +296,8 @@ public static class Briefs
             text.AppendLine("Issues folded into this flight (the controller chose to plan them here, not as flights of their own):");
             foreach (var folded in flight.FoldedIn)
             {
-                text.AppendLine($"- #{folded.Number}, from flight {folded.From}: read it (`gh issue view {folded.Number} --comments`) and plan its points as legs after the ones this flight has" +
-                    (legs.Count > 0 ? "; do not repeat them." : ", after the legs for #" + flight.Issue + "."));
+                text.AppendLine($"- {new WorkItem(flight.Tracker, folded.Number).Display}, from flight {folded.From}: read it ({words.Read(folded.Number)}) and plan its points as legs after the ones this flight has" +
+                    (legs.Count > 0 ? "; do not repeat them." : ", after the legs for " + flight.Item.Display + "."));
             }
             text.AppendLine($"The PR closes each of them; every point of each must be done by some leg, so name the issue a leg serves in its goal.");
         }
@@ -313,7 +318,7 @@ public static class Briefs
         text.AppendLine("Before you plan any leg, look for a flight already doing this. List the flights not landed:");
         text.AppendLine($"- `{run} status`: this node's flights, each with its issue, its legs and its plane (a folder and a branch).");
         text.AppendLine($"- `{run} nodes` lists the other pilot nodes on the LAN; for each, `{run} --node <host:port> status` lists its flights.");
-        text.AppendLine($"For each flight not landed other than {flight.Code}: read its issue (`gh issue view <number> -R <repo>`), its legs' goals, and the");
+        text.AppendLine($"For each flight not landed other than {flight.Code}: read its {words.Noun} ({words.ReadOther}), its legs' goals, and the");
         text.AppendLine($"files its plane touches (`git -C <its plane> diff --stat {flight.Base}...`). Compare them with your own issue.");
         text.AppendLine("A real overlap is the same area of the issue, or legs changing the same files, so that one of the two flights would");
         text.AppendLine("redo or fight the other's work. Sharing a repo, or a word in a title, is not an overlap: when in doubt, there is none.");
@@ -359,6 +364,10 @@ public static class Briefs
         text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`, against `{flight.Base}`.");
         text.AppendLine("Read the whole diff (`git diff " + flight.Base + "...HEAD`), and rerun what proves each leg's Done-when. Do not edit,");
         text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a go-around makes any change.");
+        if (Trackers.Reading(flight.Tracker).Reminder(flight.Item) is { } item)
+        {
+            text.AppendLine(item);
+        }
         // The controller's rule of 20 Oct is the standard depth: one session's reading, very light on subagents. The node
         // picks a lighter or deeper one from usage headroom, priority and the diff (#74), and says which, and why.
         if (plan is not null)

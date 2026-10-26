@@ -20,9 +20,59 @@ public interface ITracker
     string? MissingTitle(WorkItem item);
 }
 
+/// <summary>How a brief tells a session to read a work item in one tracker. Written once per tracker, so Briefs holds no tracker branches.</summary>
+public interface ITrackerReading
+{
+    /// <summary>The item's noun in a sentence: issue, story.</summary>
+    string Noun { get; }
+
+    /// <summary>How to read item <paramref name="id"/> with its description, comments and tasks; fits inside parentheses.</summary>
+    string Read(int id);
+
+    /// <summary>How to read another flight's item, whose tracker is that of its <c>status</c> display (#N or sc-N), in <c>repo</c>.</summary>
+    string ReadOther { get; }
+
+    /// <summary>One line telling a reviewer or validator where the item lives and how to read it; null where the brief says nothing of it.</summary>
+    string? Reminder(WorkItem item);
+}
+
+public sealed class GitHubReading : ITrackerReading
+{
+    public string Noun => "issue";
+
+    public string Read(int id) => $"`gh issue view {id} --comments`";
+
+    public string ReadOther => "`gh issue view <number> -R <repo>`";
+
+    public string? Reminder(WorkItem item) => null;
+}
+
+public sealed class ShortcutReading : ITrackerReading
+{
+    public string Noun => "story";
+
+    public string Read(int id) =>
+        $"the Shortcut MCP tool `stories-get-by-id` with id {id} and full detail when this session has it, else " +
+        $"`curl -s -H \"Shortcut-Token: ${ShortcutTracker.TokenVariable}\" {ShortcutTracker.Endpoint}{id}`; read its description, comments and tasks";
+
+    public string ReadOther =>
+        "a Shortcut story (shown as sc-N) with `stories-get-by-id` (full detail) or the curl above on its number, a GitHub issue (shown as #N) " +
+        "with `gh api repos/<owner>/<repo>/issues/<number>` and its `/comments`";
+
+    public string? Reminder(WorkItem item) =>
+        $"The flight's work item is Shortcut story {item.Display}: read it ({Read(item.Id)}), not a GitHub issue.";
+}
+
 /// <summary>The trackers pilot knows, by kind.</summary>
 public sealed class Trackers(IEnumerable<ITracker> all)
 {
+    private static readonly GitHubReading GitHubWords = new();
+
+    private static readonly ShortcutReading ShortcutWords = new();
+
+    /// <summary>The brief wording for a tracker's items.</summary>
+    public static ITrackerReading Reading(TrackerKind kind) => kind == TrackerKind.Shortcut ? ShortcutWords : GitHubWords;
+
     private readonly Dictionary<TrackerKind, ITracker> _byKind = all.ToDictionary(t => t.Kind);
 
     public ITracker? Of(TrackerKind kind) => _byKind.GetValueOrDefault(kind);
