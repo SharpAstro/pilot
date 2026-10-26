@@ -309,8 +309,13 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }
 
+    // A line this long does not fit the row's middle column on one line (the defender check lists every folder it misses): it
+    // wraps full width under the row instead, so the whole text is shown, never cut.
+    private const int CheckLineFits = 100;
+
     private Layout.Node CheckRow(SetupCheck check, int index)
     {
+        var tooLong = check.Line.Length > CheckLineFits;
         var fix = check.Fix is { } label && Send is not null
             ? Pill(label, $"settings:fix:{check.Key}", () => Act(Verbs.Setup, [check.Key], $"{check.Title}: {label}…"))
             : Layout.Builder.Spacer().WStar();
@@ -320,9 +325,16 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                         Layout.Builder.Text(check.Title, 14f, Bright).RowH(22f),
                         Layout.Builder.Text(check.Ok ? "done" : check.Optional ? "optional" : "to do", 11f, check.Ok ? Ok : check.Optional ? Dim : Todo).RowH(18f))
                     .WFixed(TitleWidth),
-                Layout.Builder.Text(check.Line, 12f, Body).WStar(),
+                tooLong ? Layout.Builder.Spacer().WStar() : Layout.Builder.Text(check.Line, 12f, Body).WStar(),
                 Layout.Builder.HStack(fix, Layout.Builder.Spacer().WStar()).WFixed(FixWidth))
             .WithGap(14f).Pad(8f, 6f).RowH(RowHeight);
+        if (tooLong)
+        {
+            // Under the title's column: the stripe, the row's padding and the gap in.
+            var whole = Layout.Builder.VStack(row, WrappedProse.Paragraphs(check.Line, 12f, Body, 40).Pad(8f + StripeWidth + 14f, 2f))
+                .WStar().HAuto();
+            return (index & 1) == 1 ? whole.Bg(RowAltBg) : whole;
+        }
         return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }
 

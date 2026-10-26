@@ -86,6 +86,60 @@ public sealed class SettingsPageTests
         }
     }
 
+    private const string DefenderLong = @"not excluded: C:\src\sharpastro\pilot, C:\src\sharpastro\tianwen, C:\src\sharpastro\DIR.Lib, C:\src\sharpastro\Console.Lib, C:\src\sharpastro\SdlVulkan.Renderer, C:\Users\ada\.nuget\packages, C:\Program Files\dotnet: every file a build and its tests write is scanned";
+
+    /// <summary>A failing defender check shows its Fix button, which sends the node's setup verb; its long list of missing folders wraps and keeps the whole text on hover.</summary>
+    [Theory]
+    [InlineData(700, false)]
+    [InlineData(1280, false)]
+    [InlineData(700, true)]
+    [InlineData(1280, true)]
+    public async Task AFailingDefenderCheckShowsItsFixAndSendsSetupDefender(int width, bool ok)
+    {
+        var defender = ok
+            ? new SetupCheck { Key = "defender", Title = "Windows Defender exclusions", Ok = true, Optional = true, Line = "7 folders excluded" }
+            : new SetupCheck { Key = "defender", Title = "Windows Defender exclusions", Ok = false, Optional = true, Line = DefenderLong, Fix = "Exclude (asks for elevation)" };
+        var page = Sample with { Checks = [.. Sample.Checks.Where(c => c.Key != "defender"), defender] };
+        using var renderer = new RgbaImageRenderer((uint)width, 900);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        var sent = new List<(string Verb, string[] Args)>();
+        chrome.Settings.Load = _ => Task.FromResult(page);
+        chrome.Settings.Send = (verb, args, _) =>
+        {
+            lock (sent)
+            {
+                sent.Add((verb, args));
+            }
+            return Task.FromResult("done");
+        };
+        chrome.Show(PilotPage.Settings);
+
+        void Draw() => chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, width, 900));
+        Draw();
+        await WaitAsync(() => chrome.Settings.Page is not null);
+        Draw();
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR") is { Length: > 0 } dir)
+        {
+            File.WriteAllBytes(Path.Combine(dir, $"settings-defender-{(ok ? "ok" : "failing")}-{width}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, 900));
+        }
+
+        var regions = new List<ClickableRegion>();
+        chrome.Settings.CollectPaintedRegions(regions);
+        var buttons = regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).ToList();
+        if (ok)
+        {
+            buttons.ShouldNotContain("settings:fix:defender");
+            return;
+        }
+        buttons.ShouldContain("settings:fix:defender");
+        Click(regions, "settings:fix:defender");
+        await WaitAsync(() => { lock (sent) { return sent.Count == 1; } });
+        lock (sent)
+        {
+            sent.ShouldContain(s => s.Verb == Verbs.Setup && s.Args.SequenceEqual(new[] { "defender" }));
+        }
+    }
+
     /// <summary>Maintenance and accept-fleet-flights are on / off rows: a pill each, the saved one chosen, and a pill is the node's set verb.</summary>
     [Fact]
     public async Task MaintenanceAndAcceptFleetFlightsAreOnOffRowsThatSendSet()
