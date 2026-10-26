@@ -270,6 +270,15 @@ if (feed is not null && client is not null && clients is not null)
         return envelope is { Success: true, Response: { } page } ? page : throw new InvalidOperationException(envelope.Error);
     };
     view.Transcript.Changed = loop.RequestRedraw;
+    // The attachments the pages show: each copy fetched from the node its flight or session is on (reading needs no grant
+    // on this machine, and a remote node's takes the one saved for it), decoded once, drawn as a texture.
+    var attachmentPictures = new AttachmentPictures(async (copy, ct) =>
+    {
+        var (status, _, bytes) = await clients.For(copy.Node, command: false)!.GetAttachmentAsync(copy.Id, ct);
+        return status == System.Net.HttpStatusCode.OK ? bytes : null;
+    }, loop.RequestRedraw);
+    chrome.Gallery.Lookup = attachmentPictures.Lookup;
+    chrome.Gallery.Draw = attachmentPictures.PaintOn(renderer);
     // The session menu's folder and copy entries.
     view.OnOpen = folder => OpenAway(folder);
     chrome.Flights.CopyText = text => SetClipboardText(text);

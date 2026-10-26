@@ -10,6 +10,9 @@ internal sealed partial class FlightsView<TSurface>
     private readonly ListScrollController _detailScroll = new() { Mode = ScrollBarMode.Interactive };
     private string? _openCode;
 
+    /// <summary>The attachments the open page shows and the viewer that opens one; the chrome shares one with the Sessions page.</summary>
+    public AttachmentGallery Gallery { get; set; } = new();
+
     /// <summary>Whether a flight's page is open in place of the table.</summary>
     public bool IsDetailOpen => _openCode is not null;
 
@@ -175,11 +178,13 @@ internal sealed partial class FlightsView<TSurface>
         {
             page.Add(ready);
         }
+        // The node's copies of the images the legs recorded, above the legs: the links in each leg stay as they were.
+        var scrolled = Gallery.Section($"flight:{line.Code}", detail.Attachments) is { } attachments ? [attachments, .. legs] : legs;
         return Layout.Builder.VStack(
                 [.. page,
                 Layout.Builder.HStack([.. facts]).WithGap(14f).RowH(22f),
                 Layout.Builder.HStack([.. WhoWorks(line)]).WithGap(10f).RowH(26f),
-                Layout.Builder.VStack([.. legs]).WithGap(10f).WithScroll(_detailScroll).Stretch()])
+                Layout.Builder.VStack([.. scrolled]).WithGap(10f).WithScroll(_detailScroll).Stretch()])
             .Pad(Gutter, 8f)
             .Stretch();
     }

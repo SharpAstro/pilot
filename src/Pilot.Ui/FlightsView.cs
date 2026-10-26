@@ -421,7 +421,11 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     public void Render(FlightsScreen screen, RectF32 bounds)
     {
         BeginFrame();
-        RenderLayout(Tree(screen), bounds, drawFill: DrawCanvas);
+        RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
+        {
+            DrawCanvas(fill, rect);
+            Gallery.DrawFill(fill, rect);
+        });
     }
 
     /// <summary>
@@ -553,6 +557,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                     return false;
             }
         }
+        if (evt is InputEvent.KeyDown { Key: var viewerKey } && Gallery.HandleKey(viewerKey))
+        {
+            return true;
+        }
         // An open why field takes Escape ahead of the page's own (the field has the keyboard while it is focused; this is for after).
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && _asking is not null)
         {
@@ -595,6 +603,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         }
         var page = Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch();
         page = About?.Over(page, NightOrNull) ?? page;
+        page = Gallery.Over(page);
         return _menu.IsOpen ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg)) : page;
     }
 

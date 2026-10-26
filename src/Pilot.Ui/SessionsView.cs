@@ -117,6 +117,9 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     // have its whole width (Optional), so the Session column keeps its SessionMin for the role and the name. The engine
     // decides, from the room it has; no width is measured here.
 
+    /// <summary>The open session's attachments and the viewer that opens one; the chrome shares one with the Flights page.</summary>
+    public AttachmentGallery Gallery { get; set; } = new();
+
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
 
     /// <summary>The page's table: its columns' widths, which a drag on a title's divider changes and the GUI keeps.</summary>
@@ -296,7 +299,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     public void Render(SessionsScreen screen, RectF32 bounds)
     {
         BeginFrame();
-        RenderLayout(Tree(screen), bounds);
+        RenderLayout(Tree(screen), bounds, drawFill: Gallery.DrawFill);
     }
 
     /// <summary>
@@ -432,6 +435,10 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             Transcript.Open(_lines[Selected]);
             return true;
         }
+        if (evt is InputEvent.KeyDown { Key: var viewerKey } && Gallery.HandleKey(viewerKey))
+        {
+            return true;
+        }
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && Transcript.IsOpen)
         {
             Transcript.GoBack();
@@ -468,6 +475,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         page = About?.Over(page) ?? page;
         // The open transcript's chips that did not fit on a row, as a menu over the page.
         page = Transcript.Over(page, HeaderHeight);
+        page = Gallery.Over(page);
         return _menu.IsOpen
             ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg))
             : page;
@@ -583,7 +591,11 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         Transcript.CopyText = CopyText;
         Transcript.OpenLink = OnOpen;
         var open = _whole.FirstOrDefault(l => l.Key == Transcript.Key) ?? screen.Lines.FirstOrDefault(l => l.Key == Transcript.Key);
-        return Transcript.Tree(live: open?.Row.State is not (null or Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed), open?.Row.Subagents, open, screen.AsOf);
+        var transcript = Transcript.Tree(live: open?.Row.State is not (null or Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed), open?.Row.Subagents, open, screen.AsOf);
+        // The session's details: the node's copies of the images it recorded, over its transcript.
+        return open is not null && Gallery.Section($"session:{open.Key}", AttachmentGallery.Of(open.Row.Artifacts, open.Node)) is { } attachments
+            ? Layout.Builder.VStack(attachments.Pad(Gutter, 6f), transcript.HStar()).Stretch()
+            : transcript;
     }
 
     // Open the selected session's transcript; say the bar's text to all shown; archive every ended session, and show or hide
