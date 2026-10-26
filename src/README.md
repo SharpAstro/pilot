@@ -41,9 +41,8 @@ pilot-gui --snapshot <file.json> [--capture out.png]         # a snapshot file i
 - **Node:** with no node on the default socket, the GUI starts one (`pilot-node` beside it, or the source tree's
   build of the same configuration), detached so it outlives the window; a socket named with `--node-socket` or
   `PILOT_NODE_SOCKET` is only connected to.
-- **Rail:** the left rail, as tianwen's: Home (Ctrl+1), Chat (Ctrl+8, listed after Home so the other chords keep their
-  keys), Sessions (Ctrl+2), Flights (Ctrl+3), Repos (Ctrl+7, listed after Flights for the same reason), Background tasks
-  (Ctrl+4), Fleet (Ctrl+5) and Settings (Ctrl+6).
+- **Rail:** the left rail, as tianwen's, its chords counting down it: Home (Ctrl+1), Chat (Ctrl+2), Sessions (Ctrl+3),
+  Flights (Ctrl+4), Repos (Ctrl+5), Background tasks (Ctrl+6), Fleet (Ctrl+7) and Settings (Ctrl+8).
 - **Back:** one Back and Forward for the whole window: **←** and **→** at the top of the rail (disabled when there is nothing to
   go back or forward to), Alt+Left and Alt+Right, and the mouse's back and forward buttons. Every move between places (a
   rail page, a transcript or a flight's page, a link from Home, Fleet, a card, Jobs or Repos) is recorded with the page,
@@ -431,7 +430,7 @@ Each nudge and resume is a Handled card. The watch's cards close by themselves o
 go-around or a finished leg closes every card about the leg. What it resumed and nudged is kept in memory, so a node
 restarted mid-flight may nudge a worker once more than it would have: a turn, never a stall.
 
-The GUI's rail opens the **Flights** page (Ctrl+3): each flight's code, title, repo and issue, state (held: waiting
+The GUI's rail opens the **Flights** page (Ctrl+4): each flight's code, title, repo and issue, state (held: waiting
 for which), legs (how many done, which flying), branch and sessions. As the window narrows it drops Sessions, then Branch.
 
 **A session's transcript** opens in place of the table: double-click its row, press Enter on it, or **Open transcript**
@@ -643,7 +642,7 @@ page needs nothing the node does not already send, and pilot-tui shows the same 
 `FlightDetail` in `Pilot.Ui`). `pilot-gui --capture out.png --page flights --flight <code>` renders one, with its text
 in `out.png.rows.txt`.
 
-The **Repos** page (Ctrl+7) is every tracked repo as a row (a repo is tracked once it has flown, or holds a worktree or an
+The **Repos** page (Ctrl+5) is every tracked repo as a row (a repo is tracked once it has flown, or holds a worktree or an
 open PR of a flight; **All repos** in the header adds the rest under the node's roots). A repo row shows its main checkout
 (branch, clean or dirty, ahead and behind `origin/<default>`) and its open PRs (number and title, draft or ready, where the
 checks stand; a click opens the PR). Right, or a click on the triangle, lists its worktrees under it as the Sessions page
@@ -669,7 +668,7 @@ The right panel is the watchtower's: its state and context, its Remote Control l
 (Merge is a card's) and what was handled, and at its foot a **Chat with the watchtower** shortcut to the Chat page (the
 panel once had a box to tell it things; that box is the chat's now).
 
-**The Chat page** (#207, Ctrl+8) is the conversation with the node's watchtower, in the window, where a command bar once was.
+**The Chat page** (#207, Ctrl+2) is the conversation with the node's watchtower, in the window, where a command bar once was.
 It is a page of the rail, not a dock under the right panel: the panel is 300 units wide, a conversation with tables of
 output and Markdown replies wants the page's width, and a page keeps its own scroll and the keyboard the way Sessions' say
 bar does. It reads the chat feed (`NodeClient.GetChatAsync`, above) while it is the page shown, pinned to its end until

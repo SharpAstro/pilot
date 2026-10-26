@@ -45,17 +45,21 @@ internal sealed class PilotChrome<TSurface>
     private static readonly RGBAColor32 RailHover = new(0x22, 0x24, 0x2e, 0xff);
     private static readonly RGBAColor32 RailActive = new(0x26, 0x33, 0x4a, 0xff);
 
-    /// <summary>What each page is on the rail: its glyph, its name, the chord that reaches it, and why it is locked, if it is.</summary>
+    /// <summary>
+    /// What each page is on the rail, top to bottom: its glyph, its name, the chord that reaches it, and why it is locked, if
+    /// it is. The chords count down the rail, Ctrl+1 at the top: numbered by the enum, Chat and Repos (added later) sat at 8
+    /// and 7 between 1 and 2, and the tooltip said a third number, the enum's (SE1, 2026-10-27).
+    /// </summary>
     internal static readonly IReadOnlyList<(PilotPage Page, string Icon, string Label, KeyChord Shortcut, string? Locked)> Pages =
     [
         (PilotPage.Home, "\U0001F3E0", "Home", new KeyChord(InputKey.D1, InputModifier.Ctrl), null),
-        (PilotPage.Chat, "\U0001F5FC", "Chat", new KeyChord(InputKey.D8, InputModifier.Ctrl), null),
-        (PilotPage.Sessions, "\U0001F4AC", "Sessions", new KeyChord(InputKey.D2, InputModifier.Ctrl), null),
-        (PilotPage.Flights, "✈", "Flights", new KeyChord(InputKey.D3, InputModifier.Ctrl), null),
-        (PilotPage.Repos, "📁", "Repos", new KeyChord(InputKey.D7, InputModifier.Ctrl), null),
-        (PilotPage.Jobs, "⏱", "Background tasks", new KeyChord(InputKey.D4, InputModifier.Ctrl), null),
-        (PilotPage.Fleet, "\U0001F310", "Fleet", new KeyChord(InputKey.D5, InputModifier.Ctrl), null),
-        (PilotPage.Settings, "⚙", "Settings", new KeyChord(InputKey.D6, InputModifier.Ctrl), null),
+        (PilotPage.Chat, "\U0001F5FC", "Chat", new KeyChord(InputKey.D2, InputModifier.Ctrl), null),
+        (PilotPage.Sessions, "\U0001F4AC", "Sessions", new KeyChord(InputKey.D3, InputModifier.Ctrl), null),
+        (PilotPage.Flights, "✈", "Flights", new KeyChord(InputKey.D4, InputModifier.Ctrl), null),
+        (PilotPage.Repos, "📁", "Repos", new KeyChord(InputKey.D5, InputModifier.Ctrl), null),
+        (PilotPage.Jobs, "⏱", "Background tasks", new KeyChord(InputKey.D6, InputModifier.Ctrl), null),
+        (PilotPage.Fleet, "\U0001F310", "Fleet", new KeyChord(InputKey.D7, InputModifier.Ctrl), null),
+        (PilotPage.Settings, "⚙", "Settings", new KeyChord(InputKey.D8, InputModifier.Ctrl), null),
     ];
 
     /// <summary>
@@ -658,7 +662,7 @@ internal sealed class PilotChrome<TSurface>
                 IsEnabled = locked is null,
                 // The rail has room for a glyph only, so the name, the chord, what the page's things are doing and a locked
                 // page's reason are the tooltip's.
-                Tooltip = locked is null ? $"{label}{(said is null ? "" : $": {said}")} (Ctrl+{(int)page + 1})" : $"{label} — {locked}",
+                Tooltip = locked is null ? $"{label}{(said is null ? "" : $": {said}")} (Ctrl+{shortcut.Key - InputKey.D0})" : $"{label} — {locked}",
                 Shortcut = shortcut,
                 OnSelect = _select ??= Show,
             });
