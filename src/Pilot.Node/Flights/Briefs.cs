@@ -138,6 +138,9 @@ public static class Briefs
             text.AppendLine("silently, one height and one middle per row, one source for each value and component, the right control, no");
             text.AppendLine("clutter, nothing moving under the pointer. Render a capture at a narrow and a wide size with long content,");
             text.AppendLine($"look at it yourself, and record it on the leg (`{run} artifact <path> <title>`): the reviewer looks at it.");
+            // PIL277 failed a finished leg because gh cannot upload an image and its push of a side branch to host one was refused.
+            text.AppendLine("That record is the capture's whole delivery: embed no image in the PR, push no branch to host one, and never fail");
+            text.AppendLine("or hold a leg over showing one.");
             text.AppendLine();
         }
         text.AppendLine("## Keeping the node told");
@@ -149,7 +152,9 @@ public static class Briefs
         text.AppendLine($"- Something to look at (a screenshot, a capture, a page): `{run} artifact <path or URL> <title>`.");
         text.AppendLine($"- When every step is done and the Done-when holds: `{run} leg finish done \"<one-line report>\"`. The node reruns the");
         text.AppendLine("  check itself and refuses while a step is open or the check fails; fix what it says and finish again.");
-        text.AppendLine($"- When you cannot go on: `{run} leg finish failed \"<why>\"`.");
+        text.AppendLine($"- When you cannot go on: `{run} leg finish failed \"<why>\"`. Fail only for what stops the Done-when; something");
+        // A leg failed over a nicety the Done-when never asked for rings the person and costs a fresh worker (PIL277, 2026-10-26).
+        text.AppendLine("  else you could not do (a permission refused, an image not attached, a nice-to-have) goes in the report of a done leg.");
         // A restore that cannot find a sibling's package is the sibling's publish not done yet, not this leg's fault: the node
         // holds the leg for it and flies it again once nuget.org serves the package. A worker that works around it (a local
         // feed, a pin moved back) would ship a build that is not what CI restores.
