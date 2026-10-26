@@ -25,7 +25,7 @@ internal static class SeedRepo
 
     private static string Build()
     {
-        var root = Path.Combine(Path.GetTempPath(), "pilot-seed-" + Environment.ProcessId + "-" + Guid.NewGuid().ToString("N")[..8]);
+        var root = NewTemplateRoot();
         var origin = Path.Combine(root, "origin.git");
         var repo = Path.Combine(root, "tianwen");
         Directory.CreateDirectory(repo);
@@ -43,9 +43,52 @@ internal static class SeedRepo
         return root;
     }
 
-    /// <summary>A fresh folder for a template to be built in, once a run.</summary>
-    public static string NewTemplateRoot() =>
-        Path.Combine(Path.GetTempPath(), "pilot-seed-" + Environment.ProcessId + "-" + Guid.NewGuid().ToString("N")[..8]);
+    private const string Prefix = "pilot-seed-";
+
+    /// <summary>
+    /// A fresh folder for a template to be built in, once a run, removed when the test process exits. A run killed before it
+    /// could is swept by the next: any older than a day goes.
+    /// </summary>
+    public static string NewTemplateRoot()
+    {
+        SweepOld();
+        var root = Path.Combine(Path.GetTempPath(), Prefix + Environment.ProcessId + "-" + Guid.NewGuid().ToString("N")[..8]);
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => Delete(root);
+        return root;
+    }
+
+    private static int _swept;
+
+    private static void SweepOld()
+    {
+        if (Interlocked.Exchange(ref _swept, 1) == 1)
+        {
+            return;
+        }
+        foreach (var old in Directory.EnumerateDirectories(Path.GetTempPath(), Prefix + "*"))
+        {
+            if (Directory.GetCreationTimeUtc(old) < DateTime.UtcNow.AddDays(-1))
+            {
+                Delete(old);
+            }
+        }
+    }
+
+    private static void Delete(string root)
+    {
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+            {
+                File.SetAttributes(file, FileAttributes.Normal);
+            }
+            Directory.Delete(root, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Held or gone: the next run's sweep takes it.
+        }
+    }
 
     /// <summary>
     /// Copies a template built under <paramref name="template"/> into <paramref name="root"/>, with the template's path in
