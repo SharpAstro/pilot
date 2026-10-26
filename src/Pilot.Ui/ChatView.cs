@@ -285,11 +285,15 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         {
             rows.Add(Notice(notice));
         }
+        // The question the watchtower waits on sits under the feed, above the box, not in it: in the scroll it was drawn over
+        // the reply it ends, cutting its last lines, and scrolled away with the feed. Here it always shows, and the feed ends
+        // above it.
+        Layout.Node? asked = null;
         if (OnSend is not null && held.Question is { Length: > 0 } question)
         {
             // The reply the question ends already says it in the feed: the card then holds only the choices.
             var said = held.Entries.LastOrDefault(e => e.Kind == TranscriptKind.Assistant)?.Text;
-            rows.Add(Question(question, said is not null && said.Contains(question, StringComparison.Ordinal), held.Choices));
+            asked = Question(question, said is not null && said.Contains(question, StringComparison.Ordinal), held.Choices);
         }
         var sending = Volatile.Read(ref _sending) > 0;
         if (held.Working || sending)
@@ -302,7 +306,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
         var page = OnSend is null
             ? Layout.Builder.VStack(list.HStar())
-            : Layout.Builder.VStack(list.HStar(), Foot());
+            : asked is null
+                ? Layout.Builder.VStack(list.HStar(), Foot())
+                : Layout.Builder.VStack(list.HStar(), asked, Foot());
         var body = page.WithGap(8f).Pad(Gutter, 8f).Stretch();
         var whole = Layout.Builder.VStack(top, body.HStar()).Bg(PageBg).Stretch();
         return About?.Over(whole) ?? whole;
