@@ -41,6 +41,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>How often a running job's step (its last line) is put on the stream, so a long run shows it is alive without a delta per line.</summary>
     public TimeSpan StepEvery { get; init; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// How long a job's output may stay open after its process has exited. A process it started (a test's node, a git, a
+    /// pwsh) that outlives it holds the pipe, and waiting for the pipe instead of the process kept SE1's j122 "running" for
+    /// four and a half hours after its tests had passed, with six jobs queued behind it (2026-10-26).
+    /// </summary>
+    public TimeSpan DrainGrace { get; init; } = TimeSpan.FromSeconds(15);
+
     /// <summary>How many jobs run at once; the rest wait their turn. Set live by <c>set node max-jobs</c>, then <see cref="Pump"/>.</summary>
     public int MaxRunning { get; set; } = 1;
 
@@ -370,20 +377,33 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
+            // The process's own exit, not its pipes': WaitForExitAsync also waits for every handle on stdout and stderr to close,
+            // and a process the job started keeps those open for as long as it lives.
+            var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            process.EnableRaisingEvents = true;
+            process.Exited += (_, _) => exited.TrySetResult();
+            if (process.HasExited)
+            {
+                exited.TrySetResult();
+            }
             using var limit = CancellationTokenSource.CreateLinkedTokenSource(_stopping);
             limit.CancelAfter(job.Timeout);
             try
             {
-                await process.WaitForExitAsync(limit.Token);
+                await exited.Task.WaitAsync(limit.Token);
             }
             catch (OperationCanceledException)
             {
                 timedOut = !_stopping.IsCancellationRequested;
                 Kill(process);
-                await process.WaitForExitAsync(CancellationToken.None);
+                await exited.Task;
             }
-            // The last lines are read once the process has gone and its pipes are drained; then the writer finishes them.
-            process.WaitForExit();
+            // The last lines are read once the pipes drain; a process left holding them gets DrainGrace, then is left behind.
+            var drained = process.WaitForExitAsync(CancellationToken.None);
+            if (await Task.WhenAny(drained, Task.Delay(DrainGrace, time)) != drained)
+            {
+                lines.Writer.TryWrite($"[pilot] the job's process exited, but a process it started still holds its output; the job ends here without it.");
+            }
             lines.Writer.TryComplete();
             await writer;
         }

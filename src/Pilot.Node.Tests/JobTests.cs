@@ -28,6 +28,7 @@ public sealed class JobTests : IDisposable
         _jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), TimeProvider.System)
         {
             FreeMemory = () => _free,
+            DrainGrace = TimeSpan.FromSeconds(2),
             Say = (command, _) =>
             {
                 _said.Enqueue(command);
@@ -112,6 +113,22 @@ public sealed class JobTests : IDisposable
         say.Args[0].ShouldContain($"Your job {id}");
         say.Args[0].ShouldContain("succeeded");
         say.Args[0].ShouldContain("all 12 tests passed");
+    }
+
+    [Fact]
+    public async Task AJobEndsWhenItsProcessExitsThoughAProcessItStartedStillHoldsItsOutput()
+    {
+        // SE1's j122: the tests passed in 6 minutes, a process they started kept the job's output open, and the job read as
+        // running for four and a half hours with six jobs queued behind it.
+        var leftBehind = OperatingSystem.IsWindows()
+            ? "Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 20' -NoNewWindow; echo 'started'"
+            : "(sleep 20 &); echo 'started'";
+        var started = DateTimeOffset.UtcNow;
+
+        var job = await Ended(Run(leftBehind).Made!);
+
+        job.State.ShouldBe(JobState.Succeeded);
+        (DateTimeOffset.UtcNow - started).ShouldBeLessThan(TimeSpan.FromSeconds(15));
     }
 
     [Fact]
