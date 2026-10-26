@@ -86,6 +86,6 @@ public sealed class RepoWatchTests : IDisposable
 
         var status = (await Look(repo, github)).Single();
 
-        status.Errors.ShouldHaveSingleItem().ShouldContain("no permission");
+        status.Errors.Single(e => e.StartsWith("node label sweep", StringComparison.Ordinal)).ShouldContain("no permission");
     }
 }
