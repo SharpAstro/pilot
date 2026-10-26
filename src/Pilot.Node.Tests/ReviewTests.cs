@@ -386,6 +386,81 @@ public sealed class ReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task OnAutopilotAMergeThatWaitedForChecksWhichThenFailSendsTheLegBackAsChangesNotOntoAForYouCard()
+    {
+        // With the autopilot off a failing PR is sent back from its PR-ready card; the merge the node armed itself must go round the same way.
+        var (flight, pr) = await Passed("32");
+        _github.Checks = ChoiceStatus.Pending;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        // Armed by the node: its PR-ready card closes and the merge waits for the checks.
+        await checks.LookAsync(Ct);
+        _github.Merged.ShouldBeEmpty();
+        var armed = F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
+        (armed[0], armed[^1]).ShouldBe((_github.Pr!.Head, LegCommander.ArmedByAutopilot));
+        Open().ShouldNotContain(c => c.Kind == LegCommander.PrReady);
+
+        _github.Checks = ChoiceStatus.Failing;
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        _github.Merged.ShouldBeEmpty();
+        F(flight.Code).MergeWhenGreen.ShouldBeNull();
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+        _github.DraftCalls.ShouldContain((pr, true));
+        _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.MergeDropped);
+        var card = Open().ShouldHaveSingleItem();
+        (card.Kind, card.Title).ShouldBe((LegCommander.ReviewChanges, $"{flight.Code}'s review asks for changes"));
+        card.Detail.ShouldNotBeNull().ShouldStartWith("the PR's checks failed on ");
+        (await Run(Verbs.GoAround, $"flight/{flight.Code}/parser", "controller", "fix the checks")).Error.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AMergeThePersonPressedWhileChecksRanStillDropsOntoAForYouCardWhenTheyFailOnAutopilot()
+    {
+        var (flight, _) = await Passed("33");
+        _github.Checks = ChoiceStatus.Pending;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        (await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8])).Ok.ShouldBeTrue();
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull().ShouldNotContain(LegCommander.ArmedByAutopilot);
+        // Choosing Merge on the card closes it.
+        _state.CloseCard(Open().Single(c => c.Kind == LegCommander.PrReady).Id, "chose Merge", "controller").ShouldBeTrue();
+
+        _github.Checks = ChoiceStatus.Failing;
+        await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
+
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        Open().ShouldContain(c => c.Kind == PrChecks.MergeDropped && c.Bin == CardBin.ForYou);
+    }
+
+    [Fact]
+    public async Task AnAutopilotMergeRefusedRingsOnceAndItsCardClosesWhenTheFlightIsRebasedAndReviewedAfresh()
+    {
+        var (flight, _) = await Passed("34");
+        var ready = Open().Single(c => c.Kind == LegCommander.PrReady);
+        _github.Checks = ChoiceStatus.Passing;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        // The PR moved past the head the card offers, so the merge is refused as an unread head.
+        _github.Pr = _github.Pr! with { Head = "beef0000beef0000" };
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        _github.Merged.ShouldBeEmpty();
+        Open().Where(c => c.Kind == PrChecks.AutopilotMergeRefused).ShouldHaveSingleItem().Subject.ShouldBe($"flight/{flight.Code}");
+        Open().ShouldContain(c => c.Id == ready.Id);
+
+        // Main moved: the flight is rebased and reviewed afresh, and the refused merge's card, with its stale head, goes with its PR-ready card.
+        _github.Pr = _github.Pr! with { Mergeable = "CONFLICTING" };
+        await checks.LookAsync(Ct);
+
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.PrReady || c.Kind == PrChecks.AutopilotMergeRefused);
+    }
+
+    [Fact]
     public async Task APrDroppedFromTheQueueOnAConflictIsRebasedAndReviewedAfreshNotOfferedMergeAgain()
     {
         // PIL207's #238 left the queue on merge_conflict and its card offered Merge, which could only be refused again (SE1, 2026-10-25).

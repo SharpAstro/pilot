@@ -223,7 +223,7 @@ public sealed partial class LegCommander(
                 return $"rebasing {code} onto {flight.Base} conflicts ({rebase.Why}): rebase its plane by hand, or go around its last leg to";
             }
             await PushAsync(flight, cancellationToken);
-            state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} rebased onto {flight.Base}; reviewed afresh", PrReady, MergeFailed);
+            state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} rebased onto {flight.Base}; reviewed afresh", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
             await StartReviewAsync(flight, cancellationToken);
             return null;
         }
@@ -864,6 +864,9 @@ public sealed partial class LegCommander(
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around for it", ReviewChanges, MergeFailed, PrReady);
     }
 
+    /// <summary>The last item of <see cref="FlightRow.MergeWhenGreen"/> when the node armed the merge itself, on autopilot.</summary>
+    public const string ArmedByAutopilot = "autopilot";
+
     /// <summary>
     /// <c>merge &lt;head&gt; [method]</c>: merges the flight's PR, or joins its base's merge queue. While its checks still run,
     /// the merge waits on the flight (<see cref="FlightRow.MergeWhenGreen"/>) and the node takes it once they pass. Whether it
@@ -895,12 +898,12 @@ public sealed partial class LegCommander(
         }
         if (checks?.Status == ChoiceStatus.Pending)
         {
-            return await ArmAsync(flight, pr, method, checks, null, cancellationToken);
+            return await ArmAsync(flight, pr, method, checks, null, command.Who == "node", cancellationToken);
         }
         if (mergeState is { AwaitsCheck: true })
         {
             // Every check shown is green, GitHub blocks it for a required check not created yet: arm, and the merge goes through once it passes.
-            return await ArmAsync(flight, pr, method, checks, AwaitingCheckLine, cancellationToken);
+            return await ArmAsync(flight, pr, method, checks, AwaitingCheckLine, command.Who == "node", cancellationToken);
         }
         if (flight.MergeWhenGreen is not null)
         {
@@ -944,10 +947,17 @@ public sealed partial class LegCommander(
 
     // The merge waits on the flight for its checks, on the head reviewed: GitHub's auto-merge where the repo allows it, else
     // the node's polling (PrChecks). A merge queue base keeps joining the queue once the checks pass, as before.
-    private async Task<(bool Merged, string? Made, string? Way)> ArmAsync(FlightRow flight, PullRequest pr, string method, ChecksSummary? checks, string? progress, CancellationToken cancellationToken)
+    private async Task<(bool Merged, string? Made, string? Way)> ArmAsync(FlightRow flight, PullRequest pr, string method, ChecksSummary? checks, string? progress, bool byAutopilot, CancellationToken cancellationToken)
     {
         var how = await ArmHowAsync(flight, pr, method, cancellationToken);
-        state.PutFlight(flight with { MergeWhenGreen = how is null ? [pr.Head, method] : [pr.Head, method, how] });
+        // A merge the node asked for on autopilot is marked (last), so a failure of its checks sends the leg round as it would without
+        // one. The mark follows who waits (an empty third element when none does).
+        state.PutFlight(flight with { MergeWhenGreen = (how, byAutopilot) switch
+        {
+            (null, false) => [pr.Head, method],
+            (_, false) => [pr.Head, method, how!],
+            _ => [pr.Head, method, how ?? "", ArmedByAutopilot],
+        } });
         return (false, ArmedLine(checks, how, progress), MergeWays.Armed);
     }
 
@@ -984,7 +994,7 @@ public sealed partial class LegCommander(
     {
         var (flight, pr, method) = await MergeableAsync(command, cancellationToken);
         var runs = await github.RerunFailedChecksAsync(flight.RepoPath, pr.Number, cancellationToken);
-        var (_, made, way) = await ArmAsync(flight, pr, method, null, $"merging when checks pass: {runs} failed {(runs == 1 ? "run" : "runs")} running again", cancellationToken);
+        var (_, made, way) = await ArmAsync(flight, pr, method, null, $"merging when checks pass: {runs} failed {(runs == 1 ? "run" : "runs")} running again", false, cancellationToken);
         return (made, way);
     }
 
@@ -1357,7 +1367,7 @@ public sealed partial class LegCommander(
             if (flight.Review is not null)
             {
                 state.PutFlight(flight with { Review = null });
-                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review waits for the 5-hour window", ReviewChanges, PrReady, MergeFailed, LegWatch.ReviewStalled);
+                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review waits for the 5-hour window", ReviewChanges, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, LegWatch.ReviewStalled);
             }
             return;
         }
@@ -1382,7 +1392,7 @@ public sealed partial class LegCommander(
                 GoAround = legs.Sum(l => l.GoArounds), ReviewedHead = reviewedHead,
             },
         });
-        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "a fresh review started", ReviewChanges, PrReady, MergeFailed, LegWatch.ReviewStalled);
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "a fresh review started", ReviewChanges, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, LegWatch.ReviewStalled);
         await _marks.ApplyAsync(flight.Code, cancellationToken);
     }
 
@@ -1520,7 +1530,7 @@ public sealed partial class LegCommander(
             }
             var changes = changesFor(number);
             await TurnToChangesAsync(flight, changes, cancellationToken);
-            state.CloseCardsAbout(Verbs.FlightTarget(code), closing, PrReady, MergeFailed);
+            state.CloseCardsAbout(Verbs.FlightTarget(code), closing, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
             RaiseReviewChanges(FlightOf(Verbs.FlightTarget(code)), changes);
             return null;
         }
