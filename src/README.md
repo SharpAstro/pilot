@@ -341,7 +341,8 @@ A PR pilot did not make, in a repo it may not fly, is reviewed from its link (#1
   head, a closed PR or a changes verdict queue nothing, and the review is decided once (`QueuedAt` or `QueueNote` on
   it, so a restart does not redo it). A base with no merge queue raises a For-you `pr-review-merge` card with a
   **Merge** choice (`merge pr/<owner>/<repo>#<n> <head>`); GitHub refusing to queue is a `pr-review-queue-refused`
-  card with the same choice.
+  card with the same choice. A repo in `no-auto-merge-repos` is never queued by the node by itself: its green review
+  raises the same `pr-review-merge` card instead.
 - **Nothing left behind.** Once that card closes (dismissed, or answered), the reviewer is stopped if it still runs and
   the worktree is removed, whatever it holds (a build's output is nobody's work), at once and by a sweep every 30 s
   that a node restart cannot skip. One held open is said on a For-you `pr-review-left` card and tried again. A fresh
