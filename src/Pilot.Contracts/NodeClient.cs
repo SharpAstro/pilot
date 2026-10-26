@@ -23,7 +23,8 @@ public sealed class NodeClient : IDisposable
     {
         SocketPath = socketPath;
         _handler = NodeSocket.CreateHandler(socketPath);
-        _http = new HttpClient(_handler, disposeHandler: false) { BaseAddress = NodeSocket.BaseAddress };
+        // A command may run for minutes on the node (finish reruns the leg's check), so HttpClient's 100 s default is off.
+        _http = new HttpClient(_handler, disposeHandler: false) { BaseAddress = NodeSocket.BaseAddress, Timeout = Timeout.InfiniteTimeSpan };
         _events = new Uri("ws://localhost" + NodeWire.EventsRoute);
     }
 
@@ -32,7 +33,7 @@ public sealed class NodeClient : IDisposable
         SocketPath = endpoint;
         _token = token;
         _handler = new SocketsHttpHandler { ConnectTimeout = TimeSpan.FromSeconds(5) };
-        _http = new HttpClient(_handler, disposeHandler: false) { BaseAddress = baseAddress };
+        _http = new HttpClient(_handler, disposeHandler: false) { BaseAddress = baseAddress, Timeout = Timeout.InfiniteTimeSpan };
         if (token is not null)
         {
             _http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
