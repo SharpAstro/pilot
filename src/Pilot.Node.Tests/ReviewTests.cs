@@ -357,15 +357,23 @@ public sealed class ReviewTests : IDisposable
         _state.CloseCard(Open().ShouldHaveSingleItem().Id, "done", "controller").ShouldBeTrue();
         var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
 
+        var startedBefore = _workers.Started.Count;
         _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: false, RemovedAt: DateTimeOffset.UtcNow.AddSeconds(-5), RemovedReason: "merge_conflict");
         await checks.LookAsync(Ct);
 
         Open().ShouldNotContain(c => c.Choices.Any(ch => ch.Verb == Verbs.Merge));
-        _state.Cards().ShouldContain(c => c.Subject == "flight/TIA21" && c.Title.Contains("on a conflict", StringComparison.Ordinal));
-        // Once a removal, as for any other.
-        var count = _state.Cards().Length;
+        // The Handled card is the rebase's success: a failed rebase rings with a card of the same words in a different bin and kind.
+        var handled = _state.Cards().Where(c => c.Kind == PrChecks.QueueDropped && c.Subject == "flight/TIA21").ShouldHaveSingleItem();
+        handled.Bin.ShouldBe(CardBin.Handled);
+        _state.Cards().ShouldNotContain(c => c.Kind == "pr-conflicts");
+        // Rebased onto its base and reviewed afresh: the old pass is of a head that is gone, and a review leg was started.
+        Git(F("TIA21").Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
+        F("TIA21").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        _workers.Started.Count.ShouldBe(startedBefore + 1);
+        // Once a removal, as for any other: the rebase count, not only the card count, holds still.
         await checks.LookAsync(Ct);
-        _state.Cards().Length.ShouldBe(count);
+        _workers.Started.Count.ShouldBe(startedBefore + 1);
+        _state.Cards().Count(c => c.Kind == PrChecks.QueueDropped && c.Subject == "flight/TIA21").ShouldBe(1);
     }
 
     [Fact]

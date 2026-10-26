@@ -484,9 +484,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 }
                 continue;
             }
+            var action = $"card:{card.Id}:{number}";
+            // A choice shown as a chip stays one while a press is with the node; a button is dead, and says "…" if it is the one pressed.
             buttons.Add(closed
                 ? Dead(StatusLabel(choice, card.Detail))
-                : ChoiceControl(choice, card.Detail, $"card:{card.Id}:{number}", () => OnAnswer?.Invoke(card, number)));
+                : working is not null && !IsChip(choice.Status)
+                    ? Dead(action == working ? $"{StatusLabel(choice, card.Detail)} …" : StatusLabel(choice, card.Detail))
+                    : ChoiceControl(choice, card.Detail, action, () => OnAnswer?.Invoke(card, number)));
         }
         // A waiting session is answered where its Remote Control has it: the card's link, one click away.
         if (card.Kind == CardKinds.SessionWaiting && card.Link is { } answerUrl)
