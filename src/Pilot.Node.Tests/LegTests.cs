@@ -159,6 +159,9 @@ internal sealed class FakeGitHub : IGitHub
         return Task.CompletedTask;
     }
 
+    public Task<bool?> AutoMergeArmedAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult<bool?>(AutoMergeArmed.Any(a => a.Number == number) && !AutoMergeDisarmed.Contains(number));
+
     public Task DisarmAutoMergeAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
         if (DisarmFails is { } why)

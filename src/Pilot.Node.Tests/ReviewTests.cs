@@ -847,4 +847,139 @@ public sealed class ReviewTests : IDisposable
         _workers.Started.Select(s => s.Name).ShouldBe(["du1-tia10-core", Reviewer("TIA10"), "du1-tia11-ui", Reviewer("TIA11")]);
         _github.Merged.Count.ShouldBe(2);
     }
+
+    // A flight with its PR passed and ready, then armed natively on its head while the checks run.
+    private async Task<(FlightRow Flight, PullRequest Pr, PrChecks Checks)> ArmedPassedFlight(string issue)
+    {
+        var flight = await NewFlight(issue, "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "fine")).Ok.ShouldBeTrue();
+        var pr = _github.Pr.ShouldNotBeNull();
+        _github.AutoMergeAllowed = true;
+        _github.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", pr.Head)).Error.ShouldBeNull();
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull().ShouldContain(LegCommander.ArmedByGitHub);
+        _github.AutoMergeArmed.ShouldHaveSingleItem();
+        return (F(flight.Code), pr, new PrChecks(_state, _github, TimeProvider.System, legs: _legs));
+    }
+
+    [Fact]
+    public async Task AGoAroundAnsweredFromTheMergeFailedCardIsPushedAndReviewedAfreshWhenItsLegIsDone()
+    {
+        var (flight, pr, checks) = await ArmedPassedFlight("31");
+        var code = flight.Code;
+
+        _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3, "build (linux)", "https://github.com/x/tianwen/actions/runs/1/job/2");
+        await checks.LookAsync(Ct);
+        var card = Open().ShouldHaveSingleItem();
+        card.Kind.ShouldBe(LegCommander.MergeFailed);
+        _github.AutoMergeDisarmed.ShouldBe([pr.Number]);
+
+        var goAround = card.Choices.Single(c => c.Verb == Verbs.GoAround);
+        (await Run(goAround.Verb, goAround.Target, "controller", goAround.Args)).Error.ShouldBeNull();
+
+        // Sent back as the node's own sends are: the PR a draft, the review turned to Changes, no card left offering a stale merge.
+        _github.DraftCalls.ShouldContain((pr.Number, true));
+        F(code).Review!.State.ShouldBe(ReviewState.Changes);
+        Open().ShouldBeEmpty();
+        _workers.Started.Last().Brief.ShouldContain("checks failed");
+
+        File.WriteAllText(Path.Combine(flight.Worktree, "fix31.txt"), "fixed\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "make the build pass");
+        var reviewsBefore = _workers.Started.Count(s => s.Name == Reviewer(code));
+        var worker = _state.Legs(code).Single().Worker!;
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(code, "parser"), worker, "done", "fixed")).Error.ShouldBeNull();
+
+        // The finished go-around went up, and a fresh review reads it: the flight is never left with every leg done and no card.
+        Git(Repo, "ls-remote", "origin", "flight/tia31").ShouldContain(Git(flight.Worktree, "rev-parse", "HEAD"));
+        _workers.Started.Count(s => s.Name == Reviewer(code)).ShouldBe(reviewsBefore + 1);
+        F(code).Review!.State.ShouldBe(ReviewState.Reviewing);
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass", "fine now")).Ok.ShouldBeTrue();
+        Open().ShouldHaveSingleItem().Kind.ShouldBe(LegCommander.PrReady);
+    }
+
+    [Fact]
+    public async Task ADisarmThatFailsKeepsTheArmSoItIsRetriedAndTheNodesRebaseRefuses()
+    {
+        var (flight, pr, checks) = await ArmedPassedFlight("33");
+        var code = flight.Code;
+
+        // GitHub shows it conflicting; turning its auto-merge off fails.
+        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        _github.Merge = new MergeState(MergeKinds.Conflicts, 3, 3);
+        _github.DisarmFails = "gh could not turn auto-merge off on #71: HTTP 502";
+        await checks.LookAsync(Ct);
+
+        // Still armed on GitHub, so still armed here; the card says why, and the rebase of the same look did not run.
+        F(code).MergeWhenGreen.ShouldNotBeNull();
+        _github.AutoMergeDisarmed.ShouldBeEmpty();
+        Open().Single().Detail.ShouldNotBeNull().ShouldContain("could not be turned off");
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        (await _legs.RebaseOntoBaseAsync(code, Ct)).ShouldNotBeNull().ShouldContain("could not be turned off");
+        Git(flight.Worktree, "rev-parse", "HEAD").ShouldBe(head);
+
+        // GitHub answers again: the next look turns it off.
+        _github.DisarmFails = null;
+        await checks.LookAsync(Ct);
+        _github.AutoMergeDisarmed.ShouldBe([pr.Number]);
+        F(code).MergeWhenGreen.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData(MergeKinds.ChangesRequested)]
+    [InlineData(MergeKinds.Blocked)]
+    public async Task EveryStateAnArmedMergeLeavesTurnsGitHubsAutoMergeOff(string kind)
+    {
+        var (flight, pr, checks) = await ArmedPassedFlight("34");
+
+        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        _github.Merge = new MergeState(kind, 3, 3, Reason: kind == MergeKinds.Blocked ? "a review is required" : null);
+        await checks.LookAsync(Ct);
+
+        _github.AutoMergeDisarmed.ShouldBe([pr.Number]);
+        F(flight.Code).MergeWhenGreen.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task APushNeverReachesAPrWhileGitHubsAutoMergeIsArmedOnIt()
+    {
+        var (flight, pr, checks) = await ArmedPassedFlight("35");
+        var code = flight.Code;
+
+        // The failed-check path cleared the arm here although GitHub would not turn its auto-merge off.
+        _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3, "build (linux)", null);
+        _github.DisarmFails = "gh could not turn auto-merge off on #71: HTTP 502";
+        await checks.LookAsync(Ct);
+        F(code).MergeWhenGreen.ShouldBeNull();
+        _github.AutoMergeArmed.ShouldHaveSingleItem();
+        _github.AutoMergeDisarmed.ShouldBeEmpty();
+        var card = Open().ShouldHaveSingleItem();
+        var goAround = card.Choices.Single(c => c.Verb == Verbs.GoAround);
+        (await Run(goAround.Verb, goAround.Target, "controller", goAround.Args)).Error.ShouldBeNull();
+
+        File.WriteAllText(Path.Combine(flight.Worktree, "fix35.txt"), "fixed\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix");
+        var worker = _state.Legs(code).Single().Worker!;
+        var pushedBefore = Git(Repo, "ls-remote", "origin", "flight/tia35");
+
+        // The finish refuses, with the leg still flying for its worker to finish again; nothing went up.
+        var refused = await Run(Verbs.FinishLeg, Verbs.LegTarget(code, "parser"), worker, "done", "fixed");
+        refused.Error.ShouldNotBeNull().ShouldContain("could not be turned off");
+        _state.Legs(code).Single().State.ShouldBe(LegState.Flying);
+        Git(Repo, "ls-remote", "origin", "flight/tia35").ShouldBe(pushedBefore);
+
+        // The same for opening the PR again by hand: refused, nothing pushed.
+        _state.PutLeg(_state.Legs(code).Single() with { State = LegState.Done });
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget(code), "controller")).Error.ShouldNotBeNull().ShouldContain("not pushed");
+        Git(Repo, "ls-remote", "origin", "flight/tia35").ShouldBe(pushedBefore);
+
+        // GitHub answers again: it is turned off first, and the push goes up.
+        _github.DisarmFails = null;
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget(code), "controller")).Error.ShouldBeNull();
+        _github.AutoMergeDisarmed.ShouldBe([pr.Number]);
+        Git(Repo, "ls-remote", "origin", "flight/tia35").ShouldContain(Git(flight.Worktree, "rev-parse", "HEAD"));
+    }
 }
