@@ -677,6 +677,47 @@ public sealed class LegCommanderTests : IDisposable
         _state.Cards().Count(c => c.Kind == LegCommander.SiblingBehindKind).ShouldBe(1);
     }
 
+    /// <summary>The leg commander with the node's sibling sync, as NodeApp wires it.</summary>
+    private void WithSiblingSync()
+    {
+        var git = new GitCli();
+        var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [_root]);
+        var watch = new RepoWatch(_state, new RepoCatalog(_state, options), new Planes(git), _github, TimeProvider.System) { Parallelism = 1 };
+        _legs.SiblingSync = new RepoSync(git, new Planes(git), watch);
+    }
+
+    [Fact]
+    public async Task ALegStartPullsAStaleCleanSiblingItselfAndRingsNobody()
+    {
+        SiblingDirLib(behind: 3);
+        WithSiblingSync();
+        await FlightWithTwoLegs();
+
+        (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
+
+        _workers.Started.ShouldHaveSingleItem();
+        _state.Cards().Where(c => c.Kind == LegCommander.SiblingBehindKind).ShouldBeEmpty();
+        var pulled = _state.Cards().Single(c => c.Kind == LegCommander.SiblingPulledKind);
+        (pulled.Bin, pulled.Title, pulled.Detail).ShouldBe((CardBin.Handled, "Pulled DIR.Lib for TIA1/parser", "main took 3 commits from origin/main"));
+        Git(Path.Combine(_root, "DIR.Lib"), "rev-list", "--count", "HEAD..@{upstream}").Trim().ShouldBe("0");
+    }
+
+    [Fact]
+    public async Task ALegStartLeavesADirtySiblingAloneAndItsCardSaysWhy()
+    {
+        SiblingDirLib(behind: 2);
+        File.WriteAllText(Path.Combine(_root, "DIR.Lib", "wip.txt"), "mine");
+        Git(Path.Combine(_root, "DIR.Lib"), "add", "wip.txt");
+        WithSiblingSync();
+        await FlightWithTwoLegs();
+
+        (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
+
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.SiblingBehindKind);
+        card.Detail.ShouldBe($"DIR.Lib is 2 commits behind its origin and was not pulled (the main checkout has uncommitted changes): git -C {Path.Combine(_root, "DIR.Lib")} pull --ff-only");
+        File.Exists(Path.Combine(_root, "DIR.Lib", "wip.txt")).ShouldBeTrue();
+    }
+
     [Fact]
     public async Task ALegStartedWithItsSiblingsUpToDateRaisesNoCard()
     {

@@ -144,6 +144,9 @@ public sealed partial class SiblingWatch(IGit git, TimeProvider time)
         return [.. counted.Where(c => c.behind > 0).Select(c => new SiblingBehind(Path.GetFileName(c.path), c.path, c.behind))];
     }
 
+    /// <summary>Forgets what was counted for <paramref name="path"/>: it was just pulled, and the next leg asks it afresh.</summary>
+    public void Forget(string path) => _seen.TryRemove(path, out _);
+
     private async Task<int> CountAsync(string path, CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();

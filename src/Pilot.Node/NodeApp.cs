@@ -99,6 +99,7 @@ public static class NodeApp
             legs.Models = services.GetRequiredService<RoleModels>();
             legs.Gate = services.GetRequiredService<StartGate>();
             legs.Releases = services.GetRequiredService<PackageReleases>();
+            legs.SiblingSync = services.GetRequiredService<RepoSync>();
             return legs;
         });
         builder.Services.AddSingleton(services =>
