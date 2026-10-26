@@ -773,16 +773,23 @@ public sealed class PrReviews(
         {
             held = ex.Message;
         }
+        // A Handled line is born closed, so "said once" is looked for among every card since the verdict, not the open ones.
+        var since = review.FinishedAt ?? review.StartedAt;
+        var saidHeld = state.Cards().Any(c => c.Subject == subject && c.Kind == LeftKind && c.At >= since);
         if (held is not null)
         {
             // Not the person's: something still has the folder open (a reviewer's process ending, an editor), and the sweep tries
             // again every Interval until it goes. A For-you card raised at every sweep rang the person in a loop (pilot#269's
             // review, SE1 2026-10-26); one Handled line says it, once.
-            if (!state.Cards(openOnly: true).Any(c => c.Subject == subject && c.Kind == LeftKind))
+            if (!saidHeld)
             {
                 state.RaiseCard(CardBin.Handled, LeftKind, subject, $"{review.Repo}#{review.Number}'s review worktree is still held; the node removes it when it is let go", held);
             }
             return;
+        }
+        if (saidHeld)
+        {
+            state.RaiseCard(CardBin.Handled, LeftKind, subject, $"{review.Repo}#{review.Number}'s review worktree is removed, let go at last");
         }
         state.PutPrReview(review with { State = PrReviewState.Closed, ClosedAt = time.GetUtcNow() });
         // The Merge card of a reviewed PR outlives the verdict card; a fresh review of the PR is the one thing that retires it.
