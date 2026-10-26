@@ -42,7 +42,14 @@ public sealed class CiShapedCheckTests : IDisposable
         var flights = new FlightCommander(_state, new Planes(git), time);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
         _legs = new LegCommander(_state, new FakeWorkers(), new FakeChecks(), new FakeGitHub(), git, new Planes(git), flights, options, time);
+        // The projects the checks below name, as stubs: leg plan refuses a check naming one that is not where it runs.
         Directory.CreateDirectory(Plane);
+        File.WriteAllText(Path.Combine(Plane, "Tianwen.slnx"), "<Solution />\n");
+        foreach (var project in new[] { "Pilot.Node.Tests", "TianWen.Tests", "Gui" })
+        {
+            Directory.CreateDirectory(Path.Combine(Plane, "src", project));
+            File.WriteAllText(Path.Combine(Plane, "src", project, project + ".csproj"), "<Project />\n");
+        }
         _state.PutFlight(new FlightRow
         {
             Code = "TIA1", Repo = "tianwen", RepoPath = Path.Combine(_root, "tianwen"), Issue = 1, Branch = "flight/tia1", Worktree = Plane, Base = "main",

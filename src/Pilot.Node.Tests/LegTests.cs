@@ -369,6 +369,8 @@ public abstract class LegCommanderTestsBase : IDisposable
         Directory.CreateDirectory(Repo);
         Git(Repo, "init", "-q", "-b", "main");
         File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
+        // A check that builds or tests needs a solution where it runs (leg plan refuses one that does not): a stub, in the plane's root.
+        File.WriteAllText(Path.Combine(Repo, "Tianwen.slnx"), "<Solution />\n");
         Git(Repo, "add", ".");
         Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
         var git = new GitCli();
