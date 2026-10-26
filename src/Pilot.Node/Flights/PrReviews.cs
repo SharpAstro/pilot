@@ -693,6 +693,18 @@ public sealed class PrReviews(
         {
             return;
         }
+        // A repo set to no-auto-merge is never merged by the node by itself: the person's card, as a flight's merge is.
+        var folder = Path.GetFileName(review.ClonePath.TrimEnd('\\', '/'));
+        var repoName = review.Repo[(review.Repo.IndexOf('/') + 1)..];
+        if (Models.NoAutoMerge(folder) || Models.NoAutoMerge(repoName))
+        {
+            var why = $"{review.Repo} is set to no-auto-merge";
+            state.PutPrReview(review with { QueueNote = why });
+            state.RaiseCard(CardBin.ForYou, MergeKind, subject, $"{review.Repo}#{review.Number} is reviewed {review.Verdict} and green, but {why}",
+                $"Reviewed {review.Verdict} at {at}, checks green. The node does not merge this repo by itself: merge it when you are ready.",
+                [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
+            return;
+        }
         if (await github.MergeQueueAsync(review.ClonePath, review.Number, cancellationToken) is null)
         {
             state.PutPrReview(review with { QueueNote = $"{read.Base} has no merge queue" });

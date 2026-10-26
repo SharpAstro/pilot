@@ -440,6 +440,21 @@ public sealed class PrReviewTests : IDisposable
         _state.Cards().Count(c => c.Kind == PrReviews.MergeKind).ShouldBe(1);
     }
 
+    [Fact]
+    public async Task AGreenReviewInANoAutoMergeRepoQueuesNothingAndRaisesTheMergeCard()
+    {
+        _reviews.Models = new RoleModels(new NodeSettings { NoAutoMergeRepos = ["widget"] });
+        await ReviewedWidget("approve");
+        _github.Merged.ShouldBeEmpty();
+        Row("acme/widget", 7).QueuedAt.ShouldBeNull();
+        Row("acme/widget", 7).QueueNote.ShouldNotBeNull().ShouldContain("no-auto-merge");
+        var card = _state.Cards().Single(c => c.Kind == PrReviews.MergeKind);
+        card.Choices.ShouldHaveSingleItem().ShouldSatisfyAllConditions(c => c.Verb.ShouldBe(Verbs.Merge), c => c.Args.ShouldBe([_widgetHead]));
+        await _reviews.SweepAsync(Ct);
+        _github.Merged.ShouldBeEmpty();
+        _state.Cards().Count(c => c.Kind == PrReviews.MergeKind).ShouldBe(1);
+    }
+
     /// <summary>The file the widget PR adds, the one file in its diff, one line long.</summary>
     private string Added() => PrOrigins.Git(WidgetClone, "show", "--name-only", "--format=", _widgetHead);
 
