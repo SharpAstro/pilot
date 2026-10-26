@@ -250,7 +250,8 @@ public static class CheckPaths
     private static string Missing(string segment, List<Token> tokens, PathRef reference, string root, string here)
     {
         var name = Path.GetFileName(reference.Value.TrimEnd('/', '\\'));
-        var found = name.Length == 0 ? [] : Find(root, name, directory: !Path.HasExtension(name));
+        // A name like Pilot.Node.Tests has an "extension" and is a folder: look for a file or a folder of that name.
+        var found = name.Length == 0 ? [] : Find(root, name, directory: null);
         var where = Where(root, here);
         var head = $"the check's `{segment.Trim()}` names {reference.Value}, which is not in {where} (a check runs in the plane's root, after any leading `cd <dir> &&`)";
         if (found.Count == 0)
@@ -292,8 +293,8 @@ public static class CheckPaths
             .OrderBy(e => e.Depth).ThenBy(e => IsSolution(Path.GetExtension(e.Path)) ? 0 : 1).ThenBy(e => e.Path, StringComparer.Ordinal)
             .Select(e => e.Path)];
 
-    private static List<string> Find(string root, string name, bool directory) =>
-        [.. Walk(root).Where(e => e.Directory == directory && Path.GetFileName(e.Path).Equals(name, StringComparison.OrdinalIgnoreCase))
+    private static List<string> Find(string root, string name, bool? directory) =>
+        [.. Walk(root).Where(e => (directory is null || e.Directory == directory) &&Path.GetFileName(e.Path).Equals(name, StringComparison.OrdinalIgnoreCase))
             .OrderBy(e => e.Depth).ThenBy(e => e.Path, StringComparer.Ordinal).Select(e => e.Path).Take(3)];
 
     private static string List(string root, List<string> found) => string.Join(", or ", found.Select(f => Display(root, f)));

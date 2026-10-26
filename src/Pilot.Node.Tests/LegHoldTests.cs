@@ -37,6 +37,8 @@ public abstract class LegHoldTestsBase : IDisposable
         Directory.CreateDirectory(Repo);
         Git(Repo, "init", "-q", "-b", "main");
         File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
+        // A check that builds or tests needs a solution where it runs (leg plan refuses one that does not): a stub, in the plane's root.
+        File.WriteAllText(Path.Combine(Repo, "Tianwen.slnx"), "<Solution />\n");
         Commit(Repo, "first");
         _state = new NodeState(new InMemoryJournal(), _time);
         var git = new GitCli();
