@@ -395,8 +395,22 @@ grant for does (a peer that does not answer holds nothing). A PR a peer holds is
 - A recheck that cannot run (gh cannot read the PR or the review cannot start) keeps the label and raises a For-you
   `pr-recheck-failed` card. It is not tried again until the label has been seen gone, so a PR that cannot be rechecked is
   not tried at every look: take it off and put it back to try again.
-- A flight's PR and a PR pilot reviewed route to two methods of their own, which for now leave a Handled line saying so and
-  take the label off; later legs of #286 fill them.
+- A recheck reads the PR afresh from GitHub, does one thing, replaces `pilot: recheck` with the one `pilot:` label for where
+  the PR then stands, and leaves a Handled line saying what it did. A PR already merged or closed, or in the merge queue,
+  is handled the same for all three kinds below.
+- **A flight's PR** (the node's own flight on it): a conflict or a PR behind its base is rebased as the queue-conflict path
+  does, and its review restarts (a rebase that conflicts goes back to the last leg as changes); red checks on a passed
+  review go back as changes; a head the review never read is reviewed afresh; a passed, green, clean one goes to the merge
+  queue by the usual merge rule. The explicit ask bypasses the once-a-head sets of the timed `PrChecks` look.
+- **A PR pilot reviewed with `pilot review pr`** (no flight): a head other than the review's starts a fresh review
+  (*head ab12cd34 was not the one reviewed (0f9e8d7c), review restarted*, label `pilot: reviewing`); a conflict or a PR
+  behind its base raises a For-you `pr-recheck-conflicts` card saying it is not pilot's branch to rebase, and the label
+  becomes `pilot: conflicts` (the node never rebases a branch it holds no flight on); an approved or commented review at
+  its head whose checks are green goes to the merge queue through the same rule as #279 (`QueueWhenGreenAsync`, which
+  keeps a no-auto-merge repo and a base without a merge queue as a card for you), label `pilot: queued`; anything else
+  says *nothing to do* and why (checks still running, review asks for changes, review still reading it), with the label
+  for where the review stands (`passed`, `changes`, `reviewing`).
+- **A PR pilot never touched** starts a review, as `pilot review pr` does (above).
 
 ### Liveness: no flight derails silently
 

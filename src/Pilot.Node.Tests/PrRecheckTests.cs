@@ -223,17 +223,76 @@ public sealed class PrRecheckTests : IDisposable
         _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
     }
 
-    [Fact]
-    public async Task APrItReviewedBeforeRoutesToItsOwnMethodThatSaysSo()
+    /// <summary>A PR reviewed with review-pr at its head, the verdict in (approve unless asked otherwise), the recheck label on it.</summary>
+    private async Task<PrReviewRow> ReviewedAsync(string verdict = "approve")
     {
         (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = "pr/acme/widget#7", Who = "controller" }, Ct)).Error.ShouldBeNull();
         var reviewer = Review()!.Reviewer;
+        (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.PrVerdict, Target = "pr/acme/widget#7", Args = [verdict, "Fine."], Who = reviewer }, Ct)).Error.ShouldBeNull();
+        _github.LabelCalls.Clear();
         _github.Labels[7] = [PilotMarks.Recheck];
+        return Review()!;
+    }
+
+    [Fact]
+    public async Task AReviewedPrWhoseHeadMovedSinceTheReviewIsReviewedAfresh()
+    {
+        var review = await ReviewedAsync();
+        var moved = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, "a later push");
+        _github.Prs["acme/widget#7"] = Pr("OPEN") with { Head = moved };
 
         await LookAsync();
 
-        Handled().ShouldHaveSingleItem().ShouldBe($"recheck of widget#7: reviewed by {reviewer}: the recheck of a reviewed PR is not wired yet");
-        _workers.Started.Count.ShouldBe(1);
+        var now = Review().ShouldNotBeNull();
+        (now.State, now.Head).ShouldBe((PrReviewState.Reviewing, moved));
+        now.Head.ShouldNotBe(review.Head);
+        Handled().ShouldBe([$"recheck of widget#7: head {Short(moved)} was not the one reviewed ({Short(_head)}), review restarted"]);
+        _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
+    }
+
+    [Fact]
+    public async Task AReviewedPrWhoseHeadIsTheOneReviewedAndPassedAndGreenIsQueued()
+    {
+        await ReviewedAsync();
+        _github.Checks = ChoiceStatus.Passing;
+        _github.Queues = true;
+        _github.Queue = new MergeQueueState("OPEN", _head, Queued: false);
+
+        await LookAsync();
+
+        _github.Merged.ShouldHaveSingleItem().ShouldBe((7, _head, _reviews.Models.MergeMethod));
+        Review()!.QueuedAt.ShouldNotBeNull();
+        Handled().ShouldBe([$"recheck of widget#7: passed and green, queued for merge at {Short(_head)}"]);
+        _github.Labels[7].ShouldBe([PilotMarks.Queued]);
+    }
+
+    [Fact]
+    public async Task AReviewedPrThatConflictsGetsAForYouCardAndTheConflictsLabel()
+    {
+        await ReviewedAsync();
+        _github.Prs["acme/widget#7"] = Pr("OPEN") with { Mergeable = "CONFLICTING" };
+
+        await LookAsync();
+
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrRecheck.ConflictKind);
+        (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "pr/acme/widget#7"));
+        card.Detail.ShouldNotBeNull().ShouldContain("not pilot's branch to rebase");
+        Handled().ShouldBe(["recheck of widget#7: conflicts with its base, not pilot's branch to rebase: a card asks you"]);
+        _github.Labels[7].ShouldBe([PilotMarks.Conflicts]);
+        _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AReviewedPrWithNothingToDoSaysWhereItStands()
+    {
+        await ReviewedAsync();
+        _github.Checks = ChoiceStatus.Pending;
+
+        await LookAsync();
+
+        _github.Merged.ShouldBeEmpty();
+        Handled().ShouldBe([$"recheck of widget#7: nothing to do at {Short(_head)}: its checks are still running"]);
+        _github.Labels[7].ShouldBe([PilotMarks.Passed]);
     }
 
     /// <summary>A flight of this node's on PR 7 (the recheck's PR), its leg done and pushed, reviewed and passed; the recheck label on the PR.</summary>
@@ -417,7 +476,7 @@ public sealed class PrRecheckTests : IDisposable
         // Once, then once more: the second finds the review the first started, which is its own now.
         _workers.Started.Count.ShouldBe(1);
         Handled().ShouldContain("recheck of widget#7: review started");
-        Handled().ShouldContain(h => h.Contains("reviewed by du1-review-widget-7"));
+        Handled().ShouldContain(h => h.Contains("its review is still reading it"));
         Handled().Length.ShouldBe(2);
         _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
     }

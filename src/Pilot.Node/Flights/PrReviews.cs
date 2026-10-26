@@ -702,7 +702,7 @@ public sealed class PrReviews(
     /// A reviewed PR whose verdict is approve or comment goes in its base's merge queue at the reviewed head once its checks
     /// are green (#279). Pending checks and a draft wait for the next sweep; anything else decides the review once and for all.
     /// </summary>
-    private async Task QueueWhenGreenAsync(PrReviewRow review, CancellationToken cancellationToken)
+    internal async Task QueueWhenGreenAsync(PrReviewRow review, CancellationToken cancellationToken)
     {
         var subject = Verbs.PrTarget(review.Repo, review.Number);
         PullRequest read;
