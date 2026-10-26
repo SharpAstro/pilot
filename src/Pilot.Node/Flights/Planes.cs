@@ -308,6 +308,8 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
             }
         }
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        // A folder the queue already deleted can still be registered, its remove having failed while held.
+        await git.RunAsync(["worktree", "prune"], repoPath, cancellationToken);
         var add = await git.RunAsync(["worktree", "add", "--detach", path, commit], repoPath, cancellationToken);
         if (!add.Ok)
         {

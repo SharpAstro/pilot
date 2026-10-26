@@ -163,6 +163,8 @@ public sealed class RemovalQueueTests : IDisposable
             var beside = Row();
             beside.Worktree.ShouldBe($"{queued}-2");
             Directory.Exists(beside.Worktree).ShouldBeTrue();
+            // The reviewer enters the sibling, not the held base worktree.
+            _workers.Started.Last().Plane.ShouldBe(Path.GetFileName(beside.Worktree));
             _queue.Contains(queued).ShouldBeTrue();
         }
 
@@ -342,6 +344,45 @@ public sealed class RemovalQueueTests : IDisposable
         var third = Cards().ShouldHaveSingleItem();
         third.Detail.ShouldNotBeNull().ShouldContain(Path.GetFullPath(b));
         third.Detail.ShouldNotContain(Path.GetFullPath(a));
+    }
+
+    [Fact]
+    public async Task AFreshStartNamesAFolderThatBecameDueByStartsAfterTheCardAlreadyOpenRang()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
+        var time = new Sessions.ManualTime(new DateTimeOffset(2026, 10, 26, 9, 0, 0, TimeSpan.Zero));
+        var state = new NodeState(new InMemoryJournal(), time);
+        var queue = new RemovalQueue(RemovalQueue.FileIn(Path.Combine(_root, "restart-data")), time);
+        var a = QueuedFolder(queue);
+        CardRow[] Cards() => [.. state.Cards(openOnly: true).Where(c => c.Kind == RemovalQueueStart.Kind)];
+        Task Start() => new RemovalQueueStart(queue, state, time) { Holders = _ => [] }.StartingAsync(Ct);
+
+        using var holdA = Hold(a);
+        for (var start = 1; start <= 4; start++)
+        {
+            await Start();
+        }
+        var first = Cards().ShouldHaveSingleItem();
+        first.Detail.ShouldNotBeNull().ShouldContain(Path.GetFullPath(a));
+
+        var b = QueuedFolder(queue);
+        using var holdB = Hold(b);
+        for (var start = 5; start <= 7; start++)
+        {
+            await Start();
+            Cards().ShouldHaveSingleItem().Id.ShouldBe(first.Id);
+        }
+        await Start();
+        var second = Cards().ShouldHaveSingleItem();
+        second.Id.ShouldNotBe(first.Id);
+        second.Detail.ShouldNotBeNull().ShouldContain(Path.GetFullPath(a));
+        second.Detail.ShouldContain(Path.GetFullPath(b));
+
+        // Both released: the next start removes them and closes the card.
+        holdA.Dispose();
+        holdB.Dispose();
+        await Start();
+        Cards().ShouldBeEmpty();
     }
 
     [Fact]

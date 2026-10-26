@@ -146,6 +146,7 @@ public sealed class PrReviews(
         var worktree = Path.Combine(clone, ".claude", "worktrees", plane);
         // The folder actually used: a sibling when the usual one is held and queued for removal.
         worktree = await planes.PinAsync(clone, worktree, read.Head, cancellationToken);
+        plane = Path.GetFileName(worktree);
 
         var reviewer = $"{options.Machine.ToLowerInvariant()}-review-{name}-{pr.Number}";
         var row = new PrReviewRow
