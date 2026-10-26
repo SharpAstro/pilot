@@ -17,9 +17,16 @@ public static class NodeTargets
         ? file
         : Path.Combine(NodeSocket.DefaultDataFolder, "client-grants.json");
 
-    /// <summary>The node <paramref name="node"/> (or <c>PILOT_NODE</c>) names on the LAN, else this machine's on <paramref name="socket"/>.</summary>
-    public static NodeClient Connect(string? node, string? socket, string? tokenFile = null)
+    /// <summary>
+    /// The node <paramref name="node"/> (or <c>PILOT_NODE</c>) names on the LAN, else this machine's on <paramref name="socket"/>.
+    /// <paramref name="here"/> is a name <see cref="ResolveAsync"/> found to be this machine's: its socket, whatever <c>PILOT_NODE</c> says.
+    /// </summary>
+    public static NodeClient Connect(string? node, string? socket, string? tokenFile = null, bool here = false)
     {
+        if (here)
+        {
+            return new NodeClient(NodeSocket.Resolve(socket));
+        }
         var target = node ?? (Environment.GetEnvironmentVariable(EnvironmentVariable) is { Length: > 0 } fromEnv ? fromEnv : null);
         // A name is resolved first (ResolveAsync); one that reaches here unresolved is this machine's.
         if (target is not null && NodeClient.IsEndpoint(target, out var endpoint))
@@ -31,30 +38,36 @@ public static class NodeTargets
 
     /// <summary>
     /// <paramref name="node"/> (or <c>PILOT_NODE</c>) as <see cref="Connect"/> takes it: a <c>host:port</c> as given, and a
-    /// node's name (<c>DE1</c>) or its machine's looked up among the nodes announcing themselves on the LAN. This machine's
-    /// own name is its socket. A name no node announces is refused with the names heard, never taken for this machine:
-    /// <c>--node DE1</c> once went to SE1's node without a word, and a flight meant for DE1 was checked on SE1's disk.
+    /// node's name (<c>DE1</c>, or the whole announced <c>DE1 DESKTOP-…</c>) or its host's (<c>DESKTOP-…</c>) looked up among
+    /// the nodes announcing themselves on the LAN; <c>Here</c> when that node is this machine's, which is then its socket. A
+    /// name no node announces is refused with the names heard, never taken for this machine: <c>--node DE1</c> once went to
+    /// SE1's node without a word, and a flight meant for DE1 was checked on SE1's disk.
     /// </summary>
-    public static async Task<(string? Node, string? Why)> ResolveAsync(string? node, CancellationToken cancellationToken)
+    public static async Task<(string? Node, bool Here, string? Why)> ResolveAsync(string? node, CancellationToken cancellationToken)
     {
         var target = node ?? (Environment.GetEnvironmentVariable(EnvironmentVariable) is { Length: > 0 } fromEnv ? fromEnv : null);
         if (target is null || NodeClient.IsEndpoint(target, out _))
         {
-            return (target, null);
+            return (target, false, null);
         }
-        var peers = await DiscoverAsync(TimeSpan.FromSeconds(3), cancellationToken);
-        var match = peers.FirstOrDefault(p => string.Equals(p.DisplayName, target, StringComparison.OrdinalIgnoreCase)
-            || (p.Properties.TryGetValue("machine", out var machine) && string.Equals(machine, target, StringComparison.OrdinalIgnoreCase)));
+        return Match(await DiscoverAsync(TimeSpan.FromSeconds(3), cancellationToken), target, Environment.MachineName);
+    }
+
+    /// <summary>
+    /// The node <paramref name="target"/> names among <paramref name="peers"/>: by the node's prefix (its <c>machine</c>
+    /// property, <c>DE1</c>), its announced name, or its host (<see cref="LanPeer.MachineName"/>); <c>Here</c> when that
+    /// host is <paramref name="thisHost"/>.
+    /// </summary>
+    internal static (string? Node, bool Here, string? Why) Match(IReadOnlyList<LanPeer> peers, string target, string thisHost)
+    {
+        static bool Same(string? a, string b) => a is not null && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+        var match = peers.FirstOrDefault(p => Same(p.Properties.GetValueOrDefault("machine"), target) || Same(p.DisplayName, target) || Same(p.MachineName, target));
         if (match is null)
         {
             var heard = peers.Count > 0 ? $" (heard: {string.Join(", ", peers.Select(p => p.DisplayName))})" : "";
-            return (null, $"no node named {target} announced itself on the LAN within 3 s{heard}; give it as host:port");
+            return (null, false, $"no node named {target} announced itself on the LAN within 3 s{heard}; give it as host:port");
         }
-        if (match.Properties.TryGetValue("machine", out var its) && string.Equals(its, Environment.MachineName, StringComparison.OrdinalIgnoreCase))
-        {
-            return (null, null);
-        }
-        return (match.EndPoint.ToString(), null);
+        return Same(match.MachineName, thisHost) ? (null, true, null) : (match.EndPoint.ToString(), false, null);
     }
 
     /// <summary>This user's held tokens: LAN.Lib's one-file store, over <paramref name="tokenFile"/> or <see cref="TokenFile"/>.</summary>

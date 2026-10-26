@@ -236,3 +236,39 @@ public sealed class GrantAskCardTests : IDisposable
         state.Cards().Count(c => c.Kind == NodeLan.AskedKind).ShouldBe(3);
     }
 }
+
+/// <summary>Which node <c>--node</c> names: a node's prefix, its announced name or its host; this machine's own is its socket.</summary>
+public sealed class NodeTargetsTests
+{
+    private static LAN.Lib.LanPeer Peer(string prefix, string host, string ip) =>
+        new("p-" + prefix, NodeWire.LanService, $"{prefix} {host}", new IPEndPoint(IPAddress.Parse(ip), 47731), "n-" + prefix, host, 1,
+            new Dictionary<string, string> { ["machine"] = prefix }, DateTimeOffset.UnixEpoch);
+
+    [Fact]
+    public void ANodeIsNamedByItsPrefixItsAnnouncedNameOrItsHostAndThisMachinesIsItsSocket()
+    {
+        IReadOnlyList<LAN.Lib.LanPeer> peers = [Peer("DE1", "DESKTOP-U74IF48", "192.168.0.79"), Peer("SE1", "SEB-SURFACE", "192.168.0.70")];
+
+        // From DE1: SE1 by its prefix, its whole announced name or its bare host is SE1's endpoint.
+        NodeTargets.Match(peers, "SE1", "DESKTOP-U74IF48").ShouldBe(("192.168.0.70:47731", false, (string?)null));
+        NodeTargets.Match(peers, "se1 seb-surface", "DESKTOP-U74IF48").ShouldBe(("192.168.0.70:47731", false, (string?)null));
+        NodeTargets.Match(peers, "SEB-SURFACE", "DESKTOP-U74IF48").ShouldBe(("192.168.0.70:47731", false, (string?)null));
+        // This machine's own node, by prefix or host, is its socket, not its LAN endpoint (which holds no token for itself).
+        NodeTargets.Match(peers, "DE1", "DESKTOP-U74IF48").ShouldBe(((string?)null, true, (string?)null));
+        NodeTargets.Match(peers, "desktop-u74if48", "DESKTOP-U74IF48").ShouldBe(((string?)null, true, (string?)null));
+        // A name nobody announces is refused with the names heard.
+        var (node, here, why) = NodeTargets.Match(peers, "LE1", "DESKTOP-U74IF48");
+        (node, here).ShouldBe(((string?)null, false));
+        why.ShouldNotBeNull().ShouldContain("heard: DE1 DESKTOP-U74IF48, SE1 SEB-SURFACE");
+    }
+
+    [Fact]
+    public void ANameFoundToBeThisMachinesConnectsToItsSocketWhateverPilotNodeSays()
+    {
+        // Not tried with PILOT_NODE set: the variable is the process's, and CLI tests running beside this one would follow it to
+        // a real node. Here is read before the variable is, so a node it names is never reached.
+        var socket = Path.Combine(Path.GetTempPath(), "here.sock");
+        using var client = NodeTargets.Connect("192.168.0.70:47731", socket, here: true);
+        Path.GetFullPath(client.SocketPath).ShouldBe(Path.GetFullPath(socket));
+    }
+}

@@ -183,7 +183,12 @@ public sealed class PrReviews(
         try
         {
             await github.SetCommitStatusAsync(review.ClonePath, review.Head, status, description, link, cancellationToken);
-            await github.SetPilotLabelAsync(review.ClonePath, review.Number, label, cancellationToken);
+            // A flight's PR keeps the flight's label (passed, conflicts, queued): PrMarks writes it only when its own changes, so
+            // one set here would stand over it unrepaired.
+            if (!FlightOwns(review))
+            {
+                await github.SetPilotLabelAsync(review.ClonePath, review.Number, label, cancellationToken);
+            }
             // A refusal an earlier write left is over once one goes through.
             state.CloseCardsAbout(subject, "set on GitHub", PrMarks.RefusedKind);
         }
@@ -206,6 +211,11 @@ public sealed class PrReviews(
             _ => ("success", $"commented at {at}"),
         };
     }
+
+    /// <summary>Whether the reviewed PR is a flight's: its PR, on the same repo.</summary>
+    private bool FlightOwns(PrReviewRow review) =>
+        state.Flights().Any(f => f.PullRequest == review.Number && f.PullRequestUrl is { } url
+            && url.Contains($"/{review.Repo}/pull/{review.Number}", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>The <c>pilot:</c> label a verdict leaves: changes, passed for an approval, commented for a comment.</summary>
     internal static string LabelOf(PrReviewRow review) => review.Verdict switch
