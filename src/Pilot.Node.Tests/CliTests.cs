@@ -176,6 +176,22 @@ public sealed class CliTests : IAsyncLifetime
         _node.State.Legs("TIA7").Single().Checklist.Single().Done.ShouldBeTrue();
     }
 
+    [Fact]
+    public async Task PilotJobsNamesTheJobHoldingTheQueueOnlyWhileAJobWaits()
+    {
+        JobRow Job(string id, JobState state) => new()
+        {
+            Id = id, Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = state,
+            LogPath = Path.Combine(_root, id + ".log"), Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+        };
+        _node.State.PutJob(Job("j1", JobState.Running));
+
+        (await Pilot(_root, "jobs")).Output.ShouldNotContain("holds the queue");
+
+        _node.State.PutJob(Job("j2", JobState.Queued));
+        (await Pilot(_root, "jobs")).Output.ShouldContain("j1 holds the queue (se1-tia1-parser), held for 5m");
+    }
+
     /// <summary>A flight whose first leg is done and whose second, render, has started: its validator is flying.</summary>
     private async Task<string> FlightWithAValidatorFlying(string number)
     {

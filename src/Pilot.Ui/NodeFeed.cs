@@ -107,6 +107,8 @@ internal sealed class NodeFeed : IAsyncDisposable
             Held = view.Flights.Count(f => f.State == FlightState.Held),
             JobsRunning = view.Jobs.Count(j => j.State == JobState.Running),
             JobsQueued = view.Jobs.Count(j => j.State == JobState.Queued),
+            JobHolder = JobQueue.HolderLine(view.Jobs, now),
+            LegWait = view.Legs.Where(l => l.State == LegState.Flying && l.Wait is not null).Select(l => FlightWaiting.WaitText(l.Wait!)).FirstOrDefault(),
             Rings = view.Cards.Count(c => c.State == CardState.Open && c.Bin == CardBin.Ring),
         };
     }

@@ -49,7 +49,7 @@ internal sealed record LegDetail
         Row = leg,
         Name = leg.Name,
         Order = leg.Order,
-        State = leg.Hold is not null ? "holding" : leg.State.ToString().ToLowerInvariant(),
+        State = leg.Hold is not null ? "holding" : leg.Wait is { } wait && leg.State == LegState.Flying ? FlightWaiting.WaitText(wait) : leg.State.ToString().ToLowerInvariant(),
         GoArounds = leg.GoArounds > 0 ? $"go-around {leg.GoArounds}" : null,
         Goal = leg.Goal,
         DoneWhen = leg.DoneWhen,

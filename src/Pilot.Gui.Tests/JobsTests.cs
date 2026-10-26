@@ -364,4 +364,18 @@ public sealed class JobsTests
         Contrast(JobsView<RgbaImage>.DangerLabel, JobsView<RgbaImage>.Danger).ShouldBeGreaterThanOrEqualTo(4.5);
         Contrast(JobsView<RgbaImage>.DangerLabel, JobsView<RgbaImage>.DangerHover).ShouldBeGreaterThanOrEqualTo(4.5);
     }
+
+    [Fact]
+    public void ABackgroundTasksPageNamesTheJobHoldingTheQueueOnlyWhileAJobWaits()
+    {
+        Screen().Holder.ShouldBe("j14 holds the queue (xy1-orb204-parser), held for 11m 0s");
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var (_, jobs) = Chrome(vessel);
+
+        Cells(jobs, Screen()).ShouldContain("j14 holds the queue (xy1-orb204-parser), held for 11m 0s");
+
+        var noQueue = new JobsScreen(JobLine.Build([Job("j14", JobState.Running, Live.At.AddMinutes(-11))], Live.At), "live", Live.At);
+        noQueue.Holder.ShouldBeNull();
+        Cells(jobs, noQueue).ShouldNotContain("holds the queue");
+    }
 }

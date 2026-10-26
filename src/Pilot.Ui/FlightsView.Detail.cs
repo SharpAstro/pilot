@@ -264,7 +264,7 @@ internal sealed partial class FlightsView<TSurface>
 
     private Layout.Node LegBlock(string code, LegDetail leg)
     {
-        var color = leg.Row.Hold is not null ? Held : leg.Row.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
+        var color = leg.Row.Hold is not null || (leg.Row.Wait is not null && leg.Row.State == LegState.Flying) ? Held : leg.Row.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
         var head = new List<Layout.Node>
         {
             Layout.Builder.Text($"{leg.Order}. {leg.Name}", 15f, Bright).WAuto(),
