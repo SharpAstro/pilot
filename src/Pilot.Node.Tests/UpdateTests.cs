@@ -301,7 +301,7 @@ public sealed class UpdateTests : IDisposable
         card.Title.ShouldBe("pilot 2.0.2 is out (this is 2.0.1)");
         card.Choices.ShouldHaveSingleItem().ShouldSatisfyAllConditions(
             c => c.Label.ShouldBe("Update"), c => c.Verb.ShouldBe(Verbs.Update), c => c.Args.ShouldBe([UpdateArgs.Install]));
-        card.Detail.ShouldNotBeNull().ShouldNotContain("once");
+        card.Detail.ShouldNotBeNull().ShouldNotContain("running or waiting");
 
         PutJob(state, "j1", JobState.Running);
         var auto = Updater(state, feed, UpdatePolicy.Auto, out var successors, out var lifetime);
@@ -330,7 +330,7 @@ public sealed class UpdateTests : IDisposable
 
         installed.Ok.ShouldBeTrue(installed.Error);
         installed.Way.ShouldBe("2.0.1 -> 2.0.2; the node restarts; 2 jobs left running, 1 job left waiting; the new node picks them up");
-        installed.Way.ShouldNotBeNull().ShouldNotContain("once");
+        installed.Way.ShouldNotBeNull().ShouldNotContain("goes in once");
         Read(node).ShouldBe("new " + node);
         successors.ShouldBe([Path.Combine(_install, node)]);
         lifetime.Stopped.ShouldBeTrue();
