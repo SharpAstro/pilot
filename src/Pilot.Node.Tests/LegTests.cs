@@ -82,10 +82,15 @@ internal sealed class FakeGitHub : IGitHub
         Interlocked.Increment(ref OpenPrCalls);
         return OpenPrsFail.Contains(repoPath)
             ? Task.FromException<PullRequestStatus[]>(new FlightException("gh could not list the PRs: offline"))
-            : Task.FromResult<PullRequestStatus[]>(OpenPrs.TryGetValue(repoPath, out var prs)
-                ? [.. prs.Select(p => Labels.TryGetValue(p.Number, out var set) ? p with { Labels = [.. set] } : p)]
-                : []);
+            : Task.FromResult(OpenPrs.TryGetValue(repoPath, out var prs) ? prs : []);
     }
+
+    public Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken) =>
+        OpenPrsFail.Contains(repoPath)
+            ? Task.FromException<int[]>(new FlightException("gh could not list the PRs: offline"))
+            : Task.FromResult(OpenPrs.TryGetValue(repoPath, out var prs)
+                ? (int[])[.. prs.Where(p => Labels.TryGetValue(p.Number, out var set) && set.Contains(label)).Select(p => p.Number)]
+                : []);
 
     /// <summary>Every issue created, as (repo path, title, body).</summary>
     public List<(string Repo, string Title, string? Body)> IssuesCreated { get; } = [];

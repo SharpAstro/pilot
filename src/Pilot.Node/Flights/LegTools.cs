@@ -179,7 +179,7 @@ public sealed class ShellCheckRunner : ICheckRunner
 /// <param name="Labels">The labels it carries, as read by branch; null when the read did not ask for them.</param>
 /// <param name="MergeCommit">The commit it merged as on its base, as read by branch; empty before it merges or when not read.</param>
 /// <param name="MergedAt">When it merged, as read by branch; null before it merges or when not read.</param>
-public sealed record PullRequest(int Number, string State, string Head, string Url, string Mergeable = "", string Title = "", string Author = "", string Base = "", IReadOnlyList<string>? Labels = null, string MergeCommit = "", DateTimeOffset? MergedAt = null, bool Draft = false, string HeadRef = "");
+public sealed record PullRequest(int Number, string State, string Head, string Url, string Mergeable = "", string Title = "", string Author = "", string Base = "", IReadOnlyList<string>? Labels = null, string MergeCommit = "", DateTimeOffset? MergedAt = null, bool Draft = false, string HeadRef = "", bool Fork = false);
 
 /// <summary>
 /// A GitHub Actions run on a commit: <paramref name="Status"/> is <c>queued</c>, <c>in_progress</c> or <c>completed</c>, and
@@ -343,6 +343,10 @@ public interface IGitHub
     /// <summary>The repo's open PRs with their draft state and checks, in one call, newest first.</summary>
     /// <exception cref="FlightException">gh could not list them.</exception>
     Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken);
+
+    /// <summary>The numbers of the repo's open PRs that carry <paramref name="label"/>: a light ask (no checks), for a look made often.</summary>
+    /// <exception cref="FlightException">gh could not list them.</exception>
+    Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken);
 
     /// <summary>Opens an issue in the repo at <paramref name="repoPath"/>; returns it as listed.</summary>
     /// <exception cref="FlightException">gh could not create it.</exception>
@@ -939,7 +943,7 @@ public sealed class GhCli : IGitHub
 
     public async Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(["pr", "list", "--state", "open", "--limit", "100", "--json", "number,title,isDraft,headRefName,url,statusCheckRollup,labels"], repoPath, cancellationToken);
+        var (exit, output, error) = await RunAsync(["pr", "list", "--state", "open", "--limit", "100", "--json", "number,title,isDraft,headRefName,url,statusCheckRollup"], repoPath, cancellationToken);
         if (exit != 0)
         {
             throw new FlightException($"gh could not list the PRs: {(error.Trim().Length > 0 ? error : output).Trim()}");
@@ -954,11 +958,19 @@ public sealed class GhCli : IGitHub
                 Url = p.TryGetProperty("url", out var url) ? url.GetString() : null,
                 Draft = p.TryGetProperty("isDraft", out var draft) && draft.ValueKind == JsonValueKind.True,
                 Checks = p.TryGetProperty("statusCheckRollup", out var rollup) ? RollupStatus(rollup) : null,
-                Labels = p.TryGetProperty("labels", out var labels) && labels.ValueKind == JsonValueKind.Array
-                    ? [.. labels.EnumerateArray().Select(l => TextOf(l, "name")).OfType<string>()]
-                    : [],
             })
             .OrderByDescending(p => p.Number)];
+    }
+
+    public async Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["pr", "list", "--state", "open", "--label", label, "--limit", "100", "--json", "number"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not list the PRs labelled {label}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        using var doc = JsonDocument.Parse(output);
+        return [.. doc.RootElement.EnumerateArray().Select(p => p.GetProperty("number").GetInt32())];
     }
 
     /// <summary>
@@ -1025,7 +1037,7 @@ public sealed class GhCli : IGitHub
     public async Task<PullRequest> PullRequestOfAsync(string repo, int number, CancellationToken cancellationToken)
     {
         var (exit, output, error) = await RunAsync(
-            ["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "-R", repo, "--json", "number,state,headRefOid,url,title,author,baseRefName,headRefName,isDraft"],
+            ["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "-R", repo, "--json", "number,state,headRefOid,url,title,author,baseRefName,headRefName,isDraft,isCrossRepository"],
             Path.GetTempPath(), cancellationToken);
         if (exit != 0)
         {
@@ -1039,7 +1051,8 @@ public sealed class GhCli : IGitHub
             Author: root.TryGetProperty("author", out var author) && author.ValueKind == JsonValueKind.Object && author.TryGetProperty("login", out var login) ? login.GetString() ?? "" : "",
             Base: root.TryGetProperty("baseRefName", out var baseRef) ? baseRef.GetString() ?? "" : "",
             Draft: root.TryGetProperty("isDraft", out var draft) && draft.ValueKind == JsonValueKind.True,
-            HeadRef: root.TryGetProperty("headRefName", out var headRef) ? headRef.GetString() ?? "" : "");
+            HeadRef: root.TryGetProperty("headRefName", out var headRef) ? headRef.GetString() ?? "" : "",
+            Fork: root.TryGetProperty("isCrossRepository", out var cross) && cross.ValueKind == JsonValueKind.True);
     }
 
     public async Task CloneAsync(string repo, string path, CancellationToken cancellationToken)

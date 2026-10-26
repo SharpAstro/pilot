@@ -337,13 +337,11 @@ public sealed class RepoStatusTests : IDisposable
         (plane.Flight, plane.Branch, plane.Dirty, plane.Files, plane.Added, plane.Removed).ShouldBe(("TIA1", "flight/tia1", false, 1, 3, 0));
         status.PullRequests.Single().Flight.ShouldBe("TIA1");
 
-        // The second read is the cache: gh is not asked again. The node's own sweeps (the recheck look at start) list PRs too,
-        // and have by the time the first read is back, so the count is taken after it.
-        var asked = node.GitHub.OpenPrCalls;
+        // The second read is the cache: gh is asked once.
         await node.Client.GetRepoStatusAsync(Ct);
-        node.GitHub.OpenPrCalls.ShouldBe(asked);
+        node.GitHub.OpenPrCalls.ShouldBe(1);
         await node.Client.GetRepoStatusAsync(Ct, refresh: true);
-        node.GitHub.OpenPrCalls.ShouldBe(asked + 1);
+        node.GitHub.OpenPrCalls.ShouldBe(2);
 
         var output = new StringWriter();
         var exit = await PilotCommand.RunAsync(["--node-socket", node.SocketPath, "repos"], _root, output, new StringWriter(), Ct);

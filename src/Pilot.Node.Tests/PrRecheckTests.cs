@@ -282,6 +282,70 @@ public sealed class PrRecheckTests : IDisposable
         _github.Merged.ShouldBeEmpty();
     }
 
+    private string Origin => Path.Combine(_root, "github", "widget.git");
+
+    /// <summary>
+    /// PR 7 as a branch of the base repo, <c>feature/seven</c>, one commit past main (which edits README.md when
+    /// <paramref name="touchesReadme"/>); main then moves on (with its own README.md edit when <paramref name="mainEditsReadme"/>).
+    /// The fake's PR 7 is the controller's, at that head. Returns the head and main's new tip.
+    /// </summary>
+    private (string Head, string Main) OwnBranch(bool touchesReadme, bool mainEditsReadme)
+    {
+        string[] who = ["-c", "user.email=t@example.com", "-c", "user.name=t"];
+        var work = Path.Combine(_root, "work-own");
+        PrOrigins.Git(_root, "clone", "-q", Origin, work);
+        PrOrigins.Git(work, "checkout", "-q", "-b", "feature/seven");
+        File.WriteAllText(Path.Combine(work, touchesReadme ? "README.md" : "seven.txt"), "seven\n");
+        PrOrigins.Git(work, "add", ".");
+        PrOrigins.Git(work, [.. who, "commit", "-q", "-m", "seven"]);
+        var head = PrOrigins.Git(work, "rev-parse", "HEAD");
+        PrOrigins.Git(work, "push", "-q", "-f", "origin", "HEAD:refs/heads/feature/seven", "HEAD:refs/pull/7/head");
+
+        PrOrigins.Git(work, "checkout", "-q", "main");
+        File.WriteAllText(Path.Combine(work, mainEditsReadme ? "README.md" : "main.txt"), "main moved\n");
+        PrOrigins.Git(work, "add", ".");
+        PrOrigins.Git(work, [.. who, "commit", "-q", "-m", "main moves"]);
+        PrOrigins.Git(work, "push", "-q", "origin", "HEAD:main");
+        _github.Prs["acme/widget#7"] = new PullRequest(7, "OPEN", head, "https://github.com/acme/widget/pull/7", Title: "PR 7", Author: "controller", Base: "main", HeadRef: "feature/seven");
+        return (head, PrOrigins.Git(work, "rev-parse", "HEAD"));
+    }
+
+    [Fact]
+    public async Task AReviewedPrOnTheControllersOwnBranchThatConflictsIsRebasedAndReviewedAfresh()
+    {
+        var (head, main) = OwnBranch(touchesReadme: false, mainEditsReadme: false);
+        await ReviewedAsync();
+        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Mergeable = "CONFLICTING" };
+
+        await LookAsync();
+
+        var rebased = PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven");
+        rebased.ShouldNotBe(head);
+        PrOrigins.Git(Origin, "merge-base", "--is-ancestor", main, rebased).ShouldBeEmpty();
+        Handled().ShouldBe(["recheck of widget#7: rebased onto main, review restarted"]);
+        _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
+        Review().ShouldNotBeNull().State.ShouldBe(PrReviewState.Reviewing);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrRecheck.ConflictKind);
+        Directory.Exists(Path.Combine(WidgetClone, ".claude", "worktrees", "rebase-widget-7")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task AReviewedPrOnTheControllersOwnBranchWhoseRebaseConflictsGetsTheCardAndTheConflictsLabel()
+    {
+        var (head, _) = OwnBranch(touchesReadme: true, mainEditsReadme: true);
+        await ReviewedAsync();
+        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Mergeable = "CONFLICTING" };
+
+        await LookAsync();
+
+        PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven").ShouldBe(head);
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrRecheck.ConflictKind);
+        (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "pr/acme/widget#7"));
+        card.Detail.ShouldNotBeNull().ShouldContain("conflicts");
+        Handled().ShouldHaveSingleItem().ShouldStartWith("recheck of widget#7: conflicts with its base, not rebased (rebasing feature/seven onto main conflicts");
+        _github.Labels[7].ShouldBe([PilotMarks.Conflicts]);
+    }
+
     [Fact]
     public async Task AReviewedPrWithNothingToDoSaysWhereItStands()
     {
