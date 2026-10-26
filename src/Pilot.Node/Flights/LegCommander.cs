@@ -48,7 +48,7 @@ public sealed partial class LegCommander(
     private static partial Regex LegName();
 
     public static bool Handles(string verb) =>
-        verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.ValidateLeg or Verbs.Check or Verbs.FinishLeg or Verbs.GoAround or Verbs.Merge or Verbs.RerunChecks
+        verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.ValidateLeg or Verbs.Check or Verbs.FinishLeg or Verbs.WaitLeg or Verbs.GoAround or Verbs.Merge or Verbs.RerunChecks
             or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review
             or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Fold or Verbs.Separate;
 
@@ -89,6 +89,9 @@ public sealed partial class LegCommander(
                     break;
                 case Verbs.FinishLeg:
                     await FinishAsync(command, cancellationToken);
+                    break;
+                case Verbs.WaitLeg:
+                    made = Wait(command);
                     break;
                 case Verbs.GoAround:
                     await GoAroundAsync(command, cancellationToken);
@@ -572,7 +575,7 @@ public sealed partial class LegCommander(
             plane = new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : "");
         }
         var job = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed), leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), cancellationToken);
-        state.PutLeg(leg with { State = LegState.Flying, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), Report = resumed });
+        state.PutLeg(leg with { State = LegState.Flying, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), Report = resumed, Wait = null });
         state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} started", NoGoKind, ValidatingKind);
         // A ring that this step could not be taken by itself is moot once it is.
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}/{leg.Name} started", NextStepKind);
@@ -733,6 +736,59 @@ public sealed partial class LegCommander(
         state.PutLeg(leg with { Checklist = checklist });
     }
 
+    /// <summary>The ring a wait left past its <c>--until</c> raises.</summary>
+    public const string WaitLateKind = "leg-wait-late";
+
+    /// <summary>
+    /// <c>wait-leg [path=&lt;file&gt;] [until=&lt;ISO time&gt;] [why…]</c>: the flying leg waits on a file or a time without a job. Returns
+    /// what the worker is told back.
+    /// </summary>
+    private string Wait(CommandRequest command)
+    {
+        var (flight, leg) = LegOf(command.Target);
+        if (leg.State != LegState.Flying)
+        {
+            throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}, not flying: only a flying leg waits");
+        }
+        string? path = null;
+        DateTimeOffset? until = null;
+        var why = new List<string>();
+        foreach (var arg in command.Args ?? [])
+        {
+            if (path is null && arg.StartsWith("path=", StringComparison.Ordinal))
+            {
+                path = arg["path=".Length..].Trim();
+            }
+            else if (until is null && arg.StartsWith("until=", StringComparison.Ordinal))
+            {
+                until = DateTimeOffset.TryParse(arg["until=".Length..], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed)
+                    ? parsed
+                    : throw new FlightException($"cannot read '{arg["until=".Length..]}' as a time");
+            }
+            else
+            {
+                why.Add(arg);
+            }
+        }
+        if (string.IsNullOrEmpty(path))
+        {
+            path = null;
+        }
+        if (path is null && until is null)
+        {
+            throw new FlightException("a wait needs a file (--for-file) or a time (--until) to wait for");
+        }
+        var now = time.GetUtcNow();
+        if (until is { } at && at <= now)
+        {
+            throw new FlightException($"--until {at.ToLocalTime():yyyy-MM-dd HH:mm} is in the past");
+        }
+        var wait = new LegWait { Path = path, Until = until, Why = string.Join(' ', why).Trim(), Since = now };
+        state.PutLeg(leg with { Wait = wait });
+        state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), "it waits on something it said", LegWatch.Idle, WaitLateKind);
+        return $"{flight.Code}/{leg.Name} {FlightWaiting.WaitText(wait)}{(wait.Path is not null && wait.Until is { } limit ? $" (rings past {limit.ToLocalTime():yyyy-MM-dd HH:mm})" : "")}: end your turn now, the node wakes you once it comes";
+    }
+
     private async Task FinishAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var (flight, leg) = LegOf(command.Target);
@@ -798,7 +854,7 @@ public sealed partial class LegCommander(
                 {
                     await EnsureNotArmedAsync(flight, cancellationToken);
                 }
-                state.PutLeg(leg with { State = LegState.Done, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : leg.Report });
+                state.PutLeg(leg with { State = LegState.Done, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : leg.Report, Wait = null });
                 state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} done");
                 // A go-around the review asked for, done: the fixed branch goes up and is reviewed afresh, by itself.
                 if (flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null && state.Legs(flight.Code).All(l => l.State == LegState.Done))
@@ -813,7 +869,7 @@ public sealed partial class LegCommander(
                 {
                     break;
                 }
-                state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "failed" });
+                state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "failed", Wait = null });
                 state.RaiseCard(CardBin.Ring, "leg-failed", Verbs.LegTarget(flight.Code, leg.Name),
                     $"{flight.Code}/{leg.Name} failed", report.Length > 0 ? report : null,
                     [
@@ -895,7 +951,7 @@ public sealed partial class LegCommander(
         var worker = WorkerName(flight, leg);
         var brief = Briefs.For(flight, next, state.Legs(flight.Code), why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket);
         var started = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), cancellationToken);
-        state.PutLeg(next with { State = LegState.Flying, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), FinishedAt = null, Report = $"go-around: {why}" });
+        state.PutLeg(next with { State = LegState.Flying, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), FinishedAt = null, Report = $"go-around: {why}", Wait = null });
         // Every card about the leg was about its last worker: failed, stopped, idle, waiting.
         state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"went around: {why}");
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around for it", ReviewChanges, MergeFailed, PrReady);

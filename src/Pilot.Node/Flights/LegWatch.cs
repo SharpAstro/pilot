@@ -99,6 +99,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         LookAtReviews(sessions, now);
         LookAtValidators(sessions, now);
         LookAtWaiting(sessions, now);
+        await LookAtLegWaitsAsync(now, cancellationToken);
         foreach (var leg in state.Legs().Where(l => l.State == LegState.Flying && l.WorkerJob is not null))
         {
             var subject = Verbs.LegTarget(leg.Flight, leg.Name);
@@ -147,6 +148,44 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         }
     }
 
+    /// <summary>
+    /// A flying leg whose worker waits on a file or a time (<see cref="LegRow.Wait"/>): once the file exists or the time comes the
+    /// wait is cleared first, so it fires once, and the worker is woken with a say naming what came. A file wait past its
+    /// <c>--until</c> rings once and goes on waiting.
+    /// </summary>
+    private async Task LookAtLegWaitsAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        foreach (var leg in state.Legs().Where(l => l is { State: LegState.Flying, Wait: not null }))
+        {
+            var wait = leg.Wait!;
+            var came = wait.Path is { } path
+                ? (File.Exists(path) || Directory.Exists(path) ? $"`{path}` now exists" : null)
+                : wait.Until is { } at && now >= at ? $"it is {at.ToLocalTime():HH:mm}, the time you waited until" : null;
+            var subject = Subject(leg);
+            if (came is null)
+            {
+                if (wait.Path is not null && wait.Until is { } limit && now > limit && !wait.Rung)
+                {
+                    state.PutLeg(leg with { Wait = wait with { Rung = true } });
+                    state.RaiseCard(CardBin.Ring, LegCommander.WaitLateKind, subject, $"{Name(leg)} still waits for {wait.Path}, past {limit.ToLocalTime():HH:mm}",
+                        $"waiting since {Ago(now, wait.Since)} ago{(wait.Why.Length > 0 ? $": {wait.Why}" : "")}; it keeps waiting", Choices(leg, null, resumeLabel: "Resume"));
+                }
+                continue;
+            }
+            state.PutLeg(leg with { Wait = null });
+            state.CloseCardsAbout(subject, "the wait is over", LegCommander.WaitLateKind);
+            if (leg.WorkerJob is not { } job)
+            {
+                continue;
+            }
+            var result = await SayAsync(job, $"What you waited for has come: {came}.{(wait.Why.Length > 0 ? $" You waited because: {wait.Why}." : "")} Carry on with your leg `{leg.Name}` of {leg.Flight}.", cancellationToken);
+            if (!result.Ok)
+            {
+                Ring(leg, Idle, $"{Name(leg)}'s wait is over but its worker could not be woken", result.Error);
+            }
+        }
+    }
+
     private async Task StoppedAsync(LegRow leg, SessionRow worker, string error, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var job = leg.WorkerJob!;
@@ -184,6 +223,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
 
     private async Task IdleAsync(LegRow leg, SessionRow worker, DateTimeOffset now, CancellationToken cancellationToken)
     {
+        // A worker that ended its turn on a wait it recorded (pilot leg wait) is waiting, as it was told to: the wait wakes it.
+        if (leg.Wait is not null)
+        {
+            return;
+        }
         var since = worker.LastResponseAt ?? worker.StartedAt;
         // A worker idle while a job of its own runs or waits its turn is waiting, as it was told to: the job wakes it, so it
         // is not stalled. Its own by row, or by name: a worker Claude Code continued as a copy is a row of its own, while
@@ -354,8 +398,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             + $"the Done-when holds, run `{Pilot} leg finish done \"<one-line report>\"`; if you cannot go on, run `{Pilot} leg finish failed \"<why>\"`.";
     }
 
-    private Task<CommandResult> SayAsync(SessionRow worker, string text, CancellationToken cancellationToken) =>
-        run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(worker.Id), Args = [text], Who = Who }, cancellationToken);
+    private Task<CommandResult> SayAsync(SessionRow worker, string text, CancellationToken cancellationToken) => SayAsync(worker.Id, text, cancellationToken);
+
+    private Task<CommandResult> SayAsync(string sessionId, string text, CancellationToken cancellationToken) =>
+        run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(sessionId), Args = [text], Who = Who }, cancellationToken);
 
     private void Ring(LegRow leg, string kind, string title, string? detail, SessionRow? worker = null) =>
         state.RaiseCard(CardBin.Ring, kind, Subject(leg), title, detail, Choices(leg, worker, resumeLabel: kind == Idle ? "Nudge" : "Resume"));
