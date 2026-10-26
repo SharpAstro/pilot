@@ -50,8 +50,8 @@ From a source build instead, `pilot update --adopt` moves the folder onto releas
 
 ## Update
 
-The node keeps itself current. `--update-policy` is `auto` (the default: it installs a newer release once no job
-is running), `ask` (a card with **Update**) or `off`. `--update-channel` is `stable` (the tagged releases, native AOT)
+The node keeps itself current. `--update-policy` is `auto` (the default: it installs a newer release at once; running
+jobs carry on and the new node picks them up), `ask` (a card with **Update**) or `off`. `--update-channel` is `stable` (the tagged releases, native AOT)
 or `beta`: every push to main that builds and passes its tests, as a framework-dependent Debug build that needs the
 .NET 10 runtime with ASP.NET Core. A beta version is the next patch after the latest tag, numbered by the CI run
 (`2.0.4-beta.292` is run 292). Both are on the GUI's Settings page.

@@ -286,7 +286,7 @@ public sealed class UpdateTests : IDisposable
     }
 
     [Fact]
-    public async Task AskRaisesACardWithUpdateOnceAndAutoWaitsForTheJobs()
+    public async Task AskRaisesACardWithUpdateOnceAndAutoInstallsAtOnceWhateverJobsRun()
     {
         var node = NodeUpdater.Layout.Required[0];
         Install("2.0.1", Binaries("old"), rid: "test-rid");
@@ -301,21 +301,75 @@ public sealed class UpdateTests : IDisposable
         card.Title.ShouldBe("pilot 2.0.2 is out (this is 2.0.1)");
         card.Choices.ShouldHaveSingleItem().ShouldSatisfyAllConditions(
             c => c.Label.ShouldBe("Update"), c => c.Verb.ShouldBe(Verbs.Update), c => c.Args.ShouldBe([UpdateArgs.Install]));
+        card.Detail.ShouldNotBeNull().ShouldNotContain("once");
 
-        state.PutJob(new JobRow
-        {
-            Id = "j1", Command = "dotnet test", Cwd = _root, State = JobState.Running, LogPath = Path.Combine(_root, "j1.log"),
-            Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow,
-        });
+        PutJob(state, "j1", JobState.Running);
         var auto = Updater(state, feed, UpdatePolicy.Auto, out var successors, out var lifetime);
         await auto.CheckAsync(Ct);
 
-        successors.ShouldBeEmpty();
-        lifetime.Stopped.ShouldBeFalse();
-        Read(node).ShouldBe("old " + node);
-        var refused = await auto.RunAsync(Command(), Ct);
-        refused.Error.ShouldBe("1 job is running or waiting: 2.0.2 goes in once they are done");
+        successors.ShouldBe([Path.Combine(_install, node)]);
+        lifetime.Stopped.ShouldBeTrue();
+        Read(node).ShouldBe("new " + node);
+        state.Cards().Single(c => c.Bin == CardBin.Handled).Detail.ShouldBe("1 job left running; the new node picks it up");
     }
+
+    [Fact]
+    public async Task UpdateWithJobsRunningOrQueuedInstallsAtOnceAndSaysHowManyWereLeft()
+    {
+        var node = NodeUpdater.Layout.Required[0];
+        Install("2.0.1", Binaries("old"), rid: "test-rid");
+        var feed = Feed("2.0.2", Binaries("new"), rid: "test-rid", layout: NodeUpdater.Layout);
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        PutJob(state, "j1", JobState.Running);
+        PutJob(state, "j2", JobState.Running);
+        PutJob(state, "j3", JobState.Queued);
+        PutJob(state, "j4", JobState.Succeeded);
+        var updater = Updater(state, feed, UpdatePolicy.Auto, out var successors, out var lifetime);
+
+        var installed = await updater.RunAsync(Command(), Ct);
+
+        installed.Ok.ShouldBeTrue(installed.Error);
+        installed.Way.ShouldBe("2.0.1 -> 2.0.2; the node restarts; 2 jobs left running, 1 job left waiting; the new node picks them up");
+        installed.Way.ShouldNotContain("once");
+        Read(node).ShouldBe("new " + node);
+        successors.ShouldBe([Path.Combine(_install, node)]);
+        lifetime.Stopped.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ARestartForASettingGoesAheadAtOnceWithJobsRunningAndSaysHowManyItLeft()
+    {
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var started = new List<string>();
+        var lifetime = new FakeLifetime();
+        var restarter = new NodeRestarter(state, lifetime, NullLogger<NodeRestarter>.Instance)
+        {
+            NodePath = Path.Combine(_root, OperatingSystem.IsWindows() ? "pilot-node.exe" : "pilot-node"),
+            StartSuccessor = path =>
+            {
+                started.Add(path);
+                return true;
+            },
+        };
+
+        var none = restarter.Request("lan = on");
+        none.ShouldBe(new Restart(true, null, null));
+        lifetime.Stopped.ShouldBeTrue();
+
+        PutJob(state, "j1", JobState.Running);
+        var lifetimeWithJob = new FakeLifetime();
+        var withJob = new NodeRestarter(state, lifetimeWithJob, NullLogger<NodeRestarter>.Instance) { NodePath = restarter.NodePath, StartSuccessor = restarter.StartSuccessor };
+
+        withJob.Request("lan = on").ShouldBe(new Restart(true, null, "1 job left running; the new node picks it up"));
+        lifetimeWithJob.Stopped.ShouldBeTrue();
+        started.Count.ShouldBe(2);
+    }
+
+    private void PutJob(NodeState state, string id, JobState jobState) => state.PutJob(new JobRow
+    {
+        Id = id, Command = "dotnet test", Cwd = _root, State = jobState, LogPath = Path.Combine(_root, id + ".log"),
+        Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow,
+    });
 
     [Fact]
     public async Task AnInstallSwapsTheReleaseInStartsTheNewNodeAndStopsThisOne()

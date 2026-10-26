@@ -7,16 +7,17 @@ namespace Pilot.Node.Updates;
 
 /// <summary>
 /// Keeps an installed release of pilot (the node, the CLI, the GUI and the TUI, one folder) on the latest release of
-/// SharpAstro/pilot, by its <see cref="UpdatePolicy"/>: <c>auto</c> installs it once no job is running or waiting (a job
-/// is the node's child, and a restart would cut it short) and says so on a Handled card; <c>ask</c> raises a For-you
-/// card with <b>Update</b>; <c>off</c> does not look. <c>pilot update</c> installs it now whatever the policy.
+/// SharpAstro/pilot, by its <see cref="UpdatePolicy"/>: <c>auto</c> installs it at once and says so on a Handled card;
+/// <c>ask</c> raises a For-you card with <b>Update</b>; <c>off</c> does not look. <c>pilot update</c> installs it now
+/// whatever the policy.
 /// </summary>
 /// <remarks>
 /// The node installs the release into the folder it runs from (<see cref="ReleaseInstall"/>), then starts the new
 /// <c>pilot-node</c> with <c>--after &lt;its pid&gt;</c> and its own arguments, and stops: the new one waits for it to
 /// exit and takes the socket. The flights, legs and sessions are the store's, so they carry on; a client resumes its
-/// stream; workers and the watchtower are processes of their own and keep running. A GUI or TUI open at the time runs
-/// on from its renamed-aside binary until it is reopened.
+/// stream; workers and the watchtower are processes of their own and keep running. So do the jobs, which run detached
+/// from the node: an update does not wait for them, and the new node picks them up (the answer says how many were left).
+/// A GUI or TUI open at the time runs on from its renamed-aside binary until it is reopened.
 /// </remarks>
 public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFeed feed, TimeProvider time,
     IHostApplicationLifetime lifetime, ILogger<NodeUpdater> logger) : BackgroundService
@@ -40,9 +41,6 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
     /// <summary>How often a node on the beta channel looks: main moves far more often than releases are tagged.</summary>
     public TimeSpan BetaCheckEvery { get; init; } = TimeSpan.FromMinutes(15);
 
-    /// <summary>How often a found release waits for the jobs to finish before it is installed.</summary>
-    public TimeSpan BusyRetryEvery { get; init; } = TimeSpan.FromMinutes(1);
-
     /// <summary>The folder the node runs from, which a release replaces.</summary>
     public string InstallFolder { get; init; } = Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
 
@@ -56,8 +54,7 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
     public Func<string, string, CancellationToken, Task<string?>> Smoke { get; init; } = SmokeAsync;
 
     private readonly SemaphoreSlim _installing = new(1, 1);
-    // A release found under auto, waiting for the jobs to finish; and the version a card was last raised for.
-    private Release? _pending;
+    // The version a card was last raised for, and the one that last failed to install.
     private string? _offered;
     private string? _failed;
 
@@ -81,14 +78,10 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
             try
             {
                 var now = time.GetUtcNow();
-                var wait = _pending is not null ? BusyRetryEvery : next - now;
+                var wait = next - now;
                 if (wait > TimeSpan.Zero)
                 {
                     await Task.Delay(wait, time, stopping);
-                }
-                if (_pending is { } pending)
-                {
-                    await InstallAsync(pending, "node", stopping);
                 }
                 if (time.GetUtcNow() >= next)
                 {
@@ -112,7 +105,6 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
         }
         if (options.UpdatePolicy == UpdatePolicy.Auto)
         {
-            _pending = latest;
             await InstallAsync(latest, "node", cancellationToken);
         }
         else if (options.UpdatePolicy == UpdatePolicy.Ask && _offered != latest.Version)
@@ -120,7 +112,7 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
             _offered = latest.Version;
             state.CloseCardsAbout(Verbs.NodeTarget, $"pilot {latest.Version} is out", Kind);
             state.RaiseCard(CardBin.ForYou, Kind, Verbs.NodeTarget, $"pilot {latest.Version} is out (this is {Version})",
-                $"The node installs it and restarts; flights and sessions carry on. {Busy() ?? ""}".TrimEnd(),
+                "The node installs it and restarts at once; flights, sessions and jobs carry on.",
                 [new CardChoice { Label = "Update", Verb = Verbs.Update, Target = Verbs.NodeTarget, Args = [UpdateArgs.Install] }],
                 latest.Url);
         }
@@ -150,26 +142,16 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
         {
             return state.Complete(command, null, way: $"{latest.Version} is out; this is {Version}");
         }
-        if (Busy() is { } busy)
-        {
-            if (options.UpdatePolicy == UpdatePolicy.Auto)
-            {
-                _pending = latest;
-            }
-            return state.Complete(command, options.UpdatePolicy == UpdatePolicy.Auto ? $"{busy}: {latest.Version} goes in once they are done" : busy);
-        }
+        // Read before the install: the node stops once it has gone in.
+        var left = NodeRestarter.LeftRunning(state);
         var error = await InstallAsync(latest, command.Who, cancellationToken);
-        return state.Complete(command, error, way: error is null ? $"{Version} -> {latest.Version}; the node restarts" : null);
+        return state.Complete(command, error, way: error is null ? $"{Version} -> {latest.Version}; the node restarts{(left is null ? "" : $"; {left}")}" : null);
     }
 
-    /// <summary>Installs <paramref name="release"/> and hands over to it, unless a job is running or waiting. Returns
-    /// why not, or null once the node is stopping for its successor.</summary>
+    /// <summary>Installs <paramref name="release"/> and hands over to it, whatever jobs run (they carry on, and the new node
+    /// picks them up). Returns why not, or null once the node is stopping for its successor.</summary>
     private async Task<string?> InstallAsync(Release release, string who, CancellationToken cancellationToken)
     {
-        if (Busy() is { } busy)
-        {
-            return busy;
-        }
         if (!await _installing.WaitAsync(0, cancellationToken))
         {
             return "an update is being installed already";
@@ -187,9 +169,9 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
             {
                 throw new ReleaseInstallException($"it could not go in: {failed}");
             }
-            _pending = null;
             var node = Path.Combine(InstallFolder, Executable("pilot-node"));
             var line = $"pilot {Version} -> {release.Version}, installed by {who}; the node restarts";
+            var left = NodeRestarter.LeftRunning(state);
             if (!StartSuccessor(node))
             {
                 // Installed but not running: the next start of the node (the GUI starts one) is the new one.
@@ -198,14 +180,13 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
                 return $"{release.Version} is installed, but {node} did not start";
             }
             state.CloseCardsAbout(Verbs.NodeTarget, $"pilot {release.Version} installed", Kind);
-            state.RaiseCard(CardBin.Handled, Kind, Verbs.NodeTarget, line, null, null, release.Url);
-            logger.LogInformation("update: {Line}", line);
+            state.RaiseCard(CardBin.Handled, Kind, Verbs.NodeTarget, line, left, null, release.Url);
+            logger.LogInformation("update: {Line}{Left}", line, left is null ? "" : $"; {left}");
             lifetime.StopApplication();
             return null;
         }
         catch (ReleaseInstallException ex)
         {
-            _pending = null;
             logger.LogWarning("update: {Version} not installed: {Why}", release.Version, ex.Message);
             if (_failed != release.Version)
             {
@@ -220,9 +201,6 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
             _installing.Release();
         }
     }
-
-    // A job running or waiting its turn: a restart would cut it short, so an update waits for it.
-    private string? Busy() => NodeRestarter.Busy(state);
 
     private static string Executable(string name) => OperatingSystem.IsWindows() ? name + ".exe" : name;
 

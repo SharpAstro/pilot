@@ -6,10 +6,10 @@ namespace Pilot.Node;
 /// <summary>
 /// Restarts the node to run with what changed under it (a saved setting): it starts a new <c>pilot-node</c> with its own
 /// arguments and <c>--after &lt;its pid&gt;</c>, and stops; the new one waits for it to exit and takes the socket, as a
-/// self-update's successor does. Never while a job runs or waits, as a job is the node's child and a restart would cut
-/// it short: a restart asked for then waits for the jobs, and says so.
+/// self-update's successor does. At once, jobs or not: a job runs detached from the node, which does not wait for it, and
+/// the new node picks up the ones the old one left (<see cref="LeftRunning"/> says how many).
 /// </summary>
-public sealed class NodeRestarter(NodeState state, TimeProvider time, IHostApplicationLifetime lifetime, ILogger<NodeRestarter> logger) : BackgroundService
+public sealed class NodeRestarter(NodeState state, IHostApplicationLifetime lifetime, ILogger<NodeRestarter> logger)
 {
     /// <summary>The binary a successor is started from: this process's own.</summary>
     public string NodePath { get; init; } = Environment.ProcessPath ?? "";
@@ -17,96 +17,49 @@ public sealed class NodeRestarter(NodeState state, TimeProvider time, IHostAppli
     /// <summary>Starts the successor; false if it did not start. A test replaces it.</summary>
     public Func<string, bool> StartSuccessor { get; init; } = Start;
 
-    public TimeSpan BusyRetryEvery { get; init; } = TimeSpan.FromMinutes(1);
-
-    private readonly Lock _lock = new();
-    private string? _why;
-
-    /// <summary>Why a restart waits, in a line, or null when none does.</summary>
-    public string? Waiting
+    /// <summary>
+    /// Restarts the node for <paramref name="why"/> now. Says whether it is stopping for its successor, and when it is not,
+    /// why it cannot; a restart that goes ahead says how many jobs it leaves in <see cref="Restart.Left"/>.
+    /// </summary>
+    public Restart Request(string why)
     {
-        get
+        if (!IsNode(NodePath))
         {
-            lock (_lock)
-            {
-                return _why is { } why && Busy(state) is { } busy ? $"the node restarts for {why} once no job runs ({busy})" : null;
-            }
+            return new(false, $"saved; it applies at the node's next start ({Path.GetFileName(NodePath)} is not pilot-node, so it does not restart itself)", null);
         }
+        var left = LeftRunning(state);
+        if (!StartSuccessor(NodePath))
+        {
+            return new(false, $"saved, but {NodePath} did not start; it applies at the node's next start", null);
+        }
+        logger.LogInformation("restart: for {Why}{Left}", why, left is null ? "" : $"; {left}");
+        lifetime.StopApplication();
+        return new(true, null, left);
     }
 
     /// <summary>
-    /// Restarts the node for <paramref name="why"/> now, or as soon as no job runs. Returns what became of it: null when it
-    /// is stopping for its successor, else a line saying why it waits or why it cannot.
+    /// The jobs a restart leaves behind, in words, or null for none: they run detached from the node, so they carry on, and
+    /// the node that starts next follows them again.
     /// </summary>
-    public string? Request(string why)
+    public static string? LeftRunning(NodeState state)
     {
-        lock (_lock)
+        var rows = state.Jobs();
+        var running = rows.Count(j => j.State == JobState.Running);
+        var waiting = rows.Count(j => j.State == JobState.Queued);
+        if (running + waiting == 0)
         {
-            _why = why;
+            return null;
         }
-        return TryNow();
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken stopping)
-    {
-        while (!stopping.IsCancellationRequested)
+        var parts = new List<string>();
+        if (running > 0)
         {
-            try
-            {
-                await Task.Delay(BusyRetryEvery, time, stopping);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-            bool waiting;
-            lock (_lock)
-            {
-                waiting = _why is not null;
-            }
-            if (waiting)
-            {
-                TryNow();
-            }
+            parts.Add($"{running} job{(running == 1 ? "" : "s")} left running");
         }
-    }
-
-    private string? TryNow()
-    {
-        string why;
-        lock (_lock)
+        if (waiting > 0)
         {
-            if (_why is null)
-            {
-                return null;
-            }
-            why = _why;
-            if (Busy(state) is { } busy)
-            {
-                return $"saved; the node restarts to apply it once no job runs ({busy})";
-            }
-            if (!IsNode(NodePath))
-            {
-                _why = null;
-                return $"saved; it applies at the node's next start ({Path.GetFileName(NodePath)} is not pilot-node, so it does not restart itself)";
-            }
-            if (!StartSuccessor(NodePath))
-            {
-                _why = null;
-                return $"saved, but {NodePath} did not start; it applies at the node's next start";
-            }
-            _why = null;
+            parts.Add($"{waiting} job{(waiting == 1 ? "" : "s")} left waiting");
         }
-        logger.LogInformation("restart: for {Why}", why);
-        lifetime.StopApplication();
-        return null;
-    }
-
-    /// <summary>A job running or waiting its turn, in words, or null: a restart would cut it short.</summary>
-    public static string? Busy(NodeState state)
-    {
-        var jobs = state.Jobs().Count(j => j.State is JobState.Running or JobState.Queued);
-        return jobs == 0 ? null : $"{jobs} job{(jobs == 1 ? " is" : "s are")} running or waiting";
+        return $"{string.Join(", ", parts)}; the new node picks {(running + waiting == 1 ? "it" : "them")} up";
     }
 
     private static bool IsNode(string path) =>
@@ -145,3 +98,7 @@ public sealed class NodeRestarter(NodeState state, TimeProvider time, IHostAppli
         }
     }
 }
+
+/// <summary>What <see cref="NodeRestarter.Request"/> did: whether the node is stopping for its successor, why not when it is
+/// not, and the jobs a restart that goes ahead leaves behind (null for none).</summary>
+public readonly record struct Restart(bool Going, string? Why, string? Left);

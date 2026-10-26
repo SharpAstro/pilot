@@ -191,7 +191,6 @@ public static class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<NodeUpdater>());
         // The Settings page: a saved setting restarts the node to run with it, and the setup checklist's fixes.
         builder.Services.AddSingleton<NodeRestarter>();
-        builder.Services.AddHostedService(services => services.GetRequiredService<NodeRestarter>());
         builder.Services.AddSingleton(services => new NodeSetup(options, Environment.ProcessPath ?? "pilot-node",
             services.GetRequiredService<SessionTrackerOptions>().Profile.Root)
         {

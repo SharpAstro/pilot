@@ -10,7 +10,7 @@ public sealed record SettingsPage
 
     public required SetupCheck[] Checks { get; init; }
 
-    /// <summary>Why the node has not yet restarted for a saved change (a job running), or null when none waits.</summary>
+    /// <summary>Why the node has not yet restarted for a saved change, or null when none waits. A restart no longer waits for jobs (they run detached and the new node picks them up), so a current node sends null; an older one may still say.</summary>
     public string? Restart { get; init; }
 
     /// <summary>The settings file the page edits.</summary>

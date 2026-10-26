@@ -100,7 +100,7 @@ An installed node keeps itself on the latest release by `--update-policy`:
 
 | Policy | When a newer release is out |
 | --- | --- |
-| `auto` (default) | The node installs it once no job is running or waiting (a job is its child, and a restart would cut it short), and says so on a Handled card. |
+| `auto` (default) | The node installs it at once and says so on a Handled card. Jobs run detached from the node, so they carry on and the new node picks them up; the card and the log line say how many were left. |
 | `ask` | A For-you card, *pilot 2.0.12 is out*, with **Update**. |
 | `off` | It does not look. |
 
@@ -923,10 +923,10 @@ maintenance`), which `pilot flight create`, the MCP tool and the new-flight wiza
 command is refused, naming each node and why it did not qualify (`in maintenance`, `not willing`, `unreachable`,
 `no grant`, `no checkout of <owner/name>`); with no other node known, it is refused with the maintenance reason alone.
 
-Any other setting's change restarts the node to run with it, once no
-job runs or waits (a job is its child): the node starts its
+Any other setting's change restarts the node to run with it at once: the node starts its
 successor with its own arguments and `--after <its pid>`, and stops, as a self-update does, so flights, sessions and
-the watchtower carry on and clients resume their stream. A setting the command line gives is saved but says it does
+the watchtower carry on and clients resume their stream. Jobs run detached from the node and carry on too; the new node
+picks them up, and the answer says how many were left (`2 jobs left running; the new node picks them up`). A setting the command line gives is saved but says it does
 not count until the command line stops giving it.
 
 Above the settings, the page has the setup checklist: started at logon, Claude Code's hooks for this binary, on the
