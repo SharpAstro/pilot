@@ -202,23 +202,84 @@ public sealed class PrReviewTests : IDisposable
     public async Task PostsItselfOnAnOpenPr()
     {
         // #241's review rang with a Post button all night; on an open PR pilot posts its review itself (SE1, 2026-10-26).
-        var git = new GitCli();
-        var reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, _options), _options, TimeProvider.System)
-        {
-            SelfFinishGrace = TimeSpan.FromMilliseconds(1),
-        };
-        Task<CommandResult> Ask(string verb, string who, params string[] args) =>
-            reviews.RunAsync(new CommandRequest { Verb = verb, Target = "pr/acme/widget#7", Args = args, Who = who }, Ct);
-        (await Ask(Verbs.ReviewPr, "controller")).Error.ShouldBeNull();
-        var reviewer = Row("acme/widget", 7).Reviewer;
+        var ask = SelfPosting();
+        (await ask(Verbs.ReviewPr, "controller")).Error.ShouldBeNull();
+        var started = Row("acme/widget", 7);
 
-        (await Ask(Verbs.PrVerdict, reviewer, "comment", "Reads well.")).Error.ShouldBeNull();
+        (await ask(Verbs.PrVerdict, started.Reviewer, "comment", "Reads well.")).Error.ShouldBeNull();
 
         _github.Posted.ShouldHaveSingleItem().Number.ShouldBe(7);
         Row("acme/widget", 7).PostedId.ShouldNotBeNull();
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.ReadyKind);
         _state.Cards().ShouldContain(c => c.Kind == PrReviews.PostedKind && c.Bin == CardBin.Handled);
         _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+
+        // Over at once, as after a Post press: the worktree and the reviewer do not wait for the next sweep.
+        Row("acme/widget", 7).State.ShouldBe(PrReviewState.Closed);
+        Directory.Exists(started.Worktree).ShouldBeFalse();
+        _workers.Stopped.ShouldContain(started.ReviewerJob!);
+    }
+
+    [Fact]
+    public async Task APostGitHubRefusedOnAnOpenPrLeavesAForYouCardWithPostThatSaysWhy()
+    {
+        var ask = SelfPosting();
+        (await ask(Verbs.ReviewPr, "controller")).Error.ShouldBeNull();
+        _github.PostFails = new FlightException("GitHub refused the review of acme/widget#7: HTTP 422");
+
+        (await ask(Verbs.PrVerdict, Row("acme/widget", 7).Reviewer, "comment", "A question.")).Error.ShouldBeNull();
+
+        var row = Row("acme/widget", 7);
+        row.PostedId.ShouldBeNull();
+        row.PostingAt.ShouldBeNull();
+        var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
+        (card.Id, card.Bin, card.Kind).ShouldBe((row.Card, CardBin.ForYou, PrReviews.ReadyKind));
+        card.Detail.ShouldNotBeNull().ShouldStartWith("Not posted by the node: GitHub refused the review of acme/widget#7: HTTP 422\n");
+        card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.PostReview);
+        _state.Cards().Count(c => c.Kind == PrReviews.ReadyKind).ShouldBe(2);
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.PostedKind);
+        // Its worktree stays while the card is open, for the Post that is still to come.
+        Directory.Exists(row.Worktree).ShouldBeTrue();
+
+        // Put right, the Post press posts it.
+        _github.PostFails = null;
+        (await ask(Verbs.PostReview, "controller")).Error.ShouldBeNull();
+        _github.Posted.ShouldHaveSingleItem().Number.ShouldBe(7);
+    }
+
+    [Fact]
+    public async Task APostThatWentOutOnAnOpenPrAndNeverSaidBackLeavesAForYouCardWithNoPost()
+    {
+        var ask = SelfPosting();
+        (await ask(Verbs.ReviewPr, "controller")).Error.ShouldBeNull();
+        _github.PostFails = new IOException("the pipe broke");
+
+        (await ask(Verbs.PrVerdict, Row("acme/widget", 7).Reviewer, "comment", "A question.")).Error.ShouldBeNull();
+
+        var row = Row("acme/widget", 7);
+        row.PostedId.ShouldBeNull();
+        row.PostingAt.ShouldNotBeNull();
+        var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
+        (card.Id, card.Bin, card.Kind).ShouldBe((row.Card, CardBin.ForYou, PrReviews.ReadyKind));
+        card.Detail.ShouldNotBeNull().ShouldContain("did not come back (the pipe broke), so it may be there: look on https://github.com/acme/widget/pull/7");
+        card.Choices.ShouldBeEmpty();
+
+        // Pressed all the same, it is refused and nothing is posted again.
+        (await ask(Verbs.PostReview, "controller")).Error.ShouldNotBeNull().ShouldContain("never said back");
+        _github.Posted.ShouldBeEmpty();
+    }
+
+    private delegate Task<CommandResult> Asker(string verb, string who, params string[] args);
+
+    /// <summary>Reviews as the node runs them, posting a verdict on an open PR itself; asks the verb of PR 7, as the one asking.</summary>
+    private Asker SelfPosting()
+    {
+        var git = new GitCli();
+        var reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, _options), _options, TimeProvider.System)
+        {
+            SelfFinishGrace = TimeSpan.FromMilliseconds(1),
+        };
+        return (verb, who, args) => reviews.RunAsync(new CommandRequest { Verb = verb, Target = "pr/acme/widget#7", Args = args, Who = who }, Ct);
     }
 
     [Fact]
@@ -570,7 +631,8 @@ public sealed class PrReviewCliTests : IAsyncLifetime
         Directory.CreateDirectory(folder);
         var verdict = await Pilot(folder, "review", "changes", "One defect, and the word pr in it.\nREADME.md:1 greets no one");
         verdict.Exit.ShouldBe(0, verdict.Output + verdict.Error);
-        Directory.Delete(folder);
+        // Posted by the node, the review is over at once: its worktree, folder and all, is gone with no wait for a sweep.
+        Directory.Exists(review.Worktree).ShouldBeFalse();
 
         // The PR is open, so the node posts it at once: nothing rings, a Handled card says what went out.
         var (number, payload) = (_node.GitHub.Posted.ShouldHaveSingleItem().Number, _node.GitHub.Posted[0].Payload);
