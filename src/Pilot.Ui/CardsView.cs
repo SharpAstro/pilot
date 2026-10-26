@@ -321,6 +321,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     public void NoteWorking(string cardId, string? action) =>
         System.Collections.Immutable.ImmutableInterlocked.Update(ref _working, working => action is null ? working.Remove(cardId) : working.SetItem(cardId, action));
 
+    /// <summary>The button of card <paramref name="cardId"/> whose press is with the node now, or null: the flight page reads it too.</summary>
+    public string? WorkingOn(string cardId) => Volatile.Read(ref _working).GetValueOrDefault(cardId);
+
     /// <summary>The card's refusal as it stands, for a test or a dump; null when none.</summary>
     public string? RefusedOn(string cardId) => Volatile.Read(ref _refused).GetValueOrDefault(cardId);
 
@@ -534,7 +537,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     }
 
     // A closed card's button as it was, the same size, answering nothing.
-    private static Layout.Node Dead(string label) =>
+    internal static Layout.Node Dead(string label) =>
         Layout.Builder.Text(label, 12f, Dim, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(CardBg);
 
     /// <summary>

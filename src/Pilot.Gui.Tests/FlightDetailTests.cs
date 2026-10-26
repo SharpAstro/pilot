@@ -175,6 +175,14 @@ public sealed class FlightDetailTests
         flights.CollectPaintedRegions(regions);
         regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:merge-card" }).OnClick!.Invoke(InputModifier.None);
         answered.ShouldBe((ready, 1));
+
+        // While that Merge is with the node, the page's button reads "Merge …" and takes no second press, as the panel's does.
+        chrome.Cards.NoteWorking("c9", "card:c9:1");
+        chrome.Render(new SessionsScreen([], "test", Now), new FlightsScreen([Line()], "test", Now), CardsScreen.From([ready, other]), new RectF32(0, 0, 1600, 900));
+        regions.Clear();
+        flights.CollectPaintedRegions(regions);
+        regions.Any(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:merge-card" }).ShouldBeFalse();
+        chrome.Cards.NoteWorking("c9", null);
     }
 
     [Fact]

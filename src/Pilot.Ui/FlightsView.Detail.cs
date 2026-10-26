@@ -25,6 +25,9 @@ internal sealed partial class FlightsView<TSurface>
     /// <summary>Runs a card's choice, as the panel's button does, so the card closes once it is done.</summary>
     public Action<CardRow, int>? OnAnswerCard { get; set; }
 
+    /// <summary>The button of a card whose press is with the node, as the cards panel marks it: the page's Merge is the same card's.</summary>
+    public Func<string, string?>? CardWorking { get; set; }
+
     /// <summary>Called as a flight's page is about to open, before what the window shows changes: the chrome records the place being left.</summary>
     public Action? Opening { get; set; }
 
@@ -203,7 +206,11 @@ internal sealed partial class FlightsView<TSurface>
         };
         if (CanCommand && OnAnswerCard is { } answer)
         {
-            cells.Add(CardsView<TSurface>.ChoiceControl(choice, card.Detail, $"flight:{line.Code}:merge-card", () => answer(card, number)));
+            // While the card's Merge is with the node (pressed here or on the panel) it reads "…" and takes no second press:
+            // a second Merge went out, and its end cleared the first's working state while that was still pending.
+            cells.Add(CardWorking?.Invoke(card.Id) is not null
+                ? CardsView<TSurface>.Dead($"{choice.Label} …")
+                : CardsView<TSurface>.ChoiceControl(choice, card.Detail, $"flight:{line.Code}:merge-card", () => answer(card, number)));
         }
         return Layout.Builder.HStack([.. cells]).WithGap(12f).Pad(0f, 6f).Bg(RowFocusBg).RowH(40f);
     }
