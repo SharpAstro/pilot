@@ -31,8 +31,8 @@ public sealed partial class LegCommander(
     public SiblingWatch Siblings { get; init; } = new(git, time);
 
     /// <summary>
-    /// What brings a sibling clone found behind its origin up to date: RepoSync's fetch and fast-forward of the default
-    /// branch, which leaves a dirty, diverged or off-branch clone alone. Null leaves every sibling as it is and only warns.
+    /// What brings a sibling clone found behind its origin up to date: RepoSync's merge-only fast-forward of the default
+    /// branch from what SiblingWatch fetched, under the clone's lock, which leaves a dirty, diverged or off-branch clone alone. Null leaves every sibling as it is and only warns.
     /// </summary>
     public RepoSync? SiblingSync { get; set; }
 
@@ -671,7 +671,9 @@ public sealed partial class LegCommander(
     /// <summary>
     /// Brings each sibling clone the plane's build compiles against up to its origin when it is behind, and a For-you card
     /// names only those the node could not pull (dirty, diverged, on another branch), each with why and the pull to run; one
-    /// it pulled is a Handled line. The leg starts regardless. A card is about the leg, so it closes when the leg is done or
+    /// it pulled is a Handled line, and one already current (pulled by hand since the count) is neither a line nor a card. The
+    /// pull is merge-only, as SiblingWatch has just fetched, and RepoWatch is refreshed after one, without holding the start.
+    /// The leg starts regardless. A card is about the leg, so it closes when the leg is done or
     /// goes around. A clone that is merely behind is the node's to bring up, not the person's (2026-10-26: SdlVulkan.Renderer
     /// and Codecs behind on DE1 rang at every leg start).
     /// </summary>
@@ -692,6 +694,7 @@ public sealed partial class LegCommander(
         }
         var subject = Verbs.LegTarget(flight.Code, leg.Name);
         var left = new List<(SiblingBehind Sibling, string? Why)>();
+        var pulled = false;
         foreach (var sibling in behind)
         {
             if (SiblingSync is null)
@@ -699,16 +702,26 @@ public sealed partial class LegCommander(
                 left.Add((sibling, null));
                 continue;
             }
-            var outcome = await SiblingSync.SyncOneAsync(sibling.Name, sibling.Path, cancellationToken);
+            // SiblingWatch has just fetched, so the objects are here: merge only, never a second fetch on the way to the worker's start.
+            var outcome = await SiblingSync.SyncOneAsync(sibling.Name, sibling.Path, fetch: false, cancellationToken);
             Siblings.Forget(sibling.Path);
-            if (outcome.Status is RepoSyncStatus.Updated or RepoSyncStatus.Current)
+            switch (outcome.Status)
             {
-                state.RaiseCard(CardBin.Handled, SiblingPulledKind, subject, $"Pulled {sibling.Name} for {flight.Code}/{leg.Name}", outcome.Detail);
+                case RepoSyncStatus.Updated:
+                    pulled = true;
+                    state.RaiseCard(CardBin.Handled, SiblingPulledKind, subject, $"Pulled {sibling.Name} for {flight.Code}/{leg.Name}", outcome.Detail);
+                    break;
+                case RepoSyncStatus.Current:
+                    // Pulled by hand since SiblingWatch counted it: nothing was taken, so nothing to say.
+                    break;
+                default:
+                    left.Add((sibling, outcome.Detail));
+                    break;
             }
-            else
-            {
-                left.Add((sibling, outcome.Detail));
-            }
+        }
+        if (pulled)
+        {
+            SiblingSync?.RefreshWatchInBackground();
         }
         if (left.Count == 0)
         {

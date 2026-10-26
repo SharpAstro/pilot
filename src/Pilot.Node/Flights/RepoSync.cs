@@ -40,6 +40,26 @@ public sealed class RepoSync(IGit git, Planes planes, RepoWatch watch)
         }
     }
 
+    /// <summary>The last <see cref="RefreshWatchInBackground"/>, so a test can wait for it; completed when none has run.</summary>
+    internal Task WatchRefresh { get; private set; } = Task.CompletedTask;
+
+    /// <summary>
+    /// Has <see cref="RepoWatch"/> read the repos afresh without the caller waiting on it, as a leg's start does after it
+    /// pulled a sibling, so the dashboard stops showing that clone behind. A failed read is logged, never thrown.
+    /// </summary>
+    internal void RefreshWatchInBackground()
+        => WatchRefresh = Task.Run(async () =>
+        {
+            try
+            {
+                await watch.RefreshAsync(CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                await Console.Error.WriteLineAsync($"repo sync: the repo watch could not be refreshed after a pull: {ex.Message}");
+            }
+        });
+
     /// <summary>
     /// Fetches one clone and fast-forwards its main checkout's default branch, under the rules above. Also what a leg's start
     /// runs on a sibling clone found behind its origin, so the person is told only about one the node could not bring up.

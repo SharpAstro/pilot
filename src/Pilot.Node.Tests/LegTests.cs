@@ -474,12 +474,13 @@ public abstract class LegCommanderTestsBase : IDisposable
     }
 
     /// <summary>The leg commander with the node's sibling sync, as NodeApp wires it.</summary>
-    private protected void WithSiblingSync()
+    private protected RepoWatch WithSiblingSync()
     {
         var git = new GitCli();
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [_root]);
         var watch = new RepoWatch(_state, new RepoCatalog(_state, options), new Planes(git), _github, TimeProvider.System) { Parallelism = 1 };
         _legs.SiblingSync = new RepoSync(git, new Planes(git), watch);
+        return watch;
     }
 
     private protected sealed class ThrowingGit : IGit
@@ -763,6 +764,55 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         card.Detail.ShouldBe($"DIR.Lib is 3 commits behind its origin: git -C {Path.Combine(_root, "DIR.Lib")} pull --ff-only");
 
         _state.Cards().Count(c => c.Kind == LegCommander.SiblingBehindKind).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ASiblingPulledByHandSinceItWasCountedBehindGivesNeitherAHandledLineNorACard()
+    {
+        SiblingDirLib(behind: 3);
+        WithSiblingSync();
+        var flight = await FlightWithTwoLegs();
+        // SiblingWatch counts it behind and caches that; then the person pulls it before the leg starts.
+        (await _legs.Siblings.BehindAsync(flight.Worktree, flight.RepoPath, Ct)).ShouldHaveSingleItem().Behind.ShouldBe(3);
+        Git(Path.Combine(_root, "DIR.Lib"), "pull", "-q", "--ff-only");
+
+        (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
+
+        _workers.Started.ShouldHaveSingleItem();
+        _state.Cards().Where(c => c.Kind is LegCommander.SiblingPulledKind or LegCommander.SiblingBehindKind).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AfterALegStartPulledASiblingRepoWatchShowsItZeroBehind()
+    {
+        SiblingDirLib(behind: 3);
+        var watch = WithSiblingSync();
+        var flight = await FlightWithTwoLegs();
+        // The fetch inside the count brings origin/main forward, so the watch's first read has the clone 3 behind.
+        await _legs.Siblings.BehindAsync(flight.Worktree, flight.RepoPath, Ct);
+        (await watch.StatusAsync(refresh: true, Ct)).Single(r => r.Name == "DIR.Lib").Behind.ShouldBe(3);
+
+        (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
+        await _legs.SiblingSync!.WatchRefresh;
+
+        (await watch.StatusAsync(refresh: false, Ct)).Single(r => r.Name == "DIR.Lib").Behind.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AStaleSiblingWhoseOriginWentUnreachableAfterTheCountIsStillPulled()
+    {
+        SiblingDirLib(behind: 3);
+        WithSiblingSync();
+        var flight = await FlightWithTwoLegs();
+        await _legs.Siblings.BehindAsync(flight.Worktree, flight.RepoPath, Ct);
+        var origin = Path.Combine(_root, "dir-lib-origin");
+        Directory.Move(origin, origin + "-gone");
+
+        (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
+
+        _state.Cards().Where(c => c.Kind == LegCommander.SiblingBehindKind).ShouldBeEmpty();
+        _state.Cards().Single(c => c.Kind == LegCommander.SiblingPulledKind).Detail.ShouldBe("main took 3 commits from origin/main");
+        Git(Path.Combine(_root, "DIR.Lib"), "rev-list", "--count", "HEAD..origin/main").Trim().ShouldBe("0");
     }
 
     [Fact]
