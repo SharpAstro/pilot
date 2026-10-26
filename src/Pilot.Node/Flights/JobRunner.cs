@@ -27,6 +27,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 {
     public const string UntoldKind = "job-untold";
 
+    /// <summary>The For-you card for a running job that has used next to no CPU while others queue behind it.</summary>
+    public const string IdleKind = "job-idle";
+
     /// <summary>How long a job may run unless its owner said otherwise.</summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromHours(2);
 
@@ -60,7 +63,18 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>How often the queue looks again, for memory that has come free.</summary>
     public TimeSpan PumpEvery { get; init; } = TimeSpan.FromSeconds(15);
 
+    /// <summary>How long a running job may use next to no CPU, with others queued behind it, before a card says so.</summary>
+    public TimeSpan IdleWindow { get; init; } = TimeSpan.FromMinutes(15);
+
+    /// <summary>The CPU time over <see cref="IdleWindow"/> below which a job counts as near-idle.</summary>
+    public TimeSpan IdleCpu { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>The CPU time a running job's process tree has used in all, or null when it cannot be read.</summary>
+    public Func<string, TimeSpan?>? JobCpu { get; init; }
+
     private readonly ConcurrentDictionary<string, Process> _running = new(StringComparer.Ordinal);
+    // Where each running job's idle window began and the CPU it had used then. The dispatcher's alone.
+    private readonly Dictionary<string, (DateTimeOffset At, TimeSpan Cpu)> _cpuMarks = new(StringComparer.Ordinal);
     // Every job this node handed over, so a recovery knows which ones a previous node left behind.
     private readonly ConcurrentDictionary<string, byte> _mine = new(StringComparer.Ordinal);
     // What the dispatcher acts on, one at a time: a job handed over, a cancel of a waiting one, and "look again" (a job
@@ -173,6 +187,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             return state.Complete(command, "run needs the command to run");
         }
+        if (SleepOnly.Refusal(line) is { } refusal)
+        {
+            return state.Complete(command, refusal);
+        }
 
         SessionRow? owner = null;
         if (command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal))
@@ -269,6 +287,48 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             _queue[i] = _queue[i] with { Step = i == 0 ? $"next in line: {why}" : $"queued, {i} ahead of it" };
             state.PutJob(_queue[i]);
+        }
+
+        CheckIdle();
+    }
+
+    /// <summary>
+    /// A running job that has used next to no CPU for <see cref="IdleWindow"/> while others queue behind it raises one
+    /// For-you card, closed when the job ends or the queue empties. The heuristic in <see cref="SleepOnly"/> misses some
+    /// sleeps (a script that polls), and this is what is left to catch them.
+    /// </summary>
+    private void CheckIdle()
+    {
+        var now = time.GetUtcNow();
+        foreach (var gone in _cpuMarks.Keys.Where(id => !_running.ContainsKey(id)).ToList())
+        {
+            _cpuMarks.Remove(gone);
+            state.CloseCardsAbout(Verbs.JobTarget(gone), "the job ended", IdleKind);
+        }
+        foreach (var id in _running.Keys)
+        {
+            var subject = Verbs.JobTarget(id);
+            var read = JobCpu ?? (jobId => _running.TryGetValue(jobId, out var p) ? ProcessTreeCpu.Of(p) : null);
+            if (read(id) is not { } cpu)
+            {
+                continue;
+            }
+            if (!_cpuMarks.TryGetValue(id, out var mark) || cpu - mark.Cpu >= IdleCpu)
+            {
+                // It has worked since the window began: the window starts again.
+                _cpuMarks[id] = (now, cpu);
+                state.CloseCardsAbout(subject, "the job used CPU again", IdleKind);
+            }
+            else if (_queue.Count == 0)
+            {
+                state.CloseCardsAbout(subject, "nothing waits behind it now", IdleKind);
+            }
+            else if (now - mark.At >= IdleWindow && state.Jobs().FirstOrDefault(j => j.Id == id) is { } job)
+            {
+                var waiting = string.Join(", ", _queue.Select(q => $"{q.Id} ({q.OwnerName ?? q.Owner ?? "the node"})"));
+                state.RaiseCard(CardBin.ForYou, IdleKind, subject, $"job {id} holds the slot but has used next to no CPU for {Took(now - mark.At)}",
+                    $"`{job.Command}` is run by {job.OwnerName ?? job.Owner ?? "the node"}; {_queue.Count} wait behind it: {waiting}. It may only be waiting on something; cancel it with `pilot cancel-job {id}` if so, and the owner can wait with `pilot leg wait`.");
+            }
         }
     }
 
