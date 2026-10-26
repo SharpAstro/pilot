@@ -716,7 +716,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     // waiting on you that can be answered in the browser, the link that opens it there.
     private Layout.Node NameLine(SessionLine line)
     {
-        var name = Layout.Builder.Text(line.Name, 12f, Dim);
+        var name = Layout.Builder.Text(line.ShownName, 12f, Dim);
         var answer = line.AnswerUrl is { } url && OnOpen is { } open
             ? Layout.Builder.Text("Answer in the browser" + Followable.Away, 11f, Bright, TextAlign.Center).Pad(8f, 1f).WAuto().Bg(AnswerBg).BgHover(AnswerHoverBg)
                 .Follows(new HitResult.ButtonHit($"session:{line.Key}:answer"), _ => open(url))

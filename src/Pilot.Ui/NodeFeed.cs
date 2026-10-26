@@ -213,7 +213,9 @@ internal sealed class NodeFeed : IAsyncDisposable
     {
         var view = Volatile.Read(ref _view);
         var usage = view.Usage;
-        return new SessionsScreen(SessionLine.Build(view.Sessions, now), view.Status + UpdateNoteOf(view), now,
+        var code = view.Node?.MachinePrefix is { Length: > 0 } prefix ? prefix : null;
+        var lines = SessionLine.Build(view.Sessions, now);
+        return new SessionsScreen(code is null ? lines : [.. lines.Select(l => l with { NodeCode = code })], view.Status + UpdateNoteOf(view), now,
             usage is { HasFigures: true } ? usage.Line(now, TimeZoneInfo.Local) : null, usage?.Account?.Line());
     }
 

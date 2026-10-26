@@ -87,7 +87,7 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
     /// <summary>The live sessions.</summary>
     public IReadOnlyList<HomeChip> SessionChips =>
         [.. Sessions.Lines.Where(l => l.IsLive)
-            .Select(l => new HomeChip(HomeChipKind.Session, Mark(l.Node, l.Name), "live") { Session = l })];
+            .Select(l => new HomeChip(HomeChipKind.Session, Mark(l.Node, l.ShownName), "live") { Session = l })];
 
     /// <summary>The running and queued jobs.</summary>
     public IReadOnlyList<HomeChip> JobChips =>
