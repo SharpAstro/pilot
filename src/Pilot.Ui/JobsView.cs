@@ -161,9 +161,13 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private static readonly RGBAColor32 Button = new(0x2a, 0x3a, 0x58, 0xff);
     private static readonly RGBAColor32 ButtonHover = new(0x35, 0x4a, 0x70, 0xff);
 
-    /// <summary>A button that ends something: white on it reads 6.5:1, on its hover 5.4:1 (AA for 12 px text).</summary>
-    private static readonly RGBAColor32 Danger = new(0xb3, 0x26, 0x1e, 0xff);
-    private static readonly RGBAColor32 DangerHover = new(0xc9, 0x37, 0x2c, 0xff);
+    /// <summary>
+    /// A button that ends something. Its label is Bright: 5.3:1 on it and 4.8:1 on its hover, both AA (4.5:1) for 12 px text.
+    /// The hover only lightens it a little: a lighter red took the label below AA.
+    /// </summary>
+    internal static readonly RGBAColor32 Danger = new(0xb3, 0x26, 0x1e, 0xff);
+    internal static readonly RGBAColor32 DangerHover = new(0xbd, 0x2c, 0x23, 0xff);
+    internal static readonly RGBAColor32 DangerLabel = Bright;
     private static readonly RGBAColor32 MenuBg = new(0x1f, 0x21, 0x2b, 0xff);
 
     /// <summary>How often the selected job's log is read again.</summary>
