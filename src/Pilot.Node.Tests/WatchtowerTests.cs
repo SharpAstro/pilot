@@ -111,6 +111,8 @@ public sealed class WatchtowerTests : IDisposable
     {
         Row("job00001", SessionState.Idle);
         _state.PutSession(_state.Sessions().Single() with { Name = "du1-pil269-stale-worktree-duplicate" });
+        Directory.CreateDirectory(_data);
+        File.WriteAllText(_tower.BriefFile, CurrentBrief());
 
         await _tower.LookAsync(Ct);
 
