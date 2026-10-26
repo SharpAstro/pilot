@@ -358,6 +358,13 @@ A PR pilot did not make, in a repo it may not fly, is reviewed from its link (#1
   that starts the same fixer. A finding the reviewer starts with `design:` is a question for the author: it rings a
   `pr-review-design` card and starts no fixer. An untracked repo gets nothing. One fixer per PR, never a second, and the
   review ending takes neither the fixer nor its worktree (a fresh review of the PR carries them on).
+  **Rounds.** Each sweep looks at a PR a fixer is on. A head past the reviewed one means it pushed: the fixer is stopped,
+  its worktree removed (one held open is a card, tried again) and one fresh review starts at the new head, carrying
+  `FixRound`. That review is queued by the same green-checks path as any approve or comment; a changes verdict starts
+  the next fixer with the round plus one and the new findings, and after round 3 (the same cap as a flight's review
+  go-arounds) rings a `pr-fix-capped` card with the findings and a link instead of starting a fourth. A fixer whose
+  session ended with the head unmoved leaves a For-you `pr-fix-ended` card with **Fix it**; a PR merged or closed
+  ends the fixer and its worktree. A review started by hand keeps the round count rather than resetting it.
 
 `pilot status` lists the reviews not over, and under a review whose fixer is on, `fixing, <fixer>, round <n>`; such a
 review stays listed after it closed.

@@ -187,6 +187,149 @@ public sealed class PrFixTests : IDisposable
         (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldNotBeNull().ShouldContain("a flight owns");
     }
 
+    private static readonly PrRef Seven = new("acme", "widget", 7);
+
+    /// <summary>The fixer pushes a commit to the PR: its head on GitHub moves; returns the new head.</summary>
+    private string FixerPushes(string what)
+    {
+        var head = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, what);
+        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Head = head };
+        return head;
+    }
+
+    private string FixWorktree => Path.Combine(WidgetClone, ".claude", "worktrees", "fix-widget-7");
+
+    private PrReviewRow Row => _reviews.Of(Seven).ShouldNotBeNull();
+
+    /// <summary>One fresh review at <paramref name="head"/> after a fixer's push, its reviewer giving <paramref name="verdict"/>.</summary>
+    private async Task Round(string head, string verdict, params string[] findings)
+    {
+        await _reviews.SweepAsync(Ct);
+        Row.Head.ShouldBe(head);
+        Row.State.ShouldBe(PrReviewState.Reviewing);
+        (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, [verdict, "Round report.", .. findings])).Error.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AFixersPushStopsItRemovesItsWorktreeAndStartsOneFreshReviewCarryingTheRound()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        Directory.Exists(FixWorktree).ShouldBeTrue();
+        var head = FixerPushes("fixed");
+
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+
+        _workers.Stopped.ShouldContain("job00002");
+        Directory.Exists(FixWorktree).ShouldBeFalse();
+        var row = Row;
+        (row.State, row.Head, row.Fixer, row.FixWorktree, row.FixRound).ShouldBe((PrReviewState.Reviewing, head, null, null, 1));
+        _workers.Started.Count(s => s.Name.Contains("-review-")).ShouldBe(2);
+        Fixers.Length.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AFreshReviewOfAFixersPushThatPassesWithGreenChecksQueuesThePr()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var head = FixerPushes("fixed");
+        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
+        _github.Queue = new MergeQueueState("OPEN", head, false);
+
+        await Round(head, "approve");
+        await _reviews.SweepAsync(Ct);
+
+        _github.Merged.ShouldBe([(7, head, "squash")]);
+        Row.QueuedAt.ShouldNotBeNull();
+        _state.Cards().ShouldContain(c => c.Kind == PrReviews.QueuedKind && c.Bin == CardBin.Handled);
+        Fixers.Length.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ChangesOnRoundTwoStartsTheNextFixerWithRoundTwoAndStatusSaysSo()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        await Round(FixerPushes("fixed once"), "changes", "README.md:1 still wrong");
+
+        Fixers.Length.ShouldBe(2);
+        Fixers[1].Brief.ShouldContain("README.md:1 still wrong");
+        (Row.Fixer, Row.FixRound).ShouldBe(("du1-fix-widget-7", 2));
+        var lines = StatusMarkdown.Build(_state.Snapshot()).Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
+        lines[Array.FindIndex(lines, l => l.Contains("acme/widget#7")) + 1].ShouldContain("fixing, du1-fix-widget-7, round 2");
+    }
+
+    [Fact]
+    public async Task ChangesOnRoundThreeRingsTheRoundsAndStartsNoFourthFixer()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        await Round(FixerPushes("one"), "changes", "README.md:1 wrong again");
+        await Round(FixerPushes("two"), "changes", "README.md:1 wrong a third time");
+        Fixers.Length.ShouldBe(3);
+        Row.FixRound.ShouldBe(3);
+
+        await Round(FixerPushes("three"), "changes", "README.md:1 never right");
+
+        Fixers.Length.ShouldBe(3);
+        Row.Fixer.ShouldBeNull();
+        var ring = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixCappedKind).ShouldHaveSingleItem();
+        ring.Bin.ShouldBe(CardBin.Ring);
+        ring.Title.ShouldContain("acme/widget#7");
+        ring.Title.ShouldContain("3 rounds");
+        ring.Detail.ShouldNotBeNull().ShouldContain("never right");
+        ring.Link.ShouldNotBeNull().ShouldContain("/pull/7");
+    }
+
+    [Fact]
+    public async Task AFixerThatEndsWithoutPushingLeavesACardWithFixItAndNoReview()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        _state.PutSession(Session("du1-fix-widget-7", SessionState.Ended));
+
+        await _reviews.SweepAsync(Ct);
+
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixEndedKind).ShouldHaveSingleItem();
+        (card.Bin, card.Choices.ShouldHaveSingleItem().Label).ShouldBe((CardBin.ForYou, "Fix it"));
+        Directory.Exists(FixWorktree).ShouldBeFalse();
+        Row.State.ShouldBe(PrReviewState.Closed);
+        Row.Fixer.ShouldBeNull();
+        _workers.Started.Count(s => s.Name.Contains("-review-")).ShouldBe(1);
+
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
+        Row.FixRound.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task APrMergedMeanwhileEndsItsFixerAndWorktree()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { State = "MERGED" };
+
+        await _reviews.SweepAsync(Ct);
+
+        _workers.Stopped.ShouldContain("job00002");
+        Directory.Exists(FixWorktree).ShouldBeFalse();
+        Row.Fixer.ShouldBeNull();
+        _workers.Started.Count(s => s.Name.Contains("-review-")).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AReviewStartedByHandKeepsTheRoundCount()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        await Round(FixerPushes("one"), "changes", "README.md:1 wrong again");
+        Row.FixRound.ShouldBe(2);
+
+        (await Run(Verbs.ReviewPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
+
+        Row.FixRound.ShouldBe(2);
+    }
+
+    private static SessionRow Session(string name, SessionState state) => new()
+    {
+        Id = "abcd1234", SessionId = "abcd1234-0000", Name = name, Kind = SessionKind.Background, Cwd = "/x", Role = SessionRole.Worker,
+        ContextTokens = 0, ContextWindow = 1, State = state, SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
+    };
+
     [Fact]
     public async Task StatusListsTheFixUnderTheReviewLineEvenOnceTheReviewClosed()
     {

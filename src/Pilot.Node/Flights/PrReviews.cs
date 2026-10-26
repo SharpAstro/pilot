@@ -640,6 +640,10 @@ public sealed class PrReviews(
         await _one.WaitAsync(cancellationToken);
         try
         {
+            foreach (var fixing in state.PrReviews().Where(r => r.Fixer is not null))
+            {
+                await TendFixerAsync(fixing, cancellationToken);
+            }
             var closed = state.Cards().Where(c => c.State == CardState.Closed).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
             foreach (var review in state.PrReviews().Where(r => r is { State: PrReviewState.Reviewed, Card: { } card } && closed.Contains(card)))
             {
@@ -785,6 +789,102 @@ public sealed class PrReviews(
     /// <summary>The card's choice that starts the fixer.</summary>
     public const string FixLabel = "Fix it";
 
+    /// <summary>The ring of a changes verdict after the last round of fixes: no further fixer starts.</summary>
+    public const string FixCappedKind = "pr-fix-capped";
+
+    /// <summary>The For-you card of a fixer whose session ended with the PR's head where it was, with Fix it to try again.</summary>
+    public const string FixEndedKind = "pr-fix-ended";
+
+    /// <summary>The For-you card said when a fixer's worktree could not be removed; the node tries again.</summary>
+    public const string FixLeftKind = "pr-fix-left";
+
+    /// <summary>How many rounds of fixes a PR gets before the person is rung, the same cap as a flight's review go-arounds (#249).</summary>
+    public const int MaxFixRounds = LegCommander.MaxReviewGoArounds;
+
+    /// <summary>
+    /// Looks at a PR a fixer is on (#290): merged or closed, the fixer ends; a head past the reviewed one means it pushed, so it
+    /// ends and one fresh review starts at the new head, carrying the round; a session that ended with the head unmoved is a card
+    /// with Fix it to try again.
+    /// </summary>
+    private async Task TendFixerAsync(PrReviewRow review, CancellationToken cancellationToken)
+    {
+        var pr = PrRef.Parse($"{review.Repo}#{review.Number}")!;
+        PullRequest read;
+        try
+        {
+            read = await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken);
+        }
+        catch (FlightException)
+        {
+            return;
+        }
+        var subject = Verbs.PrTarget(review.Repo, review.Number);
+        if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
+        {
+            await EndFixerAsync(review, cancellationToken);
+            return;
+        }
+        if (read.Head.Length > 0 && !string.Equals(read.Head, review.Head, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!await EndFixerAsync(review, cancellationToken))
+            {
+                return;
+            }
+            try
+            {
+                await StartAsync(pr, cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                state.RaiseCard(CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer pushed, but its review could not start", $"{ex.Message}\npilot review {pr} tries again.", link: review.Url);
+            }
+            return;
+        }
+        var sessions = state.Sessions().Where(s => string.Equals(s.Name, review.Fixer, StringComparison.Ordinal)).ToList();
+        if (sessions.Count > 0 && sessions.All(s => s.State == SessionState.Ended) && await EndFixerAsync(review, cancellationToken))
+        {
+            state.RaiseCard(CardBin.ForYou, FixEndedKind, subject, $"{pr}: {review.Fixer} ended without a push",
+                $"The PR's head is still {review.Head[..Math.Min(8, review.Head.Length)]}. Fix it starts another fixer on the same findings.",
+                [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url);
+        }
+    }
+
+    /// <summary>Stops a PR's fixer and removes its worktree, then clears the fix fields; false when the worktree is held, said on a card and tried again.</summary>
+    private async Task<bool> EndFixerAsync(PrReviewRow review, CancellationToken cancellationToken)
+    {
+        if (review.FixerJob is { } job)
+        {
+            await StopQuietly(job, cancellationToken);
+        }
+        if (review.FixWorktree is { } worktree)
+        {
+            string? held;
+            try
+            {
+                held = await planes.RemoveAsync(review.ClonePath, worktree, cancellationToken, force: true);
+            }
+            catch (FlightException ex)
+            {
+                held = ex.Message;
+            }
+            if (held is not null)
+            {
+                var subject = Verbs.PrTarget(review.Repo, review.Number);
+                if (!state.Cards(openOnly: true).Any(c => c.Kind == FixLeftKind && c.Subject == subject))
+                {
+                    state.RaiseCard(CardBin.ForYou, FixLeftKind, subject, $"{review.Repo}#{review.Number}'s fixer worktree is still there", $"{held}; the node tries again");
+                }
+                return false;
+            }
+        }
+        state.CloseCardsAbout(Verbs.PrTarget(review.Repo, review.Number), "the fixer ended", FixLeftKind);
+        if (Of(PrRef.Parse($"{review.Repo}#{review.Number}")!) is { } latest)
+        {
+            state.PutPrReview(latest with { Fixer = null, FixerJob = null, FixWorktree = null });
+        }
+        return true;
+    }
+
     /// <summary>The prefix that marks a finding as a question of design, not a defect to fix.</summary>
     public const string DesignPrefix = "design:";
 
@@ -818,7 +918,16 @@ public sealed class PrReviews(
             state.RaiseCard(CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design", $"{design}\nNo fixer started: this is the author's to decide.", link: review.Url);
             return;
         }
-        var own = Own(review, await github.LoginAsync(cancellationToken));
+        var rounds = review.FixRound ?? 0;
+        if (rounds >= MaxFixRounds)
+        {
+            state.RaiseCard(CardBin.Ring, FixCappedKind, subject, $"{pr}: still asking for changes after {rounds} rounds of fixes",
+                $"{rounds} fixers have pushed and the review still asks for changes, so no fourth starts: this is yours.\n{(review.Report ?? "").Trim()}\n{string.Join('\n', review.Findings.Select(f => f.ToString()))}",
+                link: review.Url);
+            return;
+        }
+        // A PR the controller already chose Fix it on goes on by itself, whoever owns it.
+        var own = rounds > 0 || Own(review, await github.LoginAsync(cancellationToken));
         if (!own)
         {
             if (!state.Cards(openOnly: true).Any(c => c.Kind == FixOfferKind && c.Subject == subject))
@@ -896,7 +1005,7 @@ public sealed class PrReviews(
         await planes.EnsureAsync(clone, worktree, branch, cancellationToken);
 
         var fixer = $"{options.Machine.ToLowerInvariant()}-fix-{name}-{pr.Number}";
-        var fixing = review with { Fixer = fixer, FixWorktree = worktree, FixRound = 1 };
+        var fixing = review with { Fixer = fixer, FixWorktree = worktree, FixRound = (review.FixRound ?? 0) + 1 };
         string job;
         try
         {
