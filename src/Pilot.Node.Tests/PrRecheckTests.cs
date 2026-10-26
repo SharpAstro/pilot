@@ -42,8 +42,19 @@ public sealed class PrRecheckTests : IDisposable
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),
             PostsItself = false,
         };
-        _recheck = new PrRecheck(_state, _github, _reviews, catalog, TimeProvider.System) { Fleet = _fleet };
+        // The node's own rebases make commits, and a CI runner has no identity of its own to make them with.
+        PrOrigins.Git(WidgetClone, "config", "user.email", "t@example.com");
+        PrOrigins.Git(WidgetClone, "config", "user.name", "t");
+        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers);
+        _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, git, new Planes(git), _flights, options, TimeProvider.System)
+        {
+            SelfFinishGrace = TimeSpan.FromMilliseconds(1),
+        };
+        _recheck = new PrRecheck(_state, _github, _reviews, catalog, TimeProvider.System, _legs) { Fleet = _fleet };
     }
+
+    private readonly FlightCommander _flights;
+    private readonly LegCommander _legs;
 
     private string Roots => Path.Combine(_root, "repos");
 
@@ -213,27 +224,169 @@ public sealed class PrRecheckTests : IDisposable
     }
 
     [Fact]
-    public async Task APrWithAFlightOfThisNodeOrAReviewItMadeRoutesToItsOwnMethodThatSaysSo()
+    public async Task APrItReviewedBeforeRoutesToItsOwnMethodThatSaysSo()
     {
-        _state.PutFlight(Flight("DU1", own: true));
-
-        await LookAsync();
-
-        Review().ShouldBeNull();
-        _workers.Started.ShouldBeEmpty();
-        Handled().ShouldHaveSingleItem().ShouldBe("recheck of widget#7: DU1's PR: the recheck of a flight is not wired yet");
-        _github.Labels[7].ShouldBeEmpty();
-
-        // A PR it reviewed before.
-        var flight = _state.Flights().Single();
-        _state.PutFlight(flight with { State = FlightState.Landed });
         (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = "pr/acme/widget#7", Who = "controller" }, Ct)).Error.ShouldBeNull();
         var reviewer = Review()!.Reviewer;
-        _github.Labels[7].Add(PilotMarks.Recheck);
+        _github.Labels[7] = [PilotMarks.Recheck];
+
         await LookAsync();
-        Handled().Length.ShouldBe(2);
-        Handled().ShouldContain($"recheck of widget#7: reviewed by {reviewer}: the recheck of a reviewed PR is not wired yet");
+
+        Handled().ShouldHaveSingleItem().ShouldBe($"recheck of widget#7: reviewed by {reviewer}: the recheck of a reviewed PR is not wired yet");
         _workers.Started.Count.ShouldBe(1);
+    }
+
+    /// <summary>A flight of this node's on PR 7 (the recheck's PR), its leg done and pushed, reviewed and passed; the recheck label on the PR.</summary>
+    private async Task<FlightRow> PassedFlightAsync(string? readme = null)
+    {
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(WidgetClone), Args = ["1", "Flight 1"], Who = "controller" }, Ct)).Error.ShouldBeNull();
+        var flight = _state.Flights().Single();
+        async Task Run(string verb, string target, string who, params string[] args) =>
+            (await _legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct)).Error.ShouldBeNull();
+        await Run(Verbs.PlanLeg, Verbs.FlightTarget(flight.Code), "controller", "name=parser", "goal=Do it", "done-when=It is done", "item=The step");
+        await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, "parser"), "controller");
+        var worker = _state.Legs(flight.Code).Single().Worker!;
+        File.WriteAllText(Path.Combine(flight.Worktree, readme is null ? "parser.txt" : "README.md"), readme ?? "work\n");
+        PrOrigins.Git(flight.Worktree, "add", ".");
+        PrOrigins.Git(flight.Worktree, "commit", "-q", "-m", "parser work");
+        await Run(Verbs.Check, Verbs.LegTarget(flight.Code, "parser"), worker, "1");
+        await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), worker, "done", "did it");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+
+        // The fake opens a PR of its own number; this one is PR 7 of acme/widget, at the head the plane pushed.
+        var head = PrOrigins.Git(flight.Worktree, "rev-parse", "HEAD");
+        _github.Pr = Pr("OPEN") with { Head = head };
+        _state.PutFlight(_state.Flights().Single() with { PullRequest = 7, PullRequestUrl = "https://github.com/acme/widget/pull/7" });
+        _github.Prs["acme/widget#7"] = _github.Pr;
+        await Run(Verbs.Review, "flight/" + flight.Code, _state.Flights().Single().Review!.Reviewer, "pass", "fine");
+        _github.Labels[7] = [PilotMarks.Recheck];
+        return _state.Flights().Single();
+    }
+
+    private static string Short(string sha) => sha[..8];
+
+    /// <summary>Main moves on after the flight was cut, as it does while a PR waits.</summary>
+    private void MainMoves(string file = "later.txt", string text = "later\n")
+    {
+        var work = Path.Combine(_root, "work-widget");
+        PrOrigins.Git(work, "fetch", "-q", "origin", "main");
+        PrOrigins.Git(work, "reset", "-q", "--hard", "origin/main");
+        File.WriteAllText(Path.Combine(work, file), text);
+        PrOrigins.Git(work, "add", ".");
+        PrOrigins.Git(work, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "later on main");
+        PrOrigins.Git(work, "push", "-q", "origin", "HEAD:main");
+    }
+
+    [Fact]
+    public async Task AFlightsPrBehindItsBaseIsRebasedAndItsReviewRestarted()
+    {
+        var flight = await PassedFlightAsync();
+        MainMoves();
+        _github.Merge = new MergeState(MergeKinds.Behind);
+
+        await LookAsync();
+
+        var now = _state.Flights().Single();
+        PrOrigins.Git(now.Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
+        var review = now.Review.ShouldNotBeNull();
+        review.State.ShouldBe(ReviewState.Reviewing);
+        var read = review.ReviewedHead.ShouldNotBeNull();
+        read.ShouldNotBe(flight.Review!.ReviewedHead);
+        Handled().ShouldBe([$"recheck of widget#7: rebased onto main, review restarted at {Short(read)}"]);
+        _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
+        _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AFlightsPrWhoseRebaseConflictsIsSentBackAsChangesAndTheHandledLineSaysSo()
+    {
+        await PassedFlightAsync(readme: "theirs\n");
+        MainMoves("README.md", "ours\n");
+        _github.Pr = _github.Pr! with { Mergeable = "CONFLICTING" };
+
+        await LookAsync();
+
+        _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+        var said = Handled().ShouldHaveSingleItem();
+        said.ShouldStartWith("recheck of widget#7: rebasing ");
+        said.ShouldContain("conflicts");
+        said.ShouldContain("sent back as changes");
+        _github.Labels[7].ShouldBe([PilotMarks.Changes]);
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.ReviewChanges);
+    }
+
+    [Fact]
+    public async Task AFlightsPrWithAFailingCheckIsSentBackAsChangesEvenWhenTheTimedLookTriedThatHeadAlready()
+    {
+        await PassedFlightAsync();
+        _github.Checks = ChoiceStatus.Failing;
+        var timed = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+        await timed.LookAsync(Ct);
+        await timed.LookAsync(Ct);
+        _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+
+        // The head is the same and the look would not send it back again; the person asking does. The go-around that followed
+        // is taken as done and passed again, the checks still red.
+        _state.PutFlight(_state.Flights().Single() with { Review = _state.Flights().Single().Review! with { State = ReviewState.Passed } });
+        _github.DraftCalls.Clear();
+        _github.Labels[7] = [PilotMarks.Recheck];
+        await timed.LookAsync(Ct);
+        _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+
+        await LookAsync();
+
+        _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+        _github.DraftCalls.ShouldContain((7, true));
+        Handled().ShouldBe([$"recheck of widget#7: checks failed at {Short(_github.Pr!.Head)}, sent back as changes"]);
+        _github.Labels[7].ShouldBe([PilotMarks.Changes]);
+    }
+
+    [Fact]
+    public async Task AFlightsPrWhoseHeadTheReviewNeverReadIsReviewedAfresh()
+    {
+        await PassedFlightAsync();
+        const string moved = "ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34";
+        _github.Pr = _github.Pr! with { Head = moved };
+        var started = _workers.Started.Count;
+
+        await LookAsync();
+
+        _workers.Started.Count.ShouldBe(started + 1);
+        var review = _state.Flights().Single().Review.ShouldNotBeNull();
+        review.State.ShouldBe(ReviewState.Reviewing);
+        Handled().ShouldBe([$"recheck of widget#7: head ab12cd34 was not the one reviewed, review restarted at {Short(review.ReviewedHead!)}"]);
+        _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
+    }
+
+    [Fact]
+    public async Task AFlightsPassedGreenCleanPrGoesToTheMergeQueue()
+    {
+        await PassedFlightAsync();
+        _github.Checks = ChoiceStatus.Passing;
+        _github.Queues = true;
+
+        await LookAsync();
+
+        var head = _github.Pr!.Head;
+        _github.Merged.ShouldHaveSingleItem().ShouldBe((7, head, _legs.Models.MergeMethod));
+        Handled().ShouldBe([$"recheck of widget#7: passed and green, queued for merge at {Short(head)}"]);
+        _github.Labels[7].ShouldBe([PilotMarks.Queued]);
+    }
+
+    [Fact]
+    public async Task AFlightsPrWithNothingToDoSaysSoAndLeavesTheLabelForWhereItStands()
+    {
+        await PassedFlightAsync();
+        _github.Checks = ChoiceStatus.Pending;
+        var started = _workers.Started.Count;
+
+        await LookAsync();
+
+        _github.Merged.ShouldBeEmpty();
+        _workers.Started.Count.ShouldBe(started);
+        _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        Handled().ShouldBe([$"recheck of widget#7: nothing to do at {Short(_github.Pr!.Head)}: its checks are still running"]);
+        _github.Labels[7].ShouldBe([PilotMarks.Passed]);
     }
 
     [Fact]
