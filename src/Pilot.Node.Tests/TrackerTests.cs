@@ -164,6 +164,38 @@ public sealed class TrackerTests : IDisposable
         flight.Tracker.ShouldBe(TrackerKind.Shortcut);
         flight.Issue.ShouldBe(101645);
         flight.Title.ShouldBe("Add a thing");
+
+        // The branch carries sc-<id> for Shortcut's integration; the plane's folder stays the code.
+        flight.Branch.ShouldBe("flight/bul101645-sc-101645");
+        Path.GetFileName(flight.Worktree).ShouldBe("bul101645");
+        Git(flight.Worktree, "rev-parse", "--abbrev-ref", "HEAD").ShouldBe("flight/bul101645-sc-101645");
+    }
+
+    [Fact]
+    public async Task AGitHubFlightKeepsItsPlainBranch()
+    {
+        (await Create(Commander(null, new FakeShortcut(HttpStatusCode.OK, "{}")), "12")).Ok.ShouldBeTrue();
+        _state.Flights().Single().Branch.ShouldBe("flight/bul12");
+    }
+
+    [Fact]
+    public void AShortcutPrLinksTheStoryAndClosesNothing()
+    {
+        var row = Row(TrackerKind.Shortcut) with { Title = "Cards on Shortcut", FoldedIn = [new FoldedIssue { Number = 7, From = "BUL7" }] };
+        var body = LegCommander.PrBody(row, []);
+        body.ShouldContain("sc-101645");
+        body.ShouldContain("sc-7 (folded in from BUL7)");
+        body.ShouldNotContain("Closes #");
+        LegCommander.PrTitle(row, "").ShouldBe("BUL101645: Cards on Shortcut [sc-101645]");
+        LegCommander.PrTitle(row, "About sc-101645").ShouldBe("BUL101645: About sc-101645");
+    }
+
+    [Fact]
+    public void AGitHubPrStillClosesTheIssue()
+    {
+        var row = Row(TrackerKind.GitHub) with { Title = "A thing" };
+        LegCommander.PrBody(row, []).ShouldContain("Closes #101645.");
+        LegCommander.PrTitle(row, "").ShouldBe("BUL101645: A thing");
     }
 
     [Fact]

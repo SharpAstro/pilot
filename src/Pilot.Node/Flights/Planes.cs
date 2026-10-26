@@ -124,12 +124,13 @@ public sealed class Planes(IGit git)
     }
 
     /// <summary>Makes the plane for <paramref name="code"/> in <paramref name="repoPath"/>, or throws with git's words.</summary>
-    public async Task<Plane> MakeAsync(string repoPath, string code, CancellationToken cancellationToken)
+    public async Task<Plane> MakeAsync(string repoPath, string code, CancellationToken cancellationToken, WorkItem? item = null)
     {
         var baseRef = await RemoteBaseAsync(repoPath, cancellationToken);
 
+        // The folder is the code alone; only the branch carries the tracker's link (flight/bul101645-sc-101645).
         var name = code.ToLowerInvariant();
-        var branch = $"flight/{name}";
+        var branch = $"flight/{name}{item?.BranchSuffix}";
         var worktree = Path.Combine(repoPath, ".claude", "worktrees", name);
         var add = await git.RunAsync(["worktree", "add", "--no-track", "-b", branch, worktree, baseRef], repoPath, cancellationToken);
         if (!add.Ok)

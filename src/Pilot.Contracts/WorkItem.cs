@@ -20,7 +20,13 @@ public readonly record struct WorkItem(TrackerKind Tracker, int Id)
     /// <summary>The item as a person reads it: <c>#254</c> for an issue, <c>sc-101645</c> for a story.</summary>
     public string Display => Tracker == TrackerKind.Shortcut ? $"sc-{Id.ToString(CultureInfo.InvariantCulture)}" : $"#{Id.ToString(CultureInfo.InvariantCulture)}";
 
-    /// <summary>What the item is called in a sentence: <c>issue #254</c>, <c>story sc-101645</c>.</summary>
+    /// <summary>
+    /// What a flight's branch carries after its code so the tracker links it: <c>-sc-101645</c> for a story (Shortcut's GitHub
+    /// integration reads the story id from the branch name), nothing for an issue, which the PR body's Closes links.
+    /// </summary>
+    public string BranchSuffix => Tracker == TrackerKind.Shortcut ? "-" + Display : "";
+
+    /// <summary>What the item is called in a sentence:<c>issue #254</c>, <c>story sc-101645</c>.</summary>
     public string Noun => Tracker == TrackerKind.Shortcut ? $"story {Display}" : $"issue {Display}";
 
     /// <summary>
