@@ -241,6 +241,26 @@ public sealed class OverlapTests : IDisposable
         fresh.Brief.ShouldContain("- parser (planned): Rework the parser");
     }
 
+    [Theory]
+    [InlineData(TrackerKind.Shortcut, TrackerKind.GitHub)]
+    [InlineData(TrackerKind.GitHub, TrackerKind.Shortcut)]
+    public async Task FoldAcrossTrackersIsRefusedNamingBothWhileTheOverlapItselfIsAllowed(TrackerKind asker, TrackerKind other)
+    {
+        await TwoFlights();
+        _state.PutFlight(F("TIA2") with { Tracker = asker });
+        _state.PutFlight(F("TIA1") with { Tracker = other });
+        (await Ask()).Ok.ShouldBeTrue();
+
+        var folded = await Leg(Verbs.Fold, "flight/TIA2", "TIA1");
+
+        folded.Ok.ShouldBeFalse();
+        folded.Error.ShouldNotBeNull().ShouldContain(asker.ToString());
+        folded.Error.ShouldContain(other.ToString());
+        folded.Error.ShouldContain("TIA1");
+        F("TIA2").State.ShouldNotBe(FlightState.Landed);
+        F("TIA1").FoldedIn.ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task FoldRetiresTheAskingFlightLandedAndMarkedFoldedWithNoLegsAndItsPlaneGoneButItsBranchKept()
     {
