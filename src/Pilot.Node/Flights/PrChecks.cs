@@ -468,7 +468,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             // which check, changes requested, ready.
             if (merge is not null && legs is not null)
             {
-                legs.ShowMergeState(card, merge, head);
+                // Read again after the awaits above, as below: the card's choices as they are now, not as they were.
+                if (state.Cards(openOnly: true).FirstOrDefault(c => c.Id == card.Id) is { } current)
+                {
+                    legs.ShowMergeState(current, merge, head);
+                }
             }
             else if (showsArmed)
             {
