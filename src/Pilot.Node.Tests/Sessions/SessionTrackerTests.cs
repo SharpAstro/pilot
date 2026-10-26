@@ -204,4 +204,33 @@ public sealed class SessionTrackerTests : IDisposable
         (worker.Role, worker.Flight, worker.Leg, worker.Budget).ShouldBe((SessionRole.Worker, "PIL5", "node", null as long?));
         _state.Sessions().Single(s => s.Id == "a1b2c3d4").Role.ShouldBe(SessionRole.Watchtower);
     }
+
+    [Fact]
+    public async Task ARenamedSessionTheNodeStartedKeepsItsRoleFlightAndLegAndItsPrefix()
+    {
+        _agents.Json = AgentRows.List(
+            AgentRows.Background(AgentRows.SessionB, "du1-pil283-brief", "working", pid: 4343, status: "busy"),
+            AgentRows.Background(AgentRows.SessionA, "du1-watchtower", "running", pid: 4242, status: "idle"));
+        await PollAsync();
+
+        _agents.Json = AgentRows.List(
+            AgentRows.Background(AgentRows.SessionB, "pil269-stale-worktree-duplicate", "working", pid: 4343, status: "busy"),
+            AgentRows.Background(AgentRows.SessionA, "pil269-stale-worktree-duplicate-2", "running", pid: 4242, status: "idle"));
+        await PollAsync();
+
+        var worker = _state.Sessions().Single(s => s.Id == "b2c3d4e5");
+        (worker.Role, worker.Flight, worker.Leg, worker.Name).ShouldBe((SessionRole.Worker, "PIL283", "brief", "du1-pil269-stale-worktree-duplicate"));
+        var tower = _state.Sessions().Single(s => s.Id == "a1b2c3d4");
+        (tower.Role, tower.Name).ShouldBe((SessionRole.Watchtower, "du1-pil269-stale-worktree-duplicate-2"));
+    }
+
+    [Fact]
+    public async Task ARenamedSessionTheNodeNeverStartedStaysAdHoc()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "someones-job", "working", pid: 4343, status: "busy"));
+        await PollAsync();
+
+        var row = _state.Sessions().Single();
+        (row.Role, row.Name).ShouldBe((SessionRole.AdHoc, "someones-job"));
+    }
 }

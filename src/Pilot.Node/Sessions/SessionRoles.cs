@@ -67,6 +67,13 @@ public static partial class SessionRoles
     [GeneratedRegex(@"^[a-z]{2}[0-9]+-review-[a-z0-9-]+-[0-9]+$", RegexOptions.CultureInvariant)]
     private static partial Regex PrReviewerName();
 
+    [GeneratedRegex(@"^([a-z]{2}[0-9]+)-", RegexOptions.CultureInvariant)]
+    private static partial Regex MachinePrefix();
+
+    /// <summary>The machine code a session name starts with (<c>du1</c> of <c>du1-watchtower</c>), or null for a name with none.</summary>
+    internal static string? MachinePrefixOf(string? name) =>
+        name is { Length: > 0 } && MachinePrefix().Match(name) is { Success: true } m ? m.Groups[1].Value : null;
+
     /// <summary>A flight code as a name writes it in lower case, back in its own: TIA1611a of tia1611a.</summary>
     internal static string FlightCode(string lower)
     {
