@@ -212,6 +212,12 @@ public sealed class PrReviews(
     /// </summary>
     private async Task SetLabelAsync(PrReviewRow review, CancellationToken cancellationToken)
     {
+        // A flight's PR keeps the flight's label (passed, conflicts, queued): PrMarks writes it only when its own changes, so
+        // one set here would stand over it unrepaired.
+        if (FlightOwns(review))
+        {
+            return;
+        }
         var subject = Verbs.PrTarget(review.Repo, review.Number);
         var label = review.Verdict == "changes" ? PilotMarks.Changes : PilotMarks.Passed;
         try
@@ -224,6 +230,11 @@ public sealed class PrReviews(
                 $"{ex.Message}. The review itself stands.", link: review.Url);
         }
     }
+
+    /// <summary>Whether the reviewed PR is a flight's: its PR, on the same repo.</summary>
+    private bool FlightOwns(PrReviewRow review) =>
+        state.Flights().Any(f => f.PullRequest == review.Number && f.PullRequestUrl is { } url
+            && url.Contains($"/{review.Repo}/pull/{review.Number}", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>The status a verdict leaves: approve and comment block nothing, changes fail; the description says which, at the head it read.</summary>
     internal static (string State, string Description) StatusOf(PrReviewRow review)
