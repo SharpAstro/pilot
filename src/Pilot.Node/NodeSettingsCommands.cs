@@ -70,10 +70,11 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         }
         // A role's model and effort are read when a session of it starts: in force for the next one, no restart.
         if (NodeSettings.IsRoleKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey
-            or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey)
+            or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey)
         {
             roles.Apply(updated);
             return state.Complete(command, null, way: key == NodeSettings.MergeMethodKey ? $"{key} saved as {value}; the next merge uses it"
+                : key is NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey ? $"{key} saved as {value}, and in force now"
                 : key is NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey ? $"{key} saved as {value}, and in force now"
                 : key is NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey ? $"{key} saved as {value}; the next start the node makes by itself weighs it"
                 : $"{key} saved as {value}; the next session of that kind starts with it");
@@ -140,7 +141,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             // A live setting runs with what the file says now; any other with what it said at the start.
             Source = pinned ? SettingSources.CommandLine : (Live(key) ? file : started) is not null ? SettingSources.File : SettingSources.Default,
             Choices = choices,
-            Many = key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey,
+            Many = key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey,
             Pending = !pinned && !Live(key) && (file ?? Default(key)) != running,
         };
     }
@@ -165,6 +166,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.StartLimitKey => roles.StartLimit.ToString(CultureInfo.InvariantCulture),
         NodeSettings.PriorityStartLimitKey => (NodeSettings.Read(options.SettingsFile).PriorityStartLimit ?? 98).ToString(CultureInfo.InvariantCulture),
         NodeSettings.PriorityReposKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).PriorityRepos ?? []),
+        NodeSettings.RepoTrackersKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).RepoTrackers ?? []),
+        NodeSettings.NoAutoMergeReposKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).NoAutoMergeRepos ?? []),
         // A deep review runs on the reviewer's model and a step above its effort until these are set, so say that, not the bare role's.
         _ when RoleOf(key) is (RoleModels.ReviewerDeep, var effort) => (effort ? roles.ReviewerEffort(ReviewDepth.Deep) : roles.ReviewerModel(ReviewDepth.Deep)) ?? RoleModels.NoneValue,
         _ when RoleOf(key) is ({ } role, var effort) => (effort ? roles.Effort(role) : roles.Model(role)) ?? RoleModels.NoneValue,
@@ -180,11 +183,11 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     /// <summary>Whether a setting is in force as soon as it is saved, with no restart: a role's model or effort, the merge
     /// method, the start limits, the priority repos, the job limits, maintenance and whether fleet flights are accepted.</summary>
     private static bool Live(string key) => NodeSettings.IsRoleKey(key)
-        || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey
+        || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey
             or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ShortcutTokenKey;
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
-    private static string Join(string key, IReadOnlyList<string> values) => string.Join(key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey ? '\n' : ' ', values);
+    private static string Join(string key, IReadOnlyList<string> values) => string.Join(key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey ? '\n' : ' ', values);
 
     // What a key is when neither the command line nor the file says.
     private static string Default(string key) => key switch
@@ -206,6 +209,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.PriorityStartLimitKey => "98",
         NodeSettings.WeekLimitKey => "90",
         NodeSettings.PriorityReposKey => "",
+        NodeSettings.RepoTrackersKey => "",
+        NodeSettings.NoAutoMergeReposKey => "",
         _ when RoleOf(key) is (RoleModels.ReviewerDeep, var effort) => effort ? "high" : RoleModels.DefaultModel(RoleModels.Reviewer),
         _ when RoleOf(key) is ({ } role, var effort) => effort ? RoleModels.NoneValue : RoleModels.DefaultModel(role),
         _ => "",
@@ -226,6 +231,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.MaxJobsKey => ("Jobs at once", "How many background tasks run at once; the rest wait their turn", ["1", "2", "3", "4"]),
         NodeSettings.JobMemoryKey => ("Job memory", "The free memory, in GB, a job waits for before it starts; 0 to not wait", ["0", "2", "4", "8"]),
         NodeSettings.PriorityReposKey => ("Priority repos", "Repos whose flights have runway: they go on past the start limit, up to the priority limit", []),
+        NodeSettings.RepoTrackersKey => ("Repo trackers", "Per repo, the tracker a bare number means when a flight is made (bullclip-backend=shortcut); a repo left out means GitHub issues. #N is always a GitHub issue", []),
+        NodeSettings.NoAutoMergeReposKey => ("No auto-merge repos", "Repos whose PRs the node never merges by itself, autopilot on or not: an assistant's merge raises your card, and a passed flight rings you. Your own merge still works", []),
         NodeSettings.PriorityStartLimitKey => ("Priority start limit", "How far into the 5-hour window a priority repo's flight still goes on by itself, in percent", ["95", "98", "100"]),
         NodeSettings.StartLimitKey => ("Start limit", "A session the node starts by itself (a leg, a planner, a reviewer, the watchtower, a compaction) goes ahead until the account's 5-hour window is this spent, in percent; then it waits for the reset", ["80", "90", "95", "100"]),
         NodeSettings.WeekLimitKey => ("Week limit", "How far into the 7-day window the node rings, once per window, as it starts sessions; it rings and does not wait, in percent", ["80", "90", "95", "100"]),

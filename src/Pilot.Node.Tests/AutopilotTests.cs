@@ -277,6 +277,33 @@ public sealed class AutopilotTests
     }
 
     [Fact]
+    public async Task ANoAutoMergeReposFlightIsAskedNotMergedByAnAssistantEvenWithAutopilotOnButThePersonsOwnMergeWorks()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Ready(node);
+        (await Send(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", args: ["autopilot", "on"]))).Error.ShouldBeNull();
+        var saved = await Send(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", args: ["no-auto-merge-repos", "tianwen"]));
+        saved.Error.ShouldBeNull();
+
+        var asked = await Send(node, Command(Verbs.Merge, "flight/TIA1", Assistant, agent: true, Why, Head));
+
+        asked.Error.ShouldNotBeNull().ShouldContain("waits on their card");
+        node.GitHub.Merged.ShouldBeEmpty();
+        var card = Ask(node);
+        (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "flight/TIA1"));
+        node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.AutopilotRan);
+
+        // The person's own merge, by Allow on the card or by hand, is not held.
+        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Allow"))).Error.ShouldBeNull();
+        node.GitHub.Merged.Single().Number.ShouldBe(63);
+
+        // Another repo's flight still goes through on autopilot.
+        Ready(node, "TIA2", 64);
+        node.State.PutFlight(node.State.Flights().Single(f => f.Code == "TIA2") with { Repo = "orbit" });
+        (await Send(node, Command(Verbs.Merge, "flight/TIA2", Assistant, agent: true, Why, Head))).Error.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task AutopilotOnWithNoMessageSaysSoAndARefusedCommandLeavesNoHandledCard()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

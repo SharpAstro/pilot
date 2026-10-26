@@ -33,6 +33,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     public const string MergeGuardKey = "merge-guard";
     public const string GuardHooksKey = "guard-hooks";
     public const string BuildRspKey = "build-rsp";
+    public const string ShortcutKey = "shortcut";
 
     /// <summary>The response file that turns MSBuild node reuse off, as runaway-agent's <c>machine/</c> folder and install.sh name it.</summary>
     public const string BuildRsp = "Directory.Build.rsp";
@@ -65,6 +66,9 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
 
     /// <summary>Opens a window for a person (the trust prompt); false when it did not open. A test replaces it.</summary>
     public Func<string, string, bool> OpenWindow { get; init; } = OpenConsoleWindow;
+
+    /// <summary>The Shortcut token in force (the environment's, else the saved one); the node gives the live setting, a test replaces it.</summary>
+    public Func<string?> ShortcutToken { get; init; } = () => Flights.ShortcutTracker.TokenFrom(NodeSettings.Read(options.SettingsFile).ShortcutToken);
 
     /// <summary>The checklist as it stands now.</summary>
     public IReadOnlyList<SetupCheck> Checks()
@@ -121,6 +125,16 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
 
         var (gh, ghLine) = GhSignedIn();
         checks.Add(new SetupCheck { Key = GhKey, Title = "GitHub CLI signed in", Ok = gh, Line = gh ? ghLine : $"{ghLine}: run gh auth login (updates, PRs and issues go through it)" });
+
+        var shortcut = ShortcutToken() is { Length: > 0 };
+        checks.Add(new SetupCheck
+        {
+            Key = ShortcutKey,
+            Title = "Shortcut token",
+            Ok = shortcut,
+            Line = shortcut ? "set: a flight on a Shortcut story (sc-N) takes its title from the card" : "no token: a Shortcut flight needs its title given; set shortcut-token (pilot settings) or SHORTCUT_API_TOKEN to read it from the card",
+            Optional = true,
+        });
 
         var usage = Path.Combine(profileRoot, "rate-limits.json");
         var hasUsage = File.Exists(usage);
