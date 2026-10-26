@@ -88,6 +88,7 @@ public sealed class CliTests : IAsyncLifetime
         var plane = Path.Combine(flight.Worktree, "src");
         Directory.CreateDirectory(plane);
         File.WriteAllText(Path.Combine(plane, "shader.glsl"), "void main() {}\n");
+        File.WriteAllBytes(Path.Combine(plane, "capture.png"), [0x89, 0x50, 0x4E, 0x47]);
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "The planet shader");
         await Ok(plane, "check", "1");
@@ -330,6 +331,7 @@ public sealed class CliTests : IAsyncLifetime
         await Ok(_root, "leg", "plan", "TIA1611", "gpu", "--goal", "Draw the planets", "--done-when", "The capture shows them", "--item", "Write the shader", "--item", "Capture it");
         await Ok(_root, "leg", "start", "TIA1611", "gpu");
         await Ok(flight.Worktree, "check", "1");
+        File.WriteAllBytes(Path.Combine(flight.Worktree, "capture.png"), [0x89, 0x50, 0x4E, 0x47]);
         await Ok(flight.Worktree, "artifact", "capture.png", "The planets");
 
         var (_, markdown, _) = await Pilot(_root, "status", "--output-format", "markdown");
