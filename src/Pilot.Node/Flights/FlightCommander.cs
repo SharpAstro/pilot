@@ -132,7 +132,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             throw new FlightException($"{item.Display} needs a title: this node cannot read a {item.Tracker} item's, so give one as in create-flight repo/<path> {item.Display} <title>");
         }
 
-        var plane = await planes.MakeAsync(repoPath, code, cancellationToken);
+        var plane = await planes.MakeAsync(repoPath, code, cancellationToken, item);
         state.PutFlight(new FlightRow
         {
             Code = code,

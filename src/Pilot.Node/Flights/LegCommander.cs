@@ -1180,7 +1180,7 @@ public sealed partial class LegCommander(
         if (pr is null || !string.Equals(pr.State, "OPEN", StringComparison.OrdinalIgnoreCase))
         {
             var title = string.Join(' ', command.Args ?? []).Trim();
-            pr = await github.CreateAsync(flight.RepoPath, flight.Branch, BaseBranch(flight), $"{flight.Code}: {(title.Length > 0 ? title : flight.Title ?? flight.Item.Noun)}", PrBody(flight, legs), cancellationToken);
+            pr = await github.CreateAsync(flight.RepoPath, flight.Branch, BaseBranch(flight), PrTitle(flight, title), PrBody(flight, legs), cancellationToken);
         }
         state.PutFlight(flight with { PullRequest = pr.Number, PullRequestUrl = pr.Url });
 
@@ -1588,6 +1588,13 @@ public sealed partial class LegCommander(
     private static string BaseBranch(FlightRow flight) =>
         flight.Base.StartsWith("origin/", StringComparison.Ordinal) ? flight.Base["origin/".Length..] : flight.Base;
 
+    /// <summary>The PR's title: the code and the given or flight's title; a Shortcut story's id is in it too, as the integration reads it there.</summary>
+    internal static string PrTitle(FlightRow flight, string given)
+    {
+        var title = $"{flight.Code}: {(given.Length > 0 ? given : flight.Title ?? flight.Item.Noun)}";
+        return flight.Tracker == TrackerKind.Shortcut && !title.Contains(flight.Item.Display, StringComparison.OrdinalIgnoreCase) ? $"{title} [{flight.Item.Display}]" : title;
+    }
+
     internal static string PrBody(FlightRow flight, IReadOnlyList<LegRow> legs)
     {
         var body = new System.Text.StringBuilder();
@@ -1601,10 +1608,14 @@ public sealed partial class LegCommander(
             }
         }
         body.AppendLine();
-        body.AppendLine(flight.Tracker == TrackerKind.GitHub ? $"Closes {flight.Item.Display}." : $"Shortcut story [{flight.Item.Display}].");
+        // Shortcut links a PR to its story by the sc-<id> in it and closes the story by its own workflow, so no Closes here.
+        var shortcut = flight.Tracker == TrackerKind.Shortcut;
+        body.AppendLine(shortcut ? $"Shortcut story {flight.Item.Display}." : $"Closes {flight.Item.Display}.");
         foreach (var folded in flight.FoldedIn)
         {
-            body.AppendLine($"Closes #{folded.Number} (folded in from {folded.From}).");
+            body.AppendLine(shortcut
+                ? $"Shortcut story sc-{folded.Number} (folded in from {folded.From})."
+                : $"Closes #{folded.Number} (folded in from {folded.From}).");
         }
         return body.ToString();
     }
