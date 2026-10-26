@@ -313,6 +313,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     // wraps full width under the row instead, so the whole text is shown, never cut.
     private const int CheckLineFits = 100;
 
+    // Under the title's column: the row's padding (8), the stripe (StripeWidth, 4) and the gap (14) in.
+    private const float CheckLineIndent = 26f;
+
     private Layout.Node CheckRow(SetupCheck check, int index)
     {
         var tooLong = check.Line.Length > CheckLineFits;
@@ -330,8 +333,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .WithGap(14f).Pad(8f, 6f).RowH(RowHeight);
         if (tooLong)
         {
-            // Under the title's column: the stripe, the row's padding and the gap in.
-            var whole = Layout.Builder.VStack(row, WrappedProse.Paragraphs(check.Line, 12f, Body, 40).Pad(8f + StripeWidth + 14f, 2f))
+            var whole = Layout.Builder.VStack(row, WrappedProse.Paragraphs(check.Line, 12f, Body, 40).Pad(CheckLineIndent, 2f))
                 .WStar().HAuto();
             return (index & 1) == 1 ? whole.Bg(RowAltBg) : whole;
         }
