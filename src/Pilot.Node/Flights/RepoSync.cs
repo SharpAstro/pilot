@@ -36,7 +36,11 @@ public sealed class RepoSync(IGit git, Planes planes, RepoWatch watch)
         }
     }
 
-    private async Task<RepoSyncOutcome> SyncOneAsync(string name, string path, CancellationToken cancellationToken)
+    /// <summary>
+    /// Fetches one clone and fast-forwards its main checkout's default branch, under the rules above. Also what a leg's start
+    /// runs on a sibling clone found behind its origin, so the person is told only about one the node could not bring up.
+    /// </summary>
+    internal async Task<RepoSyncOutcome> SyncOneAsync(string name, string path, CancellationToken cancellationToken)
     {
         RepoSyncOutcome Outcome(string status, string detail) => new() { Name = name, Status = status, Detail = detail };
         try

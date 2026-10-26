@@ -30,6 +30,12 @@ public sealed partial class LegCommander(
     /// <summary>Which sibling clones a plane's local build compiles against are behind their origin; a test passes its own.</summary>
     public SiblingWatch Siblings { get; init; } = new(git, time);
 
+    /// <summary>
+    /// What brings a sibling clone found behind its origin up to date: RepoSync's fetch and fast-forward of the default
+    /// branch, which leaves a dirty, diverged or off-branch clone alone. Null leaves every sibling as it is and only warns.
+    /// </summary>
+    public RepoSync? SiblingSync { get; set; }
+
     /// <summary>The CLI workers are told to run, found once.</summary>
     public string Cli { get; init; } = Briefs.PilotCli();
 
@@ -643,8 +649,11 @@ public sealed partial class LegCommander(
     }
 
     /// <summary>
-    /// A For-you card naming each sibling clone the plane's build compiles against that is behind its origin, with the pull
-    /// to run; the leg starts regardless. It is about the leg, so it closes when the leg is done or goes around.
+    /// Brings each sibling clone the plane's build compiles against up to its origin when it is behind, and a For-you card
+    /// names only those the node could not pull (dirty, diverged, on another branch), each with why and the pull to run; one
+    /// it pulled is a Handled line. The leg starts regardless. A card is about the leg, so it closes when the leg is done or
+    /// goes around. A clone that is merely behind is the node's to bring up, not the person's (2026-10-26: SdlVulkan.Renderer
+    /// and Codecs behind on DE1 rang at every leg start).
     /// </summary>
     private async Task WarnSiblingsBehindAsync(FlightRow flight, LegRow leg, CancellationToken cancellationToken)
     {
@@ -661,9 +670,34 @@ public sealed partial class LegCommander(
         {
             return;
         }
-        var lines = behind.Select(s => $"{s.Name} is {s.Behind} {(s.Behind == 1 ? "commit" : "commits")} behind its origin: git -C {s.Path} pull --ff-only");
-        state.RaiseCard(CardBin.ForYou, SiblingBehindKind, Verbs.LegTarget(flight.Code, leg.Name),
-            $"{flight.Code}/{leg.Name} compiles against {(behind.Count == 1 ? "a sibling clone" : $"{behind.Count} sibling clones")} behind origin",
+        var subject = Verbs.LegTarget(flight.Code, leg.Name);
+        var left = new List<(SiblingBehind Sibling, string? Why)>();
+        foreach (var sibling in behind)
+        {
+            if (SiblingSync is null)
+            {
+                left.Add((sibling, null));
+                continue;
+            }
+            var outcome = await SiblingSync.SyncOneAsync(sibling.Name, sibling.Path, cancellationToken);
+            Siblings.Forget(sibling.Path);
+            if (outcome.Status is RepoSyncStatus.Updated or RepoSyncStatus.Current)
+            {
+                state.RaiseCard(CardBin.Handled, SiblingPulledKind, subject, $"Pulled {sibling.Name} for {flight.Code}/{leg.Name}", outcome.Detail);
+            }
+            else
+            {
+                left.Add((sibling, outcome.Detail));
+            }
+        }
+        if (left.Count == 0)
+        {
+            return;
+        }
+        var lines = left.Select(l => $"{l.Sibling.Name} is {l.Sibling.Behind} {(l.Sibling.Behind == 1 ? "commit" : "commits")} behind its origin"
+            + (l.Why is { } why ? $" and was not pulled ({why})" : "") + $": git -C {l.Sibling.Path} pull --ff-only");
+        state.RaiseCard(CardBin.ForYou, SiblingBehindKind, subject,
+            $"{flight.Code}/{leg.Name} compiles against {(left.Count == 1 ? "a sibling clone" : $"{left.Count} sibling clones")} behind origin",
             string.Join('\n', lines));
     }
 
@@ -1221,6 +1255,9 @@ public sealed partial class LegCommander(
 
     /// <summary>The card a leg's start raises when a sibling clone its build compiles against is behind its origin.</summary>
     public const string SiblingBehindKind = "sibling-behind";
+
+    /// <summary>The Handled line a leg's start leaves for a sibling clone it pulled up to its origin.</summary>
+    public const string SiblingPulledKind = "sibling-pulled";
 
     private string ReviewerName(FlightRow flight) => $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{ReviewLeg}";
 
