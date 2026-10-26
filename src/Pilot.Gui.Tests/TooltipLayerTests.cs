@@ -81,7 +81,6 @@ public sealed class TooltipLayerTests
     public void AWordWhoseFirstHalfIsStillTooWideComesOutInPiecesThatEachFit()
     {
         // 100 units a character: four fill a line, so a 30-character word's first half (15) is itself far too wide.
-        static float Wide(string text) => text.Length * 100f;
         var word = new string('x', 30);
 
         var lines = TooltipLayer<RgbaImage>.Lines(word, Wide).ToList();
@@ -93,8 +92,6 @@ public sealed class TooltipLayerTests
     [Fact]
     public void AWordOfEmojiNeverYieldsALoneSurrogate()
     {
-        static float Wide(string text) => text.Length * 100f;
-
         foreach (var prefix in new[] { "", "a", "ab" })
         {
             for (var count = 1; count <= 25; count++)
@@ -107,6 +104,9 @@ public sealed class TooltipLayerTests
             }
         }
     }
+
+    // 100 units a character: four fill a line. A method, not a local function, as the assertions take it in an expression.
+    private static float Wide(string text) => text.Length * 100f;
 
     // No high surrogate without the low one after it, and no low one without the high one before it.
     private static bool HoldsWholePairs(string text)
