@@ -560,7 +560,7 @@ public sealed partial class LegCommander(
     {
         var validator = ValidatorName(flight, leg);
         await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
-        var job = await workers.StartAsync(new WorkerStart(validator, flight.RepoPath, PlaneOf(flight), Briefs.Validate(flight, leg, legs, Briefs.Run(Cli, Socket)), Models.Model(RoleModels.Worker), "low"), cancellationToken);
+        var job = await workers.StartAsync(new WorkerStart(validator, flight.RepoPath, PlaneOf(flight), Briefs.Validate(flight, leg, legs, Briefs.Run(Cli, Socket), options.Machine), Models.Model(RoleModels.Worker), "low"), cancellationToken);
         state.PutLeg(leg with { Validation = LegValidation.Pending, Validator = validator, ValidatorJob = job, ValidationReport = null });
         state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), "validated afresh", NoGoKind);
         state.RaiseCard(CardBin.Handled, ValidatingKind, Verbs.LegTarget(flight.Code, leg.Name),
@@ -581,7 +581,7 @@ public sealed partial class LegCommander(
             var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, cancellationToken);
             plane = new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : "");
         }
-        var job = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed), leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), cancellationToken);
+        var job = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed, machine: options.Machine), leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), cancellationToken);
         state.PutLeg(leg with { State = LegState.Flying, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), Report = resumed, Wait = null });
         state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} started", NoGoKind, ValidatingKind);
         // A ring that this step could not be taken by itself is moot once it is.
@@ -956,7 +956,7 @@ public sealed partial class LegCommander(
         // Counted apart when it answers the review, as that is the count the watchtower is capped by.
         var next = leg with { GoArounds = leg.GoArounds + 1, ReviewGoArounds = leg.ReviewGoArounds + (leg.State == LegState.Done ? 1 : 0) };
         var worker = WorkerName(flight, leg);
-        var brief = Briefs.For(flight, next, state.Legs(flight.Code), why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket);
+        var brief = Briefs.For(flight, next, state.Legs(flight.Code), why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket, machine: options.Machine);
         var started = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), cancellationToken);
         state.PutLeg(next with { State = LegState.Flying, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), FinishedAt = null, Report = $"go-around: {why}", Wait = null });
         // Every card about the leg was about its last worker: failed, stopped, idle, waiting.
@@ -1410,7 +1410,7 @@ public sealed partial class LegCommander(
             return;
         }
         await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
-        var brief = Briefs.Plan(flight, state.Legs(flight.Code), Briefs.Run(Cli, Socket));
+        var brief = Briefs.Plan(flight, state.Legs(flight.Code), Briefs.Run(Cli, Socket), options.Machine);
         _plannerJobs[flight.Code] = await workers.StartAsync(new WorkerStart(planner, flight.RepoPath, PlaneOf(flight), brief, Models.Model(RoleModels.Planner), Models.Effort(RoleModels.Planner)), cancellationToken);
         _plannersStarted[flight.Code] = time.GetUtcNow();
         state.RaiseCard(CardBin.Handled, "planner-started", Verbs.FlightTarget(flight.Code), $"Started {planner} to plan {flight.Code}'s legs");
@@ -1481,7 +1481,7 @@ public sealed partial class LegCommander(
         var numstat = await git.RunAsync(["diff", "--numstat", $"{flight.Base}...HEAD"], flight.Worktree, cancellationToken);
         var plan = ReviewPlan.Choose(state.Usage(), Models.IsPriority(flight.Repo), numstat.Ok ? ReviewPlan.ParseNumstat(numstat.Output) : null, time.GetUtcNow());
         var reviewer = ReviewerName(flight);
-        var brief = Briefs.Review(flight, legs, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Briefs.Run(Cli, Socket), plan);
+        var brief = Briefs.Review(flight, legs, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Briefs.Run(Cli, Socket), plan, options.Machine);
         // The head the reviewer reads, from the plane it reads: the pilot/review status goes on it, whatever the branch moves to.
         // GitHub can still report the head before a push for a moment, so it is only the fallback.
         var plane = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken);

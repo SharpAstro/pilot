@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Pilot.Contracts;
 
 namespace Pilot.Node;
 
@@ -116,7 +117,8 @@ public static partial class MergeGuard
     /// session's main shell on Windows, so it is read, with its own quoting). A line that is not JSON, or any other tool's
     /// call, passes.
     /// </summary>
-    public static string? Decide(string hookJson, GitQuery? git = null)
+    /// <param name="machine">The machine's prefix, when the caller knows it (a test); else it is resolved only if a <c>claude --bg</c> start needs it.</param>
+    public static string? Decide(string hookJson, GitQuery? git = null, string? machine = null)
     {
         try
         {
@@ -132,7 +134,8 @@ public static partial class MergeGuard
             {
                 return null;
             }
-            return Check(command, folder, git ?? RunGit, depth: 0, powershell: Text(root["tool_name"]) == PowerShell);
+            var prefix = new Lazy<string>(() => machine ?? Machine());
+            return Check(command, folder, git ?? RunGit, depth: 0, powershell: Text(root["tool_name"]) == PowerShell, prefix);
         }
         catch (JsonException)
         {
@@ -142,7 +145,28 @@ public static partial class MergeGuard
 
     private static string? Text(JsonNode? node) => node?.GetValueKind() == JsonValueKind.String ? node.GetValue<string>() : null;
 
-    private static string? Check(string command, string folder, GitQuery git, int depth, bool powershell)
+    /// <summary>
+    /// The machine's prefix as the node resolves it, without asking the node: the setting it saved in the default data folder,
+    /// else <c>PILOT_MACHINE</c>, else the machine name's. A node run with <c>--machine</c> or another data folder is not seen
+    /// from here, which the node's own setup avoids by saving the prefix.
+    /// </summary>
+    internal static string Machine()
+    {
+        try
+        {
+            if (NodeSettings.Read(NodeSettings.PathIn(NodeSocket.DefaultDataFolder)).Machine is { Length: > 0 } saved)
+            {
+                return saved;
+            }
+        }
+        catch (Exception)
+        {
+            // Fail-open: an unreadable file is no setting.
+        }
+        return MachinePrefixes.Normalise(Environment.GetEnvironmentVariable("PILOT_MACHINE")) ?? MachinePrefixes.FromName(Environment.MachineName);
+    }
+
+    private static string? Check(string command, string folder, GitQuery git, int depth, bool powershell, Lazy<string> machine)
     {
         // pushd / Push-Location's stack, and the folder and stack a ( ... ) or $( ... ) was entered with: a subshell's cd is gone when it ends.
         var dirs = new List<string>();
@@ -200,26 +224,67 @@ public static partial class MergeGuard
                     return why;
                 }
             }
+            else if (program == "claude")
+            {
+                if (ClaudeReason(args, machine) is { } why)
+                {
+                    return why;
+                }
+            }
             else if (depth < 3 && Shells.Contains(program) && ShellScript(args) is { } shellScript)
             {
-                if (Check(shellScript, folder, git, depth + 1, powershell: false) is { } why)
+                if (Check(shellScript, folder, git, depth + 1, powershell: false, machine) is { } why)
                 {
                     return why;
                 }
             }
             else if (depth < 3 && program is "pwsh" or "powershell" && NestedPowerShell(args) is { } script)
             {
-                if (Check(script, folder, git, depth + 1, powershell: true) is { } why)
+                if (Check(script, folder, git, depth + 1, powershell: true, machine) is { } why)
                 {
                     return why;
                 }
             }
             else if (depth < 3 && (powershell ? program is "iex" or "invoke-expression" : program == "eval") && args.Count > 0)
             {
-                if (Check(string.Join(' ', args), folder, git, depth + 1, powershell) is { } why)
+                if (Check(string.Join(' ', args), folder, git, depth + 1, powershell, machine) is { } why)
                 {
                     return why;
                 }
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// A background session a session starts itself (<c>claude --bg -n NAME</c>) is named with the machine's prefix, as the node's
+    /// own are (<c>de1-pil283-nudge</c>), so the fleet's sessions are told apart; a name without it is refused, naming the one to use.
+    /// A call with no <c>--bg</c> or no name is none of the guard's business.
+    /// </summary>
+    private static string? ClaudeReason(List<string> args, Lazy<string> machine)
+    {
+        if (!args.Contains("--bg") || SessionName(args) is not { Length: > 0 } name)
+        {
+            return null;
+        }
+        var prefix = machine.Value.ToLowerInvariant() + "-";
+        return name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : $"A background session's name starts with the machine's prefix, so the fleet's sessions can be told apart. Start it as `claude --bg -n {prefix}{name}` (<machine>-<flight or card>-<what>, e.g. {prefix}pil283-nudge).";
+    }
+
+    // -n NAME, --name NAME and --name=NAME.
+    private static string? SessionName(List<string> args)
+    {
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (args[i] is "-n" or "--name")
+            {
+                return i + 1 < args.Count ? args[i + 1] : null;
+            }
+            if (args[i].StartsWith("--name=", StringComparison.Ordinal))
+            {
+                return args[i]["--name=".Length..];
             }
         }
         return null;

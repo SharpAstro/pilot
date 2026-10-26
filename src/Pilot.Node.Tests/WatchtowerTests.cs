@@ -44,7 +44,7 @@ public sealed class WatchtowerTests : IDisposable
         }
     }
 
-    private string CurrentBrief() => Briefs.WatchtowerFingerprint("du1-watchtower", "pilot", _tower.Models.Model(RoleModels.Watchtower));
+    private string CurrentBrief() => Briefs.WatchtowerFingerprint("du1-watchtower", "pilot", _tower.Models.Model(RoleModels.Watchtower), _options.Machine);
 
     /// <summary>Nothing left to watch: the flight lands, its leg done.</summary>
     private void Quiet()
