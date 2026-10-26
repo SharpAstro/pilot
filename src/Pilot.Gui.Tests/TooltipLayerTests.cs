@@ -56,7 +56,6 @@ public sealed class TooltipLayerTests
         }
     }
 
-    // The box the tooltip is drawn in: the arranged node with its background, the widest one.
     // A line's width in design units by the test font, as the layer measures it from the window's.
     private static float Measure(string text)
     {
@@ -78,6 +77,51 @@ public sealed class TooltipLayerTests
         TooltipLayer<RgbaImage>.Lines("first paragraph\n\n\nsecond paragraph\n", Measure).ShouldBe(["first paragraph", "", "second paragraph"]);
     }
 
+    [Fact]
+    public void AWordWhoseFirstHalfIsStillTooWideComesOutInPiecesThatEachFit()
+    {
+        // 100 units a character: four fill a line, so a 30-character word's first half (15) is itself far too wide.
+        static float Wide(string text) => text.Length * 100f;
+        var word = new string('x', 30);
+
+        var lines = TooltipLayer<RgbaImage>.Lines(word, Wide).ToList();
+
+        lines.ShouldAllBe(l => Wide(l) <= TooltipLayer<RgbaImage>.MaxWidth);
+        string.Concat(lines).ShouldBe(word);
+    }
+
+    [Fact]
+    public void AWordOfEmojiNeverYieldsALoneSurrogate()
+    {
+        static float Wide(string text) => text.Length * 100f;
+
+        foreach (var prefix in new[] { "", "a", "ab" })
+        {
+            for (var count = 1; count <= 25; count++)
+            {
+                var word = prefix + string.Concat(Enumerable.Repeat("😀", count));
+                var lines = TooltipLayer<RgbaImage>.Lines(word, Wide).ToList();
+
+                string.Concat(lines).ShouldBe(word);
+                lines.ShouldAllBe(l => HoldsWholePairs(l), $"'{prefix}' + {count} emoji");
+            }
+        }
+    }
+
+    // No high surrogate without the low one after it, and no low one without the high one before it.
+    private static bool HoldsWholePairs(string text)
+    {
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (char.IsHighSurrogate(text[i]) ? i + 1 >= text.Length || !char.IsLowSurrogate(text[++i]) : char.IsLowSurrogate(text[i]))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // The box the tooltip is drawn in: the arranged node with its background, the widest one.
     private static Rect<float> Box(TooltipRequest request, Rect<float> window)
     {
         using var renderer = new RgbaImageRenderer(1, 1);
