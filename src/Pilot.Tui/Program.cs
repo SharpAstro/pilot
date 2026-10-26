@@ -258,7 +258,7 @@ fleet.OnMaintenance = (line, on) => _ = Task.Run(async () =>
 // The Settings page: this machine's node only, as its route is.
 if (remote is null)
 {
-    settings.Load = async ct => (await client.GetSettingsAsync(ct)) is { Success: true, Response: { } page }
+    settings.Load = async ct => (await client.GetSettingsWithChecksAsync(ct)) is { Success: true, Response: { } page }
         ? page
         : throw new InvalidOperationException("the node did not send its settings");
     settings.Send = (verb, args, ct) => SettingsCommands.SendAsync(client, verb, args, Who, ct);

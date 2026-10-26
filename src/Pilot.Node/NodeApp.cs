@@ -417,6 +417,9 @@ public static class NodeApp
         // This machine only: the LAN policy lets no route through it does not name.
         app.MapGet(NodeWire.SettingsRoute, async (NodeSettingsCommands settings, CancellationToken cancellationToken) =>
             Results.Json(ResponseEnvelope<SettingsPage>.Ok(await settings.PageAsync(cancellationToken)), PilotJsonContext.Default.ResponseEnvelopeSettingsPage));
+        // The setup checks run programs (netsh, gh): their own route, cached with the time they were measured.
+        app.MapGet(NodeWire.SettingsChecksRoute, async (NodeSettingsCommands settings, bool? refresh, CancellationToken cancellationToken) =>
+            Results.Json(ResponseEnvelope<SetupChecks>.Ok(await settings.SetupChecksAsync(refresh ?? false, cancellationToken)), PilotJsonContext.Default.ResponseEnvelopeSetupChecks));
         app.MapGet(NodeWire.ReposRoute, (RepoCatalog repos) =>
             Results.Json(ResponseEnvelope<RepoInfo[]>.Ok(repos.Repos()), PilotJsonContext.Default.ResponseEnvelopeRepoInfoArray));
         app.MapGet(NodeWire.RepoStatusRoute, async (RepoWatch watch, bool? refresh, CancellationToken cancellationToken) =>

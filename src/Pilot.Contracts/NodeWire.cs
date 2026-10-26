@@ -90,8 +90,14 @@ public static class NodeWire
     /// </summary>
     public const string GrantsRoute = "/api/v1/grants";
 
-    /// <summary><c>GET</c>: the node's <see cref="SettingsPage"/>, its settings and the setup checklist. This machine only.</summary>
+    /// <summary><c>GET</c>: the node's <see cref="SettingsPage"/>, its settings as <c>settings.json</c> says them; no setup check runs. This machine only.</summary>
     public const string SettingsRoute = "/api/v1/settings";
+
+    /// <summary>
+    /// <c>GET</c>: the setup checklist, <see cref="SetupChecks"/>, the node's cache of it with the time it was measured;
+    /// <c>?refresh=true</c> runs the checks again. This machine only.
+    /// </summary>
+    public const string SettingsChecksRoute = "/api/v1/settings/checks";
 
     /// <summary>The service name a node announces on the LAN (LAN.Lib), so a client finds nodes and nothing else.</summary>
     public const string LanService = "pilot-node";

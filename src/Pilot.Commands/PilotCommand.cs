@@ -786,7 +786,8 @@ public static class PilotCommand
         // The Settings page's, for a terminal and an agent: this machine's node only.
         var settings = Action(new Command("settings", "This node's setup checklist and settings, and where each setting's value comes from"), async (_, client, ct) =>
         {
-            var page = await client.GetSettingsAsync(ct);
+            // The settings and the checklist are two routes: the checks run programs, so the page does not wait on them.
+            var page = await client.GetSettingsWithChecksAsync(ct);
             if (page is not { Success: true, Response: { } shown })
             {
                 await output.WriteLineAsync($"refused: {page.Error}");
