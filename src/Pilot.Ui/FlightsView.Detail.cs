@@ -116,19 +116,20 @@ internal sealed partial class FlightsView<TSurface>
     {
         var line = detail.Line;
         var flight = line.Row;
-        var color = flight.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
+        var color = StateColor(line);
         var head = new List<Layout.Node>
         {
             Pill("← Back", "flight:back", GoBack),
             Layout.Builder.Text(line.Code, 16f, Bright).WAuto(),
             Whole(Layout.Builder.Text(line.Title, 14f, Body).WStar(), line.Title, TitleFits),
+            // The stale mark is a line of its own below: here it overlapped the title and cut the buttons at a narrow width.
             Layout.Builder.Text(line.StateDetail is null ? line.State : $"{line.State} ({line.StateDetail})", 13f, color, TextAlign.Far).WAuto(),
         };
         if (CanCommand)
         {
             foreach (var action in FlightAction.For(line))
             {
-                head.Add(Pill(action.Label, $"flight:{line.Code}:{action.Verb}", () => Choose(action, line.Code)));
+                head.Add(ActionButton(line, action, $"flight:{line.Code}:{action.Verb}"));
             }
         }
 
@@ -174,6 +175,11 @@ internal sealed partial class FlightsView<TSurface>
         ];
         // A why asked for sits under the buttons it was asked by.
         page.AddRange(WhyRow(line));
+        if (line.StaleMark is { } stale)
+        {
+            // Wrapped, never cut: it says why the buttons above are dead.
+            page.Add(Prose($"⚠ {stale}: this is the last row the node told, and its commands wait until it answers", 12f, Held));
+        }
         if (ReadyToMerge(line) is { } ready)
         {
             page.Add(ready);
@@ -188,6 +194,18 @@ internal sealed partial class FlightsView<TSurface>
             .Pad(Gutter, 8f)
             .Stretch();
     }
+
+    /// <summary>
+    /// <paramref name="action"/>'s button, or for a stale flight (its node unreachable) the same words as a dead one: a verb goes
+    /// to the node, which cannot be asked, and a live button there read as a command that would be lost (pilot #325).
+    /// </summary>
+    private Layout.Node ActionButton(FlightLine line, FlightAction action, string id) =>
+        line.Stale is null
+            ? Pill(action.Label, id, () => Choose(action, line.Code))
+            : CardsView<TSurface>.Dead(action.Label).WithTooltip(StaleWhy(line));
+
+    /// <summary>Why a stale flight's commands are off, for a dead button's or a disabled entry's hover text.</summary>
+    internal static string StaleWhy(FlightLine line) => $"{line.Stale} is unreachable: its commands wait until it answers";
 
     /// <summary>
     /// A flight whose PR waits on the person, said at the top of its page and not only in the panel: the card that offers
@@ -213,7 +231,10 @@ internal sealed partial class FlightsView<TSurface>
         {
             // While the card's Merge is with the node (pressed here or on the panel) it reads "…" and takes no second press:
             // a second Merge went out, and its end cleared the first's working state while that was still pending.
-            cells.Add(CardWorking?.Invoke(card.Id) is not null
+            // A stale flight's (its node unreachable) is dead: the choice goes to the node, which cannot be asked.
+            cells.Add(line.Stale is not null
+                ? CardsView<TSurface>.Dead(choice.Label).WithTooltip(StaleWhy(line))
+                : CardWorking?.Invoke(card.Id) is not null
                 ? CardsView<TSurface>.Dead($"{choice.Label} …")
                 : CardsView<TSurface>.ChoiceControl(choice, card.Detail, $"flight:{line.Code}:merge-card", () => answer(card, number)));
         }
@@ -245,7 +266,10 @@ internal sealed partial class FlightsView<TSurface>
                 {
                     // Named for whose it is: beside two sessions, two "Its transcript" said nothing of which was which.
                     var row = session;
-                    yield return Pill($"{who}'s transcript", $"flight:{line.Code}:session:{row.Id}", () => open(row, line.Node));
+                    // The transcript is read from the node: dead while it cannot be reached.
+                    yield return line.Stale is null
+                        ? Pill($"{who}'s transcript", $"flight:{line.Code}:session:{row.Id}", () => open(row, line.Node))
+                        : CardsView<TSurface>.Dead($"{who}'s transcript").WithTooltip(StaleWhy(line));
                 }
             }
         }
@@ -254,8 +278,10 @@ internal sealed partial class FlightsView<TSurface>
             yield return Layout.Builder.Text("not planned yet: no planner is running", 12f, Held).WAuto();
             if (CanCommand && OnAction is { } act)
             {
-                yield return Pill("Plan it", $"flight:{line.Code}:plan", () =>
-                    act(new FlightAction($"plan {line.Code}", Verbs.PlanFlight, Verbs.FlightTarget(line.Code), []) { Node = line.Node }));
+                yield return line.Stale is null
+                    ? Pill("Plan it", $"flight:{line.Code}:plan", () =>
+                        act(new FlightAction($"plan {line.Code}", Verbs.PlanFlight, Verbs.FlightTarget(line.Code), []) { Node = line.Node }))
+                    : CardsView<TSurface>.Dead("Plan it").WithTooltip(StaleWhy(line));
             }
         }
         else if (line.Row.State == FlightState.Flying)

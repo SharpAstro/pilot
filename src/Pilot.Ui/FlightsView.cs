@@ -45,10 +45,23 @@ internal sealed record FlightLine
     /// <summary>The node it flies on, when the page merges several; null on a page of one node, this window's.</summary>
     public NodeMark? Node { get; init; }
 
+    /// <summary>
+    /// The name of the node this flight's row comes from while the window cannot reach that node (its last known row, which may
+    /// be long out of date and cannot be commanded); null while the node answers. Set by <see cref="FleetPages.Merge"/> from the
+    /// feed's own reachability, the state the Fleet page and the panel read (pilot #325).
+    /// </summary>
+    public string? Stale { get; init; }
+
+    /// <summary>What says the row is a stale copy, <c>stale (DE1 unreachable)</c>, in words so colour never carries it alone; null while not stale.</summary>
+    public string? StaleMark => Stale is { } node ? $"stale ({node} unreachable)" : null;
+
+    /// <summary>The state's detail as every page shows it: the stale mark first, then what holds the flight or when it landed.</summary>
+    public string? ShownDetail => StaleMark is { } mark ? (StateDetail is null ? mark : $"{mark} · {StateDetail}") : StateDetail;
+
     /// <summary>The line as a dump writes it.</summary>
     public string ToDumpLine()
     {
-        var line = string.Join(" | ", Code, Title, Where, StateDetail is null ? State : $"{State} ({StateDetail})", Legs, Branch, Sessions);
+        var line = string.Join(" | ", Code, Title, Where, ShownDetail is null ? State : $"{State} ({ShownDetail})", Legs, Branch, Sessions);
         return Node is { } node ? $"{node.Name} | {line}" : line;
     }
 
@@ -375,10 +388,11 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             foreach (var action in FlightAction.For(line))
             {
-                items.Add(new DropdownItem<string>(action.WhyPrompt is null && action.ChatMessage is null ? action.Label : action.Label + "…", action.Verb)
-                {
-                    OnChoose = () => Choose(action, flight.Code),
-                });
+                var label = action.WhyPrompt is null && action.ChatMessage is null ? action.Label : action.Label + "…";
+                // Shown and dead, with the reason, while its node is unreachable: the verb goes to the node.
+                items.Add(line.Stale is not null
+                    ? DropdownItem<string>.Disabled(label, action.Verb, StaleWhy(line))
+                    : new DropdownItem<string>(label, action.Verb) { OnChoose = () => Choose(action, flight.Code) });
             }
         }
         items.Add(new DropdownItem<string>("Open flight", "flight") { OnChoose = () => OpenDetail(flight.Code) });
@@ -522,7 +536,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     // only while the flight still offers that action.
     private IEnumerable<Layout.Node> WhyRow(FlightLine line)
     {
-        if (_asking is not { } asking || asking.Code != line.Code
+        if (_asking is not { } asking || asking.Code != line.Code || line.Stale is not null
             || !FlightAction.For(line).Any(a => a.Verb == asking.Action.Verb && a.Target == asking.Action.Target))
         {
             yield break;
@@ -685,7 +699,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             foreach (var action in FlightAction.For(line))
             {
-                buttons.Add(Pill(action.Label, $"flight:{line.Code}:{action.Verb}", () => Choose(action, line.Code)));
+                buttons.Add(ActionButton(line, action, $"flight:{line.Code}:{action.Verb}"));
             }
         }
 
@@ -831,10 +845,15 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     private static Layout.Node Whole(Layout.Node node, string text, int fits) => text.Length > fits ? node.WithTooltip(text) : node;
 
+    /// <summary>The colour of a flight's state: dim for a stale row, which no longer says what the flight is doing.</summary>
+    private RGBAColor32 StateColor(FlightLine line) =>
+        line.Stale is not null ? Dim : line.Row.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
+
     private Layout.Node Row(FlightLine line, int index, bool marked, IReadOnlyList<ListColumn> columns)
     {
-        var landed = line.Row.State == FlightState.Landed;
-        var color = line.Row.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
+        // A stale row is drawn as a landed one is, dim: its state is the last the node told, not what it is now.
+        var landed = line.Row.State == FlightState.Landed || line.Stale is not null;
+        var color = StateColor(line);
         var text = landed ? Dim : Bright;
         var cells = new List<Layout.Node>
         {
@@ -843,7 +862,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             ListTable.Top(Layout.Builder.Text(line.Where, 13f, Dim)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.State, 14f, color).RowH(22f),
-                Whole(Layout.Builder.Text(line.StateDetail ?? "", 11f, line.Row.State == FlightState.Held ? Body : Dim).RowH(18f), line.StateDetail ?? "", StateDetailFits)),
+                Whole(Layout.Builder.Text(line.ShownDetail ?? "", 11f, line.Row.State == FlightState.Held && line.Stale is null ? Body : Dim).RowH(18f), line.ShownDetail ?? "", StateDetailFits)),
             ListTable.Top(Whole(Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body), line.Legs, LegsFits)),
             ListTable.Top(Layout.Builder.Text(line.Branch, 12f, Dim)),
             ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body)),
