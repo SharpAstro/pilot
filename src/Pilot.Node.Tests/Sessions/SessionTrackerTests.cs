@@ -225,6 +225,40 @@ public sealed class SessionTrackerTests : IDisposable
     }
 
     [Fact]
+    public async Task ARenamedSessionIsResumedUnderItsOwnNameAndKeepsItsRoleFlightAndLegAfterwards()
+    {
+        _agents.Json = AgentRows.List(
+            AgentRows.Background(AgentRows.SessionB, "du1-pil283-brief", "working", pid: 4343, status: "busy"),
+            AgentRows.Background(AgentRows.SessionA, "du1-watchtower", "running", pid: 4242, status: "idle"));
+        await PollAsync();
+        _agents.Json = AgentRows.List(
+            AgentRows.Background(AgentRows.SessionB, "pil269-stale", "working", pid: 4343, status: "busy"),
+            AgentRows.Background(AgentRows.SessionA, "pil269-stale-2", "running", pid: 4242, status: "idle"));
+        await PollAsync();
+
+        // A say to an idle one resumes it: under the name Claude Code lists it by, not the one its row shows.
+        var tower = _state.Sessions().Single(s => s.Id == "a1b2c3d4");
+        tower.Name.ShouldBe("du1-pil269-stale-2");
+        _tracker.ListedName(tower).ShouldBe("pil269-stale-2");
+        const string resumedId = "a1b2c3d4-0000-4000-8000-0000000000ff";
+        using (_tracker.BeginResume(tower))
+        {
+            _tracker.CompleteResume(tower.Id, resumedId);
+        }
+        _agents.Json = AgentRows.List(
+            AgentRows.Background(AgentRows.SessionB, "pil269-stale", "working", pid: 4343, status: "busy"),
+            AgentRows.Background(resumedId, _tracker.ListedName(tower)!, "working", pid: 4244, status: "busy"));
+        await PollAsync();
+
+        var rows = _state.Sessions();
+        rows.Count.ShouldBe(2);
+        var after = rows.Single(s => s.Id == "a1b2c3d4");
+        (after.Role, after.Name).ShouldBe((SessionRole.Watchtower, "du1-pil269-stale-2"));
+        var worker = rows.Single(s => s.Id == "b2c3d4e5");
+        (worker.Role, worker.Flight, worker.Leg).ShouldBe((SessionRole.Worker, "PIL283", "brief"));
+    }
+
+    [Fact]
     public async Task ARenamedSessionTheNodeNeverStartedStaysAdHoc()
     {
         _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "someones-job", "working", pid: 4343, status: "busy"));

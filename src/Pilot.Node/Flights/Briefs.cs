@@ -639,7 +639,7 @@ public static class Briefs
             text.AppendLine("with what you know rather than decide it.");
             text.AppendLine();
         }
-        if (NamingRule(machine, "pil283") is { Length: > 0 } naming)
+        if (NamingRule(machine, "<flight or card>") is { Length: > 0 } naming)
         {
             text.Append(naming);
             text.AppendLine();

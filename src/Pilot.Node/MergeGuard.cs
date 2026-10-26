@@ -258,7 +258,7 @@ public static partial class MergeGuard
 
     /// <summary>
     /// A background session a session starts itself (<c>claude --bg -n NAME</c>) is named with the machine's prefix, as the node's
-    /// own are (<c>de1-pil283-nudge</c>), so the fleet's sessions are told apart; a name without it is refused, naming the one to use.
+    /// own are (<c>de1-&lt;flight or card&gt;-nudge</c>), so the fleet's sessions are told apart; a name without it is refused, naming the one to use.
     /// A call with no <c>--bg</c> or no name is none of the guard's business.
     /// </summary>
     private static string? ClaudeReason(List<string> args, Lazy<string> machine)
@@ -270,7 +270,7 @@ public static partial class MergeGuard
         var prefix = machine.Value.ToLowerInvariant() + "-";
         return name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
             ? null
-            : $"A background session's name starts with the machine's prefix, so the fleet's sessions can be told apart. Start it as `claude --bg -n {prefix}{name}` (<machine>-<flight or card>-<what>, e.g. {prefix}pil283-nudge).";
+            : $"A background session's name starts with the machine's prefix, so the fleet's sessions can be told apart. Start it as `claude --bg -n {prefix}{name}` (<machine>-<flight or card>-<what>, e.g. {prefix}<flight or card>-nudge).";
     }
 
     // -n NAME, --name NAME and --name=NAME.
