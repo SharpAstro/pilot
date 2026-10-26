@@ -102,6 +102,11 @@ public sealed class CheckRunnerTests
     [InlineData("powershell.exe -NoProfile -c \"echo \"\"hi\"\"\"", "echo \"hi\"")]
     [InlineData("dotnet test --filter 'A|B'", "dotnet test --filter 'A|B'")]
     [InlineData("pwsh -NoProfile -File check.ps1", "pwsh -NoProfile -File check.ps1")]
+    // Anything after the quoted body, or a second command: not one wrapper, so left as written.
+    [InlineData("pwsh -Command \"dotnet build\" && echo \"done\"", "pwsh -Command \"dotnet build\" && echo \"done\"")]
+    [InlineData("pwsh -c \"dotnet build\"; pwsh -c \"dotnet test\"", "pwsh -c \"dotnet build\"; pwsh -c \"dotnet test\"")]
+    // A switch with a bare-word value before the command.
+    [InlineData("pwsh -ExecutionPolicy Bypass -Command \"dotnet build; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\"", "dotnet build; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }")]
     public void APwshCommandWrappedAroundTheCheckIsUnwrapped(string check, string runs) => ShellScript.Unwrap(check).ShouldBe(runs);
 
     [Theory]
@@ -109,6 +114,7 @@ public sealed class CheckRunnerTests
     [InlineData("bash -c 'make test'", "bash")]
     [InlineData("cmd /c dotnet test", "cmd")]
     [InlineData("sh -c \"x\"", "sh")]
+    [InlineData("pwsh -ExecutionPolicy Bypass -Command \"dotnet test\"", "pwsh")]
     [InlineData("pwsh -NoProfile -File check.ps1", null)]
     [InlineData("dotnet test --configuration Release", null)]
     [InlineData("bash ./check.sh", null)]

@@ -24,6 +24,10 @@ public sealed partial class ShellScript : IDisposable
     /// <summary>The script file on Windows, deleted on <see cref="Dispose"/>; null elsewhere.</summary>
     public string? Script { get; }
 
+    /// <summary>
+    /// The shell to run <paramref name="command"/> in. On Windows the line goes through <see cref="Unwrap"/> first, so every
+    /// caller, the node's jobs (<c>JobRunner</c>) as much as a leg's check, gets a <c>pwsh -Command "…"</c> wrapper read once.
+    /// </summary>
     public static ShellScript For(string command, string cwd)
     {
         if (!OperatingSystem.IsWindows())
@@ -66,7 +70,13 @@ public sealed partial class ShellScript : IDisposable
     /// script runs in pwsh anyway. Written into the script whole, the outer pwsh read the double-quoted command first and
     /// expanded its <c>$LASTEXITCODE</c> to nothing, so the inner pwsh got <c>if ()</c> and every run of TIA1827's check
     /// failed, its worker unable to change it (SE1, 2026-10-25). A single-quoted command is taken as it is, with <c>''</c>
-    /// for a quote; a double-quoted one with <c>""</c> or <c>`"</c>. Anything else is left as it was.
+    /// for a quote; a double-quoted one with <c>""</c> or <c>`"</c>. The body is that one quoted string and nothing after
+    /// it: <c>pwsh -c "a" &amp;&amp; echo "b"</c> or two chained <c>pwsh -c</c> lines are left as written, as is anything else.
+    /// A switch may take a bare-word value before the command (<c>-ExecutionPolicy Bypass</c>).
+    /// <para>
+    /// Unwrap runs in <see cref="For"/>, so it also rewrites the jobs <c>JobRunner</c> starts (JobRunner.cs, <c>ShellScript.For(job.Command, …)</c>).
+    /// That is intended: they had the same quoting bug, a double-quoted <c>$LASTEXITCODE</c> expanded by the outer pwsh.
+    /// </para>
     /// </summary>
     public static string Unwrap(string command)
     {
@@ -74,10 +84,9 @@ public sealed partial class ShellScript : IDisposable
         {
             return command;
         }
-        var inner = match.Groups["body"].Value;
-        return match.Groups["quote"].Value == "'"
-            ? inner.Replace("''", "'", StringComparison.Ordinal)
-            : inner.Replace("\"\"", "\"", StringComparison.Ordinal).Replace("`\"", "\"", StringComparison.Ordinal);
+        return match.Groups["sbody"].Success
+            ? match.Groups["sbody"].Value.Replace("''", "'", StringComparison.Ordinal)
+            : match.Groups["dbody"].Value.Replace("\"\"", "\"", StringComparison.Ordinal).Replace("`\"", "\"", StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -88,10 +97,10 @@ public sealed partial class ShellScript : IDisposable
     public static string? WrappingShell(string command) =>
         WrappedCommand().Match(command) is { Success: true } match ? match.Groups["shell"].Value : null;
 
-    [GeneratedRegex(@"^\s*(?:pwsh|powershell)(?:\.exe)?(?:\s+-(?!c(?:ommand)?\b)\w+)*\s+-(?:c|command)\s+(?<quote>[""'])(?<body>.*)\k<quote>\s*$", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    [GeneratedRegex(@"^\s*(?:pwsh|powershell)(?:\.exe)?(?:\s+[-/](?!c(?:ommand)?\b)\w+(?:\s+[^-/\s'""]\S*)?)*\s+[-/](?:c|command)\s+(?:""(?<dbody>(?:[^""`]|""""|`.)*)""|'(?<sbody>(?:[^']|'')*)')\s*$", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex PwshCommand();
 
-    [GeneratedRegex(@"^\s*(?<shell>pwsh|powershell|bash|sh|cmd)(?:\.exe)?(?:\s+[-/](?!c(?:ommand)?\b)\w+)*\s+[-/](?:c|command)\b", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^\s*(?<shell>pwsh|powershell|bash|sh|cmd)(?:\.exe)?(?:\s+[-/](?!c(?:ommand)?\b)\w+(?:\s+[^-/\s'""]\S*)?)*\s+[-/](?:c|command)\b", RegexOptions.IgnoreCase)]
     private static partial Regex WrappedCommand();
 
     public void Dispose()
