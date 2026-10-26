@@ -97,7 +97,7 @@ public sealed class PrFixTests : IDisposable
         _state.Cards().ShouldContain(c => c.Kind == PrReviews.FixStartedKind && c.Bin == CardBin.Handled);
 
         // The review ends with its post, and takes neither the fixer nor its worktree.
-        row.State.ShouldBe(PrReviewState.Reviewed);
+        row.State.ShouldBe(PrReviewState.Closed);
         await _reviews.SweepAsync(Ct);
         var after = _reviews.Of(new PrRef("acme", "widget", 7)).ShouldNotBeNull();
         (after.State, after.Fixer, after.FixerJob).ShouldBe((PrReviewState.Closed, "du1-fix-widget-7", "job00002"));
