@@ -11,7 +11,7 @@ namespace Pilot.Node.Flights;
 /// while it runs runs it once more after it, never two at once. A recheck that leaves the label on (it could not run, or a peer
 /// has the PR) is not run again until the label has been seen gone, so a PR that cannot be rechecked is not tried every look.
 /// </summary>
-public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews, RepoCatalog repos, TimeProvider time) : BackgroundService
+public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews, RepoCatalog repos, TimeProvider time, LegCommander? legs = null) : BackgroundService
 {
     /// <summary>The Handled line a recheck leaves, saying what it found.</summary>
     public const string HandledKind = "pr-recheck";
@@ -253,12 +253,142 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
         return Done(entry);
     }
 
-    /// <summary>A recheck on a PR with a flight of this node's: filled by a later leg of #286, for now it says so and takes the label off.</summary>
-    private async Task<Outcome> ForFlightAsync(Entry entry, FlightRow flight, PullRequest pr, CancellationToken cancellationToken)
+    private static string Short8(string sha) => sha[..Math.Min(8, sha.Length)];
+
+    private FlightRow? Now(string code) => state.Flights().FirstOrDefault(f => f.Code == code);
+
+    /// <summary>The label a flight's review stands at; null while it holds none (its reviewer waits for the 5-hour window).</summary>
+    private string? LabelOf(string code) => Now(code)?.Review?.State switch
     {
-        await github.RemoveLabelAsync(entry.Path, entry.Number, PilotMarks.Recheck, cancellationToken);
-        Handled(entry, $"{flight.Code}'s PR: the recheck of a flight is not wired yet", pr.Url);
+        ReviewState.Passed => PilotMarks.Passed,
+        ReviewState.Changes => PilotMarks.Changes,
+        ReviewState.Reviewing => PilotMarks.Reviewing,
+        _ => null,
+    };
+
+    /// <summary>Says what the recheck did and leaves the PR with the one <c>pilot:</c> label for where it stands, in place of the recheck's.</summary>
+    private async Task<Outcome> FinishAsync(Entry entry, PullRequest pr, string said, string? label, CancellationToken cancellationToken)
+    {
+        Handled(entry, said, pr.Url);
+        try
+        {
+            if (label is null)
+            {
+                await github.RemoveLabelAsync(entry.Path, entry.Number, PilotMarks.Recheck, cancellationToken);
+            }
+            else
+            {
+                await github.SetPilotLabelAsync(entry.Path, entry.Number, label, cancellationToken);
+            }
+        }
+        catch (FlightException ex)
+        {
+            Fail(entry, $"{said}, but its label could not be set ({ex.Message})", pr.Url);
+            return Outcome.Kept;
+        }
         return Done(entry);
+    }
+
+    /// <summary>
+    /// A recheck on a PR with a flight of this node's, GitHub read afresh and one thing done, in this order: a conflict or a PR
+    /// behind its base is rebased as the queue-conflict path does, red checks on a passed review send it back as changes, a head
+    /// the review never read is reviewed, and a passed, green, clean one goes to the merge by the usual rule. The explicit ask
+    /// bypasses <see cref="PrChecks"/>' once-a-head sets, which it leaves as they are.
+    /// </summary>
+    private async Task<Outcome> ForFlightAsync(Entry entry, FlightRow flight, PullRequest listed, CancellationToken cancellationToken)
+    {
+        if (legs is null)
+        {
+            Fail(entry, "this node holds no way to move a flight's PR", listed.Url);
+            return Outcome.Kept;
+        }
+        var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+        if (pr is null || pr.Number != entry.Number)
+        {
+            Fail(entry, $"{flight.Branch} has no PR #{entry.Number} on GitHub", listed.Url);
+            return Outcome.Kept;
+        }
+        if (!string.Equals(pr.State, "OPEN", StringComparison.OrdinalIgnoreCase))
+        {
+            await github.RemoveLabelAsync(entry.Path, entry.Number, PilotMarks.Recheck, cancellationToken);
+            Handled(entry, $"already {pr.State.ToLowerInvariant()}", pr.Url);
+            return Done(entry);
+        }
+        var merge = await github.MergeStateAsync(entry.Path, entry.Number, cancellationToken);
+        var checks = await github.ChecksAsync(entry.Path, entry.Number, cancellationToken);
+        var code = flight.Code;
+        var head = Short8(pr.Head);
+        var subject = Verbs.FlightTarget(code);
+
+        if (merge is { Kind: MergeKinds.Queued })
+        {
+            return await FinishAsync(entry, pr, "already in the merge queue", PilotMarks.Queued, cancellationToken);
+        }
+
+        if (pr.Mergeable == "CONFLICTING" || merge is { Kind: MergeKinds.Conflicts or MergeKinds.Behind })
+        {
+            if (await legs.RebaseOntoBaseAsync(code, cancellationToken) is not { } why)
+            {
+                var onto = (Now(code)?.Base ?? flight.Base).Replace("origin/", "", StringComparison.Ordinal);
+                var restarted = Now(code)?.Review?.ReviewedHead is { Length: > 0 } read ? $"review restarted at {Short8(read)}" : "its review has not started yet";
+                return await FinishAsync(entry, pr, $"rebased onto {onto}, {restarted}", LabelOf(code), cancellationToken);
+            }
+            // A rebase that conflicts rings as PrChecks rings it, and the Handled line says so too.
+            var notSent = await legs.ConflictsAsync(code, why, cancellationToken);
+            if (notSent is not null)
+            {
+                state.RaiseCard(CardBin.Ring, "pr-conflicts", subject, $"{code}'s PR #{entry.Number} conflicts with its base", $"{why} ({notSent})", link: pr.Url);
+            }
+            return await FinishAsync(entry, pr, $"{why}{(notSent is null ? ": sent back as changes, its last leg goes around to resolve it" : $" ({notSent}), rung")}", LabelOf(code), cancellationToken);
+        }
+
+        if (checks == ChoiceStatus.Failing && flight.Review is { State: ReviewState.Passed })
+        {
+            var why = await legs.ChecksFailedAsync(code, pr.Head, cancellationToken);
+            if (why is not null)
+            {
+                state.RaiseCard(CardBin.Ring, "pr-checks-failed", subject, $"{code}'s PR #{entry.Number} fails its checks", why, link: pr.Url);
+            }
+            return await FinishAsync(entry, pr, why is null ? $"checks failed at {head}, sent back as changes" : $"checks failed at {head}, not sent back ({why}), rung", LabelOf(code), cancellationToken);
+        }
+
+        var review = flight.Review;
+        if (review is null || review.ReviewedHead is { Length: > 0 } reviewed && pr.Head.Length > 0 && !string.Equals(reviewed, pr.Head, StringComparison.OrdinalIgnoreCase))
+        {
+            var started = await legs.RunAsync(new CommandRequest { Verb = Verbs.StartReview, Target = subject, Who = "node" }, cancellationToken);
+            if (!started.Ok)
+            {
+                Fail(entry, started.Error ?? "the review did not start", pr.Url);
+                return Outcome.Kept;
+            }
+            var restarted = Now(code)?.Review?.ReviewedHead is { Length: > 0 } read ? $"review restarted at {Short8(read)}" : "its review waits for a window to start";
+            return await FinishAsync(entry, pr, $"head {head} was not the one reviewed, {restarted}", LabelOf(code), cancellationToken);
+        }
+
+        if (review.State == ReviewState.Passed && checks == ChoiceStatus.Passing && merge is null or { Kind: MergeKinds.Ready })
+        {
+            if (legs.Models.NoAutoMerge(flight.Repo))
+            {
+                return await FinishAsync(entry, pr, $"passed and green at {head}, but {flight.Repo} is never merged by the node: left to you", PilotMarks.Passed, cancellationToken);
+            }
+            var merged = await legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = subject, Args = [pr.Head], Who = "node" }, cancellationToken);
+            if (!merged.Ok)
+            {
+                Fail(entry, $"passed and green, but the merge was refused: {merged.Error}", pr.Url);
+                return Outcome.Kept;
+            }
+            return merged.Way is null
+                ? await FinishAsync(entry, pr, $"passed and green, merged at {head}", null, cancellationToken)
+                : await FinishAsync(entry, pr, $"passed and green, queued for merge at {head}", PilotMarks.Queued, cancellationToken);
+        }
+
+        var standing = review.State switch
+        {
+            ReviewState.Passed => checks == ChoiceStatus.Pending ? "its checks are still running" : "GitHub does not show it ready to merge",
+            ReviewState.Changes => "its review asks for changes",
+            _ => "its review is still reading it",
+        };
+        return await FinishAsync(entry, pr, $"nothing to do at {head}: {standing}", LabelOf(code), cancellationToken);
     }
 
     /// <summary>A recheck on a PR this node reviewed: filled by a later leg of #286, for now it says so and takes the label off.</summary>
