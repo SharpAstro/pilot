@@ -586,6 +586,12 @@ machine: `pilot-node --max-jobs <n>` run at once (1 by default) and only with `-
 the rest wait in the order they came, each saying what it waits on. A job's log is kept in the node's data folder
 (`jobs/<id>.log`), and its end is served for the GUI (`GET /api/v1/jobs/<id>/log`, a grant's on the LAN).
 
+A job runs **detached** from the node (its own session via `setsid`, or on Windows its own hidden console outside the
+node's job object, with no pipe the node holds): its shell writes stdout and stderr straight to the log and its exit
+code to `jobs/<id>.log.exit` when it ends. The Running row carries `Pid`, `ProcessStartedAt` and `ExitPath`; the node
+follows the log file for the tail and step, takes the end from the process exit plus the exit file (no file: failed, no
+exit recorded), and stopping the node leaves running jobs alone. Cancel and timeout kill by pid, process tree included.
+
 A worker that finishes its own leg is stopped after 90 s, once it has said its report. Claude Code tears down a worktree
 its `-w` session entered when that job ends by itself, keeping the branch; the node checks a plane out again from its
 branch before any worker goes in, and lands one that is already gone.

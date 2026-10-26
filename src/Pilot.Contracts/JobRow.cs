@@ -44,6 +44,15 @@ public sealed record JobRow
     /// <summary>The whole of its output, on the node's machine.</summary>
     public required string LogPath { get; init; }
 
+    /// <summary>The process id of the job's shell while it runs, which is detached from the node; null for a job that has not started, and for rows written before jobs were detached.</summary>
+    public int? Pid { get; init; }
+
+    /// <summary>When that process started: with <see cref="Pid"/> it names the process, since a pid is reused.</summary>
+    public DateTimeOffset? ProcessStartedAt { get; init; }
+
+    /// <summary>The file the job's wrapper writes its exit code to when it ends (<c>&lt;log&gt;.exit</c>), so a node that did not start it can still learn how it ended.</summary>
+    public string? ExitPath { get; init; }
+
     /// <summary>How long it may run before the node stops it.</summary>
     public required TimeSpan Timeout { get; init; }
 

@@ -51,6 +51,11 @@ public sealed class JobTests : IDisposable
     public void Dispose()
     {
         _jobs.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
+        // Stopping the runner leaves jobs running, as the node does: the test ends what it started.
+        foreach (var pid in _state.Jobs().Where(j => j.State == JobState.Running && j.Pid is not null).Select(j => j.Pid!.Value))
+        {
+            KillProcess(pid);
+        }
         try
         {
             Directory.Delete(_root, recursive: true);
@@ -58,6 +63,100 @@ public sealed class JobTests : IDisposable
         catch (IOException)
         {
         }
+    }
+
+    private static void KillProcess(int pid)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+            process.Kill(entireProcessTree: true);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            // Gone already.
+        }
+    }
+
+    // The log is open for writing in the job's process while it runs.
+    private static string ReadShared(string path)
+    {
+        try
+        {
+            using var reader = new StreamReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete));
+            return reader.ReadToEnd();
+        }
+        catch (IOException)
+        {
+            return "";
+        }
+    }
+
+    private static bool Alive(int pid)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    [Fact]
+    public async Task AJobSurvivesTheRunnerStoppingAndWritesItsExitFileWhenItEnds()
+    {
+        var id = Run($"{(OperatingSystem.IsWindows() ? "Start-Sleep 3" : "sleep 3")}; echo 'survived'; exit 7").Made!;
+        var running = await Until(id, j => j.State == JobState.Running);
+        running.ExitPath.ShouldBe(running.LogPath + ".exit");
+        running.Pid.ShouldNotBeNull();
+        running.ProcessStartedAt.ShouldNotBeNull();
+
+        await _jobs.StopAsync(CancellationToken.None);
+
+        Alive(running.Pid!.Value).ShouldBeTrue();
+        File.Exists(running.ExitPath).ShouldBeFalse();
+        for (var i = 0; i < 300 && !File.Exists(running.ExitPath); i++)
+        {
+            await Task.Delay(100, Ct);
+        }
+        File.ReadAllText(running.ExitPath!).Trim().ShouldBe("7");
+        ReadShared(running.LogPath).ShouldContain("survived");
+        for (var i = 0; i < 100 && Alive(running.Pid.Value); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        Alive(running.Pid.Value).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ACancelledJobIsKilledWithItsWholeTree()
+    {
+        // The job starts a child of its own that outlives a plain kill of the shell; the tree kill takes it too.
+        var child = OperatingSystem.IsWindows()
+            ? "$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 60' -NoNewWindow -PassThru; echo \"child $($p.Id)\"; Start-Sleep 60"
+            : "sleep 60 & echo \"child $!\"; sleep 60";
+        var id = Run(child).Made!;
+        var running = await Until(id, j => j.State == JobState.Running);
+        int? childPid = null;
+        for (var i = 0; i < 300 && childPid is null; i++)
+        {
+            var text = ReadShared(running.LogPath);
+            childPid = System.Text.RegularExpressions.Regex.Match(text, @"child (\d+)") is { Success: true } m ? int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) : null;
+            await Task.Delay(50, Ct);
+        }
+        childPid.ShouldNotBeNull();
+
+        _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" }).Ok.ShouldBeTrue();
+        await Ended(id);
+
+        for (var i = 0; i < 100 && (Alive(childPid.Value) || Alive(running.Pid!.Value)); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        (Alive(running.Pid!.Value), Alive(childPid.Value)).ShouldBe((false, false));
     }
 
     // The same line in pwsh and sh: the node runs no cmd. Quoted, since pwsh's echo writes each word on a line of its own.

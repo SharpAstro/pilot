@@ -45,9 +45,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     public TimeSpan StepEvery { get; init; } = TimeSpan.FromSeconds(10);
 
     /// <summary>
-    /// How long a job's output may stay open after its process has exited. A process it started (a test's node, a git, a
-    /// pwsh) that outlives it holds the pipe, and waiting for the pipe instead of the process kept SE1's j122 "running" for
-    /// four and a half hours after its tests had passed, with six jobs queued behind it (2026-10-26).
+    /// How long to wait for a job's exit file once its process has exited. The end is the process's, never its output's: a
+    /// process the job started (a test's node, a git, a pwsh) that outlives it keeps the log open, and waiting on that
+    /// kept SE1's j122 "running" for four and a half hours after its tests had passed (2026-10-26).
     /// </summary>
     public TimeSpan DrainGrace { get; init; } = TimeSpan.FromSeconds(15);
 
@@ -390,25 +390,37 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             : null;
     }
 
-    /// <summary>Starts a job; null when it started, else why not.</summary>
+    /// <summary>Starts a job, detached from the node; null when it started, else why not.</summary>
     private string? Start(JobRow job)
     {
-        ShellScript? shell = null;
+        DetachedShell? shell = null;
         Process process;
+        var exitPath = job.LogPath + ".exit";
         try
         {
-            shell = ShellScript.For(job.Command, job.Cwd);
-            process = StartProcess(job, shell);
+            File.Delete(exitPath);
+            shell = DetachedShell.For(job.Command, job.Cwd, job.LogPath, exitPath);
+            process = shell.Start();
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException)
         {
             shell?.Dispose();
             return ex.Message;
         }
+        DateTimeOffset? began = null;
+        try
+        {
+            began = process.StartTime;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            // Gone already: the watch finds it ended.
+        }
+        var running = job with { Pid = process.Id, ProcessStartedAt = began, ExitPath = exitPath };
         // In _running before the Running row is put: a cancel that sees the row must find the process.
         _running[job.Id] = process;
-        state.PutJob(job);
-        _ = Task.Run(() => WatchAsync(job, process, shell), CancellationToken.None);
+        state.PutJob(running);
+        _ = Task.Run(() => WatchAsync(running, process, shell), CancellationToken.None);
         return null;
     }
 
@@ -435,77 +447,68 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     private readonly ConcurrentDictionary<string, string> _cancelled = new(StringComparer.Ordinal);
 
-    private static Process StartProcess(JobRow job, ShellScript shell)
-    {
-        var start = shell.Start;
-        start.RedirectStandardOutput = true;
-        start.RedirectStandardError = true;
-        start.UseShellExecute = false;
-        start.CreateNoWindow = true;
-        return Process.Start(start) ?? throw new InvalidOperationException($"`{job.Command}` did not start");
-    }
+    /// <summary>How often a running job's log is read and its process looked at.</summary>
+    private static readonly TimeSpan PollEvery = TimeSpan.FromMilliseconds(100);
 
-    private async Task WatchAsync(JobRow job, Process process, ShellScript shell)
+    private async Task WatchAsync(JobRow job, Process process, DetachedShell shell)
     {
-        using var script = shell;
-        // Its output, from stdout's and stderr's threads, goes through a channel to ONE writer: the log, its last lines
-        // (Node.Lib's ring, read once it has ended) and the step, in the order the lines came, and no lock.
+        // The job writes its own log; the node follows the file for the last lines and the step. Nothing is held open
+        // between them, so the node ending leaves the job running and its end to be read from the exit file.
         var tail = new CircularBuffer<string>(TailLines);
-        var lines = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
-        var timedOut = false;
-        using (var log = new StreamWriter(job.LogPath, append: false) { AutoFlush = true })
+        using var follower = new LogFollower(job.LogPath);
+        var lastStep = time.GetUtcNow();
+        void Take(IEnumerable<string?> lines)
         {
-            var writer = Task.Run(async () =>
+            foreach (var line in lines)
             {
-                var lastStep = time.GetUtcNow();
-                await foreach (var line in lines.Reader.ReadAllAsync(CancellationToken.None))
+                if (line is null)
                 {
-                    await log.WriteLineAsync(line);
-                    tail.Add(line);
-                    // The step, put on the stream now and then: a long run shows it is alive, without a delta per line.
-                    var now = time.GetUtcNow();
-                    if (now - lastStep >= StepEvery && line.Trim().Length > 0)
-                    {
-                        lastStep = now;
-                        state.PutJob(job with { Step = Clip(line) });
-                    }
+                    continue;
                 }
-            }, CancellationToken.None);
-            process.OutputDataReceived += (_, e) => { if (e.Data is { } line) { lines.Writer.TryWrite(line); } };
-            process.ErrorDataReceived += (_, e) => { if (e.Data is { } line) { lines.Writer.TryWrite(line); } };
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            // The process's own exit, not its pipes': WaitForExitAsync also waits for every handle on stdout and stderr to close,
-            // and a process the job started keeps those open for as long as it lives.
-            var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            process.EnableRaisingEvents = true;
-            process.Exited += (_, _) => exited.TrySetResult();
-            if (process.HasExited)
-            {
-                exited.TrySetResult();
+                tail.Add(line);
+                // The step, put on the stream now and then: a long run shows it is alive, without a delta per line.
+                var now = time.GetUtcNow();
+                if (now - lastStep >= StepEvery && line.Trim().Length > 0)
+                {
+                    lastStep = now;
+                    state.PutJob(job with { Step = Clip(line) });
+                }
             }
-            using var limit = CancellationTokenSource.CreateLinkedTokenSource(_stopping);
-            limit.CancelAfter(job.Timeout);
+        }
+
+        var timedOut = false;
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(_stopping);
+        limit.CancelAfter(job.Timeout);
+        while (true)
+        {
+            Take(follower.ReadNew());
+            if (HasExited(process))
+            {
+                break;
+            }
             try
             {
-                await exited.Task.WaitAsync(limit.Token);
+                await Task.Delay(PollEvery, limit.Token);
             }
             catch (OperationCanceledException)
             {
-                timedOut = !_stopping.IsCancellationRequested;
+                if (_stopping.IsCancellationRequested)
+                {
+                    // The node is stopping: the job is not its to end. It runs on and writes its exit file.
+                    process.Dispose();
+                    return;
+                }
+                timedOut = true;
                 Kill(process);
-                await exited.Task;
+                for (var i = 0; i < 100 && !HasExited(process); i++)
+                {
+                    await Task.Delay(PollEvery, CancellationToken.None);
+                }
+                break;
             }
-            // The last lines are read once the pipes drain; a process left holding them gets DrainGrace, then is left behind.
-            var drained = process.WaitForExitAsync(CancellationToken.None);
-            if (await Task.WhenAny(drained, Task.Delay(DrainGrace, time)) != drained)
-            {
-                lines.Writer.TryWrite($"[pilot] the job's process exited, but a process it started still holds its output; the job ends here without it.");
-            }
-            lines.Writer.TryComplete();
-            await writer;
         }
+        Take(follower.ReadNew());
+        Take([follower.Flush()]);
 
         _running.TryRemove(job.Id, out _);
         // Its slot is free: the next in line may start.
@@ -521,20 +524,59 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             ended = latest with { State = JobState.Failed, Error = $"stopped after its timeout of {Took(job.Timeout)}" };
         }
-        else if (_stopping.IsCancellationRequested)
+        else if (await ReadExitAsync(job.ExitPath!) is not { } code)
         {
-            ended = latest with { State = JobState.Failed, Error = "the node stopped while it ran" };
+            ended = latest with { State = JobState.Failed, Error = "the job's process ended and recorded no exit code" };
         }
         else
         {
-            ended = process.ExitCode == 0
+            ended = code == 0
                 ? latest with { State = JobState.Succeeded, ExitCode = 0 }
-                : latest with { State = JobState.Failed, ExitCode = process.ExitCode, Error = $"exit {process.ExitCode}" };
+                : latest with { State = JobState.Failed, ExitCode = code, Error = $"exit {code}" };
         }
         ended = ended with { Step = last.LastOrDefault(l => l.Trim().Length > 0) is { } l ? Clip(l) : null, EndedAt = time.GetUtcNow() };
         state.PutJob(ended);
+        shell.Dispose();
         await TellAsync(ended, CancellationToken.None, last);
         process.Dispose();
+    }
+
+    private static bool HasExited(Process process)
+    {
+        try
+        {
+            return process.HasExited;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// The exit code the job's wrapper wrote, or null when it wrote none. The file is written before the wrapper's process
+    /// ends, so it is there when the process is gone; <see cref="DrainGrace"/> only allows for a file system slow to show it.
+    /// </summary>
+    private async Task<int?> ReadExitAsync(string exitPath)
+    {
+        var waited = Stopwatch.StartNew();
+        do
+        {
+            try
+            {
+                if (int.TryParse((await File.ReadAllTextAsync(exitPath)).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var code))
+                {
+                    return code;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Not there yet.
+            }
+            await Task.Delay(PollEvery, CancellationToken.None);
+        }
+        while (waited.Elapsed < DrainGrace);
+        return null;
     }
 
     /// <summary>Says how the job ended to its owner, a real turn for an idle worker; a wake that fails rings, so the result is never lost in silence.</summary>
@@ -582,14 +624,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     private static string Clip(string line) => line.Trim() is { Length: > 200 } long_ ? long_[..200] + "…" : line.Trim();
 
-    public override async Task StopAsync(CancellationToken cancellationToken)
-    {
-        foreach (var process in _running.Values)
-        {
-            Kill(process);
-        }
-        await base.StopAsync(cancellationToken);
-    }
+    // StopAsync is the base one: stopping the node does not stop its jobs. They are detached, and the row of each carries the
+    // pid and exit file a later node follows them by.
+
     /// <summary>
     /// The row to wake with a job's end: its owner's, or, once that has ended, the newest live session of the owner's name.
     /// A worker Claude Code continued as a copy is a row of its own, and the first row's session has stopped, so waking it
