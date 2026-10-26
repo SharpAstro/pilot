@@ -59,7 +59,7 @@ public static class NodeApp
         builder.Services.AddSingleton<IGit, GitCli>();
         builder.Services.AddSingleton(services => new RemovalQueue(RemovalQueue.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()));
         // First: tried once at the start, before any service touches the paths it holds.
-        builder.Services.AddHostedService(services => new RemovalQueueStart(services.GetRequiredService<RemovalQueue>()));
+        builder.Services.AddHostedService(services => new RemovalQueueStart(services.GetRequiredService<RemovalQueue>(), services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>(), services.GetRequiredService<RemovalQueue>()));
         builder.Services.AddSingleton<StopGate>();
         // nuget.org's public flat container: what a flight connected to a releasing flight waits for.

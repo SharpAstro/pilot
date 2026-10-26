@@ -201,4 +201,108 @@ public sealed class RemovalQueueTests : IDisposable
         var entry = _queue.Entries().ShouldHaveSingleItem();
         (entry.Path, entry.OwnerKind, entry.Owner).ShouldBe((Path.GetFullPath(flight.Worktree), "plane", flight.Code));
     }
+
+    private string QueuedFolder(RemovalQueue queue)
+    {
+        var folder = Path.Combine(_root, "idle-" + Guid.NewGuid().ToString("N")[..6]);
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "README.md"), "x");
+        queue.Add(folder, RemovalQueue.ReviewKind, "acme/widget#7", "held");
+        return folder;
+    }
+
+    [Fact]
+    public async Task AnIdleNodeTriesTheQueueAfterTheIdleIntervalAndNotBeforeAndABusyOneNot()
+    {
+        var time = new Sessions.ManualTime(new DateTimeOffset(2026, 10, 26, 9, 0, 0, TimeSpan.Zero));
+        var state = new NodeState(new InMemoryJournal(), time);
+        var queue = new RemovalQueue(RemovalQueue.FileIn(Path.Combine(_root, "idle-data")), time);
+        var runner = new RemovalQueueStart(queue, state, time);
+        await runner.StartingAsync(Ct);
+        var folder = QueuedFolder(queue);
+
+        time.Advance(TimeSpan.FromMinutes(59));
+        runner.Look().ShouldBeFalse();
+        Directory.Exists(folder).ShouldBeTrue();
+
+        // A working session keeps it from trying, however long.
+        state.PutSession(new SessionRow
+        {
+            Id = "w0000001", SessionId = "w0000001-0000-4000-8000-000000000000", Name = "du1-w", Kind = SessionKind.Background, Cwd = "/r/w",
+            Role = SessionRole.Worker, State = SessionState.Working, StartedAt = time.GetUtcNow(), LastResponseAt = time.GetUtcNow(),
+            ContextTokens = 0, ContextWindow = 1_000_000, SpendWeighted = 0,
+        });
+        time.Advance(TimeSpan.FromHours(2));
+        runner.Look().ShouldBeFalse();
+        Directory.Exists(folder).ShouldBeTrue();
+
+        state.PutSession(state.Sessions().Single() with { State = SessionState.Idle });
+        time.Advance(TimeSpan.FromMinutes(59));
+        runner.Look().ShouldBeFalse();
+        time.Advance(TimeSpan.FromMinutes(2));
+        runner.Look().ShouldBeTrue();
+        Directory.Exists(folder).ShouldBeFalse();
+        queue.Entries().ShouldBeEmpty();
+
+        // At most once per interval.
+        var again = QueuedFolder(queue);
+        time.Advance(TimeSpan.FromMinutes(30));
+        runner.Look().ShouldBeFalse();
+        Directory.Exists(again).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AFolderHeldPastThreeStartsRingsOnceNamingTheHolderAndTheCardClosesOnceItIsReleased()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
+        var time = new Sessions.ManualTime(new DateTimeOffset(2026, 10, 26, 9, 0, 0, TimeSpan.Zero));
+        var state = new NodeState(new InMemoryJournal(), time);
+        var queue = new RemovalQueue(RemovalQueue.FileIn(Path.Combine(_root, "ring-data")), time);
+        var folder = QueuedFolder(queue);
+        RemovalQueueStart Start() => new(queue, state, time);
+
+        using (Hold(folder))
+        {
+            for (var start = 1; start <= 3; start++)
+            {
+                await Start().StartingAsync(Ct);
+                state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == RemovalQueueStart.Kind);
+            }
+
+            await Start().StartingAsync(Ct);
+            var card = state.Cards(openOnly: true).Where(c => c.Kind == RemovalQueueStart.Kind).ShouldHaveSingleItem();
+            card.Bin.ShouldBe(CardBin.ForYou);
+            var detail = card.Detail.ShouldNotBeNull();
+            detail.ShouldContain(Path.GetFullPath(folder));
+            detail.ShouldContain("4 starts tried");
+            detail.ShouldContain($"(pid {Environment.ProcessId})");
+
+            await Start().StartingAsync(Ct);
+            state.Cards().Count(c => c.Kind == RemovalQueueStart.Kind).ShouldBe(1);
+        }
+
+        await Start().StartingAsync(Ct);
+        queue.Entries().ShouldBeEmpty();
+        state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == RemovalQueueStart.Kind);
+    }
+
+    [Fact]
+    public async Task AFolderQueuedForMoreThanADayRingsWithHolderUnknownWhereNoneCanBeNamed()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
+        var time = new Sessions.ManualTime(new DateTimeOffset(2026, 10, 26, 9, 0, 0, TimeSpan.Zero));
+        var state = new NodeState(new InMemoryJournal(), time);
+        var queue = new RemovalQueue(RemovalQueue.FileIn(Path.Combine(_root, "old-data")), time);
+        var folder = QueuedFolder(queue);
+
+        using (Hold(folder))
+        {
+            var runner = new RemovalQueueStart(queue, state, time) { Holders = _ => [] };
+            await runner.StartingAsync(Ct);
+            state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == RemovalQueueStart.Kind);
+            time.Advance(TimeSpan.FromHours(25));
+            await runner.StartingAsync(Ct);
+            state.Cards(openOnly: true).Where(c => c.Kind == RemovalQueueStart.Kind).ShouldHaveSingleItem().Detail.ShouldNotBeNull().ShouldContain("holder unknown");
+        }
+    }
 }
