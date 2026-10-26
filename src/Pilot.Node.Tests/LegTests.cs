@@ -401,6 +401,8 @@ public abstract class LegCommanderTestsBase : IDisposable
 
     public void Dispose()
     {
+        // A leg start that pulled a sibling has RepoWatch reading the repos in the background; let it finish before the folders go.
+        _legs.SiblingSync?.WatchRefresh.Wait(TimeSpan.FromSeconds(30));
         try
         {
             Git(Repo, "worktree", "prune");
