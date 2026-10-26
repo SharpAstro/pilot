@@ -399,7 +399,6 @@ public static class PilotMarks
     public const string Passed = LabelPrefix + "passed";
 
     /// <summary>A <c>pilot review pr</c> that commented: it blocks nothing and passes nothing.</summary>
-    public const string Commented = LabelPrefix + "commented";
 
     public const string Conflicts = LabelPrefix + "conflicts";
 
@@ -411,7 +410,6 @@ public static class PilotMarks
         Reviewing => ("fbca04", "pilot's reviewer is reading this PR"),
         Changes => ("d93f0b", "pilot's review asks for changes"),
         Passed => ("0e8a16", "pilot's review passed on its reviewed head"),
-        Commented => ("1d76db", "pilot's review commented: nothing blocks it"),
         Conflicts => ("b60205", "this PR conflicts with its base"),
         Queued => ("5319e7", "this PR waits in the merge queue"),
         _ => ("ededed", "set by pilot"),
