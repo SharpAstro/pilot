@@ -340,7 +340,14 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             : [];
 
         var leftover = await planes.RemoveAsync(flight.RepoPath, flight.Worktree, cancellationToken);
-        if (leftover is not null)
+        if (leftover is not null && planes.Queue is { } queue)
+        {
+            // Held by a process: the flight lands all the same, and the folder is removed at the node's next start.
+            queue.Add(flight.Worktree, RemovalQueue.PlaneKind, flight.Code, leftover);
+            state.RaiseCard(CardBin.Handled, "plane-left", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed",
+                $"left {flight.Worktree} for the next start: a process holds it");
+        }
+        else if (leftover is not null)
         {
             state.RaiseCard(CardBin.ForYou, "plane-left", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed, but its plane folder is still there",
                 $"{leftover}; nothing of git's is in it, so delete it by hand once whatever holds it lets go");
