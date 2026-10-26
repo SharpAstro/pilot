@@ -363,23 +363,191 @@ public sealed class JobTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// A node on the test's data folder: its own journal, state and runner, as a restart builds them. Stopped, it leaves its
+    /// jobs running and its journal on disk for the next one, which is how a node's end looks to its successor.
+    /// </summary>
+    private sealed class Node : IDisposable
+    {
+        private readonly FileJournal _journal;
+
+        private Node(string root, Func<long?> freeMemory)
+        {
+            _journal = new FileJournal(Path.Combine(root, "journal"));
+            State = new NodeState(_journal, TimeProvider.System);
+            Jobs = new JobRunner(State, new NodeOptions(Path.Combine(root, "n.sock"), Path.Combine(root, "data")), TimeProvider.System)
+            {
+                FreeMemory = freeMemory,
+                Say = (command, _) =>
+                {
+                    Said.Enqueue(command);
+                    return Task.FromResult(State.Complete(command, null));
+                },
+            };
+        }
+
+        public NodeState State { get; }
+
+        public JobRunner Jobs { get; }
+
+        public ConcurrentQueue<CommandRequest> Said { get; } = new();
+
+        public static async Task<Node> StartAsync(string root, Func<long?>? freeMemory = null)
+        {
+            var node = new Node(root, freeMemory ?? (() => null));
+            if (node.State.Sessions().Length == 0)
+            {
+                node.State.PutSession(new SessionRow
+                {
+                    Id = "a1b2c3d4", SessionId = "a1b2c3d4-0000-4000-8000-000000000000", Name = "se1-tia1-parser", Kind = SessionKind.Background, Cwd = root,
+                    Role = SessionRole.Worker, Flight = "TIA1", Leg = "parser", ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Idle,
+                    SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
+                });
+            }
+            await node.Jobs.StartAsync(CancellationToken.None);
+            await node.Jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(10));
+            return node;
+        }
+
+        public CommandResult Run(string cwd, string command, long timeoutSeconds = 0) =>
+            Jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = "session/a1b2c3d4", Args = [cwd, timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture), command], Who = "se1-tia1-parser" });
+
+        public CommandResult Cancel(string id) =>
+            Jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
+
+        public JobRow Job(string id) => State.Jobs().Single(j => j.Id == id);
+
+        public async Task<JobRow> UntilAsync(string id, Func<JobRow, bool> condition, CancellationToken cancellationToken)
+        {
+            for (var i = 0; i < 400; i++)
+            {
+                if (Job(id) is var job && condition(job))
+                {
+                    return job;
+                }
+                await Task.Delay(50, cancellationToken);
+            }
+            throw new TimeoutException($"job {id} never came to the state awaited");
+        }
+
+        /// <summary>The job once it has ended and its owner has been told.</summary>
+        public Task<JobRow> EndedAsync(string id, CancellationToken cancellationToken) => UntilAsync(id, j => j.EndedAt is not null && j.Told, cancellationToken);
+
+        /// <summary>The node going away: its jobs run on and their rows stay as they are.</summary>
+        public async Task StopAsync()
+        {
+            await Jobs.StopAsync(CancellationToken.None);
+            _journal.Dispose();
+        }
+
+        public void Dispose() => _journal.Dispose();
+    }
+
     [Fact]
-    public async Task AQueuedJobARestartOrphanedIsFailedAndItsOwnerTold()
+    public async Task AJobARestartedNodeFindsAgainEndsUnderItWithItsRealExitCodeAndItsOwnerIsToldOnce()
+    {
+        var first = await Node.StartAsync(_root);
+        var id = first.Run(_root, "sleep 2; echo 'finished under the next node'; exit 5").Made!;
+        var running = await first.UntilAsync(id, j => j.State == JobState.Running, Ct);
+
+        await first.StopAsync();
+        // The node going away is not the job's end: nothing was said, and the process still runs.
+        first.Said.ShouldBeEmpty();
+        IsAlive(running.Pid!.Value).ShouldBeTrue();
+
+        var second = await Node.StartAsync(_root);
+        try
+        {
+            second.Job(id).State.ShouldBe(JobState.Running);
+            second.Jobs.IsRunning(id).ShouldBeTrue();
+
+            var job = await second.EndedAsync(id, Ct);
+
+            (job.State, job.ExitCode, job.Error, job.Step).ShouldBe((JobState.Failed, 5, "exit 5", "finished under the next node"));
+            var say = second.Said.ShouldHaveSingleItem();
+            say.Args[0].ShouldContain($"Your job {id}");
+            say.Args[0].ShouldContain("failed: exit 5");
+            say.Args[0].ShouldContain("finished under the next node");
+            first.Said.ShouldBeEmpty();
+
+            // A third node finds it ended, and tells nobody again.
+            await second.StopAsync();
+            using var third = await Node.StartAsync(_root);
+            third.Said.ShouldBeEmpty();
+            third.Job(id).Told.ShouldBeTrue();
+        }
+        finally
+        {
+            second.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task AJobThatEndedWhileNoNodeWasUpIsEndedFromItsExitFile()
+    {
+        var first = await Node.StartAsync(_root);
+        var id = first.Run(_root, "echo 'ended in the dark'; exit 4").Made!;
+        var running = await first.UntilAsync(id, j => j.State == JobState.Running, Ct);
+        await first.StopAsync();
+        for (var i = 0; i < 300 && !(File.Exists(running.ExitPath) && !IsAlive(running.Pid!.Value)); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        File.Exists(running.ExitPath).ShouldBeTrue();
+
+        using var second = await Node.StartAsync(_root);
+        var job = await second.EndedAsync(id, Ct);
+
+        (job.State, job.ExitCode, job.Error, job.Step).ShouldBe((JobState.Failed, 4, "exit 4", "ended in the dark"));
+        job.EndedAt.ShouldNotBeNull().ShouldBeGreaterThanOrEqualTo(job.StartedAt);
+        second.Said.ShouldHaveSingleItem().Args[0].ShouldContain("failed: exit 4");
+        // The script a Windows job ran is deleted, the node that ended it was not the one that started it.
+        if (job.ScriptPath is { } script)
+        {
+            File.Exists(script).ShouldBeFalse();
+        }
+    }
+
+    [Fact]
+    public async Task AJobThatEndedWhileNoNodeWasUpWithExitCodeZeroSucceeded()
+    {
+        var first = await Node.StartAsync(_root);
+        var id = first.Run(_root, Echo("all passed")).Made!;
+        var running = await first.UntilAsync(id, j => j.State == JobState.Running, Ct);
+        await first.StopAsync();
+        for (var i = 0; i < 300 && !(File.Exists(running.ExitPath) && !IsAlive(running.Pid!.Value)); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+
+        using var second = await Node.StartAsync(_root);
+        var job = await second.EndedAsync(id, Ct);
+
+        (job.State, job.ExitCode, job.Error, job.Step).ShouldBe((JobState.Succeeded, 0, null, "all passed"));
+        second.Said.ShouldHaveSingleItem().Args[0].ShouldContain("succeeded");
+    }
+
+    [Fact]
+    public async Task AJobWhoseProcessIsGoneWithNoExitFileFailsSayingSoAndIsToldOnce()
     {
         _state.PutJob(new JobRow
         {
-            Id = "j1", Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = JobState.Queued,
-            LogPath = Path.Combine(_root, "j1.log"), Timeout = JobRunner.DefaultTimeout, StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            Id = "j1", Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = JobState.Running,
+            LogPath = Path.Combine(_root, "j1.log"), Pid = int.MaxValue - 7, ProcessStartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            Timeout = JobRunner.DefaultTimeout, StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
         });
 
         await _jobs.RecoverAsync(Ct);
+        // Looked at again (as a second start would): it has ended and been told, so nothing more is said.
+        await _jobs.RecoverAsync(Ct);
 
-        (_state.Jobs().Single().State, _state.Jobs().Single().Error).ShouldBe((JobState.Failed, "the node stopped before its turn came"));
+        var job = _state.Jobs().Single();
+        (job.State, job.Error, job.Told).ShouldBe((JobState.Failed, "ended while the node was down, no exit recorded", true));
         _said.Single().Args[0].ShouldContain("Your job j1");
     }
 
     [Fact]
-    public async Task AJobARestartOrphanedIsFailedAndItsOwnerTold()
+    public async Task AJobWhoseRowSaysNoProcessAtAllFailsAsOneGoneWithoutAnExitFile()
     {
         _state.PutJob(new JobRow
         {
@@ -389,9 +557,152 @@ public sealed class JobTests : IDisposable
 
         await _jobs.RecoverAsync(Ct);
 
+        (_state.Jobs().Single().State, _state.Jobs().Single().Error).ShouldBe((JobState.Failed, "ended while the node was down, no exit recorded"));
+    }
+
+    [Fact]
+    public async Task APidAnotherProcessHasTakenIsNotTakenForTheJob()
+    {
+        // The pid is a live process's (this test's own), but it started long after the job did: it is not the job's.
+        using var self = System.Diagnostics.Process.GetCurrentProcess();
+        _state.PutJob(new JobRow
+        {
+            Id = "j1", Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = JobState.Running,
+            LogPath = Path.Combine(_root, "j1.log"), Pid = self.Id, ProcessStartedAt = new DateTimeOffset(self.StartTime.ToUniversalTime(), TimeSpan.Zero).AddHours(-3),
+            Timeout = JobRunner.DefaultTimeout, StartedAt = DateTimeOffset.UtcNow.AddHours(-3),
+        });
+
+        await _jobs.RecoverAsync(Ct);
+
         var job = _state.Jobs().Single();
-        (job.State, job.Error, job.Told).ShouldBe((JobState.Failed, "the node stopped while it ran, so its end was never seen", true));
-        _said.Single().Args[0].ShouldContain("Your job j1");
+        (job.State, job.Error).ShouldBe((JobState.Failed, "ended while the node was down, no exit recorded"));
+        _jobs.IsRunning("j1").ShouldBeFalse();
+        // And it was not killed for it.
+        IsAlive(self.Id).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task APidAnotherProcessHasTakenDoesNotHideTheExitFileTheJobLeft()
+    {
+        using var self = System.Diagnostics.Process.GetCurrentProcess();
+        var log = Path.Combine(_root, "j1.log");
+        File.WriteAllText(log + ".exit", "0\n");
+        _state.PutJob(new JobRow
+        {
+            Id = "j1", Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = JobState.Running,
+            LogPath = log, ExitPath = log + ".exit", Pid = self.Id, ProcessStartedAt = new DateTimeOffset(self.StartTime.ToUniversalTime(), TimeSpan.Zero).AddHours(-3),
+            Timeout = JobRunner.DefaultTimeout, StartedAt = DateTimeOffset.UtcNow.AddHours(-3),
+        });
+
+        await _jobs.RecoverAsync(Ct);
+
+        (_state.Jobs().Single().State, _state.Jobs().Single().ExitCode).ShouldBe((JobState.Succeeded, 0));
+    }
+
+    [Fact]
+    public async Task QueuedJobsSurviveARestartAndRunInTheOrderTheyCame()
+    {
+        long? free = 0;
+        var first = await Node.StartAsync(_root, () => free);
+        var one = first.Run(_root, Echo("one ran")).Made!;
+        var two = first.Run(_root, Echo("two ran")).Made!;
+        var three = first.Run(_root, Echo("three ran")).Made!;
+        await first.UntilAsync(three, j => j.Step is not null, Ct);
+        await first.StopAsync();
+
+        using var second = await Node.StartAsync(_root, () => free);
+        // Still waiting, nothing failed, and the node said nothing.
+        foreach (var id in new[] { one, two, three })
+        {
+            second.Job(id).State.ShouldBe(JobState.Queued);
+        }
+        await second.UntilAsync(three, j => j.Step == "queued, 2 ahead of it", Ct);
+        second.Said.ShouldBeEmpty();
+        second.Job(one).Step.ShouldNotBeNull().ShouldStartWith("next in line");
+
+        free = null;
+        second.Jobs.Pump();
+        var ended = new[] { await second.EndedAsync(one, Ct), await second.EndedAsync(two, Ct), await second.EndedAsync(three, Ct) };
+
+        ended.Select(j => j.State).ShouldAllBe(state => state == JobState.Succeeded);
+        ended.Select(j => j.Step).ShouldBe(["one ran", "two ran", "three ran"]);
+        ended[0].StartedAt.ShouldBeLessThanOrEqualTo(ended[1].StartedAt);
+        ended[1].StartedAt.ShouldBeLessThanOrEqualTo(ended[2].StartedAt);
+        second.Said.Count.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task ACancelKillsAReattachedJobAndItsChildProcessesToo()
+    {
+        var pidFile = Path.Combine(_root, "child.pid");
+        var command = OperatingSystem.IsWindows()
+            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 60' -PassThru -WindowStyle Hidden; Set-Content '{pidFile}' $p.Id; $p.WaitForExit()"
+            : $"sleep 60 & echo $! > '{pidFile}'; wait";
+        var first = await Node.StartAsync(_root);
+        var id = first.Run(_root, command).Made!;
+        await first.UntilAsync(id, j => j.State == JobState.Running, Ct);
+        for (var i = 0; i < 300 && !(File.Exists(pidFile) && File.ReadAllText(pidFile).Trim().Length > 0); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        var childPid = int.Parse(File.ReadAllText(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        await first.StopAsync();
+        IsAlive(childPid).ShouldBeTrue();
+
+        using var second = await Node.StartAsync(_root);
+        second.Jobs.IsRunning(id).ShouldBeTrue();
+        second.Cancel(id).Ok.ShouldBeTrue();
+        var job = await second.EndedAsync(id, Ct);
+
+        (job.State, job.Error).ShouldBe((JobState.Cancelled, "cancelled by controller"));
+        for (var i = 0; i < 100 && IsAlive(childPid); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        IsAlive(childPid).ShouldBeFalse();
+        second.Said.ShouldHaveSingleItem().Args[0].ShouldContain("cancelled by controller");
+    }
+
+    [Fact]
+    public async Task AReattachedJobsTimeoutCountsFromItsStartNotFromTheRestart()
+    {
+        var first = await Node.StartAsync(_root);
+        var id = first.Run(_root, Sleep(60), timeoutSeconds: 3).Made!;
+        await first.UntilAsync(id, j => j.State == JobState.Running, Ct);
+        await first.StopAsync();
+        await Task.Delay(2000, Ct);
+
+        using var second = await Node.StartAsync(_root);
+        var job = await second.EndedAsync(id, Ct);
+
+        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 3s"));
+        // From the start: it had 1s left when the second node came up, not 3s anew.
+        (DateTimeOffset.UtcNow - job.StartedAt).ShouldBeLessThan(TimeSpan.FromSeconds(8));
+    }
+
+    [Fact]
+    public async Task StoppingTheNodeLeavesItsRunningJobRunningAndItsRowRunning()
+    {
+        var first = await Node.StartAsync(_root);
+        var id = first.Run(_root, Sleep(60)).Made!;
+        var running = await first.UntilAsync(id, j => j.State == JobState.Running, Ct);
+
+        await first.StopAsync();
+
+        try
+        {
+            IsAlive(running.Pid!.Value).ShouldBeTrue();
+            File.Exists(running.ExitPath).ShouldBeFalse();
+            first.Said.ShouldBeEmpty();
+            using var second = await Node.StartAsync(_root);
+            second.Job(id).State.ShouldBe(JobState.Running);
+            second.Cancel(id).Ok.ShouldBeTrue();
+            (await second.EndedAsync(id, Ct)).State.ShouldBe(JobState.Cancelled);
+        }
+        finally
+        {
+            JobKiller.Kill(running);
+        }
     }
 
     [Fact]
@@ -457,6 +768,18 @@ public sealed class JobTests : IDisposable
     }
 }
 
+/// <summary>Kills a job's process from its row, for a test that must not leave one running.</summary>
+internal static class JobKiller
+{
+    public static void Kill(JobRow job)
+    {
+        if (job is { Pid: { } pid, ProcessStartedAt: { } startedAt })
+        {
+            new JobProcess(pid, startedAt).Kill();
+        }
+    }
+}
+
 /// <summary>What follows a job's log, and how a detached job is started.</summary>
 public sealed class JobFilesTests : IDisposable
 {
@@ -493,6 +816,24 @@ public sealed class JobFilesTests : IDisposable
         }
 
         follower.Read(final: false).ShouldBe(["é"]);
+    }
+
+    [Fact]
+    public void AFollowerThatStartsAtTheEndReadsOnlyTheLastWholeLinesAndThenWhatComesAfter()
+    {
+        var head = string.Concat(Enumerable.Range(0, 3000).Select(i => $"line {i:0000}\n"));
+        File.WriteAllText(_log, head);
+        var follower = new LogFollower(_log, fromEnd: true);
+
+        var lines = follower.Read(final: false);
+
+        lines.Count.ShouldBeLessThan(3000);
+        lines[^1].ShouldBe("line 2999");
+        // Whole lines only: the one the window started in is dropped.
+        lines.ShouldAllBe(l => l.StartsWith("line ", StringComparison.Ordinal) && l.Length == 9);
+        File.AppendAllText(_log, "after\npart");
+        follower.Read(final: false).ShouldBe(["after"]);
+        follower.Read(final: true).ShouldBe(["part"]);
     }
 
     [Fact]
