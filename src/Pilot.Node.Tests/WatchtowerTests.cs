@@ -53,10 +53,15 @@ public sealed class WatchtowerTests : IDisposable
         _state.PutFlight(_state.Flights().Single() with { State = FlightState.Landed, LandedAt = _time.GetUtcNow() });
     }
 
+    // A say the intercom does not deliver, as when a session cannot be resumed.
+    private bool _refuseSays;
+
     private Task<CommandResult> Run(CommandRequest command, CancellationToken cancellationToken)
     {
         _said.Add(command);
-        return Task.FromResult(_state.Complete(command, null));
+        return Task.FromResult(_refuseSays && command.Verb == Verbs.Say
+            ? new CommandResult { Seq = 0, Verb = command.Verb, Target = command.Target, Who = command.Who, Ok = false, Error = "the intercom did not deliver it" }
+            : _state.Complete(command, null));
     }
 
     /// <summary>The watchtower's row, as the tracker would put it; its id is the job the fake workers handed out.</summary>
@@ -163,18 +168,85 @@ public sealed class WatchtowerTests : IDisposable
     }
 
     [Fact]
-    public async Task OneThatEndedIsStartedAgainButNotWhileAFreshOneIsStillShowingUp()
+    public async Task OneThatEndedWithNothingToSayIsLeftNotReplacedEveryTurn()
     {
         await _tower.LookAsync(Ct);
         await _tower.LookAsync(Ct);
         _workers.Started.Count.ShouldBe(1);
 
+        // Its turn over, the session ended (as SE1's did after every turn): a flight in the air alone wakes nothing.
         _time.Advance(TimeSpan.FromMinutes(3));
         Row("job00001", SessionState.Ended);
         await _tower.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromHours(2));
+        await _tower.LookAsync(Ct);
 
+        _workers.Started.Count.ShouldBe(1);
+        _said.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task OneThatEndedIsResumedInPlaceForANewCardWhileItsCacheIsWarm()
+    {
+        await _tower.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromMinutes(3));
+        Row("job00001", SessionState.Ended, lastResponse: _time.GetUtcNow());
+        _time.Advance(TimeSpan.FromMinutes(50));
+
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9/parser", "TIA9/parser failed");
+        await _tower.LookAsync(Ct);
+        await _tower.LookAsync(Ct);
+
+        // The say resumes the same session, its context read from the cache: no fresh one, no brief read again.
+        _workers.Started.Count.ShouldBe(1);
+        var say = _said.ShouldHaveSingleItem();
+        (say.Verb, say.Target).ShouldBe((Verbs.Say, "session/job00001"));
+        say.Args[0].ShouldContain("TIA9/parser failed");
+    }
+
+    [Fact]
+    public async Task OneThatEndedIsReplacedForANewCardOnceItsCacheIsColdOrItsWindowMostlySpent()
+    {
+        await _tower.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromMinutes(3));
+        Row("job00001", SessionState.Ended, lastResponse: _time.GetUtcNow());
+
+        // Past the cache's hour, a resume would read its whole context again at full price: a fresh one reads only its brief.
+        _time.Advance(TimeSpan.FromMinutes(56));
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9/parser", "TIA9/parser failed");
+        await _tower.LookAsync(Ct);
         _workers.Started.Count.ShouldBe(2);
-        _state.Cards().First(c => c.Bin == CardBin.Handled).Title.ShouldBe("Started a fresh watchtower: TIA9 is in the air, and the last one ended");
+        _said.ShouldBeEmpty();
+        _state.Cards().ShouldContain(c => c.Bin == CardBin.Handled && c.Title.StartsWith("Started a fresh watchtower: ", StringComparison.Ordinal)
+            && c.Title.EndsWith(", and the last one ended", StringComparison.Ordinal));
+
+        // Warm, but three quarters of its window spent: replaced too.
+        _time.Advance(TimeSpan.FromMinutes(3));
+        Row("job00002", SessionState.Ended, lastResponse: _time.GetUtcNow(), context: 160_000);
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9/lexer", "TIA9/lexer failed");
+        await _tower.LookAsync(Ct);
+        _workers.Started.Count.ShouldBe(3);
+        _said.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task OneThatEndedAndCannotBeResumedIsReplacedAtTheNextLook()
+    {
+        await _tower.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromMinutes(3));
+        Row("job00001", SessionState.Ended, lastResponse: _time.GetUtcNow());
+        _refuseSays = true;
+
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9/parser", "TIA9/parser failed");
+        await _tower.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+        _workers.Started.Count.ShouldBe(1);
+
+        // Not said again into a session that did not take it: a fresh one, with the card in its brief.
+        await _tower.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+        _workers.Started.Count.ShouldBe(2);
+        _workers.Started[1].Brief.ShouldContain("TIA9/parser failed");
     }
 
     [Fact]

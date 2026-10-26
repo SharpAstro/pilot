@@ -65,6 +65,16 @@ public sealed class Watchtower(
     /// <summary>How long a started watchtower has to show up in the listing before it counts as gone.</summary>
     public TimeSpan ShowUpGrace { get; init; } = TimeSpan.FromMinutes(2);
 
+    /// <summary>
+    /// How long after its last reply an ended watchtower is resumed rather than replaced: inside the prompt cache's hour, with a
+    /// margin. Resumed warm, its context is read from the cache; past it, the whole context is read again at full price, more
+    /// than a fresh one's brief, so a fresh one starts instead.
+    /// </summary>
+    public TimeSpan CacheWarmFor { get; init; } = TimeSpan.FromMinutes(55);
+
+    /// <summary>The share of its context window past which an ended watchtower is replaced, not resumed, warm or not.</summary>
+    public double ResumeBelow { get; init; } = 0.75;
+
     /// <summary>How it runs the CLI, socket and all: <see cref="Briefs.Run"/>.</summary>
     public string Pilot { get; init; } = "pilot";
 
@@ -85,6 +95,9 @@ public sealed class Watchtower(
     private DateTimeOffset? _startedAt;
     private DateTimeOffset _nextTry = DateTimeOffset.MinValue;
     private DateTimeOffset? _resumedAfter;
+
+    // An ended watchtower a resuming say did not reach: replaced by a fresh one, not said to again.
+    private string? _resumeRefused;
     private bool _adopted;
     // When there was last something to watch; the node's start counts, so one running then is kept QuietFor first.
     private DateTimeOffset? _watchingAt;
@@ -303,6 +316,26 @@ public sealed class Watchtower(
                 {
                     return;
                 }
+                // One that ended (its turn over, or stopped when quiet) on the brief it has is woken only when there is something
+                // to say to it: in place while its cache is warm, where the say resumes it; past that, a fresh one, below. Started
+                // afresh after every ended turn instead, SE1 began 83 in a day (2026-10-25), each reading its brief again cold.
+                if (row is { State: SessionState.Ended } && Briefed() == BriefFingerprint() && row.Id != _resumeRefused)
+                {
+                    if (Untold().Count == 0)
+                    {
+                        return;
+                    }
+                    if (Warm(row, now))
+                    {
+                        _job = row.Id;
+                        if (await TellNewCardsAsync(row, cancellationToken) == false)
+                        {
+                            // Not delivered: the next look starts a fresh one rather than trying this one again.
+                            _resumeRefused = row.Id;
+                        }
+                        return;
+                    }
+                }
                 // Kept by the node by itself, so held while the 5-hour window is spent, and started by the next look once it has reset;
                 // a restart asked for (restart-watchtower, or the card's Try now) is a person's, and goes ahead.
                 if (now >= _nextTry && !Gate.Hold("watchtower", Models.StartLimit, Models.WeekLimit, Waits, Verbs.WatchtowerTarget, "The watchtower waits to start"))
@@ -457,7 +490,7 @@ public sealed class Watchtower(
         _job = null;
         _startedAt = null;
         state.RaiseCard(CardBin.Handled, "watchtower-parked", Verbs.WatchtowerTarget,
-            $"Stopped the watchtower: nothing to watch for {QuietFor.TotalMinutes:0} minutes; the next flight, job or ring starts a fresh one");
+            $"Stopped the watchtower: nothing to watch for {QuietFor.TotalMinutes:0} minutes; the next card resumes it within the hour, else starts a fresh one");
     }
 
     private string BriefFingerprint() => Briefs.WatchtowerFingerprint(Name, Pilot, Models.Model(RoleModels.Watchtower));
@@ -504,16 +537,26 @@ public sealed class Watchtower(
         }
     }
 
-    /// <summary>Says the cards it has not heard of to it, in one message; true when there were any to say.</summary>
-    private async Task<bool> TellNewCardsAsync(SessionRow row, CancellationToken cancellationToken)
+    /// <summary>The open cards it has not heard of, oldest first: not its own, not Handled lines, not about itself.</summary>
+    private List<CardRow> Untold() => state.Cards(openOnly: true)
+        .Where(c => c.Bin != CardBin.Handled && c.Kind != RaisedKind && c.Subject != Verbs.WatchtowerTarget && !_told.Contains(c.Id))
+        .OrderBy(c => c.At)
+        .ToList();
+
+    /// <summary>Whether an ended watchtower is resumed rather than replaced: its cache still warm, and room left in its window.</summary>
+    private bool Warm(SessionRow row, DateTimeOffset now) =>
+        row.LastResponseAt is { } last && now - last < CacheWarmFor
+        && (row.ContextWindow <= 0 || row.ContextTokens < row.ContextWindow * ResumeBelow);
+
+    /// <summary>
+    /// Says the cards it has not heard of to it, in one message: null when there were none, else whether the say went through.
+    /// </summary>
+    private async Task<bool?> TellNewCardsAsync(SessionRow row, CancellationToken cancellationToken)
     {
-        var fresh = state.Cards(openOnly: true)
-            .Where(c => c.Bin != CardBin.Handled && c.Kind != RaisedKind && c.Subject != Verbs.WatchtowerTarget && !_told.Contains(c.Id))
-            .OrderBy(c => c.At)
-            .ToList();
+        var fresh = Untold();
         if (fresh.Count == 0)
         {
-            return false;
+            return null;
         }
 
         var text = (fresh.Count == 1 ? "A card opened:" : $"{fresh.Count} cards opened:") + "\n" + string.Join("\n", fresh.Select(Briefs.CardLine))
@@ -526,6 +569,6 @@ public sealed class Watchtower(
                 _told.Add(card.Id);
             }
         }
-        return true;
+        return result.Ok;
     }
 }
