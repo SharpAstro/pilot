@@ -609,4 +609,41 @@ public sealed class ChatTests
             File.WriteAllBytes(capture, SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, 1280, 800));
         }
     }
+
+    [Fact]
+    public async Task AQuestionSitsUnderTheFeedAboveTheBoxAndCoversNoneOfIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var entries = Enumerable.Range(0, 30).Select(i => new TranscriptEntry
+        {
+            Index = i, Kind = TranscriptKind.Assistant, At = At.AddSeconds(i),
+            Text = i == 29 ? "Three flights are in the air.\n\nShould I file the five pilot feature issues and start tianwen#1824?" : $"Reply {i}: a line long enough to wrap once the window is narrow, said by the watchtower about its flights.",
+        }).ToArray();
+        var chat = NewChat(renderer, Page(entries, question: "Should I file the five pilot feature issues and start tianwen#1824?",
+            choices: ["Yes, file all five and take #1824", "File the five issues only", "Take #1824 only", "Leave it for now"]));
+        await Read(chat, 30);
+
+        var arranged = Layout.Engine.Arrange(chat.Tree(), new Rect<float>(0, 0, 1280, 800), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        var feed = arranged.Single(a => a.Node.Scroll is not null).Bounds;
+        var choice = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "chat:choice:1" }).Bounds;
+        var box = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).Bounds;
+
+        // The choices are below the feed's last pixel and above the box: nothing of the conversation is under them.
+        choice.Y.ShouldBeGreaterThanOrEqualTo(feed.Y + feed.Height);
+        (choice.Y + choice.Height).ShouldBeLessThanOrEqualTo(box.Y);
+
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 } capture)
+        {
+            var dir = Path.GetDirectoryName(capture) ?? ".";
+            foreach (var (width, height) in new[] { (900, 700), (2000, 900) })
+            {
+                using var shot = new RgbaImageRenderer((uint)width, (uint)height);
+                var view = NewChat(shot, Page(entries, question: "Should I file the five pilot feature issues and start tianwen#1824?",
+                    choices: ["Yes, file all five and take #1824", "File the five issues only", "Take #1824 only", "Leave it for now"]));
+                await Read(view, 30);
+                view.Render(new RectF32(0, 0, width, height));
+                File.WriteAllBytes(Path.Combine(dir, $"chat-question-{width}.png"), SharpAstro.Png.PngWriter.Encode(shot.Surface.Pixels, width, height));
+            }
+        }
+    }
 }
