@@ -34,6 +34,9 @@ internal sealed class AttachmentGallery
     /// <summary>The decoded picture of a copy, or null while the host is still fetching it or cannot decode it.</summary>
     public Func<AttachmentRef, AttachmentPicture?>? Lookup { get; set; }
 
+    /// <summary>True when the host has given up on a copy's picture (a format it cannot decode, or a fetch that failed): its well shows the extension.</summary>
+    public Func<AttachmentRef, bool>? Failed { get; set; }
+
     /// <summary>Paints a picture in a rectangle already fitted to its shape.</summary>
     public Action<AttachmentPicture, RectF32>? Draw { get; set; }
 
@@ -76,7 +79,9 @@ internal sealed class AttachmentGallery
             _known[copy.Id] = copy;
             var picked = copy;
             var thumb = Layout.Builder.VStack(
-                    Layout.Builder.Fill(ThumbWidth, ThumbHeight, ThumbKey + copy.Id).WFixed(ThumbWidth).HFixed(ThumbHeight).Bg(Well).BgHover(WellHover)
+                    (Failed?.Invoke(copy) == true
+                        ? Layout.Builder.Text(copy.Ext.ToUpperInvariant(), 14f, Dim, trim: TextTrim.End)
+                        : Layout.Builder.Fill(ThumbWidth, ThumbHeight, ThumbKey + copy.Id)).WFixed(ThumbWidth).HFixed(ThumbHeight).Bg(Well).BgHover(WellHover)
                         .Follows(new HitResult.ButtonHit($"attachment:{owner}:{copy.Id}"), _ => Open(picked)),
                     Layout.Builder.Text(copy.Title, 11f, Dim, trim: TextTrim.End).RowH(16f))
                 .WithGap(2f)
@@ -102,7 +107,9 @@ internal sealed class AttachmentGallery
         _known[copy.Id] = copy;
         var viewer = Layout.Builder.VStack(
                 Layout.Builder.Text($"{copy.Title} · click or Escape to close", 12f, Bright).RowH(22f),
-                Layout.Builder.Fill(32f, 32f, FullKey + copy.Id).Stretch())
+                (Failed?.Invoke(copy) == true
+                    ? Layout.Builder.Text($"No preview of a .{copy.Ext} here", 12f, Dim)
+                    : Layout.Builder.Fill(32f, 32f, FullKey + copy.Id)).Stretch())
             .WithGap(8f)
             .Pad(24f, 16f)
             .Bg(Scrim)

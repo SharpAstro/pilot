@@ -221,6 +221,9 @@ public sealed class AttachmentTests : IAsyncDisposable
             (await flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = "flight/TIA1", Who = "tests" }, Ct)).Ok.ShouldBeTrue();
 
             Directory.Exists(Path.Combine(data, "attachments", "TIA1")).ShouldBeFalse();
+            // Its artifacts stay listed without the copy, so nothing names a file that is gone.
+            state.Legs("TIA1").Single().Artifacts.ShouldHaveSingleItem().Attachment.ShouldBeNull();
+            state.Legs("TIA2").Single().Artifacts.ShouldHaveSingleItem().Attachment.ShouldNotBeNull();
             Directory.EnumerateFiles(Path.Combine(data, "attachments", "TIA2")).ShouldHaveSingleItem();
         }
         finally

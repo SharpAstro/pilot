@@ -3,15 +3,17 @@ using System.Runtime.CompilerServices;
 using DIR.Lib;
 using Pilot.Ui;
 using SdlVulkan.Renderer;
+using SharpAstro.Jpeg;
 using SharpAstro.Png;
+using SharpAstro.Webp;
 using Vortice.Vulkan;
 
 namespace Pilot.Gui;
 
 /// <summary>
 /// The window's pictures of the node's attachments: each copy fetched once through the node it lives on (so a remote node's
-/// works the same, over the grant), decoded once, and kept by id. A PNG is decoded; any other format the node keeps stays
-/// without a picture, and the artifact's link opens it as before. <see cref="Lookup"/> never waits: it starts the fetch
+/// works the same, over the grant), decoded once, and kept by id. PNG, JPEG and WebP are decoded; any other format the node
+/// keeps (gif, bmp) has no decoder here and is <see cref="Failed"/>, which the page shows as its extension. <see cref="Lookup"/> never waits: it starts the fetch
 /// and answers null until the picture is there, then asks for a redraw.
 /// </summary>
 internal sealed class AttachmentPictures(Func<AttachmentRef, CancellationToken, Task<byte[]?>> fetch, Action requestRedraw) : IDisposable
@@ -21,6 +23,7 @@ internal sealed class AttachmentPictures(Func<AttachmentRef, CancellationToken, 
     private sealed class Slot
     {
         public volatile AttachmentPicture? Picture;
+        public volatile bool Failed;
     }
 
     private readonly ConcurrentDictionary<string, Slot> _slots = new(StringComparer.Ordinal);
@@ -41,19 +44,46 @@ internal sealed class AttachmentPictures(Func<AttachmentRef, CancellationToken, 
         return null;
     }
 
+    /// <summary>True once a copy has been fetched and could not be decoded (or fetched): it will never have a picture.</summary>
+    public bool Failed(AttachmentRef copy) => _slots.TryGetValue(copy.Id, out var slot) && slot.Failed;
+
+    /// <summary>The picture of <paramref name="bytes"/> by its <paramref name="ext"/>, or null for a format with no decoder here or data that does not decode.</summary>
+    internal static AttachmentPicture? Decode(string ext, byte[] bytes)
+    {
+        try
+        {
+            switch (ext.ToLowerInvariant())
+            {
+                case "png" when PngImageDecoder.TryDecodeRgba8(bytes, out var rgba, out var width, out var height):
+                    return new AttachmentPicture(width, height, rgba);
+                case "jpg" or "jpeg":
+                    var jpeg = JpegDecoder.Decode(bytes);
+                    return new AttachmentPicture(jpeg.Width, jpeg.Height, jpeg.Pixels);
+                case "webp":
+                    var webp = WebpDecoder.Decode(bytes);
+                    return new AttachmentPicture(webp.Width, webp.Height, webp.Rgba);
+            }
+        }
+        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException or ArgumentException)
+        {
+        }
+        return null;
+    }
+
     private async Task LoadAsync(AttachmentRef copy, Slot slot)
     {
         try
         {
-            if (copy.Ext.Equals("png", StringComparison.OrdinalIgnoreCase) && await fetch(copy, _stop.Token).ConfigureAwait(false) is { } bytes
-                && PngImageDecoder.TryDecodeRgba8(bytes, out var rgba, out var width, out var height))
+            if (await fetch(copy, _stop.Token).ConfigureAwait(false) is { } bytes)
             {
-                slot.Picture = new AttachmentPicture(width, height, rgba);
+                slot.Picture = Decode(copy.Ext, bytes);
             }
+            slot.Failed = slot.Picture is null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // A node that is away or refuses shows no picture; the link under it still opens the file.
+            // A node that is away or refuses shows its extension rather than a picture.
+            slot.Failed = true;
         }
         finally
         {

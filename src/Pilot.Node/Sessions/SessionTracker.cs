@@ -452,6 +452,7 @@ public sealed class SessionTracker : BackgroundService
     private void Forget(string id, string sessionId, bool keepStale = false)
     {
         _rows.Remove(id);
+        Attachments?.Remove(id);
         _endedAt.Remove(id);
         _transcripts.Remove(sessionId);
         foreach (var copy in _rowOf.Where(c => c.Value == id).Select(c => c.Key).ToList())

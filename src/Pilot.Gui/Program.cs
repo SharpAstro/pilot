@@ -278,6 +278,7 @@ if (feed is not null && client is not null && clients is not null)
         return status == System.Net.HttpStatusCode.OK ? bytes : null;
     }, loop.RequestRedraw);
     chrome.Gallery.Lookup = attachmentPictures.Lookup;
+    chrome.Gallery.Failed = attachmentPictures.Failed;
     chrome.Gallery.Draw = attachmentPictures.PaintOn(renderer);
     // The session menu's folder and copy entries.
     view.OnOpen = folder => OpenAway(folder);

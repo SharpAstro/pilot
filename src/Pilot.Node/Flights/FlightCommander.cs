@@ -355,7 +355,15 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             state.RaiseCard(CardBin.ForYou, "plane-left", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed, but its plane folder is still there",
                 $"{leftover}; nothing of git's is in it, so delete it by hand once whatever holds it lets go");
         }
-        Attachments?.Remove(flight.Code);
+        if (Attachments is not null)
+        {
+            // The copies go with the flight: its artifacts stay listed, without what they kept.
+            Attachments.Remove(flight.Code);
+            foreach (var leg in state.Legs(flight.Code).Where(l => l.Artifacts.Any(a => a.Attachment is not null)))
+            {
+                state.PutLeg(leg with { Artifacts = [.. leg.Artifacts.Select(a => a with { Attachment = null, AttachmentExt = null })] });
+            }
+        }
         state.PutFlight(flight with { State = FlightState.Landed, LandedAt = time.GetUtcNow(), FoldedInto = foldedInto ?? flight.FoldedInto });
 
         // Its cards leave with it, and a quiet one says it is in; a folded one says where its work went.
