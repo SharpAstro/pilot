@@ -246,7 +246,7 @@ public static class Verbs
     /// <c>pr-verdict pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt; approve|changes|comment &lt;report&gt; [&lt;path:line finding&gt;…]</c>: a PR
     /// reviewer's verdict, its report and then each finding on a line; a card carries it to the controller, and the
     /// review's worktree goes when it closes.
-    /// On the controller's own PR only <c>comment</c> is taken, as GitHub takes nothing else there.
+    /// On the controller's own PR every verdict is taken and kept for the status and label, but it posts as a comment, as GitHub takes nothing else there.
     /// </summary>
     public const string PrVerdict = "pr-verdict";
 

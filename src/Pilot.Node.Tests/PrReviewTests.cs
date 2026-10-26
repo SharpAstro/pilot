@@ -300,7 +300,7 @@ public sealed class PrReviewTests : IDisposable
         var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
         (card.Id, card.Bin, card.Kind, card.Subject).ShouldBe((row.Card, CardBin.ForYou, PrReviews.ReadyKind, "pr/acme/widget#7"));
         card.Title.ShouldBe("acme/widget#7: review ready, changes (PR 7 of acme/widget)");
-        card.Detail.ShouldBe($"By ada, reviewed at {_widgetHead[..8]}.\nPosts as REQUEST_CHANGES under controller, 0 inline comments.\n"
+        card.Detail.ShouldBe($"By ada, reviewed at {_widgetHead[..8]}.\nVerdict changes; posts as REQUEST_CHANGES under controller, 0 inline comments.\n"
             + $"The draft: {_reviews.DraftOf(new PrRef("acme", "widget", 7))}\nOne defect.\nREADME.md:1 says hello to no one");
         var post = card.Choices.ShouldHaveSingleItem();
         (post.Label, post.Verb, post.Target).ShouldBe(("Post", Verbs.PostReview, "pr/acme/widget#7"));
@@ -321,15 +321,36 @@ public sealed class PrReviewTests : IDisposable
     }
 
     [Fact]
-    public async Task OnTheControllersOwnPrOnlyACommentIsTaken()
+    public async Task AChangesVerdictOnTheControllersOwnPrPostsCommentYetSetsFailureAndPilotChanges()
     {
         _github.Login = "ada";
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
         _workers.Started.Single().Brief.ShouldContain("This PR is ada's own");
         var reviewer = Row("acme/widget", 7).Reviewer;
 
-        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", reviewer, "approve", "fine")).Error.ShouldNotBeNull().ShouldContain("GitHub takes only a comment there");
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", reviewer, "changes", "One defect.")).Error.ShouldBeNull();
+        var row = Row("acme/widget", 7);
+        row.Verdict.ShouldBe("changes");
+        _state.Cards(openOnly: true).ShouldHaveSingleItem().Detail.ShouldNotBeNull().ShouldContain("Verdict changes; posts as COMMENT under ada");
+        _github.Statuses.Last().ShouldBe((_widgetHead, "failure", "changes: One defect.", "https://github.com/acme/widget/pull/7"));
+        _github.LabelCalls.ShouldBe([(7, PilotMarks.Changes)]);
+
+        (await Run(Verbs.PostReview, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+        using var doc = System.Text.Json.JsonDocument.Parse(_github.Posted.Single().Payload);
+        doc.RootElement.GetProperty("event").GetString().ShouldBe("COMMENT");
+        _github.LabelCalls.Last().ShouldBe((7, PilotMarks.Changes));
+    }
+
+    [Fact]
+    public async Task ACleanCommentOnTheControllersOwnPrSetsSuccessAndPilotPassed()
+    {
+        _github.Login = "ada";
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+        var reviewer = Row("acme/widget", 7).Reviewer;
+
         (await Run(Verbs.PrVerdict, "pr/acme/widget#7", reviewer, "comment", "A question on README.md:1")).Error.ShouldBeNull();
+        _github.Statuses.Last().State.ShouldBe("success");
+        _github.LabelCalls.ShouldBe([(7, PilotMarks.Passed)]);
     }
 
     /// <summary>The file the widget PR adds, the one file in its diff, one line long.</summary>
@@ -353,7 +374,7 @@ public sealed class PrReviewTests : IDisposable
             new PrFinding { Path = "README.md", Line = 1, Body = "is this greeting still wanted?", Inline = false },
         ]);
         var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
-        card.Detail.ShouldNotBeNull().ShouldContain("Posts as REQUEST_CHANGES under controller, 1 inline comment and 1 in its body, their lines not in the diff.");
+        card.Detail.ShouldNotBeNull().ShouldContain("Verdict changes; posts as REQUEST_CHANGES under controller, 1 inline comment and 1 in its body, their lines not in the diff.");
         File.Exists(row.Draft.ShouldNotBeNull()).ShouldBeTrue();
         Path.IsPathFullyQualified(row.Draft).ShouldBeTrue();
 
@@ -399,8 +420,8 @@ public sealed class PrReviewTests : IDisposable
         _github.Statuses.Count.ShouldBe(3);
         _github.Statuses.Last().ShouldBe((_widgetHead, "failure", "changes: One defect.", "https://github.com/acme/widget/pull/7#pullrequestreview-9001"));
         _github.Statuses.ShouldAllBe(s => s.Sha == _widgetHead);
-        // The PR's labels are a flight's: a review of any PR leaves them alone.
-        _github.LabelCalls.ShouldBeEmpty();
+        // The label follows the verdict, at the verdict and again after the post.
+        _github.LabelCalls.ShouldBe([(7, PilotMarks.Changes), (7, PilotMarks.Changes)]);
     }
 
     [Fact]
