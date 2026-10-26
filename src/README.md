@@ -383,8 +383,8 @@ review stays listed after it closed.
 
 The node sets one `pilot:` label on a PR to say where it stands (`reviewing`, `changes`, `passed`, `conflicts`, `queued`).
 `pilot: recheck` runs the other way (#286): a person puts it on any open PR of a repo the node tracks to have pilot look
-at it again, whoever worked on it. Every 30 s the node lists each tracked GitHub repo's open PRs (`PrRecheck`) and takes
-a labelled one when it is its own: it holds the flight on that PR, else its own review of it, else no peer node it holds a
+at it again, whoever worked on it. Every minute the node asks each tracked GitHub repo for its open PRs carrying the label (`PrRecheck`, one light
+`gh pr list --label` call per repo, no checks read) and takes a labelled one when it is its own: it holds the flight on that PR, else its own review of it, else no peer node it holds a
 grant for does (a peer that does not answer holds nothing). A PR a peer holds is left to that peer, label and all.
 
 - One recheck of a PR runs at a time, keyed by repo and number, in memory. A label put back while one runs (seen gone,
@@ -404,8 +404,11 @@ grant for does (a peer that does not answer holds nothing). A PR a peer holds is
   queue by the usual merge rule. The explicit ask bypasses the once-a-head sets of the timed `PrChecks` look.
 - **A PR pilot reviewed with `pilot review pr`** (no flight): a head other than the review's starts a fresh review
   (*head ab12cd34 was not the one reviewed (0f9e8d7c), review restarted*, label `pilot: reviewing`); a conflict or a PR
-  behind its base raises a For-you `pr-recheck-conflicts` card saying it is not pilot's branch to rebase, and the label
-  becomes `pilot: conflicts` (the node never rebases a branch it holds no flight on); an approved or commented review at
+  behind its base on the controller's own branch (author is the gh login, branch in the base repo, not a fork, no fixer
+  on it) is rebased onto its base in a throwaway worktree of the clone pilot holds, pushed with `--force-with-lease`, and
+  reviewed afresh (*rebased onto main, review restarted*, label `pilot: reviewing`); anyone else's, or one whose rebase
+  conflicts or cannot be pushed, raises a For-you `pr-recheck-conflicts` card saying why, and the label becomes
+  `pilot: conflicts`; an approved or commented review at
   its head whose checks are green goes to the merge queue through the same rule as #279 (`QueueWhenGreenAsync`, which
   keeps a no-auto-merge repo and a base without a merge queue as a card for you), label `pilot: queued`; anything else
   says *nothing to do* and why (checks still running, review asks for changes, review still reading it), with the label

@@ -1051,6 +1051,62 @@ public sealed class PrReviews(
             $"Started {fixer} on {pr}'s branch {branch}, to make the changes the review asked for", $"in {worktree}", link: review.Url);
     }
 
+    /// <summary>
+    /// Rebases the branch of <paramref name="pr"/> onto its base in a throwaway worktree of the clone pilot holds and pushes it
+    /// with <c>--force-with-lease</c> on the head read; a recheck of the controller's own PR (#286). Null when it is pushed; else
+    /// why not, and whether the rebase conflicted (undone, nothing pushed).
+    /// </summary>
+    public async Task<(bool Conflicts, string Why)?> RebaseOwnBranchAsync(PrRef pr, PullRequest read, CancellationToken cancellationToken)
+    {
+        var clone = TrackedClone(pr);
+        if (clone is null)
+        {
+            return (false, $"{pr.Repo} is not a repo the node tracks");
+        }
+        if (read.HeadRef.Length == 0 || read.Base.Length == 0 || read.Fork)
+        {
+            return (false, read.Fork ? "its branch is on a fork" : "gh did not say its branch and base");
+        }
+        if (Of(pr) is { Fixer: not null })
+        {
+            return (false, "a fixer is working on its branch");
+        }
+        var branch = read.HeadRef;
+        var worktree = Path.Combine(clone, ".claude", "worktrees", $"rebase-{Slug(pr.Name)}-{pr.Number}");
+        try
+        {
+            var fetch = await git.RunAsync(["fetch", "--quiet", "origin", read.Base, $"+refs/heads/{branch}:refs/remotes/origin/{branch}"], clone, cancellationToken);
+            if (!fetch.Ok)
+            {
+                return (false, $"git could not fetch {branch} and {read.Base}: {fetch.Why}");
+            }
+            var tip = await git.RunAsync(["rev-parse", $"refs/remotes/origin/{branch}"], clone, cancellationToken);
+            if (!tip.Ok || !string.Equals(tip.Output.Trim(), read.Head, StringComparison.OrdinalIgnoreCase))
+            {
+                return (false, $"{branch} is not at the head read from GitHub ({Short(read.Head)}), so it is left alone");
+            }
+            worktree = await planes.PinAsync(clone, worktree, read.Head, cancellationToken);
+            var rebase = await git.RunAsync(["rebase", $"origin/{read.Base}"], worktree, cancellationToken);
+            if (!rebase.Ok)
+            {
+                await git.RunAsync(["rebase", "--abort"], worktree, cancellationToken);
+                return (true, $"rebasing {branch} onto {read.Base} conflicts ({rebase.Why})");
+            }
+            var push = await git.RunAsync(["push", $"--force-with-lease=refs/heads/{branch}:{read.Head}", "origin", $"HEAD:refs/heads/{branch}"], worktree, cancellationToken);
+            return push.Ok ? null : (false, $"git could not push {branch}: {push.Why}");
+        }
+        catch (FlightException ex)
+        {
+            return (false, ex.Message);
+        }
+        finally
+        {
+            await planes.RemoveAsync(clone, worktree, cancellationToken, force: true);
+        }
+    }
+
+    private static string Short(string sha) => sha[..Math.Min(8, sha.Length)];
+
     /// <summary>Ends a review: its reviewer stopped, its worktree removed, its open cards closed. A worktree held open is said on a card and tried again.</summary>
     private async Task EndAsync(PrReviewRow review, string why, CancellationToken cancellationToken)
     {
