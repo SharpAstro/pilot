@@ -38,15 +38,18 @@ internal sealed class NodeFeed : IAsyncDisposable
     private long _reposAtTicks = DateTimeOffset.MinValue.UtcTicks;
     private long _reposWantedUntilTicks = DateTimeOffset.MinValue.UtcTicks;
     private int _reposLoading;
+    // What stamps DownSince: the wall clock, a test's own where it says when a node went down.
+    private readonly Func<DateTimeOffset> _clock;
 
     /// <summary>
     /// The node as this feed last saw it: its rows, its usage, how the connection stands, what the node said it is
     /// (<paramref name="Node"/>, its machine and account, for the fleet; <paramref name="NodeVersion"/>, as of the last
-    /// connection: an update restarts the node under this window) and its repos.
+    /// connection: an update restarts the node under this window), its repos and when its stream went down
+    /// (<paramref name="DownSince"/>: its first failed open, or its drop after being live; null while it is up, and before the first try failed).
     /// </summary>
     private sealed record View(
         SessionRow[] Sessions, FlightRow[] Flights, LegRow[] Legs, CardRow[] Cards, JobRow[] Jobs, UsageRow? Usage, string? Stream,
-        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos);
+        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos, DateTimeOffset? DownSince = null);
 
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(
@@ -68,8 +71,9 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// <param name="nodeInfo">Asks the node what it is, on each connection, its version included (null: never asked).</param>
     public NodeFeed(Func<long?, string?, CancellationToken, Task<INodeEvents>> open, string socketPath, TimeSpan? retry = null,
         Func<CancellationToken, Task<string?>>? nodeVersion = null, Func<CancellationToken, Task<NodeInfo>>? nodeInfo = null,
-        Func<CancellationToken, Task<RepoStatus[]?>>? repoLoader = null)
+        Func<CancellationToken, Task<RepoStatus[]?>>? repoLoader = null, Func<DateTimeOffset>? clock = null)
     {
+        _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _repoLoader = repoLoader;
         _open = open;
         _nodeVersion = nodeVersion;
@@ -96,6 +100,7 @@ internal sealed class NodeFeed : IAsyncDisposable
         return new NodeSummary
         {
             Connected = view.Connected,
+            DownSince = view.DownSince,
             Status = view.Status,
             Node = view.Node,
             Stream = view.Stream,
@@ -127,6 +132,19 @@ internal sealed class NodeFeed : IAsyncDisposable
 
     /// <summary>Whether a stream is open and has delivered its snapshot.</summary>
     public bool Connected => Volatile.Read(ref _view).Connected;
+
+    /// <summary>
+    /// Whether the stream is up and when it went down, from one read of the view, so the two agree: the merged panel holds a
+    /// node's cards back while it is not <c>Connected</c>, and names it with the time it has been out of reach.
+    /// </summary>
+    public (bool Connected, DateTimeOffset? DownSince) Reach
+    {
+        get
+        {
+            var view = Volatile.Read(ref _view);
+            return (view.Connected, view.DownSince);
+        }
+    }
 
     /// <summary>Why there is no node, when the GUI could not start one: the header says it while it retries.</summary>
     public string? Problem { get; set; }
@@ -397,13 +415,16 @@ internal sealed class NodeFeed : IAsyncDisposable
             Stream = stream,
             Status = snapshot || !view.Connected ? $"live from the node on {_socketPath}" : view.Status,
             Connected = true,
+            DownSince = null,
         });
         Interlocked.Increment(ref _version);
     }
 
     private void SetStatus(string status, bool connected)
     {
-        ImmutableInterlocked.Update(ref _view, view => view with { Status = status, Connected = connected });
+        // The first moment it is seen down: a node that stays down keeps the time it went, each retry only restates why.
+        var at = _clock();
+        ImmutableInterlocked.Update(ref _view, view => view with { Status = status, Connected = connected, DownSince = connected ? null : view.DownSince ?? at });
         Interlocked.Increment(ref _version);
     }
 

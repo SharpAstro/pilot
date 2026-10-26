@@ -534,7 +534,8 @@ internal sealed class PilotChrome<TSurface>
 
     /// <summary>
     /// Gives the Fleet page's "N waiting on you" its link: the Sessions page, filtered to that node alone, the first session
-    /// waiting on you selected and at the head of the list. <paramref name="show"/> switches the page where the host keeps it itself.
+    /// waiting on you selected and at the head of the list. Also gives the panel's line for a node out of reach (<see cref="CardsView{TSurface}.OnFleet"/>)
+    /// its link: that node's row on this page, selected. <paramref name="show"/> switches the page where the host keeps it itself.
     /// </summary>
     public void LinkFleet(Action<PilotPage>? show = null)
     {
@@ -547,6 +548,13 @@ internal sealed class PilotChrome<TSurface>
             Sessions.Transcript.Close();
             // A node's rows are unmarked while it is the only one there is; otherwise marked with the key the pick is.
             Sessions.SelectFirst(l => l.Row.State == SessionState.Waiting && (l.Node is null ? line.Here : l.Node.Key == line.Where));
+        });
+        // The panel's line for a node out of reach: its row on this page, selected, among all the nodes (a pick of others would hide it).
+        Cards.OnFleet = node => Navigate(() =>
+        {
+            Switch(PilotPage.Fleet, show);
+            Nodes.ShowAll();
+            Fleet.SelectNode(node.Where);
         });
     }
 

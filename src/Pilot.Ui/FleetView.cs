@@ -9,6 +9,9 @@ internal sealed record NodeSummary
 {
     public required bool Connected { get; init; }
 
+    /// <summary>When its stream went down (its first failed open, or its drop after being live); null while it is up, and before the first try failed.</summary>
+    public DateTimeOffset? DownSince { get; init; }
+
     /// <summary>What its feed says of the connection: live, waiting, retrying.</summary>
     public required string Status { get; init; }
 
@@ -374,9 +377,24 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             ListCursor.Open(ListId, Math.Clamp(ListCursor.Index, 0, screen.Lines.Count - 1), screen.Lines.Count);
         }
         _count = screen.Lines.Count;
+        if (_wanted is { } wanted)
+        {
+            _wanted = null;
+            var index = screen.Lines.ToList().FindIndex(l => string.Equals(l.Where, wanted, StringComparison.OrdinalIgnoreCase));
+            if (index >= 0)
+            {
+                ListCursor.Open(ListId, index, screen.Lines.Count);
+            }
+        }
         var page = Layout.Builder.VStack(Header(screen), Main(screen).Stretch()).Bg(Ground).Stretch();
         return About?.Over(page) ?? page;
     }
+
+    // The node whose row is to be selected the next time the page is built (the panel's held line asked for it), by where it is reached.
+    private string? _wanted;
+
+    /// <summary>Selects the row of the node at <paramref name="where"/> when the page is next built, wherever the list was.</summary>
+    public void SelectNode(string where) => _wanted = where;
 
     public override bool HandleInput(InputEvent evt) => evt is InputEvent.KeyDown key && HandleListKey(key.Key, key.Modifiers);
 

@@ -166,7 +166,9 @@ public sealed class MergedFleetTests : IAsyncDisposable
         pages.Sessions.Lines.Where(l => l.Node is null).Select(l => l.Name).ShouldBe(["se1-watchtower", "se1-tia1-gpu"], ignoreOrder: true);
         pages.Sessions.Lines.Where(l => l.Node is not null).ShouldAllBe(l => l.Node!.Name == "LE1");
         pages.Flights.Lines.Single(l => l.Code == "ORB2").Node.ShouldNotBeNull().Name.ShouldBe("LE1");
-        pages.Cards.Open.Single(c => c.Title == "ORB2's PR is ready").ShouldSatisfyAllConditions(c => pages.Cards.NodeOf(c).ShouldNotBeNull().Name.ShouldBe("LE1"));
+        // Its cards are not: they leave the panel for one line naming LE1 (UnreachableNodeTests).
+        pages.Cards.Open.Select(c => c.Title).ShouldBe(["TIA1 landed"]);
+        pages.Cards.Held.ShouldHaveSingleItem().Node.Name.ShouldBe("LE1");
     }
 
     [Fact]
