@@ -133,6 +133,57 @@ public sealed class SessionTrackerTests : IDisposable
     }
 
     [Fact]
+    public async Task EveryWayARowEndsSaysWhyAndWorkingAgainClearsIt()
+    {
+        // Its process went: no longer listed.
+        _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "x", status: "busy"));
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Lines.Assistant("m1", input: 10, output: 100));
+        await PollAsync();
+        _state.Sessions().Single().EndedBecause.ShouldBeNull();
+
+        _agents.Json = "[]";
+        await PollAsync();
+        _state.Sessions().Single().EndedBecause.ShouldBe("its process went (no longer listed)");
+
+        // Listed live again: cleared.
+        _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "x", status: "busy"));
+        await PollAsync();
+        _state.Sessions().Single().EndedBecause.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ABackgroundJobListedDoneOrFailedWithNoProcessSaysWhich()
+    {
+        _agents.Json = AgentRows.List(
+            AgentRows.Background(AgentRows.SessionA, "recent job", "done"),
+            AgentRows.Background(AgentRows.SessionB, "recent failure", "failed"));
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Lines.Assistant("m1", input: 1));
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionB), Lines.Assistant("m2", input: 1));
+
+        await PollAsync();
+
+        _state.Sessions().Single(s => s.Name == "recent job").EndedBecause.ShouldBe("Claude Code lists it as done with no process");
+        _state.Sessions().Single(s => s.Name == "recent failure").EndedBecause.ShouldBe("Claude Code lists it as failed with no process");
+    }
+
+    [Fact]
+    public async Task AResumedRowIsLiveAndSaysNothingOfItsEnd()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "x", status: "busy"));
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Lines.Assistant("m1", input: 10, output: 100));
+        await PollAsync();
+        _agents.Json = "[]";
+        await PollAsync();
+        _state.Sessions().Single().EndedBecause.ShouldNotBeNull();
+
+        _tracker.CompleteResume("a1b2c3d4", AgentRows.SessionB);
+
+        var row = _state.Sessions().Single();
+        row.State.ShouldBe(SessionState.Working);
+        row.EndedBecause.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task EndedAndFailedBackgroundRowsListWhileRecentAndNotOnceTheirTranscriptIsOlderThanTheRetention()
     {
         _agents.Json = AgentRows.List(

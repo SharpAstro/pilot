@@ -215,7 +215,7 @@ public sealed class SessionTracker : BackgroundService
             Put(previous with
             {
                 // Said to again: back in the lists if it was put away.
-                SessionId = newSessionId, State = SessionState.Working, WaitingFor = null, Archived = false,
+                SessionId = newSessionId, State = SessionState.Working, WaitingFor = null, Archived = false, EndedBecause = null,
                 EarlierSessionIds = inPlace ? previous.EarlierSessionIds : [.. previous.EarlierSessionIds ?? [], previous.SessionId],
             });
         }
@@ -299,7 +299,7 @@ public sealed class SessionTracker : BackgroundService
             {
                 // It was running and is no longer listed: its process went. The row stays, as it was, as ended.
                 _endedAt[id] = now;
-                Put(previous with { State = SessionState.Ended, WaitingFor = null });
+                Put(previous with { State = SessionState.Ended, WaitingFor = null, EndedBecause = "its process went (no longer listed)" });
             }
             else if (now - _endedAt.GetValueOrDefault(id, now) > _options.EndedRetention)
             {
@@ -400,6 +400,8 @@ public sealed class SessionTracker : BackgroundService
         {
             Id = id,
             EarlierSessionIds = _rows.TryGetValue(id, out var known) ? known.EarlierSessionIds : null,
+            // A watchtower's rename is noted by the watchtower, not the listing: it stays while the row is under that name.
+            EndedBecause = built.EndedBecause ?? (known is { EndedBecause: { } noted } && noted == $"renamed to {built.Name}" ? noted : null),
             // Put away stays put away while it stays ended; running again brings it back.
             Archived = known is { Archived: true } && ended,
             Artifacts = known?.Artifacts,

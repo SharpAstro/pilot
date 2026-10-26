@@ -65,12 +65,12 @@ public sealed class WatchtowerTests : IDisposable
     }
 
     /// <summary>The watchtower's row, as the tracker would put it; its id is the job the fake workers handed out.</summary>
-    private void Row(string id, SessionState state, DateTimeOffset? lastResponse = null, long context = 10_000, string? apiError = null, DateTimeOffset? resetsAt = null) =>
+    private void Row(string id, SessionState state, DateTimeOffset? lastResponse = null, long context = 10_000, string? apiError = null, DateTimeOffset? resetsAt = null, string name = "du1-watchtower") =>
         _state.PutSession(new SessionRow
         {
             Id = id,
             SessionId = id + "-0000-4000-8000-000000000000",
-            Name = "du1-watchtower",
+            Name = name,
             Kind = SessionKind.Background,
             Cwd = _options.WatchtowerFolder,
             Role = SessionRole.Watchtower,
@@ -282,6 +282,21 @@ public sealed class WatchtowerTests : IDisposable
         _said.Count.ShouldBe(1);
         _workers.Started.Count.ShouldBe(2);
         _workers.Started[1].Brief.ShouldContain("TIA9/parser failed");
+    }
+
+    [Fact]
+    public async Task ARowItStartedThatTurnsUpRenamedIsNotedAsSoAndTheFreshStartSaysSo()
+    {
+        await _tower.LookAsync(Ct);
+        _workers.Started.Count.ShouldBe(1);
+
+        _time.Advance(TimeSpan.FromMinutes(3));
+        Row("job00001", SessionState.Idle, name: "my-own-name");
+        await _tower.LookAsync(Ct);
+
+        _workers.Started.Count.ShouldBe(2);
+        _state.Sessions().Single(s => s.Id == "job00001").EndedBecause.ShouldBe("renamed to my-own-name");
+        _state.Cards().First(c => c.Bin == CardBin.Handled).Title.ShouldContain("the one it started was renamed to my-own-name");
     }
 
     [Fact]

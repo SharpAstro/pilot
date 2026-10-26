@@ -49,6 +49,20 @@ public sealed class SessionsViewTests
     }
 
     [Fact]
+    public void AnEndedRowShowsWhyItEnded()
+    {
+        var snapshot = SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath);
+        var ended = snapshot.Sessions.First(s => s.State == SessionState.Ended) with { EndedBecause = "its process went (no longer listed)" };
+        var screen = SessionsCapture.ScreenFor(snapshot with { Sessions = [.. snapshot.Sessions.Select(s => s.Id == ended.Id ? ended : s)] }, "sample");
+
+        SessionsCapture.RowsText(screen).ShouldContain("ended (its process went (no longer listed))");
+        screen.Lines.Single(l => l.Row.Id == ended.Id).EndedBecause.ShouldBe("its process went (no longer listed)");
+        screen.Lines.Where(l => l.Row.Id != ended.Id).ShouldAllBe(l => l.EndedBecause == null || l.Row.Id == ended.Id);
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        SessionsCapture.Render(renderer, screen);
+    }
+
+    [Fact]
     public void LiveSessionsComeBeforeTheOnesThatStopped()
     {
         var screen = SampleScreen();
