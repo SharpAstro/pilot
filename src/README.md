@@ -508,7 +508,7 @@ pilot sessions
 pilot repos [--all] [--refresh] [--output-format markdown]   # each tracked repo: branch, worktrees (flight, diff stat) and open PRs; --all adds untracked ones
 pilot repos sync                               # fetch -p --all, then fast-forward each tracked repo's default branch; prints each repo's outcome
 pilot issue create <title> [--body <text>] [--repo <path>]   # a new issue through gh; prints its number
-pilot flight create <issue> [title…] [--repo <path>]
+pilot flight create <issue> [title…] [--repo <path>] [--anyway]   # labels the issue (or story) `pilot node: <this node>`; refused when it carries another node's, unless --anyway (which comments why)
 pilot flight plan <code>                       # a planner plans the legs from the issue
 pilot flight planned <code> [summary…]         # what the planner says when it is done
 pilot flight overlap <code> <other> <why…>     # the planner: this flight looks like part of <other>; rings a Fold / Plan separately card

@@ -133,6 +133,12 @@ public static class Verbs
     public const string FlyAnyway = "fly-anyway";
 
     /// <summary>
+    /// The arg a <c>create-flight</c> may carry after its item: create it although the item carries another node's
+    /// <c>pilot node:</c> label. It is no part of the title.
+    /// </summary>
+    public const string AnywayFlag = "--anyway";
+
+    /// <summary>
     /// <c>land flight/&lt;code&gt;</c>: its work is in. Its worktree is removed when it is clean (never when it holds
     /// changes); its branch and code are kept, and flights connected to it are cleared.
     /// </summary>

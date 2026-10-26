@@ -93,6 +93,8 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             throw new FlightException($"create-flight takes a repo target, {Verbs.RepoTargetPrefix}<path to its checkout>, not {command.Target}");
         }
         var args = command.Args ?? [];
+        var anyway = args.Contains(Verbs.AnywayFlag, StringComparer.Ordinal);
+        args = [.. args.Where(a => a != Verbs.AnywayFlag)];
         if (args.Length == 0)
         {
             throw new FlightException("create-flight needs the work item first (an issue number, sc-N or a Shortcut story URL), as in create-flight repo/<path> 1611 [title]");
@@ -117,6 +119,11 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         var repoPath = await planes.MainCheckoutAsync(path, cancellationToken)
             ?? throw new FlightException($"{path} is no git checkout");
         var repo = Path.GetFileName(repoPath);
+        var otherNode = await OtherNodeOfAsync(repoPath, item, cancellationToken);
+        if (otherNode is not null && !anyway)
+        {
+            throw new FlightException($"{item.Noun} carries the label {PilotMarks.NodeLabel(otherNode)}: it is flying on {otherNode}, not on {Machine}. Fly it there, or give --anyway to create the flight here over {otherNode}'s label");
+        }
         var flights = state.Flights();
         var prefix = FlightCodes.PrefixFor(repo, flights);
         var code = FlightCodes.Next(prefix, item.Id, flights)
@@ -153,7 +160,45 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             State = FlightState.Flying,
             CreatedAt = time.GetUtcNow(),
         });
+        await LabelAsync(repoPath, item, code, otherNode, cancellationToken);
         return (code, null);
+    }
+
+    /// <summary>The node code another node's label on <paramref name="item"/> names, or null when it has none (this node's own is no other's).</summary>
+    private async Task<string?> OtherNodeOfAsync(string repoPath, WorkItem item, CancellationToken cancellationToken)
+    {
+        if (Trackers?.Of(item.Tracker) is not { } tracker)
+        {
+            return null;
+        }
+        var labels = await tracker.LabelsAsync(repoPath, item.Id, cancellationToken);
+        return labels.Select(PilotMarks.NodeOf).FirstOrDefault(n => n is not null && !string.Equals(n, Machine, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Says on the item that this node flies it, and with <paramref name="overridden"/> (a create given --anyway over another
+    /// node's label) takes that label off and comments why. The flight is made by now, so a refusal is a For-you card, not a lost flight.
+    /// </summary>
+    private async Task LabelAsync(string repoPath, WorkItem item, string code, string? overridden, CancellationToken cancellationToken)
+    {
+        if (Trackers?.Of(item.Tracker) is not { } tracker)
+        {
+            return;
+        }
+        try
+        {
+            await tracker.AddLabelAsync(repoPath, item.Id, PilotMarks.NodeLabel(Machine), cancellationToken);
+            if (overridden is not null)
+            {
+                await tracker.RemoveLabelAsync(repoPath, item.Id, PilotMarks.NodeLabel(overridden), cancellationToken);
+                await tracker.CommentAsync(repoPath, item.Id,
+                    $"The controller created flight {code} on {Machine} anyway, over the label {PilotMarks.NodeLabel(overridden)}: this item was flying on {overridden}.", cancellationToken);
+            }
+        }
+        catch (FlightException ex)
+        {
+            state.RaiseCard(CardBin.ForYou, "node-label-refused", $"flight/{code}", $"{code} is flying, but {item.Noun} has no {PilotMarks.NodeLabel(Machine)} label", ex.Message);
+        }
     }
 
     /// <summary>
