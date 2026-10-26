@@ -328,7 +328,7 @@ public sealed class FleetTests
         line.WatchtowerChurning.ShouldBeTrue();
         line.WatchtowerMark.ShouldBe("⚠ watchtower churning (9 in 24 h)");
         line.Watchtower!.ShouldContain("typically ends 4 min after its last reply");
-        line.Watchtower.ShouldContain("last ended: process gone");
+        line.Watchtower!.ShouldContain("last ended: process gone");
         line.ToDumpLine().ShouldContain("⚠ watchtower churning (9 in 24 h)");
         new FleetScreen([line], Live.At).Summary.ShouldBe("1 node · 1 live · 1 with a churning watchtower");
 
