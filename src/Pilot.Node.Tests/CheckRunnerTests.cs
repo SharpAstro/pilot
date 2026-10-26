@@ -107,7 +107,28 @@ public sealed class CheckRunnerTests
     [InlineData("pwsh -c \"dotnet build\"; pwsh -c \"dotnet test\"", "pwsh -c \"dotnet build\"; pwsh -c \"dotnet test\"")]
     // A switch with a bare-word value before the command.
     [InlineData("pwsh -ExecutionPolicy Bypass -Command \"dotnet build; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\"", "dotnet build; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }")]
+    // A double-quoted body is read as the outer pwsh reads it: a backtick makes the next character literal, so an escaped
+    // dollar (a working check) stays a dollar, and `n and the like are their control characters.
+    [InlineData("pwsh -NoProfile -c \"git --version; exit `$LASTEXITCODE\"", "git --version; exit $LASTEXITCODE")]
+    [InlineData("pwsh -c \"echo a``b\"", "echo a`b")]
+    [InlineData("pwsh -c \"echo `\"a`\" \"\"b\"\"\"", "echo \"a\" \"b\"")]
+    [InlineData("pwsh -c \"echo a`nb`tc\"", "echo a\nb\tc")]
     public void APwshCommandWrappedAroundTheCheckIsUnwrapped(string check, string runs) => ShellScript.Unwrap(check).ShouldBe(runs);
+
+    /// <summary>
+    /// A check that escaped its dollar correctly (<c>`$LASTEXITCODE</c>) runs as the outer pwsh would have run it: the
+    /// unwrapped line passes with the exit code of its last program, here 0.
+    /// </summary>
+    [Fact]
+    public async Task AnEscapedDollarInAWrappedCheckStillPasses()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Unwrap only rewrites on Windows, where the node runs pwsh.");
+
+        var run = await new ShellCheckRunner().RunAsync("pwsh -NoProfile -c \"git --version; exit `$LASTEXITCODE\"", Path.GetTempPath(), Ct);
+
+        run.Passed.ShouldBeTrue(run.Tail);
+        run.ExitCode.ShouldBe(0);
+    }
 
     [Theory]
     [InlineData("pwsh -NoProfile -Command \"dotnet test\"", "pwsh")]

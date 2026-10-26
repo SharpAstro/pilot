@@ -70,7 +70,8 @@ public sealed partial class ShellScript : IDisposable
     /// script runs in pwsh anyway. Written into the script whole, the outer pwsh read the double-quoted command first and
     /// expanded its <c>$LASTEXITCODE</c> to nothing, so the inner pwsh got <c>if ()</c> and every run of TIA1827's check
     /// failed, its worker unable to change it (SE1, 2026-10-25). A single-quoted command is taken as it is, with <c>''</c>
-    /// for a quote; a double-quoted one with <c>""</c> or <c>`"</c>. The body is that one quoted string and nothing after
+    /// for a quote; a double-quoted one with <c>""</c> and the backtick escapes pwsh reads (<c>`$</c>, <c>``</c>, <c>`"</c>, <c>`n</c>…),
+    /// each undone in one pass. The body is that one quoted string and nothing after
     /// it: <c>pwsh -c "a" &amp;&amp; echo "b"</c> or two chained <c>pwsh -c</c> lines are left as written, as is anything else.
     /// A switch may take a bare-word value before the command (<c>-ExecutionPolicy Bypass</c>).
     /// <para>
@@ -86,7 +87,48 @@ public sealed partial class ShellScript : IDisposable
         }
         return match.Groups["sbody"].Success
             ? match.Groups["sbody"].Value.Replace("''", "'", StringComparison.Ordinal)
-            : match.Groups["dbody"].Value.Replace("\"\"", "\"", StringComparison.Ordinal).Replace("`\"", "\"", StringComparison.Ordinal);
+            : UnquoteDouble(match.Groups["dbody"].Value);
+    }
+
+    /// <summary>
+    /// A double-quoted pwsh string's text as the outer pwsh reads it, in one left-to-right pass: <c>""</c> is a quote, a
+    /// backtick before <c>n</c>, <c>t</c>, <c>r</c>, <c>0</c>, <c>a</c>, <c>b</c>, <c>f</c>, <c>v</c> is that control character, and a backtick before any
+    /// other character is that character (<c>`$</c> is <c>$</c>, <c>``</c> is a backtick, <c>`"</c> is a quote). Variables stay
+    /// unexpanded: the script runs the text, which expands them itself.
+    /// </summary>
+    private static string UnquoteDouble(string body)
+    {
+        var text = new StringBuilder(body.Length);
+        for (var i = 0; i < body.Length; i++)
+        {
+            var c = body[i];
+            if (c == '"' && i + 1 < body.Length && body[i + 1] == '"')
+            {
+                text.Append('"');
+                i++;
+            }
+            else if (c == '`' && i + 1 < body.Length)
+            {
+                i++;
+                text.Append(body[i] switch
+                {
+                    'n' => '\n',
+                    't' => '\t',
+                    'r' => '\r',
+                    '0' => '\0',
+                    'a' => '\a',
+                    'b' => '\b',
+                    'f' => '\f',
+                    'v' => '\v',
+                    var other => other,
+                });
+            }
+            else
+            {
+                text.Append(c);
+            }
+        }
+        return text.ToString();
     }
 
     /// <summary>
