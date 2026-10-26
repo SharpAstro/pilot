@@ -214,7 +214,8 @@ public sealed class JobsTests
         jobs.CanCommand = true;
         var copied = new List<string>();
         var sessions = new List<string>();
-        jobs.OnCancel = _ => { };
+        var cancelled = new List<string>();
+        jobs.OnCancel = job => cancelled.Add(job.Id);
         jobs.OnSession = job => sessions.Add(job.Owner!);
         jobs.OnOpen = _ => { };
         jobs.CopyText = copied.Add;
@@ -228,6 +229,12 @@ public sealed class JobsTests
         sessions.ShouldBe(["c3d4e5f6"]);
         jobs.MenuItems[^2].OnChoose!();
         copied.ShouldBe(["dotnet test j14"]);
+
+        // The menu's Cancel… asks, as the button does: it cancelled at once before, so it is chosen here, not only read.
+        jobs.OpenMenu(screen.Lines[0], 0, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
+        jobs.MenuItems[0].OnChoose!();
+        cancelled.ShouldBeEmpty();
+        Cells(jobs, screen).ShouldContain("Cancel j14?");
 
         // A job handed over from a terminal wakes nobody, and an ended one is past cancelling.
         jobs.OpenMenu(screen.Lines[3], 3, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
@@ -311,5 +318,21 @@ public sealed class JobsTests
                     SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, height));
             }
         }
+    }
+
+    // WCAG 2.x contrast ratio.
+    private static double Contrast(RGBAColor32 a, RGBAColor32 b)
+    {
+        static double Linear(byte v) => v / 255.0 is var s && s <= 0.03928 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4);
+        static double L(RGBAColor32 c) => 0.2126 * Linear(c.Red) + 0.7152 * Linear(c.Green) + 0.0722 * Linear(c.Blue);
+        var (hi, lo) = (Math.Max(L(a), L(b)), Math.Min(L(a), L(b)));
+        return (hi + 0.05) / (lo + 0.05);
+    }
+
+    [Fact]
+    public void ACancelButtonsLabelClearsAaAtRestAndHovered()
+    {
+        Contrast(JobsView<RgbaImage>.DangerLabel, JobsView<RgbaImage>.Danger).ShouldBeGreaterThanOrEqualTo(4.5);
+        Contrast(JobsView<RgbaImage>.DangerLabel, JobsView<RgbaImage>.DangerHover).ShouldBeGreaterThanOrEqualTo(4.5);
     }
 }
