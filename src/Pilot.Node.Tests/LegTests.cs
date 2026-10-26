@@ -352,19 +352,19 @@ internal sealed class FakeGitHub : IGitHub
 }
 
 /// <summary>Legs: planned in order, flown one at a time by fresh workers, done only on a passing rerun, and a flight merged guarded on its head.</summary>
-public sealed class LegCommanderTests : IDisposable
+public abstract class LegCommanderTestsBase : IDisposable
 {
-    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+    private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2l-" + Guid.NewGuid().ToString("N")[..8]);
-    private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
-    private readonly FakeWorkers _workers = new();
-    private readonly FakeChecks _checks = new();
-    private readonly FakeGitHub _github = new();
-    private readonly FlightCommander _flights;
-    private readonly LegCommander _legs;
+    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2l-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private protected readonly FakeWorkers _workers = new();
+    private protected readonly FakeChecks _checks = new();
+    private protected readonly FakeGitHub _github = new();
+    private protected readonly FlightCommander _flights;
+    private protected readonly LegCommander _legs;
 
-    public LegCommanderTests()
+    protected LegCommanderTestsBase()
     {
         Directory.CreateDirectory(Repo);
         Git(Repo, "init", "-q", "-b", "main");
@@ -377,7 +377,7 @@ public sealed class LegCommanderTests : IDisposable
         _legs = new LegCommander(_state, _workers, _checks, _github, git, new Planes(git), _flights, options, TimeProvider.System);
     }
 
-    private string Repo => Path.Combine(_root, "tianwen");
+    private protected string Repo => Path.Combine(_root, "tianwen");
 
     public void Dispose()
     {
@@ -395,7 +395,7 @@ public sealed class LegCommanderTests : IDisposable
         Directory.Delete(_root, recursive: true);
     }
 
-    private static string Git(string cwd, params string[] args)
+    private protected static string Git(string cwd, params string[] args)
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
@@ -409,12 +409,12 @@ public sealed class LegCommanderTests : IDisposable
         return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
     }
 
-    private Task<CommandResult> Leg(string verb, string target, params string[] args) =>
+    private protected Task<CommandResult> Leg(string verb, string target, params string[] args) =>
         _legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct);
 
-    private LegRow L(string name) => _state.Legs("TIA1").Single(l => l.Name == name);
+    private protected LegRow L(string name) => _state.Legs("TIA1").Single(l => l.Name == name);
 
-    private async Task<FlightRow> FlightWithTwoLegs()
+    private protected async Task<FlightRow> FlightWithTwoLegs()
     {
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Parse the ephemeris", "done-when=The parser tests pass",
@@ -423,6 +423,100 @@ public sealed class LegCommanderTests : IDisposable
         return _state.Flights().Single();
     }
 
+    private protected const string UsesDirLib = """
+        <Project>
+          <PropertyGroup>
+            <UseLocalDirLib Condition="'$(UseLocalDirLib)' == '' AND Exists('$(MSBuildThisFileDirectory)..\DIR.Lib\src\DIR.Lib\DIR.Lib.csproj')">true</UseLocalDirLib>
+          </PropertyGroup>
+        </Project>
+        """;
+
+    private protected void Commit(string cwd, string message) =>
+        Git(cwd, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", message);
+
+    /// <summary>The repo declares DIR.Lib as a UseLocal sibling, and the clone beside it is <paramref name="behind"/> commits behind its origin.</summary>
+    private protected void SiblingDirLib(int behind)
+    {
+        File.WriteAllText(Path.Combine(Repo, "Directory.Build.props"), UsesDirLib);
+        Git(Repo, "add", ".");
+        Commit(Repo, "uses DIR.Lib");
+        var origin = Path.Combine(_root, "dir-lib-origin");
+        Directory.CreateDirectory(origin);
+        Git(origin, "init", "-q", "-b", "main");
+        Commit(origin, "first");
+        Git(_root, "clone", "-q", origin, "DIR.Lib");
+        for (var i = 0; i < behind; i++)
+        {
+            Commit(origin, $"newer {i}");
+        }
+    }
+
+    /// <summary>The leg commander with the node's sibling sync, as NodeApp wires it.</summary>
+    private protected void WithSiblingSync()
+    {
+        var git = new GitCli();
+        var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [_root]);
+        var watch = new RepoWatch(_state, new RepoCatalog(_state, options), new Planes(git), _github, TimeProvider.System) { Parallelism = 1 };
+        _legs.SiblingSync = new RepoSync(git, new Planes(git), watch);
+    }
+
+    private protected sealed class ThrowingGit : IGit
+    {
+        public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("git did not start");
+    }
+
+    // A flight with both legs done, reviewed and passed, and its PR open at the plane's head: the tip.
+    private protected async Task<string> ReadyToMerge()
+    {
+        var flight = await FlightWithTwoLegs();
+        _legs.Models = new RoleModels(null);
+        foreach (var name in new[] { "parser", "render" })
+        {
+            if (L(name).State == LegState.Planned)
+            {
+                await Leg(Verbs.StartLeg, $"flight/TIA1/{name}");
+            }
+            if (L(name).State == LegState.Planned)
+            {
+                await Leg(Verbs.ValidateLeg, $"flight/TIA1/{name}", "go");
+            }
+            foreach (var i in Enumerable.Range(1, L(name).Checklist.Length))
+            {
+                await Leg(Verbs.Check, $"flight/TIA1/{name}", i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            (await Leg(Verbs.FinishLeg, $"flight/TIA1/{name}", "done")).Ok.ShouldBeTrue();
+        }
+        var tip = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
+        _github.Pr = new PullRequest(63, "OPEN", tip, "https://github.com/x/tianwen/pull/63");
+        _state.PutFlight(_state.Flights().Single() with
+        {
+            PullRequest = 63,
+            Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow },
+        });
+        return tip;
+    }
+
+    /// <summary>git as on Windows with a process sitting in the worktree: the remove succeeds and the empty folder stays.</summary>
+    private protected sealed class FolderKeepingGit : IGit
+    {
+        private readonly GitCli _git = new();
+
+        public async Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
+        {
+            var run = await _git.RunAsync(args, cwd, cancellationToken);
+            if (run.Ok && args is ["worktree", "remove", .., var worktree])
+            {
+                Directory.CreateDirectory(worktree);
+            }
+            return run;
+        }
+    }
+}
+
+/// <summary>Part 1 of LegCommanderTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class LegCommanderTests1 : LegCommanderTestsBase
+{
     [Fact]
     public async Task AFlightMadeWithoutATitleTakesItsIssuesAndItsResultNamesTheCode()
     {
@@ -632,34 +726,6 @@ public sealed class LegCommanderTests : IDisposable
         restored.Cards().Single(c => c.Kind == LegCommander.LegRemovedKind).Detail.ShouldBe("not needed");
     }
 
-    private const string UsesDirLib = """
-        <Project>
-          <PropertyGroup>
-            <UseLocalDirLib Condition="'$(UseLocalDirLib)' == '' AND Exists('$(MSBuildThisFileDirectory)..\DIR.Lib\src\DIR.Lib\DIR.Lib.csproj')">true</UseLocalDirLib>
-          </PropertyGroup>
-        </Project>
-        """;
-
-    private void Commit(string cwd, string message) =>
-        Git(cwd, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", message);
-
-    /// <summary>The repo declares DIR.Lib as a UseLocal sibling, and the clone beside it is <paramref name="behind"/> commits behind its origin.</summary>
-    private void SiblingDirLib(int behind)
-    {
-        File.WriteAllText(Path.Combine(Repo, "Directory.Build.props"), UsesDirLib);
-        Git(Repo, "add", ".");
-        Commit(Repo, "uses DIR.Lib");
-        var origin = Path.Combine(_root, "dir-lib-origin");
-        Directory.CreateDirectory(origin);
-        Git(origin, "init", "-q", "-b", "main");
-        Commit(origin, "first");
-        Git(_root, "clone", "-q", origin, "DIR.Lib");
-        for (var i = 0; i < behind; i++)
-        {
-            Commit(origin, $"newer {i}");
-        }
-    }
-
     [Fact]
     public async Task ALegStartedWithASiblingBehindItsOriginRaisesOneCardNamingItAndThePullAndStillStarts()
     {
@@ -675,15 +741,6 @@ public sealed class LegCommanderTests : IDisposable
         card.Detail.ShouldBe($"DIR.Lib is 3 commits behind its origin: git -C {Path.Combine(_root, "DIR.Lib")} pull --ff-only");
 
         _state.Cards().Count(c => c.Kind == LegCommander.SiblingBehindKind).ShouldBe(1);
-    }
-
-    /// <summary>The leg commander with the node's sibling sync, as NodeApp wires it.</summary>
-    private void WithSiblingSync()
-    {
-        var git = new GitCli();
-        var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [_root]);
-        var watch = new RepoWatch(_state, new RepoCatalog(_state, options), new Planes(git), _github, TimeProvider.System) { Parallelism = 1 };
-        _legs.SiblingSync = new RepoSync(git, new Planes(git), watch);
     }
 
     [Fact]
@@ -756,12 +813,6 @@ public sealed class LegCommanderTests : IDisposable
         _state.Cards().Where(c => c.Kind == LegCommander.SiblingBehindKind).ShouldBeEmpty();
     }
 
-    private sealed class ThrowingGit : IGit
-    {
-        public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("git did not start");
-    }
-
     [Fact]
     public async Task ALegStartsAFreshWorkerInThePlaneBriefedFromItAndOnlyInOrder()
     {
@@ -800,7 +851,11 @@ public sealed class LegCommanderTests : IDisposable
         (await Leg(Verbs.Check, "flight/TIA1/parser", "9")).Error.ShouldNotBeNull().ShouldContain("steps 1 to 2");
         (await Leg(Verbs.Check, "flight/TIA1/render", "1")).Error.ShouldNotBeNull().ShouldContain("no checklist");
     }
+}
 
+/// <summary>Part 2 of LegCommanderTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class LegCommanderTests2 : LegCommanderTestsBase
+{
     [Fact]
     public async Task ALegIsDoneOnlyWithEveryStepTickedAndItsCheckPassingOnARerun()
     {
@@ -929,37 +984,6 @@ public sealed class LegCommanderTests : IDisposable
         Directory.Exists(flight.Worktree).ShouldBeFalse();
     }
 
-    // A flight with both legs done, reviewed and passed, and its PR open at the plane's head: the tip.
-    private async Task<string> ReadyToMerge()
-    {
-        var flight = await FlightWithTwoLegs();
-        _legs.Models = new RoleModels(null);
-        foreach (var name in new[] { "parser", "render" })
-        {
-            if (L(name).State == LegState.Planned)
-            {
-                await Leg(Verbs.StartLeg, $"flight/TIA1/{name}");
-            }
-            if (L(name).State == LegState.Planned)
-            {
-                await Leg(Verbs.ValidateLeg, $"flight/TIA1/{name}", "go");
-            }
-            foreach (var i in Enumerable.Range(1, L(name).Checklist.Length))
-            {
-                await Leg(Verbs.Check, $"flight/TIA1/{name}", i.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            }
-            (await Leg(Verbs.FinishLeg, $"flight/TIA1/{name}", "done")).Ok.ShouldBeTrue();
-        }
-        var tip = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
-        _github.Pr = new PullRequest(63, "OPEN", tip, "https://github.com/x/tianwen/pull/63");
-        _state.PutFlight(_state.Flights().Single() with
-        {
-            PullRequest = 63,
-            Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow },
-        });
-        return tip;
-    }
-
     [Fact]
     public async Task AMergeThatOnlyJoinsTheMergeQueueLeavesTheFlightFlyingUntilGitHubMergesIt()
     {
@@ -1044,22 +1068,6 @@ public sealed class LegCommanderTests : IDisposable
         (await new Planes(new FolderKeepingGit()).RemoveAsync(Repo, flight.Worktree, Ct)).ShouldBeNull();
 
         Directory.Exists(flight.Worktree).ShouldBeFalse();
-    }
-
-    /// <summary>git as on Windows with a process sitting in the worktree: the remove succeeds and the empty folder stays.</summary>
-    private sealed class FolderKeepingGit : IGit
-    {
-        private readonly GitCli _git = new();
-
-        public async Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
-        {
-            var run = await _git.RunAsync(args, cwd, cancellationToken);
-            if (run.Ok && args is ["worktree", "remove", .., var worktree])
-            {
-                Directory.CreateDirectory(worktree);
-            }
-            return run;
-        }
     }
 
     [Fact]
