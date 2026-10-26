@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Pilot.Contracts;
 
 namespace Pilot.Node.Flights;
 
@@ -193,10 +194,82 @@ public sealed class RemovalQueue(string file, TimeProvider time)
     }
 }
 
-/// <summary>Tries the removal queue once at the node's start, before the services that touch those paths run.</summary>
-public sealed class RemovalQueueStart(RemovalQueue queue) : IHostedLifecycleService
+/// <summary>
+/// Tries the removal queue once at the node's start, before the services that touch those paths run, and again when the
+/// node has had no working session for <see cref="IdleFor"/> (at most once per <see cref="IdleFor"/>; the PR review sweep
+/// never tries it). After each try, a folder queued for more than <see cref="OlderThan"/> or <see cref="MoreStarts"/> starts
+/// rings once on a For-you card naming it and, where Windows can say, what holds it; the card closes when none is left.
+/// </summary>
+public sealed class RemovalQueueStart(RemovalQueue queue, NodeState? state = null, TimeProvider? clock = null) : BackgroundService, IHostedLifecycleService
 {
+    /// <summary>What the For-you card is.</summary>
+    public const string Kind = "removal-held";
+
+    private readonly TimeProvider _time = clock ?? TimeProvider.System;
+    private DateTimeOffset _lastWorking;
+    private DateTimeOffset _lastTried;
+
+    /// <summary>How long no session has been working before the queue is tried again, and the least between two tries.</summary>
+    public TimeSpan IdleFor { get; init; } = TimeSpan.FromHours(1);
+
+    /// <summary>How often it looks at whether the node is idle.</summary>
+    public TimeSpan Interval { get; init; } = TimeSpan.FromMinutes(1);
+
+    /// <summary>A folder queued for longer than this rings.</summary>
+    public TimeSpan OlderThan { get; init; } = TimeSpan.FromDays(1);
+
+    /// <summary>A folder that has outlasted more starts than this rings.</summary>
+    public int MoreStarts { get; init; } = 3;
+
+    /// <summary>What names the processes holding a folder; a test's can say otherwise.</summary>
+    public Func<string, IReadOnlyList<string>> Holders { get; init; } = folder => Updates.FileHolders.OfFolder(folder);
+
     public Task StartingAsync(CancellationToken cancellationToken)
+    {
+        _lastWorking = _lastTried = _time.GetUtcNow();
+        Try();
+        return Task.CompletedTask;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stopping)
+    {
+        while (!stopping.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(Interval, _time, stopping);
+                Look();
+            }
+            catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                await Console.Error.WriteLineAsync($"removal queue: one look failed, looking again: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>One look: tries the queue if no session has been working for <see cref="IdleFor"/> and it was not tried within it.</summary>
+    public bool Look()
+    {
+        var now = _time.GetUtcNow();
+        if (state is not null && state.Sessions().Any(r => r.State == SessionState.Working))
+        {
+            _lastWorking = now;
+            return false;
+        }
+        if (now - _lastWorking < IdleFor || now - _lastTried < IdleFor)
+        {
+            return false;
+        }
+        _lastTried = now;
+        Try();
+        return true;
+    }
+
+    private void Try()
     {
         var (removed, held) = queue.TryAll();
         foreach (var entry in removed)
@@ -207,12 +280,29 @@ public sealed class RemovalQueueStart(RemovalQueue queue) : IHostedLifecycleServ
         {
             Console.Error.WriteLine($"removal queue: kept {entry.Path} ({entry.OwnerKind} {entry.Owner}), start {entry.StartsTried}: {why}");
         }
-        return Task.CompletedTask;
+        if (state is null)
+        {
+            return;
+        }
+        var now = _time.GetUtcNow();
+        var due = held.Select(h => h.Entry).Where(e => e.StartsTried > MoreStarts || now - e.AddedAt > OlderThan).ToList();
+        if (due.Count == 0)
+        {
+            state.CloseCardsAbout(Verbs.NodeTarget, "the queued folders are gone or no longer overdue", Kind);
+            return;
+        }
+        var lines = due.Select(e =>
+        {
+            var holders = Holders(e.Path);
+            return $"{e.Path}: {e.OwnerKind} {e.Owner}, queued {e.AddedAt:u}, {e.StartsTried} starts tried, held by "
+                + (holders.Count > 0 ? string.Join(", ", holders) : "holder unknown") + $" ({e.Why})";
+        });
+        state.RaiseCard(CardBin.ForYou, Kind, Verbs.NodeTarget,
+            $"{due.Count} folder{(due.Count == 1 ? "" : "s")} Windows still holds open",
+            string.Join('\n', lines));
     }
 
-    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     public Task StartedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     public Task StoppingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }

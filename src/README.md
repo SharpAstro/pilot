@@ -199,6 +199,16 @@ under Hooks). Once
 landed, the plane's worktree is removed and its branch kept. PRs are merged by rebase unless the node's `merge-method`
 says otherwise, so every commit's subject, which a repo's docs may cite, reaches main.
 
+**A folder Windows holds open** (a review's worktree, a landed plane, a cached clone) does not keep its review or flight
+open with a card retried every sweep. It goes in the removal queue, `pending-removals.json` in the node's data folder
+(path, what it belonged to, when queued, why, starts tried), and the review or landing finishes anyway with a Handled
+line. The queue is tried once at the node's start, before anything touches those paths, and again when no session has
+been working for an hour (at most once an hour); the PR review sweep never tries it. A folder queued for more than a day,
+or that has outlasted more than 3 starts, rings once on a For-you card (kind `removal-held`, subject the node) listing
+each such folder with its owner, when it was queued, its starts and the process holding it (Restart Manager over the
+files under it, else `handle.exe` when on PATH, else "holder unknown"). The card is kept, not raised again, while such
+folders stand, and closes when none is left. A new pin at a held queued path is made beside it.
+
 ### Legs
 
 A flight's legs fly in their order on its plane, one at a time, each by a fresh background worker named
