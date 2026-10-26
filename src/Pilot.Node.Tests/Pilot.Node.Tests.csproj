@@ -48,4 +48,10 @@
     <None Include="Fixtures\gh\*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Four test classes a core: most of a test waits on a git process or a socket, not the CPU, and CI's Windows runner
+       has four cores (its Test step took 2 m 26 s at one class a core, 2026-10-27). -->
+  <ItemGroup>
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
