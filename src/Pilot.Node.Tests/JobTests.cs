@@ -64,6 +64,14 @@ public sealed class JobTests : IDisposable
 
     private static string Sleep(int seconds) => $"sleep {seconds}";
 
+    /// <summary>The log as it is: the job's wrapper may still hold it open for writing a moment after the exit file shows, and a plain File.ReadAllText then fails on Windows.</summary>
+    private static string ReadLog(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
     private CommandResult Run(string command, string target = "session/a1b2c3d4", long timeoutSeconds = 0, string? cwd = null) =>
         _jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = target, Args = [cwd ?? _root, timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture), command], Who = "se1-tia1-parser" });
 
@@ -106,7 +114,7 @@ public sealed class JobTests : IDisposable
 
         var job = await Ended(id);
         (job.State, job.ExitCode, job.Step, job.Told).ShouldBe((JobState.Succeeded, 0, "all 12 tests passed", true));
-        File.ReadAllText(job.LogPath).ShouldContain("all 12 tests passed");
+        ReadLog(job.LogPath).ShouldContain("all 12 tests passed");
         var say = _said.ShouldHaveSingleItem();
         (say.Verb, say.Target, say.Who).ShouldBe((Verbs.Say, "session/a1b2c3d4", "node"));
         say.Args[0].ShouldContain($"Your job {id}");
@@ -176,7 +184,7 @@ public sealed class JobTests : IDisposable
         var job = await Ended(Run(command).Made!);
 
         job.State.ShouldBe(JobState.Succeeded);
-        File.ReadAllText(job.LogPath).ReplaceLineEndings("\n").ShouldBe("to stdout é\nto stderr\nand stdout again\n");
+        ReadLog(job.LogPath).ReplaceLineEndings("\n").ShouldBe("to stdout é\nto stderr\nand stdout again\n");
         job.Step.ShouldBe("and stdout again");
     }
 
