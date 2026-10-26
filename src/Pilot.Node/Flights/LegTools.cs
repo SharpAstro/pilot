@@ -383,6 +383,10 @@ public interface IGitHub
     /// </summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task SetPilotLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken);
+
+    /// <summary>Takes <paramref name="label"/> off PR <paramref name="number"/>; no error when it has none like it.</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task RemoveLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken);
 }
 
 /// <summary>What the node sets on a flight PR on GitHub: the <c>pilot/review</c> status and the <c>pilot:</c> labels.</summary>
@@ -402,6 +406,9 @@ public static class PilotMarks
 
     public const string Queued = LabelPrefix + "queued";
 
+    /// <summary>Put on any open PR by a person to have pilot look at it again, whoever worked on it; the node takes it off once it has.</summary>
+    public const string Recheck = LabelPrefix + "recheck";
+
     /// <summary>The colour (hex, no #) and description a label is made with in a repo that has none.</summary>
     public static (string Color, string Description) LabelStyle(string label) => label switch
     {
@@ -410,6 +417,7 @@ public static class PilotMarks
         Passed => ("0e8a16", "pilot's review passed on its reviewed head"),
         Conflicts => ("b60205", "this PR conflicts with its base"),
         Queued => ("5319e7", "this PR waits in the merge queue"),
+        Recheck => ("1d76db", "ask pilot to look at this PR again"),
         _ => ("ededed", "set by pilot"),
     };
 }
@@ -931,7 +939,7 @@ public sealed class GhCli : IGitHub
 
     public async Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(["pr", "list", "--state", "open", "--limit", "100", "--json", "number,title,isDraft,headRefName,url,statusCheckRollup"], repoPath, cancellationToken);
+        var (exit, output, error) = await RunAsync(["pr", "list", "--state", "open", "--limit", "100", "--json", "number,title,isDraft,headRefName,url,statusCheckRollup,labels"], repoPath, cancellationToken);
         if (exit != 0)
         {
             throw new FlightException($"gh could not list the PRs: {(error.Trim().Length > 0 ? error : output).Trim()}");
@@ -946,6 +954,9 @@ public sealed class GhCli : IGitHub
                 Url = p.TryGetProperty("url", out var url) ? url.GetString() : null,
                 Draft = p.TryGetProperty("isDraft", out var draft) && draft.ValueKind == JsonValueKind.True,
                 Checks = p.TryGetProperty("statusCheckRollup", out var rollup) ? RollupStatus(rollup) : null,
+                Labels = p.TryGetProperty("labels", out var labels) && labels.ValueKind == JsonValueKind.Array
+                    ? [.. labels.EnumerateArray().Select(l => TextOf(l, "name")).OfType<string>()]
+                    : [],
             })
             .OrderByDescending(p => p.Number)];
     }
@@ -1117,6 +1128,15 @@ public sealed class GhCli : IGitHub
         if (exit != 0)
         {
             throw new FlightException($"GitHub refused the label {label} on #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+    }
+
+    public async Task RemoveLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["pr", "edit", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--remove-label", label], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"GitHub refused to take the label {label} off #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
     }
 

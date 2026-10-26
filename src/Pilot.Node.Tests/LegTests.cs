@@ -82,7 +82,9 @@ internal sealed class FakeGitHub : IGitHub
         Interlocked.Increment(ref OpenPrCalls);
         return OpenPrsFail.Contains(repoPath)
             ? Task.FromException<PullRequestStatus[]>(new FlightException("gh could not list the PRs: offline"))
-            : Task.FromResult(OpenPrs.TryGetValue(repoPath, out var prs) ? prs : []);
+            : Task.FromResult<PullRequestStatus[]>(OpenPrs.TryGetValue(repoPath, out var prs)
+                ? [.. prs.Select(p => Labels.TryGetValue(p.Number, out var set) ? p with { Labels = [.. set] } : p)]
+                : []);
     }
 
     /// <summary>Every issue created, as (repo path, title, body).</summary>
@@ -322,6 +324,19 @@ internal sealed class FakeGitHub : IGitHub
         var labels = Labels.TryGetValue(number, out var existing) ? existing : Labels[number] = [];
         labels.RemoveWhere(l => l.StartsWith(PilotMarks.LabelPrefix, StringComparison.Ordinal));
         labels.Add(label);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Every label asked to come off, by PR number, in order.</summary>
+    public List<(int Number, string Label)> RemoveCalls { get; } = [];
+
+    public Task RemoveLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
+    {
+        RemoveCalls.Add((number, label));
+        if (Labels.TryGetValue(number, out var set))
+        {
+            set.Remove(label);
+        }
         return Task.CompletedTask;
     }
 
