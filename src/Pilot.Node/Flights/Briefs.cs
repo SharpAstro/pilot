@@ -152,6 +152,7 @@ public static class Briefs
             text.AppendLine($"- Tick each step as you finish it: `{run} check <step number>`.");
         }
         text.AppendLine($"- Something to look at (a screenshot, a capture, a page): `{run} artifact <path or URL> <title>`.");
+        text.AppendLine($"  {AttachmentRule(run)}");
         text.AppendLine($"- When every step is done and the Done-when holds: `{run} leg finish done \"<one-line report>\"`. The node reruns the");
         text.AppendLine("  check itself and refuses while a step is open or the check fails; fix what it says and finish again.");
         text.AppendLine($"- When you cannot go on: `{run} leg finish failed \"<why>\"`. Fail only for what stops the Done-when; something");
@@ -270,6 +271,7 @@ public static class Briefs
         text.AppendLine($"- Every fact holds, or you could not find one false: `{run} leg validate go \"<the facts checked, in a line>\"`.");
         text.AppendLine($"- A fact is false: `{run} leg validate no-go \"<each stale fact, with the command that showed it and what was true instead>\"`.");
         text.AppendLine("Answer GO unless a fact is false. Then end your turn with the same answer.");
+        text.AppendLine(AttachmentRule(run));
         return text.ToString();
     }
 
@@ -437,6 +439,7 @@ public static class Briefs
         text.AppendLine();
         text.AppendLine("Look for: a Done-when that does not hold, bugs and regressions, tests that do not test what they say, and");
         text.AppendLine("anything the issue asked for that is missing. Style alone is no reason for changes.");
+        text.AppendLine(AttachmentRule(run));
         text.AppendLine();
         text.AppendLine("## Your verdict");
         text.AppendLine($"- Ready: `{run} review pass \"<what you checked, in a line or two>\"`.");
@@ -506,6 +509,7 @@ public static class Briefs
             text.AppendLine("verdict all the same: the PR's status and label say it.");
         }
         text.AppendLine("Give it once. Then end your turn with the same verdict.");
+        text.AppendLine(AttachmentRule(run));
         return text.ToString();
     }
 
@@ -559,6 +563,14 @@ public static class Briefs
         text.AppendLine("- End your turn once the push and the comment are done.");
         return text.ToString();
     }
+
+    /// <summary>
+    /// GitHub takes no image from <c>gh</c>, so a PR body or review names an artifact (its title) and points at where the node
+    /// keeps its copy, rather than trying to attach it.
+    /// </summary>
+    internal static string AttachmentRule(string run) =>
+        "GitHub takes no image from gh: a PR body or a review names the artifact (its title) and says `" + run + " attachments <code>` "
+        + "(the flight's code) for where the node keeps the copy, never an attachment of its own.";
 
     /// <summary>
     /// What the watchtower is told when it starts: its job, what it may and may not do, the commands it does it with,

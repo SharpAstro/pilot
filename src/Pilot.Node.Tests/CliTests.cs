@@ -338,7 +338,21 @@ public sealed class CliTests : IAsyncLifetime
         markdown.ShouldContain("## Flights");
         markdown.ShouldContain("### TIA1611 · Planets on the GPU");
         markdown.ShouldContain("| 1 | gpu | flying | 1/2 |");
-        markdown.ShouldContain($"![The planets]({Path.Combine(flight.Worktree, "capture.png").Replace('\\', '/')})");
+        // The node's copy is shown, not the plane's file, so it still renders once the plane's file is gone.
+        var kept = _node.State.Flights().Single().Code;
+        var copy = Directory.GetFiles(Path.Combine(Path.GetFullPath(_node.Options.DataFolder), "attachments", kept)).Single().Replace('\\', '/');
+        markdown.ShouldContain($"![The planets]({copy})");
+        markdown.ShouldNotContain(Path.Combine(flight.Worktree, "capture.png").Replace('\\', '/'));
+        File.Delete(Path.Combine(flight.Worktree, "capture.png"));
+        (await Pilot(_root, "status", "--output-format", "markdown")).Output.ShouldContain($"![The planets]({copy})");
+
+        // pilot attachments lists the flight's copies with their paths, and every one with no argument.
+        var (_, listed, _) = await Pilot(_root, "attachments", "TIA1611");
+        listed.ShouldContain("TIA1611/gpu");
+        listed.ShouldContain("The planets");
+        listed.Replace('\\', '/').ShouldContain(copy);
+        (await Pilot(_root, "attachments")).Output.ShouldBe(listed);
+        (await Pilot(_root, "attachments", "TIA9999")).Output.ShouldBe("No attachments for TIA9999.\n");
 
         // The tests' host has no terminal, as the GUI's command bar and the MCP server have none: auto is plain, and rich the source.
         var (_, auto, _) = await Pilot(_root, "status");

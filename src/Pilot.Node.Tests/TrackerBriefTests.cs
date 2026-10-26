@@ -74,6 +74,24 @@ public class TrackerBriefTests
     }
 
     [Fact]
+    public void TheWorkerValidatorAndReviewerBriefsSayAPrBodyNamesAnArtifactAndPointAtPilotAttachments()
+    {
+        var flight = Row(TrackerKind.GitHub);
+
+        string[] briefs =
+        [
+            Briefs.For(flight, Leg(), [Leg()]),
+            Briefs.Validate(flight, Leg(), [Leg()], "pilot"),
+            Briefs.Review(flight, [Leg()], Plane, "pilot"),
+        ];
+        foreach (var brief in briefs)
+        {
+            brief.ShouldContain("GitHub takes no image from gh");
+            brief.ShouldContain("pilot attachments <code>");
+        }
+    }
+
+    [Fact]
     public void AGitHubFlightsValidatorAndReviewerSayNothingOfAnyTracker()
     {
         var flight = Row(TrackerKind.GitHub);
