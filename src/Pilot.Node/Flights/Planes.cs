@@ -301,7 +301,10 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
             // A sibling left by an earlier hold is cleared if it can be.
             if (Directory.Exists(path) && !queue.Contains(path))
             {
-                await RemoveAsync(repoPath, path, cancellationToken, force: true);
+                if (await RemoveAsync(repoPath, path, cancellationToken, force: true) is { } siblingHeld)
+                {
+                    queue.Add(path, RemovalQueue.ReviewKind, Path.GetFileName(path), siblingHeld);
+                }
             }
         }
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);

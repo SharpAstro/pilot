@@ -307,6 +307,44 @@ public sealed class RemovalQueueTests : IDisposable
     }
 
     [Fact]
+    public async Task AFolderThatBecomesDueAfterTheCardRangIsNamedByItAndOneReleasedIsDropped()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
+        var time = new Sessions.ManualTime(new DateTimeOffset(2026, 10, 26, 9, 0, 0, TimeSpan.Zero));
+        var state = new NodeState(new InMemoryJournal(), time);
+        var queue = new RemovalQueue(RemovalQueue.FileIn(Path.Combine(_root, "grow-data")), time);
+        var a = QueuedFolder(queue);
+        time.Advance(TimeSpan.FromHours(20));
+        var b = QueuedFolder(queue);
+        var runner = new RemovalQueueStart(queue, state, time) { Holders = _ => [] };
+        CardRow[] Cards() => [.. state.Cards(openOnly: true).Where(c => c.Kind == RemovalQueueStart.Kind)];
+
+        using var holdA = Hold(a);
+        using var holdB = Hold(b);
+        time.Advance(TimeSpan.FromHours(5));
+        await runner.StartingAsync(Ct);
+        var first = Cards().ShouldHaveSingleItem();
+        first.Detail.ShouldNotBeNull().ShouldContain(Path.GetFullPath(a));
+        first.Detail.ShouldNotContain(Path.GetFullPath(b));
+
+        // The same set leaves the card be; B past a day joins it as a new one.
+        await runner.StartingAsync(Ct);
+        Cards().ShouldHaveSingleItem().Id.ShouldBe(first.Id);
+        time.Advance(TimeSpan.FromHours(20));
+        await runner.StartingAsync(Ct);
+        var second = Cards().ShouldHaveSingleItem();
+        second.Id.ShouldNotBe(first.Id);
+        second.Detail.ShouldNotBeNull().ShouldContain(Path.GetFullPath(a));
+        second.Detail.ShouldContain(Path.GetFullPath(b));
+
+        holdA.Dispose();
+        await runner.StartingAsync(Ct);
+        var third = Cards().ShouldHaveSingleItem();
+        third.Detail.ShouldNotBeNull().ShouldContain(Path.GetFullPath(b));
+        third.Detail.ShouldNotContain(Path.GetFullPath(a));
+    }
+
+    [Fact]
     public async Task IdleTriesDoNotRaiseStartsTriedAndDoNotRingBeforeADay()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
