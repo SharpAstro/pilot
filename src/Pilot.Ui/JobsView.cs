@@ -160,6 +160,10 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private static readonly RGBAColor32 Failed = new(0xe0, 0x5a, 0x5a, 0xff);
     private static readonly RGBAColor32 Button = new(0x2a, 0x3a, 0x58, 0xff);
     private static readonly RGBAColor32 ButtonHover = new(0x35, 0x4a, 0x70, 0xff);
+
+    /// <summary>A button that ends something: white on it reads 6.5:1, on its hover 5.4:1 (AA for 12 px text).</summary>
+    private static readonly RGBAColor32 Danger = new(0xb3, 0x26, 0x1e, 0xff);
+    private static readonly RGBAColor32 DangerHover = new(0xc9, 0x37, 0x2c, 0xff);
     private static readonly RGBAColor32 MenuBg = new(0x1f, 0x21, 0x2b, 0xff);
 
     /// <summary>How often the selected job's log is read again.</summary>
@@ -200,6 +204,12 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     /// <summary>Cancels a job: the node's <c>cancel-job</c>.</summary>
     public Action<JobRow>? OnCancel { get; set; }
+
+    /// <summary>
+    /// The job whose Cancel was pressed and waits on its confirm: a cancel ends a run that may have taken hours, so one press
+    /// only asks, and the detail's buttons become the question until it is answered or another job is picked.
+    /// </summary>
+    private string? _confirmCancel;
 
     /// <summary>Opens the session a job wakes (its transcript, on the Sessions page); null where there is none to open.</summary>
     public Action<JobRow>? OnSession { get; set; }
@@ -388,7 +398,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
         else if (CanCommand && line.Live && OnCancel is { } cancel)
         {
-            items.Add(new DropdownItem<string>("Cancel", "cancel") { OnChoose = () => cancel(job) });
+            items.Add(new DropdownItem<string>("Cancel…", "cancel") { OnChoose = () => _confirmCancel = job.Id });
         }
         if (job.Owner is not null && OnSession is { } session)
         {
@@ -420,6 +430,11 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     internal Layout.Node Build(JobsScreen screen, JobLine? selected)
     {
         var parts = new List<Layout.Node> { Header(screen), Main(screen).HStar() };
+        // A question asked about one job does not follow the selection to another, nor outlive the job's run.
+        if (_confirmCancel is { } asked && (selected is not { Live: true } || selected.Row.Id != asked))
+        {
+            _confirmCancel = null;
+        }
         if (selected is not null)
         {
             parts.Add(Details(selected));
@@ -544,8 +559,16 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
         else if (CanCommand && line.Live && OnCancel is { } cancel)
         {
+            if (_confirmCancel == job.Id)
+            {
+                // The question replaces the row's buttons, so nothing else can be pressed by a slip while it stands.
+                buttons.Add(Layout.Builder.Text($"Cancel {job.Id}? It stops now; its output so far stays in its log.", 12f, Bright).WAuto());
+                buttons.Add(Pill("Cancel job", $"job:{job.Id}:cancel-yes", () => { _confirmCancel = null; cancel(job); }, Danger, DangerHover));
+                buttons.Add(Pill("Keep running", $"job:{job.Id}:cancel-no", () => _confirmCancel = null));
+                return Panel(facts, line, buttons);
+            }
             // Cancel (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            buttons.Add(Pill("Cancel", $"job:{job.Id}:cancel", () => cancel(job)));
+            buttons.Add(Pill("Cancel…", $"job:{job.Id}:cancel", () => _confirmCancel = job.Id, Danger, DangerHover));
         }
         if (job.Owner is not null && OnSession is { } session)
         {
@@ -558,6 +581,11 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             buttons.Add(Pill("Open log", $"job:{job.Id}:log", () => open(job.LogPath)));
         }
 
+        return Panel(facts, line, buttons);
+    }
+
+    private Layout.Node Panel(List<Layout.Node> facts, JobLine line, List<Layout.Node> buttons)
+    {
         return Layout.Builder.VStack(
                 Layout.Builder.HStack(
                         Layout.Builder.VStack([.. facts]).WFixed(FactsColumn),
@@ -622,11 +650,11 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// </summary>
     private static Layout.Node Optional(Layout.Node cell, float width) => cell.WStar(1f, 0f, width).CollapseBelow(width);
 
-    private static Layout.Node Pill(string label, string action, Action onClick) =>
+    private static Layout.Node Pill(string label, string action, Action onClick, RGBAColor32? bg = null, RGBAColor32? hover = null) =>
         Layout.Builder.Text(label, 12f, Bright, TextAlign.Center)
             .Pad(10f, 4f)
             .WAuto()
-            .Bg(Button)
-            .BgHover(ButtonHover)
+            .Bg(bg ?? Button)
+            .BgHover(hover ?? ButtonHover)
             .Follows(new HitResult.ButtonHit(action), _ => onClick());
 }
