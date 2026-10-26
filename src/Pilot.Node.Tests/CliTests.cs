@@ -165,6 +165,9 @@ public sealed class CliTests : IAsyncLifetime
         var outside = await Pilot(_root, "check", "1");
         (outside.Exit, outside.Error).ShouldBe((2, "pilot: this folder is in no flight's plane; name the leg with --leg <code>/<leg>" + Environment.NewLine));
 
+        var outsideWait = await Pilot(_root, "leg", "wait", "--for-file", "x.flag");
+        (outsideWait.Exit, outsideWait.Error).ShouldBe((2, "pilot: this folder is in no flight's plane; name the leg with --leg <code>/<leg>" + Environment.NewLine));
+
         var idle = await Pilot(plane, "leg", "finish", "done");
         idle.Error.ShouldContain("TIA7 has no leg flying");
 

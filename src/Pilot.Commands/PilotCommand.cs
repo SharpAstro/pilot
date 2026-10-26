@@ -336,11 +336,30 @@ public static class PilotCommand
         var goAround = Action(new Command("go-around", "Stop the leg's worker and start a fresh one, told why") { Arguments = { why }, Options = { leg } },
             (p, client, ct) => OnLeg(p, client, Verbs.GoAround, _ => [Join(p, why)], ct));
 
+        var forFile = new Option<string?>("--for-file") { Description = "A file whose appearance wakes the worker (a relative path is from here)" };
+        var until = new Option<string?>("--until") { Description = "A time: alone it wakes the worker then; with --for-file it rings once past it and goes on waiting (14:30, or 2026-10-27T09:00)" };
+        var waitWhy = Words("why", "Why it waits: the wake-up says it back", required: false);
+        var wait = Action(new Command("wait", "Wait on a file or a time with no job: end your turn after it, the node wakes you once it comes") { Arguments = { waitWhy }, Options = { forFile, until, leg } },
+            (p, client, ct) =>
+            {
+                var args = new List<string>();
+                if (p.GetValue(forFile) is { Length: > 0 } file)
+                {
+                    args.Add($"path={(Path.IsPathRooted(file) ? file : Path.GetFullPath(file, cwd))}");
+                }
+                if (p.GetValue(until) is { Length: > 0 } at)
+                {
+                    args.Add($"until={ParseUntil(at, DateTimeOffset.Now).ToString("o", System.Globalization.CultureInfo.InvariantCulture)}");
+                }
+                args.AddRange(p.GetValue(waitWhy) ?? []);
+                return OnLeg(p, client, Verbs.WaitLeg, _ => [.. args], ct);
+            });
+
         var tokens = Arg("tokens", "The new budget in weighted tokens, as 6000000");
         var extend = Action(new Command("extend", "Raise the leg's budget") { Arguments = { tokens }, Options = { leg } },
             (p, client, ct) => OnLeg(p, client, Verbs.ExtendBudget, _ => [p.GetValue(tokens)!], ct));
 
-        var legCommand = new Command("leg", "Legs: plan, remove, start, validate, finish, go around, extend") { Subcommands = { plan, remove, start, validate, finish, goAround, extend } };
+        var legCommand = new Command("leg", "Legs: plan, remove, start, validate, finish, wait, go around, extend") { Subcommands = { plan, remove, start, validate, finish, wait, goAround, extend } };
 
         // check, artifact
         var step = Words("step", "The step's number, or the start of its text");
@@ -790,6 +809,16 @@ public static class PilotCommand
     /// The leg the folder <paramref name="cwd"/> works on: the flying leg of the flight whose plane holds it, and who is
     /// asking, its worker by name, so the black box says which worker ticked what.
     /// </summary>
+    /// <summary>A time as typed: a full date and time, or a clock time (<c>14:30</c>), which is the next such time from <paramref name="now"/>.</summary>
+    internal static DateTimeOffset ParseUntil(string text, DateTimeOffset now)
+    {
+        if (!DateTimeOffset.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeLocal, out var at))
+        {
+            throw new UsageException($"cannot read '{text}' as a time; give 14:30 or 2026-10-27T09:00");
+        }
+        return TimeSpan.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, out _) && at <= now ? at.AddDays(1) : at;
+    }
+
     internal static (string Target, string Who) LegHere(SnapshotEvent snapshot, string cwd, string fallback = "cli", bool validating = false)
     {
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
@@ -954,7 +983,7 @@ public static class PilotCommand
             {
                 await output.WriteLineAsync($"created issue #{issueNumber}");
             }
-            if (verb is Verbs.Overlap or Verbs.Separate && result.Made is { Length: > 0 } told)
+            if (verb is Verbs.Overlap or Verbs.Separate or Verbs.WaitLeg && result.Made is { Length: > 0 } told)
             {
                 await output.WriteLineAsync(told);
             }

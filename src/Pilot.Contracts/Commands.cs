@@ -171,6 +171,12 @@ public static class Verbs
     public const string FinishLeg = "finish-leg";
 
     /// <summary>
+    /// <c>wait-leg flight/&lt;code&gt;/&lt;leg&gt; [path=&lt;file&gt;] [until=&lt;ISO time&gt;] [why…]</c>: the flying leg's worker waits on a file or a time
+    /// with no job; it ends its turn and the node wakes it once when it comes. Needs a file or a time, and a time not past.
+    /// </summary>
+    public const string WaitLeg = "wait-leg";
+
+    /// <summary>
     /// <c>go-around flight/&lt;code&gt;/&lt;leg&gt; &lt;why…&gt;</c>: its worker stopped and a fresh one started, briefed from the
     /// leg, the plane's diff so far and why; never the last worker's conversation.
     /// </summary>

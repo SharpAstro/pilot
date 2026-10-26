@@ -83,9 +83,36 @@ public sealed record LegRow
     /// </summary>
     public PackageWait? Hold { get; init; }
 
+    /// <summary>
+    /// What its worker waits on without a job (<c>pilot leg wait</c>): a file to appear or a time to come. The worker ends its
+    /// turn; the node looks about every minute and wakes it once when it comes. Null when it waits on nothing.
+    /// </summary>
+    public LegWait? Wait { get; init; }
+
     public DateTimeOffset? StartedAt { get; init; }
 
     public DateTimeOffset? FinishedAt { get; init; }
+}
+
+/// <summary>A leg's worker waiting on a file or a time, with no job: what it waits for, why, and since when.</summary>
+public sealed record LegWait
+{
+    /// <summary>The file whose appearance wakes the worker; null for a wait on a time alone.</summary>
+    public string? Path { get; init; }
+
+    /// <summary>
+    /// The time that wakes the worker (a wait on a time alone), or, with a <see cref="Path"/>, the time past which the wait rings
+    /// the person once and goes on waiting. Null for a file wait with no limit.
+    /// </summary>
+    public DateTimeOffset? Until { get; init; }
+
+    /// <summary>Why the worker waits, in its words; empty when it said nothing.</summary>
+    public string Why { get; init; } = "";
+
+    public required DateTimeOffset Since { get; init; }
+
+    /// <summary>Whether the wait past its <see cref="Until"/> has rung already.</summary>
+    public bool Rung { get; init; }
 }
 
 /// <summary>
