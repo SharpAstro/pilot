@@ -148,6 +148,24 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>The tracker a bare number means in <paramref name="repo"/> (<see cref="NodeSettings.RepoTrackersKey"/>), in force at once.</summary>
+    public TrackerKind TrackerOf(string repo)
+    {
+        lock (_lock)
+        {
+            return _settings.TrackerOf(repo);
+        }
+    }
+
+    /// <summary>Whether the node never merges <paramref name="repo"/>'s PRs by itself (<see cref="NodeSettings.NoAutoMergeReposKey"/>), in force at once.</summary>
+    public bool NoAutoMerge(string repo)
+    {
+        lock (_lock)
+        {
+            return _settings.NoAutoMergeRepos?.Contains(repo, StringComparer.OrdinalIgnoreCase) == true;
+        }
+    }
+
     /// <summary>Whether the node takes no new flight (<see cref="NodeSettings.MaintenanceKey"/>): on while the setting says so, at once.</summary>
     public bool Maintenance
     {

@@ -639,7 +639,7 @@ internal static class NewFlights
         foreach (var (repo, issue) in picks)
         {
             var made = await SendAsync(client, Verbs.CreateFlight, Verbs.RepoTarget(repo.Path),
-                [issue.Number.ToString(System.Globalization.CultureInfo.InvariantCulture), issue.Title], who, cancellationToken);
+                ["#" + issue.Number.ToString(System.Globalization.CultureInfo.InvariantCulture), issue.Title], who, cancellationToken);
             if (made is not { Ok: true, Made: { } code })
             {
                 return $"failed: {repo.Name} #{issue.Number}: {made?.Error ?? "the node did not answer"}"

@@ -143,7 +143,7 @@ prefix, `--machine` or `PILOT_MACHINE`, else from its name).
 
 | Command | What it does |
 | --- | --- |
-| `create-flight repo/<path> <issue> [title…]` | Codes the flight and makes its plane; `<path>` may be any checkout of the repo, a worktree included. Without a title it takes the issue's; the result names the code it made. |
+| `create-flight repo/<path> <item> [title…]` | Codes the flight and makes its plane; `<path>` may be any checkout of the repo, a worktree included. `<item>` is a GitHub issue (`254`, `#254`) or a Shortcut story (`sc-101645` or its `app.shortcut.com/<org>/story/N` URL); see **Trackers**. Without a title it takes the item's; the result names the code it made. |
 | `plan-flight flight/<code>` | A planner, `<machine>-<flight>-plan`, in the plane: it reads the issue and the code and plans the legs (`plan-leg`), writing no code, then says `planned`. |
 | `planned flight/<code> [summary…]` | The planner is done: a For-you card lists the legs, with **Start** on the first. No leg may be named `plan`. |
 | `overlap flight/<code> <other> <why…>` | The planner found the flight to look like part of another. A pair not asked before is recorded pending on the flight and rings one card (**Fold into <other>**, **Plan separately**); `plan-leg` and `planned` on the flight are refused while it waits, and the planner is told to end its turn (it is started again with the answer). A pair answered already returns the answer, with no card. Refused for an unknown, landed or the same flight. |
@@ -153,6 +153,24 @@ prefix, `--machine` or `PILOT_MACHINE`, else from its name).
 | `sync-repos node` | `git fetch -p --all` in each tracked repo, then a fast-forward-only merge of `origin/<default>` into its main checkout. Never a merge commit or a pull, and a checkout that is dirty, on another branch, diverged from origin or without an origin default is left alone and the outcome says why; a failed fetch or fast-forward is that repo's `failed`. Each git call is cut off after 2 minutes. The result's `made` is one `name<TAB>updated\|current\|skipped\|failed<TAB>detail` line per repo, and the repo status is read afresh after it. The controller's: refused from the watchtower, and from the LAN without a grant. |
 | `create-issue repo/<path> <title> [body…]` | A new issue through `gh issue create`; the result's `made` is its number. The controller's, as `sync-repos` is. |
 | `land flight/<code>` | Its work is in: the worktree goes when clean (never with changes not committed, nor with a commit on no remote and not in its base), the branch and code stay, and flights waiting for it are cleared. |
+
+**Trackers (#254).** A flight's work item is a GitHub issue or a Shortcut story, and the flight records which. The code
+is the repo prefix and the number (`BUL101645` for story 101645), with the same `a` to `e` suffixes. A Shortcut flight's
+branch is `flight/bul101645-sc-101645` and its PR title or body carries `sc-101645`, so Shortcut's GitHub integration
+links the card; the body has no `Closes #`, and landing never tries to close the card. Every brief reads a Shortcut
+flight's story, not `gh issue view`: through the Shortcut MCP tool `stories-get-by-id` when the session has it, else
+`curl` against the REST API with the token. A flight made before trackers existed reads as GitHub. Folding a flight into
+one on another tracker is refused; overlap works across trackers.
+- **The Shortcut token** reads a story's title when `create-flight` is given none. It is the `SHORTCUT_API_TOKEN`
+  variable, which wins, else the node's `shortcut-token` setting. With neither, and no title given, the create is refused
+  naming what is missing. Settings and the setup checklist show only whether it is present, never the token.
+- **A bare number** means the repo's tracker default (`repo-trackers`, under Settings), GitHub for a repo with none.
+  `#254` is always a GitHub issue and `sc-N` always a story. The new-flight wizard lists a repo's GitHub issues, so it
+  always sends `#N`.
+- **Other repo roots and default branches.** `repo-roots` takes several folders (`pilot settings set repo-roots
+  C:\src\sharpastro C:\src\drawboard`), and the wizard and `repos` list the clones under each. A plane is cut from the
+  remote's default branch as `origin/HEAD` says it, so a repo whose default is `develop` flies from `origin/develop`
+  and its PR goes there; `main` is only the guess when `origin/HEAD` cannot be set.
 
 **The planner looks first.** Before it plans a leg, a planner's brief has it list the flights not landed (`pilot status`
 here, and `pilot nodes` then `pilot --node <host:port> status` for each node it sees), read their issues and legs'
@@ -869,6 +887,19 @@ the one setting a LAN grant may change (the Fleet row menu's way); every other `
 `pilot status` prints an `autopilot` line, on or off. Only the person changes it (see **Who may do what**): a `set` of it
 from an assistant, the lookout, a flight's session or a grant is refused, taking it out (`set autopilot` with no value)
 included.
+
+Two per-repo settings (#254) are lists, keyed by the repo's folder name and in force at once, like `priority-repos`:
+- `repo-trackers` takes `repo=tracker` entries (`pilot settings set repo-trackers bullclip-backend=shortcut`), `tracker`
+  being `github` or `shortcut`. A bare number given to `create-flight` for that repo is a story of that tracker; a repo
+  left out means GitHub. A later entry for a repo replaces the earlier one.
+- `no-auto-merge-repos` names repos whose PRs the node never merges by itself, autopilot on or not (`pilot settings set
+  no-auto-merge-repos bullclip-backend`). An assistant's `merge` of such a flight is not run on autopilot: it raises the
+  For-you confirm card as it does with autopilot off, and the asking session is told the answer. A passed flight's
+  PR-ready card there rings the controller as for any repo. The person's own merge (the card's **Allow**, the **Merge**
+  button, `pilot flight merge` by hand) is not held.
+
+`shortcut-token` is in force at once, and the setup checklist has an optional **Shortcut token** line saying whether one
+is present (the variable or the setting).
 
 A `create-flight` that reaches a node in maintenance goes to a willing node instead (#177). The candidates are the
 nodes this node holds a grant for (`client-grants.json` beside its data, the tokens `pilot connect` saved; the

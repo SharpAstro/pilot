@@ -94,7 +94,10 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         {
             throw new FlightException("create-flight needs the work item first (an issue number, sc-N or a Shortcut story URL), as in create-flight repo/<path> 1611 [title]");
         }
-        var (parsed, parseError) = WorkItem.Parse(args[0]);
+        // A bare number means the repo's tracker default (repo-trackers), keyed by the checkout's folder name.
+        var givenPath = command.Target[Verbs.RepoTargetPrefix.Length..];
+        var named = Path.GetFileName((await planes.MainCheckoutAsync(givenPath, cancellationToken) ?? givenPath).TrimEnd('/', '\\'));
+        var (parsed, parseError) = WorkItem.Parse(args[0], Models.TrackerOf(named));
         if (parsed is not { } item)
         {
             throw new FlightException($"create-flight: {parseError}");

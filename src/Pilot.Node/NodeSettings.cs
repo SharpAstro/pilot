@@ -34,6 +34,8 @@ public sealed record NodeSettings
     public const string AcceptFleetFlightsKey = "accept-fleet-flights";
     public const string AutopilotKey = "autopilot";
     public const string ShortcutTokenKey = "shortcut-token";
+    public const string RepoTrackersKey = "repo-trackers";
+    public const string NoAutoMergeReposKey = "no-auto-merge-repos";
 
     /// <summary>How a flight's PR is merged when the merge names no method: rebase keeps every commit's subject, which a
     /// repo's docs may cite (tianwen's rule); squash makes one commit of them; merge adds a merge commit.</summary>
@@ -41,7 +43,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ShortcutTokenKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey,
          .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey)];
 
     /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
@@ -86,6 +88,12 @@ public sealed record NodeSettings
 
     /// <summary>The repos whose flights have runway: they go on past <see cref="StartLimit"/>, up to <see cref="PriorityStartLimit"/>.</summary>
     public IReadOnlyList<string>? PriorityRepos { get; init; }
+
+    /// <summary>Per repo (its folder name), the tracker a bare number means (<see cref="RepoTrackersKey"/>), each entry <c>repo=shortcut</c> or <c>repo=github</c>; a repo left out means GitHub.</summary>
+    public IReadOnlyList<string>? RepoTrackers { get; init; }
+
+    /// <summary>The repos (folder names) whose PRs the node never merges by itself (<see cref="NoAutoMergeReposKey"/>), autopilot or not: an assistant's merge raises a card, and a passed flight rings.</summary>
+    public IReadOnlyList<string>? NoAutoMergeRepos { get; init; }
 
     /// <summary>The roles' models and efforts by key (<c>worker-model</c>: <c>opus</c>); a key left out takes the role's default.</summary>
     public IReadOnlyDictionary<string, string>? Roles { get; init; }
@@ -138,7 +146,7 @@ public sealed record NodeSettings
                     LanPortKey => JsonValue.Create(LanPort),
                     MaxJobsKey => JsonValue.Create(MaxJobs),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
-                    RepoRootsKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
+                    RepoRootsKey or RepoTrackersKey or NoAutoMergeReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
                     _ => JsonValue.Create(values[0]),
                 };
             }
@@ -173,6 +181,8 @@ public sealed record NodeSettings
         PriorityStartLimitKey => PriorityStartLimit is { } high ? [high.ToString(CultureInfo.InvariantCulture)] : null,
         WeekLimitKey => WeekLimit is { } week ? [week.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityReposKey => PriorityRepos,
+        RepoTrackersKey => RepoTrackers,
+        NoAutoMergeReposKey => NoAutoMergeRepos,
         _ when IsRoleKey(key) && Roles?.GetValueOrDefault(key) is { } role => [role],
         _ => null,
     };
@@ -304,6 +314,31 @@ public sealed record NodeSettings
                 return clear
                     ? (settings with { PriorityRepos = null }, null)
                     : (settings with { PriorityRepos = [.. given.Distinct(StringComparer.OrdinalIgnoreCase)] }, null);
+            case NoAutoMergeReposKey:
+                return clear
+                    ? (settings with { NoAutoMergeRepos = null }, null)
+                    : (settings with { NoAutoMergeRepos = [.. given.Distinct(StringComparer.OrdinalIgnoreCase)] }, null);
+            case RepoTrackersKey:
+            {
+                if (clear)
+                {
+                    return (settings with { RepoTrackers = null }, null);
+                }
+                var entries = new List<string>();
+                foreach (var entry in given)
+                {
+                    var at = entry.IndexOf('=');
+                    var repo = at > 0 ? entry[..at].Trim() : "";
+                    var tracker = at > 0 ? entry[(at + 1)..].Trim().ToLowerInvariant() : "";
+                    if (repo.Length == 0 || tracker is not ("github" or "shortcut"))
+                    {
+                        return (null, "repo-trackers takes repo=tracker entries, as in bullclip-backend=shortcut (github or shortcut)");
+                    }
+                    entries.RemoveAll(e => e.StartsWith(repo + "=", StringComparison.OrdinalIgnoreCase));
+                    entries.Add($"{repo}={tracker}");
+                }
+                return (settings with { RepoTrackers = entries }, null);
+            }
             case StartLimitKey:
                 if (clear)
                 {
@@ -343,6 +378,11 @@ public sealed record NodeSettings
                 return (null, $"there is no setting {key}; there are {string.Join(", ", Keys)}");
         }
     }
+
+    /// <summary>The tracker a bare number means in <paramref name="repo"/> (its folder name): its <see cref="RepoTrackersKey"/> entry, else GitHub.</summary>
+    public TrackerKind TrackerOf(string repo) =>
+        RepoTrackers?.Select(e => e.Split('=', 2)).FirstOrDefault(p => p.Length == 2 && string.Equals(p[0], repo, StringComparison.OrdinalIgnoreCase)) is { } found
+            && found[1] == "shortcut" ? TrackerKind.Shortcut : TrackerKind.GitHub;
 
     // The on/off words set node takes for a switch; null for anything else.
     private static bool? OnOff(string? value) => value?.ToLowerInvariant() switch

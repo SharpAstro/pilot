@@ -192,7 +192,10 @@ public static class NodeApp
         builder.Services.AddSingleton<NodeRestarter>();
         builder.Services.AddHostedService(services => services.GetRequiredService<NodeRestarter>());
         builder.Services.AddSingleton(services => new NodeSetup(options, Environment.ProcessPath ?? "pilot-node",
-            services.GetRequiredService<SessionTrackerOptions>().Profile.Root));
+            services.GetRequiredService<SessionTrackerOptions>().Profile.Root)
+        {
+            ShortcutToken = () => Flights.ShortcutTracker.TokenFrom(services.GetRequiredService<RoleModels>().ShortcutToken),
+        });
         builder.Services.AddSingleton<NodeSettingsCommands>();
         builder.Services.AddSingleton(services => new SessionTracker(
             services.GetRequiredService<NodeState>(),

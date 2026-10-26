@@ -36,7 +36,8 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         var onAutopilot = standing.Kind == StandingKind.Assistant && Standing.YourOnly(command, state);
         if (onAutopilot)
         {
-            if (!Get<RoleModels>().Autopilot)
+            // A repo set to no-auto-merge never has its flight merged by an assistant on its own, autopilot or not: the merge waits on the person's card.
+            if (!Get<RoleModels>().Autopilot || command.Verb == Verbs.Merge && NoAutoMerge(command))
             {
                 return Get<Autopilot>().Ask(command);
             }
@@ -49,6 +50,12 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         }
         return result;
     }
+
+    // Whether a merge's flight is in a repo whose PRs the node never merges by itself (no-auto-merge-repos).
+    private bool NoAutoMerge(CommandRequest command) =>
+        command.Target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal)
+        && state.Flights().FirstOrDefault(f => f.Code == command.Target[Verbs.FlightTargetPrefix.Length..]) is { } flight
+        && Get<RoleModels>().NoAutoMerge(flight.Repo);
 
     private async Task<CommandResult> RouteAsync(CommandRequest command, CancellationToken cancellationToken)
     {

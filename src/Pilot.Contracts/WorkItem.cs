@@ -31,10 +31,10 @@ public readonly record struct WorkItem(TrackerKind Tracker, int Id)
 
     /// <summary>
     /// Reads what a create-flight was given: <c>sc-N</c> or <c>SC-N</c>, a Shortcut story URL
-    /// (<c>https://app.shortcut.com/&lt;org&gt;/story/N[/slug]</c>), or a bare number (<c>254</c>, <c>#254</c>), which is a GitHub issue.
+    /// (<c>https://app.shortcut.com/&lt;org&gt;/story/N[/slug]</c>), or a bare number (<c>254</c>), which is <paramref name="bare"/> (a GitHub issue unless the repo's tracker default says otherwise); <c>#254</c> is always a GitHub issue.
     /// Returns null, and why, for anything else.
     /// </summary>
-    public static (WorkItem? Item, string? Error) Parse(string? text)
+    public static (WorkItem? Item, string? Error) Parse(string? text, TrackerKind bare = TrackerKind.GitHub)
     {
         var given = (text ?? "").Trim();
         const string Shape = "a work item is a number (a GitHub issue), sc-N or a https://app.shortcut.com/<org>/story/N URL (a Shortcut story)";
@@ -58,7 +58,8 @@ public readonly record struct WorkItem(TrackerKind Tracker, int Id)
                 ? (linked, null)
                 : (null, $"{given} names no Shortcut story: {Shape}");
         }
-        return Number(given.TrimStart('#'), TrackerKind.GitHub) is { } issue ? (issue, null) : (null, $"{given} is not a work item: {Shape}");
+        // A bare number is the repo's tracker default; a leading # says GitHub whatever the default is.
+        return Number(given.TrimStart('#'), given.StartsWith('#') ? TrackerKind.GitHub : bare) is { } issue ? (issue, null) : (null, $"{given} is not a work item: {Shape}");
     }
 
     private static WorkItem? Number(string text, TrackerKind tracker) =>
