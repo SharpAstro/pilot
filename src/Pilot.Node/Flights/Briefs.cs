@@ -218,6 +218,11 @@ public static class Briefs
         "Checks, and your own builds and test runs, build as the repo's CI does: for a SharpAstro dotnet repo that is `-c Release`, not the Debug a bare\n" +
         "`dotnet build` gives. A check that cannot match CI says why in the Done-when, before it fails.";
 
+    /// <summary>The line the planner is told: a check runs in the plane's root, so write it as CI runs it, working-directory included.</summary>
+    internal const string CheckWhereRule =
+        "A check runs in the plane's root: write it as CI runs it, including its working-directory (`cd <dir> && dotnet build <solution> -c Release`).\n" +
+        "`leg plan` refuses a check naming a project, solution or folder that is not where it runs, and says where the file is.";
+
     /// <summary>
     /// The org's UI checklist beside the flight's clone (<c>.github/docs/ui-changes.md</c> in the folder holding its repo,
     /// as SharpAstro keeps it), or null where there is none.
@@ -381,6 +386,8 @@ public static class Briefs
         text.AppendLine("(`--filter 'FullyQualifiedName~A|FullyQualifiedName~B'`). A bare | is refused, since it would pipe.");
         // SDL144: a Debug check on a worktree needed what the Release package never carries, and failed for nothing of the leg's.
         text.AppendLine(CiRule);
+        // PIL319: a check naming a solution that sits in src/ could never pass from the plane's root.
+        text.AppendLine(CheckWhereRule);
         if (CiShape.Of(flight.Worktree) is { } ci)
         {
             text.AppendLine($"This repo's CI ({ci.Workflow}) builds {ci.Configuration}: give every `dotnet build` and `dotnet test` in a check `-c {ci.Configuration}`. " +

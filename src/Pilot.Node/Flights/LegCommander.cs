@@ -425,6 +425,13 @@ public sealed partial class LegCommander(
                 $"the check pipes on the | at column {pipe + 1}, outside quotes: the shell would run what follows it as a program. Quote it, as in --filter 'A|B'");
         }
 
+        // A check runs in the plane's root (after any leading cd), so a project it names must be there: ci-differs says why a
+        // build differs from CI, never that a file is somewhere it is not (PIL319).
+        if (check is not null && CheckPaths.Refusal(check, flight.Worktree) is { } missing)
+        {
+            throw new FlightException(missing);
+        }
+
         // A check builds as the repo's CI does (SDL144: a Debug check needing what the Release package never carries). One that
         // cannot match says why, and the reason stays with the leg, in its Done-when, where the worker and the reviewer read it.
         if (check is not null)
