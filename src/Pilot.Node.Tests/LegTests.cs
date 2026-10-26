@@ -66,7 +66,7 @@ internal sealed class FakeGitHub : IGitHub
     public Dictionary<int, string> Issues { get; } = [];
 
     public Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken) =>
-        Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value })]);
+        Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value, Labels = IssueLabels.TryGetValue(i.Key, out var labels) ? [.. labels] : [] })]);
 
     /// <summary>Each repo's open PRs, by repo folder path; a repo with none listed has none.</summary>
     public Dictionary<string, PullRequestStatus[]> OpenPrs { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -373,8 +373,15 @@ internal sealed class FakeGitHub : IGitHub
     public Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
         Task.FromResult(IssueLabels.TryGetValue(number, out var labels) ? labels.ToArray() : []);
 
+    /// <summary>When set, adding or removing an issue label fails with it, as GitHub refusing it.</summary>
+    public string? IssueLabelFails { get; set; }
+
     public Task AddIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
     {
+        if (IssueLabelFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
         if (!LabelsCreated.Contains(label))
         {
             LabelsCreated.Add(label);
@@ -385,6 +392,10 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task RemoveIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
     {
+        if (IssueLabelFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
         if (IssueLabels.TryGetValue(number, out var labels))
         {
             labels.Remove(label);

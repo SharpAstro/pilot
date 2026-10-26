@@ -216,6 +216,51 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    public async Task LandingAFlightTakesThisNodesLabelOffItsIssueOrStoryAndLeavesOthers()
+    {
+        var (github, shortcut) = Trackered();
+        github.IssueLabels[51] = ["bug"];
+        await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "51");
+        await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "sc-52", "A", "story");
+        github.IssueLabels[51].Order().ShouldBe(["bug", "pilot node: DE1"]);
+
+        (await Run(Verbs.Land, Verbs.FlightTarget("TIA51"))).Ok.ShouldBeTrue();
+        (await Run(Verbs.Land, Verbs.FlightTarget("TIA52"))).Ok.ShouldBeTrue();
+
+        github.IssueLabels[51].ShouldBe(["bug"]);
+        shortcut.Labels[52].ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task LandingAfterAMergeAndRetiringAFoldedFlightTakeTheLabelOffToo()
+    {
+        var (github, _) = Trackered();
+        await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "61");
+        await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "62");
+
+        await _commander.LandAfterMergeAsync("TIA61", Git(Flight("TIA61").Worktree, "rev-parse", "HEAD"), Ct);
+        await _commander.RetireFoldedAsync(Flight("TIA62"), "TIA61", Ct);
+
+        Flight("TIA61").State.ShouldBe(FlightState.Landed);
+        Flight("TIA62").State.ShouldBe(FlightState.Landed);
+        github.IssueLabels[61].ShouldBeEmpty();
+        github.IssueLabels[62].ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ALabelGitHubWillNotTakeOffIsSaidOnTheLandedCardAndTheFlightLandsAnyway()
+    {
+        var (github, _) = Trackered();
+        await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "71");
+        github.IssueLabelFails = "no permission";
+
+        (await Run(Verbs.Land, Verbs.FlightTarget("TIA71"))).Ok.ShouldBeTrue();
+
+        Flight("TIA71").State.ShouldBe(FlightState.Landed);
+        _state.Cards(openOnly: false).Single(c => c.Kind == "landed").Detail.ShouldNotBeNull().ShouldContain("no permission");
+    }
+
+    [Fact]
     public async Task ASecondFlightOnTheIssueGetsASuffixAndItsOwnPlaneFromAWorktreeToo()
     {
         await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "1611");

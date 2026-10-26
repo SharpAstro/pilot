@@ -20,6 +20,9 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
 
     public TimeSpan Interval { get; init; } = TimeSpan.FromMinutes(3);
 
+    /// <summary>This node's code, whose label a look sweeps off issues it does not fly; empty sweeps nothing.</summary>
+    public string Machine { get; init; } = "";
+
     /// <summary>How many repos are read at once.</summary>
     public int Parallelism { get; init; } = 4;
 
@@ -158,6 +161,23 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
         {
             var listed = await Ref("open PRs", async () => await github.OpenPullRequestsAsync(repo.Path, cancellationToken));
             prs.AddRange((listed ?? []).Select(p => p with { Flight = flights.FirstOrDefault(f => f.Branch == p.Head)?.Code }));
+
+            // This node's label on an open issue no flight of this node (flying or held) is on is stale, left by a flight that
+            // went without landing: taken off. Another node's label is never touched. Shortcut stories are covered by landing.
+            if (Machine.Length > 0)
+            {
+                var own = PilotMarks.NodeLabel(Machine);
+                var issues = await Ref("open issues", async () => await github.IssuesAsync(repo.Path, cancellationToken));
+                foreach (var issue in (issues ?? []).Where(i => i.Labels.Contains(own, StringComparer.OrdinalIgnoreCase)
+                             && !flights.Any(f => f.State != FlightState.Landed && f.Tracker == TrackerKind.GitHub && f.Issue == i.Number)))
+                {
+                    await Ref("node label sweep", async () =>
+                    {
+                        await github.RemoveIssueLabelAsync(repo.Path, issue.Number, own, cancellationToken);
+                        return Array.Empty<int>();
+                    });
+                }
+            }
         }
 
         return new RepoStatus
