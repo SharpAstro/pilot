@@ -113,7 +113,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             // Its PR-ready card offers the merge already; a removal it has been carded for is not carded again.
-            if (queue.RemovedAt is not { } removedAt || queue.RemovedReason is "merged" || carded.Contains(subject)
+            if (queue.RemovedAt is not { } removedAt || string.Equals(queue.RemovedReason, "merged", StringComparison.OrdinalIgnoreCase) || carded.Contains(subject)
                 || state.Cards().Any(c => c.Kind == QueueDropped && c.Subject == subject && c.At >= removedAt))
             {
                 continue;
@@ -215,7 +215,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 // GitHub merges it when its checks pass (and its other rules allow): the PR's MERGED, read above on a later look,
                 // is what lands the flight.
-                legs?.ShowMerge(subject, checks?.Status == ChoiceStatus.Passing ? "checks passed: GitHub merges it now" : LegCommander.ArmedLine(checks, how), MergeWays.Armed);
+                // A review GitHub still waits for is said: its merge is not "now".
+                legs?.ShowMerge(subject, checks?.Status == ChoiceStatus.Passing
+                    ? merge?.Reason is { } waits ? $"checks passed: GitHub waits for {waits} before it merges" : "checks passed: GitHub merges it now"
+                    : LegCommander.ArmedLine(checks, how), MergeWays.Armed);
                 continue;
             }
             // GitHub's auto-merge would merge a head that moved, or one whose check was re-run green, on its own: off first.

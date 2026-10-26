@@ -243,7 +243,7 @@ public static class MergeKinds
 /// </summary>
 /// <param name="Done">Checks finished (a skipped one is finished), of <paramref name="Total"/>.</param>
 /// <param name="Position">Its place in the merge queue when <see cref="MergeKinds.Queued"/>, when GitHub says.</param>
-/// <param name="Reason">What blocks it, in words, when <see cref="MergeKinds.Blocked"/>.</param>
+/// <param name="Reason">What blocks it, in words, when <see cref="MergeKinds.Blocked"/>; what an <see cref="MergeKinds.Armed"/> merge waits for once its checks are green (<c>a review</c>), when it does.</param>
 /// <param name="FailedName">The first failed check, and <paramref name="FailedLink"/> its page.</param>
 /// <param name="DroppedFromQueue">Why GitHub took it out of the queue unmerged, when it did and it is not queued again.</param>
 /// <param name="AwaitsCheck">A <see cref="MergeKinds.Pending"/> with every check shown green: GitHub says BLOCKED because a required check has yet to be created (a gate job starts only once the builds finish), the gap between the last build and it.</param>
@@ -554,7 +554,8 @@ public sealed class GhCli : IGitHub
             }
             if (root.TryGetProperty("autoMergeRequest", out var auto) && auto.ValueKind == JsonValueKind.Object)
             {
-                return Say(MergeKinds.Armed);
+                // Armed with every check green and a review still required: GitHub waits for the review, not for checks.
+                return Say(MergeKinds.Armed, mergeState == "BLOCKED" && review == "REVIEW_REQUIRED" && checks.All(c => c.Bucket != "pending") ? "a review" : null);
             }
             if (checks.Any(c => c.Bucket == "pending"))
             {
@@ -577,25 +578,50 @@ public sealed class GhCli : IGitHub
         }
     }
 
-    // A check run carries name, status, conclusion and detailsUrl; a commit status context, state and targetUrl.
+    // A check run carries name, status, conclusion and detailsUrl; a commit status context, state and targetUrl. The rollup keeps
+    // superseded runs (a re-run is a new entry of the same name): only the latest of each is what GitHub shows and gh pr checks
+    // lists, so only it counts: the one that started last, else the one listed last.
     private static List<(string Bucket, string? Name, string? Link)> RollupChecks(JsonElement root)
     {
-        var checks = new List<(string, string?, string?)>();
+        var latest = new List<(string Bucket, string? Name, string? Link, DateTimeOffset? Started)>();
+        var index = new Dictionary<string, int>(StringComparer.Ordinal);
         if (!root.TryGetProperty("statusCheckRollup", out var rollup) || rollup.ValueKind != JsonValueKind.Array)
         {
-            return checks;
+            return [];
         }
         foreach (var check in rollup.EnumerateArray())
         {
             var conclusion = (TextOf(check, "conclusion") is { Length: > 0 } c ? c : TextOf(check, "state"))?.ToUpperInvariant();
             var status = TextOf(check, "status")?.ToUpperInvariant();
+            // STALE is gh's pending: the result is out of date, not a verdict.
             var bucket = conclusion is "FAILURE" or "ERROR" or "CANCELLED" or "TIMED_OUT" or "ACTION_REQUIRED" or "STARTUP_FAILURE" ? "fail"
-                : string.IsNullOrEmpty(conclusion) || conclusion is "PENDING" or "EXPECTED" || status is { Length: > 0 } and not "COMPLETED" ? "pending"
+                : string.IsNullOrEmpty(conclusion) || conclusion is "PENDING" or "EXPECTED" or "STALE" || status is { Length: > 0 } and not "COMPLETED" ? "pending"
                 : "pass";
-            checks.Add((bucket, TextOf(check, "name") ?? TextOf(check, "context"), TextOf(check, "detailsUrl") ?? TextOf(check, "targetUrl")));
+            var name = TextOf(check, "name") ?? TextOf(check, "context");
+            var entry = (bucket, name, TextOf(check, "detailsUrl") ?? TextOf(check, "targetUrl"), Started: StampOf(check, "startedAt") ?? StampOf(check, "completedAt"));
+            // A check with no name cannot be told from another: kept as it is.
+            var key = name is null ? null : $"{TextOf(check, "workflowName")}\0{name}";
+            if (key is not null && index.TryGetValue(key, out var at))
+            {
+                // Older than what is listed already stays out; equal or unstamped, the later listed wins.
+                if (!(entry.Started is { } started && latest[at].Started is { } listed && started < listed))
+                {
+                    latest[at] = entry;
+                }
+                continue;
+            }
+            if (key is not null)
+            {
+                index[key] = latest.Count;
+            }
+            latest.Add(entry);
         }
-        return checks;
+        return [.. latest.Select(c => (c.Bucket, c.Name, c.Link))];
     }
+
+    // A time gh prints, or null; the zero time of a run not finished yet is no time.
+    private static DateTimeOffset? StampOf(JsonElement element, string property) =>
+        TextOf(element, property) is { } text && DateTimeOffset.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var at) && at.Year > 1 ? at : null;
 
     public async Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
     {

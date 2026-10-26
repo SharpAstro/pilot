@@ -249,6 +249,22 @@ public sealed class MergeArmTests
     }
 
     [Fact]
+    public async Task ANativelyArmedMergeWaitingOnAReviewWithGreenChecksSaysGitHubWaitsForItNotThatItMergesNow()
+    {
+        var (node, ready) = await ArmedNatively(Pending(1));
+        await using var _ = node;
+
+        node.GitHub.Summary = Passing();
+        node.GitHub.Merge = new MergeState(MergeKinds.Armed, 3, 3, Reason: "a review");
+        await Look(node);
+
+        var detail = Card(node, ready).Detail.ShouldNotBeNull();
+        detail.ShouldContain("GitHub waits for a review");
+        detail.ShouldNotContain("merges it now");
+        node.GitHub.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task ANativelyArmedPrMergedByGitHubClosesTheCardAsMergedAndLandsTheFlight()
     {
         var (node, ready) = await ArmedNatively(Pending(1));

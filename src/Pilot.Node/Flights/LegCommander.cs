@@ -1064,9 +1064,11 @@ public sealed partial class LegCommander(
         var unarmed = showing == ChoiceStatus.Armed && merge.DroppedFromQueue is null ? "Its merge is not armed any more: GitHub's auto-merge was turned off, or the merge was dropped. Merge arms it again." : null;
         var (status, note, title, detail) = merge.Kind switch
         {
-            MergeKinds.Pending when merge.AwaitsCheck => (ChoiceStatus.Pending, null, ready, own ? card.Detail : unarmed ?? "A check GitHub requires has yet to report. Merge arms the merge: it goes through once it passes."),
-            MergeKinds.Pending => (ChoiceStatus.Pending, merge.Progress, ready, own ? card.Detail : unarmed ?? "Its checks run again. Merge arms the merge: it goes through once they pass."),
+            MergeKinds.Pending when merge.AwaitsCheck => (ChoiceStatus.Pending, null, $"{code}'s PR #{number} waits for a required check", own ? card.Detail : unarmed ?? "A check GitHub requires has yet to report. Merge arms the merge: it goes through once it passes."),
+            MergeKinds.Pending => (ChoiceStatus.Pending, merge.Progress, $"{code}'s PR #{number}'s checks are running", own ? card.Detail : unarmed ?? "Its checks run again. Merge arms the merge: it goes through once they pass."),
             MergeKinds.Ready => (ChoiceStatus.Passing, null, ready, own ? card.Detail : unarmed ?? "Nothing on GitHub stands in its way."),
+            // Armed on green checks with a review still to come: GitHub waits for that, not for checks.
+            MergeKinds.Armed when merge.Reason is { } waits => (ChoiceStatus.Armed, merge.Progress, $"{code}'s PR #{number} merges once it has {waits}", $"GitHub's auto-merge is armed: its checks passed, and GitHub waits for {waits} before it merges. GitHub merges it then, with the node up or not."),
             MergeKinds.Armed => (ChoiceStatus.Armed, merge.Progress, $"{code}'s PR #{number} merges when its checks pass", $"GitHub's auto-merge is armed: merging when checks pass{(merge.Progress is { } progress ? $", {progress} done" : "")}. GitHub merges it, with the node up or not."),
             MergeKinds.Queued => (ChoiceStatus.Queued, merge.Place, $"{code}'s PR #{number} is in the merge queue", QueuedLine(code, merge.Place is { } place ? $"in the merge queue, {place}" : "in the merge queue")),
             MergeKinds.Blocked => (ChoiceStatus.Blocked, merge.FailedName ?? merge.Reason, $"{code}'s PR #{number} is blocked: {merge.Reason}",
@@ -1087,7 +1089,8 @@ public sealed partial class LegCommander(
         var choices = hasMerge && !replaceWords
             ? card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Label = "Merge", Status = status, Note = note } : c).ToList()
             : [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = card.Subject, Args = [head, .. card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge)?.Args.Skip(1) ?? []], Status = status, Note = note }];
-        state.UpdateCard(card.Id, title, detail, choices, merge.FailedLink ?? link, PrReady);
+        // The failed check's page is the link only where a failed check is what blocks it: the others keep the PR's.
+        state.UpdateCard(card.Id, title, detail, choices, merge is { Kind: MergeKinds.Blocked, FailedName: not null } ? merge.FailedLink ?? link : link, PrReady);
     }
 
     /// <summary>
