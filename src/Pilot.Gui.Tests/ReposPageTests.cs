@@ -65,8 +65,8 @@ public sealed class ReposPageTests
     public void TheRailListsReposAfterFlightsAndItsChordKeepsTheOthersTheirKeys()
     {
         PilotChrome<RgbaImage>.Pages.Select(p => p.Page).Where(p => p != PilotPage.Chat).Take(4).ShouldBe([PilotPage.Home, PilotPage.Sessions, PilotPage.Flights, PilotPage.Repos]);
-        PilotChrome<RgbaImage>.Pages.Single(p => p.Page == PilotPage.Repos).Shortcut.ShouldBe(new KeyChord(InputKey.D7, InputModifier.Ctrl));
-        PilotChrome<RgbaImage>.Pages.Single(p => p.Page == PilotPage.Jobs).Shortcut.ShouldBe(new KeyChord(InputKey.D4, InputModifier.Ctrl));
+        PilotChrome<RgbaImage>.Pages.Single(p => p.Page == PilotPage.Repos).Shortcut.ShouldBe(new KeyChord(InputKey.D5, InputModifier.Ctrl));
+        PilotChrome<RgbaImage>.Pages.Single(p => p.Page == PilotPage.Jobs).Shortcut.ShouldBe(new KeyChord(InputKey.D6, InputModifier.Ctrl));
         PilotChrome<RgbaImage>.Pages.Single(p => p.Page == PilotPage.Repos).Locked.ShouldBeNull();
 
         using var renderer = new RgbaImageRenderer(1, 1);
