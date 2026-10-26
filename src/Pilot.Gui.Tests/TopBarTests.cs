@@ -112,6 +112,36 @@ public sealed class TopBarTests
         }
     }
 
+    /// <summary>
+    /// The ? card hangs under the bar's row: it covers neither the ? nor anything beside it, so the ? itself closes it again
+    /// (it once covered the ?, whose click landed on the card's × instead).
+    /// </summary>
+    [Fact]
+    public void TheHelpCardHangsUnderTheBarAndLeavesTheQuestionMarkClear()
+    {
+        using var renderer = new RgbaImageRenderer((int)Width, 800);
+        var chrome = NewChrome(renderer);
+        chrome.Repos.SyncRepos = _ => Task.FromResult<RepoSyncOutcome[]>([]);
+        chrome.About.Toggle();
+
+        foreach (var (page, tree) in Pages(chrome))
+        {
+            var arranged = Arrange(renderer, tree);
+            var question = Button(arranged, "about:toggle");
+            var close = Button(arranged, "about:close");
+            var title = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "pilot" } }).Select(a => a.Bounds).Single();
+            title.Y.ShouldBeGreaterThanOrEqualTo(question.Y + question.Height, page);
+            close.Y.ShouldBeGreaterThanOrEqualTo(question.Y + question.Height, page);
+            // Nothing painted after the ? (the card is) lies over its middle; the clear spacer above the card paints nothing.
+            var at = arranged.ToList().FindIndex(a => a.Node.Hit is HitResult.ButtonHit { Action: "about:toggle" });
+            var (x, y) = (question.X + question.Width / 2f, question.Y + question.Height / 2f);
+            arranged.Skip(at + 1).Where(a => a.Node is Layout.Node.Leaf leaf && a.Bounds.Width > 0f
+                    && (leaf.Hit is not null || leaf.Background is not null || leaf.Content is not Layout.Content.Box { Color.Alpha: 0 })
+                    && x >= a.Bounds.X && x <= a.Bounds.X + a.Bounds.Width && y >= a.Bounds.Y && y <= a.Bounds.Y + a.Bounds.Height)
+                .ShouldBeEmpty(page);
+        }
+    }
+
     /// <summary>Nothing in the bar's rows is cut off at 1280 px wide: every box in them lies inside the window.</summary>
     [Fact]
     public void NothingInTheBarIsClippedAt1280()
