@@ -218,9 +218,12 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             var checks = dropped is null ? await github.ChecksSummaryAsync(flight.RepoPath, number, cancellationToken) : null;
             // Armed, but the merge queue threw it out: GitHub queues it again once the checks pass and throws it out again while
             // the cause stands, so "merging when checks pass" alone was a merge that never came (tianwen #1846, three times).
-            string Said(string line) => merge?.DroppedFromQueue is { } thrownOut
-                ? $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass, and drops it again until that is fixed; a branch brought up to date by merging its base loses those fixes in a rebase merge, so rebase it."
-                : line;
+            // The rebase advice is for a conflict under a rebase merge only: one dropped for failed checks, by hand or with the
+            // queue cleared is told only that it was.
+            string Said(string line) => merge?.DroppedFromQueue is not { } thrownOut ? line
+                : thrownOut.Contains("conflict", StringComparison.OrdinalIgnoreCase) && method.Equals("rebase", StringComparison.OrdinalIgnoreCase)
+                    ? $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass, and drops it again until the conflict is gone; a branch brought up to date by merging its base loses those fixes in a rebase merge, so rebase it."
+                    : $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass.";
             if (dropped is null && merge is { AwaitsCheck: true } && checks?.Status != ChoiceStatus.Failing)
             {
                 // Every check shown is green, but one GitHub requires is not there yet (a gate job starts once the builds finish):
@@ -241,9 +244,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 // GitHub merges it when its checks pass (and its other rules allow): the PR's MERGED, read above on a later look,
                 // is what lands the flight.
                 // A review GitHub still waits for is said: its merge is not "now".
-                legs?.ShowMerge(subject, checks?.Status == ChoiceStatus.Passing
-                    ? merge?.Reason is { } waits ? $"checks passed: GitHub waits for {waits} before it merges" : "checks passed: GitHub merges it now"
-                    : Said(LegCommander.ArmedLine(checks, how)), MergeWays.Armed);
+                // Dropped from the queue once, its green checks mean GitHub queues it again, not that it merges now.
+                legs?.ShowMerge(subject, Said(checks?.Status == ChoiceStatus.Passing
+                    ? merge?.Reason is { } waits ? $"checks passed: GitHub waits for {waits} before it merges"
+                        : merge?.DroppedFromQueue is not null ? "checks passed: GitHub queues it again" : "checks passed: GitHub merges it now"
+                    : LegCommander.ArmedLine(checks, how)), MergeWays.Armed);
                 continue;
             }
             // GitHub's auto-merge would merge a head that moved, or one whose check was re-run green, on its own: off first.

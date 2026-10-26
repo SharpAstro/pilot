@@ -282,6 +282,23 @@ public sealed class MergeArmTests
     }
 
     [Fact]
+    public async Task AnArmedMergeDroppedForAnotherReasonWithGreenChecksSaysGitHubQueuesItAgainNotThatItMergesNow()
+    {
+        var (node, ready) = await ArmedNatively(Pending(1));
+        await using var _ = node;
+
+        node.GitHub.Summary = Passing();
+        node.GitHub.Merge = new MergeState(MergeKinds.Armed, 3, 3, DroppedFromQueue: "failed checks");
+        await Look(node);
+
+        var detail = Card(node, ready).Detail.ShouldNotBeNull();
+        detail.ShouldContain("checks passed: GitHub queues it again");
+        detail.ShouldContain("Dropped from the merge queue: failed checks");
+        detail.ShouldNotContain("merges it now");
+        detail.ShouldNotContain("rebase it");
+    }
+
+    [Fact]
     public async Task ANativelyArmedPrMergedByGitHubClosesTheCardAsMergedAndLandsTheFlight()
     {
         var (node, ready) = await ArmedNatively(Pending(1));
