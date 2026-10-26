@@ -77,6 +77,27 @@ public static partial class MergeGuard
         return 0;
     }
 
+    /// <summary>
+    /// Whether a session in <paramref name="folder"/> is one the node started, whose merges are the node's: a worker, planner,
+    /// validator or reviewer in a plane (<c>.claude/worktrees/&lt;name&gt;</c>, a flight's or a PR review's), or the watchtower in
+    /// its folder. The person's own session, and one they steer, merges as they say: on autopilot a reviewed, passed PR is
+    /// theirs to merge from anywhere, and a guard on every session sent the night's passed PRs nowhere (SE1, 2026-10-26).
+    /// </summary>
+    public static bool Guarded(string folder)
+    {
+        var path = folder.Replace('\\', '/').TrimEnd('/');
+        if (path.Contains("/.claude/worktrees/", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        var watchtower = Environment.GetEnvironmentVariable("PILOT_WATCHTOWER_FOLDER") is { Length: > 0 } given
+            ? given.Replace('\\', '/').TrimEnd('/')
+            : null;
+        return watchtower is not null
+            ? string.Equals(path, watchtower, StringComparison.OrdinalIgnoreCase)
+            : path.EndsWith("/pilot2/watchtower", StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>The deny as Claude Code reads it on stdout (code.claude.com/docs/en/hooks, PreToolUse).</summary>
     public static string Answer(string reason) =>
         HookCommands.Write(new JsonObject
@@ -107,6 +128,10 @@ public static partial class MergeGuard
                 return null;
             }
             var folder = Text(root["cwd"]) is { Length: > 0 } cwd ? cwd : Environment.CurrentDirectory;
+            if (!Guarded(folder))
+            {
+                return null;
+            }
             return Check(command, folder, git ?? RunGit, depth: 0, powershell: Text(root["tool_name"]) == PowerShell);
         }
         catch (JsonException)

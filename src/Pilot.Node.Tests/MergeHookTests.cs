@@ -22,7 +22,22 @@ public sealed class MergeHookTests : IDisposable
     }
 
     private static string Input(string command, string tool = "Bash") =>
-        new JsonObject { ["hook_event_name"] = "PreToolUse", ["tool_name"] = tool, ["tool_input"] = new JsonObject { ["command"] = command }, ["cwd"] = "/work/plane" }.ToJsonString();
+        new JsonObject { ["hook_event_name"] = "PreToolUse", ["tool_name"] = tool, ["tool_input"] = new JsonObject { ["command"] = command }, ["cwd"] = "/work/repo/.claude/worktrees/plane" }.ToJsonString();
+
+    [Theory]
+    [InlineData("/work/repo/.claude/worktrees/pil12", true)]
+    [InlineData(@"C:\r\pilot\.claude\worktrees\agent-1", true)]
+    [InlineData(@"C:\Users\me\AppData\Local\pilot2\watchtower", true)]
+    [InlineData(@"C:\r\pilot", false)]
+    [InlineData("/work/repo", false)]
+    public void OnlyASessionTheNodeStartedIsGuarded(string folder, bool guarded) => MergeGuard.Guarded(folder).ShouldBe(guarded);
+
+    [Fact]
+    public void ThePersonsOwnSessionMergesAsTheySay()
+    {
+        var input = new JsonObject { ["hook_event_name"] = "PreToolUse", ["tool_name"] = "Bash", ["tool_input"] = new JsonObject { ["command"] = "gh pr merge 249 --squash" }, ["cwd"] = "/work/repo" }.ToJsonString();
+        MergeGuard.Decide(input, Git("flight/x")).ShouldBeNull();
+    }
 
     /// <summary>A repo whose default branch is main and whose checkout is on <paramref name="branch"/>.</summary>
     private static MergeGuard.GitQuery Git(string? branch, string? defaultBranch = "origin/main") => (_, args) =>
@@ -277,7 +292,7 @@ public sealed class MergeHookTests : IDisposable
 
         MergeGuard.Decide(Input("cd ../other && git push"), git).ShouldNotBeNull();
 
-        folders.ShouldAllBe(f => f.Replace('\\', '/').EndsWith("/work/other", StringComparison.Ordinal));
+        folders.ShouldAllBe(f => f.Replace('\\', '/').EndsWith("/.claude/worktrees/other", StringComparison.Ordinal));
     }
 
     [Theory]
