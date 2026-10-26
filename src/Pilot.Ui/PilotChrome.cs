@@ -57,7 +57,7 @@ internal sealed class PilotChrome<TSurface>
         (PilotPage.Sessions, "\U0001F4AC", "Sessions", new KeyChord(InputKey.D3, InputModifier.Ctrl), null),
         (PilotPage.Flights, "✈", "Flights", new KeyChord(InputKey.D4, InputModifier.Ctrl), null),
         (PilotPage.Repos, "📁", "Repos", new KeyChord(InputKey.D5, InputModifier.Ctrl), null),
-        (PilotPage.Jobs, "⏱", "Background tasks", new KeyChord(InputKey.D6, InputModifier.Ctrl), null),
+        (PilotPage.Jobs, "📋", "Background tasks", new KeyChord(InputKey.D6, InputModifier.Ctrl), null),
         (PilotPage.Fleet, "\U0001F310", "Fleet", new KeyChord(InputKey.D7, InputModifier.Ctrl), null),
         (PilotPage.Settings, "⚙", "Settings", new KeyChord(InputKey.D8, InputModifier.Ctrl), null),
     ];

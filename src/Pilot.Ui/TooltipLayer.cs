@@ -99,18 +99,32 @@ internal sealed class TooltipLayer<TSurface>(Renderer<TSurface> renderer) : Pixe
     }
 
     // A word in pieces that each fit a line: cut by Chunks, and a piece of wide glyphs still too wide halved until it fits.
-    private static IEnumerable<string> Pieces(string word, Func<string, float> width)
+    private static IEnumerable<string> Pieces(string word, Func<string, float> width) =>
+        Chunks(word).SelectMany(chunk => Halve(chunk, width));
+
+    // A piece that fits whole, else its two halves each measured and halved in turn; a single glyph is never cut, and
+    // a cut never falls inside a surrogate pair (it moves off the low surrogate), so no piece holds half of one.
+    private static IEnumerable<string> Halve(string piece, Func<string, float> width)
     {
-        foreach (var chunk in Chunks(word))
+        if (piece.Length <= 1 || width(piece) <= MaxWidth)
         {
-            var rest = chunk;
-            while (rest.Length > 1 && width(rest) > MaxWidth)
-            {
-                var half = rest.Length / 2;
-                yield return rest[..half];
-                rest = rest[half..];
-            }
-            yield return rest;
+            yield return piece;
+            yield break;
+        }
+        var half = piece.Length / 2;
+        if (char.IsLowSurrogate(piece[half]))
+        {
+            half = half > 1 ? half - 1 : half + 1;
+        }
+        if (half >= piece.Length)
+        {
+            // Only a lone pair is left: one glyph, as wide as it is.
+            yield return piece;
+            yield break;
+        }
+        foreach (var part in Halve(piece[..half], width).Concat(Halve(piece[half..], width)))
+        {
+            yield return part;
         }
     }
 
@@ -122,6 +136,10 @@ internal sealed class TooltipLayer<TSurface>(Renderer<TSurface> renderer) : Pixe
         {
             var cut = word.LastIndexOfAny(['/', '\\'], at + LongWord - 1, LongWord - 1);
             var end = cut > at ? cut + 1 : at + LongWord;
+            if (char.IsLowSurrogate(word[end]))
+            {
+                end--;
+            }
             yield return word[at..end];
             at = end;
         }
