@@ -1334,6 +1334,16 @@ public sealed partial class LegCommander(
         {
             var title = string.Join(' ', command.Args ?? []).Trim();
             pr = await github.CreateAsync(flight.RepoPath, flight.Branch, BaseBranch(flight), PrTitle(flight, title), PrBody(flight, legs), cancellationToken);
+            // The node label rides the PR as an issue's label (a PR is one on GitHub), not through SetPilotLabelAsync, which
+            // would swap out the PR's state labels. A refusal is noted, not fatal to the PR.
+            try
+            {
+                await github.AddIssueLabelAsync(flight.RepoPath, pr.Number, PilotMarks.NodeLabel(options.Machine), cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                state.RaiseCard(CardBin.Handled, "node-label-refused", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR has no {PilotMarks.NodeLabel(options.Machine)} label", ex.Message);
+            }
         }
         state.PutFlight(flight with { PullRequest = pr.Number, PullRequestUrl = pr.Url });
 

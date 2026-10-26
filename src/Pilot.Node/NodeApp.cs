@@ -88,7 +88,9 @@ public static class NodeApp
             return flights;
         });
         builder.Services.AddSingleton<RepoCatalog>();
-        builder.Services.AddSingleton<RepoWatch>();
+        builder.Services.AddSingleton(services => new RepoWatch(
+            services.GetRequiredService<NodeState>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<Planes>(),
+            services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>()) { Machine = options.Machine });
         builder.Services.AddHostedService(services => services.GetRequiredService<RepoWatch>());
         builder.Services.AddSingleton<RepoSync>();
         builder.Services.AddSingleton<RepoCommander>();
