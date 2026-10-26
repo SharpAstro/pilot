@@ -480,6 +480,8 @@ public sealed class MergeArmTests
         card.Choices.Single(c => c.Verb == Verbs.Merge).Status.ShouldBe(ChoiceStatus.ChangesRequested);
         card.Detail.ShouldNotBeNull().ShouldNotContain("GitHub merges it");
         node.State.Cards().ShouldHaveSingleItem();
+        // The card says the merge is offered again, so GitHub must not still merge it on green.
+        node.GitHub.AutoMergeDisarmed.ShouldBe([63]);
     }
 
     [Theory]

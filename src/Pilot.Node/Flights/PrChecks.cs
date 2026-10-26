@@ -294,16 +294,24 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         {
             return false;
         }
-        if (native && merge.Kind is MergeKinds.Conflicts or MergeKinds.Behind)
+        // Whatever the card shows now, the merge it offered again is not one GitHub does by itself: its auto-merge is turned off for
+        // every state the merge left (a ready one has none on it, a closed PR has nothing to turn off). Conflicts and behind move
+        // the head next, and a changes-requested, draft or blocked PR on a repo without required reviews would still merge on green.
+        if (native && merge.Kind is not (MergeKinds.Ready or MergeKinds.Closed))
         {
-            // Its head is about to move: GitHub's auto-merge would merge what nobody reviewed.
             try
             {
                 await github.DisarmAutoMergeAsync(flight.RepoPath, flight.PullRequest!.Value, cancellationToken);
             }
             catch (FlightException ex)
             {
+                // Still armed on GitHub, so still armed here: the next look turns it off again, and the node's rebase refuses meanwhile.
                 await Console.Error.WriteLineAsync($"pr checks: {flight.Code}'s auto-merge could not be turned off: {ex.Message}");
+                if (legs is not null)
+                {
+                    legs.ShowMerge(Verbs.FlightTarget(flight.Code), $"GitHub shows the PR as {merge.Kind}, but its auto-merge could not be turned off ({ex.Message}): switch it off on the PR page, or it merges once the checks pass", MergeWays.Armed);
+                }
+                return true;
             }
         }
         if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is { MergeWhenGreen: not null } now)

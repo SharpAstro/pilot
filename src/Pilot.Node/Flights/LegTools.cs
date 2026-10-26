@@ -322,6 +322,12 @@ public interface IGitHub
     /// <exception cref="FlightException">gh could not turn it off.</exception>
     Task DisarmAutoMergeAsync(string repoPath, int number, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Whether GitHub's auto-merge is armed on PR <paramref name="number"/> (its <c>autoMergeRequest</c>), whatever state the PR
+    /// shows otherwise; null when GitHub would not say. Armed, it merges whatever head the PR has once its checks pass.
+    /// </summary>
+    Task<bool?> AutoMergeArmedAsync(string repoPath, int number, CancellationToken cancellationToken);
+
     /// <summary>Runs PR <paramref name="number"/>'s failed workflow runs again (<c>gh run rerun --failed</c>); how many runs it asked for.</summary>
     /// <exception cref="FlightException">The PR has no failed run, or gh could not rerun one.</exception>
     Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken);
@@ -708,6 +714,26 @@ public sealed class GhCli : IGitHub
         if (exit != 0)
         {
             throw new FlightException($"gh could not arm auto-merge on #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+    }
+
+    public async Task<bool?> AutoMergeArmedAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (exit, output, _) = await RunAsync(["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "autoMergeRequest"], repoPath, cancellationToken);
+        return exit == 0 ? ParseAutoMergeArmed(output) : null;
+    }
+
+    /// <summary><c>gh pr view --json autoMergeRequest</c>'s answer: true with a request on the PR, false with <c>null</c>; null when it is no JSON.</summary>
+    internal static bool? ParseAutoMergeArmed(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("autoMergeRequest", out var auto) ? auto.ValueKind == JsonValueKind.Object : null;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 

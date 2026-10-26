@@ -211,6 +211,8 @@ public sealed partial class LegCommander(
                 flight = flight with { MergeWhenGreen = null };
                 state.PutFlight(flight);
             }
+            // Armed on GitHub by a hand the node did not see: the plane is not rebased for a push that would be refused.
+            await EnsureNotArmedAsync(flight, cancellationToken);
             await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
             // A base that is no branch on the remote is the remote's default first, as when its PR opened.
             flight = await RepairBaseAsync(flight, cancellationToken);
@@ -754,6 +756,14 @@ public sealed partial class LegCommander(
                         throw new FlightException($"{flight.Code}/{leg.Name}'s check `{check}` failed ({run.ExitCode}); it stays flying. Last of its output:\n{run.Tail}");
                     }
                 }
+                // The go-around's push comes next when it is the last leg: GitHub's auto-merge is turned off before the leg is done, so a
+                // refusal leaves it flying for its worker to finish again, not done with nothing pushed.
+                var pushes = flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null
+                    && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name);
+                if (pushes)
+                {
+                    await EnsureNotArmedAsync(flight, cancellationToken);
+                }
                 state.PutLeg(leg with { State = LegState.Done, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : leg.Report });
                 state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} done");
                 // A go-around the review asked for, done: the fixed branch goes up and is reviewed afresh, by itself.
@@ -819,6 +829,15 @@ public sealed partial class LegCommander(
         if (flight.State != FlightState.Flying)
         {
             throw new FlightException($"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}");
+        }
+
+        // A done leg that goes around from the merge card (a failed check, conflicts, behind) sits under a review that passed: it is
+        // sent back as the node's own sends are (PR to draft, review to Changes), so its finish pushes the fixed branch and a fresh
+        // review starts. Left Passed, the finished go-around neither pushes nor reviews, and the flight would sit with no card.
+        if (leg.State == LegState.Done && flight.Review is { State: ReviewState.Passed } && flight.PullRequest is not null)
+        {
+            await TurnToChangesAsync(flight, why, cancellationToken);
+            flight = FlightOf(Verbs.FlightTarget(flight.Code));
         }
 
         if (leg.WorkerJob is { } job)
@@ -1204,8 +1223,36 @@ public sealed partial class LegCommander(
 
     private string ReviewerName(FlightRow flight) => $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{ReviewLeg}";
 
+    /// <summary>
+    /// GitHub's auto-merge, armed on the flight's open PR, merges whatever head the PR has once its checks pass (its
+    /// <c>--match-head-commit</c> is only checked when it is armed): a push must never reach a PR while it is armed. Turned off
+    /// first when it is on; when it cannot be, or GitHub would not say whether it is, the push is refused with that said.
+    /// </summary>
+    private async Task EnsureNotArmedAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+        if (pr is not { State: "OPEN" })
+        {
+            return;
+        }
+        // Unknown is treated as armed: the disarm is no error when it was not on.
+        if (await github.AutoMergeArmedAsync(flight.RepoPath, pr.Number, cancellationToken) == false)
+        {
+            return;
+        }
+        try
+        {
+            await github.DisarmAutoMergeAsync(flight.RepoPath, pr.Number, cancellationToken);
+        }
+        catch (FlightException ex)
+        {
+            throw new FlightException($"{flight.Branch} is not pushed: #{pr.Number} may be armed with GitHub's auto-merge, which would merge the new head unreviewed, and it could not be turned off ({ex.Message}): switch it off on the PR page, then try again");
+        }
+    }
+
     private async Task PushAsync(FlightRow flight, CancellationToken cancellationToken)
     {
+        await EnsureNotArmedAsync(flight, cancellationToken);
         // With a lease: the flight's branch is the node's own, and a repaired base rebases it, which a plain push refuses;
         // the lease still refuses to overwrite a push the node did not make.
         var push = await git.RunAsync(["push", "-u", "--force-with-lease", "origin", flight.Branch], flight.Worktree, cancellationToken);
@@ -1441,20 +1488,30 @@ public sealed partial class LegCommander(
         }
     }
 
+    /// <summary>
+    /// A passed review taken as asking for <paramref name="changes"/>: the PR goes back to draft, which GitHub will not merge, and
+    /// the flight's review turns to Changes, so the leg's finish pushes and reviews afresh. A new go-around's changes are its own
+    /// COMMENT review, so the one that passed is not the last word on the PR. Runs under the commander's lock.
+    /// </summary>
+    private async Task TurnToChangesAsync(FlightRow flight, string changes, CancellationToken cancellationToken)
+    {
+        var number = flight.PullRequest!.Value;
+        await github.SetDraftAsync(flight.RepoPath, number, draft: true, cancellationToken);
+        state.PutFlight(flight with { Review = flight.Review! with { State = ReviewState.Changes, Report = changes, FinishedAt = time.GetUtcNow(), ReviewUrl = null, MarksWhy = null } });
+        await _marks.ApplyAsync(flight.Code, cancellationToken);
+    }
+
     private async Task<string?> SendBackAsync(string code, Func<int, string> changesFor, string closing, CancellationToken cancellationToken)
     {
         await _one.WaitAsync(cancellationToken);
         try
         {
-            if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying, Review: { State: ReviewState.Passed } review, PullRequest: { } number } flight)
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying, Review: { State: ReviewState.Passed }, PullRequest: { } number } flight)
             {
                 return $"{code} is not a flying flight with a passed review";
             }
             var changes = changesFor(number);
-            await github.SetDraftAsync(flight.RepoPath, number, draft: true, cancellationToken);
-            // A new go-around's changes: its own COMMENT review, so the one that passed is not the last word on the PR.
-            state.PutFlight(flight with { Review = review with { State = ReviewState.Changes, Report = changes, FinishedAt = time.GetUtcNow(), ReviewUrl = null, MarksWhy = null } });
-            await _marks.ApplyAsync(code, cancellationToken);
+            await TurnToChangesAsync(flight, changes, cancellationToken);
             state.CloseCardsAbout(Verbs.FlightTarget(code), closing, PrReady, MergeFailed);
             RaiseReviewChanges(FlightOf(Verbs.FlightTarget(code)), changes);
             return null;
