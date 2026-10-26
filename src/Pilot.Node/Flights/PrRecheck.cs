@@ -391,13 +391,73 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
         return await FinishAsync(entry, pr, $"nothing to do at {head}: {standing}", LabelOf(code), cancellationToken);
     }
 
-    /// <summary>A recheck on a PR this node reviewed: filled by a later leg of #286, for now it says so and takes the label off.</summary>
+    /// <summary>
+    /// A recheck on a PR this node reviewed with <c>review-pr</c>, GitHub read afresh, in this order: a PR no longer open loses
+    /// the label; one in the merge queue is left there; a head other than the review's is reviewed afresh; a conflict (or a PR
+    /// behind its base) is a For-you card, as it is not pilot's branch to rebase (a flight's own branch is the flight path's);
+    /// a passed, green one goes to the merge queue by <see cref="PrReviews.QueueWhenGreenAsync"/>'s rule.
+    /// </summary>
     private async Task<Outcome> ForReviewedAsync(Entry entry, PrReviewRow review, PullRequest pr, CancellationToken cancellationToken)
     {
-        await github.RemoveLabelAsync(entry.Path, entry.Number, PilotMarks.Recheck, cancellationToken);
-        Handled(entry, $"reviewed by {review.Reviewer}: the recheck of a reviewed PR is not wired yet", pr.Url);
-        return Done(entry);
+        var subject = Verbs.PrTarget(entry.Repo, entry.Number);
+        if (!string.Equals(pr.State, "OPEN", StringComparison.OrdinalIgnoreCase))
+        {
+            await github.RemoveLabelAsync(entry.Path, entry.Number, PilotMarks.Recheck, cancellationToken);
+            Handled(entry, $"already {pr.State.ToLowerInvariant()}", pr.Url);
+            return Done(entry);
+        }
+        if (await github.MergeQueueAsync(entry.Path, entry.Number, cancellationToken) is { State: "OPEN", Queued: true })
+        {
+            return await FinishAsync(entry, pr, "already queued", PilotMarks.Queued, cancellationToken);
+        }
+
+        var head = Short8(pr.Head);
+        var stands = review.State == PrReviewState.Reviewing ? PilotMarks.Reviewing : review.Verdict == "changes" ? PilotMarks.Changes : PilotMarks.Passed;
+        if (pr.Head.Length > 0 && !string.Equals(review.Head, pr.Head, StringComparison.OrdinalIgnoreCase))
+        {
+            var started = await reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = subject, Who = "node" }, cancellationToken);
+            if (!started.Ok)
+            {
+                Fail(entry, started.Error ?? "the review did not start", pr.Url);
+                return Outcome.Kept;
+            }
+            return await FinishAsync(entry, pr, $"head {head} was not the one reviewed ({Short8(review.Head)}), review restarted", PilotMarks.Reviewing, cancellationToken);
+        }
+
+        var merge = await github.MergeStateAsync(entry.Path, entry.Number, cancellationToken);
+        if (pr.Mergeable == "CONFLICTING" || merge is { Kind: MergeKinds.Conflicts or MergeKinds.Behind })
+        {
+            var what = merge is { Kind: MergeKinds.Behind } && pr.Mergeable != "CONFLICTING" ? "is behind its base" : "conflicts with its base";
+            state.CloseCardsAbout(subject, "looked at again", ConflictKind);
+            state.RaiseCard(CardBin.ForYou, ConflictKind, subject, $"{Short(entry.Repo, entry.Number)} {what}",
+                $"It is not pilot's branch to rebase{(string.IsNullOrEmpty(pr.Author) ? "" : $": it is {pr.Author}'s")}. Rebase it and push, and it is looked at again with the label.", link: pr.Url);
+            return await FinishAsync(entry, pr, $"{what}, not pilot's branch to rebase: a card asks you", PilotMarks.Conflicts, cancellationToken);
+        }
+
+        if (review.State != PrReviewState.Reviewing && review.Verdict is "approve" or "comment" && review.QueuedAt is null)
+        {
+            // The queue watch decides once; a recheck is a new ask, so what it noted before is cleared and it decides again.
+            var fresh = review with { QueueNote = null };
+            state.PutPrReview(fresh);
+            await reviews.QueueWhenGreenAsync(fresh, cancellationToken);
+            var now = reviews.Of(new PrRef(entry.Repo.Split('/')[0], entry.Repo.Split('/')[1], entry.Number)) ?? fresh;
+            if (now.QueuedAt is not null)
+            {
+                return await FinishAsync(entry, pr, $"passed and green, queued for merge at {head}", PilotMarks.Queued, cancellationToken);
+            }
+            if (now.QueueNote is { } note)
+            {
+                return await FinishAsync(entry, pr, $"nothing queued at {head}: {note}", stands, cancellationToken);
+            }
+        }
+        var standing = review.State == PrReviewState.Reviewing ? "its review is still reading it"
+            : review.Verdict == "changes" ? "its review asks for changes"
+            : "its checks are still running";
+        return await FinishAsync(entry, pr, $"nothing to do at {head}: {standing}", stands, cancellationToken);
     }
+
+    /// <summary>The For-you card a recheck raises on a reviewed PR that conflicts with its base.</summary>
+    public const string ConflictKind = "pr-recheck-conflicts";
 
     private Outcome Done(Entry entry)
     {

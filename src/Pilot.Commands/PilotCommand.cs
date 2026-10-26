@@ -417,7 +417,7 @@ public static class PilotCommand
             });
         // review pr: a fresh reviewer on any PR, pinned at its head in a worktree of the node's own
         var prRef = Arg("pr", "The PR: owner/repo#n, or its URL");
-        var reviewPr = Action(new Command("pr", "Start a reviewer on any PR, pinned at its head; its verdict comes back as a card") { Arguments = { prRef } },
+        var reviewPr = Action(new Command("pr", "Start a reviewer on any PR, pinned at its head; its verdict comes back as a card. To have pilot look at a PR again later, put the 'pilot: recheck' label on it") { Arguments = { prRef } },
             (p, client, ct) =>
             {
                 var pr = Pr(p.GetValue(prRef)!);
