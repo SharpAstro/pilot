@@ -181,7 +181,7 @@ public sealed class PrReviews(
         var commits = await git.RunAsync(["log", "--oneline", $"origin/{read.Base}..HEAD"], worktree, cancellationToken);
         var stat = await git.RunAsync(["diff", "--stat", $"origin/{read.Base}...HEAD"], worktree, cancellationToken);
         var brief = Briefs.ReviewPr(row, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""),
-            await github.LoginAsync(cancellationToken), Briefs.Run(Cli, Socket));
+            await github.LoginAsync(cancellationToken), Briefs.Run(Cli, Socket), options.Machine);
         string job;
         try
         {

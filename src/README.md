@@ -1160,7 +1160,12 @@ A `#` that starts a word outside quotes is a comment to the end of the line (in 
 one is no code. A `PowerShell` call is read with PowerShell's own quoting (the backtick is the escape, a
 backslash is a path's, `''` and `""` are literal quotes), split on `{` and `}` too, and `Set-Location`, `iex` /
 `Invoke-Expression` and `pwsh -Command '…'` are followed as `cd`, `eval` and `bash -c` are, and a leading `$name =` assignment is skipped
-(`$out = gh pr merge 1` is a merge). Everything else, a push of a
+(`$out = gh pr merge 1` is a merge). It also refuses a background session started without the machine's prefix: a `claude`
+call with `--bg` and a name (`-n NAME`, `--name NAME`, `--name=NAME`), through wrappers and `pwsh -Command` too, whose name does not start
+with `<machine>-` (case-insensitive) is denied, the reason giving the prefixed name to use (`de1-tia1241-nudge`). The machine is
+resolved as the node does, without asking it: the `machine` it saved in `settings.json` of the default data folder, else
+`PILOT_MACHINE`, else the machine name's; a `claude` call without `--bg` or a name passes. Every brief (worker, validator, planner,
+reviewer, PR reviewer, watchtower) tells the session the same rule, with the node's machine code written out. Everything else, a push of a
 flight branch included, passes untouched. Like `pilot-node hook` it
 is fail-open (input it cannot read passes, exit 0 always) and never calls the node; the node's own merge
 (`pilot flight merge` runs `gh pr merge` itself) is not a session's tool call, so the hook never sees it.
