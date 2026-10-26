@@ -489,9 +489,14 @@ public static class PilotCommand
             });
         var jobsCommand = Action(new Command("jobs", "The node's jobs, running first"), async (_, client, ct) =>
         {
-            var jobs = (await SnapshotAsync(client, ct)).Jobs.OrderBy(j => j.State switch { JobState.Running => 0, JobState.Queued => 1, _ => 2 })
+            var all = (await SnapshotAsync(client, ct)).Jobs;
+            var jobs = all.OrderBy(j => j.State switch { JobState.Running => 0, JobState.Queued => 1, _ => 2 })
             .ThenByDescending(j => j.StartedAt).Take(20).ToList();
             await output.WriteAsync(jobs.Count == 0 ? "No jobs.\n" : string.Concat(jobs.Select(j => JobLine(j) + "\n")));
+            if (JobQueue.HolderLine(all, DateTimeOffset.UtcNow) is { } holder)
+            {
+                await output.WriteLineAsync(holder);
+            }
             return 0;
         });
         var jobId = Arg("job", "The job's id, as j3");

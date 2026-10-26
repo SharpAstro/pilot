@@ -161,6 +161,7 @@ public static class Briefs
         text.AppendLine("  runs it as a job and wakes you with how it ended and its last lines; do not wait for it or poll it. The machine");
         text.AppendLine("  is shared with other flights, so it may wait its turn first; that costs you nothing. Short commands (one test,"
             + " a quick build of one project) you run yourself, as usual."); 
+        text.AppendLine(WaitRule(run));
         // Claude Code isolates a -w session in its worktree and refuses a command it cannot prove stays inside: a git in a
         // loop, a pilot run handed a shell's -Command string. The worker recovers by splitting it, a turn lost each time
         // (TIA1781's cross-structure, SE1 2026-10-25).
@@ -174,6 +175,15 @@ public static class Briefs
         text.AppendLine("left. Start it with DONE when every step is done and the Done-when holds, or BLOCKED: and why.");
         return text.ToString();
     }
+
+    /// <summary>
+    /// What the worker and the planner (whose legs' Done-when may wait on outside work) are told about waiting: a leg waits on a
+    /// file or a time with <c>leg wait</c>, never with a job that sleeps, which holds a slot of the queue while it does nothing.
+    /// </summary>
+    internal static string WaitRule(string run) =>
+        $"- Outside work to wait for (a file another tool writes, a time of day): `{run} leg wait --for-file <path> [--until <time>] [why...]`, then end\n" +
+        "  your turn; the node wakes you once when the file exists or the time comes. Never wait with a `run` job that sleeps or polls:\n" +
+        "  it holds a slot of the queue and blocks every job behind it.";
 
     /// <summary>
     /// The line both the planner and the worker are told: build as CI does. A published package is built Release, so a Debug
@@ -281,6 +291,8 @@ public static class Briefs
         text.AppendLine("anyone can check, and a check command the node reruns before it counts the leg done (a test filter, a build).");
         text.AppendLine("Prefer few legs: one for a small issue, two to four for a larger one, split where a reviewer would want to");
         text.AppendLine($"see the work land in steps. No leg may be named `{LegCommander.ReviewLeg}` or `{LegCommander.PlanLeg}`.");
+        text.AppendLine("A leg that needs outside work (a file, a time) says so in its steps; its worker waits with `leg wait`, never with a job.");
+        text.AppendLine(WaitRule(run));
         if (legs.Count > 0)
         {
             text.AppendLine();

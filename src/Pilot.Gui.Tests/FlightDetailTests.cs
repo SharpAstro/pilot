@@ -483,4 +483,14 @@ public sealed class FlightDetailTests
         texts.ShouldNotContain(t => t.Contains("pilot/review", StringComparison.Ordinal));
         regions.Any(r => r.Result is HitResult.ButtonHit { Action: "review:TIA1611" }).ShouldBeFalse();
     }
+
+    [Fact]
+    public void AFlyingLegWaitingOnAFileSaysWhatItWaitsFor()
+    {
+        var legs = Legs();
+        legs[0] = legs[0] with { Wait = new LegWait { Path = @"C:\x\done.txt", Since = Live.At } };
+        var line = FlightLine.Build([Flight()], [], Now, legs).Single();
+
+        FlightDetail.From(line, Now).Legs.Single(l => l.Name == "render").State.ShouldBe(@"waiting for C:\x\done.txt");
+    }
 }

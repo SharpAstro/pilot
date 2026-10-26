@@ -232,4 +232,16 @@ public sealed class FlightsViewsTests
         dashes.ShouldBeGreaterThan(2);
         view.Canvas.Edges.Count.ShouldBe(2);
     }
+
+    [Fact]
+    public void TheFlightsListSaysWhichFileAFlyingLegWaitsFor()
+    {
+        var leg = new LegRow
+        {
+            Flight = "A", Name = "render", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying,
+            Wait = new LegWait { Path = @"C:\x\done.txt", Since = Live.At },
+        };
+
+        FlightLine.Build([Flight("A")], [], Live.At, [leg]).Single().Legs.ShouldBe(@"1 leg · 0 done · render waiting for C:\x\done.txt");
+    }
 }

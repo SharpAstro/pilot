@@ -459,6 +459,7 @@ pilot leg remove <code> <leg> [why…]           # takes a planned leg out of th
 pilot leg start <code> <leg>
 pilot leg validate go|no-go [report…]          # a leg's validator, from its plane (--leg <code>/<leg> elsewhere)
 pilot leg finish done|failed [report…]         # done: the node reruns the check
+pilot leg wait --for-file <path> [--until <time>] [why…]   # wait on outside work without a job (--leg <code>/<leg> elsewhere)
 pilot leg go-around <why…>
 pilot review pass|changes <report…>            # a flight's reviewer, from its plane (--flight <code> elsewhere)
 pilot review pr <owner>/<repo>#<n>|<url>       # a reviewer on any PR, pinned at its head (see Any PR's review)

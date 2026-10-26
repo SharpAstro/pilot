@@ -75,8 +75,7 @@ internal sealed record JobLine
     };
 
     /// <summary>A run's length as the node's wake says it: <c>45s</c>, <c>12m 4s</c>, <c>2h 5m</c>.</summary>
-    internal static string Duration(TimeSpan span) =>
-        span.TotalHours >= 1 ? $"{(int)span.TotalHours}h {span.Minutes}m" : span.TotalMinutes >= 1 ? $"{(int)span.TotalMinutes}m {span.Seconds}s" : $"{Math.Max(0, (int)span.TotalSeconds)}s";
+    internal static string Duration(TimeSpan span) => JobQueue.Duration(span);
 }
 
 /// <summary>What the Background tasks page shows: the node's jobs, and where they come from.</summary>
@@ -97,6 +96,22 @@ internal sealed record JobsScreen(IReadOnlyList<JobLine> Lines, string Source, D
             var queued = Lines.Count(l => l.Row.State == JobState.Queued);
             var summary = $"{Lines.Count} {(Lines.Count == 1 ? "job" : "jobs")} · {running} running";
             return queued > 0 ? $"{summary} · {queued} queued" : summary;
+        }
+    }
+
+    /// <summary>
+    /// Who holds the queue and for how long, one line per node with a queue (<see cref="JobQueue.HolderLine"/>, the node's name
+    /// first when the page merges several); null while no job waits.
+    /// </summary>
+    public string? Holder
+    {
+        get
+        {
+            var lines = Lines.GroupBy(l => l.Node?.Key)
+                .Select(g => JobQueue.HolderLine(g.Select(l => l.Row), AsOf) is { } line ? (g.First().Node is { } node ? $"{node.Name}: {line}" : line) : null)
+                .OfType<string>()
+                .ToList();
+            return lines.Count == 0 ? null : string.Join(" · ", lines);
         }
     }
 
@@ -472,9 +487,14 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             rows[i] = Row(screen.Lines[i], i, marked, columns);
         }
 
-        return Layout.Builder.VStack(
-                Table.Header(columns, Scale),
-                Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch())
+        var table = new List<Layout.Node>();
+        if (screen.Holder is { } holder)
+        {
+            table.Add(Layout.Builder.Text(holder, 13f, Queued).RowH(24f));
+        }
+        table.Add(Table.Header(columns, Scale));
+        table.Add(Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch());
+        return Layout.Builder.VStack([.. table])
             .Pad(Gutter, 8f)
             .Stretch();
     }
