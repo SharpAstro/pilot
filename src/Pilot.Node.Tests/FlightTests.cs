@@ -143,6 +143,78 @@ public sealed class FlightCommanderTests : IDisposable
         Git(flight.Worktree, "rev-parse", "--abbrev-ref", "HEAD").ShouldBe("flight/tia1611");
     }
 
+    private (FakeGitHub GitHub, FakeShortcut Shortcut) Trackered()
+    {
+        var github = new FakeGitHub();
+        var shortcut = new FakeShortcut();
+        _commander.Machine = "DE1";
+        _commander.Trackers = new Trackers([new GitHubTracker(github), shortcut]);
+        return (github, shortcut);
+    }
+
+    [Fact]
+    public async Task ACreateLabelsTheIssueAndTheStoryWithThisNodesCode()
+    {
+        var (github, shortcut) = Trackered();
+
+        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "11", "an", "issue")).Ok.ShouldBeTrue();
+        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "sc-12", "a", "story")).Ok.ShouldBeTrue();
+
+        github.IssueLabels[11].ShouldBe(["pilot node: DE1"]);
+        github.LabelsCreated.ShouldBe(["pilot node: DE1"]);
+        shortcut.Labels[12].ShouldBe(["pilot node: DE1"]);
+        PilotMarks.NodeLabelPrefix.StartsWith(PilotMarks.LabelPrefix, StringComparison.Ordinal).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task AnItemWithAnotherNodesLabelIsRefusedNamingThatNodeAndMakesNoPlane()
+    {
+        var (github, shortcut) = Trackered();
+        github.IssueLabels[21] = ["pilot node: SE1"];
+        shortcut.Labels[22] = ["pilot node: SE1"];
+
+        var issue = await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "21");
+        var story = await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "sc-22", "title");
+
+        issue.Error.ShouldNotBeNull().ShouldContain("SE1");
+        story.Error.ShouldNotBeNull().ShouldContain("SE1");
+        _state.Flights().ShouldBeEmpty();
+        Directory.Exists(Path.Combine(Repo, ".claude", "worktrees", "tia21")).ShouldBeFalse();
+        github.IssueLabels[21].ShouldBe(["pilot node: SE1"]);
+    }
+
+    [Fact]
+    public async Task ThisNodesOwnLabelIsNoRefusal()
+    {
+        var (github, _) = Trackered();
+        github.IssueLabels[31] = ["pilot node: DE1", "bug"];
+
+        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "31")).Ok.ShouldBeTrue();
+
+        Flight("TIA31").State.ShouldBe(FlightState.Flying);
+        github.IssueComments.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AnywayCreatesOverAnotherNodesLabelAndCommentsOnTheIssue()
+    {
+        var (github, shortcut) = Trackered();
+        github.IssueLabels[41] = ["pilot node: SE1"];
+        shortcut.Labels[42] = ["pilot node: SE1"];
+
+        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "41", "--anyway", "Over", "there")).Ok.ShouldBeTrue();
+        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "sc-42", "T", "--anyway")).Ok.ShouldBeTrue();
+
+        Flight("TIA41").Title.ShouldBe("Over there");
+        github.IssueLabels[41].ShouldBe(["pilot node: DE1"]);
+        var comment = github.IssueComments.ShouldHaveSingleItem();
+        comment.Number.ShouldBe(41);
+        comment.Body.ShouldContain("anyway");
+        comment.Body.ShouldContain("pilot node: SE1");
+        shortcut.Comments.ShouldHaveSingleItem().Id.ShouldBe(42);
+        shortcut.Labels[42].ShouldBe(["pilot node: DE1"]);
+    }
+
     [Fact]
     public async Task ASecondFlightOnTheIssueGetsASuffixAndItsOwnPlaneFromAWorktreeToo()
     {
@@ -356,5 +428,43 @@ public sealed class PlaneSettingsTests : IDisposable
         var written = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(file))!.AsObject();
         written["disabledMcpjsonServers"]!.AsArray().Select(n => n!.GetValue<string>()).ShouldBe(["console-inspector", "sdl-ui-inspector"]);
         written["permissions"]!["allow"]![0]!.GetValue<string>().ShouldBe("Bash(ls:*)");
+    }
+}
+
+/// <summary>A Shortcut tracker by dictionary: story labels by id, and its comments.</summary>
+internal sealed class FakeShortcut : ITracker
+{
+    public TrackerKind Kind => TrackerKind.Shortcut;
+
+    public Dictionary<int, List<string>> Labels { get; } = [];
+
+    public List<(int Id, string Body)> Comments { get; } = [];
+
+    public Task<string?> TitleAsync(string repoPath, int id, CancellationToken cancellationToken) => Task.FromResult<string?>("a story");
+
+    public string? MissingTitle(WorkItem item) => null;
+
+    public Task<string[]> LabelsAsync(string repoPath, int id, CancellationToken cancellationToken) =>
+        Task.FromResult(Labels.TryGetValue(id, out var labels) ? labels.ToArray() : []);
+
+    public Task AddLabelAsync(string repoPath, int id, string label, CancellationToken cancellationToken)
+    {
+        (Labels.TryGetValue(id, out var labels) ? labels : Labels[id] = []).Add(label);
+        return Task.CompletedTask;
+    }
+
+    public Task RemoveLabelAsync(string repoPath, int id, string label, CancellationToken cancellationToken)
+    {
+        if (Labels.TryGetValue(id, out var labels))
+        {
+            labels.Remove(label);
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task CommentAsync(string repoPath, int id, string body, CancellationToken cancellationToken)
+    {
+        Comments.Add((id, body));
+        return Task.CompletedTask;
     }
 }

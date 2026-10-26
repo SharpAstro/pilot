@@ -361,6 +361,43 @@ internal sealed class FakeGitHub : IGitHub
         return Task.CompletedTask;
     }
 
+    /// <summary>The labels each issue carries, by number.</summary>
+    public Dictionary<int, HashSet<string>> IssueLabels { get; } = [];
+
+    /// <summary>The labels made in the repo, in order.</summary>
+    public List<string> LabelsCreated { get; } = [];
+
+    /// <summary>Every comment made on an issue, by number.</summary>
+    public List<(int Number, string Body)> IssueComments { get; } = [];
+
+    public Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult(IssueLabels.TryGetValue(number, out var labels) ? labels.ToArray() : []);
+
+    public Task AddIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
+    {
+        if (!LabelsCreated.Contains(label))
+        {
+            LabelsCreated.Add(label);
+        }
+        (IssueLabels.TryGetValue(number, out var labels) ? labels : IssueLabels[number] = []).Add(label);
+        return Task.CompletedTask;
+    }
+
+    public Task RemoveIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
+    {
+        if (IssueLabels.TryGetValue(number, out var labels))
+        {
+            labels.Remove(label);
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken)
+    {
+        IssueComments.Add((number, body));
+        return Task.CompletedTask;
+    }
+
     /// <summary>The login gh says it is signed in as.</summary>
     public string? Login { get; set; } = "controller";
 

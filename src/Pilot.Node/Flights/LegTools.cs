@@ -397,6 +397,21 @@ public interface IGitHub
     /// <summary>Takes <paramref name="label"/> off PR <paramref name="number"/>; no error when it has none like it.</summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task RemoveLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken);
+
+    /// <summary>The labels issue <paramref name="number"/> carries; empty when gh cannot say.</summary>
+    Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken);
+
+    /// <summary>Adds <paramref name="label"/> to issue <paramref name="number"/>, creating it in the repo when it has none like it.</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task AddIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken);
+
+    /// <summary>Takes <paramref name="label"/> off issue <paramref name="number"/>.</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task RemoveIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken);
+
+    /// <summary>Comments on issue <paramref name="number"/> in the controller's name.</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken);
 }
 
 /// <summary>What the node sets on a flight PR on GitHub: the <c>pilot/review</c> status and the <c>pilot:</c> labels.</summary>
@@ -419,8 +434,22 @@ public static class PilotMarks
     /// <summary>Put on any open PR by a person to have pilot look at it again, whoever worked on it; the node takes it off once it has.</summary>
     public const string Recheck = LabelPrefix + "recheck";
 
+    /// <summary>
+    /// The prefix of the label that says which node flies an issue or story. Deliberately not starting with
+    /// <see cref="LabelPrefix"/> (<c>pilot: </c>), whose labels are a PR's and are replaced as a set: a node label must
+    /// survive a review's label change.
+    /// </summary>
+    public const string NodeLabelPrefix = "pilot node: ";
+
+    /// <summary>The label for the node with machine prefix <paramref name="code"/>.</summary>
+    public static string NodeLabel(string code) => NodeLabelPrefix + code;
+
+    /// <summary>The node code a label names, or null when it is no node label.</summary>
+    public static string? NodeOf(string label) =>
+        label.StartsWith(NodeLabelPrefix, StringComparison.Ordinal) && label.Length > NodeLabelPrefix.Length ? label[NodeLabelPrefix.Length..].Trim() : null;
+
     /// <summary>The colour (hex, no #) and description a label is made with in a repo that has none.</summary>
-    public static (string Color, string Description) LabelStyle(string label) => label switch
+    public static (string Color, string Description) LabelStyle(string label) => NodeOf(label) is not null ? ("1d76db", "the pilot node that flies this item") : label switch
     {
         Reviewing => ("fbca04", "pilot's reviewer is reading this PR"),
         Changes => ("d93f0b", "pilot's review asks for changes"),
@@ -1166,6 +1195,42 @@ public sealed class GhCli : IGitHub
         if (exit != 0)
         {
             throw new FlightException($"GitHub refused to take the label {label} off #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+
+    public async Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (exit, output, _) = await RunAsync(["issue", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "labels", "-q", ".labels[].name"], repoPath, cancellationToken);
+        return exit != 0 ? [] : output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    public async Task AddIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
+    {
+        var (color, description) = PilotMarks.LabelStyle(label);
+        var (made, madeOutput, madeError) = await RunAsync(["label", "create", label, "--color", color, "--description", description], repoPath, cancellationToken);
+        if (made != 0 && !(madeError + madeOutput).Contains("already exists", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException($"GitHub refused the label {label} on the repo: {(madeError.Trim().Length > 0 ? madeError : madeOutput).Trim()}");
+        }
+        await EditIssueAsync(repoPath, number, ["--add-label", label], label, cancellationToken);
+    }
+
+    public Task RemoveIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken) =>
+        EditIssueAsync(repoPath, number, ["--remove-label", label], label, cancellationToken);
+
+    private static async Task EditIssueAsync(string repoPath, int number, string[] change, string label, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["issue", "edit", number.ToString(System.Globalization.CultureInfo.InvariantCulture), .. change], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"GitHub refused the label {label} on #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+    }
+
+    public async Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["issue", "comment", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--body", body], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"GitHub refused the comment on #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
     }
 
