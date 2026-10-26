@@ -289,7 +289,7 @@ public sealed class JobsTests
     }
 
     [Fact]
-    public void CapturesOfCancelAndItsQuestionAtNarrowAndWideWindows()
+    public void CapturesOfCancelAtRestHoveredAndAskedAtNarrowAndWideWindows()
     {
         if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
         {
@@ -298,7 +298,7 @@ public sealed class JobsTests
         var dir = Path.GetDirectoryName(capture) ?? ".";
         foreach (var (width, height) in new[] { (1280, 800), (2000, 900) })
         {
-            foreach (var asked in new[] { false, true })
+            foreach (var state in new[] { "rest", "hover", "asked" })
             {
                 using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
                 var (chrome, jobs) = Chrome(renderer);
@@ -306,15 +306,24 @@ public sealed class JobsTests
                 jobs.OnCancel = _ => { };
                 jobs.OnSession = _ => { };
                 chrome.Show(PilotPage.Jobs);
-                chrome.Render(new SessionsScreen([], "test", Live.At), null, null, Screen(), new RectF32(0, 0, width, height));
-                if (asked)
+                void Draw() => chrome.Render(new SessionsScreen([], "test", Live.At), null, null, Screen(), new RectF32(0, 0, width, height));
+                Draw();
+                if (state == "hover")
+                {
+                    // The page sits right of the 52 px rail; find the pill in the page's own pixel layout and put the pointer on it.
+                    var page = Layout.Engine.Arrange(jobs.Tree(Screen()), new Rect<float>(52f, 0f, width - 52f, height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+                    var pill = page.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "job:j14:cancel" }).Bounds;
+                    jobs.Pointer = (pill.X + pill.Width / 2f, pill.Y + pill.Height / 2f);
+                    Draw();
+                }
+                else if (state == "asked")
                 {
                     var arranged = Layout.Engine.Arrange(jobs.Tree(Screen()), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
                     var cancel = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "job:j14:cancel" });
                     CellLayout.HitTest(arranged, cancel.Bounds.X + 1, cancel.Bounds.Y);
-                    chrome.Render(new SessionsScreen([], "test", Live.At), null, null, Screen(), new RectF32(0, 0, width, height));
+                    Draw();
                 }
-                File.WriteAllBytes(Path.Combine(dir, $"job-cancel-{(asked ? "asked" : "button")}-{width}.png"),
+                File.WriteAllBytes(Path.Combine(dir, $"job-cancel-{state}-{width}.png"),
                     SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, height));
             }
         }
