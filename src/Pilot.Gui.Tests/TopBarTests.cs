@@ -49,6 +49,7 @@ public sealed class TopBarTests
         yield return ("fleet", chrome.Fleet.Tree(fleet));
         yield return ("repos", chrome.Repos.Tree(new ReposScreen([], "test", now)));
         yield return ("settings", chrome.Settings.Tree(now));
+        yield return ("chat", chrome.Chat.Tree());
     }
 
     private static ImmutableArray<Layout.ArrangedNode<float>> Arrange(RgbaImageRenderer renderer, Layout.Node tree) =>
