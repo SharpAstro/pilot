@@ -503,8 +503,8 @@ pilot update [--check] [--adopt]               # the latest release, installed w
 pilot archive <session> | --ended [--undo]      # put ended sessions away, out of the lists (or back)
 pilot run [--timeout 90m] -- <command…>        # a long run handed to the node as a job (see Jobs)
 pilot jobs                                     # the node's jobs, running first
-pilot job <id>                                 # one job, and where its whole output is
-pilot job cancel <id>                          # stops it, running or waiting; its owner is told
+pilot job <id>                                 # one job: its output's path, and while it runs its pid and process tree
+pilot job <id> cancel [--force]                # stops it, running or waiting; its owner is told. --force kills the whole tree at once (see Jobs)
 pilot mcp                                      # these commands as an MCP server over stdio (see The MCP server)
 ```
 
@@ -547,6 +547,13 @@ that handed it over with how it ended, its last lines and the path of its whole 
 machine: `pilot-node --max-jobs <n>` run at once (1 by default) and only with `--job-memory <GB>` free (2 by default);
 the rest wait in the order they came, each saying what it waits on. A job's log is kept in the node's data folder
 (`jobs/<id>.log`), and its end is served for the GUI (`GET /api/v1/jobs/<id>/log`, a grant's on the LAN).
+
+While a job runs, its log (the GET above, which the Background tasks page polls) also carries the wrapper's `pid` and
+the process `tree` under it (name, pid, depth), read from the OS every 2 s; the node remembers the descendants it has
+seen, so a child that outlived its wrapper is still found. When the wrapper is gone, the row still reads running and a
+descendant lives, the log says so in `stuck` (`process exited, output still held by <pid>`). `pilot job <id> cancel`
+stops a job the usual way; `--force` (`cancel-job` with the arg `force`) kills the wrapper and every known descendant at
+once, with no grace, ends the job Cancelled with `cancelled (forced) by <who>` and tells its owner once.
 
 A worker that finishes its own leg is stopped after 90 s, once it has said its report. Claude Code tears down a worktree
 its `-w` session entered when that job ends by itself, keeping the branch; the node checks a plane out again from its

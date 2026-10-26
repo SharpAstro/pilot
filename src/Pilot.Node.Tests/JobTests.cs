@@ -279,7 +279,7 @@ public sealed class JobTests : IDisposable
         var stuck = Log();
         stuck.Stuck.ShouldNotBeNull().ShouldStartWith("process exited, output still held by ");
         stuck.Tree!.ShouldContain(p => p.Pid == childPid);
-        stuck.Tree.ShouldNotContain(p => p.Pid == running.Pid);
+        stuck.Tree!.ShouldNotContain(p => p.Pid == running.Pid);
         _state.Jobs().Single(j => j.Id == id).State.ShouldBe(JobState.Running);
         IsAlive(childPid).ShouldBeTrue();
 

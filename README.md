@@ -72,6 +72,7 @@ pilot flight create <issue> --repo <checkout>   # the flight, its plane made
 pilot flight plan <code>                  # a planner plans the legs; then they fly
 pilot flight merge <code> <head>          # once its review has passed and CI is green
 pilot nodes                               # the fleet; pilot --node <host:port> status reads another node
+pilot job <id> cancel [--force]           # stop a job; --force kills its whole process tree at once
 pilot mcp                                 # the same commands as an MCP server over stdio
 ```
 
