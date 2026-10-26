@@ -9,7 +9,24 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public static class ProcessTreeCpu
 {
-    public static TimeSpan? Of(Process root)
+    /// <summary>
+    /// Keeps the last CPU time seen for each process of a job's tree, keyed by pid and start time (a reused pid is a new
+    /// process), so the total never falls when a child ends: an ended process keeps counting what it last used.
+    /// </summary>
+    public sealed class Tally
+    {
+        private readonly Dictionary<(int Pid, DateTime Start), TimeSpan> _seen = [];
+
+        public void Note(int pid, DateTime start, TimeSpan cpu)
+        {
+            var key = (pid, start);
+            _seen[key] = _seen.TryGetValue(key, out var before) && before > cpu ? before : cpu;
+        }
+
+        public TimeSpan Total => _seen.Values.Aggregate(TimeSpan.Zero, (sum, t) => sum + t);
+    }
+
+    public static TimeSpan? Of(Process root, Tally tally)
     {
         try
         {
@@ -24,20 +41,19 @@ public static class ProcessTreeCpu
                     grew |= tree.Contains(parent) && tree.Add(pid);
                 }
             }
-            var total = TimeSpan.Zero;
             foreach (var pid in tree)
             {
                 try
                 {
                     using var p = Process.GetProcessById(pid);
-                    total += p.TotalProcessorTime;
+                    tally.Note(pid, p.StartTime, p.TotalProcessorTime);
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception or NotSupportedException)
                 {
                     // Ended since the snapshot.
                 }
             }
-            return total;
+            return tally.Total;
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException or NotSupportedException)
         {

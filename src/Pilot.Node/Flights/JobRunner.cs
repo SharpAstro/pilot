@@ -74,7 +74,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     private readonly ConcurrentDictionary<string, Process> _running = new(StringComparer.Ordinal);
     // Where each running job's idle window began and the CPU it had used then. The dispatcher's alone.
-    private readonly Dictionary<string, (DateTimeOffset At, TimeSpan Cpu)> _cpuMarks = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (DateTimeOffset At, TimeSpan Cpu, TimeSpan Last)> _cpuMarks = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ProcessTreeCpu.Tally> _cpuTallies = new(StringComparer.Ordinal);
     // Every job this node handed over, so a recovery knows which ones a previous node left behind.
     private readonly ConcurrentDictionary<string, byte> _mine = new(StringComparer.Ordinal);
     // What the dispatcher acts on, one at a time: a job handed over, a cancel of a waiting one, and "look again" (a job
@@ -303,23 +304,36 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         foreach (var gone in _cpuMarks.Keys.Where(id => !_running.ContainsKey(id)).ToList())
         {
             _cpuMarks.Remove(gone);
+            _cpuTallies.Remove(gone);
             state.CloseCardsAbout(Verbs.JobTarget(gone), "the job ended", IdleKind);
         }
         foreach (var id in _running.Keys)
         {
             var subject = Verbs.JobTarget(id);
-            var read = JobCpu ?? (jobId => _running.TryGetValue(jobId, out var p) ? ProcessTreeCpu.Of(p) : null);
+            var read = JobCpu ?? (jobId =>
+            {
+                if (!_running.TryGetValue(jobId, out var p))
+                {
+                    return null;
+                }
+                if (!_cpuTallies.TryGetValue(jobId, out var tally))
+                {
+                    _cpuTallies[jobId] = tally = new ProcessTreeCpu.Tally();
+                }
+                return ProcessTreeCpu.Of(p, tally);
+            });
             if (read(id) is not { } cpu)
             {
                 continue;
             }
-            if (!_cpuMarks.TryGetValue(id, out var mark) || cpu - mark.Cpu >= IdleCpu)
+            // A reading that fell means a process ended: that is work too, so the window starts again.
+            if (!_cpuMarks.TryGetValue(id, out var mark) || cpu < mark.Last || cpu - mark.Cpu >= IdleCpu)
             {
                 // It has worked since the window began: the window starts again.
-                _cpuMarks[id] = (now, cpu);
+                _cpuMarks[id] = (now, cpu, cpu);
                 state.CloseCardsAbout(subject, "the job used CPU again", IdleKind);
             }
-            else if (_queue.Count == 0)
+            else if (Remember(id, mark, cpu) && _queue.Count == 0)
             {
                 state.CloseCardsAbout(subject, "nothing waits behind it now", IdleKind);
             }
@@ -330,6 +344,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     $"`{job.Command}` is run by {job.OwnerName ?? job.Owner ?? "the node"}; {_queue.Count} wait behind it: {waiting}. It may only be waiting on something; cancel it with `pilot job cancel {id}` if so, and the owner can wait with `pilot leg wait`.");
             }
         }
+    }
+
+    /// <summary>Notes the latest reading beside the window's mark, so a later one that is lower shows a process ended. Always true.</summary>
+    private bool Remember(string id, (DateTimeOffset At, TimeSpan Cpu, TimeSpan Last) mark, TimeSpan cpu)
+    {
+        _cpuMarks[id] = mark with { Last = cpu };
+        return true;
     }
 
     private void CancelBeforeItsTurn(JobRow job, string who)
