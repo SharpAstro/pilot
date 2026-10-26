@@ -100,9 +100,24 @@ public sealed class JobsTests
         described.ShouldContain("/data/jobs/j14.log");
         described.ShouldContain("its output is in its log");
         described.ShouldContain("Open log");
-        // A click on Cancel's cell cancels it, as a click on its pixels does in the window.
+        // A click on Cancel only asks: a job may have run for hours, so nothing is sent until the question is answered.
         var cancel = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "job:j14:cancel" });
         CellLayout.HitTest(arranged, cancel.Bounds.X + 1, cancel.Bounds.Y);
+        cancelled.ShouldBeEmpty();
+        arranged = Layout.Engine.Arrange(jobs.Tree(Screen()), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
+        CellLayout.Describe(arranged).ShouldContain("Cancel j14?");
+
+        // Keep running takes the question back; asked again, Cancel job sends it.
+        var keep = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "job:j14:cancel-no" });
+        CellLayout.HitTest(arranged, keep.Bounds.X + 1, keep.Bounds.Y);
+        cancelled.ShouldBeEmpty();
+        arranged = Layout.Engine.Arrange(jobs.Tree(Screen()), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
+        CellLayout.Describe(arranged).ShouldNotContain("Cancel j14?");
+        cancel = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "job:j14:cancel" });
+        CellLayout.HitTest(arranged, cancel.Bounds.X + 1, cancel.Bounds.Y);
+        arranged = Layout.Engine.Arrange(jobs.Tree(Screen()), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
+        var yes = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "job:j14:cancel-yes" });
+        CellLayout.HitTest(arranged, yes.Bounds.X + 1, yes.Bounds.Y);
         cancelled.ShouldBe(["j14"]);
 
         // An ended job, clicked, has nothing left to cancel.
@@ -208,7 +223,7 @@ public sealed class JobsTests
 
         jobs.OpenMenu(screen.Lines[0], 0, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
 
-        jobs.MenuItems.Select(i => i.Label).ShouldBe(["Cancel", "Its session", "Open its log", "Open its folder", "Copy j14", "Copy its command", "Copy its log's path"]);
+        jobs.MenuItems.Select(i => i.Label).ShouldBe(["Cancel…", "Its session", "Open its log", "Open its folder", "Copy j14", "Copy its command", "Copy its log's path"]);
         jobs.MenuItems[1].OnChoose!();
         sessions.ShouldBe(["c3d4e5f6"]);
         jobs.MenuItems[^2].OnChoose!();
@@ -216,7 +231,7 @@ public sealed class JobsTests
 
         // A job handed over from a terminal wakes nobody, and an ended one is past cancelling.
         jobs.OpenMenu(screen.Lines[3], 3, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
-        jobs.MenuItems.Select(i => i.Label).ShouldNotContain("Cancel");
+        jobs.MenuItems.Select(i => i.Label).ShouldNotContain("Cancel…");
         jobs.MenuItems.Select(i => i.Label).ShouldNotContain("Its session");
     }
 
@@ -264,5 +279,37 @@ public sealed class JobsTests
         var arranged = Layout.Engine.Arrange(jobs.Tree(Screen()), new Rect<float>(0, 0, 1228, 800), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
         arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "its output is in its log, on the node's machine" } })
             .Bounds.Width.ShouldBeGreaterThan(400f);
+    }
+
+    [Fact]
+    public void CapturesOfCancelAndItsQuestionAtNarrowAndWideWindows()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var dir = Path.GetDirectoryName(capture) ?? ".";
+        foreach (var (width, height) in new[] { (1280, 800), (2000, 900) })
+        {
+            foreach (var asked in new[] { false, true })
+            {
+                using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+                var (chrome, jobs) = Chrome(renderer);
+                jobs.CanCommand = true;
+                jobs.OnCancel = _ => { };
+                jobs.OnSession = _ => { };
+                chrome.Show(PilotPage.Jobs);
+                chrome.Render(new SessionsScreen([], "test", Live.At), null, null, Screen(), new RectF32(0, 0, width, height));
+                if (asked)
+                {
+                    var arranged = Layout.Engine.Arrange(jobs.Tree(Screen()), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
+                    var cancel = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "job:j14:cancel" });
+                    CellLayout.HitTest(arranged, cancel.Bounds.X + 1, cancel.Bounds.Y);
+                    chrome.Render(new SessionsScreen([], "test", Live.At), null, null, Screen(), new RectF32(0, 0, width, height));
+                }
+                File.WriteAllBytes(Path.Combine(dir, $"job-cancel-{(asked ? "asked" : "button")}-{width}.png"),
+                    SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, height));
+            }
+        }
     }
 }
