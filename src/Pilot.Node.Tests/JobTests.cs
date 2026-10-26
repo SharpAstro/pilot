@@ -124,6 +124,103 @@ public sealed class JobTests : IDisposable
     }
 
     [Fact]
+    public async Task AFinishedJobLeavesItsRealExitCodeInTheExitFileAndItsRowHoldsItsPidAndStartTime()
+    {
+        var before = DateTimeOffset.UtcNow.AddSeconds(-5);
+        var ok = await Ended(Run(Echo("fine")).Made!);
+        var bad = await Ended(Run(Echo("not fine", 7)).Made!);
+
+        foreach (var (job, code) in new[] { (ok, 0), (bad, 7) })
+        {
+            job.ExitPath.ShouldBe(job.LogPath + ".exit");
+            File.ReadAllText(job.ExitPath!).Trim().ShouldBe(code.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            File.Exists(job.ExitPath + ".tmp").ShouldBeFalse();
+            job.ExitCode.ShouldBe(code);
+            job.Pid.ShouldNotBeNull().ShouldBeGreaterThan(0);
+            job.ProcessStartedAt.ShouldNotBeNull().ShouldBeInRange(before, DateTimeOffset.UtcNow.AddSeconds(5));
+        }
+        // The script a Windows job ran is deleted once the job has ended, not when it started.
+        (ok.ScriptPath is null).ShouldBe(!OperatingSystem.IsWindows());
+        if (ok.ScriptPath is { } script)
+        {
+            File.Exists(script).ShouldBeFalse();
+        }
+    }
+
+    [Fact]
+    public async Task ARunningJobsRowHoldsItsPidBeforeItEnds()
+    {
+        var id = Run(Sleep(30)).Made!;
+
+        var running = await Until(id, j => j.State == JobState.Running);
+
+        running.Pid.ShouldNotBeNull();
+        running.ProcessStartedAt.ShouldNotBeNull();
+        running.ExitPath.ShouldBe(running.LogPath + ".exit");
+        File.Exists(running.ExitPath).ShouldBeFalse();
+        if (OperatingSystem.IsWindows())
+        {
+            File.Exists(running.ScriptPath).ShouldBeTrue();
+        }
+        _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
+        await Ended(id);
+    }
+
+    [Fact]
+    public async Task BothStdoutAndStderrReachTheLog()
+    {
+        var command = OperatingSystem.IsWindows()
+            ? "'to stdout é'; [Console]::Error.WriteLine('to stderr'); 'and stdout again'"
+            : "echo 'to stdout é'; echo 'to stderr' 1>&2; echo 'and stdout again'";
+
+        var job = await Ended(Run(command).Made!);
+
+        job.State.ShouldBe(JobState.Succeeded);
+        File.ReadAllText(job.LogPath).ReplaceLineEndings("\n").ShouldBe("to stdout é\nto stderr\nand stdout again\n");
+        job.Step.ShouldBe("and stdout again");
+    }
+
+    [Fact]
+    public async Task ACancelKillsTheJobsChildProcessesToo()
+    {
+        var pidFile = Path.Combine(_root, "child.pid");
+        var command = OperatingSystem.IsWindows()
+            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 60' -PassThru -WindowStyle Hidden; Set-Content '{pidFile}' $p.Id; $p.WaitForExit()"
+            : $"sleep 60 & echo $! > '{pidFile}'; wait";
+        var id = Run(command).Made!;
+        await Until(id, j => j.State == JobState.Running);
+        for (var i = 0; i < 300 && !(File.Exists(pidFile) && File.ReadAllText(pidFile).Trim().Length > 0); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        var childPid = int.Parse(File.ReadAllText(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        IsAlive(childPid).ShouldBeTrue();
+
+        _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" }).Ok.ShouldBeTrue();
+        var job = await Ended(id);
+
+        job.State.ShouldBe(JobState.Cancelled);
+        for (var i = 0; i < 100 && IsAlive(childPid); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        IsAlive(childPid).ShouldBeFalse();
+    }
+
+    private static bool IsAlive(int pid)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    [Fact]
     public async Task AJobPastItsTimeoutIsStoppedAndSaysSo()
     {
         var job = await Ended(Run(Sleep(30), timeoutSeconds: 1).Made!);
@@ -357,6 +454,57 @@ public sealed class JobTests : IDisposable
         PilotCommand.TryDuration(text, out var span).ShouldBeTrue();
         span.ShouldBe(TimeSpan.FromSeconds(seconds));
         PilotCommand.TryDuration("2d", out _).ShouldBeFalse();
+    }
+}
+
+/// <summary>What follows a job's log, and how a detached job is started.</summary>
+public sealed class JobFilesTests : IDisposable
+{
+    private readonly string _log = Path.Combine(Path.GetTempPath(), "p2f-" + Guid.NewGuid().ToString("N")[..8] + ".log");
+
+    public void Dispose() => File.Delete(_log);
+
+    [Fact]
+    public void ALineTheJobHasNotEndedYetWaitsForItsNewline()
+    {
+        var follower = new LogFollower(_log);
+        follower.Read(final: false).ShouldBeEmpty();
+
+        File.WriteAllText(_log, "one\r\ntwo\nthr");
+        follower.Read(final: false).ShouldBe(["one", "two"]);
+
+        File.AppendAllText(_log, "ee\nfour");
+        follower.Read(final: false).ShouldBe(["three"]);
+        follower.Read(final: true).ShouldBe(["four"]);
+        follower.Read(final: true).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AMultiByteCharacterSplitBetweenTwoReadsIsWholeInTheLine()
+    {
+        var follower = new LogFollower(_log);
+        var bytes = System.Text.Encoding.UTF8.GetBytes("é\n");
+        File.WriteAllBytes(_log, bytes[..1]);
+        follower.Read(final: false).ShouldBeEmpty();
+
+        using (var stream = new FileStream(_log, FileMode.Append))
+        {
+            stream.Write(bytes, 1, bytes.Length - 1);
+        }
+
+        follower.Read(final: false).ShouldBe(["é"]);
+    }
+
+    [Fact]
+    public void ACommandLineIsQuotedAsTheCRuntimeReadsItBack()
+    {
+        var start = new System.Diagnostics.ProcessStartInfo(@"C:\Program Files\PowerShell\pwsh.exe");
+        foreach (var arg in new[] { "-File", @"C:\a b\j1.ps1", "plain", "", "say \"hi\"", @"ends with\" })
+        {
+            start.ArgumentList.Add(arg);
+        }
+
+        JobProcess.CommandLine(start).ShouldBe("\"C:\\Program Files\\PowerShell\\pwsh.exe\" -File \"C:\\a b\\j1.ps1\" plain \"\" \"say \\\"hi\\\"\" \"ends with\\\\\"");
     }
 }
 

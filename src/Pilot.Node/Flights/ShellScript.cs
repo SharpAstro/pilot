@@ -47,15 +47,97 @@ public sealed class ShellScript : IDisposable
     public static string Body(string command) =>
         $"{command}\nif ($?) {{ exit 0 }}\nif ($LASTEXITCODE) {{ exit $LASTEXITCODE }}\nexit 1\n";
 
-    public void Dispose()
+    /// <summary>
+    /// The wrapper of a job (<c>pilot run</c>), which must outlive the node: the line runs with stdout and stderr appended to
+    /// <paramref name="logPath"/> (the launcher hands the process the log's own handle, so no pipe of the node's is in it) and
+    /// the wrapper writes the exit code to <paramref name="exitPath"/> when the line ends, to a temp name that is then renamed,
+    /// so a half-written file is never read. On Windows the script is <paramref name="logPath"/> with <c>.ps1</c>, which
+    /// <see cref="Dispose"/> deletes (the node does that once the job has ended, not when it starts); on Linux there is none.
+    /// </summary>
+    public static ShellScript ForJob(string command, string cwd, string logPath, string exitPath)
     {
-        if (Script is null)
+        if (!OperatingSystem.IsWindows())
+        {
+            // The line's own shell runs under a wrapper shell, which writes the code once it is back: $1 the log, $2 the line,
+            // $3 the exit file, passed as arguments so no quoting of the line is needed. A session of its own (setsid), so
+            // a signal to the node's group or the node's end does not reach it; stdin is /dev/null.
+            const string Wrapper = "exec >>\"$1\" 2>&1 </dev/null; /bin/sh -c \"$2\"; c=$?; printf '%s\\n' \"$c\" >\"$3.tmp\"; mv -f \"$3.tmp\" \"$3\"; exit \"$c\"";
+            var setsid = new[] { "/usr/bin/setsid", "/bin/setsid", "/usr/local/bin/setsid" }.FirstOrDefault(File.Exists);
+            var start = new ProcessStartInfo(setsid ?? "/bin/sh") { WorkingDirectory = cwd };
+            if (setsid is not null)
+            {
+                start.ArgumentList.Add("/bin/sh");
+            }
+            foreach (var arg in new[] { "-c", Wrapper, "sh", logPath, command, exitPath })
+            {
+                start.ArgumentList.Add(arg);
+            }
+            return new ShellScript(start, null);
+        }
+        var script = Path.ChangeExtension(logPath, ".ps1");
+        File.WriteAllText(script, JobBody(command, exitPath), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        var pwsh = new ProcessStartInfo(PwshPath()) { WorkingDirectory = cwd };
+        foreach (var arg in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script })
+        {
+            pwsh.ArgumentList.Add(arg);
+        }
+        return new ShellScript(pwsh, script);
+    }
+
+    /// <summary>
+    /// The job's script. Run as given it is the wrapper: it starts itself again with <c>-PilotInner</c> (same streams, which
+    /// are the log) and, once that has ended, writes its exit code. A line that says <c>exit n</c> ends the script before it
+    /// could write anything, which is why the line runs in a process of its own and the code is written by the one around it.
+    /// The inner part is <see cref="Body"/>, so the code is the one a shell gives, as for a check.
+    /// </summary>
+    public static string JobBody(string command, string exitPath) =>
+        "param([switch]$PilotInner)\n"
+        + "try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }\n"
+        + "if (-not $PilotInner) {\n"
+        + "    & ([Environment]::ProcessPath) -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $PSCommandPath -PilotInner\n"
+        + "    $code = if ($null -eq $LASTEXITCODE) { 1 } else { $LASTEXITCODE }\n"
+        + $"    $exitFile = {PsQuote(exitPath)}\n"
+        + "    [System.IO.File]::WriteAllText(\"$exitFile.tmp\", \"$code`n\")\n"
+        + "    [System.IO.File]::Move(\"$exitFile.tmp\", $exitFile, $true)\n"
+        + "    exit $code\n"
+        + "}\n"
+        + Body(command);
+
+    private static string PsQuote(string text) => "'" + text.Replace("'", "''", StringComparison.Ordinal) + "'";
+
+    /// <summary>pwsh's full path (the first on PATH), or just <c>pwsh</c> when it is not found there.</summary>
+    private static string PwshPath()
+    {
+        foreach (var folder in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                var candidate = Path.Combine(folder.Trim('"'), "pwsh.exe");
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+            catch (ArgumentException)
+            {
+                // A PATH entry that is no path.
+            }
+        }
+        return "pwsh";
+    }
+
+    public void Dispose() => Delete(Script);
+
+    /// <summary>Deletes a script file; a path of null, or one already gone, is nothing.</summary>
+    public static void Delete(string? script)
+    {
+        if (script is null)
         {
             return;
         }
         try
         {
-            File.Delete(Script);
+            File.Delete(script);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

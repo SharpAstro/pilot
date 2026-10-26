@@ -44,6 +44,21 @@ public sealed record JobRow
     /// <summary>The whole of its output, on the node's machine.</summary>
     public required string LogPath { get; init; }
 
+    /// <summary>
+    /// Where its exit code is written when it ends: <see cref="LogPath"/> plus <c>.exit</c>. The job's own wrapper writes it, so
+    /// a node that was away while the job ended still finds how it ended. Set when it is handed over, present once it has ended.
+    /// </summary>
+    public string? ExitPath { get; init; }
+
+    /// <summary>The process id of the job's wrapper, once it has started: what a cancel, a timeout or a later node finds it by. Null while it waits.</summary>
+    public int? Pid { get; init; }
+
+    /// <summary>When that process started: a pid alone can be another process's after a reboot, so it only counts while this matches.</summary>
+    public DateTimeOffset? ProcessStartedAt { get; init; }
+
+    /// <summary>The script file the job runs, on Windows (the node deletes it once the job has ended); null on Linux, where the wrapper is a command line.</summary>
+    public string? ScriptPath { get; init; }
+
     /// <summary>How long it may run before the node stops it.</summary>
     public required TimeSpan Timeout { get; init; }
 
