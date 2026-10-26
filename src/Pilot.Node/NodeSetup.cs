@@ -11,13 +11,13 @@ namespace Pilot.Node;
 /// <summary>
 /// What it takes for this machine's node to be part of the fleet, as a checklist, and the fixes the node can make
 /// itself: started at logon, pilot's hooks in Claude Code's settings, on the LAN, let through the firewall, its
-/// watchtower's folder trusted, gh signed in, and usage figures to show. The Settings page shows it (<see cref="Checks"/>),
+/// build folders (and, on request, build processes) excluded from Windows Defender's scans, its watchtower's folder trusted, gh signed in, and usage figures to show. The Settings page shows it (<see cref="Checks"/>),
 /// its buttons are <c>setup node &lt;key&gt;</c> (<see cref="FixAsync"/>), and <c>pilot-node setup</c> makes every fix a
 /// command line can.
 /// </summary>
 /// <remarks>
-/// Two fixes need a person, and say so rather than going around them: the firewall rule asks for elevation (one prompt,
-/// on this machine's screen), and the trust prompt is Claude Code's own, so the fix opens <c>claude</c> in the folder in a
+/// Three fixes need a person, and say so rather than going around them: the firewall rule and the Defender exclusions ask
+/// for elevation (one prompt each, on this machine's screen), and the trust prompt is Claude Code's own, so the fix opens <c>claude</c> in the folder in a
 /// window that says what it is for. gh's login is a person's alone.
 /// </remarks>
 public sealed class NodeSetup(NodeOptions options, string nodePath, string profileRoot)
@@ -27,6 +27,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     public const string HooksKey = "hooks";
     public const string LanKey = "lan";
     public const string FirewallKey = "firewall";
+    public const string DefenderKey = "defender";
     public const string TrustKey = "trust";
     public const string GhKey = "gh";
     public const string UsageKey = "usage";
@@ -63,6 +64,12 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
 
     /// <summary>Starts a program elevated (Windows' UAC prompt) and waits for it; false when the prompt was refused. A test replaces it.</summary>
     public Func<string, string, bool> RunElevated { get; init; } = RunElevatedProcess;
+
+    /// <summary>Whether Windows Defender's exclusions apply on this machine: Windows only. A test replaces it, to try both on either.</summary>
+    public bool DefenderApplies { get; init; } = OperatingSystem.IsWindows();
+
+    /// <summary>The folders the defender check wants excluded; null takes <see cref="WantedFolders"/>. A test gives its own.</summary>
+    public Func<IReadOnlyList<string>>? DefenderFolders { get; init; }
 
     /// <summary>Opens a window for a person (the trust prompt); false when it did not open. A test replaces it.</summary>
     public Func<string, string, bool> OpenWindow { get; init; } = OpenConsoleWindow;
@@ -113,6 +120,11 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             });
         }
 
+        if (DefenderApplies)
+        {
+            checks.Add(DefenderCheck());
+        }
+
         var trusted = Trusted(options.WatchtowerFolder);
         checks.Add(new SetupCheck
         {
@@ -149,8 +161,11 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         return checks;
     }
 
-    /// <summary>Makes the fix of the check <paramref name="key"/>; null when it is done, else why not.</summary>
-    public async Task<string?> FixAsync(string key, CancellationToken cancellationToken)
+    /// <summary>
+    /// Makes the fix of the check <paramref name="key"/>; null when it is done, else why not. <paramref name="processes"/> is
+    /// the defender fix's <c>--processes</c>: the build processes are excluded as well as the folders.
+    /// </summary>
+    public async Task<string?> FixAsync(string key, CancellationToken cancellationToken, bool processes = false)
     {
         switch (key)
         {
@@ -197,6 +212,8 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                 }
                 return FirewallAllows() is (true, _) ? null : "the rule is still not there";
             }
+            case DefenderKey:
+                return FixDefender(processes);
             case TrustKey:
                 // Recorded in Claude Code's file, carefully (ClaudeTrust); the prompt in a window only when that cannot be.
                 Directory.CreateDirectory(options.WatchtowerFolder);
@@ -208,7 +225,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                     ? null
                     : $"no window opened: run claude in {options.WatchtowerFolder} and accept its trust prompt";
             default:
-                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, HooksKey, MergeGuardKey, GuardHooksKey, BuildRspKey, LanKey, FirewallKey, TrustKey })}, not {key}";
+                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, HooksKey, MergeGuardKey, GuardHooksKey, BuildRspKey, LanKey, FirewallKey, DefenderKey, TrustKey })}, not {key}";
         }
     }
 
@@ -506,6 +523,117 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         return missing.Count > 0
             ? (false, $"rule {FirewallRule} lets {Path.GetFileName(nodePath)} in, but not {string.Join(", ", missing)}: the Fleet page and pilot nodes hear no other node")
             : (true, $"rule {FirewallRule} allows {Path.GetFileName(nodePath)} in, on {on} networks");
+    }
+
+    /// <summary>
+    /// The folders a build machine wants Windows Defender to leave alone: each repo root, the NuGet package folder
+    /// (<c>NUGET_PACKAGES</c>, else <c>.nuget\packages</c>), the node's data folder, Claude Code's <c>.claude</c> and the dotnet
+    /// root. Only those that exist, in full, and each once.
+    /// </summary>
+    private IReadOnlyList<string> WantedFolders()
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var folders = new List<string>(options.RepoRoots)
+        {
+            Environment.GetEnvironmentVariable("NUGET_PACKAGES") is { Length: > 0 } packages ? packages : Path.Combine(home, ".nuget", "packages"),
+            options.DataFolder,
+            Path.Combine(home, ".claude"),
+        };
+        var (exit, sdks) = Run("dotnet", ["--list-sdks"], TimeSpan.FromSeconds(15));
+        if (exit == 0 && DefenderExclusions.SdkRoot(sdks) is { } dotnet)
+        {
+            folders.Add(dotnet);
+        }
+        return [.. folders.Select(f => Path.GetFullPath(f).TrimEnd('\\', '/')).Where(Directory.Exists)
+            .GroupBy(DefenderExclusions.Normalise).Select(g => g.First())];
+    }
+
+    /// <summary>Defender's state, and the folders it was asked about; the state is null when pwsh gave no usable answer.</summary>
+    private (DefenderExclusions.State? State, IReadOnlyList<string> Wanted) ReadDefender()
+    {
+        var wanted = (DefenderFolders ?? WantedFolders)();
+        var script = DefenderExclusions.Query(wanted.Select(DefenderExclusions.Drive).OfType<char>().Distinct());
+        var encoded = Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(script));
+        var (exit, output) = Run("pwsh", ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], TimeSpan.FromSeconds(30));
+        return (exit == 0 ? DefenderExclusions.Parse(output) : null, wanted);
+    }
+
+    /// <summary>
+    /// Whether Defender excludes the build machine's folders (<see cref="WantedFolders"/>). Optional: it is a speed-up, builds
+    /// and tests pass without it, only slower, as every file they write is scanned. Fine when Defender is not the antivirus in
+    /// force, and a folder on a Dev Drive is left to its performance mode. Defender shows its exclusions to an elevated
+    /// process only, so from the node they read as hidden: the line says so and the fix, which is idempotent, is offered.
+    /// </summary>
+    public SetupCheck DefenderCheck()
+    {
+        const string Title = "Windows Defender exclusions";
+        if (!DefenderApplies)
+        {
+            return new SetupCheck { Key = DefenderKey, Title = Title, Ok = true, Line = "does not apply here: Windows Defender is Windows only", Optional = true };
+        }
+        var (state, wanted) = ReadDefender();
+        if (state is null)
+        {
+            return new SetupCheck { Key = DefenderKey, Title = Title, Ok = false, Line = "Get-MpPreference gave no answer (is pwsh on PATH?): the exclusions are not checked", Optional = true };
+        }
+        if (!state.Active)
+        {
+            return new SetupCheck { Key = DefenderKey, Title = Title, Ok = true, Line = "Windows Defender is not the antivirus in force (off, or passive beside another one): nothing to exclude", Optional = true };
+        }
+        var missing = DefenderExclusions.MissingPaths(wanted, state);
+        var devDrives = DefenderExclusions.OnDevDrive(wanted, state);
+        var skipped = devDrives.Count == 0 ? "" : $"; {string.Join(", ", devDrives)} on a Dev Drive, which Defender treats on its own";
+        if (missing.Count == 0)
+        {
+            return new SetupCheck { Key = DefenderKey, Title = Title, Ok = true, Line = $"{wanted.Count - devDrives.Count} folders excluded{skipped}", Optional = true };
+        }
+        return state.Readable
+            ? new SetupCheck { Key = DefenderKey, Title = Title, Ok = false, Line = $"not excluded: {string.Join(", ", missing)}: every file a build and its tests write is scanned{skipped}", Fix = "Exclude (asks for elevation)", Optional = true }
+            : new SetupCheck { Key = DefenderKey, Title = Title, Ok = false, Line = $"Defender shows its exclusions to an elevated process only, so these are not known to be excluded: {string.Join(", ", missing)}{skipped}", Fix = "Exclude (asks for elevation)", Optional = true };
+    }
+
+    /// <summary>
+    /// Adds the missing exclusions with one elevated pwsh script, so one prompt, then reads them again; null when done, else
+    /// why not. Nothing missing asks for nothing. Read from here Defender's list may stay hidden, and then the elevated run
+    /// is taken as done.
+    /// </summary>
+    private string? FixDefender(bool processes)
+    {
+        if (!DefenderApplies)
+        {
+            return "Windows Defender's exclusions apply on Windows only";
+        }
+        var (state, wanted) = ReadDefender();
+        if (state is null)
+        {
+            return "Get-MpPreference gave no answer: is pwsh on PATH?";
+        }
+        if (!state.Active)
+        {
+            return null;
+        }
+        var paths = DefenderExclusions.MissingPaths(wanted, state);
+        var names = processes ? DefenderExclusions.MissingProcesses(DefenderExclusions.Processes, state) : [];
+        if (paths.Count == 0 && names.Count == 0)
+        {
+            return null;
+        }
+        using var script = Flights.ShellScript.For(DefenderExclusions.Script(paths, names), Path.GetTempPath());
+        if (script.Script is null)
+        {
+            return "the node adds Defender's exclusions on Windows only";
+        }
+        if (!RunElevated(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe"),
+                $"--headless pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{script.Script}\""))
+        {
+            return "the elevation prompt was refused or did not open";
+        }
+        if (ReadDefender().State is not { Readable: true } after)
+        {
+            return null;
+        }
+        var still = DefenderExclusions.MissingPaths(wanted, after).Concat(processes ? DefenderExclusions.MissingProcesses(DefenderExclusions.Processes, after) : []).ToList();
+        return still.Count == 0 ? null : $"still not excluded: {string.Join(", ", still)}";
     }
 
     /// <summary>Claude Code's folder trust, in this profile's file; a test points it elsewhere.</summary>

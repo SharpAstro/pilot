@@ -998,9 +998,18 @@ LAN, the firewall rule for this binary and for `pilot`, `pilot-gui` and `pilot-t
 nodes' beacons and are let in on the discovery port alone (Windows), the watchtower's folder trusted (read from Claude Code's own record,
 a folder above it counting), gh signed in, and usage figures. Each says how it stands; those the node can fix have a
 button (`setup node <check>`): the logon entry, the hooks, the LAN, the firewall rule (one elevation prompt, which
-replaces an earlier install's rule), the trust prompt (opened in a window titled for what it is). `pilot settings`
+replaces an earlier install's rule), the Windows Defender exclusions (below), the trust prompt (opened in a window titled for what it is). `pilot settings`
 prints both. The route and both verbs are this machine's only: a grant from the LAN never reaches them, and nor does
 the watchtower.
+
+The **Windows Defender exclusions** check (`setup node defender`, optional, Windows only) reads `Get-MpPreference` and lists
+the folders a build machine wants left unscanned that are not excluded yet: each repo root, the NuGet package folder
+(`NUGET_PACKAGES`, else `~/.nuget/packages`), the node's data folder, `~/.claude` and the dotnet root. A folder on a Dev
+Drive is skipped (Defender's performance mode covers it), and it is fine when Defender is not the antivirus in force. Its
+button runs one elevated script of `Add-MpPreference -ExclusionPath` lines, so one prompt; `pilot settings setup defender
+--processes` adds `-ExclusionProcess` for `pilot-node.exe`, `dotnet.exe`, `MSBuild.exe`, `VBCSCompiler.exe` and
+`testhost.exe` too. Defender shows its exclusions to an elevated process only, so from the node the check may not be able
+to tell and says so, offering the (idempotent) fix.
 
 The **Merge guard** check (`setup node merge-guard`, not optional) says whether `~/.claude/settings.json` has the merge
 guard for this binary: a user-wide `PreToolUse` hook on `Bash` and `PowerShell` (matcher `Bash|PowerShell`) running
