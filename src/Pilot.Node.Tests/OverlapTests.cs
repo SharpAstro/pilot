@@ -7,17 +7,17 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>A planner finds its flight looks like part of another: one card asks, the answer is kept per pair, and the flight's leg planning waits.</summary>
-public sealed class OverlapTests : IDisposable
+public abstract class OverlapTestsBase : IDisposable
 {
-    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+    private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2o-" + Guid.NewGuid().ToString("N")[..8]);
-    private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
-    private readonly FakeWorkers _workers = new();
-    private readonly FlightCommander _flights;
-    private readonly LegCommander _legs;
+    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2o-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private protected readonly FakeWorkers _workers = new();
+    private protected readonly FlightCommander _flights;
+    private protected readonly LegCommander _legs;
 
-    public OverlapTests()
+    protected OverlapTestsBase()
     {
         Directory.CreateDirectory(Repo);
         Git(Repo, "init", "-q", "-b", "main");
@@ -27,9 +27,9 @@ public sealed class OverlapTests : IDisposable
         (_flights, _legs) = Commanders(_state);
     }
 
-    private string Repo => Path.Combine(_root, "tianwen");
+    private protected string Repo => Path.Combine(_root, "tianwen");
 
-    private (FlightCommander, LegCommander) Commanders(NodeState state)
+    private protected (FlightCommander, LegCommander) Commanders(NodeState state)
     {
         var git = new GitCli();
         var flights = new FlightCommander(state, new Planes(git), TimeProvider.System);
@@ -53,7 +53,7 @@ public sealed class OverlapTests : IDisposable
         Directory.Delete(_root, recursive: true);
     }
 
-    private static string Git(string cwd, params string[] args)
+    private protected static string Git(string cwd, params string[] args)
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
@@ -67,14 +67,14 @@ public sealed class OverlapTests : IDisposable
         return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
     }
 
-    private Task<CommandResult> Leg(string verb, string target, params string[] args) =>
+    private protected Task<CommandResult> Leg(string verb, string target, params string[] args) =>
         Leg(_legs, verb, target, args);
 
-    private static Task<CommandResult> Leg(LegCommander legs, string verb, string target, params string[] args) =>
+    private protected static Task<CommandResult> Leg(LegCommander legs, string verb, string target, params string[] args) =>
         legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct);
 
     /// <summary>TIA1 (the one TIA2 looks like part of) and TIA2.</summary>
-    private async Task TwoFlights()
+    private protected async Task TwoFlights()
     {
         foreach (var issue in new[] { "1", "2" })
         {
@@ -82,10 +82,16 @@ public sealed class OverlapTests : IDisposable
         }
     }
 
-    private Task<CommandResult> Ask(string why = "it edits the same parser") => Leg(Verbs.Overlap, "flight/TIA2", "TIA1", why);
+    private protected Task<CommandResult> Ask(string why = "it edits the same parser") => Leg(Verbs.Overlap, "flight/TIA2", "TIA1", why);
 
-    private CardRow[] Cards() => [.. _state.Cards().Where(c => c.Kind == LegCommander.OverlapKind)];
+    private protected CardRow[] Cards() => [.. _state.Cards().Where(c => c.Kind == LegCommander.OverlapKind)];
 
+    private protected FlightRow F(string code) => _state.Flights().Single(f => f.Code == code);
+}
+
+/// <summary>Part 1 of OverlapTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class OverlapTests1 : OverlapTestsBase
+{
     [Fact]
     public async Task OverlapOnAFreshPairRingsOneCardWithFoldAndPlanSeparatelyAndTellsThePlannerToEndItsTurn()
     {
@@ -206,8 +212,6 @@ public sealed class OverlapTests : IDisposable
         _workers.Started.Count.ShouldBe(1);
     }
 
-    private FlightRow F(string code) => _state.Flights().Single(f => f.Code == code);
-
     [Fact]
     public async Task FoldRecordsItOnThePairClosesTheCardAndAddsTheIssueToTheOtherFlightWhosePlannerIsToldToPlanLegsAfterItsOwn()
     {
@@ -315,7 +319,11 @@ public sealed class OverlapTests : IDisposable
         Cards().ShouldHaveSingleItem().State.ShouldBe(CardState.Open);
         _workers.Started.ShouldBeEmpty();
     }
+}
 
+/// <summary>Part 2 of OverlapTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class OverlapTests2 : OverlapTestsBase
+{
     [Fact]
     public async Task FoldingIntoAFlightWhosePrIsOpenIsRefusedForThePrWouldNotCloseTheIssue()
     {
