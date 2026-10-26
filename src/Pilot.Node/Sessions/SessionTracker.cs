@@ -30,7 +30,9 @@ public sealed class SessionTracker : BackgroundService
     private readonly Dictionary<string, DateTimeOffset> _endedAt = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
     private readonly Dictionary<string, SessionTranscripts> _transcripts = new Dictionary<string, SessionTranscripts>(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTimeOffset> _stale = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
-    private readonly Dictionary<string, string?> _repos = new Dictionary<string, string?>(StringComparer.Ordinal);
+    // The role the node gave each session it started (seen from a name that said so), by row id, with its machine prefix.
+    private readonly Dictionary<string, (SessionRoleInfo Role, string? Prefix)> _given = new Dictionary<string, (SessionRoleInfo, string?)>(StringComparer.Ordinal);
+    private readonly Dictionary<string, string?> _repos =new Dictionary<string, string?>(StringComparer.Ordinal);
 
     // A resumed session continues under a new session id; its row keeps its id and follows it there. By session id:
     // the row each copy belongs to, and the ids it left behind, whose listed rows are not sessions of their own.
@@ -356,7 +358,27 @@ public sealed class SessionTracker : BackgroundService
         }
 
         // A row built afresh from the listing keeps the copies it followed: they are this row's history, not the listing's.
-        var built = SessionRowBuilder.Build(agent, facts, record, repo, JoinFlight(SessionRoles.Resolve(agent.Name, background: agent.Kind == "background"), agent.Cwd), Hooks.Of(agent.SessionId));
+        var role = SessionRoles.Resolve(agent.Name, background: agent.Kind == "background");
+        string? renamed = null;
+        if (role.Role != SessionRole.AdHoc)
+        {
+            // The name says what the node made it: kept by row, so a rename later does not lose it.
+            _given[id] = (role, SessionRoles.MachinePrefixOf(agent.Name));
+        }
+        else if (_given.TryGetValue(id, out var gave) && agent.Name is { Length: > 0 })
+        {
+            // Renamed away from the node's naming: still the session the node started, and its row still shows the prefix.
+            role = gave.Role;
+            if (gave.Prefix is { } prefix && !agent.Name.StartsWith(prefix + "-", StringComparison.Ordinal))
+            {
+                renamed = $"{prefix}-{agent.Name}";
+            }
+        }
+        var built = SessionRowBuilder.Build(agent, facts, record, repo, JoinFlight(role, agent.Cwd), Hooks.Of(agent.SessionId));
+        if (renamed is not null)
+        {
+            built = built with { Name = renamed };
+        }
         Put(built with
         {
             Id = id,
@@ -477,6 +499,10 @@ public sealed class SessionTracker : BackgroundService
         {
             _rows[row.Id] = row;
             _endedAt[row.Id] = now;
+            if (row.Role != SessionRole.AdHoc && SessionRoles.MachinePrefixOf(row.Name) is { } kept)
+            {
+                _given[row.Id] = (new SessionRoleInfo(row.Role, row.Flight, row.Leg, null), kept);
+            }
             // The resumes it followed, as the store kept them: without them, a restarted node would take each copy a
             // resume left behind for a session of its own, and the row's own copy for a new row.
             if (!row.SessionId.StartsWith(row.Id, StringComparison.Ordinal))

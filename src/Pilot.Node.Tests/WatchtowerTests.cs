@@ -107,6 +107,18 @@ public sealed class WatchtowerTests : IDisposable
     }
 
     [Fact]
+    public async Task ARenamedWatchtowerIsStillTheWatchtowerAndNoSecondOneStarts()
+    {
+        Row("job00001", SessionState.Idle);
+        _state.PutSession(_state.Sessions().Single() with { Name = "du1-pil269-stale-worktree-duplicate" });
+
+        await _tower.LookAsync(Ct);
+
+        _workers.Started.ShouldBeEmpty();
+        _tower.Current()!.Id.ShouldBe("job00001");
+    }
+
+    [Fact]
     public async Task WithNothingToWatchNoneIsStartedAndAnIdleOneIsStoppedOnceQuietLongEnough()
     {
         Quiet();

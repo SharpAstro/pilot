@@ -131,10 +131,17 @@ public sealed class Watchtower(
         }
     }
 
+    /// <summary>
+    /// Whether a row is this node's watchtower: by its name, or by the role the tracker kept for it when it was renamed
+    /// (then its name still starts with the machine's code, which the tracker put back).
+    /// </summary>
+    private bool IsWatchtower(SessionRow row) =>
+        row.Name == Name || (row.Role == SessionRole.Watchtower && row.Name.StartsWith($"{options.Machine.ToLowerInvariant()}-", StringComparison.Ordinal));
+
     /// <summary>The watchtower's row now: the one it started, else the newest of its name, live first.</summary>
     public SessionRow? Current()
     {
-        var rows = state.Sessions().Where(s => s.Name == Name).ToList();
+        var rows = state.Sessions().Where(IsWatchtower).ToList();
         return rows.FirstOrDefault(r => r.Id == _job)
             ?? rows.OrderByDescending(Live).ThenByDescending(r => r.StartedAt).FirstOrDefault();
     }
@@ -159,7 +166,7 @@ public sealed class Watchtower(
         {
             _generations ??= LoadGenerations();
             var changed = false;
-            foreach (var row in state.Sessions().Where(s => s.Name == Name))
+            foreach (var row in state.Sessions().Where(IsWatchtower))
             {
                 var at = _generations.FindIndex(g => g.Job == row.Id);
                 if (at < 0)
