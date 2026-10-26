@@ -43,7 +43,7 @@ to the GitHub Release. The repo is private, so sign gh in first (`gh auth login`
 2. Run `pilot-node setup` (with `--repo-root <org root>`, and `--machine <prefix>` if two machines' names start
    alike). It installs the hooks into `~/.claude/settings.json`, starts the node at logon and now, and turns the LAN
    on.
-3. Open `pilot-gui` and go to **Settings** (Ctrl+6) for what is left: trusting the watchtower's folder once, gh
+3. Open `pilot-gui` and go to **Settings** (Ctrl+8) for what is left: trusting the watchtower's folder once, gh
    signed in, and usage figures from a status line.
 
 From a source build instead, `pilot update --adopt` moves the folder onto releases.
