@@ -562,7 +562,9 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     /// Whether Defender excludes the build machine's folders (<see cref="WantedFolders"/>). Optional: it is a speed-up, builds
     /// and tests pass without it, only slower, as every file they write is scanned. Fine when Defender is not the antivirus in
     /// force, and a folder on a Dev Drive is left to its performance mode. Defender shows its exclusions to an elevated
-    /// process only, so from the node they read as hidden: the line says so and the fix, which is idempotent, is offered.
+    /// process only, so from the node they read as hidden: the elevated fix records them (<see cref="DefenderExclusions.RecordFile"/>)
+    /// and the check reads that, its line saying it is as of the last fix. With no record the line says they are not known and
+    /// the fix, which is idempotent, is offered.
     /// </summary>
     public SetupCheck DefenderCheck()
     {
@@ -580,22 +582,41 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         {
             return new SetupCheck { Key = DefenderKey, Title = Title, Ok = true, Line = "Windows Defender is not the antivirus in force (off, or passive beside another one): nothing to exclude", Optional = true };
         }
-        var missing = DefenderExclusions.MissingPaths(wanted, state);
-        var devDrives = DefenderExclusions.OnDevDrive(wanted, state);
+        // Hidden from this process, the exclusions are what the last elevated fix recorded, if it did.
+        var record = state.Readable ? null : ReadDefenderRecord();
+        var known = DefenderExclusions.WithRecord(state, record);
+        var missing = DefenderExclusions.MissingPaths(wanted, known);
+        var devDrives = DefenderExclusions.OnDevDrive(wanted, known);
         var skipped = devDrives.Count == 0 ? "" : $"; {string.Join(", ", devDrives)} on a Dev Drive, which Defender treats on its own";
+        var recorded = record is null ? "" : $", as recorded at the last fix on {record.At:yyyy-MM-dd}";
         if (missing.Count == 0)
         {
-            return new SetupCheck { Key = DefenderKey, Title = Title, Ok = true, Line = $"{wanted.Count - devDrives.Count} folders excluded{skipped}", Optional = true };
+            return new SetupCheck { Key = DefenderKey, Title = Title, Ok = true, Line = $"{wanted.Count - devDrives.Count} folders excluded{recorded}{skipped}", Optional = true };
         }
-        return state.Readable
-            ? new SetupCheck { Key = DefenderKey, Title = Title, Ok = false, Line = $"not excluded: {string.Join(", ", missing)}: every file a build and its tests write is scanned{skipped}", Fix = "Exclude (asks for elevation)", Optional = true }
+        return known.Readable
+            ? new SetupCheck { Key = DefenderKey, Title = Title, Ok = false, Line = $"not excluded{recorded}: {string.Join(", ", missing)}: every file a build and its tests write is scanned{skipped}", Fix = "Exclude (asks for elevation)", Optional = true }
             : new SetupCheck { Key = DefenderKey, Title = Title, Ok = false, Line = $"Defender shows its exclusions to an elevated process only, so these are not known to be excluded: {string.Join(", ", missing)}{skipped}", Fix = "Exclude (asks for elevation)", Optional = true };
+    }
+
+    /// <summary>What the last elevated fix recorded of Defender's exclusions, in the data folder; null when there is none or it cannot be read.</summary>
+    private DefenderExclusions.Record? ReadDefenderRecord()
+    {
+        try
+        {
+            var file = Path.Combine(options.DataFolder, DefenderExclusions.RecordFile);
+            return File.Exists(file) ? DefenderExclusions.ParseRecord(File.ReadAllText(file)) : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
     /// Adds the missing exclusions with one elevated pwsh script, so one prompt, then reads them again; null when done, else
-    /// why not. Nothing missing asks for nothing. Read from here Defender's list may stay hidden, and then the elevated run
-    /// is taken as done.
+    /// why not. Nothing missing asks for nothing. Read from here Defender's list stays hidden, so the elevated script records
+    /// it (<see cref="DefenderExclusions.RecordFile"/>) and that record is what is read again; a refused or failed run leaves
+    /// the old one.
     /// </summary>
     private string? FixDefender(bool processes)
     {
@@ -612,13 +633,15 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         {
             return null;
         }
+        state = DefenderExclusions.WithRecord(state, state.Readable ? null : ReadDefenderRecord());
         var paths = DefenderExclusions.MissingPaths(wanted, state);
         var names = processes ? DefenderExclusions.MissingProcesses(DefenderExclusions.Processes, state) : [];
         if (paths.Count == 0 && names.Count == 0)
         {
             return null;
         }
-        using var script = Flights.ShellScript.For(DefenderExclusions.Script(paths, names), Path.GetTempPath());
+        var recordPath = Path.Combine(options.DataFolder, DefenderExclusions.RecordFile);
+        using var script = Flights.ShellScript.For(DefenderExclusions.Script(paths, names, recordPath), Path.GetTempPath());
         if (script.Script is null)
         {
             return "the node adds Defender's exclusions on Windows only";
@@ -628,9 +651,14 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         {
             return "the elevation prompt was refused or did not open";
         }
-        if (ReadDefender().State is not { Readable: true } after)
+        if (ReadDefender().State is not { } live)
         {
             return null;
+        }
+        var after = DefenderExclusions.WithRecord(live, live.Readable ? null : ReadDefenderRecord());
+        if (!after.Readable)
+        {
+            return $"the elevated run left no record of the exclusions in {recordPath}, so they are not known to be excluded";
         }
         var still = DefenderExclusions.MissingPaths(wanted, after).Concat(processes ? DefenderExclusions.MissingProcesses(DefenderExclusions.Processes, after) : []).ToList();
         return still.Count == 0 ? null : $"still not excluded: {string.Join(", ", still)}";

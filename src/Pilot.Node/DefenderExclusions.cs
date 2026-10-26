@@ -119,11 +119,48 @@ public static class DefenderExclusions
     public static List<string> MissingProcesses(IEnumerable<string> wanted, State state) =>
         [.. wanted.Where(w => !state.Processes.Contains(w, StringComparer.OrdinalIgnoreCase))];
 
+    /// <summary>The file in the node's data folder that holds <see cref="Record"/>, as the last elevated fix wrote it.</summary>
+    public const string RecordFile = "defender-exclusions.json";
+
+    /// <summary>
+    /// What Defender's exclusions were when the elevated fix last ran, <paramref name="At"/> that time. Only an elevated process
+    /// can read them, so the node, which is not, takes this as what is excluded.
+    /// </summary>
+    public sealed record Record(DateTimeOffset At, IReadOnlyList<string> Paths, IReadOnlyList<string> Processes);
+
+    /// <summary>The record in <see cref="RecordFile"/>'s text, or null when it is not that JSON.</summary>
+    public static Record? ParseRecord(string text)
+    {
+        try
+        {
+            using var json = JsonDocument.Parse(text.TrimStart('﻿'));
+            var root = json.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("At", out var at) || at.ValueKind != JsonValueKind.String || !at.TryGetDateTimeOffset(out var when))
+            {
+                return null;
+            }
+            return new Record(when, Strings(root, "Paths"), Strings(root, "Processes"));
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="live"/>, which Defender hid the exclusions from, with <paramref name="record"/>'s in their place, so it reads
+    /// as what the last fix left. <paramref name="live"/> as it is when it was not hidden or there is no record.
+    /// </summary>
+    public static State WithRecord(State live, Record? record) =>
+        live.Readable || record is null ? live : live with { Readable = true, Paths = record.Paths, Processes = record.Processes };
+
     /// <summary>
     /// The elevated script: one <c>Add-MpPreference</c> line for each folder and each process, each in single quotes, which
-    /// pwsh takes literally, with a quote in a name doubled. Adding one that is there changes nothing.
+    /// pwsh takes literally, with a quote in a name doubled. Adding one that is there changes nothing. With
+    /// <paramref name="recordPath"/> it ends by writing Get-MpPreference's exclusions there as JSON (<see cref="Record"/>), when it
+    /// can read them, for the node, which cannot.
     /// </summary>
-    public static string Script(IEnumerable<string> paths, IEnumerable<string> processes)
+    public static string Script(IEnumerable<string> paths, IEnumerable<string> processes, string? recordPath = null)
     {
         var script = new StringBuilder();
         foreach (var path in paths)
@@ -133,6 +170,13 @@ public static class DefenderExclusions
         foreach (var process in processes)
         {
             script.Append("Add-MpPreference -ExclusionProcess ").Append(Quote(process)).Append('\n');
+        }
+        if (recordPath is not null)
+        {
+            script.Append("$now = Get-MpPreference\n");
+            script.Append("$seen = @($now.ExclusionPath) + @($now.ExclusionProcess)\n");
+            script.Append("if ($now -and -not ($seen -match '^N/A')) { [pscustomobject]@{ At = (Get-Date).ToString('o'); Paths = @($now.ExclusionPath); Processes = @($now.ExclusionProcess) } | ConvertTo-Json -Compress | Set-Content -LiteralPath ")
+                .Append(Quote(recordPath)).Append(" -Encoding utf8 }\n");
         }
         return script.ToString().TrimEnd('\n');
     }
