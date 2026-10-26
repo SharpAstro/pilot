@@ -432,10 +432,12 @@ public sealed class WatchtowerTests : IDisposable
     /// <summary>Starts a watchtower, lets it reply, and has it end a minute later (reason given); the next look starts another.</summary>
     private async Task ChurnOnceAsync(int n, string? because = null)
     {
+        // An ended watchtower is replaced, not resumed, only when there is a card to say and its window is full.
+        _state.RaiseCard(CardBin.Ring, "leg-failed", $"flight/TIA{n}/parser", $"TIA{n}/parser failed");
         await _tower.LookAsync(Ct);
         var id = $"job{n:D5}";
         _time.Advance(TimeSpan.FromSeconds(30));
-        Row(id, SessionState.Idle, lastResponse: _time.GetUtcNow());
+        Row(id, SessionState.Idle, lastResponse: _time.GetUtcNow(), context: 180_000);
         _time.Advance(TimeSpan.FromSeconds(60));
         _state.PutSession(_state.Sessions().Single(r => r.Id == id) with { State = SessionState.Ended, EndedBecause = because });
     }
@@ -447,6 +449,7 @@ public sealed class WatchtowerTests : IDisposable
         {
             await ChurnOnceAsync(n, "process gone");
         }
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA6/parser", "TIA6/parser failed");
         await _tower.LookAsync(Ct);
 
         var health = _tower.Health().ShouldNotBeNull();
@@ -458,7 +461,8 @@ public sealed class WatchtowerTests : IDisposable
         card.Detail.ShouldStartWith("6 watchtowers");
 
         // One more start: the same card, its text moved on.
-        Row("job00006", SessionState.Ended);
+        Row("job00006", SessionState.Ended, context: 180_000);
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA7/parser", "TIA7/parser failed");
         await _tower.LookAsync(Ct);
         var again = Open().Single(c => c.Kind == CardKinds.WatchtowerChurning);
         again.Id.ShouldBe(card.Id);
