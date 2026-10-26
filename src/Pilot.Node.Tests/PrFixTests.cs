@@ -11,27 +11,40 @@ namespace Pilot.Node.Tests;
 /// own PR in a repo the node tracks, by itself; on anyone else's, from a For-you card's Fix it; never for a design question,
 /// an untracked repo, or a PR a flight owns. GitHub is a fake gh over bare repos; git is real.
 /// </summary>
-public sealed class PrFixTests : IDisposable
+public abstract class PrFixTestsBase : IDisposable
 {
-    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+    private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2f-" + Guid.NewGuid().ToString("N")[..8]);
-    private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
-    private readonly FakeWorkers _workers = new();
-    private readonly FakeGitHub _github = new();
-    private readonly PrReviews _reviews;
-    private readonly NodeOptions _options;
+    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2f-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private protected readonly FakeWorkers _workers = new();
+    private protected readonly FakeGitHub _github = new();
+    private protected readonly PrReviews _reviews;
+    private protected readonly NodeOptions _options;
 
     /// <summary>acme/widget has a clone under the repo roots and a branch on its origin; acme/gadget has no clone.</summary>
-    public PrFixTests()
+    // The two origins, widget's branch and its clone, built once a run and copied into each test's folder, as PrReviewTests'
+    // are: about twenty git processes a test otherwise, and the class took 115 s on CI's Windows runner (2026-10-27).
+    private protected static readonly Lazy<(string Root, string WidgetHead, string GadgetHead)> Seed = new(() =>
     {
-        var (widget, widgetHead) = PrOrigins.Make(_root, "widget", 7);
-        var (gadget, gadgetHead) = PrOrigins.Make(_root, "gadget", 9);
-        PrOrigins.Git(Path.Combine(_root, "work-widget"), "push", "-q", "origin", "HEAD:refs/heads/feature/seven");
-        Directory.CreateDirectory(Roots);
-        PrOrigins.Git(Roots, "clone", "-q", widget, "widget");
-        PrOrigins.Git(WidgetClone, "config", "remote.origin.url", "https://github.com/acme/widget.git");
-        PrOrigins.Git(WidgetClone, "config", $"url.{widget.Replace('\\', '/')}.insteadOf", "https://github.com/acme/widget.git");
+        var root = SeedRepo.NewTemplateRoot();
+        var (widget, widgetHead) = PrOrigins.Make(root, "widget", 7);
+        var (_, gadgetHead) = PrOrigins.Make(root, "gadget", 9);
+        PrOrigins.Git(Path.Combine(root, "work-widget"), "push", "-q", "origin", "HEAD:refs/heads/feature/seven");
+        var roots = Path.Combine(root, "repos");
+        Directory.CreateDirectory(roots);
+        PrOrigins.Git(roots, "clone", "-q", widget, "widget");
+        var clone = Path.Combine(roots, "widget");
+        PrOrigins.Git(clone, "config", "remote.origin.url", "https://github.com/acme/widget.git");
+        PrOrigins.Git(clone, "config", $"url.{widget.Replace('\\', '/')}.insteadOf", "https://github.com/acme/widget.git");
+        return (root, widgetHead, gadgetHead);
+    }, LazyThreadSafetyMode.ExecutionAndPublication);
+
+    protected PrFixTestsBase()
+    {
+        SeedRepo.CopyTree(Seed.Value.Root, _root);
+        var (widgetHead, gadgetHead) = (Seed.Value.WidgetHead, Seed.Value.GadgetHead);
+        var gadget = Path.Combine(_root, "github", "gadget.git");
         _github.Origins["acme/gadget"] = gadget;
         _github.Login = "ada";
         _github.Prs["acme/widget#7"] = Pr("acme/widget", 7, widgetHead, "ada") with { HeadRef = "feature/seven" };
@@ -45,11 +58,11 @@ public sealed class PrFixTests : IDisposable
         };
     }
 
-    private string Roots => Path.Combine(_root, "repos");
+    private protected string Roots => Path.Combine(_root, "repos");
 
-    private string WidgetClone => Path.Combine(Roots, "widget");
+    private protected string WidgetClone => Path.Combine(Roots, "widget");
 
-    private static PullRequest Pr(string repo, int number, string head, string author) =>
+    private protected static PullRequest Pr(string repo, int number, string head, string author) =>
         new(number, "OPEN", head, $"https://github.com/{repo}/pull/{number}", Title: $"PR {number} of {repo}", Author: author, Base: "main");
 
     public void Dispose()
@@ -64,11 +77,11 @@ public sealed class PrFixTests : IDisposable
         PrOrigins.Delete(_root);
     }
 
-    private Task<CommandResult> Run(string verb, string pr, string who, params string[] args) =>
+    private protected Task<CommandResult> Run(string verb, string pr, string who, params string[] args) =>
         _reviews.RunAsync(new CommandRequest { Verb = verb, Target = $"pr/{pr}", Args = args, Who = who }, Ct);
 
     /// <summary>Reviews <paramref name="pr"/> and gives <paramref name="verdict"/> with these findings; the reviewer's own words.</summary>
-    private async Task<PrReviewRow> Review(string pr, string verdict, params string[] findings)
+    private protected async Task<PrReviewRow> Review(string pr, string verdict, params string[] findings)
     {
         (await Run(Verbs.ReviewPr, pr, "controller")).Error.ShouldBeNull();
         var row = _reviews.Of(PrRef.Parse(pr)!).ShouldNotBeNull();
@@ -76,8 +89,41 @@ public sealed class PrFixTests : IDisposable
         return _reviews.Of(PrRef.Parse(pr)!).ShouldNotBeNull();
     }
 
-    private WorkerStart[] Fixers => [.. _workers.Started.Where(s => s.Name.Contains("-fix-"))];
+    private protected WorkerStart[] Fixers => [.. _workers.Started.Where(s => s.Name.Contains("-fix-"))];
 
+    private protected static readonly PrRef Seven = new("acme", "widget", 7);
+
+    /// <summary>The fixer pushes a commit to the PR: its head on GitHub moves; returns the new head.</summary>
+    private protected string FixerPushes(string what)
+    {
+        var head = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, what);
+        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Head = head };
+        return head;
+    }
+
+    private protected string FixWorktree => Path.Combine(WidgetClone, ".claude", "worktrees", "fix-widget-7");
+
+    private protected PrReviewRow Row => _reviews.Of(Seven).ShouldNotBeNull();
+
+    /// <summary>One fresh review at <paramref name="head"/> after a fixer's push, its reviewer giving <paramref name="verdict"/>.</summary>
+    private protected async Task Round(string head, string verdict, params string[] findings)
+    {
+        await _reviews.SweepAsync(Ct);
+        Row.Head.ShouldBe(head);
+        Row.State.ShouldBe(PrReviewState.Reviewing);
+        (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, [verdict, "Round report.", .. findings])).Error.ShouldBeNull();
+    }
+
+    private protected static SessionRow Session(string name, SessionState state) => new()
+    {
+        Id = "abcd1234", SessionId = "abcd1234-0000", Name = name, Kind = SessionKind.Background, Cwd = "/x", Role = SessionRole.Worker,
+        ContextTokens = 0, ContextWindow = 1, State = state, SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
+    };
+}
+
+/// <summary>Part 1 of PrFixTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class PrFixTests1 : PrFixTestsBase
+{
     [Fact]
     public async Task AChangesVerdictOnAnOwnPrInATrackedRepoStartsOneFixerOnThePrsBranch()
     {
@@ -160,7 +206,11 @@ public sealed class PrFixTests : IDisposable
         card.Detail.ShouldNotBeNull().ShouldContain("should this be a service at all?");
         _reviews.Of(new PrRef("acme", "widget", 7))!.Fixer.ShouldBeNull();
     }
+}
 
+/// <summary>Part 2 of PrFixTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class PrFixTests2 : PrFixTestsBase
+{
     [Fact]
     public async Task AnUntrackedRepoGetsNoFixerAndNoCard()
     {
@@ -185,29 +235,6 @@ public sealed class PrFixTests : IDisposable
         Fixers.ShouldBeEmpty();
         _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixOfferKind || c.Kind == PrReviews.DesignKind);
         (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldNotBeNull().ShouldContain("a flight owns");
-    }
-
-    private static readonly PrRef Seven = new("acme", "widget", 7);
-
-    /// <summary>The fixer pushes a commit to the PR: its head on GitHub moves; returns the new head.</summary>
-    private string FixerPushes(string what)
-    {
-        var head = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, what);
-        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Head = head };
-        return head;
-    }
-
-    private string FixWorktree => Path.Combine(WidgetClone, ".claude", "worktrees", "fix-widget-7");
-
-    private PrReviewRow Row => _reviews.Of(Seven).ShouldNotBeNull();
-
-    /// <summary>One fresh review at <paramref name="head"/> after a fixer's push, its reviewer giving <paramref name="verdict"/>.</summary>
-    private async Task Round(string head, string verdict, params string[] findings)
-    {
-        await _reviews.SweepAsync(Ct);
-        Row.Head.ShouldBe(head);
-        Row.State.ShouldBe(PrReviewState.Reviewing);
-        (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, [verdict, "Round report.", .. findings])).Error.ShouldBeNull();
     }
 
     [Fact]
@@ -257,7 +284,11 @@ public sealed class PrFixTests : IDisposable
         var lines = StatusMarkdown.Build(_state.Snapshot()).Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
         lines[Array.FindIndex(lines, l => l.Contains("acme/widget#7")) + 1].ShouldContain("fixing, du1-fix-widget-7, round 2");
     }
+}
 
+/// <summary>Part 3 of PrFixTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class PrFixTests3 : PrFixTestsBase
+{
     [Fact]
     public async Task ChangesOnRoundThreeRingsTheRoundsAndStartsNoFourthFixer()
     {
@@ -323,12 +354,6 @@ public sealed class PrFixTests : IDisposable
 
         Row.FixRound.ShouldBe(2);
     }
-
-    private static SessionRow Session(string name, SessionState state) => new()
-    {
-        Id = "abcd1234", SessionId = "abcd1234-0000", Name = name, Kind = SessionKind.Background, Cwd = "/x", Role = SessionRole.Worker,
-        ContextTokens = 0, ContextWindow = 1, State = state, SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
-    };
 
     [Fact]
     public async Task StatusListsTheFixUnderTheReviewLineEvenOnceTheReviewClosed()
