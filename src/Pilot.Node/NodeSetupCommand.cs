@@ -12,6 +12,14 @@ namespace Pilot.Node;
 /// </summary>
 public static class NodeSetupCommand
 {
+    /// <summary>
+    /// The last line setup prints. The chords are the GUI rail's, which counts down it: Fleet is Ctrl+7 and Settings Ctrl+8
+    /// (PilotChrome.Pages in Pilot.Ui, which this project does not reference, so they are written here too).
+    /// </summary>
+    internal static string ClosingLine(int left) => left == 0
+        ? "\nsetup: done. Ask another machine for control from its row on the Fleet page (Ctrl+7)."
+        : $"\nsetup: {left} left for you, above; the Settings page (Ctrl+8) has a button for those the node can fix.";
+
     public static async Task<int> RunAsync(string socketPath, string dataFolder, string? machine, string[]? repoRoots, string? channel, bool firewall,
         string nodePath, TextWriter output, TextWriter error, CancellationToken cancellationToken)
     {
@@ -67,9 +75,7 @@ public static class NodeSetupCommand
             await output.WriteLineAsync($"  {(check.Ok ? "ok  " : check.Optional ? "--  " : "TODO")} {check.Title}: {check.Line}");
             left += check.Ok || check.Optional ? 0 : 1;
         }
-        await output.WriteLineAsync(left == 0
-            ? "\nsetup: done. Ask another machine for control from its row on the Fleet page (Ctrl+5)."
-            : $"\nsetup: {left} left for you, above; the Settings page (Ctrl+6) has a button for those the node can fix.");
+        await output.WriteLineAsync(ClosingLine(left));
         return 0;
 
         async Task Step(string key, string done)

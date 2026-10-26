@@ -701,7 +701,7 @@ line says what became of it, a refusal included. Over a remote node (`--node`) i
 `autopilot on` or `autopilot off` on each row that answers (nothing for a node not reached, whose last word would read as
 now), beside the maintenance mark, and the row's dump line ends in it.
 
-The **Background tasks** page (Ctrl+4) is the node's jobs: running first, then those waiting in the order they will
+The **Background tasks** page (Ctrl+6) is the node's jobs: running first, then those waiting in the order they will
 start, then the ended, last ended first. Each row has the job's command, whom it wakes (the flight and leg, a session,
 or a terminal), its state with what it is doing, waits on or came to, when it started and how long it ran; a job that
 ended without its owner being told says so. The selected job shows its folder, log and timeout beside the end of its
@@ -911,7 +911,7 @@ sessions, flights and jobs, and never speaks for another. To bring a second mach
    would clash with another machine's prefix). It saves the LAN on (and what was given) in the node's settings file,
    installs the hooks, installs the logon entry and starts the node, and asks Windows for elevation once to let
    `pilot-node` in on private networks. It ends with the checklist: what is left is a person's.
-3. **What is left**, which the GUI's **Settings** page (Ctrl+6) also lists with a button for each the node can fix:
+3. **What is left**, which the GUI's **Settings** page (Ctrl+8) also lists with a button for each the node can fix:
    the watchtower's folder trusted once (Claude Code's own prompt, which the page opens in a titled window; a folder
    above it that is trusted already covers it), gh signed in, and usage figures (a status line that writes
    `rate-limits.json`; without it the node still says whose account it is, with no figures).
@@ -919,7 +919,7 @@ sessions, flights and jobs, and never speaks for another. To bring a second mach
    `pilot connect <host>:47731`) rings an Allow/Deny card on it, to be allowed there; its rows are then steered from the
    merged lists.
 
-**The Fleet page** (Ctrl+5 in the GUI, 5 in the TUI) is every node at once: this window's first, then every node heard
+**The Fleet page** (Ctrl+7 in the GUI, 5 in the TUI) is every node at once: this window's first, then every node heard
 on the LAN or granted to this user, each on a feed of its own (its event stream, watched without a grant as anyone on
 the LAN may). A row says the node's machine and where it is reached, whose account it runs on and its usage, its live
 sessions and how many wait on you, its flights and jobs, and its rings; a node not reached says what its connection is
@@ -945,7 +945,7 @@ otherwise; a leg's own `--model` or `--effort` still wins for its worker; `none`
 own default. The watchtower's brief says its model, so a lighter one rings for a judgement rather than makes it. The command line wins over the
 file (an autostart entry made before the file existed still pins what it names), and a key the file leaves out takes
 the default; a value it cannot read is passed over, never fatal. `pilot-node setup` writes it, and so does the
-**Settings** page (Ctrl+6 in the GUI, 6 in the TUI), or `pilot settings set <key> [value…]`.
+**Settings** page (Ctrl+8 in the GUI, 6 in the TUI), or `pilot settings set <key> [value…]`.
 
 A role's model and effort, and the job limits, are in force at once (the next session of that kind starts with
 them; a waiting job starts as soon as the new limit allows). So are `maintenance` and `accept-fleet-flights` (#177),
