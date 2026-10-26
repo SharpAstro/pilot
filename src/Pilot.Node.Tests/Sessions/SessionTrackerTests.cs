@@ -213,6 +213,23 @@ public sealed class SessionTrackerTests : IDisposable
     }
 
     [Fact]
+    public async Task AFreshWatchtowerUnderTheSameNameDoesNotRewriteWhyTheOldOneEnded()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionA, "du1-watchtower", "running", pid: 4242, status: "idle"));
+        await PollAsync();
+        _agents.Json = "[]";
+        await PollAsync();
+        var cause = _state.Sessions().Single().EndedBecause;
+        cause.ShouldBe("its process went (no longer listed)");
+
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "du1-watchtower", "running", pid: 4343, status: "idle"));
+        await PollAsync();
+        await PollAsync();
+
+        _state.Sessions().Single(s => s.Id == "a1b2c3d4").EndedBecause.ShouldBe(cause);
+    }
+
+    [Fact]
     public async Task ASessionEndHookThenALaterEmptyListingKeepsTheHooksReason()
     {
         _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "x", status: "busy"));

@@ -295,8 +295,11 @@ public sealed class SessionTracker : BackgroundService
                 if (isNew && agent.Kind == "background" && _rows.TryGetValue(id, out var added))
                 {
                     // A background session listed under a new session id, though nobody here resumed it: it continues an
-                    // older row of the same name and folder, which has no process now.
+                    // older row of the same name and folder, which has no process now. A session the node's own flights start
+                    // (a watchtower, a leg worker) is always started fresh under the same name, so it is never a resume; nor is a
+                    // row that already says why it ended.
                     foreach (var older in _rows.Values.Where(r => r.Id != id && r.Kind == SessionKind.Background && r.Name == added.Name
+                        && r.Role == SessionRole.AdHoc && added.Role == SessionRole.AdHoc && r.EndedBecause is null
                         && string.Equals(r.Cwd, added.Cwd, StringComparison.OrdinalIgnoreCase) && r.SessionId != added.SessionId).ToList())
                     {
                         if (!_resumedAs.ContainsKey(older.Id) && !HasProcess(listed, older.SessionId))

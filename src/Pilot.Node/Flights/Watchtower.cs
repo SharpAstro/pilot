@@ -302,7 +302,10 @@ public sealed class Watchtower(
         var summary = $"{lastHour} watchtower{(lastHour == 1 ? "" : "s")} in the last hour ({last24} in 24 h)";
         if (typical is { } after)
         {
-            summary += $"; each ended about {Math.Max(0, (int)Math.Round(after.TotalMinutes))} minutes after its reply";
+            var secs = Math.Max(0, (int)Math.Round(after.TotalSeconds));
+            var mins = (int)Math.Round(after.TotalMinutes);
+            var span = secs < 60 ? $"{secs} second{(secs == 1 ? "" : "s")}" : $"{mins} minute{(mins == 1 ? "" : "s")}";
+            summary += $"; each ended about {span} after its reply";
         }
         if (lastEnded is { Length: > 0 })
         {
