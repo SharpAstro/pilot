@@ -154,7 +154,8 @@ public sealed class PrReviews(
         var name = Slug(pr.Name);
         var plane = $"review-{name}-{pr.Number}";
         var worktree = Path.Combine(clone, ".claude", "worktrees", plane);
-        await planes.PinAsync(clone, worktree, read.Head, cancellationToken);
+        // The folder actually used: a sibling when the usual one is held and queued for removal.
+        worktree = await planes.PinAsync(clone, worktree, read.Head, cancellationToken);
 
         var reviewer = $"{options.Machine.ToLowerInvariant()}-review-{name}-{pr.Number}";
         var row = new PrReviewRow
@@ -283,17 +284,26 @@ public sealed class PrReviews(
         if (Directory.Exists(cached))
         {
             // A clone cut short (the node stopped mid-clone) is no clone: it is made again.
-            try
+            if (!RemovalQueue.TryDelete(cached, out var why))
             {
-                foreach (var file in Directory.EnumerateFiles(cached, "*", SearchOption.AllDirectories))
+                if (planes.Queue is not { } queue)
                 {
-                    File.SetAttributes(file, FileAttributes.Normal);
+                    throw new FlightException($"{cached} holds a clone cut short that could not be removed: {why}");
                 }
-                Directory.Delete(cached, recursive: true);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                throw new FlightException($"{cached} holds a clone cut short that could not be removed: {ex.Message}");
+                // Held: left for the next start, and the clone is made beside it.
+                queue.Add(cached, RemovalQueue.CacheKind, pr.Repo, why);
+                for (var n = 2; ; n++)
+                {
+                    cached = Path.Combine(CloneCache, pr.Owner, $"{pr.Name}-{n}");
+                    if (Directory.Exists(Path.Combine(cached, ".git")) || RemovalQueue.TryDelete(cached, out _))
+                    {
+                        break;
+                    }
+                }
+                if (Directory.Exists(Path.Combine(cached, ".git")))
+                {
+                    return cached;
+                }
             }
         }
         await github.CloneAsync(pr.Repo, cached, cancellationToken);
@@ -1055,7 +1065,12 @@ public sealed class PrReviews(
         // A Handled line is born closed, so "said once" is looked for among every card since the verdict, not the open ones.
         var since = review.FinishedAt ?? review.StartedAt;
         var saidHeld = state.Cards().Any(c => c.Subject == subject && c.Kind == LeftKind && c.At >= since);
-        if (held is not null)
+        if (held is not null && planes.Queue is { } queue)
+        {
+            // A folder a process holds is for the next start, not for a card tried again every sweep: the review ends anyway.
+            queue.Add(review.Worktree, RemovalQueue.ReviewKind, $"{review.Repo}#{review.Number}", held);
+        }
+        else if (held is not null)
         {
             // Not the person's: something still has the folder open (a reviewer's process ending, an editor), and the sweep tries
             // again every Interval until it goes. A For-you card raised at every sweep rang the person in a loop (pilot#269's
@@ -1073,6 +1088,10 @@ public sealed class PrReviews(
         state.PutPrReview(review with { State = PrReviewState.Closed, ClosedAt = time.GetUtcNow() });
         // The Merge card of a reviewed PR outlives the verdict card; a fresh review of the PR is the one thing that retires it.
         state.CloseCardsAbout(subject, why, [ReadyKind, LegWatch.ReviewStalled, PrMarks.RefusedKind, LeftKind, .. why == "a fresh review started" ? new[] { MergeKind, QueueRefusedKind } : []]);
+        if (held is not null)
+        {
+            state.RaiseCard(CardBin.Handled, LeftKind, subject, $"{review.Repo}#{review.Number}'s review ended", $"left {review.Worktree} for the next start: a process holds it");
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stopping)

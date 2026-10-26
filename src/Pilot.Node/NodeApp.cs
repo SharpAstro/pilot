@@ -57,7 +57,10 @@ public static class NodeApp
         builder.Services.AddSingleton<HookBook>();
         builder.Services.AddSingleton(services => new TranscriptBook(services.GetRequiredService<SessionTrackerOptions>().Profile));
         builder.Services.AddSingleton<IGit, GitCli>();
-        builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>()));
+        builder.Services.AddSingleton(services => new RemovalQueue(RemovalQueue.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()));
+        // First: tried once at the start, before any service touches the paths it holds.
+        builder.Services.AddHostedService(services => new RemovalQueueStart(services.GetRequiredService<RemovalQueue>()));
+        builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>(), services.GetRequiredService<RemovalQueue>()));
         builder.Services.AddSingleton<StopGate>();
         // nuget.org's public flat container: what a flight connected to a releasing flight waits for.
         builder.Services.AddSingleton<INuGetFeed>(_ => new NuGetOrgFeed(new HttpClient(new HttpClientHandler { AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate }) { Timeout = TimeSpan.FromSeconds(30) }));

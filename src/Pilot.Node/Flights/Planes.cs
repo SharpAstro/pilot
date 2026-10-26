@@ -72,8 +72,11 @@ public sealed record Plane(string RepoPath, string Branch, string Worktree, stri
 /// on one branch and land as one PR, with no merge-order race between a flight's PRs (v1's DIR.Lib #115 and #117,
 /// tianwen #1613 and #1617).
 /// </summary>
-public sealed class Planes(IGit git)
+public sealed class Planes(IGit git, RemovalQueue? queue = null)
 {
+    /// <summary>The folders waiting for a start to remove them; null where a test or a host keeps none.</summary>
+    public RemovalQueue? Queue => queue;
+
     /// <summary>The main checkout of the repo <paramref name="path"/> is in, a linked worktree's included; null outside a repo.</summary>
     public async Task<string?> MainCheckoutAsync(string path, CancellationToken cancellationToken)
     {
@@ -257,6 +260,11 @@ public sealed class Planes(IGit git)
             return;
         }
         await git.RunAsync(["worktree", "prune"], repoPath, cancellationToken);
+        // A folder queued for removal is tried once more first; still held, it is said as such.
+        if (queue is not null && queue.Contains(worktree) && !queue.TryOne(worktree))
+        {
+            throw new FlightException($"{worktree} is queued for removal at the node's next start and a process still holds it; the plane cannot be checked out there until it lets go");
+        }
         DeleteLeftover(worktree);
         var add = await git.RunAsync(["worktree", "add", worktree, branch], repoPath, cancellationToken);
         if (!add.Ok)
@@ -270,19 +278,40 @@ public sealed class Planes(IGit git)
     /// A worktree at <paramref name="worktree"/> detached at <paramref name="commit"/>, made afresh: a PR review's, pinned at
     /// the head it reviews, so nothing pushed after moves it. Whatever was there before goes first.
     /// </summary>
-    public async Task PinAsync(string repoPath, string worktree, string commit, CancellationToken cancellationToken)
+    /// <returns>The folder the worktree was made in: <paramref name="worktree"/>, or a sibling of it (<c>-2</c>, <c>-3</c>) when that one is held and queued for removal.</returns>
+    public async Task<string> PinAsync(string repoPath, string worktree, string commit, CancellationToken cancellationToken)
     {
-        if (await RemoveAsync(repoPath, worktree, cancellationToken, force: true) is { } held)
+        // A path in the queue is tried once more before it is used.
+        queue?.TryOne(worktree);
+        if (queue is null || !queue.Contains(worktree))
         {
-            throw new FlightException(held);
+            if (await RemoveAsync(repoPath, worktree, cancellationToken, force: true) is { } held)
+            {
+                if (queue is null)
+                {
+                    throw new FlightException(held);
+                }
+                queue.Add(worktree, RemovalQueue.ReviewKind, Path.GetFileName(worktree), held);
+            }
         }
-        Directory.CreateDirectory(Path.GetDirectoryName(worktree)!);
-        var add = await git.RunAsync(["worktree", "add", "--detach", worktree, commit], repoPath, cancellationToken);
+        var path = worktree;
+        for (var n = 2; queue is not null && queue.Contains(path); n++)
+        {
+            path = $"{worktree}-{n}";
+            // A sibling left by an earlier hold is cleared if it can be.
+            if (Directory.Exists(path) && !queue.Contains(path))
+            {
+                await RemoveAsync(repoPath, path, cancellationToken, force: true);
+            }
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var add = await git.RunAsync(["worktree", "add", "--detach", path, commit], repoPath, cancellationToken);
         if (!add.Ok)
         {
-            throw new FlightException($"git could not check out {commit[..Math.Min(8, commit.Length)]} at {worktree}: {add.Why}");
+            throw new FlightException($"git could not check out {commit[..Math.Min(8, commit.Length)]} at {path}: {add.Why}");
         }
-        PlaneSettings.DisableRepoMcpServers(worktree);
+        PlaneSettings.DisableRepoMcpServers(path);
+        return path;
     }
 
     /// <summary>Removes the folder of a worktree git no longer has: what a torn-down worktree leaves when a file was held.</summary>
@@ -415,9 +444,17 @@ public sealed class Planes(IGit git)
                 return null;
             }
             // A worker stopped a moment ago can still hold a file open on Windows: give it a few seconds.
-            if (++tries >= 5 || !remove.Why.Contains("Permission denied", StringComparison.OrdinalIgnoreCase))
+            var held = remove.Why.Contains("Permission denied", StringComparison.OrdinalIgnoreCase);
+            if (++tries >= 5 || !held)
             {
-                throw new FlightException($"git could not remove {worktree}: {remove.Why}");
+                var message = $"git could not remove {worktree}: {remove.Why}";
+                // Still held after the wait (git says "Permission denied" or, for a file held without sharing, "failed to
+                // delete ... Invalid argument"): with a queue it is the queue's to remove at the next start.
+                if (queue is not null && (held || remove.Why.Contains("failed to delete", StringComparison.OrdinalIgnoreCase)))
+                {
+                    return message;
+                }
+                throw new FlightException(message);
             }
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
         }
