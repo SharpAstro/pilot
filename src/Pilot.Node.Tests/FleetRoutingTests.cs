@@ -107,10 +107,27 @@ public sealed class FleetRoutingTests : IDisposable
         result.Way.ShouldBe("PIL180 is flying on DE1: SE1 is in maintenance");
         var sent = peer.Sent.ShouldHaveSingleItem();
         (sent.Verb, sent.Target, sent.Who).ShouldBe((Verbs.CreateFlight, "repo/D:/src/tianwen", "tests"));
-        sent.Args.ShouldBe(["1611", "Parser", "fix"]);
+        sent.Args.ShouldBe(["#1611", "Parser", "fix"]);
         _state.Flights().ShouldBeEmpty();
         var card = _state.Cards().ShouldHaveSingleItem();
         (card.Bin, card.Kind, card.Title).ShouldBe((CardBin.Handled, FlightCommander.RoutedKind, "PIL180 is flying on DE1: SE1 is in maintenance"));
+    }
+
+    [Fact]
+    public async Task ARoutedBareNumberIsSentAsTheItemThisNodeResolvedItToSoThePeersSettingsCannotReadItDifferently()
+    {
+        var peer = Willing("DE1");
+        _fleet.Peers.Add(peer);
+        var withTracker = NodeSettings.With(new NodeSettings(), NodeSettings.MaintenanceKey, ["on"]).Settings!;
+        _models.Apply(NodeSettings.With(withTracker, "repo-trackers", ["tianwen=shortcut"]).Settings!);
+
+        (await Create("101645", "Story")).Ok.ShouldBeTrue();
+        peer.Sent.ShouldHaveSingleItem().Args.ShouldBe(["sc-101645", "Story"]);
+
+        peer.Sent.Clear();
+        _models.Apply(NodeSettings.With(withTracker, "repo-trackers", ["tianwen=github"]).Settings!);
+        (await Create("42")).Ok.ShouldBeTrue();
+        peer.Sent.ShouldHaveSingleItem().Args.ShouldBe(["#42"]);
     }
 
     [Fact]

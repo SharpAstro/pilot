@@ -182,7 +182,9 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             CommandResult result;
             try
             {
-                result = await peer.SendAsync(command with { Target = Verbs.RepoTarget(checkout) }, cancellationToken);
+                // The item resolved here is sent explicitly (sc-N or #N), so the peer's own repo-trackers cannot read it differently.
+                string[] sent = [item.Display, .. (command.Args ?? []).Skip(1)];
+                result = await peer.SendAsync(command with { Target = Verbs.RepoTarget(checkout), Args = sent }, cancellationToken);
             }
             catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or System.Net.WebSockets.WebSocketException)
             {
