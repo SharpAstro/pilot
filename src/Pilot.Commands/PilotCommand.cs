@@ -89,7 +89,11 @@ public static class PilotCommand
         {
             command.SetAction(async (parseResult, ct) =>
             {
-                var (target, here, unknown) = await NodeTargets.ResolveAsync(parseResult.GetValue(node), ct);
+                // A socket named and no node is this machine's, whatever PILOT_NODE says: how the MCP server, the GUI and the TUI
+                // hand a command the node they resolved, so the variable cannot send it elsewhere.
+                var (target, here, unknown) = parseResult.GetValue(node) is null && parseResult.GetValue(socket) is not null
+                    ? (null, true, null)
+                    : await NodeTargets.ResolveAsync(parseResult.GetValue(node), ct);
                 if (unknown is not null)
                 {
                     await error.WriteLineAsync($"pilot: {unknown}");
