@@ -1208,7 +1208,7 @@ public static class PilotCommand
         {
             var flight = row.Flight is null ? "" : $" {row.Flight}{(row.Leg is { } leg ? "/" + leg : "")}";
             var budget = row.Budget is { } b ? $" of {b.ToString("N0", CultureInfo.InvariantCulture)}" : "";
-            text.AppendLine($"{row.Id}  {MachineName.Shown(row.Name, machine)}{row.Role.ToString().ToLowerInvariant()}{flight}  {row.State.ToString().ToLowerInvariant()}  {row.Model ?? "-"}  {row.ContextTokens.ToString("N0", CultureInfo.InvariantCulture)}/{row.ContextWindow.ToString("N0", CultureInfo.InvariantCulture)}  {row.SpendWeighted.ToString("N0", CultureInfo.InvariantCulture)}{budget}{(row.EndedBecause is { } why && row.State is SessionState.Ended or SessionState.Failed ? $"  ({why})" : "")}");
+            text.AppendLine($"{row.Id}  {MachineName.Shown(row.Name, machine)}{row.Role.ToString().ToLowerInvariant()}{flight}  {row.State.ToString().ToLowerInvariant()}  {row.Model ?? "-"}  {row.ContextTokens.ToString("N0", CultureInfo.InvariantCulture)}/{row.ContextWindow.ToString("N0", CultureInfo.InvariantCulture)}  {row.SpendWeighted.ToString("N0", CultureInfo.InvariantCulture)}{budget}{(row.EndedBecause is { } why ? $"  ({why})" : "")}");
         }
         return text.Length == 0 ? "No sessions.\n" : text.ToString();
     }

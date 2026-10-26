@@ -63,6 +63,16 @@ public sealed class SessionsViewTests
     }
 
     [Fact]
+    public void ALiveRowShowsTheNoteThatItWasRenamed()
+    {
+        var snapshot = SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath);
+        var live = snapshot.Sessions.First(s => s.State == SessionState.Working) with { EndedBecause = "renamed to my-own-name" };
+        var screen = SessionsCapture.ScreenFor(snapshot with { Sessions = [.. snapshot.Sessions.Select(s => s.Id == live.Id ? live : s)] }, "sample");
+
+        screen.Lines.Single(l => l.Row.Id == live.Id).EndedBecause.ShouldBe("renamed to my-own-name");
+    }
+
+    [Fact]
     public void LiveSessionsComeBeforeTheOnesThatStopped()
     {
         var screen = SampleScreen();

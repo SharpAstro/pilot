@@ -46,7 +46,7 @@ internal sealed partial record SessionLine
     /// <summary>What it waits on, while it waits on you; null otherwise.</summary>
     public string? WaitingFor { get; init; }
 
-    /// <summary>Why it ended, while it is ended or failed (<see cref="SessionRow.EndedBecause"/>); null otherwise.</summary>
+    /// <summary>Why it ended, or the note that it was renamed while it is live (<see cref="SessionRow.EndedBecause"/>); null when none.</summary>
     public string? EndedBecause { get; init; }
 
     /// <summary>Since when it waits on you, while it does; null otherwise (<see cref="SessionRow.WaitingSince"/>).</summary>
@@ -129,7 +129,7 @@ internal sealed partial record SessionLine
             LastResponse = row.LastResponseAt is { } at ? Ago(now - at) : "none yet",
             State = IsStopped(row) ? "stopped" : StateText(row.State),
             WaitingFor = IsStopped(row) ? StopText(row, now) : row.State == SessionState.Waiting ? row.WaitingFor : null,
-            EndedBecause = row.State is SessionState.Ended or SessionState.Failed ? row.EndedBecause : null,
+            EndedBecause = row.EndedBecause,
             WaitingSince = row.State == SessionState.Waiting ? row.WaitingSince : null,
             Asking = row.State == SessionState.Waiting ? row.Asking : null,
             RemoteControlUrl = row.RemoteControlUrl,

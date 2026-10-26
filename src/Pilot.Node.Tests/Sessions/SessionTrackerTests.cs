@@ -184,6 +184,48 @@ public sealed class SessionTrackerTests : IDisposable
     }
 
     [Fact]
+    public async Task ARenameNoteTheWatchtowerPutsOnTheRowSurvivesTheNextPoll()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionA, "my-own-name", "working", pid: 4242, status: "busy"));
+        await PollAsync();
+        var row = _state.Sessions().Single();
+        _state.PutSession(row with { EndedBecause = "renamed to my-own-name" });
+
+        (await PollAsync()).ShouldBeEmpty();
+
+        _state.Sessions().Single().EndedBecause.ShouldBe("renamed to my-own-name");
+    }
+
+    [Fact]
+    public async Task ABackgroundSessionListedUnderANewIdIsNotedAsResumedAsIt()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionA, "du1-job", "working", pid: 4242, status: "busy"));
+        await PollAsync();
+
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "du1-job", "working", pid: 4343, status: "busy"));
+        await PollAsync();
+        await PollAsync();
+
+        var old = _state.Sessions().Single(s => s.Id == "a1b2c3d4");
+        old.State.ShouldBe(SessionState.Ended);
+        old.EndedBecause.ShouldBe("resumed as b2c3d4e5");
+        _state.Sessions().Single(s => s.Id == "b2c3d4e5").State.ShouldNotBe(SessionState.Ended);
+    }
+
+    [Fact]
+    public async Task ASessionEndHookThenALaterEmptyListingKeepsTheHooksReason()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "x", status: "busy"));
+        await PollAsync();
+        _tracker.Hooks.Apply(HookBookTests.HookOf("SessionEnd", ",\"reason\":\"logout\""), Start);
+
+        _agents.Json = "[]";
+        await PollAsync();
+
+        _state.Sessions().Single().EndedBecause.ShouldBe("session ended (logout)");
+    }
+
+    [Fact]
     public async Task EndedAndFailedBackgroundRowsListWhileRecentAndNotOnceTheirTranscriptIsOlderThanTheRetention()
     {
         _agents.Json = AgentRows.List(

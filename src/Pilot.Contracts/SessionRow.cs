@@ -143,9 +143,10 @@ public sealed record SessionRow
     /// <summary>
     /// Why it ended, while <see cref="State"/> is <see cref="SessionState.Ended"/> or <see cref="SessionState.Failed"/>: its
     /// process went (no longer listed), a SessionEnd hook (with the hook's reason when it gave one), Claude Code listing it
-    /// done, blocked or failed with no process (a <c>claude --bg</c> job that exited), or the watchtower's note that it
-    /// turned up renamed. Null on a live row (working again clears it) and where no cause is known, so rows still compare
-    /// equal as records.
+    /// done, blocked or failed with no process (a <c>claude --bg</c> job that exited), or that it was resumed under a new
+    /// session id. Also the watchtower's note that a live row turned up renamed (<c>renamed to &lt;name&gt;</c>), which a
+    /// live row carries. Otherwise null on a live row (working again clears it) and where no cause is known, so rows still
+    /// compare equal as records.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? EndedBecause { get; init; }

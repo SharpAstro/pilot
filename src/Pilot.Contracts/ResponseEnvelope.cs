@@ -86,7 +86,7 @@ public sealed record WatchtowerHealth
     /// <summary>Watchtowers started in the last 24 hours.</summary>
     public int StartsLast24h { get; init; }
 
-    /// <summary>The median time a watchtower lived after its last reply, over those that ended in the last 24 hours; null when none did or none had replied.</summary>
+    /// <summary>The median time a watchtower lived after its last reply, over those that ended in the last hour; null when none did or none had replied.</summary>
     public TimeSpan? TypicalLifetimeAfterReply { get; init; }
 
     /// <summary>Why the latest ended watchtower ended (<see cref="SessionRow.EndedBecause"/>).</summary>
