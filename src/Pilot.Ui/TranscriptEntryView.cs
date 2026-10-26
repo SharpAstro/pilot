@@ -51,7 +51,7 @@ internal sealed class TranscriptEntryView
 
     // Kept clear right of the time: a feed's scrollbar is drawn over the rows' right edge, and took the seconds' last digit
     // ("20:40:3"). The bar's width with a pixel either side; gone once DIR.Lib reserves the bar's column: SharpAstro/DIR.Lib#161.
-    private const float ScrollGutter = ListScrollController.ScrollBarBaseWidthPx + 4f;
+    internal const float ScrollGutter =ListScrollController.ScrollBarBaseWidthPx + 4f;
 
     // A call's line: the tool's column, the caret's column the unfolded body is indented by, and how many of a failed
     // call's last lines show while it is folded.
