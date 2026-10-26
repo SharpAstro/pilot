@@ -256,6 +256,82 @@ public sealed class RepoSyncTests : IDisposable
     }
 
     [Fact]
+    public async Task AMergeOnlySyncTakesWhatWasAlreadyFetchedWhereTheFullSyncFailsOnAnUnreachableRemote()
+    {
+        // A clone one commit behind a bare origin, whose new commit it has fetched; then the origin goes away.
+        var origin = Path.Combine(_root, "origin.git");
+        var repo = Path.Combine(_root, "tianwen");
+        var other = Path.Combine(_root, "elsewhere", "tianwen");
+        Git(_root, "init", "-q", "--bare", "-b", "main", origin);
+        Git(_root, "clone", "-q", origin, repo);
+        File.WriteAllText(Path.Combine(repo, "README.md"), "hello\n");
+        Git(repo, "add", ".");
+        Git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
+        Git(repo, "push", "-q", "-u", "origin", "main");
+        Git(repo, "remote", "set-head", "origin", "main");
+        Git(_root, "clone", "-q", origin, other);
+        File.WriteAllText(Path.Combine(other, "more.txt"), "more\n");
+        Git(other, "add", ".");
+        Git(other, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "second");
+        Git(other, "push", "-q", "origin", "main");
+        Git(repo, "fetch", "-q", "--all");
+        Git(repo, "remote", "set-url", "origin", Path.Combine(_root, "gone.git"));
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var (sync, _) = Sync(new GitCli(), new FakeGitHub(), state, _root);
+
+        var full = await sync.SyncOneAsync("tianwen", repo, fetch: true, Ct);
+        var mergeOnly = await sync.SyncOneAsync("tianwen", repo, fetch: false, Ct);
+
+        full.Status.ShouldBe(RepoSyncStatus.Failed);
+        full.Detail.ShouldStartWith("git fetch failed");
+        (mergeOnly.Status, mergeOnly.Detail).ShouldBe((RepoSyncStatus.Updated, "main took 1 commit from origin/main"));
+        File.Exists(Path.Combine(repo, "more.txt")).ShouldBeTrue();
+        (await sync.SyncOneAsync("tianwen", repo, fetch: false, Ct)).Status.ShouldBe(RepoSyncStatus.Current);
+    }
+
+    /// <summary>A git that answers a fetch slowly and, once a fast-forward is done, says the clone is level with origin.</summary>
+    private sealed class MovingGit(string path) : IGit
+    {
+        private readonly ScriptedGit _inner = new();
+
+        public int Merges { get; private set; }
+
+        public void Behind(int behind) => _inner.Repo(path, behind: behind);
+
+        public async Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
+        {
+            if (args[0] == "fetch")
+            {
+                await Task.Delay(150, cancellationToken);
+            }
+            var run = await _inner.RunAsync(args, cwd, cancellationToken);
+            if (args[0] == "merge" && run.Ok)
+            {
+                Merges++;
+                _inner.Say(path, "rev-list --left-right --count origin/main...HEAD", "0\t0\n");
+            }
+            return run;
+        }
+    }
+
+    [Fact]
+    public async Task TwoSyncsOfTheSameCloneStartedTogetherTakeTurnsOneUpdatesAndTheOtherFindsItCurrent()
+    {
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var repo = Clone("busy");
+        var git = new MovingGit(repo);
+        git.Behind(2);
+        var (sync, _) = Sync(git, new FakeGitHub(), state, _root);
+
+        var outcomes = await Task.WhenAll(sync.SyncOneAsync("busy", repo, Ct), sync.SyncOneAsync("busy", repo, Ct));
+
+        outcomes.ShouldNotContain(o => o.Status == RepoSyncStatus.Failed);
+        outcomes.Count(o => o.Status == RepoSyncStatus.Updated).ShouldBe(1);
+        outcomes.Count(o => o.Status == RepoSyncStatus.Current).ShouldBe(1);
+        git.Merges.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task CreateIssueAsksGhForTheTitleAndBodyAndReturnsItsNumberAndRefusesWithoutATitle()
     {
         var repo = Path.Combine(_root, "tianwen");
