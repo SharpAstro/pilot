@@ -105,6 +105,7 @@ internal sealed class PilotChrome<TSurface>
         Tooltips = new TooltipLayer<TSurface>(renderer);
         // A flight page's Merge is its card's own choice, run as the panel runs it.
         Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
+        Flights.CardWorking = Cards.WorkingOn;
         Home = new HomeView<TSurface>(renderer);
         sessions.ShareWith(Flights, Repos, Jobs, Fleet, Settings, Cards, Chat);
         // The panel's watchtower foot is the way into the chat.

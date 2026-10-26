@@ -297,6 +297,11 @@ if (feed is not null && client is not null && clients is not null)
     // A card's button is a command on the node, as a click anywhere else is; the stream closes the card.
     async Task CardCommandAsync(string verb, CardRow card, string[] args, string action)
     {
+        // One press of a card at a time, from the panel or the flight page: a second would clear the first's working state.
+        if (chrome.Cards.WorkingOn(card.Id) is not null)
+        {
+            return;
+        }
         // Said on the button at once, cleared when the node has answered, whatever it said.
         chrome.Cards.NoteWorking(card.Id, action);
         loop.RequestRedraw();
