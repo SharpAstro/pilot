@@ -775,7 +775,13 @@ public sealed class PrReviews(
         }
         if (held is not null)
         {
-            state.RaiseCard(CardBin.ForYou, LeftKind, subject, $"{review.Repo}#{review.Number}'s review worktree is still there", $"{held}; the node tries again");
+            // Not the person's: something still has the folder open (a reviewer's process ending, an editor), and the sweep tries
+            // again every Interval until it goes. A For-you card raised at every sweep rang the person in a loop (pilot#269's
+            // review, SE1 2026-10-26); one Handled line says it, once.
+            if (!state.Cards(openOnly: true).Any(c => c.Subject == subject && c.Kind == LeftKind))
+            {
+                state.RaiseCard(CardBin.Handled, LeftKind, subject, $"{review.Repo}#{review.Number}'s review worktree is still held; the node removes it when it is let go", held);
+            }
             return;
         }
         state.PutPrReview(review with { State = PrReviewState.Closed, ClosedAt = time.GetUtcNow() });
