@@ -35,6 +35,8 @@ internal static class SeedRepo
         Git(repo, "config", "user.email", "t@example.com");
         Git(repo, "config", "user.name", "t");
         File.WriteAllText(Path.Combine(repo, "README.md"), "hello\n");
+        // A check that builds or tests needs a solution where it runs (leg plan refuses one that does not): a stub, in the plane's root.
+        File.WriteAllText(Path.Combine(repo, "Tianwen.slnx"), "<Solution />\n");
         Git(repo, "add", ".");
         Git(repo, "commit", "-q", "-m", "first");
         Git(repo, "remote", "add", "origin", origin);
