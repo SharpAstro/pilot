@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Pilot.Contracts;
 
 namespace Pilot.Node.Flights;
 
