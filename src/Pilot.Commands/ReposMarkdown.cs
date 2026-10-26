@@ -41,13 +41,13 @@ internal static class ReposMarkdown
 
             if (repo.PullRequests.Length > 0)
             {
-                text.AppendLine("| PR | Branch | Flight | State | Checks |");
-                text.AppendLine("| --- | --- | --- | --- | --- |");
+                text.AppendLine("| PR | Branch | Flight | State | Checks | Labels |");
+                text.AppendLine("| --- | --- | --- | --- | --- | --- |");
                 foreach (var pr in repo.PullRequests)
                 {
                     var label = Markdown.Text($"#{pr.Number} {pr.Title}");
                     var link = string.IsNullOrEmpty(pr.Url) ? label : $"[{label}]({(pr.Url.Contains(' ') ? $"<{pr.Url}>" : pr.Url)})";
-                    text.AppendLine($"| {link} | {Markdown.Text(pr.Head)} | {Markdown.Text(pr.Flight ?? "")} | {(pr.Draft ? "draft" : "ready")} | {Markdown.Text(pr.Checks ?? "")} |");
+                    text.AppendLine($"| {link} | {Markdown.Text(pr.Head)} | {Markdown.Text(pr.Flight ?? "")} | {(pr.Draft ? "draft" : "ready")} | {Markdown.Text(pr.Checks ?? "")} | {Markdown.Text(string.Join(", ", pr.Labels))} |");
                 }
                 text.AppendLine();
             }
