@@ -42,7 +42,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     private const int TailLines = 20;
 
     /// <summary>How often a running job's log and exit file are looked at.</summary>
-    public TimeSpan FollowEvery { get; init; } = TimeSpan.FromMilliseconds(250);
+    public TimeSpan FollowEvery { get; set; } = TimeSpan.FromMilliseconds(250);
 
     /// <summary>Where a job's exit code is written when it ends: its log's path plus <c>.exit</c>.</summary>
     public static string ExitPathOf(string logPath) => logPath + ".exit";
@@ -81,11 +81,22 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>The CPU time a running job's process tree has used in all, or null when it cannot be read.</summary>
     public Func<string, TimeSpan?>? JobCpu { get; init; }
 
+    /// <summary>The OS's process table, as the node reads a job's tree and kills it: a test puts a fake one.</summary>
+    public IProcessTable ProcessTable { get; init; } = OsProcessTable.Instance;
+
+    /// <summary>How often a running job's process tree is looked at, so a process it starts is remembered and is found again if it outlives the wrapper.</summary>
+    public TimeSpan TreeEvery { get; set; } = TimeSpan.FromSeconds(2);
+
     // The running jobs' processes, by pid and start time: the node follows a job by its files, and holds no pipe of it.
     private readonly ConcurrentDictionary<string, JobProcess> _running = new(StringComparer.Ordinal);
     // Where each running job's idle window began and the CPU it had used then. The dispatcher's alone.
     private readonly Dictionary<string, (DateTimeOffset At, TimeSpan Cpu, TimeSpan Last)> _cpuMarks = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ProcessTreeCpu.Tally> _cpuTallies = new(StringComparer.Ordinal);
+    // What each running job's tree has held; made once, from the process table the runner was given.
+    private JobTree? _tree;
+    private JobTree Tree => LazyInitializer.EnsureInitialized(ref _tree, () => new JobTree(ProcessTable));
+    // Wakes a watch that is between two looks, so a cancel is seen at once and not a look later.
+    private readonly ConcurrentDictionary<string, TaskCompletionSource> _nudges = new(StringComparer.Ordinal);
     // Every job this node handed over, so a recovery knows which ones a previous node left behind.
     private readonly ConcurrentDictionary<string, byte> _mine = new(StringComparer.Ordinal);
     // The watches of the running jobs, so the node's stop waits for each to let go of its job without touching its row.
@@ -469,14 +480,33 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     private static string Gigabytes(long bytes) => $"{bytes / (double)(1L << 30):0.0} GB";
 
-    /// <summary><c>cancel-job job/&lt;id&gt;</c>: stops it, or takes it out of the queue; its owner is told, as of any job's end.</summary>
+    /// <summary>
+    /// <c>cancel-job job/&lt;id&gt; [force]</c>: stops it, or takes it out of the queue; its owner is told, as of any job's end.
+    /// With <c>force</c> the wrapper and every process the node has seen under it are killed at once, so one that outlived the
+    /// wrapper and holds the job's output dies too, and the job ends <c>cancelled (forced) by &lt;who&gt;</c>.
+    /// </summary>
     public CommandResult Cancel(CommandRequest command)
     {
         var id = command.Target.StartsWith(Verbs.JobTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.JobTargetPrefix.Length..] : command.Target;
+        var args = command.Args ?? [];
+        if (args.Any(a => !string.Equals(a, Verbs.ForceArg, StringComparison.OrdinalIgnoreCase)))
+        {
+            return state.Complete(command, $"cancel-job takes only `{Verbs.ForceArg}`, not {string.Join(' ', args)}");
+        }
+        var force = args.Length > 0;
         if (_running.TryGetValue(id, out var process))
         {
             _cancelled[id] = command.Who;
-            process.Kill();
+            if (force)
+            {
+                _forced[id] = 0;
+                Tree.KillAll(id, process);
+            }
+            else
+            {
+                process.Kill();
+            }
+            Nudge(id);
             return state.Complete(command, null);
         }
         if (state.Jobs().FirstOrDefault(j => j.Id == id) is { State: JobState.Queued })
@@ -488,7 +518,43 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         return state.Complete(command, state.Jobs().Any(j => j.Id == id) ? $"job {id} is not running" : $"There is no job {id}");
     }
 
+    private void Nudge(string id)
+    {
+        if (_nudges.TryGetValue(id, out var nudge))
+        {
+            nudge.TrySetResult();
+        }
+    }
+
+    /// <summary>
+    /// What the job log read adds to the log's end: the wrapper's pid, the process tree under it as the OS has it (and what the
+    /// node saw earlier that lives still), and, when the row reads running while the wrapper has exited and a process it
+    /// started lives on, the fact that the job is held by it. A job that is not running has only its pid.
+    /// </summary>
+    public JobLog Describe(JobRow job, JobLog log)
+    {
+        JobProcess? process = null;
+        if (job.State == JobState.Running)
+        {
+            process = _running.TryGetValue(job.Id, out var held) ? held : job is { Pid: { } pid, ProcessStartedAt: { } startedAt } ? new JobProcess(pid, startedAt) : null;
+        }
+        if (process is null)
+        {
+            return log with { Pid = job.Pid };
+        }
+        var reading = Tree.Read(job.Id, process);
+        var outlived = reading.Held.ToList();
+        // The ones nearest the wrapper hold it, whatever they started in turn.
+        var stuck = outlived.Count > 0
+            ? $"process exited, output still held by {string.Join(", ", outlived.Where(h => h.Depth == outlived.Min(x => x.Depth)).Select(h => h.Pid))}"
+            : null;
+        return log with { Pid = process.Pid, Tree = reading.Tree, Stuck = stuck };
+    }
+
     private readonly ConcurrentDictionary<string, string> _cancelled = new(StringComparer.Ordinal);
+
+    // The jobs whose cancel was forced, so their row says so.
+    private readonly ConcurrentDictionary<string, byte> _forced = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Follows a job by its files, not by pipes it holds: the log is read for new lines (they are the step, put on the stream
@@ -526,10 +592,18 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             // Counted from its start, as a node that found it again does: a restart does not give a job its time anew.
             var left = job.StartedAt + job.Timeout - time.GetUtcNow();
             limit.CancelAfter(left > TimeSpan.Zero ? left : TimeSpan.Zero);
+            var nudge = _nudges[job.Id] = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var nextTree = time.GetUtcNow();
             try
             {
                 while (true)
                 {
+                    // The processes under it are looked at now and then, so one that outlives the wrapper is still known.
+                    if (time.GetUtcNow() >= nextTree)
+                    {
+                        nextTree = time.GetUtcNow() + TreeEvery;
+                        Tree.Read(job.Id, process);
+                    }
                     // Sampled before the exit file is looked at: a process that was gone by now has left its exit file, if it was going to.
                     var alive = process.IsAlive();
                     Follow(final: false);
@@ -542,7 +616,18 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     {
                         break;
                     }
-                    await Task.Delay(FollowEvery, time, limit.Token);
+                    // Between two looks, or sooner when a cancel says so.
+                    using var pause = CancellationTokenSource.CreateLinkedTokenSource(limit.Token);
+                    var tick = Task.Delay(FollowEvery, time, pause.Token);
+                    if (await Task.WhenAny(tick, nudge.Task) == tick)
+                    {
+                        await tick;
+                    }
+                    else
+                    {
+                        pause.Cancel();
+                        nudge = _nudges[job.Id] = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    }
                 }
             }
             catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
@@ -566,6 +651,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
         _running.TryRemove(job.Id, out _);
         _watches.TryRemove(job.Id, out _);
+        _nudges.TryRemove(job.Id, out _);
+        Tree.Forget(job.Id);
         // Its slot is free: the next in line may start.
         Pump();
         string[] last = [.. tail.Snapshot];
@@ -573,7 +660,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         JobRow ended;
         if (_cancelled.TryRemove(job.Id, out var by))
         {
-            ended = latest with { State = JobState.Cancelled, Error = $"cancelled by {by}" };
+            ended = latest with { State = JobState.Cancelled, Error = _forced.TryRemove(job.Id, out _) ? $"cancelled (forced) by {by}" : $"cancelled by {by}" };
         }
         else if (timedOut)
         {

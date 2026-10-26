@@ -195,6 +195,53 @@ public sealed class CliTests : IAsyncLifetime
         (await Pilot(_root, "jobs")).Output.ShouldContain("j1 holds the queue (se1-tia1-parser), held for 5m");
     }
 
+    [Fact]
+    public async Task PilotJobCancelForceSendsCancelJobWithForceAndTheJobEndsForced()
+    {
+        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        // Not a bare sleep, which the node refuses: the echo makes it a job.
+        await Ok(_root, "run", "--", "sleep 30; echo slept");
+        var id = _node.State.Jobs().Single().Id;
+        for (var i = 0; i < 300 && _node.State.Jobs().Single().State != JobState.Running; i++)
+        {
+            await Task.Delay(20, Ct);
+        }
+
+        var (exit, output, error) = await Pilot(_root, "job", id, "cancel", "--force");
+
+        exit.ShouldBe(0, $"{output}{error}");
+        JobRow ended;
+        for (var i = 0; (ended = _node.State.Jobs().Single()).EndedAt is null; i++)
+        {
+            i.ShouldBeLessThan(300, "the job did not end");
+            await Task.Delay(100, Ct);
+        }
+        ended.State.ShouldBe(JobState.Cancelled);
+        ended.Error.ShouldNotBeNull().ShouldStartWith("cancelled (forced) by ");
+    }
+
+    [Fact]
+    public async Task PilotJobCancelWithoutForceIsAPlainCancel()
+    {
+        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await Ok(_root, "run", "--", "sleep 30; echo slept");
+        var id = _node.State.Jobs().Single().Id;
+        for (var i = 0; i < 300 && _node.State.Jobs().Single().State != JobState.Running; i++)
+        {
+            await Task.Delay(20, Ct);
+        }
+
+        await Ok(_root, "job", id, "cancel");
+        JobRow ended;
+        for (var i = 0; (ended = _node.State.Jobs().Single()).EndedAt is null; i++)
+        {
+            i.ShouldBeLessThan(300, "the job did not end");
+            await Task.Delay(100, Ct);
+        }
+
+        ended.Error.ShouldStartWith("cancelled by ");
+    }
+
     /// <summary>A flight whose first leg is done and whose second, render, has started: its validator is flying.</summary>
     private async Task<string> FlightWithAValidatorFlying(string number)
     {

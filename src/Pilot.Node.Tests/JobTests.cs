@@ -233,6 +233,112 @@ public sealed class JobTests : IDisposable
         IsAlive(childPid).ShouldBeFalse();
     }
 
+    [Fact]
+    public async Task AForcedCancelEndsAJobWhoseChildOutlivedItsWrapperAndKillsTheChild()
+    {
+        // The watch looks once an hour, so the row still reads running when only the wrapper has been killed: the stuck state.
+        _jobs.FollowEvery = TimeSpan.FromHours(1);
+        _jobs.TreeEvery = TimeSpan.FromMilliseconds(100);
+        var pidFile = Path.Combine(_root, "child.pid");
+        // The child runs in the wrapper's own stdout, which is the job's log: it holds the log open.
+        var command = OperatingSystem.IsWindows()
+            ? $"pwsh -NoProfile -Command \"Set-Content '{pidFile}' `$PID; Start-Sleep 60\""
+            : $"sleep 60 & echo $! > '{pidFile}'; wait";
+        var id = Run(command).Made!;
+        var running = await Until(id, j => j.State == JobState.Running);
+        for (var i = 0; i < 300 && !(File.Exists(pidFile) && File.ReadAllText(pidFile).Trim().Length > 0); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        var childPid = int.Parse(File.ReadAllText(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        IsAlive(childPid).ShouldBeTrue();
+
+        // The tree under the wrapper, as the log read gives it, once the child is in it: it is remembered from here on.
+        JobLog Log() => _jobs.Describe(_state.Jobs().Single(j => j.Id == id), new JobLog { Lines = [], Length = 0 });
+        for (var i = 0; i < 300 && Log().Tree?.Any(p => p.Pid == childPid) != true; i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        var tree = Log();
+        tree.Pid.ShouldBe(running.Pid);
+        tree.Tree![0].Pid.ShouldBe(running.Pid!.Value);
+        tree.Tree[0].Depth.ShouldBe(0);
+        tree.Tree.Single(p => p.Pid == childPid).Depth.ShouldBeGreaterThan(0);
+        tree.Stuck.ShouldBeNull();
+
+        // Only the wrapper is killed: the child lives on, holding the log, and the row still says running.
+        using (var wrapper = System.Diagnostics.Process.GetProcessById(running.Pid.Value))
+        {
+            wrapper.Kill();
+            wrapper.WaitForExit();
+        }
+        for (var i = 0; i < 300 && Log().Stuck is null; i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        var stuck = Log();
+        stuck.Stuck.ShouldNotBeNull().ShouldStartWith("process exited, output still held by ");
+        stuck.Tree!.ShouldContain(p => p.Pid == childPid);
+        stuck.Tree.ShouldNotContain(p => p.Pid == running.Pid);
+        _state.Jobs().Single(j => j.Id == id).State.ShouldBe(JobState.Running);
+        IsAlive(childPid).ShouldBeTrue();
+
+        _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Args = [Verbs.ForceArg], Who = "controller" }).Ok.ShouldBeTrue();
+        var job = await Ended(id);
+
+        (job.State, job.Error).ShouldBe((JobState.Cancelled, "cancelled (forced) by controller"));
+        for (var i = 0; i < 100 && IsAlive(childPid); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        IsAlive(childPid).ShouldBeFalse();
+        // Its owner was told once, and the tree is not asked again once it has ended.
+        var say = _said.ShouldHaveSingleItem();
+        say.Args[0].ShouldContain("cancelled (forced) by controller");
+        Log().Tree.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AForcedCancelOfAJobWithItsWrapperAliveKillsTheWholeTreeAtOnce()
+    {
+        var pidFile = Path.Combine(_root, "child.pid");
+        var command = OperatingSystem.IsWindows()
+            ? $"pwsh -NoProfile -Command \"Set-Content '{pidFile}' `$PID; Start-Sleep 60\""
+            : $"sleep 60 & echo $! > '{pidFile}'; wait";
+        var id = Run(command).Made!;
+        await Until(id, j => j.State == JobState.Running);
+        for (var i = 0; i < 300 && !(File.Exists(pidFile) && File.ReadAllText(pidFile).Trim().Length > 0); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        var childPid = int.Parse(File.ReadAllText(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+
+        _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Args = [Verbs.ForceArg], Who = "controller" }).Ok.ShouldBeTrue();
+        var job = await Ended(id);
+
+        (job.State, job.Error).ShouldBe((JobState.Cancelled, "cancelled (forced) by controller"));
+        for (var i = 0; i < 100 && IsAlive(childPid); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        IsAlive(childPid).ShouldBeFalse();
+        _said.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task ACancelTakesNoArgumentButForce()
+    {
+        var id = Run(Sleep(30)).Made!;
+        await Until(id, j => j.State == JobState.Running);
+
+        _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Args = ["now"], Who = "controller" })
+            .Error.ShouldBe("cancel-job takes only `force`, not now");
+        _state.Jobs().Single(j => j.Id == id).State.ShouldBe(JobState.Running);
+
+        _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" }).Ok.ShouldBeTrue();
+        (await Ended(id)).Error.ShouldBe("cancelled by controller");
+    }
+
     private static bool IsAlive(int pid)
     {
         try

@@ -13,7 +13,14 @@ namespace Pilot.Node.Flights;
 public sealed record JobProcess(int Pid, DateTimeOffset StartedAt, Process? Child = null)
 {
     /// <summary>How far apart two readings of one process's start may be: the same kernel time read two ways differs by a tick or so.</summary>
-    private static readonly TimeSpan StartTolerance = TimeSpan.FromSeconds(2);
+    internal static readonly TimeSpan StartTolerance = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Whether a process that started at <paramref name="actual"/> is the one that started at <paramref name="expected"/>. A
+    /// start that cannot be read now is no match; one that could not be read when the process was first seen matches any.
+    /// </summary>
+    internal static bool SameStart(DateTimeOffset? actual, DateTimeOffset? expected) =>
+        actual is { } a && expected is { } e ? (a - e).Duration() <= StartTolerance : expected is null;
 
     /// <summary>
     /// Starts <paramref name="shell"/> detached: in a session of its own on Linux, and on Windows in a process group of its

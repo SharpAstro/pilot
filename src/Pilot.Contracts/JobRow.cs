@@ -92,7 +92,25 @@ public sealed record JobLog
 
     /// <summary>Whether there is more before <see cref="Lines"/>.</summary>
     public bool Clipped { get; init; }
+
+    /// <summary>The process id of the job's wrapper, as <see cref="JobRow.Pid"/>; null while it waits.</summary>
+    public int? Pid { get; init; }
+
+    /// <summary>
+    /// The processes under the job now, the wrapper first (depth 0) and each below it with its depth, as the node reads them from
+    /// the OS; once the wrapper is gone, the ones the node saw earlier that still live. Null for a job that is not running.
+    /// </summary>
+    public JobProcessInfo[]? Tree { get; init; }
+
+    /// <summary>
+    /// Set when the job reads running but its wrapper has exited while a process it started lives, which holds its output:
+    /// <c>process exited, output still held by 4812</c>. <c>pilot job &lt;id&gt; cancel --force</c> ends it.
+    /// </summary>
+    public string? Stuck { get; init; }
 }
+
+/// <summary>A process under a running job: its program, its id, and how far below the job's wrapper it is (the wrapper is 0).</summary>
+public sealed record JobProcessInfo(string Name, int Pid, int Depth);
 
 /// <summary>Where a job stands.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<JobState>))]
