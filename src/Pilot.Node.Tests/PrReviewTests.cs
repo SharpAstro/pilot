@@ -158,16 +158,19 @@ public abstract class PrReviewTestsBase : IDisposable
 
     private protected PrReviewRow Row(string repo, int number) => _reviews.Of(new PrRef(repo.Split('/')[0], repo.Split('/')[1], number)).ShouldNotBeNull();
 
+    private protected PrReviews? _selfPosting;
+
     private protected delegate Task<CommandResult> Asker(string verb, string who, params string[] args);
 
     /// <summary>Reviews as the node runs them, posting a verdict on an open PR itself; asks the verb of PR 7, as the one asking.</summary>
-    private protected Asker SelfPosting()
+    private protected Asker SelfPosting(TimeSpan? grace = null)
     {
         var git = new GitCli();
         var reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, _options), _options, TimeProvider.System)
         {
-            SelfFinishGrace = TimeSpan.FromMilliseconds(1),
+            SelfFinishGrace = grace ?? TimeSpan.FromMilliseconds(1),
         };
+        _selfPosting = reviews;
         return (verb, who, args) => reviews.RunAsync(new CommandRequest { Verb = verb, Target = "pr/acme/widget#7", Args = args, Who = who }, Ct);
     }
 
@@ -185,9 +188,9 @@ public abstract class PrReviewTestsBase : IDisposable
     /// <summary>The file the widget PR adds, the one file in its diff, one line long.</summary>
     private protected string Added() => PrOrigins.Git(WidgetClone, "show", "--name-only", "--format=", _widgetHead);
 
-    private protected static async Task WaitFor(Func<bool> condition)
+    private protected static async Task WaitFor(Func<bool> condition, int tries = 200)
     {
-        for (var i = 0; i < 200 && !condition(); i++)
+        for (var i = 0; i < tries && !condition(); i++)
         {
             await Task.Delay(10, Ct);
         }
@@ -266,10 +269,41 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
         _state.Cards().ShouldContain(c => c.Kind == PrReviews.PostedKind && c.Bin == CardBin.Handled);
         _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
 
-        // Over at once, as after a Post press: the worktree and the reviewer do not wait for the next sweep.
-        Row("acme/widget", 7).State.ShouldBe(PrReviewState.Closed);
+        // Over after the reviewer's grace, not at the next sweep: the worktree goes and the reviewer is stopped.
+        await WaitFor(() => Row("acme/widget", 7).State == PrReviewState.Closed);
         Directory.Exists(started.Worktree).ShouldBeFalse();
         _workers.Stopped.ShouldContain(started.ReviewerJob!);
+    }
+
+    [Fact]
+    public async Task ThePostedReviewsVerdictIsAnsweredBeforeItsWorktreeAndReviewerGoAfterTheGrace()
+    {
+        var grace = TimeSpan.FromSeconds(2);
+        var ask = SelfPosting(grace);
+        var sweeper = _selfPosting!;
+        (await ask(Verbs.ReviewPr, "controller")).Error.ShouldBeNull();
+        var started = Row("acme/widget", 7);
+
+        var answered = await ask(Verbs.PrVerdict, started.Reviewer, "approve", "Reads well.");
+        var sinceAnswer = System.Diagnostics.Stopwatch.StartNew();
+
+        // Answered, and posted, with the reviewer still in its turn: its worktree and job are there, as it ends its turn on the answer.
+        answered.Error.ShouldBeNull();
+        _github.Posted.ShouldHaveSingleItem().Number.ShouldBe(7);
+        Directory.Exists(started.Worktree).ShouldBeTrue();
+        _workers.Stopped.ShouldNotContain(started.ReviewerJob!);
+        Row("acme/widget", 7).State.ShouldBe(PrReviewState.Reviewed);
+
+        // A sweep inside the grace leaves it too, though its card is closed: only the verdict's own delayed task ends it.
+        await sweeper.SweepAsync(Ct);
+        Directory.Exists(started.Worktree).ShouldBeTrue();
+        _workers.Stopped.ShouldNotContain(started.ReviewerJob!);
+
+        // After the grace both are gone.
+        await WaitFor(() => Row("acme/widget", 7).State == PrReviewState.Closed, 1000);
+        sinceAnswer.Elapsed.ShouldBeGreaterThanOrEqualTo(grace - TimeSpan.FromMilliseconds(250));
+        Directory.Exists(started.Worktree).ShouldBeFalse();
+        _workers.Stopped.ShouldBe([started.ReviewerJob!]);
     }
 
     [Fact]
@@ -840,8 +874,9 @@ public sealed class PrReviewCliTests : IAsyncLifetime
         Directory.CreateDirectory(folder);
         var verdict = await Pilot(folder, "review", "changes", "One defect, and the word pr in it.\nREADME.md:1 greets no one");
         verdict.Exit.ShouldBe(0, verdict.Output + verdict.Error);
-        // Posted by the node, the review is over at once: its worktree, folder and all, is gone with no wait for a sweep.
-        Directory.Exists(review.Worktree).ShouldBeFalse();
+        // Posted by the node, the review ends only after the reviewer's grace (the node's own, 90 s, so not waited out here): the
+        // worktree is still there when the verdict is answered.
+        Directory.Exists(review.Worktree).ShouldBeTrue();
 
         // The PR is open, so the node posts it at once: nothing rings, a Handled card says what went out.
         var (number, payload) = (_node.GitHub.Posted.ShouldHaveSingleItem().Number, _node.GitHub.Posted[0].Payload);
