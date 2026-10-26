@@ -330,7 +330,7 @@ public sealed class UpdateTests : IDisposable
 
         installed.Ok.ShouldBeTrue(installed.Error);
         installed.Way.ShouldBe("2.0.1 -> 2.0.2; the node restarts; 2 jobs left running, 1 job left waiting; the new node picks them up");
-        installed.Way.ShouldNotContain("once");
+        installed.Way.ShouldNotBeNull().ShouldNotContain("once");
         Read(node).ShouldBe("new " + node);
         successors.ShouldBe([Path.Combine(_install, node)]);
         lifetime.Stopped.ShouldBeTrue();
