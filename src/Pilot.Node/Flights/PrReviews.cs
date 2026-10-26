@@ -61,7 +61,7 @@ public sealed class PrReviews(
     /// </summary>
     public string DraftOf(PrRef pr) => Path.Combine(Path.GetFullPath(options.DataFolder), "reviews", pr.Owner, $"{pr.Name}-{pr.Number}.json");
 
-    public static bool Handles(string verb) => verb is Verbs.ReviewPr or Verbs.PrVerdict or Verbs.PostReview;
+    public static bool Handles(string verb) => verb is Verbs.ReviewPr or Verbs.PrVerdict or Verbs.PostReview or Verbs.FixPr;
 
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
@@ -80,9 +80,17 @@ public sealed class PrReviews(
                     break;
                 case Verbs.PrVerdict:
                     postedByNode = await VerdictAsync(pr, command, cancellationToken);
+                    if (postedByNode)
+                    {
+                        await FixAfterPostAsync(pr, cancellationToken);
+                    }
                     break;
                 case Verbs.PostReview:
                     await PostAsync(pr, command, cancellationToken);
+                    await FixAfterPostAsync(pr, cancellationToken);
+                    break;
+                case Verbs.FixPr:
+                    await FixAsync(pr, command, cancellationToken);
                     break;
                 case Verbs.Merge:
                     await MergeAsync(pr, command, cancellationToken);
@@ -128,6 +136,8 @@ public sealed class PrReviews(
             await EndAsync(earlier, "a fresh review started", cancellationToken);
         }
 
+        // The fix of an earlier review goes on past a fresh one: its session and worktree are the next round's to end.
+        var fixOn = Of(pr);
         var clone = await CloneOfAsync(pr, cancellationToken);
         var fetch = await git.RunAsync(["fetch", "--quiet", "origin", $"pull/{pr.Number}/head"], clone, cancellationToken);
         if (!fetch.Ok)
@@ -160,6 +170,10 @@ public sealed class PrReviews(
             Worktree = worktree,
             Reviewer = reviewer,
             State = PrReviewState.Reviewing,
+            Fixer = fixOn?.Fixer,
+            FixerJob = fixOn?.FixerJob,
+            FixWorktree = fixOn?.FixWorktree,
+            FixRound = fixOn?.FixRound,
             StartedAt = time.GetUtcNow(),
         };
         var commits = await git.RunAsync(["log", "--oneline", $"origin/{read.Base}..HEAD"], worktree, cancellationToken);
@@ -754,6 +768,150 @@ public sealed class PrReviews(
         state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });
         state.RaiseCard(CardBin.Handled, QueuedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             queued ? $"Queued {pr} in {read.Base}'s merge queue" : $"Merged {pr}", $"{command.Who} chose Merge at {head[..7]}.", link: review.Url);
+    }
+
+    /// <summary>The Handled line a fixer's start leaves.</summary>
+    public const string FixStartedKind = "pr-fix-started";
+
+    /// <summary>The For-you card of a changes verdict on a PR that is not the controller's own, with Fix it.</summary>
+    public const string FixOfferKind = "pr-fix-offer";
+
+    /// <summary>The ring of a changes verdict with a design question in it: the author decides, no fixer starts.</summary>
+    public const string DesignKind = "pr-review-design";
+
+    /// <summary>The For-you card said when the fixer could not start.</summary>
+    public const string FixFailedKind = "pr-fix-failed";
+
+    /// <summary>The card's choice that starts the fixer.</summary>
+    public const string FixLabel = "Fix it";
+
+    /// <summary>The prefix that marks a finding as a question of design, not a defect to fix.</summary>
+    public const string DesignPrefix = "design:";
+
+    private static bool IsDesign(PrFinding finding) => finding.Body.StartsWith(DesignPrefix, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The clone of a repo the node tracks (one RepoCatalog lists under the repo roots, never the clone cache), or null.</summary>
+    private string? TrackedClone(PrRef pr) =>
+        repos.Repos().FirstOrDefault(r => string.Equals(r.GitHub, pr.Repo, StringComparison.OrdinalIgnoreCase))?.Path;
+
+    /// <summary>Whether a flight's PR is this one: a flight's own review and fix are the flight's.</summary>
+    private bool FlightOwns(PrRef pr) =>
+        state.Flights().Any(f => f.PullRequestUrl is { } url && PrRef.Parse(url) is { } owned
+            && string.Equals(owned.Repo, pr.Repo, StringComparison.OrdinalIgnoreCase) && owned.Number == pr.Number);
+
+    /// <summary>
+    /// A changes verdict on a PR now posted (#290). On the controller's own PR in a repo the node tracks, with no flight owning
+    /// it, one fixer starts on the PR's branch; on anyone else's, a For-you card offers Fix it. A finding marked as a design
+    /// question rings instead and starts none, and an untracked repo gets nothing. A fixer already on is never joined by a second.
+    /// A fixer that could not start is a For-you card, not a failed post.
+    /// </summary>
+    private async Task FixAfterPostAsync(PrRef pr, CancellationToken cancellationToken)
+    {
+        if (Of(pr) is not { Verdict: "changes", Fixer: null } review || TrackedClone(pr) is null || FlightOwns(pr))
+        {
+            return;
+        }
+        var subject = Verbs.PrTarget(pr.Repo, pr.Number);
+        if (review.Findings.Any(IsDesign))
+        {
+            var design = string.Join('\n', review.Findings.Where(IsDesign).Select(f => f.ToString()));
+            state.RaiseCard(CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design", $"{design}\nNo fixer started: this is the author's to decide.", link: review.Url);
+            return;
+        }
+        var own = Own(review, await github.LoginAsync(cancellationToken));
+        if (!own)
+        {
+            if (!state.Cards(openOnly: true).Any(c => c.Kind == FixOfferKind && c.Subject == subject))
+            {
+                state.RaiseCard(CardBin.ForYou, FixOfferKind, subject, $"{pr}: the review asked for changes, and it is {review.Author ?? "someone else"}'s PR",
+                    $"{(review.Report ?? "").Trim()}\nFix it starts a session on the PR's branch that makes them.",
+                    [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url);
+            }
+            return;
+        }
+        try
+        {
+            await StartFixerAsync(pr, review, cancellationToken);
+        }
+        catch (FlightException ex)
+        {
+            state.RaiseCard(CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start", ex.Message, link: review.Url);
+        }
+    }
+
+    /// <summary>The Fix it choice: the same fixer, started on the controller's word on a PR that is not their own.</summary>
+    private async Task FixAsync(PrRef pr, CommandRequest command, CancellationToken cancellationToken)
+    {
+        if (Of(pr) is not { } review)
+        {
+            throw new FlightException($"{pr} has no review; review-pr starts one");
+        }
+        if (review.Verdict != "changes")
+        {
+            throw new FlightException($"{pr}'s review did not ask for changes, so there is nothing to fix");
+        }
+        await StartFixerAsync(pr, review, cancellationToken);
+    }
+
+    /// <summary>
+    /// Starts the one fixer of a PR: its branch fetched, a worktree <c>&lt;clone&gt;/.claude/worktrees/fix-&lt;repo&gt;-&lt;n&gt;</c> on it,
+    /// a session briefed with the review. Refused for a repo the node does not track, a PR a flight owns, one that is not
+    /// open, and one that has a fixer already.
+    /// </summary>
+    private async Task StartFixerAsync(PrRef pr, PrReviewRow review, CancellationToken cancellationToken)
+    {
+        if (review.Fixer is { } on)
+        {
+            throw new FlightException($"{pr} has {on} fixing it already");
+        }
+        var clone = TrackedClone(pr) ?? throw new FlightException($"{pr.Repo} is not a repo the node tracks, so it makes no changes there");
+        if (FlightOwns(pr))
+        {
+            throw new FlightException($"a flight owns {pr}: its own legs fix it");
+        }
+        var read = await github.PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken);
+        if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException($"{pr} is {read.State.ToLowerInvariant()}, not open");
+        }
+        var branch = read.HeadRef.Length > 0 ? read.HeadRef : throw new FlightException($"gh did not say {pr}'s branch");
+
+        var fetch = await git.RunAsync(["fetch", "--quiet", "origin", $"+refs/heads/{branch}:refs/remotes/origin/{branch}"], clone, cancellationToken);
+        if (!fetch.Ok)
+        {
+            throw new FlightException($"git could not fetch {pr}'s branch {branch} into {clone} (a PR from a fork has none there): {fetch.Why}");
+        }
+        if (!(await git.RunAsync(["show-ref", "--verify", "--quiet", $"refs/heads/{branch}"], clone, cancellationToken)).Ok)
+        {
+            var made = await git.RunAsync(["branch", "--track", branch, $"origin/{branch}"], clone, cancellationToken);
+            if (!made.Ok)
+            {
+                throw new FlightException($"git could not make the branch {branch} in {clone}: {made.Why}");
+            }
+        }
+
+        var name = Slug(pr.Name);
+        var plane = $"fix-{name}-{pr.Number}";
+        var worktree = Path.Combine(clone, ".claude", "worktrees", plane);
+        await planes.EnsureAsync(clone, worktree, branch, cancellationToken);
+
+        var fixer = $"{options.Machine.ToLowerInvariant()}-fix-{name}-{pr.Number}";
+        var fixing = review with { Fixer = fixer, FixWorktree = worktree, FixRound = 1 };
+        string job;
+        try
+        {
+            job = await workers.StartAsync(new WorkerStart(fixer, clone, plane, Briefs.FixPr(fixing, branch, CiShape.Of(worktree)),
+                Models.Model(RoleModels.Worker), Models.Effort(RoleModels.Worker)), cancellationToken);
+        }
+        catch (FlightException)
+        {
+            await planes.RemoveAsync(clone, worktree, cancellationToken, force: true);
+            throw;
+        }
+        state.PutPrReview(fixing with { FixerJob = job });
+        state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), "a fixer started", FixOfferKind);
+        state.RaiseCard(CardBin.Handled, FixStartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
+            $"Started {fixer} on {pr}'s branch {branch}, to make the changes the review asked for", $"in {worktree}", link: review.Url);
     }
 
     /// <summary>Ends a review: its reviewer stopped, its worktree removed, its open cards closed. A worktree held open is said on a card and tried again.</summary>

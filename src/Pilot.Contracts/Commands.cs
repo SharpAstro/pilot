@@ -256,6 +256,12 @@ public static class Verbs
     /// </summary>
     public const string PostReview = "post-review";
 
+    /// <summary>
+    /// <c>fix-pr pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>: a fixer session on the PR's branch, for what its reviewer's changes verdict found (#290).
+    /// The node starts one itself on the controller's own PR; this is the choice on the card of anyone else's.
+    /// </summary>
+    public const string FixPr = "fix-pr";
+
     /// <summary><c>extend-budget flight/&lt;code&gt;/&lt;leg&gt; &lt;tokens&gt;</c>: raises the leg's budget, in weighted tokens, to the new figure.</summary>
     public const string ExtendBudget = "extend-budget";
 

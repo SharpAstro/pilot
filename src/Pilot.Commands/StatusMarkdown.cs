@@ -107,14 +107,24 @@ internal static class StatusMarkdown
             }
         }
 
-        var reviews = snapshot.PrReviews.Where(r => r.State != PrReviewState.Closed).OrderBy(r => r.StartedAt).ToList();
+        // A review stays listed while its fix is on, even once the review itself closed (#290).
+        var reviews = snapshot.PrReviews.Where(r => r.State != PrReviewState.Closed || r.Fixer is not null).OrderBy(r => r.StartedAt).ToList();
         if (reviews.Count > 0)
         {
             text.AppendLine("## PR reviews").AppendLine();
             foreach (var review in reviews)
             {
-                var how = review.State == PrReviewState.Reviewing ? $"reviewing, {review.Reviewer}" : $"{review.Verdict}, on card {review.Card}";
+                var how = review.State switch
+                {
+                    PrReviewState.Reviewing => $"reviewing, {review.Reviewer}",
+                    PrReviewState.Closed => $"{review.Verdict}, closed",
+                    _ => $"{review.Verdict}, on card {review.Card}",
+                };
                 text.AppendLine($"- [{Text($"{review.Repo}#{review.Number}")}]({review.Url}) {Text(review.Title ?? "")} ({Text(how)}, at `{review.Head[..Math.Min(8, review.Head.Length)]}`)");
+                if (review.Fixer is { } fixer)
+                {
+                    text.AppendLine($"  - {Text($"fixing, {fixer}, round {review.FixRound ?? 1}")}");
+                }
             }
             text.AppendLine();
         }
