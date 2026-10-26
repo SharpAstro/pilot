@@ -398,8 +398,6 @@ public static class PilotMarks
 
     public const string Passed = LabelPrefix + "passed";
 
-    /// <summary>A <c>pilot review pr</c> that commented: it blocks nothing and passes nothing.</summary>
-
     public const string Conflicts = LabelPrefix + "conflicts";
 
     public const string Queued = LabelPrefix + "queued";
