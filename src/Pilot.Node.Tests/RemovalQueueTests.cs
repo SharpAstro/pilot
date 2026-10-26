@@ -305,4 +305,44 @@ public sealed class RemovalQueueTests : IDisposable
             state.Cards(openOnly: true).Where(c => c.Kind == RemovalQueueStart.Kind).ShouldHaveSingleItem().Detail.ShouldNotBeNull().ShouldContain("holder unknown");
         }
     }
+
+    [Fact]
+    public async Task IdleTriesDoNotRaiseStartsTriedAndDoNotRingBeforeADay()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
+        var time = new Sessions.ManualTime(new DateTimeOffset(2026, 10, 26, 9, 0, 0, TimeSpan.Zero));
+        var state = new NodeState(new InMemoryJournal(), time);
+        var queue = new RemovalQueue(RemovalQueue.FileIn(Path.Combine(_root, "idle-count-data")), time);
+        var runner = new RemovalQueueStart(queue, state, time) { Holders = _ => [] };
+        await runner.StartingAsync(Ct);
+        var folder = QueuedFolder(queue);
+
+        using (Hold(folder))
+        {
+            for (var hour = 1; hour <= 6; hour++)
+            {
+                time.Advance(TimeSpan.FromMinutes(61));
+                runner.Look().ShouldBeTrue();
+            }
+            queue.Entries().ShouldHaveSingleItem().StartsTried.ShouldBe(0);
+            state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == RemovalQueueStart.Kind);
+        }
+    }
+
+    [Fact]
+    public async Task AQueuedCachePathReusedAfterReleaseIsNoLongerInTheQueue()
+    {
+        var (gizmo, head) = PrOrigins.Make(_root, "gizmo", 3);
+        _github.Origins["acme/gizmo"] = gizmo;
+        _github.Prs["acme/gizmo#3"] = new PullRequest(3, "OPEN", head, "https://github.com/acme/gizmo/pull/3", Title: "PR 3", Author: "ada", Base: "main");
+        var cached = Path.Combine(_reviews.CloneCache, "acme", "gizmo");
+        Directory.CreateDirectory(cached);
+        File.WriteAllText(Path.Combine(cached, "partial"), "x");
+        _queue.Add(cached, RemovalQueue.CacheKind, "acme/gizmo", "held");
+
+        (await Run(Verbs.ReviewPr, "pr/acme/gizmo#3", "controller")).Error.ShouldBeNull();
+
+        Directory.Exists(Path.Combine(cached, ".git")).ShouldBeTrue();
+        _queue.Contains(cached).ShouldBeFalse();
+    }
 }

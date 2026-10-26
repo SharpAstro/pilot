@@ -270,7 +270,12 @@ public sealed class PrReviews(
         if (Directory.Exists(cached))
         {
             // A clone cut short (the node stopped mid-clone) is no clone: it is made again.
-            if (!RemovalQueue.TryDelete(cached, out var why))
+            if (RemovalQueue.TryDelete(cached, out var why))
+            {
+                // Cleared and reused: its queue entry must go, or the next start deletes the fresh clone.
+                planes.Queue?.TryOne(cached);
+            }
+            else
             {
                 if (planes.Queue is not { } queue)
                 {

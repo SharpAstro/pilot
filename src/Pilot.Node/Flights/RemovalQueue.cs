@@ -79,8 +79,8 @@ public sealed class RemovalQueue(string file, TimeProvider time)
         }
     }
 
-    /// <summary>Tries every entry once: those removed are dropped, those still held have their starts raised and stay.</summary>
-    public (IReadOnlyList<PendingRemoval> Removed, IReadOnlyList<(PendingRemoval Entry, string Why)> Held) TryAll()
+    /// <summary>Tries every entry once: those removed are dropped, those still held stay, their starts raised when the try is a start's.</summary>
+    public (IReadOnlyList<PendingRemoval> Removed, IReadOnlyList<(PendingRemoval Entry, string Why)> Held) TryAll(bool countStart = true)
     {
         lock (_lock)
         {
@@ -95,7 +95,7 @@ public sealed class RemovalQueue(string file, TimeProvider time)
                     removed.Add(entry);
                     continue;
                 }
-                var again = entry with { StartsTried = entry.StartsTried + 1 };
+                var again = countStart ? entry with { StartsTried = entry.StartsTried + 1 } : entry;
                 kept.Add(again);
                 held.Add((again, why));
             }
@@ -227,7 +227,7 @@ public sealed class RemovalQueueStart(RemovalQueue queue, NodeState? state = nul
     public Task StartingAsync(CancellationToken cancellationToken)
     {
         _lastWorking = _lastTried = _time.GetUtcNow();
-        Try();
+        Try(countStart: true);
         return Task.CompletedTask;
     }
 
@@ -265,13 +265,13 @@ public sealed class RemovalQueueStart(RemovalQueue queue, NodeState? state = nul
             return false;
         }
         _lastTried = now;
-        Try();
+        Try(countStart: false);
         return true;
     }
 
-    private void Try()
+    private void Try(bool countStart)
     {
-        var (removed, held) = queue.TryAll();
+        var (removed, held) = queue.TryAll(countStart);
         foreach (var entry in removed)
         {
             Console.Error.WriteLine($"removal queue: removed {entry.Path} ({entry.OwnerKind} {entry.Owner})");
