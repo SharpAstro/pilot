@@ -394,6 +394,42 @@ public sealed class JobTests : IDisposable
         await jobs.StopAsync(CancellationToken.None);
     }
 
+    [Fact]
+    public async Task AJobWhoseCpuReadingFallsWhenAChildEndsAndRisesAgainRaisesNoCard()
+    {
+        var (jobs, clock, cpu, _) = Idle();
+        var first = Hand(jobs, Sleep(60));
+        Hand(jobs, Echo("later"));
+        double[] sawtooth = [0.8, 2.0, 3.1, 1.2, 2.2, 3.3, 1.4, 2.5, 3.7, 0.0];
+        foreach (var seconds in sawtooth.Concat(sawtooth))
+        {
+            clock.Advance(TimeSpan.FromMinutes(3));
+            cpu[first] = TimeSpan.FromSeconds(seconds);
+            jobs.Dispatch(JobRunner.LookAgain.Instance);
+        }
+        IdleCards(openOnly: false).ShouldBeEmpty();
+        await jobs.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public void TheCpuTallyNeverFallsWhenAProcessEndsAndKeepsWhatAnEndedOneUsed()
+    {
+        var tally = new ProcessTreeCpu.Tally();
+        var started = new DateTime(2026, 10, 26, 9, 0, 0, DateTimeKind.Utc);
+        tally.Note(10, started, TimeSpan.FromSeconds(1));
+        tally.Note(11, started, TimeSpan.FromSeconds(3));
+        tally.Total.ShouldBe(TimeSpan.FromSeconds(4));
+
+        // Pid 11 ended and is not noted again: its 3 s still count, and a new child adds to them.
+        tally.Note(12, started.AddSeconds(5), TimeSpan.FromSeconds(2));
+        tally.Note(10, started, TimeSpan.FromSeconds(1.5));
+        tally.Total.ShouldBe(TimeSpan.FromSeconds(6.5));
+
+        // A reused pid with a later start time is another process.
+        tally.Note(11, started.AddSeconds(9), TimeSpan.FromSeconds(0.5));
+        tally.Total.ShouldBe(TimeSpan.FromSeconds(7));
+    }
+
     /// <summary>Calls back, as the state publishes it, when a job's Running row is put.</summary>
     private sealed class OnJobRunning(Action<string> running) : INodeEventSink
     {
