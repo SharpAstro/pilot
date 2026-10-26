@@ -263,6 +263,15 @@ public sealed class NodeTargetsTests
     }
 
     [Fact]
+    public async Task ThisMachinesOwnHostIsItsSocketWithoutListeningOnTheLan()
+    {
+        var started = DateTimeOffset.UtcNow;
+        (await NodeTargets.ResolveAsync(Environment.MachineName.ToLowerInvariant(), TestContext.Current.CancellationToken))
+            .ShouldBe(((string?)null, true, (string?)null));
+        (DateTimeOffset.UtcNow - started).ShouldBeLessThan(TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
     public void ANameFoundToBeThisMachinesConnectsToItsSocketWhateverPilotNodeSays()
     {
         // Not tried with PILOT_NODE set: the variable is the process's, and CLI tests running beside this one would follow it to

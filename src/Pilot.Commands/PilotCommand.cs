@@ -73,7 +73,7 @@ public static class PilotCommand
         };
         var node = new Option<string?>("--node")
         {
-            Description = "A node on the LAN, host:port (pilot nodes finds them); else PILOT_NODE, else this machine's. Commands need pilot connect first",
+            Description = "A node on the LAN: host:port, or its name (SE1) or host as pilot nodes lists them; else PILOT_NODE, else this machine's. Commands need pilot connect first",
             Recursive = true,
         };
         var outputFormat = new Option<string>("--output-format")

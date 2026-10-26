@@ -9,7 +9,7 @@ using Pilot.Contracts;
 // Console.Lib rather than painted on pixels: the Sessions page (1), the Flights page (2) with its
 // buttons, the Background tasks page (3), the Fleet page (4), and the watchtower's panel with its cards, all live from
 // this machine's node or one on the LAN.
-var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN, host:port; else PILOT_NODE, else this machine's" };
+var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN: host:port, or its name (SE1) or host; else PILOT_NODE, else this machine's" };
 var socketOption = new Option<string?>("--node-socket") { Description = "This machine's node's socket; else PILOT_NODE_SOCKET, else this user's default" };
 var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 sessions, 3 flights, 4 jobs, 5 fleet, 6 settings, 7 repos, 8 chat, Alt+Left or Backspace back and Alt+Right forward, Ctrl+T the chat with the watchtower, q quits")
 {
