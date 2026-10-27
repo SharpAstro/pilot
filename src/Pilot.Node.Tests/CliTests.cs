@@ -655,8 +655,7 @@ public sealed class CliTests : IAsyncLifetime
             Errors = [new PullRequestsError { Org = "sebgod", Message = "gh offline" }],
         };
 
-        var plain = PullRequestsMarkdown.Plain(row, needsMe: false, now).ReplaceLineEndings("
-");
+        var plain = PullRequestsMarkdown.Plain(row, needsMe: false, now).ReplaceLineEndings("\n");
         plain.ShouldContain("3 open · 1 ready · 1 checks running · 1 conflicts · read 2m ago");
         plain.ShouldContain("SharpAstro/pilot  1\n    #7 Ready one  Ready  PIL7  sebgod  review passed  updated 3h ago");
         plain.ShouldContain("    #3 A|B is *wip*  Checks running 4/7  sebgod  updated 1d ago");
