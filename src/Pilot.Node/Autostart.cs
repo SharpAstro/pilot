@@ -18,7 +18,7 @@ namespace Pilot.Node;
 /// unit's cgroup, so they outlive the node. A self-update or a settings restart starts no successor: the node exits and
 /// the unit starts it again on the binaries in place. Exit code 3 (another node holds the socket) is not retried. A unit
 /// that differs from <see cref="SystemdUnit"/> is out of date, and the setup check has it rewritten.</para>
-</remarks>
+/// </remarks>
 public static class Autostart
 {
     /// <summary>The Run value's name, and the unit's.</summary>
