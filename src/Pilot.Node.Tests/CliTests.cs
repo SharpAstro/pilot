@@ -372,10 +372,10 @@ public sealed class CliTests : IAsyncLifetime
     [Fact]
     public async Task NodeRestartIsSentToTheNodeWhichRefusesWhenItIsNotAPilotNode()
     {
-        var (exit, _, error) = await Pilot(_root, "node", "restart", "the", "settings", "changed");
+        var (exit, output, _) = await Pilot(_root, "node", "restart", "the", "settings", "changed");
 
         exit.ShouldBe(1);
-        error.ShouldContain("is not pilot-node, so it cannot start a successor of itself");
+        output.ShouldContain("is not pilot-node, so it cannot start a successor of itself");
         _node.State.Cards().ShouldNotContain(c => c.Kind == "restart");
         (await Pilot(_root, "node")).Exit.ShouldBe(2);
         var help = await Pilot(_root, "node", "restart", "--help");

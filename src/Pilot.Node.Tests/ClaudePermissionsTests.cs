@@ -167,7 +167,7 @@ public sealed class ClaudePermissionsTests : IDisposable
 
         var line = ClaudePermissions.Describe(ClaudePermissions.Missing(settings, Rules));
 
-        line.ShouldStartWith("pilot update (Bash); pilot answer (PowerShell); pilot dismiss, settings, job,");
+        line.ShouldStartWith("pilot update (Bash); pilot answer (PowerShell); pilot node, dismiss, settings, job,");
         line.ShouldContain($"{NodePath}, ");
         line.ShouldEndWith("(Bash, PowerShell)");
     }
@@ -199,7 +199,7 @@ public sealed class ClaudePermissionsTests : IDisposable
         var before = PermissionsCheck(setup);
         (before.Ok, before.Optional, before.Fix).ShouldBe((false, false, "Allow pilot's commands"));
         before.Line.ShouldContain($"{Rules.Count} of {Rules.Count}");
-        before.Line.ShouldContain("pilot update, answer, dismiss, settings, job, jobs, cancel, leg, flight, review, tell, say, cards, status, sessions");
+        before.Line.ShouldContain("pilot update, node, answer, dismiss, settings, job, jobs, cancel, leg, flight, review, tell, say, cards, status, sessions");
         before.Line.ShouldContain($"{NodePath}");
         before.Line.ShouldContain("(Bash, PowerShell)");
         before.Line.ShouldContain(settings);
