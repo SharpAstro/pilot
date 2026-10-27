@@ -182,25 +182,27 @@ public sealed class StopGateTests : IDisposable
     [Fact]
     public async Task TheHookPrintsTheNodesDecisionAndNothingOnceLetThrough()
     {
+        // The hook's 2 s is for a live session; on a loaded machine the node took longer and the test read no decision.
+        var patient = TimeSpan.FromSeconds(30);
         await using var node = await NodeHarness.StartAsync(Ct);
         Fly(Flight(), node.State);
         File.WriteAllText(Path.Combine(Plane, "stray.txt"), "left\n");
 
         // As Claude Code runs it: the Stop on stdin, the decision on stdout.
         var first = new StringWriter();
-        (await HookCommands.HookAsync(node.SocketPath, new MemoryStream(Encoding.UTF8.GetBytes(StopJson(Plane))), first)).ShouldBe(0);
+        (await HookCommands.HookAsync(node.SocketPath, new MemoryStream(Encoding.UTF8.GetBytes(StopJson(Plane))), first, patient)).ShouldBe(0);
         var decision = JsonDocument.Parse(first.ToString()).RootElement;
         decision.GetProperty("decision").GetString().ShouldBe("block");
         decision.GetProperty("reason").GetString().ShouldNotBeNull().ShouldContain("stray.txt");
 
         var second = new StringWriter();
-        (await HookCommands.HookAsync(node.SocketPath, new MemoryStream(Encoding.UTF8.GetBytes(StopJson(Plane, active: true))), second)).ShouldBe(0);
+        (await HookCommands.HookAsync(node.SocketPath, new MemoryStream(Encoding.UTF8.GetBytes(StopJson(Plane, active: true))), second, patient)).ShouldBe(0);
         second.ToString().ShouldBeEmpty();
         node.State.Cards(openOnly: true).ShouldContain(c => c.Kind == StopGate.Kind && c.Bin == CardBin.Ring);
 
         // Outside a plane the hook prints nothing, as for every other event.
         var outside = new StringWriter();
-        (await HookCommands.HookAsync(node.SocketPath, new MemoryStream(Encoding.UTF8.GetBytes(StopJson(Repo))), outside)).ShouldBe(0);
+        (await HookCommands.HookAsync(node.SocketPath, new MemoryStream(Encoding.UTF8.GetBytes(StopJson(Repo))), outside, patient)).ShouldBe(0);
         outside.ToString().ShouldBeEmpty();
     }
 }
