@@ -222,7 +222,10 @@ public sealed class JobsTests
 
         var arranged = Layout.Engine.Arrange(jobs.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
 
-        arranged.Select(a => a.Node.Tooltip).OfType<string>().Where(t => t.StartsWith("pid", StringComparison.Ordinal)).ShouldBe(["pid 4812"]);
+        // The row's hover is the Home chip's brief (#258), whose running line carries the pid.
+        arranged.Select(a => a.Node.Tooltip).OfType<string>().Where(t => t.Contains("pid ", StringComparison.Ordinal)).Count().ShouldBe(1);
+        arranged.Select(a => a.Node.Tooltip).OfType<string>().ShouldContain(t => t.Contains("pid 4812", StringComparison.Ordinal));
+        arranged.Select(a => a.Node.Tooltip).OfType<string>().ShouldNotContain(t => t.Contains("pid 777", StringComparison.Ordinal));
     }
 
     [Fact]

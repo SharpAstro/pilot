@@ -299,7 +299,20 @@ public sealed class SettingsPageTests
         }
         finally
         {
-            File.Delete(tokens);
+            // A background read of the token file can still hold it for a moment when the whole suite loads the machine (Windows
+            // refuses the delete then); the file is a temp one, so a stubborn lock is left to the temp folder rather than failing the test.
+            for (var attempt = 0; attempt < 20; attempt++)
+            {
+                try
+                {
+                    File.Delete(tokens);
+                    break;
+                }
+                catch (IOException)
+                {
+                    await Task.Delay(50, TestContext.Current.CancellationToken);
+                }
+            }
         }
     }
 
