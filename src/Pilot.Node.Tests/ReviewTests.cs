@@ -773,6 +773,11 @@ public sealed class ReviewTests2 : ReviewTestsBase
         var ring = Open().Where(c => c.Kind == PrChecks.ClosedWithWork).ShouldHaveSingleItem();
         ring.Title.ShouldBe($"TIA7's PR #{F("TIA7").PullRequest} was closed without a merge");
         ring.Detail.ShouldNotBeNull().ShouldContain("not in its base");
+
+        // Dismissed, it is the person's answer: the next look does not ring it again.
+        _state.CloseCard(ring.Id, "known", "controller").ShouldBeTrue();
+        await checks.LookAsync(Ct);
+        Open().ShouldNotContain(c => c.Kind == PrChecks.ClosedWithWork);
     }
 
     [Fact]

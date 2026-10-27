@@ -121,11 +121,13 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 $"its PR #{number} was closed without a merge and its plane holds nothing past its base: its work is in");
             return;
         }
-        if (state.Cards(openOnly: true).Any(c => c.Kind == ClosedWithWork && c.Subject == subject))
+        // Once per closed PR, dismissed or not: a dismissal is the person's answer, and the look comes round every 30 s.
+        var title = $"{flight.Code}'s PR #{number} was closed without a merge";
+        if (state.Cards().Any(c => c.Kind == ClosedWithWork && c.Subject == subject && c.Title == title))
         {
             return;
         }
-        state.RaiseCard(CardBin.Ring, ClosedWithWork, subject, $"{flight.Code}'s PR #{number} was closed without a merge",
+        state.RaiseCard(CardBin.Ring, ClosedWithWork, subject, title,
             own.Count > 0
                 ? $"its plane still holds {own.Count} commit{(own.Count == 1 ? "" : "s")} not in its base: {string.Join("; ", own)}. Reopen the PR, or drop the work and land the flight"
                 : "its plane cannot be read: reopen the PR, or land the flight by hand once its work is safe");
