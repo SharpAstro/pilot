@@ -455,7 +455,7 @@ internal sealed partial class FlightsView<TSurface>
             {
                 _reports.Clear();
             }
-            _reports[key] = document = SelectableTree.Of(Layout.Builder.Markdown(text, ReportStyle(older) with { OnLink = Follow }));
+            _reports[key] = document = SelectableTree.Of(Layout.Builder.Markdown(text, ReportStyle(older) with { OnLink = Follow }), breakLongWords: true);
         }
         return document;
     }

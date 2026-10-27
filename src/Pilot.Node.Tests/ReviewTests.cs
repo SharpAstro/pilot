@@ -290,6 +290,11 @@ public sealed class ReviewTests1 : ReviewTestsBase
         verdict.ShouldContain("Put every code name, path");
         verdict.ShouldContain("in backticks");
         verdict.ShouldContain("\"Show all\"");
+        // The template's own double quotes would eat the backticks: it says how to pass the report instead.
+        verdict.ShouldContain("Pass the Markdown report intact");
+        verdict.ShouldContain("<<'EOF'");
+        verdict.ShouldContain("single-quoted here-string");
+        verdict.ShouldContain("Never put it between plain double quotes");
     }
 
     [Fact]

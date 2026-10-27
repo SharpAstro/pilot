@@ -36,16 +36,29 @@ internal static class WrappedProse
             yield return word + " ";
             yield break;
         }
-        var start = 0;
-        for (var i = 0; i < word.Length; i++)
+        var pieces = Break(word).ToArray();
+        for (var i = 0; i < pieces.Length; i++)
         {
-            if (word[i] is ',' or '+' or '/' or '\\' or '.' or ':' or '_' or '-' && i + 1 < word.Length)
+            yield return i == pieces.Length - 1 ? pieces[i] + " " : pieces[i];
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="word"/> cut after each of its separators (<c>, + / \ . : _ -</c>), a separator that ends it left with it;
+    /// the pieces joined are the word, so the copy of a run of them has no space the text did not.
+    /// </summary>
+    internal static IEnumerable<string> Break(string word)
+    {
+        var start = 0;
+        for (var i = 0; i + 1 < word.Length; i++)
+        {
+            if (word[i] is ',' or '+' or '/' or '\\' or '.' or ':' or '_' or '-')
             {
                 yield return word[start..(i + 1)];
                 start = i + 1;
             }
         }
-        yield return word[start..] + " ";
+        yield return word[start..];
     }
 
     /// <summary>

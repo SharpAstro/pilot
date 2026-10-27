@@ -224,6 +224,35 @@ public sealed class FlightDetailTests
     }
 
     [Fact]
+    public void ALongPathOrNameInAReportWrapsAtItsSeparatorsInsidePageWidthAndStaysSelectableAndWhole()
+    {
+        const string path = "src/Pilot.Ui/SomeVeryLongNamespace/WithNestedFolders/AndMore/FlightsView.Detail.Header.Row.cs:1234";
+        const string name = "Some_Very_Long_CheckName_That_Has_Many_Underscores_And_Keeps_Going_On_And_On";
+        var report = $"1. `{path}` is wrong, and so is {path}.\n2. The check `{name}` fails, as **{name}**, does.";
+        const int width = 900;
+        using var vessel = new RgbaImageRenderer(width, 800);
+        var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Flights;
+        var screen = new FlightsScreen([FlightLine.Build([Flight() with { Review = Changes(report) }], [], Now, Legs()).Single()], "test", Now);
+        flights.Render(screen, new RectF32(0, 0, width, 800));
+        flights.OpenDetail("TIA1611");
+        flights.Render(screen, new RectF32(0, 0, width, 800));
+
+        var arranged = Layout.Engine.Arrange(flights.Tree(screen), new Rect<float>(0, 0, width, 800), new PixelMeasureContext<RgbaImage>(vessel, SessionsCapture.FontPath, 1f));
+        var texts = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text }).ToList();
+
+        // Nothing is drawn past the page's right edge: the long words broke at their separators instead of running off it.
+        texts.Where(a => a.Bounds.Right > width + 0.5f).Select(a => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value).ShouldBeEmpty();
+        // Each path is more than one leaf, each of them selectable and none carrying a space the path did not have.
+        var pieces = texts.Select(a => (Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Where(t => path.Contains(t.Value.TrimEnd(), StringComparison.Ordinal) && t.Value.Length > 3).ToList();
+        pieces.Count.ShouldBeGreaterThan(2);
+        pieces.ShouldAllBe(t => t.Selectable);
+        // The leaves in reading order, joined, are the report's own words: the path appears whole twice, the name twice.
+        var said = string.Concat(texts.Select(a => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value));
+        said.Split(path).Length.ShouldBe(3);
+        said.Split(name).Length.ShouldBe(3);
+    }
+
+    [Fact]
     public void ALongReportFoldsEachFindingToItsFirstLinesAndShowAllOpensItAndShowLessFoldsItAgain()
     {
         string Finding(int n) => $"{n}. Finding {n} starts here\n   detail A{n}\n   detail B{n}\n   detail C{n}\n   detail D{n}";

@@ -478,6 +478,11 @@ public static class Briefs
         text.AppendLine("with a short first line that says what is wrong, then the detail on the lines under it. Put every code name, path");
         text.AppendLine("(`path/to/File.cs:42`) and command in backticks. The page shows the first lines of each finding and the rest on");
         text.AppendLine("\"Show all\", so the first line has to stand on its own.");
+        // A backtick inside double quotes is a command substitution in Bash and the escape character in PowerShell: the code names
+        // the report is asked to carry would vanish, or run. A quoted here-string passes the text as it is.
+        text.AppendLine("Pass the Markdown report intact, backticks and all: in Bash a quoted heredoc, `review changes \"$(cat <<'EOF'` then the");
+        text.AppendLine("report and `EOF` and `)\"` on lines of their own; in PowerShell a single-quoted here-string, `@'` and `'@` on lines of");
+        text.AppendLine("their own around the report. Never put it between plain double quotes, where a backtick runs or escapes.");
         text.AppendLine("Then end your turn with the same verdict.");
         return text.ToString();
     }
