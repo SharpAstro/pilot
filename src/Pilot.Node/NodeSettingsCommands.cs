@@ -25,7 +25,6 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         return Task.FromResult(new SettingsPage
         {
             Settings = [.. NodeSettings.Keys.Select(key => Row(key, saved))],
-            Restart = restarter.Waiting,
             File = options.SettingsFile,
         });
     }
@@ -94,8 +93,9 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             jobs.Pump();
             return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now");
         }
+        var carrying = NodeRestarter.JobsCarryOn(state) is { } jobsLeft ? $" ({jobsLeft} under the next node)" : "";
         var restart = restarter.Request($"{key} = {value}");
-        return state.Complete(command, null, setting: Row(key, updated), way: restart ?? $"{key} saved as {value}; the node restarts to run with it");
+        return state.Complete(command, null, setting: Row(key, updated), way: restart ?? $"{key} saved as {value}; the node restarts to run with it{carrying}");
     }
 
     /// <summary><c>setup node &lt;check&gt;</c>: the fix the checklist offers for it.</summary>
@@ -233,7 +233,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.LanPortKey => ("LAN port", "The TCP port other machines reach this node on", []),
         NodeSettings.MachineKey => ("Machine prefix", "Two letters and a number, at the front of this machine's session names (DE1-watchtower)", []),
         NodeSettings.RepoRootsKey => ("Repo roots", "Folders of git clones the new-flight wizard offers, beside the flights' own repos", []),
-        NodeSettings.UpdatePolicyKey => ("Updates", "auto installs a newer pilot once no job runs; ask raises a card; off does not look", [.. UpdatePolicies.Names]),
+        NodeSettings.UpdatePolicyKey => ("Updates", "auto installs a newer pilot at once (jobs carry on under the new node); ask raises a card; off does not look", [.. UpdatePolicies.Names]),
         NodeSettings.UpdateChannelKey => ("Update channel", "stable follows the tagged releases; beta follows main's every push (a Debug build, needs the .NET runtime)", [.. UpdateChannels.Names]),
         NodeSettings.MaxJobsKey => ("Jobs at once", "How many background tasks run at once; the rest wait their turn", ["1", "2", "3", "4"]),
         NodeSettings.JobMemoryKey => ("Job memory", "The free memory, in GB, a job waits for before it starts; 0 to not wait", ["0", "2", "4", "8"]),

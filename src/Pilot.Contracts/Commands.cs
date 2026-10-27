@@ -311,7 +311,7 @@ public static class Verbs
 
     /// <summary>
     /// <c>set node &lt;key&gt; [value…]</c>: saves a setting in the node's settings file (no value, or <c>default</c>, takes
-    /// it out); the node restarts to run with it once no job would be cut short. This machine only.
+    /// it out); the node restarts to run with it at once; jobs carry on under the next node. This machine only.
     /// </summary>
     public const string Set = "set";
 

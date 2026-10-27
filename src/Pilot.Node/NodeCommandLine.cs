@@ -68,7 +68,7 @@ public static class NodeCommandLine
         };
         var updatePolicy = new Option<string>("--update-policy")
         {
-            Description = "When a newer release of pilot is out: auto installs it once no job runs, and says so; ask raises a card with Update; off does not look. auto by default; only an installed release looks",
+            Description = "When a newer release of pilot is out: auto installs it at once (jobs carry on), and says so; ask raises a card with Update; off does not look. auto by default; only an installed release looks",
             DefaultValueFactory = _ => UpdatePolicy.Auto.Name(),
         };
         updatePolicy.AcceptOnlyFromAmong([.. UpdatePolicies.Names]);

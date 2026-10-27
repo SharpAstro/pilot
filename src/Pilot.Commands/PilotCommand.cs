@@ -848,7 +848,7 @@ public static class PilotCommand
         });
         var settingKey = Arg("setting", "lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory or lan-port");
         var settingValue = Words("value", "Its value (every folder, for repo-roots); none, or default, takes it out", required: false);
-        var set = Action(new Command("set", "Save a setting; the node restarts to run with it once no job runs") { Arguments = { settingKey, settingValue }, Options = { actingOn } },
+        var set = Action(new Command("set", "Save a setting; the node restarts to run with it at once, jobs carry on") { Arguments = { settingKey, settingValue }, Options = { actingOn } },
             (p, client, ct) => Send(client, Verbs.Set, Verbs.NodeTarget, [p.GetValue(settingKey)!, .. p.GetValue(settingValue) ?? []], who, ct, p.GetValue(actingOn)));
         var checkKey = Arg("check", "autostart, no-autostart, hooks, lan, firewall, defender or trust");
         var defenderProcesses = new Option<bool>("--processes") { Description = "With defender: exclude pilot-node, dotnet, MSBuild, VBCSCompiler and testhost as processes too, not only the folders" };
