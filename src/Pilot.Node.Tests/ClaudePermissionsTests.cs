@@ -167,9 +167,10 @@ public sealed class ClaudePermissionsTests : IDisposable
 
         var line = ClaudePermissions.Describe(ClaudePermissions.Missing(settings, Rules));
 
-        line.ShouldStartWith("pilot update (Bash); pilot answer (PowerShell); pilot node, dismiss, settings, job,");
+        // node comes right after update in the verbs, so its two tools' group is met before answer's one.
+        line.ShouldStartWith("pilot update (Bash); pilot node, dismiss, settings, job,");
         line.ShouldContain($"{NodePath}, ");
-        line.ShouldEndWith("(Bash, PowerShell)");
+        line.ShouldEndWith("(Bash, PowerShell); pilot answer (PowerShell)");
     }
 
     private (NodeSetup Setup, string Settings) Setup(string? settingsText)

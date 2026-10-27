@@ -380,7 +380,7 @@ public sealed class CliTests : IAsyncLifetime
         (await Pilot(_root, "node")).Exit.ShouldBe(2);
         var help = await Pilot(_root, "node", "restart", "--help");
         help.Output.ShouldContain("carry on");
-        help.Output.ShouldContain("--acting-on");
+        help.Output.ShouldContain("--why");
     }
 
     [Fact]
