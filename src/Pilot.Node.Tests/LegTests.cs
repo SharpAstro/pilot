@@ -242,6 +242,27 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult(Queue);
 
+    /// <summary>Every dequeue the node asked for, by PR number.</summary>
+    public List<int> Dequeued { get; } = [];
+
+    /// <summary>When set, DequeueAsync fails with it.</summary>
+    public string? DequeueFails { get; set; }
+
+    public Task DequeueAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        if (DequeueFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        Dequeued.Add(number);
+        // The queue lets it go: the PR is not queued any more, and GitHub says it was removed by hand.
+        if (Queue is { Queued: true } queued)
+        {
+            Queue = queued with { Queued = false, Position = null, RemovedAt = DateTimeOffset.UtcNow, RemovedReason = "manually removed" };
+        }
+        return Task.CompletedTask;
+    }
+
     /// <summary>Every draft (true) or ready (false) the node asked for, by PR number.</summary>
     public List<(int Number, bool Draft)> DraftCalls { get; } = [];
 

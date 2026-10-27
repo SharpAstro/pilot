@@ -76,7 +76,7 @@ public sealed partial class LegCommander(
                     made = await SeparateAsync(command, cancellationToken);
                     break;
                 case Verbs.PlanLeg:
-                    Plan(command);
+                    await PlanAsync(command, cancellationToken);
                     break;
                 case Verbs.RemoveLeg:
                     Remove(command);
@@ -361,7 +361,7 @@ public sealed partial class LegCommander(
 
     private sealed record DueStep(CommandRequest? Step);
 
-    private void Plan(CommandRequest command)
+    private async Task PlanAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var flight = FlightOf(command.Target);
         if (flight.State == FlightState.Landed)
@@ -458,6 +458,8 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"{flight.Code}/{name} is {known.State.ToString().ToLowerInvariant()}; only a planned leg is planned again");
         }
+        // More work on a flight whose merge is armed or queued: the merge is taken back first, and a refusal refuses the leg.
+        await TakeMergeBackAsync(flight, Verbs.PlanLeg, $"a new leg, {name}, was planned", cancellationToken);
         // Planned again, the leg is validated afresh: its row is replaced, and a no-go that rang about it is moot.
         if (known is not null)
         {
@@ -533,6 +535,10 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"{flight.Code}/{before.Name} comes first and is {before.State.ToString().ToLowerInvariant()}");
         }
+
+        // A new leg on a flight whose merge is armed or queued takes the merge back first, a refusal refusing the start.
+        await TakeMergeBackAsync(flight, Verbs.StartLeg, $"{leg.Name} started", cancellationToken);
+        flight = FlightOf(Verbs.FlightTarget(flight.Code));
 
         // A person's start, or the sweep's once the 5-hour window allows it: the week only rings.
         Gate.RingWeek(Models.WeekLimit);
@@ -972,6 +978,11 @@ public sealed partial class LegCommander(
             throw new FlightException(
                 $"{flight.Code}/{leg.Name} has gone around {leg.ReviewGoArounds} times on its review's findings: another is the person's call, as the review may want what no worker can do. Leave the card open for them");
         }
+
+        // A go-around on a flight whose merge is armed or queued takes the merge back first, a refusal refusing the go-around.
+        // This turns a passed review back too, so the block below finds it Changes and leaves it.
+        await TakeMergeBackAsync(flight, Verbs.GoAround, why, cancellationToken);
+        flight = FlightOf(Verbs.FlightTarget(flight.Code));
 
         // A done leg that goes around from the merge card (a failed check, conflicts, behind) sits under a review that passed: it is
         // sent back as the node's own sends are (PR to draft, review to Changes), so its finish pushes the fixed branch and a fresh
@@ -1662,6 +1673,81 @@ public sealed partial class LegCommander(
         await github.SetDraftAsync(flight.RepoPath, number, draft: true, cancellationToken);
         state.PutFlight(flight with { Review = flight.Review! with { State = ReviewState.Changes, Report = changes, FinishedAt = time.GetUtcNow(), ReviewUrl = null, MarksWhy = null } });
         await _marks.ApplyAsync(flight.Code, cancellationToken);
+    }
+
+    /// <summary>The card saying a merge was taken back for a new leg, and why.</summary>
+    public const string MergeTakenBackKind = "merge-taken-back";
+
+    /// <summary>
+    /// A flight whose merge is armed (the node's, or GitHub's auto-merge) or queued in GitHub's merge queue is about to get more
+    /// work: the merge is taken back, as it would otherwise land the PR without the new leg. The node's arm is cleared, GitHub's
+    /// auto-merge disarmed, the PR taken out of the queue, the passed review turned back (so the merge waits on a fresh one) and
+    /// the PR-ready card's Merge closed, and a card says so. Nothing when no merge stands. A disarm or dequeue GitHub refuses
+    /// refuses the verb, with that said: a PR is never left armed under a new leg. Runs under the commander's lock.
+    /// </summary>
+    private async Task TakeMergeBackAsync(FlightRow flight, string verb, string why, CancellationToken cancellationToken)
+    {
+        if (flight.PullRequest is not { } number || flight.State == FlightState.Landed)
+        {
+            return;
+        }
+        var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+        var open = pr is { State: "OPEN" };
+        var queued = open && await github.MergeQueueAsync(flight.RepoPath, number, cancellationToken) is { State: "OPEN", Queued: true };
+        // Unknown is treated as armed, as EnsureNotArmedAsync does: the disarm is no error when it was not on.
+        var armedSaid = open ? await github.AutoMergeArmedAsync(flight.RepoPath, number, cancellationToken) : false;
+        var armedOnGitHub = armedSaid != false;
+        if (flight.MergeWhenGreen is null && !queued && !armedOnGitHub)
+        {
+            return;
+        }
+        var took = new List<string>();
+        if (armedOnGitHub)
+        {
+            try
+            {
+                await github.DisarmAutoMergeAsync(flight.RepoPath, number, cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                throw new FlightException($"{verb} is refused: #{number} may be armed with GitHub's auto-merge, which would merge it without the new leg, and it could not be turned off ({ex.Message}): switch it off on the PR page, then try again");
+            }
+            if (armedSaid == true)
+            {
+                took.Add("GitHub's auto-merge turned off");
+            }
+        }
+        if (queued)
+        {
+            try
+            {
+                await github.DequeueAsync(flight.RepoPath, number, cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                throw new FlightException($"{verb} is refused: #{number} is in the merge queue, which would merge it without the new leg, and it could not be taken out ({ex.Message}): remove it from the queue on the PR page, then try again");
+            }
+            took.Add("taken out of the merge queue");
+        }
+        if (flight.MergeWhenGreen is not null)
+        {
+            flight = flight with { MergeWhenGreen = null };
+            state.PutFlight(flight);
+            if (took.Count == 0)
+            {
+                took.Add("no longer waiting for its checks");
+            }
+        }
+        // The review that passed was of a head without the new work: the merge waits on a fresh one.
+        if (flight.Review is { State: ReviewState.Passed })
+        {
+            await TurnToChangesAsync(flight, why, cancellationToken);
+        }
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s merge was taken back: {why}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+        state.RaiseCard(CardBin.Handled, MergeTakenBackKind, Verbs.FlightTarget(flight.Code),
+            $"{flight.Code}'s merge of PR #{number} was taken back",
+            $"{(took.Count > 0 ? $"{string.Join(", ", took)}. " : "")}{why}. The merge is offered again once the new leg is done and a fresh review passes.",
+            link: flight.PullRequestUrl);
     }
 
     private async Task<string?> SendBackAsync(string code, Func<int, string> changesFor, string closing, CancellationToken cancellationToken)

@@ -285,6 +285,13 @@ The brief says the depth and why (`Depth: light (usage at 88%).`), the review ro
 carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
 
 - `pilot review pass <report>` from the plane offers the merge: the PR-ready card, with the review's words.
+- **More work takes the merge back (#342).** `plan-leg`, `start-leg` and `go-around` on a flight whose merge is armed (the
+  node's `MergeWhenGreen`, or GitHub's auto-merge) or queued in GitHub's merge queue take it back first: the node's arm is
+  cleared, auto-merge disarmed, the PR dequeued (GraphQL `dequeuePullRequest`), the passed review turned back to Changes
+  (the PR to draft), the PR-ready card's Merge closed, and a Handled `merge-taken-back` card says so and why. The merge is
+  offered again only once the new leg is done and a fresh review passes. A disarm or dequeue GitHub refuses refuses the
+  verb with that said, so a PR is never left armed under a new leg. The queue watcher skips a flight with a leg not done,
+  so the node's own dequeue is not rung as a dropped merge.
 - `pilot review changes <changes>` rings with **Go around** (the last leg, told the changes; a done leg may go around
   for a review) and **Ready anyway**. The go-around's finish pushes and starts a fresh review by itself.
 - GitHub is told the verdict (`gh pr ready`) before the node keeps it: **changes** mark the PR a draft (`--undo`), so it
