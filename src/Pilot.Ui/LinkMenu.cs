@@ -119,8 +119,8 @@ internal sealed class LinkMenu
         {
             switch (key.Key)
             {
-                case InputKey.Enter when _menu.Items.Count > 0:
-                    _menu.Items[0].OnChoose?.Invoke();
+                case InputKey.Enter when MenuItems.Count > 0:
+                    MenuItems[0].OnChoose?.Invoke();
                     return true;
                 case InputKey.Escape:
                     _menu.IsOpen = false;
