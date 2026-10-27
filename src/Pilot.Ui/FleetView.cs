@@ -204,7 +204,7 @@ internal sealed record FleetScreen(IReadOnlyList<FleetLine> Lines, DateTimeOffse
         get
         {
             var live = Lines.Count(l => l.Connected);
-            var rings = Lines.Sum(l => l.Rings);
+            var rings = Lines.Where(l => l.Connected).Sum(l => l.Rings);
             var summary = $"{Lines.Count} {(Lines.Count == 1 ? "node" : "nodes")} · {live} live";
             if (rings > 0)
             {

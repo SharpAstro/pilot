@@ -281,6 +281,19 @@ public sealed class FleetTests
         arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().ShouldNotContain(b => b.Action.EndsWith(":maintenance", StringComparison.Ordinal));
     }
 
+    /// <summary>The header counts only the rings of rows that answer now; a last-known row still shows its own, dimmed.</summary>
+    [Fact]
+    public void TheHeaderDoesNotCountALastKnownRowsRings()
+    {
+        var live = FleetLine.From("node.sock", here: true, canCommand: true, null, Summary("laptop", "ada@example.org", rings: 1));
+        var gone = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null,
+            Summary("s2", "bo@example.org", connected: false, rings: 1) with { DownSince = new DateTimeOffset(2026, 10, 28, 12, 5, 0, TimeSpan.Zero) });
+
+        gone.LastKnown.ShouldBeTrue();
+        gone.Rings.ShouldBe(1);
+        new FleetScreen([live, gone], Live.At).Summary.ShouldBe("2 nodes · 1 live · 1 ringing");
+    }
+
     /// <summary>A node never heard has nothing last said: dashes, and a status that says why.</summary>
     [Fact]
     public void ANodeNeverHeardShowsDashesAndWhy()
