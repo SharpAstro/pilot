@@ -104,10 +104,17 @@ public sealed class DetachedShell : IDisposable
     /// <summary>What a Linux job starts: <c>setsid /bin/sh -c</c> the wrapper, in the build environment.</summary>
     internal static ProcessStartInfo UnixStart(string command, string cwd, string logPath, string exitPath)
     {
-        var wrapper = $"exec </dev/null >/dev/null 2>&1\n( {command}\n) </dev/null >{ShQuote(logPath)} 2>&1\ncode=$?\n" +
+        // A job keeps only its log and /dev/null: every other fd the node holds without CLOEXEC is closed first. dash
+        // takes only single-digit fds in a redirection, so any fd number needs bash; without bash fds 3 to 9 still go.
+        var bash = new[] { "/bin/bash", "/usr/bin/bash" }.FirstOrDefault(File.Exists);
+        var closeFds = bash is null
+            ? "for n in 3 4 5 6 7 8 9; do eval \"exec $n>&-\"; done\n"
+            : "for f in /proc/self/fd/* /dev/fd/*; do n=${f##*/}; case $n in ''|*[!0-9]*) continue;; esac; [ \"$n\" -gt 2 ] && eval \"exec $n>&-\"; done 2>/dev/null\n";
+        var wrapper = $"{closeFds}exec </dev/null >/dev/null 2>&1\n( {command}\n) </dev/null >{ShQuote(logPath)} 2>&1\ncode=$?\n" +
             $"echo \"$code\" > {ShQuote(exitPath + ".tmp")} && mv -f {ShQuote(exitPath + ".tmp")} {ShQuote(exitPath)}\nexit $code\n";
         var setsid = new[] { "/usr/bin/setsid", "/bin/setsid" }.FirstOrDefault(File.Exists);
-        var start = setsid is null ? new ProcessStartInfo("/bin/sh") : new ProcessStartInfo(setsid) { ArgumentList = { "/bin/sh" } };
+        var shell = bash ?? "/bin/sh";
+        var start = setsid is null ? new ProcessStartInfo(shell) : new ProcessStartInfo(setsid) { ArgumentList = { shell } };
         start.ArgumentList.Add("-c");
         start.ArgumentList.Add(wrapper);
         start.WorkingDirectory = cwd;
