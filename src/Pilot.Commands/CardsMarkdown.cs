@@ -33,6 +33,10 @@ internal static class CardsMarkdown
                 var by = card.ClosedBy is { } closedBy ? $", by {closedBy}" : "";
                 text.AppendLine($"**closed**: {Markdown.Text($"{card.Outcome}{by}")}").AppendLine();
             }
+            if (card.Summary is { Length: > 0 } summary)
+            {
+                text.AppendLine(Markdown.Text(summary)).AppendLine();
+            }
             if (card.Detail is { Length: > 0 } detail)
             {
                 // A hard line break per line, as the plain output keeps the detail's lines.

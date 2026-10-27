@@ -134,7 +134,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     [
                         new CardChoice { Label = string.Create(inv, $"Extend to {more:N0}"), Verb = Verbs.ExtendBudget, Target = subject, Args = [more.ToString(System.Globalization.CultureInfo.InvariantCulture)] },
                         new CardChoice { Label = Verbs.RedoLeg(leg.Name), Verb = Verbs.GoAround, Target = subject, Args = [string.Create(inv, $"the last worker spent {worker.SpendWeighted:N0} of a {budget:N0} budget")] },
-                    ]);
+                    ],
+                    summary: $"The worker of {leg.Flight}/{leg.Name} is past its budget but keeps working. Extend gives it more room; Redo leg starts a fresh worker.");
             }
 
             switch (worker.State)
@@ -343,7 +344,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 [
                     new CardChoice { Label = "Go anyway", Verb = Verbs.StartLeg, Target = subject, Args = ["anyway"] },
                     new CardChoice { Label = "Remove leg", Verb = Verbs.RemoveLeg, Target = subject, Args = ["its validation stalled"] },
-                ]);
+                ],
+                summary: $"The validation of {leg.Flight}/{leg.Name} stalled. Go anyway starts the leg without it; Remove leg drops the leg.");
             }
         }
     }
@@ -442,7 +444,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             }
         }
         state.RaiseCard(CardBin.Ring, ReviewStalled, subject, $"{name}'s review stalled", why,
-            [new CardChoice { Label = "Review again", Verb = again, Target = subject }]);
+            [new CardChoice { Label = "Review again", Verb = again, Target = subject }],
+            summary: $"The review of {name} stalled. Review again starts it afresh.");
     }
 
     // Each flight's planner stalls the node has acted on, as _reviewStalls: an idle planner told once, a gone one replaced once, then rung.

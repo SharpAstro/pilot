@@ -285,7 +285,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         }
         if (refused is not null)
         {
-            state.RaiseCard(CardBin.Ring, "pr-conflicts", Verbs.FlightTarget(code), $"{code}'s PR #{number} conflicts with its base", $"{why} ({refused})", link: url);
+            state.RaiseCard(CardBin.Ring, "pr-conflicts", Verbs.FlightTarget(code), $"{code}'s PR #{number} conflicts with its base", $"{why} ({refused})", link: url,
+                summary: $"The PR #{number} of {code} conflicts with its base and could not be rebased by the node. The last leg goes around to resolve it; dismiss this once it is clean.");
         }
     }
 
@@ -427,7 +428,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 state.PutFlight(flight with { MergeWhenGreen = null });
                 if (_failed.Add($"{flight.Code} {head}") && await legs.ChecksFailedAsync(flight.Code, head, cancellationToken) is { } why)
                 {
-                    state.RaiseCard(CardBin.Ring, "pr-checks-failed", subject, $"{flight.Code}'s PR #{number} fails its checks", why + autoMergeNote, link: pr!.Url);
+                    state.RaiseCard(CardBin.Ring, "pr-checks-failed", subject, $"{flight.Code}'s PR #{number} fails its checks", why + autoMergeNote, link: pr!.Url,
+                        summary: $"The PR #{number} of {flight.Code} fails its checks. The last leg goes around to fix them; dismiss this if you fix them yourself.");
                 }
                 continue;
             }
@@ -658,7 +660,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 if (await legs.ChecksFailedAsync(flight.Code, failed.Head, cancellationToken) is { } why)
                 {
-                    state.RaiseCard(CardBin.Ring, "pr-checks-failed", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number} fails its checks", why, link: failed.Url);
+                    state.RaiseCard(CardBin.Ring, "pr-checks-failed", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number} fails its checks", why, link: failed.Url,
+                        summary: $"The PR #{number} of {flight.Code} fails its checks. The last leg goes around to fix them; dismiss this if you fix them yourself.");
                 }
                 continue;
             }

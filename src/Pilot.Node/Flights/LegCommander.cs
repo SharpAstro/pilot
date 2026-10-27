@@ -1035,7 +1035,8 @@ public sealed partial class LegCommander(
                     [
                         new CardChoice { Label = Verbs.RedoLeg(leg.Name), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker gave up: {(report.Length > 0 ? report : "no reason given")}"] },
                         new CardChoice { Label = "Mark done anyway", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
-                    ]);
+                    ],
+                    summary: $"The worker of {flight.Code}/{leg.Name} gave up. Redo leg sends a fresh worker; Mark done anyway accepts the leg as it is.");
                 break;
             default:
                 throw new FlightException("finish-leg takes done or failed, then a report");
@@ -1460,7 +1461,9 @@ public sealed partial class LegCommander(
         {
             choices.Add(new CardChoice { Label = "Merge again", Verb = Verbs.Merge, Target = target, Args = [head, method] });
         }
-        state.UpdateCard(card.Id, title, detail, choices, link ?? card.Link, kind);
+        var redo = state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is { } redoLeg ? $"{code}/{redoLeg.Name}" : code;
+        var summary = $"The merge of {code} did not go through. Redo leg sends a fresh worker to fix {redo}{(mergeAgain ? "; Merge again tries once more as it is" : "")}.";
+        state.UpdateCard(card.Id, title, detail, choices, link ?? card.Link, kind, summary);
         return true;
     }
 
@@ -1916,7 +1919,8 @@ public sealed partial class LegCommander(
         state.RaiseCard(CardBin.Ring, PrReady, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}'s PR #{pr.Number} is ready to merge",
             $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {pr.Head[..Math.Min(8, pr.Head.Length)]}. {reviewed}: {review}.",
-            [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url);
+            [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url,
+            summary: $"{flight.Code} is reviewed and its PR #{pr.Number} is ready. Merge lands it; dismissing leaves the PR open.");
     }
 
     /// <summary>Whether a command comes from this node's watchtower, which the person's own words are not.</summary>
@@ -1943,7 +1947,9 @@ public sealed partial class LegCommander(
             choices.Add(new CardChoice { Label = Verbs.RedoLeg(last.Name), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [$"the review asked for changes: {changes}"] });
         }
         choices.Add(new CardChoice { Label = "Ready anyway", Verb = Verbs.Review, Target = Verbs.FlightTarget(flight.Code), Args = ["pass", "ready anyway"] });
-        state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review asks for changes", detail, choices, link: flight.PullRequestUrl);
+        state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review asks for changes", detail, choices, link: flight.PullRequestUrl,
+            summary: last is null ? $"The review of {flight.Code} asked for changes. Ready anyway lands it as it is."
+                : $"The review of {flight.Code}/{last.Name} asked for changes. Redo leg sends a fresh worker to make them; Ready anyway lands it as it is.");
     }
 
     /// <summary>
