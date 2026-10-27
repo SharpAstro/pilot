@@ -181,4 +181,20 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
         _state.Legs("TIA1").Select(l => l.Name).ShouldBe(["render"]);
         _workers.Stopped.ShouldHaveSingleItem();
     }
+
+    [Fact]
+    public async Task ARedoLegThatFailsToStartRingsWithARedoLegButton()
+    {
+        await FlightWithTwoLegs();
+        (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
+        var gate = Hold();
+        (await Leg(Verbs.GoAround, "flight/TIA1/parser", "not right")).Made.ShouldNotBeNull().ShouldStartWith("started");
+
+        gate.SetException(new FlightException("claude refused to start"));
+
+        await Until(() => _state.Cards(openOnly: true).Any(c => c.Kind == LegCommander.StartFailedKind));
+        var choice = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.StartFailedKind).Choices.Single();
+        choice.Verb.ShouldBe(Verbs.GoAround);
+        choice.Label.ShouldBe("Redo leg parser");
+    }
 }

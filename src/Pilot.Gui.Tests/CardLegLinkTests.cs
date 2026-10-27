@@ -146,5 +146,41 @@ public sealed class CardLegLinkTests
 
         chrome.Page.ShouldBe(PilotPage.Flights);
         chrome.Flights.DetailOffset.ShouldBeGreaterThan(0);
+        chrome.Flights.LegBlockInView("leg9").ShouldBeTrue();
+        chrome.Flights.LegBlockInView("leg1").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ALegLinkThatNeverResolvedDoesNotScrollTheNextFlightsPage()
+    {
+        LegRow[] Legs(string code) => [.. Enumerable.Range(1, 12).Select(i => new LegRow
+        {
+            Flight = code, Name = $"leg{i}", Order = i, Goal = $"Goal of leg {i}.", DoneWhen = $"Leg {i} is done.", State = LegState.Done,
+            Checklist = [new CheckItem { Text = "one" }, new CheckItem { Text = "two" }],
+        })];
+        FlightRow Row(string code) => new()
+        {
+            Code = code, Repo = "tianwen", RepoPath = "/r/tianwen", Issue = 1611, Title = "Planets", Branch = $"flight/{code.ToLowerInvariant()}",
+            Worktree = $"/r/tianwen/.claude/worktrees/{code.ToLowerInvariant()}", Base = "origin/main", State = FlightState.Flying, CreatedAt = Live.At,
+        };
+        var lines = FlightLine.Build([Row("TIA1"), Row("TIA2")], [], Now, [.. Legs("TIA1"), .. Legs("TIA2")]);
+        var screen = new FlightsScreen(lines, "test", Now);
+        using var renderer = new RgbaImageRenderer(900, 700);
+        var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+
+        // The link names a leg TIA1's page does not have, and the page is shut before it resolves.
+        view.OpenDetail("TIA1", "nope");
+        view.Render(screen, new RectF32(0, 0, 900, 700));
+        view.CloseDetail();
+        view.OpenDetail("TIA2");
+        view.Render(screen, new RectF32(0, 0, 900, 700));
+        view.DetailOffset.ShouldBe(0);
+
+        // A leg link left pending and a plain open of another page does the same.
+        view.CloseDetail();
+        view.OpenDetail("TIA1", "leg9");
+        view.OpenDetail("TIA2");
+        view.Render(screen, new RectF32(0, 0, 900, 700));
+        view.DetailOffset.ShouldBe(0);
     }
 }

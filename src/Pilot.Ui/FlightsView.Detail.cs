@@ -43,10 +43,13 @@ internal sealed partial class FlightsView<TSurface>
         // Its row is shown whatever In play says while its page is open, and selected once the page is shut.
         _pinned = code;
         _detailScroll.AtomOffset = 0;
+        // A leg link that never resolved must not scroll the next page opened.
+        _revealLeg = null;
     }
 
     public void CloseDetail()
     {
+        _revealLeg = null;
         _selectPinned = _pinned is not null && _pinned == _openCode;
         _openCode = null;
     }
@@ -366,6 +369,27 @@ internal sealed partial class FlightsView<TSurface>
     {
         OpenDetail(code);
         _revealLeg = leg;
+    }
+
+    // The arrangement of the page painted last.
+    private ImmutableArray<Layout.ArrangedNode<float>> _arranged;
+
+    /// <summary>Whether the top of <paramref name="leg"/>'s block lies inside the detail viewport as last painted; false when the leg is not on the page.</summary>
+    internal bool LegBlockInView(string leg)
+    {
+        if (!_legBlocks.TryGetValue(leg, out var block) || _arranged.IsDefault)
+        {
+            return false;
+        }
+        foreach (var node in _arranged)
+        {
+            if (ReferenceEquals(node.Node, block))
+            {
+                var (start, _) = _detailScroll.ContentExtentOf(new RectF32(node.Bounds.X, node.Bounds.Y, node.Bounds.Width, node.Bounds.Height));
+                return start >= _detailScroll.Offset - 1f && start < _detailScroll.Offset + _detailScroll.Viewport.Height;
+            }
+        }
+        return false;
     }
 
     // Scrolls the asked-for leg to the top of the page's scroll, from the arrangement just made; true when the offset moved and the page wants painting again.
