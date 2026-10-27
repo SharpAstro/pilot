@@ -1181,6 +1181,31 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         _workers.Stopped.ShouldNotContain("aa000004");
     }
 
+    [Fact]
+    public async Task WorkNotInMainLandsOnlyOnceAPassedReviewHasReadItsHead()
+    {
+        // TIA368 was landed by hand with a leg added after its pass: two pushed commits no reviewer had seen.
+        var flight = await FlightWithTwoLegs();
+        var origin = Path.Combine(_root, "origin.git");
+        Git(_root, "init", "-q", "--bare", origin);
+        Git(Repo, "remote", "add", "origin", origin);
+        Git(Repo, "push", "-q", "origin", "main");
+        File.WriteAllText(Path.Combine(flight.Worktree, "parser.cs"), "class Parser {}\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "the parser");
+        Git(flight.Worktree, "push", "-q", "origin", "HEAD:" + flight.Branch);
+        var land = new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" };
+
+        var refused = await _flights.RunAsync(land, Ct);
+        refused.Error.ShouldNotBeNull().ShouldContain("TIA1's plane holds 1 commit not in main that no passed review has read");
+        refused.Error.ShouldContain("the parser");
+        _state.Flights().Single().State.ShouldBe(FlightState.Flying);
+
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        _state.PutFlight(_state.Flights().Single() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "r", ReviewedHead = head, StartedAt = DateTimeOffset.UtcNow } });
+        (await _flights.RunAsync(land, Ct)).Ok.ShouldBeTrue();
+    }
+
     private void Session(string id, string name, SessionRole role, string flight, SessionState state) => _state.PutSession(new SessionRow
     {
         Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = "/r/w", Role = role, Flight = flight,
