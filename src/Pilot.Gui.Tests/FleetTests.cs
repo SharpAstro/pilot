@@ -273,7 +273,10 @@ public sealed class FleetTests
         bool Has(string text) => arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == text);
         Has($"{FleetLine.MaintenanceWord} as of {hhmm}").ShouldBeTrue();
         line.StateLines.ShouldBe([$"last heard {hhmm}", "(restarting or unreachable; retrying every 2 s)"]);
-        line.StateLines.ShouldAllBe(l => Has(l));
+        foreach (var part in line.StateLines)
+        {
+            Has(part).ShouldBeTrue();
+        }
         Has("2 flying").ShouldBeTrue();
         arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().ShouldNotContain(b => b.Action.EndsWith(":maintenance", StringComparison.Ordinal));
     }
@@ -531,7 +534,7 @@ public sealed class FleetTests
         chrome.Show(PilotPage.Fleet);
 
         var arranged = Layout.Engine.Arrange(chrome.Fleet.Tree(new FleetScreen([line, never], Live.At)), new Rect<float>(0, 0, width, 400), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
-        foreach (var text in new[] { .. line.StateLines, line.Usage, never.State })
+        foreach (var text in (string[])[.. line.StateLines, line.Usage, never.State])
         {
             var leaf = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == text).ShouldHaveSingleItem();
             var measured = renderer.MeasureText(text.AsSpan(), SessionsCapture.FontPath, 11f).Width;
