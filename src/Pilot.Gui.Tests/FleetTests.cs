@@ -253,14 +253,14 @@ public sealed class FleetTests
     {
         var heard = new DateTimeOffset(2026, 10, 28, 12, 5, 0, TimeSpan.Zero);
         var hhmm = heard.ToLocalTime().ToString("HH:mm");
-        var gone = InMaintenance("s2", connected: false) with { DownSince = heard, LiveSessions = 3, WaitingOnYou = 1, Flying = 2, Rings = 1 };
+        var gone = InMaintenance("s2", connected: false) with { DownSince = heard, RetryEvery = TimeSpan.FromSeconds(2), LiveSessions = 3, WaitingOnYou = 1, Flying = 2, Rings = 1 };
         var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, gone);
 
         line.LastKnown.ShouldBeTrue();
         line.Connected.ShouldBeFalse();
         line.Maintenance.ShouldBeTrue();
         line.AsOf.ShouldBe($"as of {hhmm}");
-        line.State.ShouldBe($"last heard {hhmm} · unreachable, retrying");
+        line.State.ShouldBe($"last heard {hhmm} (restarting or unreachable; retrying every 2 s)");
         (line.Account, line.Sessions, line.Flights, line.Rings).ShouldBe(("bo@example.org", "3 live · 1 waiting on you", "2 flying", 1));
         line.WaitingOnYou.ShouldBe(0);
         line.CanSetMaintenance.ShouldBeFalse();
@@ -362,7 +362,7 @@ public sealed class FleetTests
         var quiet = new NodeMark("10.0.0.5:47731", "10.0.0.5:47731", "LE1", Here: false);
         var inMaintenance = InMaintenance("de1", connected: true) with { Usage = "5 h 42% · 7 d 18%", Flying = 1, Rings = 1 };
         inMaintenance = inMaintenance with { Node = inMaintenance.Node! with { Autopilot = true, MachinePrefix = "DE1", MachineName = "NAS-1" } };
-        var down = InMaintenance("de2", connected: false) with { DownSince = heard, Usage = "5 h 42% · 7 d 18%", Flying = 1, Rings = 1 };
+        var down = InMaintenance("de2", connected: false) with { DownSince = heard, RetryEvery = TimeSpan.FromSeconds(2), Usage = "5 h 42% · 7 d 18%", Flying = 1, Rings = 1 };
         down = down with { Node = down.Node! with { Autopilot = true, MachinePrefix = "DE2", MachineName = "LAPTOP-3" } };
         var never = Summary("le1", connected: false) with { Node = null, Status = "no node on 10.0.0.5:47731: refused; retrying every 2s" };
         var screen = new FleetScreen(
@@ -381,7 +381,11 @@ public sealed class FleetTests
         chrome.Nodes.Choices = [live, busy, gone];
         chrome.Nodes.Down = new Dictionary<string, DateTimeOffset?> { [gone.Key] = heard };
         var sessions = new SessionsScreen([], "test", heard);
-        var flights = new FlightsScreen([], "test", heard);
+        FlightLine Flight(string code, int issue, string title, NodeMark node, string? stale = null) =>
+            FlightLine.From(new FlightRow { Code = code, Repo = "tianwen", RepoPath = "/r/tianwen", Issue = issue, Title = title, Branch = $"flight/{code.ToLowerInvariant()}", Worktree = "/w", Base = "origin/main", State = FlightState.Flying, CreatedAt = heard }, [], heard.AddMinutes(30))
+                with { Node = node, Stale = stale };
+        // One flight from each heard node, so the Flights frames show every node's pill and rows; the never-heard LE1 has none.
+        var flights = new FlightsScreen(FlightLine.Order([Flight("TIA1611", 1611, "Planets on the GPU", live), Flight("TIA1612", 1612, "Mount model", busy), Flight("TIA1613", 1613, "Guider calibration", gone, "DE2")]), "test", heard);
 
         chrome.Show(PilotPage.Fleet);
         chrome.Render(sessions, flights, null, null, screen, new RectF32(0, 0, width, 460));
@@ -517,7 +521,7 @@ public sealed class FleetTests
     [InlineData(1800)]
     public void ALastKnownRowsStatusLineIsNotClipped(int width)
     {
-        var down = InMaintenance("de2", connected: false) with { DownSince = new DateTimeOffset(2026, 10, 28, 5, 34, 0, TimeSpan.Zero), Usage = "5 h 42% · 7 d 18%" };
+        var down = InMaintenance("de2", connected: false) with { DownSince = new DateTimeOffset(2026, 10, 28, 5, 34, 0, TimeSpan.Zero), RetryEvery = TimeSpan.FromSeconds(2), Usage = "5 h 42% · 7 d 18%" };
         var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, down, Live.At);
         var never = FleetLine.From("10.0.0.5:47731", here: false, canCommand: true, null,
             Summary("le1", connected: false) with { Node = null, Status = "no node on 10.0.0.5:47731: refused; retrying every 2s" }, Live.At);

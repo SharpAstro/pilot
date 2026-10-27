@@ -12,6 +12,9 @@ internal sealed record NodeSummary
     /// <summary>When its stream went down (its first failed open, or its drop after being live); null while it is up, and before the first try failed.</summary>
     public DateTimeOffset? DownSince { get; init; }
 
+    /// <summary>How often its feed tries again; null where not known.</summary>
+    public TimeSpan? RetryEvery { get; init; }
+
     /// <summary>What its feed says of the connection: live, waiting, retrying.</summary>
     public required string Status { get; init; }
 
@@ -164,7 +167,7 @@ internal sealed record FleetLine
             CanCommand = canCommand,
             Machine = summary.Node is { } node ? (node.MachinePrefix.Length > 0 ? $"{node.MachinePrefix} · {node.MachineName}" : node.MachineName) : announcedAs ?? where,
             State = summary.Connected ? "live"
-                : lastKnown ? (summary.DownSince is { } since ? $"last heard {since.ToLocalTime():HH:mm} · unreachable, retrying" : "last heard earlier · unreachable, retrying")
+                : lastKnown ? $"last heard {(summary.DownSince is { } since ? since.ToLocalTime().ToString("HH:mm") : "earlier")} (restarting or unreachable; retrying{(summary.RetryEvery is { } every ? $" every {every.TotalSeconds:0} s" : "")})"
                 : summary.Status.StartsWith("waiting", StringComparison.Ordinal) ? "no answer yet: " + summary.Status : summary.Status.Replace($"no node on {where}: ", ""),
             LastKnown = lastKnown,
             LastHeard = lastKnown ? summary.DownSince : null,
