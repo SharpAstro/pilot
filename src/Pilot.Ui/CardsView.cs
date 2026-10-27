@@ -288,6 +288,26 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     private static readonly RGBAColor32 Live = new(0x4c, 0xc3, 0x8a, 0xff);
 
+    // The right-click menu of the links that leave the app: Copy URL.
+    private readonly LinkMenu _links = new();
+
+    /// <summary>Puts text on the clipboard: the links' Copy URL. Null where the host has no clipboard, and the links have no menu.</summary>
+    public Action<string>? CopyText
+    {
+        get => _links.CopyText;
+        set => _links.CopyText = value;
+    }
+
+    /// <summary>Asks the host for a frame, for the "Copied" notice that fades; set by the host.</summary>
+    public Action? Changed
+    {
+        get => _links.Changed;
+        set => _links.Changed = value;
+    }
+
+    /// <summary>The links' menu: its open items and its notice.</summary>
+    internal LinkMenu Links => _links;
+
     // The panel as last drawn, whose cards a button answers.
     private CardsScreen _shown = CardsScreen.Empty;
 
@@ -345,9 +365,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         // The link's row is kept whether there is a link or not: the block is always as tall, so the cards under it never
         // move when the watchtower gains or loses its Remote Control, or a fresh one starts (SE1, 2026-10-24).
         blocks.Add(row.RemoteControlUrl is { } url
-            ? Layout.Builder.Text("Remote Control: open in the browser" + Followable.Away, 12f, ForYou).BgHover(CardHover)
+            ? _links.OnLink(Layout.Builder.Text("Remote Control: open in the browser" + Followable.Away, 12f, ForYou).BgHover(CardHover)
                 .Follows(new HitResult.ButtonHit("watchtower:rc"), _ => OnOpen?.Invoke(url))
-                .RowH(20f)
+                .RowH(20f), url)
             : Layout.Builder.Spacer().RowH(20f));
         blocks.Add(Layout.Builder.Spacer().RowH(10f));
         return blocks;
@@ -425,7 +445,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         return Layout.Builder.VStack([.. rows]).Pad(Gutter, 4f).Bg(CardBg).WStar().HAuto();
     }
 
-    public override bool HandleInput(InputEvent evt) => false;
+    public override bool HandleInput(InputEvent evt) => evt is InputEvent.KeyDown key && _links.HandleKey(key, this);
 
     internal Layout.Node Build(CardsScreen screen)
     {
@@ -477,7 +497,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             }
         }
         var stack = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).Stretch();
-        return Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch();
+        return _links.Over(Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch());
     }
 
     /// <summary>The panel's line for a node out of reach: dim, two lines at most, the whole text on hover once it is cut.</summary>
@@ -544,10 +564,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
             // session's link is its button, Answer in the browser, so its title is no second one.
             card.Link is { } titleLink && card.Kind != CardKinds.SessionWaiting
-                ? Whole(Layout.Builder.Text(Titled(card) + Followable.Away, 14f, Link)
+                ? Whole(_links.OnLink(Layout.Builder.Text(Titled(card) + Followable.Away, 14f, Link)
                     .BgHover(CardHover)
                     .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => OnOpen?.Invoke(titleLink))
-                    .RowH(22f), card.Title, card.Title.Length > TitleFits)
+                    .RowH(22f), titleLink), card.Title, card.Title.Length > TitleFits)
                 : Whole(Layout.Builder.Text(Titled(card), 14f, Bright).RowH(22f), card.Title, card.Title.Length > TitleFits),
         };
         if (card.Detail is { Length: > 0 } detail)
@@ -605,7 +625,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         // A waiting session is answered where its Remote Control has it: the card's link, one click away.
         if (card.Kind == CardKinds.SessionWaiting && card.Link is { } answerUrl)
         {
-            buttons.Add(Button("Answer in the browser" + Followable.Away, $"card:{card.Id}:answer", () => OnOpen?.Invoke(answerUrl)));
+            buttons.Add(_links.OnLink(Button("Answer in the browser" + Followable.Away, $"card:{card.Id}:answer", () => OnOpen?.Invoke(answerUrl)), answerUrl));
         }
         // A card about a leg's worker reads best beside what the worker was doing when it was raised.
         var session = merged ? null : TranscriptOf?.Invoke(card);

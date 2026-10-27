@@ -63,6 +63,19 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>Opens a URL (a PR) or a folder.</summary>
     public Action<string>? OnOpen { get; set; }
 
+    // The right-click menu of the PR links, which leave the app: Copy URL.
+    private readonly LinkMenu _links = new();
+
+    /// <summary>Puts text on the clipboard: the PR links' Copy URL. Null where the host has no clipboard, and the links have no menu.</summary>
+    public Action<string>? CopyText
+    {
+        get => _links.CopyText;
+        set => _links.CopyText = value;
+    }
+
+    /// <summary>The links' menu: its open items and its notice.</summary>
+    internal LinkMenu Links => _links;
+
     /// <summary>
     /// Runs the node's <c>sync-repos</c>; null leaves the page without a Sync button (a snapshot file has no node to ask). Throws
     /// <see cref="InvalidOperationException"/> with the node's words when it is refused.
@@ -72,8 +85,12 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>Opens the new-flight wizard on the repo's issues; the host switches to the Flights page.</summary>
     public Action<RepoLine>? OnNewFlight { get; set; }
 
-    /// <summary>Called when a sync finishes, from whichever thread: the host redraws.</summary>
-    public Action? Changed { get; set; }
+    /// <summary>Called when a sync finishes, or the links' "Copied" notice fades, from whichever thread: the host redraws.</summary>
+    public Action? Changed
+    {
+        get => _links.Changed;
+        set => _links.Changed = value;
+    }
 
     /// <summary>Whether a sync is running now.</summary>
     public bool Syncing { get; private set; }
@@ -169,11 +186,16 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         }
         _count = shown.Count;
         var page = Layout.Builder.VStack(Header(screen), Main(shown).HStar()).Bg(Ground).Stretch();
-        return About?.Over(page) ?? page;
+        return _links.Over(About?.Over(page) ?? page);
     }
 
     public override bool HandleInput(InputEvent evt)
     {
+        // A link's menu, and the keys that reach it, ahead of the list's.
+        if (evt is InputEvent.KeyDown linkKey && _links.HandleKey(linkKey, this))
+        {
+            return true;
+        }
         // Right lists the selected repo's worktrees under it, Left puts them away.
         if (evt is InputEvent.KeyDown { Key: InputKey.Right or InputKey.Left } arrow && Selected >= 0 && Selected < _lines.Count && _lines[Selected].Worktrees.Count > 0)
         {
@@ -352,8 +374,8 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     {
         var cells = new List<Layout.Node>
         {
-            Layout.Builder.Text(pull.Text + Followable.Away, 12f, Link).WStar().BgHover(RowHoverBg)
-                .Follows(new HitResult.ButtonHit($"pr:{pull.Pr.Number}"), _ => OpenUrl(pull)),
+            LinkOf(Layout.Builder.Text(pull.Text + Followable.Away, 12f, Link).WStar().BgHover(RowHoverBg)
+                .Follows(new HitResult.ButtonHit($"pr:{pull.Pr.Number}"), _ => OpenUrl(pull)), pull),
         };
         // Labels as the wizard shows an issue's: dim, after the title; a fixed share so a long list cannot push the checks off.
         if (pull.Pr.Labels.Length > 0)
@@ -364,6 +386,9 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         cells.Add(Layout.Builder.Text(pull.Checks, 11f, ChecksColor(pull.Checks)).WAuto());
         return Layout.Builder.HStack([.. cells]).WithGap(8f).RowH(18f);
     }
+
+    // A PR link with the shared right-click menu, Copy URL; a PR the node gave no URL for has no link to copy.
+    private Layout.Node LinkOf(Layout.Node link, PullLine pull) => pull.Pr.Url is { } url ? _links.OnLink(link, url) : link;
 
     private void OpenUrl(PullLine pull)
     {
@@ -391,8 +416,8 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 .Follows(new HitResult.ButtonHit($"repo:{repo.Key}:flight:{code}"), _ => OnFlight?.Invoke(worktree))
             : Layout.Builder.Text("no flight", 12f, Dim);
         var pull = worktree.Pull is { } pr
-            ? Layout.Builder.Text($"PR #{pr.Pr.Number}{Followable.Away}", 12f, Link).BgHover(RowHoverBg)
-                .Follows(new HitResult.ButtonHit($"repo:{repo.Key}:pr:{pr.Pr.Number}"), _ => OpenUrl(pr))
+            ? LinkOf(Layout.Builder.Text($"PR #{pr.Pr.Number}{Followable.Away}", 12f, Link).BgHover(RowHoverBg)
+                .Follows(new HitResult.ButtonHit($"repo:{repo.Key}:pr:{pr.Pr.Number}"), _ => OpenUrl(pr)), pr)
             : Layout.Builder.Text("no PR", 12f, Dim);
         var cells = new List<Layout.Node>
         {
