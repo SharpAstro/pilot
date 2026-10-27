@@ -1116,6 +1116,19 @@ guard for this binary: a user-wide `PreToolUse` hook on `Bash` and `PowerShell` 
 merge-guard`) installs it; a guard for another path of the binary, or an older one on `Bash` alone, fails it until the
 fix replaces it, and a second install changes nothing.
 
+The **Claude Code permissions** check (`setup node claude-permissions`, not optional) reads `permissions.allow` in the same
+user settings file and lists which of pilot's allow rules are missing, so an unattended session is not stopped at a permission
+prompt for its own commands. The rules, each for both `Bash` and `PowerShell`: `pilot <verb>:*` for `update`, `answer`,
+`dismiss`, `settings`, `job`, `jobs`, `cancel`, `leg`, `flight`, `review`, `tell`, `say`, `cards`, `status` and `sessions`, and
+the node's own binary and the `pilot` CLI beside it by full path (`<path>:*`), so a restart by path is allowed. A rule counts
+as present when the list has it, the whole tool (`Bash`), or every pilot verb (`Bash(pilot:*)`). The check names how many are
+missing and which. Its button (`pilot settings setup claude-permissions`) first copies the file as it is to
+`settings.json.pilot-bak` beside it, then appends only the missing rules after the entries already there, creating
+`permissions.allow` when absent and touching nothing else; with nothing missing it writes nothing and makes no backup, and a
+file that is not valid JSON (or whose `allow` is not a list) is refused and left byte for byte as it was. Allowing a command
+only lets Claude Code run it: the node still refuses a caller without the role, and merges and a person's cards stay guarded by
+the node and the merge guard.
+
 One more optional check is **Guard hooks** (`setup node guard-hooks`): it says whether three generic guard hooks
 are in `~/.claude/settings.json`: `big_read_guard.sh` (refuses a whole-file `Read` and a bare `cat`),
 `fat_result_notice.sh` (says a tool result was unusually large) and `pgrep_self_match_guard.sh` (refuses an inline

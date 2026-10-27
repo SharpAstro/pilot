@@ -160,6 +160,18 @@ public sealed class ClaudePermissionsTests : IDisposable
         Should.Throw<JsonException>(() => ClaudePermissions.Install(settings, Rules));
     }
 
+    [Fact]
+    public void TheMissingRulesAreDescribedGroupedByTheToolsTheyMiss()
+    {
+        var settings = """{ "permissions": { "allow": [ "Bash(pilot answer:*)", "PowerShell(pilot update:*)" ] } }""";
+
+        var line = ClaudePermissions.Describe(ClaudePermissions.Missing(settings, Rules));
+
+        line.ShouldStartWith("pilot update (Bash); pilot answer (PowerShell); pilot dismiss, settings, job,");
+        line.ShouldContain($"{NodePath}, ");
+        line.ShouldEndWith("(Bash, PowerShell)");
+    }
+
     private (NodeSetup Setup, string Settings) Setup(string? settingsText)
     {
         var settings = Path.Combine(_root, ".claude", "settings.json");
@@ -187,8 +199,9 @@ public sealed class ClaudePermissionsTests : IDisposable
         var before = PermissionsCheck(setup);
         (before.Ok, before.Optional, before.Fix).ShouldBe((false, false, "Allow pilot's commands"));
         before.Line.ShouldContain($"{Rules.Count} of {Rules.Count}");
-        before.Line.ShouldContain("pilot update (Bash, PowerShell)");
-        before.Line.ShouldContain($"{NodePath} (Bash, PowerShell)");
+        before.Line.ShouldContain("pilot update, answer, dismiss, settings, job, jobs, cancel, leg, flight, review, tell, say, cards, status, sessions");
+        before.Line.ShouldContain($"{NodePath}");
+        before.Line.ShouldContain("(Bash, PowerShell)");
         before.Line.ShouldContain(settings);
         before.Line.ShouldContain("node still refuses a caller without the role");
 

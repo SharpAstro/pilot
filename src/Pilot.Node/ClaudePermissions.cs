@@ -76,10 +76,23 @@ public static class ClaudePermissions
     }
 
     /// <summary>
-    /// Missing rules for a line, grouped by command: <c>pilot update (Bash, PowerShell), pilot-node.exe path (Bash)</c>.
+    /// Missing rules for a line, the commands that miss the same tools together: <c>pilot update, answer (Bash, PowerShell); C:/bin/pilot-node.exe (PowerShell)</c>.
+    /// A <c>pilot &lt;verb&gt;</c> command is written as its verb after the first of the group.
     /// </summary>
     public static string Describe(IReadOnlyList<string> missing) =>
-        string.Join(", ", missing.GroupBy(r => Split(r).Command).Select(g => $"{g.Key} ({string.Join(", ", g.Select(r => Split(r).Tool))})"));
+        string.Join("; ", missing
+            .Select(r => Split(r))
+            .GroupBy(r => r.Command)
+            .Select(g => (Command: g.Key, Tools: string.Join(", ", g.Select(r => r.Tool))))
+            .GroupBy(c => c.Tools)
+            .Select(g =>
+            {
+                var commands = g.Select(c => c.Command).ToList();
+                var verbs = commands.Where(c => c.StartsWith("pilot ", StringComparison.Ordinal)).Select(c => c[6..]).ToList();
+                var others = commands.Where(c => !c.StartsWith("pilot ", StringComparison.Ordinal));
+                var named = (verbs.Count > 0 ? [$"pilot {string.Join(", ", verbs)}"] : Array.Empty<string>()).Concat(others);
+                return $"{string.Join(", ", named)} ({g.Key})";
+            }));
 
     private static HashSet<string> Allowed(JsonObject root)
     {

@@ -312,7 +312,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     /// </summary>
     private SetupCheck ClaudePermissionsCheck()
     {
-        const string Title = "Claude Code allows pilot's commands";
+        const string Title = "Claude Code permissions";
         try
         {
             var text = File.Exists(SettingsFile) ? File.ReadAllText(SettingsFile) : "";
