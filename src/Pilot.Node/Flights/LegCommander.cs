@@ -173,7 +173,7 @@ public sealed partial class LegCommander(
             var code = FlightOf(command.Target).Code;
             MarkMerge(command.Target, ChoiceStatus.Conflicting);
             error = await RebaseOntoBaseAsync(code, cancellationToken) is { } why
-                ? $"{error}; {why}{(await ConflictsAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : ": its last leg goes around to resolve it")}"
+                ? $"{error}; {why}{(await ConflictsAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : ": its last leg is redone to resolve it")}"
                 : $"{error}: it is being rebased onto its base and reviewed afresh, and the merge is offered again once that passes";
         }
 
@@ -1104,7 +1104,7 @@ public sealed partial class LegCommander(
             }
             if (Unchanged(flight.Code, leg) is null)
             {
-                throw new FlightException($"{flight.Code}/{leg.Name} changed while GitHub was being asked: nothing more was done, look again and go around again");
+                throw new FlightException($"{flight.Code}/{leg.Name} changed while GitHub was being asked: nothing more was done, look again and redo the leg again");
             }
             flight = FlightOf(Verbs.FlightTarget(flight.Code));
         }
@@ -1411,7 +1411,7 @@ public sealed partial class LegCommander(
             MergeKinds.Armed => (ChoiceStatus.Armed, merge.Progress, $"{code}'s PR #{number} merges when its checks pass", $"GitHub's auto-merge is armed: merging when checks pass{(merge.Progress is { } progress ? $", {progress} done" : "")}. GitHub merges it, with the node up or not."),
             MergeKinds.Queued => (ChoiceStatus.Queued, merge.Place, $"{code}'s PR #{number} is in the merge queue", QueuedLine(code, merge.Place is { } place ? $"in the merge queue, {place}" : "in the merge queue")),
             MergeKinds.Blocked => (ChoiceStatus.Blocked, merge.FailedName ?? merge.Reason, $"{code}'s PR #{number} is blocked: {merge.Reason}",
-                merge.FailedName is { } name ? $"GitHub blocks the merge: {name} failed. Redo the leg to fix what it found, or re-run the check if it was a flake." : $"GitHub blocks the merge: {merge.Reason}."),
+                merge.FailedName is { } name ? $"GitHub blocks the merge: {name} failed. Redo the leg to fix it, or re-run the check if it was a flake." : $"GitHub blocks the merge: {merge.Reason}."),
             MergeKinds.ChangesRequested => (ChoiceStatus.ChangesRequested, null, $"{code}'s PR #{number} has changes requested", "A review on GitHub asks for changes. They are read first, then the merge is offered again."),
             _ => ((string?)null, null, null, null),
         };

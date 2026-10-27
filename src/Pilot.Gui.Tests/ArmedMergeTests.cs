@@ -24,7 +24,7 @@ public sealed class ArmedMergeTests
         + "Switch on GitHub's auto-merge to let GitHub wait instead: gh repo edit --enable-auto-merge, or the repo's Settings > General > Allow auto-merge. GitHub waits only for required checks, so make them required too (a branch protection rule or a ruleset).";
 
     private static readonly string FailedDetail = $"The merge waited for the checks to pass, and {LongCheck} failed on 77018f1c. "
-        + "Redo the leg to fix what it found, re-run the checks if it was a flake, or merge again. GitHub's auto-merge is turned off.";
+        + "Redo the leg to fix it, re-run the checks if it was a flake, or merge again. GitHub's auto-merge is turned off.";
 
     private static CardChoice Merge(string? status, string label = "Merge") =>
         new() { Label = label, Verb = Verbs.Merge, Target = "flight/PIL244", Args = ["77018f1"], Status = status };
