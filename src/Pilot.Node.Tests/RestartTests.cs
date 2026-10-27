@@ -21,6 +21,12 @@ public sealed class RestartTests
     private static string Sleeping(int seconds, int exit) =>
         OperatingSystem.IsWindows() ? $"Start-Sleep {seconds}; echo 'finished'; exit {exit}" : $"sleep {seconds}; echo 'finished'; exit {exit}";
 
+    /// <summary>A job that runs until <paramref name="gate"/> exists, then exits with <paramref name="exit"/>: it outlasts a restart however slow.</summary>
+    private static string WaitingFor(string gate, int exit) =>
+        OperatingSystem.IsWindows()
+            ? $"while (-not (Test-Path -LiteralPath '{gate}')) {{ Start-Sleep -Milliseconds 100 }}; echo 'finished'; exit {exit}"
+            : $"while [ ! -e '{gate}' ]; do sleep 0.1; done; echo 'finished'; exit {exit}";
+
     private static async Task<NodeHarness> StartAsync(string? folder = null)
     {
         var node = await NodeHarness.StartAsync(Ct, folder: folder);
@@ -86,12 +92,23 @@ public sealed class RestartTests
     public async Task ARunningJobIsFollowedAgainAfterARestartAndItsOwnerToldOnce()
     {
         var first = await StartAsync();
-        var id = Run(first, Sleeping(3, 7));
+        var gate = Path.Combine(first.Folder, "gate");
+        var id = Run(first, WaitingFor(gate, 7));
         var running = await Until(first, id, j => j.State == JobState.Running);
         await first.StopKeepingFolderAsync();
         Deliveries(first).ShouldBe(0);
 
         await using var second = await StartAsync(first.Folder);
+        // Followed again, not read from an exit file: the second node holds the job, and its process is alive, before it ends.
+        var jobs = second.App.Services.GetRequiredService<JobRunner>();
+        for (var i = 0; i < 200 && !jobs.IsRunning(id); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        jobs.IsRunning(id).ShouldBeTrue();
+        Alive(running.Pid!.Value).ShouldBeTrue();
+        File.Exists(running.ExitPath).ShouldBeFalse();
+        await File.WriteAllTextAsync(gate, "go", Ct);
         var ended = await Until(second, id, j => j.EndedAt is not null && j.Told);
 
         (ended.State, ended.ExitCode, ended.Pid).ShouldBe((JobState.Failed, 7, running.Pid));

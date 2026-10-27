@@ -26,7 +26,7 @@ public sealed class DetachedShell : IDisposable
     /// <summary>The script files a Windows job runs from: deleted on <see cref="Dispose"/>, and by the wrapper when it ends.</summary>
     public IReadOnlyList<string> Scripts => _files;
 
-    public static DetachedShell For(string command, string cwd, string logPath, string exitPath)
+    public static DetachedShell For(string jobId, string command, string cwd, string logPath, string exitPath)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -38,7 +38,7 @@ public sealed class DetachedShell : IDisposable
         var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
         File.WriteAllText(inner, ShellScript.Body(command), utf8);
         File.WriteAllText(outer, WindowsWrapper(inner, outer, exitPath), utf8);
-        return new DetachedShell([inner, outer], () => StartWindows(outer, cwd, logPath));
+        return new DetachedShell([inner, outer], () => StartWindows(jobId, outer, cwd, logPath));
     }
 
     /// <summary>Starts the job; the process is the shell's, left running if the node ends.</summary>
@@ -88,6 +88,10 @@ public sealed class DetachedShell : IDisposable
     private const uint CreateNoWindow = 0x08000000;
     private const uint UseShowWindow = 0x1;
     private const uint UseStdHandles = 0x100;
+    private const uint CreateSuspended = 0x4;
+    private const uint ExtendedStartupInfoPresent = 0x80000;
+    private const nint HandleListAttribute = 0x20002;
+    private const uint JobObjectAllAccess = 0x1F001F;
     private const int ErrorAccessDenied = 5;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -101,6 +105,13 @@ public sealed class DetachedShell : IDisposable
         public ushort ShowWindow, Reserved2Size;
         public nint Reserved2;
         public nint StdInput, StdOutput, StdError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct StartupInfoEx
+    {
+        public StartupInfo Startup;
+        public nint AttributeList;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -121,7 +132,7 @@ public sealed class DetachedShell : IDisposable
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreateProcessW(string? application, StringBuilder commandLine, nint processAttributes, nint threadAttributes,
-        [MarshalAs(UnmanagedType.Bool)] bool inheritHandles, uint flags, nint environment, string? directory, ref StartupInfo startup, out ProcessInformation information);
+        [MarshalAs(UnmanagedType.Bool)] bool inheritHandles, uint flags, nint environment, string? directory, ref StartupInfoEx startup, out ProcessInformation information);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern SafeFileHandle CreateFileW(string name, uint access, uint share, ref SecurityAttributes attributes, uint disposition, uint flags, nint template);
@@ -134,7 +145,57 @@ public sealed class DetachedShell : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(nint handle);
 
-    private static Process StartWindows(string outer, string cwd, string logPath)
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool InitializeProcThreadAttributeList(nint list, int count, int flags, ref nint size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UpdateProcThreadAttribute(nint list, uint flags, nint attribute, nint value, nint size, nint previous, nint returnSize);
+
+    [DllImport("kernel32.dll")]
+    private static extern void DeleteProcThreadAttributeList(nint list);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern nint CreateJobObjectW(nint attributes, string name);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern nint OpenJobObjectW(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, string name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AssignProcessToJobObject(nint job, nint process);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool TerminateJobObject(nint job, uint exitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern int ResumeThread(nint thread);
+
+    private static string JobName(string jobId) => "pilot-job-" + jobId;
+
+    /// <summary>
+    /// Ends every process of a Windows job's named job object (<c>pilot-job-&lt;id&gt;</c>), found by name so a restarted node
+    /// reaches a job it did not start; walking parent pids misses a descendant whose parent already exited. No-op elsewhere
+    /// or when the object is gone (every process in it has ended).
+    /// </summary>
+    internal static void TerminateJob(string jobId)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        var job = OpenJobObjectW(JobObjectAllAccess, false, JobName(jobId));
+        if (job == 0)
+        {
+            return;
+        }
+        TerminateJobObject(job, 1);
+        CloseHandle(job);
+    }
+
+    private static Process StartWindows(string jobId, string outer, string cwd, string logPath)
     {
         // The log is opened for writing here and handed to the child as its stdout and stderr (one handle, so one file
         // position: the two never overwrite each other); the node's own copy is closed once the child has it.
@@ -145,36 +206,86 @@ public sealed class DetachedShell : IDisposable
         {
             throw new Win32Exception(Marshal.GetLastWin32Error());
         }
-        var startup = new StartupInfo
+        var startup = new StartupInfoEx
         {
-            Size = (uint)Marshal.SizeOf<StartupInfo>(),
-            Flags = UseStdHandles | UseShowWindow,
-            ShowWindow = 0,
-            StdInput = nul.DangerousGetHandle(),
-            StdOutput = log.DangerousGetHandle(),
-            StdError = log.DangerousGetHandle(),
+            Startup = new StartupInfo
+            {
+                Size = (uint)Marshal.SizeOf<StartupInfoEx>(),
+                Flags = UseStdHandles | UseShowWindow,
+                ShowWindow = 0,
+                StdInput = nul.DangerousGetHandle(),
+                StdOutput = log.DangerousGetHandle(),
+                StdError = log.DangerousGetHandle(),
+            },
         };
-        var line = $"pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{outer}\"";
-        // Outside the node's job object when the job allows it, so ending the node ends nothing here; a job object that
-        // does not allow breakaway refuses the flag, and the job then starts without it.
-        var flags = CreateNoWindow | CreateNewProcessGroup;
-        var started = CreateProcessW(null, new StringBuilder(line), 0, 0, true, flags | CreateBreakawayFromJob, 0, cwd, ref startup, out var info);
-        if (!started && Marshal.GetLastWin32Error() == ErrorAccessDenied)
-        {
-            started = CreateProcessW(null, new StringBuilder(line), 0, 0, true, flags, 0, cwd, ref startup, out info);
-        }
-        if (!started)
-        {
-            throw new Win32Exception(Marshal.GetLastWin32Error());
-        }
+        // Only the log and NUL are inherited: every other inheritable handle in the node (a pipe end of a process started at the
+        // same moment, the std pipes of a test host) stays out of the job.
+        var size = nint.Zero;
+        InitializeProcThreadAttributeList(0, 1, 0, ref size);
+        var list = Marshal.AllocHGlobal(size);
+        var handles = Marshal.AllocHGlobal(2 * nint.Size);
+        var listReady = false;
+        var job = nint.Zero;
         try
         {
-            return Process.GetProcessById((int)info.ProcessId);
+            if (!InitializeProcThreadAttributeList(list, 1, 0, ref size))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            listReady = true;
+            Marshal.WriteIntPtr(handles, 0, nul.DangerousGetHandle());
+            Marshal.WriteIntPtr(handles, nint.Size, log.DangerousGetHandle());
+            if (!UpdateProcThreadAttribute(list, 0, HandleListAttribute, handles, 2 * nint.Size, 0, 0))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            startup.AttributeList = list;
+            var line = $"pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{outer}\"";
+            // Outside the node's job object when it allows it, so ending the node ends nothing here; a job object that does
+            // not allow breakaway refuses the flag, and the job then starts without it. Suspended until it is in its own
+            // named job object, so nothing it starts can be outside it.
+            var flags = CreateNoWindow | CreateNewProcessGroup | CreateSuspended | ExtendedStartupInfoPresent;
+            var started = CreateProcessW(null, new StringBuilder(line), 0, 0, true, flags | CreateBreakawayFromJob, 0, cwd, ref startup, out var info);
+            if (!started && Marshal.GetLastWin32Error() == ErrorAccessDenied)
+            {
+                started = CreateProcessW(null, new StringBuilder(line), 0, 0, true, flags, 0, cwd, ref startup, out info);
+            }
+            if (!started)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            try
+            {
+                // Kept by name for as long as a process is in it, so a restarted node can open it and end the tree.
+                job = CreateJobObjectW(0, JobName(jobId));
+                if (job == 0 || !AssignProcessToJobObject(job, info.Process))
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    using var stray = Process.GetProcessById((int)info.ProcessId);
+                    stray.Kill(entireProcessTree: true);
+                    throw new Win32Exception(error);
+                }
+                ResumeThread(info.Thread);
+                return Process.GetProcessById((int)info.ProcessId);
+            }
+            finally
+            {
+                CloseHandle(info.Thread);
+                CloseHandle(info.Process);
+            }
         }
         finally
         {
-            CloseHandle(info.Thread);
-            CloseHandle(info.Process);
+            if (job != 0)
+            {
+                CloseHandle(job);
+            }
+            if (listReady)
+            {
+                DeleteProcThreadAttributeList(list);
+            }
+            Marshal.FreeHGlobal(handles);
+            Marshal.FreeHGlobal(list);
         }
     }
 

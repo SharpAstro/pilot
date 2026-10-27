@@ -347,7 +347,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             case Withdrawn withdrawn when _running.TryGetValue(withdrawn.Id, out var process):
                 // It started before the cancel reached the dispatcher: stop it as any running job.
                 _cancelled[withdrawn.Id] = withdrawn.Who;
-                Kill(process);
+                Kill(withdrawn.Id, process);
                 break;
             case Withdrawn withdrawn when state.Jobs().FirstOrDefault(j => j.Id == withdrawn.Id) is { State: JobState.Queued }:
                 // Its hand-over is still behind this in the channel: cancel it when it comes.
@@ -466,7 +466,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         try
         {
             File.Delete(exitPath);
-            shell = DetachedShell.For(job.Command, job.Cwd, job.LogPath, exitPath);
+            shell = DetachedShell.For(job.Id, job.Command, job.Cwd, job.LogPath, exitPath);
             process = shell.Start();
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException)
@@ -500,7 +500,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         if (_running.TryGetValue(id, out var process))
         {
             _cancelled[id] = command.Who;
-            Kill(process);
+            Kill(id, process);
             return state.Complete(command, null);
         }
         if (state.Jobs().FirstOrDefault(j => j.Id == id) is { State: JobState.Queued })
@@ -568,7 +568,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     return;
                 }
                 timedOut = true;
-                Kill(process);
+                Kill(job.Id, process);
                 for (var i = 0; i < 100 && !HasExited(process); i++)
                 {
                     await Task.Delay(PollEvery, CancellationToken.None);
@@ -679,8 +679,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
     }
 
-    private static void Kill(Process process)
+    /// <summary>Ends the job's whole tree; on Windows by its named job object, which holds a descendant whose parent already exited.</summary>
+    private static void Kill(string id, Process process)
     {
+        DetachedShell.TerminateJob(id);
         try
         {
             process.Kill(entireProcessTree: true);
