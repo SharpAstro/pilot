@@ -14,10 +14,11 @@ namespace Pilot.Node;
 /// <remarks>
 /// <para><b>Windows:</b> a value in the user's <c>Run</c> key that starts the node through <c>conhost --headless</c>, so
 /// no console window opens and none is left to close by mistake. A self-update's successor starts windowless already.</para>
-/// <para><b>Linux:</b> a systemd user unit, <c>Restart=always</c>. A self-update starts its successor and exits; systemd
-/// ends the successor with its unit and starts the unit again, on the binaries the update put in place, which is the
-/// same restart. Exit code 3 (another node holds the socket) is not retried.</para>
-/// </remarks>
+/// <para><b>Linux:</b> a systemd user unit, <c>Restart=always</c>. Jobs run in transient scopes of their own, outside the
+/// unit's cgroup, so they outlive the node. A self-update or a settings restart starts no successor: the node exits and
+/// the unit starts it again on the binaries in place. Exit code 3 (another node holds the socket) is not retried. A unit
+/// that differs from <see cref="SystemdUnit"/> is out of date, and the setup check has it rewritten.</para>
+</remarks>
 public static class Autostart
 {
     /// <summary>The Run value's name, and the unit's.</summary>
@@ -54,6 +55,79 @@ public static class Autostart
 
             """;
     }
+
+    /// <summary>
+    /// The path and arguments an <c>ExecStart=</c> value holds: the inverse of the quoting <see cref="SystemdUnit"/> does.
+    /// Null when it does not read back (an unclosed quote, an empty line).
+    /// </summary>
+    public static (string Path, IReadOnlyList<string> Args)? ParseExecStart(string exec)
+    {
+        var words = new List<string>();
+        var word = new StringBuilder();
+        var inWord = false;
+        for (var i = 0; i < exec.Length; i++)
+        {
+            var c = exec[i];
+            if (c == '"')
+            {
+                inWord = true;
+                for (i++; ; i++)
+                {
+                    if (i >= exec.Length)
+                    {
+                        return null;
+                    }
+                    if (exec[i] == '"')
+                    {
+                        break;
+                    }
+                    if (exec[i] == '\\' && i + 1 < exec.Length)
+                    {
+                        i++;
+                    }
+                    else if (exec[i] is '%' or '$' && i + 1 < exec.Length && exec[i + 1] == exec[i])
+                    {
+                        i++;
+                    }
+                    word.Append(exec[i]);
+                }
+            }
+            else if (char.IsWhiteSpace(c))
+            {
+                if (inWord)
+                {
+                    words.Add(word.ToString());
+                    word.Clear();
+                    inWord = false;
+                }
+            }
+            else
+            {
+                inWord = true;
+                word.Append(c);
+            }
+        }
+        if (inWord)
+        {
+            words.Add(word.ToString());
+        }
+        return words.Count == 0 ? null : (words[0], words.Skip(1).ToList());
+    }
+
+    /// <summary>
+    /// Whether <paramref name="unitText"/> is the unit <see cref="SystemdUnit"/> writes for its own <c>ExecStart</c>; false
+    /// for one that differs in anything else (a <c>KillMode</c> an older node wrote, say) or whose ExecStart does not read.
+    /// </summary>
+    public static bool UnitIsCurrent(string unitText)
+    {
+        var text = unitText.Replace("\r\n", "\n");
+        var exec = text.Split('\n').FirstOrDefault(l => l.StartsWith("ExecStart=", StringComparison.Ordinal));
+        return exec is not null && ParseExecStart(exec["ExecStart=".Length..]) is { } parsed
+            && string.Equals(text, SystemdUnit(parsed.Path, parsed.Args), StringComparison.Ordinal);
+    }
+
+    /// <summary>Whether the entry in place is current: always on Windows, else the unit file against <see cref="SystemdUnit"/>.</summary>
+    public static bool EntryIsCurrent() => !OperatingSystem.IsLinux() || !File.Exists(UnitPath()) || UnitIsCurrent(File.ReadAllText(UnitPath()));
 
     /// <summary>Where the unit goes: <c>~/.config/systemd/user</c>, or under <c>XDG_CONFIG_HOME</c>.</summary>
     public static string UnitPath() =>

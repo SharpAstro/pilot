@@ -7,7 +7,8 @@ namespace Pilot.Node;
 /// Restarts the node to run with what changed under it (a saved setting): it starts a new <c>pilot-node</c> with its own
 /// arguments and <c>--after &lt;its pid&gt;</c>, and stops; the new one waits for it to exit and takes the socket, as a
 /// self-update's successor does. At once, whatever jobs run or wait: a job runs detached from the node and the next node
-/// follows it again, so a restart says how many carry on instead of waiting for them.
+/// follows it again, so a restart says how many carry on instead of waiting for them. Under a systemd unit it starts no
+/// successor: the node only stops, and the unit's <c>Restart=always</c> starts it again on the binaries now in place.
 /// </summary>
 public sealed class NodeRestarter(IHostApplicationLifetime lifetime, ILogger<NodeRestarter> logger)
 {
@@ -16,6 +17,17 @@ public sealed class NodeRestarter(IHostApplicationLifetime lifetime, ILogger<Nod
 
     /// <summary>Starts the successor; false if it did not start. A test replaces it.</summary>
     public Func<string, bool> StartSuccessor { get; init; } = Start;
+
+    /// <summary>Whether the node's unit restarts it, so no successor is started. A test replaces it.</summary>
+    public Func<string, bool> RestartedBySystemd { get; init; } = UnderSystemdUnit;
+
+    /// <summary>
+    /// The node runs as <paramref name="nodePath"/> under a systemd unit (<c>INVOCATION_ID</c> is set, and it is
+    /// pilot-node): the unit restarts it when it exits, whatever the exit code but those in
+    /// <c>RestartPreventExitStatus</c>, so a clean stop is a restart and a successor would only fight the unit for the socket.
+    /// </summary>
+    public static bool UnderSystemdUnit(string nodePath) =>
+        IsNode(nodePath) && !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("INVOCATION_ID"));
 
     /// <summary>
     /// Restarts the node for <paramref name="why"/> now. Returns what became of it: null when it is stopping for its
@@ -27,7 +39,8 @@ public sealed class NodeRestarter(IHostApplicationLifetime lifetime, ILogger<Nod
         {
             return $"saved; it applies at the node's next start ({Path.GetFileName(NodePath)} is not pilot-node, so it does not restart itself)";
         }
-        if (!StartSuccessor(NodePath))
+        // A clean stop (exit 0) is one Restart=always restarts: the unit starts the node again after RestartSec.
+        if (!RestartedBySystemd(NodePath) && !StartSuccessor(NodePath))
         {
             return $"saved, but {NodePath} did not start; it applies at the node's next start";
         }
@@ -43,7 +56,7 @@ public sealed class NodeRestarter(IHostApplicationLifetime lifetime, ILogger<Nod
         return jobs == 0 ? null : $"{jobs} job{(jobs == 1 ? " carries" : "s carry")} on";
     }
 
-    private static bool IsNode(string path) =>
+    internal static bool IsNode(string path) =>
         string.Equals(Path.GetFileNameWithoutExtension(path), "pilot-node", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Starts <paramref name="node"/> windowless with this node's own arguments, to take over once it exits.</summary>

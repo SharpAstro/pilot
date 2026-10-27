@@ -92,7 +92,9 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         var entry = Autostart.Entry();
         checks.Add(entry is null
             ? new SetupCheck { Key = AutostartKey, Title = "Starts at logon", Ok = false, Line = "nothing starts the node at logon: the fleet loses this machine until someone opens pilot", Fix = "Start at logon" }
-            : new SetupCheck { Key = AutostartKey, Title = "Starts at logon", Ok = true, Line = entry, Fix = null });
+            : !Autostart.EntryIsCurrent()
+                ? new SetupCheck { Key = AutostartKey, Title = "Starts at logon", Ok = false, Line = $"the unit is out of date (it differs from the one this node writes, so a restart may take jobs down): {entry}", Fix = "Rewrite" }
+                : new SetupCheck { Key = AutostartKey, Title = "Starts at logon", Ok = true, Line = entry, Fix = null });
 
         var hooks = HooksInstalled();
         checks.Add(new SetupCheck

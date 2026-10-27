@@ -90,8 +90,9 @@ Install one by unzipping it into a folder on `PATH` (`%LOCALAPPDATA%\pilot2\bin`
 `pilot-node autostart install -- <node options>` starts the node at logon with those options (none, once the settings
 file holds them), and now if none answers
 on its socket: a value in the user's `Run` key on Windows (through `conhost --headless`, so no console window), a
-systemd user unit on Linux (`Restart=always`, so a self-update's restart is the unit's own; exit code 3, another node on
-the socket, is not retried). The options are checked by the node's own parser before anything is written.
+systemd user unit on Linux (`Restart=always`; jobs run in scopes of their own, and an update or a settings restart starts no
+successor: the node exits and the unit restarts it itself; exit code 3, another node on the socket, is not retried; a unit
+that differs from the one the node writes fails the setup check, whose fix `Rewrite` writes it again and reloads systemd). The options are checked by the node's own parser before anything is written.
 `autostart show` says what is there, `autostart remove` takes it out. Without it the node runs while something
 started it: by hand, or the GUI, whose node listens on its socket only, never on the LAN.
 
@@ -1088,7 +1089,7 @@ command is refused, naming each node and why it did not qualify (`in maintenance
 Any other setting's change restarts the node to run with it at once, whatever jobs run or wait (a job runs detached
 from the node and the next node follows it again, and the answer says how many carry on: ` (2 jobs carry on under the
 next node)`, as an update's says `; 2 jobs carry on`): the node starts its successor with its own arguments and
-`--after <its pid>`, and stops, as a self-update does, so flights, sessions and the watchtower carry on and clients
+`--after <its pid>`, and stops, as a self-update does (under its systemd unit it only stops, and the unit restarts it), so flights, sessions and the watchtower carry on and clients
 resume their stream. A setting the command line gives is saved but says it does
 not count until the command line stops giving it.
 
