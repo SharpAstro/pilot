@@ -246,6 +246,31 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>
+    /// Changes the flight <paramref name="code"/> as it is now, in one step: <paramref name="change"/> is given the row as it stands and
+    /// returns the row to keep, so a writer that read the flight earlier (a command whose GitHub call was out) never puts a
+    /// stale copy over what another has written meanwhile. Nothing when the flight is gone or <paramref name="change"/> returns null.
+    /// Returns the row kept, or null.
+    /// </summary>
+    public FlightRow? UpdateFlight(string code, Func<FlightRow, FlightRow?> change)
+    {
+        lock (_gate)
+        {
+            if (!_flights.TryGetValue(code, out var known) || change(known) is not { } changed)
+            {
+                return null;
+            }
+            if (!Same(known, changed))
+            {
+                Publish(new FlightChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = changed });
+            }
+            return changed;
+        }
+    }
+
+    /// <summary>Whether two rows of a flight are the same in everything a record compares.</summary>
+    internal static bool SameFlight(FlightRow a, FlightRow b) => Same(a, b);
+
     /// <summary>The legs of <paramref name="flight"/>, in their order; every leg when it is null.</summary>
     public LegRow[] Legs(string? flight = null)
     {

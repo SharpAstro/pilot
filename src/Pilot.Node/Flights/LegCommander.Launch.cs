@@ -70,7 +70,7 @@ public sealed partial class LegCommander
     /// Starts a session outside the lock, to be called under it with the reservation <paramref name="key"/> free. <paramref name="start"/>
     /// readies the plane, calls the action it is given as the launcher is asked, and starts the session, returning its job; <paramref name="record"/> runs under the lock again with the
     /// job and returns null once it recorded it, or why the flight is no longer as it was (the job is then stopped);
-    /// <paramref name="after"/> runs under the lock once it did.
+    /// <paramref name="after"/> runs once it did, with the lock let go: it may ask GitHub.
     /// </summary>
     /// <param name="replacing">Takes the reservation over from a start still out, which then gives itself up silently.</param>
     /// <param name="quietFailure">Says a failure itself (its text), under the lock, where the command is never told it.</param>
@@ -89,6 +89,7 @@ public sealed partial class LegCommander
             string? job = null;
             string? failure = null;
             var current = true;
+            var recorded = false;
             try
             {
                 job = await start(() => launch.Entered.TrySetResult());
@@ -102,10 +103,7 @@ public sealed partial class LegCommander
                         if (failure is null)
                         {
                             state.CloseCardsAbout(subject, $"{what} started", StartFailedKind);
-                            if (after is not null)
-                            {
-                                await after();
-                            }
+                            recorded = true;
                         }
                     }
                 }
@@ -118,6 +116,11 @@ public sealed partial class LegCommander
                 {
                     // Taken over by a later start, or the flight moved on while this one was out: the session started is of no use.
                     await StopQuietly(job, CancellationToken.None);
+                }
+                else if (recorded && after is not null)
+                {
+                    // What follows a start is GitHub's (a review's marks on its PR): asked without the lock.
+                    await after();
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

@@ -5,7 +5,9 @@ namespace Pilot.Node.Flights;
 
 /// <summary>
 /// The flight verbs: <c>create-flight</c>, <c>connect</c> and <c>land</c>. Git work takes seconds, so each runs off the
-/// state's lock, one at a time (two creates must not claim one code), and puts its result on the stream when done.
+/// state's lock, one at a time (two creates must not claim one code), and puts its result on the stream when done. Nor does git
+/// or GitHub work hold the commander's own lock (PIL338): a create runs on its own lock, apart from every other verb's, and a
+/// landing lets the lock go for its calls and takes it again to record, so a connect or a land of another flight goes through at once.
 /// </summary>
 /// <param name="workers">Stops the flight's sessions before its plane goes; null in a test that starts none.</param>
 /// <param name="github">Gives a flight made without a title its issue's, and the commit a landed PR merged as; null in a test that names its titles.</param>
@@ -13,6 +15,12 @@ namespace Pilot.Node.Flights;
 public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider time, IWorkerLauncher? workers = null, IGitHub? github = null, PackageReleases? packages = null)
 {
     private readonly SemaphoreSlim _one = new(1, 1);
+
+    // Two creates must not claim one code, but a create's git work (the checkout, the worktree) holds no other verb: it has its own lock.
+    private readonly SemaphoreSlim _creating = new(1, 1);
+
+    // The flights being landed, whose plane and sessions are being taken down with the lock let go: a second land of one is refused.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _landing = new(StringComparer.Ordinal);
 
     /// <summary>The settings in force: whether the node is in maintenance. A test's commander takes every flight.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
@@ -46,6 +54,10 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
 
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
+        if (command.Verb == Verbs.CreateFlight)
+        {
+            return await CreateOneAtATimeAsync(command, cancellationToken);
+        }
         await _one.WaitAsync(cancellationToken);
         try
         {
@@ -56,9 +68,6 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             {
                 switch (command.Verb)
                 {
-                    case Verbs.CreateFlight:
-                        (made, way) = await CreateAsync(command, cancellationToken);
-                        break;
                     case Verbs.Connect:
                         Connect(command);
                         break;
@@ -79,6 +88,47 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         finally
         {
             _one.Release();
+        }
+    }
+
+    private async Task<CommandResult> CreateOneAtATimeAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        await _creating.WaitAsync(cancellationToken);
+        try
+        {
+            string? error = null;
+            string? made = null;
+            string? way = null;
+            try
+            {
+                (made, way) = await CreateAsync(command, cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                error = ex.Message;
+            }
+            return state.Complete(command, error, way: way, made: made);
+        }
+        finally
+        {
+            _creating.Release();
+        }
+    }
+
+    /// <summary>
+    /// Runs <paramref name="call"/> (git, GitHub, a launcher: each takes as long as it takes) with the lock let go, and takes it
+    /// again before it returns, whatever came of it. Called under the lock.
+    /// </summary>
+    private async Task<T> OffLockAsync<T>(Func<Task<T>> call)
+    {
+        _one.Release();
+        try
+        {
+            return await call();
+        }
+        finally
+        {
+            await _one.WaitAsync(CancellationToken.None);
         }
     }
 
@@ -345,61 +395,95 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         {
             return;
         }
-        // Its sessions first: a worker inside its stop grace, or a reviewer, still has the plane open, and a folder held
-        // open is not removed. Seen live: a flight landed a minute after its worker finished kept its plane.
-        if (workers is not null)
+        // The flight's sessions, git and GitHub are asked with the lock let go (PIL338); while they are, a second landing of it is refused.
+        if (!_landing.TryAdd(flight.Code, true))
         {
-            // Every live session of the flight's too, not only the legs' current workers and the current reviewer: its planner,
-            // an earlier reviewer, a validator or a renamed copy sat idle in TIA368's plane after it landed, holding the folder
-            // and still able to push. A session's job is its row id.
-            var sessions = state.Sessions().Where(s => s.State != SessionState.Ended && string.Equals(s.Flight, flight.Code, StringComparison.Ordinal)).Select(s => s.Id);
-            var jobs = state.Legs(flight.Code).Select(l => l.WorkerJob).Append(flight.Review?.ReviewerJob).OfType<string>().Concat(sessions).Distinct();
-            foreach (var job in jobs)
-            {
-                try
-                {
-                    await workers.StopAsync(job, cancellationToken);
-                }
-                catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
-                {
-                    // Gone already.
-                }
-            }
+            throw new FlightException($"{flight.Code} is being landed already: wait for it");
         }
-        // Nothing of the flight's is left where nobody looks: no commit that is on no remote and not in main (TIA1658's
-        // last read was one, until it was landed by hand). Such a plane is not landed; it says which commits.
-        // After a merge, everything up to the merged head is in: only commits past it would be left behind.
-        var mainRef = flight.Base.Length > 0 ? flight.Base : "origin/main";
-        if (mergedHead is not null)
+        try
         {
-            if (await planes.PastAsync(flight.Worktree, mergedHead, cancellationToken) is { Count: > 0 } past)
-            {
-                throw new FlightException($"{flight.Code} merged at {mergedHead[..Math.Min(8, mergedHead.Length)]}, but its plane holds {past.Count} commit{(past.Count == 1 ? "" : "s")} past it: {string.Join("; ", past)}. Land {(past.Count == 1 ? "it" : "them")} in a PR of {(past.Count == 1 ? "its" : "their")} own, then land the flight");
-            }
+            await LandingAsync(flight, cancellationToken, mergedHead, foldedInto);
         }
-        else if (await planes.UnlandedAsync(flight.Worktree, mainRef, cancellationToken) is { Count: > 0 } loose)
+        finally
         {
-            throw new FlightException($"{flight.Code}'s plane holds {loose.Count} commit{(loose.Count == 1 ? "" : "s")} on no remote and not in {mainRef}: {string.Join("; ", loose)}. Push {(loose.Count == 1 ? "it" : "them")} (flight pr) or drop {(loose.Count == 1 ? "it" : "them")}, then land");
+            _landing.TryRemove(flight.Code, out _);
         }
-        // Work not in main lands only once a passed review has read it, at the head the plane holds now: TIA368 was landed by
-        // hand with a leg added after its pass, whose two commits no reviewer had seen. A folded flight's work goes on in the
-        // other, and a flight with nothing of its own (a duplicate dropped) lands as before.
-        else if (foldedInto is null && await planes.NotInMainAsync(flight.Worktree, mainRef, cancellationToken) is { Head: { } head, Commits.Count: > 0 } work
-            && !(flight.Review is { State: ReviewState.Passed, ReviewedHead: { } reviewed } && string.Equals(reviewed, head, StringComparison.OrdinalIgnoreCase)))
-        {
-            throw new FlightException($"{flight.Code}'s plane holds {work.Commits.Count} commit{(work.Commits.Count == 1 ? "" : "s")} not in {mainRef} that no passed review has read: {string.Join("; ", work.Commits)}. Review {(work.Commits.Count == 1 ? "it" : "them")} (flight review) and merge, or drop {(work.Commits.Count == 1 ? "it" : "them")}, then land");
-        }
+    }
 
+    private async Task LandingAsync(FlightRow flight, CancellationToken cancellationToken, string? mergedHead, string? foldedInto)
+    {
         // What it releases is read before its plane goes, and before anything is changed: a land that cannot say what its
         // consumers wait for is refused, never half done. A folded flight released nothing.
         var consumers = state.Flights().Where(f => f.State != FlightState.Landed && f.Connections.Contains(flight.Code, StringComparer.Ordinal)).ToList();
-        var released = foldedInto is null && packages is not null && consumers.Count > 0
-            ? await MergeOfAsync(flight, cancellationToken) is var (mergeCommit, mergedAt)
-                ? await packages.WaitsAsync(flight, consumers, mergedHead, mergeCommit, mergedAt, cancellationToken)
-                : []
-            : [];
+        // Every live session of the flight's too, not only the legs' current workers and the current reviewer: its planner,
+        // an earlier reviewer, a validator or a renamed copy sat idle in TIA368's plane after it landed, holding the folder
+        // and still able to push. A session's job is its row id.
+        var sessions = state.Sessions().Where(s => s.State != SessionState.Ended && string.Equals(s.Flight, flight.Code, StringComparison.Ordinal)).Select(s => s.Id);
+        var jobs = state.Legs(flight.Code).Select(l => l.WorkerJob).Append(flight.Review?.ReviewerJob).OfType<string>().Concat(sessions).Distinct().ToList();
+        var (released, consumed, leftover) = await OffLockAsync(async () =>
+        {
+            // Its sessions first: a worker inside its stop grace, or a reviewer, still has the plane open, and a folder held
+            // open is not removed. Seen live: a flight landed a minute after its worker finished kept its plane.
+            if (workers is not null)
+            {
+                foreach (var job in jobs)
+                {
+                    try
+                    {
+                        await workers.StopAsync(job, cancellationToken);
+                    }
+                    catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+                    {
+                        // Gone already.
+                    }
+                }
+            }
+            // Nothing of the flight's is left where nobody looks: no commit that is on no remote and not in main (TIA1658's
+            // last read was one, until it was landed by hand). Such a plane is not landed; it says which commits.
+            // After a merge, everything up to the merged head is in: only commits past it would be left behind.
+            var mainRef = flight.Base.Length > 0 ? flight.Base : "origin/main";
+            if (mergedHead is not null)
+            {
+                if (await planes.PastAsync(flight.Worktree, mergedHead, cancellationToken) is { Count: > 0 } past)
+                {
+                    throw new FlightException($"{flight.Code} merged at {mergedHead[..Math.Min(8, mergedHead.Length)]}, but its plane holds {past.Count} commit{(past.Count == 1 ? "" : "s")} past it: {string.Join("; ", past)}. Land {(past.Count == 1 ? "it" : "them")} in a PR of {(past.Count == 1 ? "its" : "their")} own, then land the flight");
+                }
+            }
+            else if (await planes.UnlandedAsync(flight.Worktree, mainRef, cancellationToken) is { Count: > 0 } loose)
+            {
+                throw new FlightException($"{flight.Code}'s plane holds {loose.Count} commit{(loose.Count == 1 ? "" : "s")} on no remote and not in {mainRef}: {string.Join("; ", loose)}. Push {(loose.Count == 1 ? "it" : "them")} (flight pr) or drop {(loose.Count == 1 ? "it" : "them")}, then land");
+            }
+            // Work not in main lands only once a passed review has read it, at the head the plane holds now: TIA368 was landed by
+            // hand with a leg added after its pass, whose two commits no reviewer had seen. A folded flight's work goes on in the
+            // other, and a flight with nothing of its own (a duplicate dropped) lands as before.
+            else if (foldedInto is null && await planes.NotInMainAsync(flight.Worktree, mainRef, cancellationToken) is { Head: { } head, Commits.Count: > 0 } work
+                && !(flight.Review is { State: ReviewState.Passed, ReviewedHead: { } reviewed } && string.Equals(reviewed, head, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new FlightException($"{flight.Code}'s plane holds {work.Commits.Count} commit{(work.Commits.Count == 1 ? "" : "s")} not in {mainRef} that no passed review has read: {string.Join("; ", work.Commits)}. Review {(work.Commits.Count == 1 ? "it" : "them")} (flight review) and merge, or drop {(work.Commits.Count == 1 ? "it" : "them")}, then land");
+            }
 
-        var leftover = await planes.RemoveAsync(flight.RepoPath, flight.Worktree, cancellationToken);
+            var released = foldedInto is null && packages is not null && consumers.Count > 0
+                ? await MergeOfAsync(flight, cancellationToken) is var (mergeCommit, mergedAt)
+                    ? await packages.WaitsAsync(flight, consumers, mergedHead, mergeCommit, mergedAt, cancellationToken)
+                    : []
+                : [];
+            // Which of the consumers use what it released is read now too, with the rest of what asks the network.
+            var consumed = new HashSet<(string Consumer, string Id, string Producer)>();
+            foreach (var consumer in consumers.Where(_ => released.Length > 0))
+            {
+                foreach (var release in released.Where(r => !consumer.PackageWaits.Any(w => w.Id == r.Id && w.Producer == r.Producer)))
+                {
+                    if (await packages!.ConsumesAsync(consumer, flight, release.Id, cancellationToken))
+                    {
+                        consumed.Add((consumer.Code, release.Id, release.Producer));
+                    }
+                }
+            }
+
+            var leftover = await planes.RemoveAsync(flight.RepoPath, flight.Worktree, cancellationToken);
+            return (released, consumed, leftover);
+        });
+
         if (leftover is not null && planes.Queue is { } queue)
         {
             // Held by a process: the flight lands all the same, and the folder is removed at the node's next start.
@@ -421,7 +505,16 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
                 state.PutLeg(leg with { Artifacts = [.. leg.Artifacts.Select(a => a with { Attachment = null, AttachmentExt = null })] });
             }
         }
-        state.PutFlight(flight with { State = FlightState.Landed, LandedAt = time.GetUtcNow(), FoldedInto = foldedInto ?? flight.FoldedInto });
+        // The flight as it is now, never the copy read before the calls: what another command wrote meanwhile stays. A fold's answer
+        // is the one thing its caller brings.
+        var landedAt = time.GetUtcNow();
+        flight = state.UpdateFlight(flight.Code, f => f with
+        {
+            State = FlightState.Landed,
+            LandedAt = landedAt,
+            FoldedInto = foldedInto ?? f.FoldedInto,
+            Overlaps = foldedInto is null ? f.Overlaps : flight.Overlaps,
+        }) ?? flight;
 
         // The item is no longer flying here: its node label goes, unless another flight of this node (a suffixed second one)
         // is still on the same item. Landed already, so a failure is said, not a refusal.
@@ -487,14 +580,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             else if (released.Length > 0)
             {
                 // Landed with a release it uses: it flies once the package can be fetched, not before.
-                var uses = new List<PackageWait>();
-                foreach (var release in released.Where(r => !waiting.PackageWaits.Any(w => w.Id == r.Id && w.Producer == r.Producer)))
-                {
-                    if (await packages!.ConsumesAsync(waiting, flight, release.Id, cancellationToken))
-                    {
-                        uses.Add(release);
-                    }
-                }
+                var uses = released.Where(r => !waiting.PackageWaits.Any(w => w.Id == r.Id && w.Producer == r.Producer) && consumed.Contains((waiting.Code, r.Id, r.Producer))).ToList();
                 waiting = waiting with { PackageWaits = [.. waiting.PackageWaits, .. uses] };
             }
             state.PutFlight(Settle(waiting));

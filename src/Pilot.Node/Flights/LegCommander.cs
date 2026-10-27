@@ -213,16 +213,23 @@ public sealed partial class LegCommander(
 
     private async Task<string?> RebaseUnderLockAsync(string code, CancellationToken cancellationToken)
     {
-        await _one.WaitAsync(cancellationToken);
+        // The flight is this rebase's while its git and GitHub calls are out (PIL338): a merge or open-pr under way on it is waited for,
+        // without the lock, and the lock itself is let go for every call. A flight that changed meanwhile is the next look's to
+        // decide on, so it says nothing (null): it is no conflict to send a leg round for.
+        var call = await EnterAsync(code, "being rebased onto its base", cancellationToken);
         try
         {
             if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying } flight || !Directory.Exists(flight.Worktree))
             {
                 return $"{code} is not a flying flight with a plane";
             }
-            if ((await git.RunAsync(["status", "--porcelain"], flight.Worktree, cancellationToken)).Output.Trim().Length > 0)
+            if ((await OffLockAsync(null, () => git.RunAsync(["status", "--porcelain"], flight.Worktree, cancellationToken))).Output.Trim().Length > 0)
             {
                 return $"{code}'s plane holds changes not committed, so it is not rebased by itself";
+            }
+            if (Moved(flight) is not null)
+            {
+                return null;
             }
             // A merge armed on the head being replaced is let go, GitHub's auto-merge included: it would merge the rebased head
             // before anyone has reviewed it, and the node's own rebase is no dropped merge to ring about.
@@ -232,28 +239,44 @@ public sealed partial class LegCommander(
                 {
                     try
                     {
-                        await github.DisarmAutoMergeAsync(flight.RepoPath, armed, cancellationToken);
+                        await OffLockAsync(null, () => github.DisarmAutoMergeAsync(flight.RepoPath, armed, cancellationToken));
                     }
                     catch (FlightException ex)
                     {
                         return $"{code}'s PR #{armed} is armed with GitHub's auto-merge, which could not be turned off ({ex.Message}), so it is not rebased: switch it off on the PR page";
                     }
+                    if (Moved(flight) is not null)
+                    {
+                        return null;
+                    }
                 }
-                flight = flight with { MergeWhenGreen = null };
-                state.PutFlight(flight);
+                flight = Record(code, f => f with { MergeWhenGreen = null }) ?? flight;
             }
-            // Armed on GitHub by a hand the node did not see: the plane is not rebased for a push that would be refused.
-            await EnsureNotArmedAsync(flight, cancellationToken);
-            await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
-            // A base that is no branch on the remote is the remote's default first, as when its PR opened.
-            flight = await RepairBaseAsync(flight, cancellationToken);
-            var rebase = await git.RunAsync(["rebase", flight.Base], flight.Worktree, cancellationToken);
-            if (!rebase.Ok)
+            var (repaired, notRebased) = await OffLockAsync(null, async Task<(FlightRow, string?)> () =>
             {
-                await git.RunAsync(["rebase", "--abort"], flight.Worktree, cancellationToken);
-                return $"rebasing {code} onto {flight.Base} conflicts ({rebase.Why}): rebase its plane by hand, or go around its last leg to";
+                // Armed on GitHub by a hand the node did not see: the plane is not rebased for a push that would be refused.
+                await EnsureNotArmedAsync(flight, cancellationToken);
+                await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
+                // A base that is no branch on the remote is the remote's default first, as when its PR opened.
+                var repaired = await RepairBaseAsync(flight, cancellationToken);
+                var rebase = await git.RunAsync(["rebase", repaired.Base], flight.Worktree, cancellationToken);
+                if (!rebase.Ok)
+                {
+                    await git.RunAsync(["rebase", "--abort"], flight.Worktree, cancellationToken);
+                    return (repaired, $"rebasing {code} onto {repaired.Base} conflicts ({rebase.Why}): rebase its plane by hand, or go around its last leg to");
+                }
+                await PushAsync(repaired, cancellationToken);
+                return (repaired, null);
+            });
+            if (notRebased is not null)
+            {
+                return notRebased;
             }
-            await PushAsync(flight, cancellationToken);
+            if (Moved(flight) is not null)
+            {
+                return null;
+            }
+            flight = Record(code, f => f with { Base = repaired.Base })!;
             state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} rebased onto {flight.Base}; reviewed afresh", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
             await StartReviewAsync(flight, cancellationToken, quiet: true);
             return null;
@@ -264,6 +287,7 @@ public sealed partial class LegCommander(
         }
         finally
         {
+            call.Dispose();
             _one.Release();
         }
     }
@@ -954,14 +978,24 @@ public sealed partial class LegCommander(
                     && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name);
                 if (pushes)
                 {
-                    await EnsureNotArmedAsync(flight, cancellationToken);
+                    using (Calling(flight.Code, "being pushed"))
+                    {
+                        await OffLockAsync(flight, () => EnsureNotArmedAsync(flight, cancellationToken));
+                    }
+                    if (Unchanged(flight.Code, leg) is null)
+                    {
+                        throw new FlightException($"{flight.Code}/{leg.Name} changed while GitHub was being asked: nothing was recorded, look again and finish again");
+                    }
                 }
                 state.PutLeg(leg with { State = LegState.Done, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : leg.Report, Wait = null });
                 state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} done");
                 // A go-around the review asked for, done: the fixed branch goes up and is reviewed afresh, by itself.
                 if (flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null && state.Legs(flight.Code).All(l => l.State == LegState.Done))
                 {
-                    await PushAsync(flight, cancellationToken);
+                    using (Calling(flight.Code, "being pushed"))
+                    {
+                        await OffLockAsync(null, () => PushAsync(flight, cancellationToken));
+                    }
                     await StartReviewAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken, quiet: true);
                 }
                 break;
@@ -1038,7 +1072,14 @@ public sealed partial class LegCommander(
         // review starts. Left Passed, the finished go-around neither pushes nor reviews, and the flight would sit with no card.
         if (leg.State == LegState.Done && flight.Review is { State: ReviewState.Passed } && flight.PullRequest is not null)
         {
-            await TurnToChangesAsync(flight, why, cancellationToken);
+            using (Calling(flight.Code, "being sent round"))
+            {
+                await TurnToChangesAsync(flight, why, cancellationToken);
+            }
+            if (Unchanged(flight.Code, leg) is null)
+            {
+                throw new FlightException($"{flight.Code}/{leg.Name} changed while GitHub was being asked: nothing more was done, look again and go around again");
+            }
             flight = FlightOf(Verbs.FlightTarget(flight.Code));
         }
 
@@ -1086,17 +1127,25 @@ public sealed partial class LegCommander(
     /// </summary>
     private async Task<(bool Merged, string? Made, string? Way)> MergeAsync(CommandRequest command, CancellationToken cancellationToken)
     {
-        var (flight, pr, method) = await MergeableAsync(command, cancellationToken);
-        // A merge queue takes no PR whose required checks have not passed, and a plain merge would be refused for the same:
-        // pressed while they run, the merge waits for them on this head (TIA1818's #1826, DE1 2026-10-25).
-        var checks = await github.ChecksSummaryAsync(flight.RepoPath, pr.Number, cancellationToken);
+        var (flight, head, method) = Mergeable(command);
+        // Every ask of GitHub and git is made with the lock let go (PIL338): the flight is this command's meanwhile, and what it
+        // found is recorded only if the flight is still as it was decided on.
+        using var call = Calling(flight.Code, "being merged");
+        var (pr, checks, mergeState) = await OffLockAsync(flight, async () =>
+        {
+            var pr = await LookAtPrAsync(flight, head, cancellationToken);
+            var checks = await github.ChecksSummaryAsync(flight.RepoPath, pr.Number, cancellationToken);
+            // A merge queue takes no PR whose required checks have not passed, and a plain merge would be refused for the same:
+            // pressed while they run, the merge waits for them on this head (TIA1818's #1826, DE1 2026-10-25).
+            var mergeState = checks?.Status == ChoiceStatus.Failing ? null : await github.MergeStateAsync(flight.RepoPath, pr.Number, cancellationToken);
+            return (pr, checks, mergeState);
+        });
         if (checks?.Status == ChoiceStatus.Failing)
         {
             throw new FlightException($"#{pr.Number}'s checks fail: it merges once they pass");
         }
         // What GitHub says about the PR is what the button does: a PR in the queue is not queued twice, one behind its base or
         // with changes requested is refused with that said, as GitHub's own button would not be there (pilot #244).
-        var mergeState = await github.MergeStateAsync(flight.RepoPath, pr.Number, cancellationToken);
         switch (mergeState?.Kind)
         {
             case MergeKinds.Queued:
@@ -1119,9 +1168,10 @@ public sealed partial class LegCommander(
         }
         if (flight.MergeWhenGreen is not null)
         {
-            state.PutFlight(flight with { MergeWhenGreen = null });
+            Record(flight.Code, f => f with { MergeWhenGreen = null });
         }
-        return await github.MergeAsync(flight.RepoPath, pr.Number, pr.Head, method, cancellationToken)
+        // The merge itself is the longest ask: nothing of the flight is held over it, and what follows reads the flight afresh.
+        return await OffLockAsync(null, () => github.MergeAsync(flight.RepoPath, pr.Number, pr.Head, method, cancellationToken))
             ? (false, QueuedLine(flight.Code), MergeWays.Queued)
             : (true, null, null);
     }
@@ -1161,10 +1211,10 @@ public sealed partial class LegCommander(
     // the node's polling (PrChecks). A merge queue base keeps joining the queue once the checks pass, as before.
     private async Task<(bool Merged, string? Made, string? Way)> ArmAsync(FlightRow flight, PullRequest pr, string method, ChecksSummary? checks, string? progress, bool byAutopilot, CancellationToken cancellationToken)
     {
-        var how = await ArmHowAsync(flight, pr, method, cancellationToken);
+        var how = await OffLockAsync(flight, () => ArmHowAsync(flight, pr, method, cancellationToken));
         // A merge the node asked for on autopilot is marked (last), so a failure of its checks sends the leg round as it would without
         // one. The mark follows who waits (an empty third element when none does).
-        state.PutFlight(flight with { MergeWhenGreen = (how, byAutopilot) switch
+        Record(flight.Code, f => f with { MergeWhenGreen = (how, byAutopilot) switch
         {
             (null, false) => [pr.Head, method],
             (_, false) => [pr.Head, method, how!],
@@ -1204,18 +1254,22 @@ public sealed partial class LegCommander(
     /// </summary>
     private async Task<(string? Made, string? Way)> RerunChecksAsync(CommandRequest command, CancellationToken cancellationToken)
     {
-        var (flight, pr, method) = await MergeableAsync(command, cancellationToken);
-        var runs = await github.RerunFailedChecksAsync(flight.RepoPath, pr.Number, cancellationToken);
+        var (flight, head, method) = Mergeable(command);
+        using var call = Calling(flight.Code, "re-running its checks");
+        var (pr, runs) = await OffLockAsync(flight, async () =>
+        {
+            var pr = await LookAtPrAsync(flight, head, cancellationToken);
+            return (pr, await github.RerunFailedChecksAsync(flight.RepoPath, pr.Number, cancellationToken));
+        });
         var (_, made, way) = await ArmAsync(flight, pr, method, null, $"merging when checks pass: {runs} failed {(runs == 1 ? "run" : "runs")} running again", false, cancellationToken);
         return (made, way);
     }
 
     /// <summary>
-    /// What a merge needs before anything is asked of GitHub about its checks: the flight flying with every leg done and its
-    /// review passed, its PR open at the head the controller reviewed and nothing in the plane past it, and not conflicting.
-    /// Throws <see cref="FlightException"/> with why not.
+    /// What a merge needs of the node's own state before anything is asked of GitHub: the flight flying with every leg done and its
+    /// review passed, and the head and method asked for. Throws <see cref="FlightException"/> with why not. Under the lock.
     /// </summary>
-    private async Task<(FlightRow Flight, PullRequest Pr, string Method)> MergeableAsync(CommandRequest command, CancellationToken cancellationToken)
+    private (FlightRow Flight, string Head, string Method) Mergeable(CommandRequest command)
     {
         var flight = FlightOf(command.Target);
         var args = command.Args ?? [];
@@ -1244,6 +1298,15 @@ public sealed partial class LegCommander(
                 ? $"{flight.Code} has not been reviewed; open its PR with the node (flight pr), which starts the review"
                 : $"{flight.Code}'s review is {flight.Review.State.ToString().ToLowerInvariant()}, not passed");
         }
+        return (flight, head, method);
+    }
+
+    /// <summary>
+    /// The flight's PR as GitHub has it, open at the head the controller reviewed with nothing in the plane past it, and not
+    /// conflicting. Throws <see cref="FlightException"/> with why not. Asks GitHub and git: never under the lock.
+    /// </summary>
+    private async Task<PullRequest> LookAtPrAsync(FlightRow flight, string head, CancellationToken cancellationToken)
+    {
         var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken)
             ?? throw new FlightException($"{flight.Branch} has no PR");
         if (!string.Equals(pr.State, "OPEN", StringComparison.OrdinalIgnoreCase))
@@ -1266,7 +1329,7 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"#{pr.Number} conflicts with its base, so GitHub cannot merge it");
         }
-        return (flight, pr, method);
+        return pr;
     }
 
     /// <summary>
@@ -1401,27 +1464,34 @@ public sealed partial class LegCommander(
             throw new FlightException($"{flight.Code} has legs not done: {string.Join(", ", open)}");
         }
 
-        // A base that is not a branch on the remote is repaired first: the rebase it takes must be what is pushed.
-        flight = await RepairBaseAsync(flight, cancellationToken);
-        // Pushed every time, not only for a new PR: a go-around's commits must reach the PR before it is reviewed again.
-        await PushAsync(flight, cancellationToken);
-        var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
-        if (pr is null || !string.Equals(pr.State, "OPEN", StringComparison.OrdinalIgnoreCase))
+        var title = string.Join(' ', command.Args ?? []).Trim();
+        // The base repaired, the branch pushed and the PR looked up and made are git and GitHub: asked with the lock let go (PIL338), and
+        // recorded once the flight is found as it was. Each is safe to say again, as a PR made and not recorded is found by its branch.
+        using var call = Calling(flight.Code, "having its PR opened");
+        var (repaired, pr) = await OffLockAsync(flight, async () =>
         {
-            var title = string.Join(' ', command.Args ?? []).Trim();
-            pr = await github.CreateAsync(flight.RepoPath, flight.Branch, BaseBranch(flight), PrTitle(flight, title), PrBody(flight, legs), cancellationToken);
-            // The node label rides the PR as an issue's label (a PR is one on GitHub), not through SetPilotLabelAsync, which
-            // would swap out the PR's state labels. A refusal is noted, not fatal to the PR.
-            try
+            // A base that is not a branch on the remote is repaired first: the rebase it takes must be what is pushed.
+            var repaired = await RepairBaseAsync(flight, cancellationToken);
+            // Pushed every time, not only for a new PR: a go-around's commits must reach the PR before it is reviewed again.
+            await PushAsync(repaired, cancellationToken);
+            var pr = await github.PullRequestAsync(repaired.RepoPath, repaired.Branch, cancellationToken);
+            if (pr is null || !string.Equals(pr.State, "OPEN", StringComparison.OrdinalIgnoreCase))
             {
-                await github.AddIssueLabelAsync(flight.RepoPath, pr.Number, PilotMarks.NodeLabel(options.Machine), cancellationToken);
+                pr = await github.CreateAsync(repaired.RepoPath, repaired.Branch, BaseBranch(repaired), PrTitle(repaired, title), PrBody(repaired, legs), cancellationToken);
+                // The node label rides the PR as an issue's label (a PR is one on GitHub), not through SetPilotLabelAsync, which
+                // would swap out the PR's state labels. A refusal is noted, not fatal to the PR.
+                try
+                {
+                    await github.AddIssueLabelAsync(repaired.RepoPath, pr.Number, PilotMarks.NodeLabel(options.Machine), cancellationToken);
+                }
+                catch (FlightException ex)
+                {
+                    state.RaiseCard(CardBin.Handled, "node-label-refused", Verbs.FlightTarget(repaired.Code), $"{repaired.Code}'s PR has no {PilotMarks.NodeLabel(options.Machine)} label", ex.Message);
+                }
             }
-            catch (FlightException ex)
-            {
-                state.RaiseCard(CardBin.Handled, "node-label-refused", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR has no {PilotMarks.NodeLabel(options.Machine)} label", ex.Message);
-            }
-        }
-        state.PutFlight(flight with { PullRequest = pr.Number, PullRequestUrl = pr.Url });
+            return (repaired, pr);
+        });
+        Record(flight.Code, f => f with { Base = repaired.Base, PullRequest = pr.Number, PullRequestUrl = pr.Url });
 
         // The PR open, a fresh reviewer reads it before the merge is offered. One that cannot start costs the flight
         // its review, not its merge: the card says so and the controller decides.
@@ -1706,16 +1776,19 @@ public sealed partial class LegCommander(
 
         // On GitHub before the verdict is kept: a gh that fails leaves the review as it was, for the reviewer to say again,
         // never a pass whose PR is still a draft, or changes whose PR can still be merged with the fixes pending.
+        // GitHub is asked with the lock let go (PIL338): the flight is this verdict's meanwhile, and the verdict is kept only if the
+        // flight is found as it was.
+        using var call = Calling(flight.Code, "being given its verdict");
         if (flight.PullRequest is { } number)
         {
-            await github.SetDraftAsync(flight.RepoPath, number, draft: verdict == "changes", cancellationToken);
+            await OffLockAsync(flight, () => github.SetDraftAsync(flight.RepoPath, number, draft: verdict == "changes", cancellationToken));
         }
 
         var now = time.GetUtcNow();
         var kept = fromReviewer ? report : $"{report} (passed by {command.Who} over: {review.Report})";
-        state.PutFlight(flight with { Review = review with { State = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes, Report = kept, FinishedAt = now } });
+        Record(flight.Code, f => f with { Review = f.Review is { } held ? held with { State = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes, Report = kept, FinishedAt = now } : null });
         // On the PR now the verdict is kept: a mark GitHub refuses is a card, never a verdict lost.
-        await _marks.ApplyAsync(flight.Code, cancellationToken);
+        await OffLockAsync(null, () => _marks.ApplyAsync(flight.Code, cancellationToken));
         flight = FlightOf(command.Target);
         if (verdict == "pass")
         {
@@ -1754,53 +1827,37 @@ public sealed partial class LegCommander(
     public Task<string?> ConflictsAsync(string code, string why, CancellationToken cancellationToken) =>
         SendBackAsync(code, _ => $"the PR conflicts with its base ({why}): rebase the plane onto its base, resolving every conflict so both sides' work stays, rerun the check, and push", "it conflicts with its base", cancellationToken);
 
-    /// <summary>Sets on GitHub what an earlier refusal left: the review comment, the status, the label. The node's look at the PRs calls it.</summary>
-    public async Task RetryMarksAsync(CancellationToken cancellationToken)
-    {
-        await _one.WaitAsync(cancellationToken);
-        try
-        {
-            await _marks.RetryAsync(cancellationToken);
-        }
-        finally
-        {
-            _one.Release();
-        }
-    }
+    /// <summary>
+    /// Sets on GitHub what an earlier refusal left: the review comment, the status, the label. The node's look at the PRs calls it.
+    /// Never under the commander's lock: the marks are one flight at a time among themselves, and each write to a flight's row is one
+    /// step (PIL338).
+    /// </summary>
+    public Task RetryMarksAsync(CancellationToken cancellationToken) => _marks.RetryAsync(cancellationToken);
 
     /// <summary>
     /// Keeps a flight's PR marks to what the node's look at the PR found: its conflicts and merge queue as labels, and its head
-    /// and <c>pilot:</c> label as GitHub has them on the flight's row.
+    /// and <c>pilot:</c> label as GitHub has them on the flight's row. Never under the commander's lock, as <see cref="RetryMarksAsync"/>.
     /// </summary>
-    public async Task NoteGitHubAsync(string code, PullRequest pr, bool queued, CancellationToken cancellationToken)
-    {
-        await _one.WaitAsync(cancellationToken);
-        try
-        {
-            await _marks.NoteAsync(code, pr, queued, cancellationToken);
-        }
-        finally
-        {
-            _one.Release();
-        }
-    }
+    public Task NoteGitHubAsync(string code, PullRequest pr, bool queued, CancellationToken cancellationToken) => _marks.NoteAsync(code, pr, queued, cancellationToken);
 
     /// <summary>
     /// A passed review taken as asking for <paramref name="changes"/>: the PR goes back to draft, which GitHub will not merge, and
     /// the flight's review turns to Changes, so the leg's finish pushes and reviews afresh. A new go-around's changes are its own
-    /// COMMENT review, so the one that passed is not the last word on the PR. Runs under the commander's lock.
+    /// COMMENT review, so the one that passed is not the last word on the PR. Called under the commander's lock with the flight
+    /// taken (<see cref="Calling"/>), and lets the lock go for GitHub; a flight found changed is refused, and nothing is recorded.
     /// </summary>
     private async Task TurnToChangesAsync(FlightRow flight, string changes, CancellationToken cancellationToken)
     {
         var number = flight.PullRequest!.Value;
-        await github.SetDraftAsync(flight.RepoPath, number, draft: true, cancellationToken);
-        state.PutFlight(flight with { Review = flight.Review! with { State = ReviewState.Changes, Report = changes, FinishedAt = time.GetUtcNow(), ReviewUrl = null, MarksWhy = null } });
-        await _marks.ApplyAsync(flight.Code, cancellationToken);
+        await OffLockAsync(flight, () => github.SetDraftAsync(flight.RepoPath, number, draft: true, cancellationToken));
+        Record(flight.Code, f => f with { Review = f.Review is { } held ? held with { State = ReviewState.Changes, Report = changes, FinishedAt = time.GetUtcNow(), ReviewUrl = null, MarksWhy = null } : null });
+        await OffLockAsync(null, () => _marks.ApplyAsync(flight.Code, cancellationToken));
     }
 
     private async Task<string?> SendBackAsync(string code, Func<int, string> changesFor, string closing, CancellationToken cancellationToken)
     {
-        await _one.WaitAsync(cancellationToken);
+        // The flight is this send-back's while GitHub is asked, as a rebase's: one under way on it is waited for, without the lock.
+        var call = await EnterAsync(code, "being sent back for changes", cancellationToken);
         try
         {
             if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying, Review: { State: ReviewState.Passed }, PullRequest: { } number } flight)
@@ -1819,6 +1876,7 @@ public sealed partial class LegCommander(
         }
         finally
         {
+            call.Dispose();
             _one.Release();
         }
     }
@@ -1826,7 +1884,7 @@ public sealed partial class LegCommander(
     /// <summary>Every leg done, reviewed, the PR open: the merge is the controller's, a gate before an irreversible step.</summary>
     private async Task RaisePrReadyAsync(FlightRow flight, string review, string reviewed, CancellationToken cancellationToken)
     {
-        var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken)
+        var pr = await OffLockAsync(null, () => github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken))
             ?? throw new FlightException($"{flight.Branch} has no PR");
         var legs = state.Legs(flight.Code);
         state.RaiseCard(CardBin.Ring, PrReady, Verbs.FlightTarget(flight.Code),
@@ -1865,7 +1923,8 @@ public sealed partial class LegCommander(
     /// A flight whose base is not a branch on the remote (cut while the clone lacked <c>origin/HEAD</c>, from whatever was
     /// checked out; PIL124 and PIL126 from a feature branch since merged and deleted): its base becomes the remote's
     /// default, and its clean plane is rebased onto it, which drops the commits that branch already landed. A rebase that
-    /// conflicts is undone and said, never left half done.
+    /// conflicts is undone and said, never left half done. Asks git and GitHub, so never under the lock, and the repaired row is the
+    /// caller's to record.
     /// </summary>
     private async Task<FlightRow> RepairBaseAsync(FlightRow flight, CancellationToken cancellationToken)
     {
@@ -1889,9 +1948,8 @@ public sealed partial class LegCommander(
             await git.RunAsync(["rebase", "--abort"], flight.Worktree, cancellationToken);
             throw new FlightException($"{flight.Code}'s base {flight.Base} is not a branch on the remote, and rebasing its plane onto {remoteBase} conflicts: {rebase.Why}. Rebase it by hand, then open the PR");
         }
-        var repaired = flight with { Base = remoteBase };
-        state.PutFlight(repaired);
-        return repaired;
+        // The caller records the new base, under the lock: this runs with it let go.
+        return flight with { Base = remoteBase };
     }
 
     /// <summary>The branch a PR goes into: its base without the remote (<c>origin/main</c> is <c>main</c>).</summary>

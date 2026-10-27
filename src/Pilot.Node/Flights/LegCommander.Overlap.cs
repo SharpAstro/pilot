@@ -170,7 +170,11 @@ public sealed partial class LegCommander
         // is recorded and the card stays open; the planner, stopped, is started again by the controller's next answer.
         await StopPlannerAsync(flight, cancellationToken);
         var answered = flight with { Overlaps = [.. flight.Overlaps.Select(o => o.Other == known.Other ? o with { Answer = OverlapAnswer.Fold, At = time.GetUtcNow() } : o)] };
-        await flights.RetireFoldedAsync(answered, other.Code, cancellationToken);
+        // The retirement takes the plane down (its sessions, its worktree): with this lock let go, the flight held meanwhile (PIL338).
+        using (Calling(flight.Code, "being folded"))
+        {
+            await OffLockAsync(null, () => flights.RetireFoldedAsync(answered, other.Code, cancellationToken));
+        }
 
         other = FlightOf(Verbs.FlightTarget(other.Code));
         if (!other.FoldedIn.Any(f => f.Number == flight.Issue))
