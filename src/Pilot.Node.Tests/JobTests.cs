@@ -140,6 +140,38 @@ public sealed class JobTests : IDisposable
     }
 
     [Fact]
+    public async Task AJobInheritsOnlyItsLogAndNulNotAnOtherInheritableHandleTheNodeHolds()
+    {
+        // PIL365: the node holds inheritable handles of its own (a pipe to a child, say). A job that inherited them would keep the
+        // far end open for as long as it ran. Here the test's own client end is that handle: once the test closes its copy,
+        // the only other holder would be the job.
+        using var server = new System.IO.Pipes.AnonymousPipeServerStream(System.IO.Pipes.PipeDirection.In, HandleInheritability.Inheritable);
+        var clientClosed = false;
+        try
+        {
+            var id = Run(Sleep(30)).Made.ShouldNotBeNull();
+            var running = await Until(id, j => j.State == JobState.Running && j.Pid is not null);
+
+            server.DisposeLocalCopyOfClientHandle();
+            clientClosed = true;
+
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(5));
+            var read = await server.ReadAsync(new byte[1], timeout.Token);
+
+            read.ShouldBe(0);
+            IsAlive(running.Pid!.Value).ShouldBeTrue();
+        }
+        finally
+        {
+            if (!clientClosed)
+            {
+                server.DisposeLocalCopyOfClientHandle();
+            }
+        }
+    }
+
+    [Fact]
     public async Task AFailingJobSaysItsExitCode()
     {
         var job = await Ended(Run(Echo("3 failed", 3)).Made!);
