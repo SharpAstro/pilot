@@ -248,6 +248,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     // Column widths of the list, as they are before a reader drags a divider.
     private const float CodeWidth = 120f;
+    // Wide enough for "stale (DE1 unreachable)" in 11 pt under the code.
+    private const float StaleCodeWidth = 150f;
+    // What is dropped once it is this narrow: a title in a sliver of a column was drawn over the State beside it.
+    private const float WhatDropBelow = 60f;
     private const float WhereWidth = 140f;
     private const float StateWidth = 160f;
     private const float BranchWidth = 150f;
@@ -798,7 +802,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         }
 
         var marked = screen.Lines.Any(l => l.Node is not null);
-        var columns = Columns(marked);
+        var columns = Columns(marked, screen.Lines.Any(l => l.Stale is not null));
         var rows = new Layout.Node[screen.Lines.Count];
         for (var i = 0; i < rows.Length; i++)
         {
@@ -812,14 +816,18 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             .Stretch();
     }
 
-    /// <summary>The list's columns, header and rows both over them: Node only while the page merges several nodes.</summary>
-    private static IReadOnlyList<ListColumn> Columns(bool marked)
+    /// <summary>
+    /// The list's columns, header and rows both over them: Node only while the page merges several nodes. A stale row's mark sits
+    /// under its code, so the Flight column is wide enough for it while one shows. Repo is dropped on a narrow window, as
+    /// Branch and Sessions are: as a fixed column it ran into What at 760 wide and overprinted it.
+    /// </summary>
+    private static IReadOnlyList<ListColumn> Columns(bool marked, bool stale)
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Fixed("Flight", CodeWidth),
-            ListColumn.Star("What"),
-            ListColumn.Fixed("Repo", WhereWidth),
+            ListColumn.Fixed("Flight", stale ? StaleCodeWidth : CodeWidth),
+            new ListColumn("What", Layout.Sizing.Star(1f, 0f), WhatDropBelow),
+            ListColumn.Optional("Repo", WhereWidth),
             ListColumn.Fixed("State", StateWidth),
             ListColumn.Fixed("Legs", LegsWidth),
             ListColumn.Optional("Branch", BranchWidth),
@@ -857,12 +865,17 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         var text = landed ? Dim : Bright;
         var cells = new List<Layout.Node>
         {
-            ListTable.Top(Layout.Builder.Text(line.Code, 15f, text)),
+            // A stale row's mark is under its code, in words and in the amber of a held thing: at a narrow width the State column is off the page.
+            line.StaleMark is { } mark
+                ? Layout.Builder.VStack(
+                    Layout.Builder.Text(line.Code, 15f, text).RowH(22f),
+                    Whole(Layout.Builder.Text(mark, 11f, Held).RowH(18f), mark, 0))
+                : ListTable.Top(Layout.Builder.Text(line.Code, 15f, text)),
             ListTable.Top(Whole(Layout.Builder.Text(line.Title, 14f, landed ? Dim : Body), line.Title, TitleFits)),
             ListTable.Top(Layout.Builder.Text(line.Where, 13f, Dim)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.State, 14f, color).RowH(22f),
-                Whole(Layout.Builder.Text(line.ShownDetail ?? "", 11f, line.Row.State == FlightState.Held && line.Stale is null ? Body : Dim).RowH(18f), line.ShownDetail ?? "", StateDetailFits)),
+                Whole(Layout.Builder.Text(line.StateDetail ?? "", 11f, line.Row.State == FlightState.Held && line.Stale is null ? Body : Dim).RowH(18f), line.StateDetail ?? "", StateDetailFits)),
             ListTable.Top(Whole(Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body), line.Legs, LegsFits)),
             ListTable.Top(Layout.Builder.Text(line.Branch, 12f, Dim)),
             ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body)),

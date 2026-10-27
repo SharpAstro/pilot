@@ -125,13 +125,11 @@ internal sealed partial class FlightsView<TSurface>
             // The stale mark is a line of its own below: here it overlapped the title and cut the buttons at a narrow width.
             Layout.Builder.Text(line.StateDetail is null ? line.State : $"{line.State} ({line.StateDetail})", 13f, color, TextAlign.Far).WAuto(),
         };
-        if (CanCommand)
-        {
-            foreach (var action in FlightAction.For(line))
-            {
-                head.Add(ActionButton(line, action, $"flight:{line.Code}:{action.Verb}"));
-            }
-        }
+        // The buttons wrap onto lines of their own under the title, as Home's chips do: in the head row they took the title's room and
+        // the last (a stale flight's dead "Remove render") ran past the page's edge at a narrow width.
+        var buttons = CanCommand
+            ? FlightAction.For(line).Select(action => ActionButton(line, action, $"flight:{line.Code}:{action.Verb}")).ToList()
+            : [];
 
         var facts = new List<Layout.Node>
         {
@@ -173,6 +171,10 @@ internal sealed partial class FlightsView<TSurface>
         [
             Layout.Builder.HStack([.. head]).WithGap(10f).RowH(32f),
         ];
+        if (buttons.Count > 0)
+        {
+            page.Add(Layout.Builder.WrapH([.. buttons]).WithGap(10f).WithLineGap(6f).WStar());
+        }
         // A why asked for sits under the buttons it was asked by.
         page.AddRange(WhyRow(line));
         if (line.StaleMark is { } stale)
