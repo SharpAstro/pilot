@@ -1124,7 +1124,7 @@ fix replaces it, and a second install changes nothing.
 
 The **Claude Code permissions** check (`setup node claude-permissions`, not optional) reads `permissions.allow` in the same
 user settings file and lists which of pilot's allow rules are missing, so an unattended session is not stopped at a permission
-prompt for its own commands. The rules, each for both `Bash` and `PowerShell`: `pilot <verb>:*` for `update`, `answer`,
+prompt for its own commands. The rules, each for both `Bash` and `PowerShell`: `pilot <verb>:*` for `update`, `node`, `answer`,
 `dismiss`, `settings`, `job`, `jobs`, `cancel`, `leg`, `flight`, `review`, `tell`, `say`, `cards`, `status` and `sessions`, and
 the node's own binary and the `pilot` CLI beside it by full path (`<path>:*`), so a restart by path is allowed. A rule counts
 as present when the list has it, the whole tool (`Bash`), or every pilot verb (`Bash(pilot:*)`). The check names how many are
