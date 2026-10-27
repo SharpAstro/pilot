@@ -243,22 +243,20 @@ public sealed class McpTests : IAsyncLifetime
         var output = new LineWriter();
         var child = new FakeChild(_node.Folder, _node.SocketPath);
 
-        // Nothing changed for the first message; the update lands before the second is answered.
-        var updated = false;
+        // Nothing changed for the first message; the update lands before the second is answered. The server looks once after each
+        // reply (the quiet timer is its default 30 s here and cannot fire), so the second look is the one that sees it.
+        var looks = 0;
         var server = new McpServer(_node.Folder, node: null, socket: _node.SocketPath,
-            installed: _ => Task.FromResult<string?>(updated ? "99.0.0+abc" : McpServer.Running), log: log, startChild: child.Start);
+            installed: _ => Task.FromResult<string?>(Interlocked.Increment(ref looks) >= 2 ? "99.0.0+abc" : McpServer.Running), log: log, startChild: child.Start);
         var running = server.RunAsync(input, output, Ct);
 
         input.Feed(Initialize);
         (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(1);
-        updated = true;
         input.Feed("""{"jsonrpc":"2.0","id":2,"method":"ping"}""");
 
-        // The reply and, once, the tools may differ on the new binary. Either comes first: the server's own watch can see the
-        // update before the ping is answered, and hands over as a quiet server does (failed so on CI twice, 2026-10-27).
-        var two = new[] { await output.NextAsync(), await output.NextAsync() };
-        two.Count(m => m.TryGetProperty("id", out var id) && id.GetInt32() == 2).ShouldBe(1);
-        two.Count(m => m.TryGetProperty("method", out var method) && method.GetString() == "notifications/tools/list_changed").ShouldBe(1);
+        // The reply to the ping comes first, then the tools may differ on the new binary.
+        (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(2);
+        (await output.NextAsync()).GetProperty("method").GetString().ShouldBe("notifications/tools/list_changed");
         child.Args.ShouldBe(["--node-socket", _node.SocketPath, "mcp"]);
         child.Heard.Count.ShouldBe(2);
         JsonDocument.Parse(child.Heard[0]).RootElement.GetProperty("method").GetString().ShouldBe("initialize");
