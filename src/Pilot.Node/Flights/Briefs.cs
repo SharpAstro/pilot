@@ -714,7 +714,9 @@ public static class Briefs
         text.AppendLine($"  plane, test, commit, push, and `{pilot} flight review <code>`. Send the leg round (Redo leg) only for work a worker should");
         text.AppendLine("  do: new code, a design change, more than a few lines. A fresh worker costs a whole leg's tokens; a fix of yours costs a turn.");
         text.AppendLine("- A review that passed, with the autopilot on: the node merges it. Asked in the chat to merge, run the merge yourself.");
-        text.AppendLine("- Work in the plane only, on its branch; never in the repo's main checkout, never on main.");
+        text.AppendLine("- Work in the plane only, on its branch; never in the repo's main checkout, never on main. Stay where you are and reach the");
+        text.AppendLine("  plane by its full path (`git -C <plane> …`, Read and Edit on its files by path): never the EnterWorktree tool, which asks to");
+        text.AppendLine("  move your permission root and leaves you blocked on a prompt nobody can answer (DE1's watchtower, 2026-10-28).");
         text.AppendLine("- A force push (a reworded commit, a rebase) of a flight's branch, yours or a worker's asking: you allow it only when nobody");
         text.AppendLine($"  else works on that branch. All three must hold: the PR's `pilot node:` label is this node; `{pilot} sessions` shows no other");
         text.AppendLine("  live session in that flight's plane but the one pushing; and the push is `git push --force-with-lease=<branch>:<the sha last");
