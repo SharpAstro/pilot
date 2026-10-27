@@ -94,6 +94,7 @@ public sealed class CardSummaryTests
     {
         var old = new SnapshotEvent
         {
+            Seq = 1, At = DateTimeOffset.UnixEpoch, Stream = "s", Notes = [], Sessions = [],
             Cards =
             [
                 new CardRow { Id = "c1", Bin = CardBin.Ring, Kind = "leg-failed", Subject = "flight/PIL355/redo", Title = "PIL355/redo failed", At = DateTimeOffset.UnixEpoch, State = CardState.Open },
@@ -102,7 +103,7 @@ public sealed class CardSummaryTests
 
         var loaded = new NodeState(new OldJournal(old), TimeProvider.System);
 
-        loaded.Cards().Single().Summary.ShouldContain("PIL355/redo");
+        loaded.Cards().Single().Summary!.ShouldContain("PIL355/redo");
     }
 
     private sealed class OldJournal(SnapshotEvent snapshot) : INodeJournal
@@ -119,6 +120,7 @@ public sealed class CardSummaryTests
     {
         var snapshot = new SnapshotEvent
         {
+            Seq = 1, At = DateTimeOffset.UnixEpoch, Stream = "s", Notes = [], Sessions = [],
             Cards =
             [
                 new CardRow
