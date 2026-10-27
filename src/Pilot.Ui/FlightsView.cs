@@ -593,6 +593,11 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                     return false;
             }
         }
+        // A link's menu, and the keys that reach it, ahead of the page's.
+        if (evt is InputEvent.KeyDown linkKey && _links.HandleKey(linkKey, this))
+        {
+            return true;
+        }
         if (evt is InputEvent.KeyDown { Key: var viewerKey } && Gallery.HandleKey(viewerKey))
         {
             return true;

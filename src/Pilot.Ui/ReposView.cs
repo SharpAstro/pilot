@@ -191,6 +191,11 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     public override bool HandleInput(InputEvent evt)
     {
+        // A link's menu, and the keys that reach it, ahead of the list's.
+        if (evt is InputEvent.KeyDown linkKey && _links.HandleKey(linkKey, this))
+        {
+            return true;
+        }
         // Right lists the selected repo's worktrees under it, Left puts them away.
         if (evt is InputEvent.KeyDown { Key: InputKey.Right or InputKey.Left } arrow && Selected >= 0 && Selected < _lines.Count && _lines[Selected].Worktrees.Count > 0)
         {

@@ -39,7 +39,11 @@ internal sealed class LinkMenu
     /// <summary>The time, replaceable so a test can let the notice run out.</summary>
     public Func<DateTimeOffset> Now { get; set; } = () => DateTimeOffset.UtcNow;
 
+    private static readonly RGBAColor32 FocusBg = new(0x2f, 0x4d, 0x8a, 0xff);
+
     private readonly DropdownMenuState<string> _menu = new();
+    // The links a view has declared, by the action of their hit: how the keyboard finds one again after the frame is rebuilt.
+    private readonly Dictionary<string, string> _urls = [];
     private RectF32 _at;
     private DateTimeOffset? _copiedAt;
     private RectF32 _noticeAt;
@@ -48,6 +52,9 @@ internal sealed class LinkMenu
     /// <summary>The open menu's items; empty while it is shut.</summary>
     public IReadOnlyList<DropdownItem<string>> MenuItems => _menu.IsOpen ? _menu.Items : [];
 
+    /// <summary>The action of the link that has the keyboard focus, or null when none has: Tab and Shift+Tab move it, Shift+F10 opens its menu.</summary>
+    public string? Focused { get; private set; }
+
     /// <summary>Whether the "Copied" notice is up.</summary>
     public bool NoticeShown => _copiedAt is { } at && Now() - at < NoticeFor;
 
@@ -55,29 +62,94 @@ internal sealed class LinkMenu
     /// <paramref name="link"/> with the menu on its right press, for <paramref name="url"/>: the one place a view says a link has
     /// a menu. A link of a host with no clipboard is returned as it is.
     /// </summary>
-    public Layout.Node OnLink(Layout.Node link, string url) =>
-        CopyText is null ? link : link.WithContextMenu(at => Open(url, at));
+    public Layout.Node OnLink(Layout.Node link, string url)
+    {
+        if (CopyText is null)
+        {
+            return link;
+        }
+        if (link.Hit is HitResult.ButtonHit { Action: var action })
+        {
+            _urls[action] = url;
+            // A link with the keyboard on it is lit, so Shift+F10 is seen to be about it.
+            if (action == Focused)
+            {
+                link = link.Bg(FocusBg);
+            }
+        }
+        return link.WithContextMenu(at => Open(url, at));
+    }
+
+    /// <summary>Puts the keyboard on the link whose hit has <paramref name="action"/>, or takes it off with null.</summary>
+    public void Focus(string? action) => Focused = action;
 
     /// <summary>Opens the menu where <paramref name="at"/> was pressed, with Copy URL for <paramref name="url"/>.</summary>
-    public void Open(string url, PointerPress at)
+    public void Open(string url, PointerPress at) => OpenAt(url, at.X, at.Y);
+
+    private void OpenAt(string url, float x, float y)
     {
         if (CopyText is not { } copy)
         {
             return;
         }
-        _menu.Items = [new DropdownItem<string>(CopyLabel, "copy-url") { OnChoose = () => Copied(url, copy, at) }];
+        _menu.Items = [new DropdownItem<string>(CopyLabel, "copy-url") { OnChoose = () => Copied(url, copy, x, y) }];
         // Hung where the press was, a point: the menu is as wide as its entry, measured, and kept on screen.
-        _at = new RectF32(at.X, at.Y, 0f, 0f);
+        _at = new RectF32(x, y, 0f, 0f);
         _menu.IsOpen = true;
     }
 
-    private void Copied(string url, Action<string> copy, PointerPress at)
+    private void Copied(string url, Action<string> copy, float x, float y)
     {
         copy(url);
         _menu.IsOpen = false;
         _copiedAt = Now();
-        _noticeAt = new RectF32(at.X, at.Y, 0f, 0f);
+        _noticeAt = new RectF32(x, y, 0f, 0f);
         Tock();
+    }
+
+    /// <summary>
+    /// The keys of a link's menu, for the view that owns it to offer ahead of its own: Tab and Shift+Tab move the focus along the
+    /// links <paramref name="widget"/> has painted, Shift+F10 opens the focused link's menu under it, and with the menu open
+    /// Enter chooses Copy URL and Escape shuts it. True when the key was taken. (DIR.Lib's InputKey has no Menu key yet, so that
+    /// one is not heard: SharpAstro/DIR.Lib#162.)
+    /// </summary>
+    public bool HandleKey(InputEvent.KeyDown key, IPixelWidget widget)
+    {
+        if (_menu.IsOpen)
+        {
+            switch (key.Key)
+            {
+                case InputKey.Enter when _menu.Items.Count > 0:
+                    _menu.Items[0].OnChoose?.Invoke();
+                    return true;
+                case InputKey.Escape:
+                    _menu.IsOpen = false;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+        if (CopyText is null || _urls.Count == 0)
+        {
+            return false;
+        }
+        var shift = (key.Modifiers & InputModifier.Shift) != 0;
+        if (key.Key is InputKey.F10 && key.Modifiers == InputModifier.Shift)
+        {
+            if (Focused is not { } action || !_urls.TryGetValue(action, out var url))
+            {
+                return false;
+            }
+            foreach (var (painted, region) in Painted(widget))
+            {
+                if (painted == action)
+                {
+                    // The links of the last paint, in the order they were painted, which is the order a reader meets them.
+    private List<(string Action, ClickableRegion Region)> Painted(IPixelWidget widget)
+    {
+        var regions = new List<ClickableRegion>();
+        widget.CollectPaintedRegions(regions);
+        return [.. regions.Where(r => r.Result is HitResult.ButtonHit b && _urls.ContainsKey(b.Action)).Select(r => (((HitResult.ButtonHit)r.Result).Action, r))];
     }
 
     // A frame per tick while the notice is up, so it thins and goes without the pointer moving; one timer at a time.

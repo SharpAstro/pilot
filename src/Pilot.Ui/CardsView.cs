@@ -445,7 +445,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         return Layout.Builder.VStack([.. rows]).Pad(Gutter, 4f).Bg(CardBg).WStar().HAuto();
     }
 
-    public override bool HandleInput(InputEvent evt) => false;
+    public override bool HandleInput(InputEvent evt) => evt is InputEvent.KeyDown key && _links.HandleKey(key, this);
 
     internal Layout.Node Build(CardsScreen screen)
     {

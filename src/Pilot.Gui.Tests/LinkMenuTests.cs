@@ -397,6 +397,129 @@ public sealed class LinkMenuTests
         copied.ShouldBe(["https://github.com/example-org/orbit/pull/205"]);
     }
 
+    // ---- The keyboard (SharpAstro/pilot#337, link-menu-keyboard) ----
+
+    private static InputEvent.KeyDown Key(InputKey key, InputModifier mods = InputModifier.None) => new(key, mods);
+
+    [Fact]
+    public void ShiftF10OnAFocusedCardTitleLinkOpensCopyUrlUnderItAndEnterCopies()
+    {
+        using var renderer = new RgbaImageRenderer(300, 800);
+        var (view, copied) = Panel(renderer);
+        var screen = CardsScreen.From([PrCard()]);
+        view.Render(screen, new RectF32(0, 0, 300, 800));
+
+        // Tab puts the keyboard on the first link; nothing is open until Shift+F10.
+        view.HandleInput(Key(InputKey.Tab)).ShouldBeTrue();
+        view.Links.Focused.ShouldBe("card:c5:title");
+        view.Links.MenuItems.ShouldBeEmpty();
+        view.Render(screen, new RectF32(0, 0, 300, 800));
+
+        view.HandleInput(Key(InputKey.F10, InputModifier.Shift)).ShouldBeTrue();
+        view.Links.MenuItems.Select(i => i.Label).ShouldBe([LinkMenu.CopyLabel]);
+        // The menu is on the page, hung under the link.
+        var regions = Painted(view, screen);
+        var title = Link(regions, "card:c5:title");
+        var item = regions.Single(r => r.Result is HitResult.ListItemHit);
+        item.X.ShouldBeGreaterThanOrEqualTo(title.X - 1f);
+        item.Y.ShouldBeGreaterThanOrEqualTo(title.Y + title.Height - 1f);
+
+        view.HandleInput(Key(InputKey.Enter)).ShouldBeTrue();
+        copied.ShouldBe([PrUrl]);
+        view.Links.MenuItems.ShouldBeEmpty();
+        view.Links.NoticeShown.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void EscapeShutsTheKeyboardsMenuWithoutCopying()
+    {
+        using var renderer = new RgbaImageRenderer(300, 800);
+        var (view, copied) = Panel(renderer);
+        var screen = CardsScreen.From([PrCard()]);
+        view.Render(screen, new RectF32(0, 0, 300, 800));
+        view.HandleInput(Key(InputKey.Tab)).ShouldBeTrue();
+        view.Render(screen, new RectF32(0, 0, 300, 800));
+        view.HandleInput(Key(InputKey.F10, InputModifier.Shift)).ShouldBeTrue();
+        view.Links.MenuItems.ShouldNotBeEmpty();
+
+        view.HandleInput(Key(InputKey.Escape)).ShouldBeTrue();
+
+        view.Links.MenuItems.ShouldBeEmpty();
+        copied.ShouldBeEmpty();
+        view.Links.NoticeShown.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ShiftF10WithNoLinkFocusedAndPlainF10AreLeftAlone()
+    {
+        using var renderer = new RgbaImageRenderer(300, 800);
+        var (view, _) = Panel(renderer);
+        var screen = CardsScreen.From([PrCard()]);
+        view.Render(screen, new RectF32(0, 0, 300, 800));
+
+        view.HandleInput(Key(InputKey.F10, InputModifier.Shift)).ShouldBeFalse();
+        view.HandleInput(Key(InputKey.Tab)).ShouldBeTrue();
+        view.Render(screen, new RectF32(0, 0, 300, 800));
+        view.HandleInput(Key(InputKey.F10)).ShouldBeFalse();
+        view.Links.MenuItems.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void TabAndShiftTabWalkTheCardsLinksAndWrap()
+    {
+        using var renderer = new RgbaImageRenderer(300, 800);
+        var (view, _) = Panel(renderer);
+        var screen = CardsScreen.From([PrCard(), WaitingCard()]);
+        string? Step(InputModifier mods = InputModifier.None)
+        {
+            view.Render(screen, new RectF32(0, 0, 300, 800));
+            view.HandleInput(Key(InputKey.Tab, mods)).ShouldBeTrue();
+            return view.Links.Focused;
+        }
+
+        var first = Step();
+        var second = Step();
+        second.ShouldNotBe(first);
+        Step(InputModifier.Shift).ShouldBe(first);
+        // Back from the first wraps to the last.
+        Step(InputModifier.Shift).ShouldNotBe(first);
+        // The focused link is lit on the page.
+        view.Render(screen, new RectF32(0, 0, 300, 800));
+    }
+
+    [Fact]
+    public void AHostWithNoClipboardTakesNoLinkKeys()
+    {
+        using var renderer = new RgbaImageRenderer(300, 800);
+        var view = new CardsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        var screen = CardsScreen.From([PrCard()]);
+        view.Render(screen, new RectF32(0, 0, 300, 800));
+
+        view.HandleInput(Key(InputKey.Tab)).ShouldBeFalse();
+        view.HandleInput(Key(InputKey.F10, InputModifier.Shift)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TheFlightPagesLinksTakeTheSameKeys()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var copied = new List<string>();
+        var chrome = NewChrome(renderer);
+        var flights = chrome.Flights;
+        flights.CopyText = copied.Add;
+        var screen = FlightsScreenOf();
+        chrome.Show(PilotPage.Flights);
+        flights.OpenDetail("TIA1611");
+        chrome.Render(new SessionsScreen([], "test", Now), screen, new RectF32(0, 0, 1280, 800));
+
+        flights.HandleInput(Key(InputKey.Tab)).ShouldBeTrue();
+        chrome.Render(new SessionsScreen([], "test", Now), screen, new RectF32(0, 0, 1280, 800));
+        flights.HandleInput(Key(InputKey.F10, InputModifier.Shift)).ShouldBeTrue();
+        flights.Links.MenuItems.Select(i => i.Label).ShouldBe([LinkMenu.CopyLabel]);
+        flights.HandleInput(Key(InputKey.Enter)).ShouldBeTrue();
+        copied.Count.ShouldBe(1);
+    }
+
     [Fact]
     public void CapturesOfTheFlightPageWithTheMenuOpenOverItsPrLink()
     {

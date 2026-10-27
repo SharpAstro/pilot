@@ -446,6 +446,11 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     public override bool HandleInput(InputEvent evt)
     {
+        // A link's menu, and the keys that reach it, ahead of the list's: the transcript's links are painted in this widget too.
+        if (evt is InputEvent.KeyDown linkKey && (Transcript.IsOpen ? Transcript.Links : _links).HandleKey(linkKey, this))
+        {
+            return true;
+        }
         // Enter opens the selected session's transcript; Escape goes back to the table.
         if (evt is InputEvent.KeyDown { Key: InputKey.Enter } && !Transcript.IsOpen && Selected >= 0 && Selected < _lines.Count && Transcript.Load is not null)
         {
