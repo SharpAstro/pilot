@@ -740,6 +740,42 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AFlightWhosePrWasClosedWithNothingOfItsOwnLeftLandsAndOneWithWorkRings()
+    {
+        // PIL274: its work went in through another PR, a rebase left its branch empty, its PR was closed, and it stayed
+        // flying while reviewers were started on the empty PR.
+        var empty = await NewFlight("6", "parser");
+        await Fly(empty, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA6"), "controller");
+        Git(empty.Worktree, "reset", "-q", "--hard", "origin/main");
+        _github.Pr = _github.Pr! with { State = "CLOSED" };
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights);
+
+        await checks.LookAsync(Ct);
+
+        F("TIA6").State.ShouldBe(FlightState.Landed);
+        _state.Cards().ShouldContain(c => c.Kind == PrChecks.ClosedLanded && c.Subject == "flight/TIA6");
+    }
+
+    [Fact]
+    public async Task AFlightWhosePrWasClosedWithWorkOfItsOwnRingsOnceAndStaysFlying()
+    {
+        var flight = await NewFlight("7", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA7"), "controller");
+        _github.Pr = _github.Pr! with { State = "CLOSED" };
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights);
+
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        F("TIA7").State.ShouldBe(FlightState.Flying);
+        var ring = Open().Where(c => c.Kind == PrChecks.ClosedWithWork).ShouldHaveSingleItem();
+        ring.Title.ShouldBe($"TIA7's PR #{F("TIA7").PullRequest} was closed without a merge");
+        ring.Detail.ShouldNotBeNull().ShouldContain("not in its base");
+    }
+
+    [Fact]
     public async Task APlaneIsCutFromTheRemotesDefaultEvenWithoutOriginHeadOrOnAFeatureBranch()
     {
         // The clone has no origin/HEAD and its checkout is on a feature branch: the plane still comes from origin/main.

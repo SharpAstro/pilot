@@ -375,6 +375,32 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
     }
 
     /// <summary>
+    /// Lands <paramref name="code"/> as <c>land</c> does when its plane holds nothing past its base, and says what it holds
+    /// otherwise: a flight whose PR was closed because a rebase left it empty has nothing to lose (PIL274, whose work went in
+    /// through another PR). One at a time with the flight verbs. Null when it landed; else the plane's own commits, or an
+    /// empty list when the plane cannot be read.
+    /// </summary>
+    public async Task<IReadOnlyList<string>?> LandIfNothingOfItsOwnAsync(string code, CancellationToken cancellationToken)
+    {
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            var flight = Find(Verbs.FlightTarget(code));
+            var (head, commits) = await planes.NotInMainAsync(flight.Worktree, flight.Base.Length > 0 ? flight.Base : "origin/main", cancellationToken);
+            if (head is null || commits.Count > 0)
+            {
+                return commits;
+            }
+            await LandFlightAsync(flight, cancellationToken);
+            return null;
+        }
+        finally
+        {
+            _one.Release();
+        }
+    }
+
+    /// <summary>
     /// Retires <paramref name="flight"/> as folded into <paramref name="other"/>: landed with nothing of its own, as <c>land</c>
     /// does (its sessions stopped, its clean plane removed, its code and branch kept), marked with the flight it went into, and a
     /// quiet card saying so instead of a landed one. One at a time with the flight verbs. Throws <see cref="FlightException"/>
