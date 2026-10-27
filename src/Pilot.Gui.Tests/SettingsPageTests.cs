@@ -310,7 +310,7 @@ public sealed class SettingsPageTests
                 }
                 catch (IOException)
                 {
-                    await Task.Delay(50);
+                    await Task.Delay(50, TestContext.Current.CancellationToken);
                 }
             }
         }
