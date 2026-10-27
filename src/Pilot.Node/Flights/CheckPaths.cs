@@ -47,7 +47,34 @@ public static class CheckPaths
     /// The refusal for a check naming a project, solution or folder that is not where it runs, or running a bare
     /// <c>dotnet build|test</c> where there is none; null when every path exists (or the plane is not on disk to look in).
     /// </summary>
-    public static string? Refusal(string check, string plane)
+    public static string? Refusal(string check, string plane) => Judge(check, plane)?.Refusal;
+
+    /// <summary>
+    /// The check with each path it names that is not where it runs written so it finds the one in the plane, as
+    /// <see cref="Refusal"/> would tell a planner to write it; null when there is nothing to correct, or what is wrong has no one
+    /// rewrite (a folder to cd to, a name found nowhere). A leg planned before plan refused such checks kept its own, so each of
+    /// its go-arounds failed the same check (PIL273, PIL294: <c>dotnet build Pilot.slnx</c> for <c>src/Pilot.slnx</c>, 2026-10-27).
+    /// </summary>
+    public static string? Corrected(string check, string plane)
+    {
+        var corrected = check;
+        // One wrong path per pass, a few at most: each pass reads the check as it now is.
+        for (var pass = 0; pass < 4 && Judge(corrected, plane) is { } finding; pass++)
+        {
+            var at = corrected.IndexOf(finding.Segment, StringComparison.Ordinal);
+            if (finding.Rewritten is null || at < 0)
+            {
+                return null;
+            }
+            corrected = string.Concat(corrected.AsSpan(0, at), finding.Rewritten, corrected.AsSpan(at + finding.Segment.Length));
+        }
+        return corrected != check && Judge(corrected, plane) is null ? corrected : null;
+    }
+
+    /// <summary>What is wrong with a check's paths: the refusal, the segment it is about, and that segment rewritten when there is one.</summary>
+    private sealed record Finding(string Refusal, string Segment, string? Rewritten);
+
+    private static Finding? Judge(string check, string plane)
     {
         if (!Directory.Exists(plane))
         {
@@ -89,7 +116,7 @@ public static class CheckPaths
                 }
                 if (!Directory.Exists(next))
                 {
-                    return MissingFolder(segment, target.Value, root, here);
+                    return new Finding(MissingFolder(segment, target.Value, root, here), segment.Trim(), null);
                 }
                 here = Path.TrimEndingDirectorySeparator(next);
                 continue;
@@ -112,7 +139,7 @@ public static class CheckPaths
                 }
                 if (Directory.Exists(full) && !HoldsProject(full))
                 {
-                    return Empty(segment, tokens, dotnet, $"the folder {Display(root, full)}", root, here);
+                    return new Finding(Empty(segment, tokens, dotnet, $"the folder {Display(root, full)}", root, here).Refusal, segment.Trim(), null);
                 }
             }
 
@@ -247,7 +274,7 @@ public static class CheckPaths
         return $"the check's `{segment.Trim()}` goes to {target}, which is not a folder in {Where(root, here)} (a check runs in the plane's root, after any leading `cd <dir> &&`): {how}";
     }
 
-    private static string Missing(string segment, List<Token> tokens, PathRef reference, string root, string here)
+    private static Finding Missing(string segment, List<Token> tokens, PathRef reference, string root, string here)
     {
         var name = Path.GetFileName(reference.Value.TrimEnd('/', '\\'));
         // A name like Pilot.Node.Tests has an "extension" and is a folder: look for a file or a folder of that name.
@@ -256,27 +283,28 @@ public static class CheckPaths
         var head = $"the check's `{segment.Trim()}` names {reference.Value}, which is not in {where} (a check runs in the plane's root, after any leading `cd <dir> &&`)";
         if (found.Count == 0)
         {
-            return $"{head}; {name} is nowhere in the plane. {Nearest(root)}";
+            return new Finding($"{head}; {name} is nowhere in the plane. {Nearest(root)}", segment.Trim(), null);
         }
 
         var rewritten = Rewrite(tokens, reference.Index, reference.Prefix, name, found[0], here);
         var also = found.Count > 1 ? $" (also {string.Join(", ", found.Skip(1).Select(f => Display(root, f)))})" : "";
-        return $"{head}; {name} is {Display(root, found[0])}{also}: write `{rewritten}`";
+        // More than one of that name is no one rewrite to make by itself.
+        return new Finding($"{head}; {name} is {Display(root, found[0])}{also}: write `{rewritten}`", segment.Trim(), found.Count == 1 ? rewritten : null);
     }
 
-    private static string Empty(string segment, List<Token> tokens, Dotnet dotnet, string place, string root, string here)
+    private static Finding Empty(string segment, List<Token> tokens, Dotnet dotnet, string place, string root, string here)
     {
         var projects = Projects(root);
         var head = $"the check's `{segment.Trim()}` has no project or solution to {dotnet.Verb} in {place} (a check runs in the plane's root, after any leading `cd <dir> &&`)";
         if (projects.Count == 0)
         {
-            return $"{head}; the plane holds no solution or project at all, so check what it builds";
+            return new Finding($"{head}; the plane holds no solution or project at all, so check what it builds", segment.Trim(), null);
         }
 
         var first = projects[0];
         var rewritten = Rewrite(tokens, dotnet.VerbIndex + 1, "", Path.GetFileName(first), first, here, insert: true);
         var listed = string.Join(", ", projects.Take(4).Select(p => Display(root, p)));
-        return $"{head}; nearest the root are {listed}: write `{rewritten}`";
+        return new Finding($"{head}; nearest the root are {listed}: write `{rewritten}`", segment.Trim(), rewritten);
     }
 
     /// <summary>The solutions and projects nearest the plane's root, solutions first among equals.</summary>

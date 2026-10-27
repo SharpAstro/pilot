@@ -73,6 +73,19 @@ public sealed class CheckPathsTests : IDisposable
     }
 
     [Fact]
+    public void ACheckPlannedWithTheWrongPathsIsCorrectedToFindThemAndOneWithNothingWrongIsLeft()
+    {
+        WriteSrcLayout();
+
+        CheckPaths.Corrected("dotnet build Pilot.slnx -c Release && dotnet test Pilot.Node.Tests -c Release --no-build", Plane)
+            .ShouldBe("cd src && dotnet build Pilot.slnx -c Release && dotnet test Pilot.Node.Tests -c Release --no-build");
+        CheckPaths.Corrected("dotnet build -c Release", Plane).ShouldBe("cd src && dotnet build Pilot.slnx -c Release");
+        CheckPaths.Corrected("cd src && dotnet build Pilot.slnx -c Release", Plane).ShouldBeNull();
+        // Found nowhere: no rewrite to make by itself.
+        CheckPaths.Corrected("dotnet build Missing.slnx", Plane).ShouldBeNull();
+    }
+
+    [Fact]
     public void TheSameCheckWithItsWorkingDirectoryIsTaken()
     {
         WriteSrcLayout();
