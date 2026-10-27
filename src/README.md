@@ -96,6 +96,8 @@ that differs from the one the node writes fails the setup check, whose fix `Rewr
 `autostart show` says what is there, `autostart remove` takes it out. Without it the node runs while something
 started it: by hand, or the GUI, whose node listens on its socket only, never on the LAN.
 
+`tests/linux/systemd-jobs.sh` proves the Linux half on a real systemd (WSL Ubuntu will do): `wsl -d Ubuntu -- bash tests/linux/systemd-jobs.sh` from the plane root installs a node as the user unit, starts a job, restarts the node by a setting and by an update from a folder feed, and checks the job lives on with the same start time, is listed running by the new node, ends with its own exit code, and the unit is active. It takes linux-x64 builds from `$PILOT_LINUX_PUBLISH` (see its header for the three `dotnet publish -p:PublishAot=false` lines; AOT does not cross-compile from Windows), works in a scratch folder under `/tmp`, and puts back a `pilot-node` unit it found (the unit name is fixed, and systemd reads only `~/.config/systemd/user`). It enables user lingering when no user bus answers.
+
 An installed node keeps itself on the latest release by `--update-policy`:
 
 | Policy | When a newer release is out |

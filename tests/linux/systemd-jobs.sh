@@ -99,7 +99,7 @@ fi
 
 # The install folder: a release of 2.0.0 (its VERSION marker), as `pilot update` needs it to be.
 stage() { # stage <node folder> <target folder> <version>
-    mkdir -p "$2" && cp -r "$1"/. "$2"/ && cp -r "$PUB/cli"/. "$2"/
+    mkdir -p "$2" && cp -r "$1"/. "$2"/ && cp -rn "$PUB/cli"/. "$2"/ 2>/dev/null
     : > "$2/pilot-gui"; : > "$2/pilot-tui"
     chmod +x "$2/pilot-node" "$2/pilot" "$2/pilot-gui" "$2/pilot-tui"
     (cd "$2" && { printf '%s linux-x64\n' "$3"; find . -type f ! -name VERSION | sed 's|^\./||' | sort; } > VERSION)
@@ -133,7 +133,7 @@ fi
 
 # --- 4. install as the user unit
 mkdir -p "$DATA"
-"$NODE" autostart install -- --data "$DATA" --node-socket "$SOCK" --no-watchtower --release-feed "$FEED" >"$WORK/install.out" 2>&1
+"$NODE" autostart install -- --data "$DATA" --node-socket "$SOCK" --no-watchtower --update-policy off --release-feed "$FEED" >"$WORK/install.out" 2>&1
 cat "$WORK/install.out"
 for _ in $(seq 1 30); do [ -S "$SOCK" ] && break; sleep 1; done
 [ -S "$SOCK" ] || { journalctl --user -u "$UNIT" --no-pager -n 30; fail "the node did not answer on $SOCK"; }
@@ -182,7 +182,7 @@ check_carried() { # check_carried <what>
 
 # --- 6. a settings restart
 PID=$(main_pid)
-pilot settings set max-jobs 2 || fail "settings set"
+pilot settings set lan-port 47653 || fail "settings set"
 wait_node_after "$PID" || { journalctl --user -u "$UNIT" --no-pager -n 40; fail "the unit did not bring the node back after the settings restart"; }
 check_carried "settings restart"
 
