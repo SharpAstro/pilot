@@ -98,16 +98,23 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, CreateIssueAsync fails with it.</summary>
     public string? CreateIssueFails { get; set; }
 
-    public Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken)
+    /// <summary>When set, CreateIssueAsync waits for it before it does anything: a command handler held, as a node busy with a session start holds one.</summary>
+    public Task? CreateIssueHold { get; set; }
+
+    public async Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken)
     {
+        if (CreateIssueHold is { } hold)
+        {
+            await hold;
+        }
         if (CreateIssueFails is { } why)
         {
-            return Task.FromException<IssueInfo>(new FlightException(why));
+            throw new FlightException(why);
         }
         IssuesCreated.Add((repoPath, title, body));
         var number = Issues.Count == 0 ? 1 : Issues.Keys.Max() + 1;
         Issues[number] = title;
-        return Task.FromResult(new IssueInfo { Number = number, Title = title });
+        return new IssueInfo { Number = number, Title = title };
     }
 
     /// <summary>Each issue closed, with its comment, in order.</summary>

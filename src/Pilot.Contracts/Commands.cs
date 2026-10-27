@@ -44,6 +44,15 @@ public sealed record CommandRequest
     public string? Why { get; init; }
 
     /// <summary>
+    /// Names this one attempt at the command: the CLI fills it with a fresh id per invocation, or with the one the caller
+    /// gives it (<c>PILOT_REQUEST_ID</c>) to retry a command that timed out. The node runs a command with an id it has
+    /// seen once, and answers a repeat with the first's result (waiting for it if it is still running). Null for a
+    /// client that does not retry (the GUI, a card's button): every send runs.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RequestId { get; init; }
+
+    /// <summary>
     /// Set by the node when it let an assistant's your-only command through because the autopilot is on, so the command's
     /// result and its black-box line say so. Never read from the wire: a client cannot claim it.
     /// </summary>
