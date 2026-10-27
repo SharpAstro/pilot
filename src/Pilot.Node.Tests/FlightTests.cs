@@ -232,6 +232,21 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    public async Task TheLabelStaysWhileASecondFlightOfThisNodeIsStillOnTheItem()
+    {
+        var (github, _) = Trackered();
+        await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "81");
+        await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "81");
+        Flight("TIA81a").State.ShouldNotBe(FlightState.Landed);
+
+        (await Run(Verbs.Land, Verbs.FlightTarget("TIA81"))).Ok.ShouldBeTrue();
+        github.IssueLabels[81].ShouldBe(["pilot node: DE1"]);
+
+        (await Run(Verbs.Land, Verbs.FlightTarget("TIA81a"))).Ok.ShouldBeTrue();
+        github.IssueLabels[81].ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task LandingAfterAMergeAndRetiringAFoldedFlightTakeTheLabelOffToo()
     {
         var (github, _) = Trackered();
