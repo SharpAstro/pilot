@@ -258,13 +258,46 @@ public sealed class LegWatchTests
         (_said[^1].Verb, _said[^1].Target).ShouldBe((Verbs.StartReview, "flight/TIA1"));
         Open().ShouldNotContain(c => c.Bin != CardBin.Handled);
 
-        // Stalled again after that: now it rings, with a fresh review as the way on.
+        // Stalled again after that: now it rings, with a fresh review as the way on. (The session row stands in for the fresh
+        // reviewer the node's start-review put on the flight; the fake run does not swap ReviewerJob, the ladder is the same.)
         _time.Advance(TimeSpan.FromMinutes(4));
         await _watch.LookAsync(Ct);
         var card = Open().Where(c => c.Bin == CardBin.Ring).ShouldHaveSingleItem();
         (card.Kind, card.Subject, card.Detail).ShouldBe((LegWatch.ReviewStalled, "flight/TIA1", "it stopped 12 min ago without its verdict"));
         card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.StartReview);
         _said.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ALaterReviewRoundOfTheSameFlightIsToldAgainBeforeItIsRestartedOrRung()
+    {
+        _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });
+        FlightRow Flight(ReviewRow? review) => new()
+        {
+            Code = "TIA1", Repo = "tianwen", RepoPath = "/r", Issue = 1, Branch = "flight/tia1", Worktree = "/r/w", Base = "origin/main",
+            State = FlightState.Flying, CreatedAt = Start, Review = review,
+        };
+        ReviewRow Reviewing() => new() { State = ReviewState.Reviewing, Reviewer = "du1-tia1-review", ReviewerJob = "a1b2c3d4", StartedAt = _time.GetUtcNow() };
+
+        _state.PutFlight(Flight(Reviewing()));
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow());
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        (_said[0].Verb, _said[1].Verb).ShouldBe((Verbs.Say, Verbs.StartReview));
+
+        // A verdict lands (changes), fixes follow, and the next round starts: its first stall is told, not rung.
+        _state.PutFlight(Flight(new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", ReviewerJob = "a1b2c3d4", StartedAt = Start }));
+        await _watch.LookAsync(Ct);
+        _state.PutFlight(Flight(Reviewing()));
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow());
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+
+        _said.Count.ShouldBe(3);
+        (_said[2].Verb, _said[2].Target).ShouldBe((Verbs.Say, "session/a1b2c3d4"));
+        Open().Where(c => c.Bin == CardBin.Ring).ShouldBeEmpty();
     }
 
     [Fact]

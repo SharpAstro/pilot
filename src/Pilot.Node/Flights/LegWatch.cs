@@ -289,16 +289,24 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// </summary>
     private async Task LookAtReviewsAsync(SessionRow[] sessions, DateTimeOffset now, CancellationToken cancellationToken)
     {
+        var reviewing = new HashSet<string>(StringComparer.Ordinal);
         foreach (var flight in state.Flights().Where(f => f.State != FlightState.Landed && f.Review is { State: ReviewState.Reviewing, ReviewerJob: not null }))
         {
             var subject = Verbs.FlightTarget(flight.Code);
+            reviewing.Add(subject);
             await LookAtReviewerAsync(sessions, now, flight.Review!.ReviewerJob!, flight.Review.StartedAt, subject, flight.Code, Verbs.StartReview, cancellationToken);
         }
         // Any PR's reviewer (#113) is watched as a flight's is.
         foreach (var review in state.PrReviews().Where(r => r is { State: PrReviewState.Reviewing, ReviewerJob: not null }))
         {
             var subject = Verbs.PrTarget(review.Repo, review.Number);
+            reviewing.Add(subject);
             await LookAtReviewerAsync(sessions, now, review.ReviewerJob!, review.StartedAt, subject, $"{review.Repo}#{review.Number}", Verbs.ReviewPr, cancellationToken);
+        }
+        // A subject no longer Reviewing (a verdict landed) starts its next round's ladder from the telling again.
+        foreach (var subject in _reviewStalls.Keys.Where(k => !reviewing.Contains(k)).ToArray())
+        {
+            _reviewStalls.Remove(subject);
         }
     }
 
