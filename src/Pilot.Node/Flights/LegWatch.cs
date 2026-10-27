@@ -100,7 +100,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     {
         var now = time.GetUtcNow();
         var sessions = state.Sessions();
-        LookAtReviews(sessions, now);
+        await LookAtReviewsAsync(sessions, now, cancellationToken);
         LookAtValidators(sessions, now);
         LookAtWaiting(sessions, now);
         await LookAtLegWaitsAsync(now, cancellationToken);
@@ -285,20 +285,28 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
 
     /// <summary>
     /// A reviewer working is left alone; one that never showed up, failed, ended, or sat idle past the grace without its
-    /// verdict rings, with a fresh review as the way on.
+    /// verdict is told to give it, then given a fresh review, and only then rings, with a fresh review as the way on.
     /// </summary>
-    private void LookAtReviews(SessionRow[] sessions, DateTimeOffset now)
+    private async Task LookAtReviewsAsync(SessionRow[] sessions, DateTimeOffset now, CancellationToken cancellationToken)
     {
+        var reviewing = new HashSet<string>(StringComparer.Ordinal);
         foreach (var flight in state.Flights().Where(f => f.State != FlightState.Landed && f.Review is { State: ReviewState.Reviewing, ReviewerJob: not null }))
         {
             var subject = Verbs.FlightTarget(flight.Code);
-            LookAtReviewer(sessions, now, flight.Review!.ReviewerJob!, flight.Review.StartedAt, subject, flight.Code, Verbs.StartReview);
+            reviewing.Add(subject);
+            await LookAtReviewerAsync(sessions, now, flight.Review!.ReviewerJob!, flight.Review.StartedAt, subject, flight.Code, Verbs.StartReview, cancellationToken);
         }
         // Any PR's reviewer (#113) is watched as a flight's is.
         foreach (var review in state.PrReviews().Where(r => r is { State: PrReviewState.Reviewing, ReviewerJob: not null }))
         {
             var subject = Verbs.PrTarget(review.Repo, review.Number);
-            LookAtReviewer(sessions, now, review.ReviewerJob!, review.StartedAt, subject, $"{review.Repo}#{review.Number}", Verbs.ReviewPr);
+            reviewing.Add(subject);
+            await LookAtReviewerAsync(sessions, now, review.ReviewerJob!, review.StartedAt, subject, $"{review.Repo}#{review.Number}", Verbs.ReviewPr, cancellationToken);
+        }
+        // A subject no longer Reviewing (a verdict landed) starts its next round's ladder from the telling again.
+        foreach (var subject in _reviewStalls.Keys.Where(k => !reviewing.Contains(k)).ToArray())
+        {
+            _reviewStalls.Remove(subject);
         }
     }
 
@@ -375,7 +383,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         }
     }
 
-    private void LookAtReviewer(SessionRow[] sessions, DateTimeOffset now, string job, DateTimeOffset startedAt, string subject, string name, string again)
+    // Each review subject's stalls the node has acted on, and when it last did: told once, restarted once, then rung. A review
+    // stalled "3 min ago without its verdict" only rang, and nobody pressed Review again (PIL274, SE1, 2026-10-27).
+    private readonly Dictionary<string, (int Tries, DateTimeOffset At)> _reviewStalls = new(StringComparer.Ordinal);
+
+    private async Task LookAtReviewerAsync(SessionRow[] sessions, DateTimeOffset now, string job, DateTimeOffset startedAt, string subject, string name, string again, CancellationToken cancellationToken)
     {
         var row = sessions.FirstOrDefault(s => s.Id == job);
         string? why = row switch
@@ -391,11 +403,39 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             state.CloseCardsAbout(subject, "reviewing again", ReviewStalled);
         }
-        if (why is not null)
+        if (why is null)
         {
-            state.RaiseCard(CardBin.Ring, ReviewStalled, subject, $"{name}'s review stalled", why,
-                [new CardChoice { Label = "Review again", Verb = again, Target = subject }]);
+            return;
         }
+        var (tries, at) = _reviewStalls.TryGetValue(subject, out var acted) ? acted : (0, DateTimeOffset.MinValue);
+        // What was done last is given the grace to work before the next step.
+        if (now - at < IdleGrace)
+        {
+            return;
+        }
+        if (tries == 0 && row is { State: not SessionState.Failed })
+        {
+            _reviewStalls[subject] = (1, now);
+            var told = await SayAsync(row.Id, "Your review stopped without its verdict. Finish it now: give your verdict with the review command your brief names (pass, changes or comment), with what you checked.", cancellationToken);
+            if (told.Ok)
+            {
+                state.RaiseCard(CardBin.Handled, ReviewStalled, subject, $"{name}'s reviewer was told to give its verdict", why);
+                return;
+            }
+            tries = 1;
+        }
+        if (tries <= 1)
+        {
+            _reviewStalls[subject] = (2, now);
+            var restarted = await run(new CommandRequest { Verb = again, Target = subject, Who = Who }, cancellationToken);
+            if (restarted.Ok)
+            {
+                state.RaiseCard(CardBin.Handled, ReviewStalled, subject, $"{name}'s review started afresh", $"{why}; told to finish, it did not");
+                return;
+            }
+        }
+        state.RaiseCard(CardBin.Ring, ReviewStalled, subject, $"{name}'s review stalled", why,
+            [new CardChoice { Label = "Review again", Verb = again, Target = subject }]);
     }
 
     /// <summary>What an idle worker is told: its leg is not finished, and the two ways to finish it.</summary>

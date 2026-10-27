@@ -331,4 +331,11 @@ public sealed class MergedFleetTests : IAsyncDisposable
         made.ShouldBe([Lan, "10.0.0.7:47731"]);
         FleetClients.WatchOnly(new NodeMark("s9", Lan, "LE1", Here: false)).ShouldContain("Connect");
     }
+
+    [Fact]
+    public void TheWindowsOwnNodesPillSaysThisSoThisNodeOnThePageHasAPillToMatch()
+    {
+        NodeFilter.Label(new NodeMark("s", "node.sock", "SE1", Here: true)).ShouldBe("SE1 (this)");
+        NodeFilter.Label(new NodeMark("s9", "192.168.0.79:47731", "DE1", Here: false)).ShouldBe("DE1");
+    }
 }
