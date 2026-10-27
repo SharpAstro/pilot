@@ -159,7 +159,6 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private const float FactLabel = 70f;
     private const float LogLineHeight = 16f;
     private const float TreeRowHeight = 18f;
-    private const float TreeIndent = 14f;
     private const int TreeRows = 4;
 
     private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
@@ -677,8 +676,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             var process = below[i];
             yield return Layout.Builder.HStack(
                     Layout.Builder.Text(i == 0 ? "tree" : "", 12f, Faint).WFixed(FactLabel),
-                    Layout.Builder.Spacer().WFixed(Math.Max(process.Depth - 1, 0) * TreeIndent),
-                    Layout.Builder.Text($"{process.Name} {process.Pid}", 12f, Body).WStar())
+                    Layout.Builder.Text($"{Branch(process.Depth)}{process.Name} {process.Pid}", 12f, Body).WStar())
                 .RowH(TreeRowHeight);
         }
         if (below.Count > TreeRows)
@@ -689,6 +687,12 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                 .RowH(TreeRowHeight);
         }
     }
+
+    /// <summary>
+    /// A process's place in the tree, drawn in its text as pstree does (two spaces a level, then └): an indent computed as a width was a
+    /// size laid out by hand, which LayoutDrivenTests refuses (review of #357).
+    /// </summary>
+    internal static string Branch(int depth) => depth <= 1 ? "" : string.Concat(Enumerable.Repeat("  ", depth - 2)) + "└ ";
 
     /// <summary>A confirm question beside its pills: padded as a pill is, so its text shares their middle.</summary>
     private static Layout.Node Question(string text) => Layout.Builder.Text(text, 12f, Bright).Pad(0f, 4f).WAuto();

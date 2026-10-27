@@ -198,12 +198,12 @@ public sealed class JobsTests
         var described = CellLayout.Describe(arranged);
         described.ShouldContain("pid");
         described.ShouldContain("4812");
-        // The wrapper is the pid fact; the tree is what runs under it, the deeper indented further right.
+        // The wrapper is the pid fact; the tree is what runs under it, a child marked └ under its parent, as pstree draws it.
         var dotnet = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "dotnet 5120" } }).Bounds;
-        var testhost = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "testhost 6044" } }).Bounds;
+        var testhost = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "└ testhost 6044" } }).Bounds;
         arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "pwsh 4812" } }).ShouldBeFalse();
-        testhost.X.ShouldBeGreaterThan(dotnet.X);
         testhost.Y.ShouldBeGreaterThan(dotnet.Y);
+        (JobsView<RgbaImage>.Branch(1), JobsView<RgbaImage>.Branch(2), JobsView<RgbaImage>.Branch(3)).ShouldBe(("", "└ ", "  └ "));
 
         // A job that is not running shows neither, even when its log is the one followed.
         var ended = arranged.First(a => a.Node.Hit is HitResult.ListItemHit { ListId: JobsView<RgbaImage>.ListId, Index: 1 });
