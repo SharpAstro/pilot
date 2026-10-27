@@ -898,6 +898,8 @@ public sealed class ReviewTests2 : ReviewTestsBase
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
         card.Detail.ShouldNotBeNull().ShouldContain("this is yours to decide");
+        // What the review asks comes first, where a card cut to its first lines still shows it (PIL294's #357).
+        card.Detail.ShouldStartWith("the PR's body closes the round's issue");
 
         // The note is for the person: the go-around's args become the next worker's brief, which is told what the review asked.
         card.Choices.Single(c => c.Verb == Verbs.GoAround).Args.ShouldNotBeNull().ShouldAllBe(a => !a.Contains("yours to decide"));
@@ -1057,6 +1059,73 @@ public sealed class ReviewTests3 : ReviewTestsBase
         Git(flight.Worktree, "status", "--porcelain").ShouldBeEmpty();
     }
 
+    // A merge that conflicts exits non-zero, and leaves the conflict in the tree for the test to resolve.
+    private static void MergeLeavingConflict(string cwd, string other)
+    {
+        try
+        {
+            Git(cwd, "-c", "user.email=t@example.com", "-c", "user.name=t", "merge", "-q", "--no-commit", other);
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    [Fact]
+    public async Task APlaneBehindItsBranchPushedFromElsewhereWithTheConflictResolvedTakesItAndRaisesNoConflict()
+    {
+        var flight = await NewFlight("17", "parser");
+        File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA17"), "controller");
+        File.WriteAllText(Path.Combine(Repo, "README.md"), "ours\n");
+        Git(Repo, "commit", "-qam", "README on main");
+        Git(Repo, "push", "-q", "origin", "main");
+        // The controller resolves the conflict on another clone and pushes the branch (#344): the plane is behind it.
+        var branch = F("TIA17").Branch;
+        var elsewhere = Path.Combine(_root, "elsewhere");
+        Git(_root, "clone", "-q", Git(Repo, "remote", "get-url", "origin").Trim(), elsewhere);
+        Git(elsewhere, "checkout", "-q", branch);
+        MergeLeavingConflict(elsewhere, "origin/main");
+        File.WriteAllText(Path.Combine(elsewhere, "README.md"), "resolved\n");
+        Git(elsewhere, "add", ".");
+        Git(elsewhere, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "resolve");
+        Git(elsewhere, "push", "-q", "origin", $"HEAD:{branch}");
+        var resolved = Git(elsewhere, "rev-parse", "HEAD").Trim();
+
+        (await _legs.RebaseOntoBaseAsync("TIA17", Ct)).ShouldBeNull();
+
+        Git(F("TIA17").Worktree, "rev-parse", "HEAD").Trim().ShouldBe(resolved);
+        File.ReadAllText(Path.Combine(F("TIA17").Worktree, "README.md")).Trim().ShouldBe("resolved");
+        Open().ShouldNotContain(c => c.Kind == "pr-conflicts");
+        Open().ShouldNotContain(c => c.Kind == LegCommander.MergeFailed);
+    }
+
+    [Fact]
+    public async Task ABranchThatAlreadyHoldsItsBaseIsPushedWithNoRebase()
+    {
+        var flight = await NewFlight("18", "parser");
+        File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
+        await Fly(flight, "parser");
+        File.WriteAllText(Path.Combine(Repo, "README.md"), "ours\n");
+        Git(Repo, "commit", "-qam", "README on main");
+        Git(Repo, "push", "-q", "origin", "main");
+        // The base is merged into the branch with the conflict resolved: a rebase of its commits would conflict again.
+        var wt = F("TIA18").Worktree;
+        Git(wt, "fetch", "-q", "origin");
+        MergeLeavingConflict(wt, "origin/main");
+        File.WriteAllText(Path.Combine(wt, "README.md"), "resolved\n");
+        Git(wt, "add", ".");
+        Git(wt, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "merge main");
+        var head = Git(wt, "rev-parse", "HEAD").Trim();
+
+        (await _legs.RebaseOntoBaseAsync("TIA18", Ct)).ShouldBeNull();
+
+        Git(wt, "rev-parse", "HEAD").Trim().ShouldBe(head);
+        Git(wt, "rev-parse", $"origin/{F("TIA18").Branch}").Trim().ShouldBe(head);
+        Open().ShouldNotContain(c => c.Kind == "pr-conflicts");
+    }
+
     [Fact]
     public async Task APassedPrWhoseRebaseConflictsIsSentBackAsChangesAndItsDoneLegGoesAroundByItself()
     {
@@ -1113,7 +1182,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
 
         var card = Open().ShouldHaveSingleItem();
         (card.Kind, card.Detail).ShouldBe((LegCommander.ReviewChanges, "the parser drops the last line"));
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Go around parser", Verbs.GoAround), ("Ready anyway", Verbs.Review)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Redo leg parser", Verbs.GoAround), ("Ready anyway", Verbs.Review)]);
 
         // The go-around reopens the done leg with the review's words; its finish pushes and starts a fresh review.
         var goAround = card.Choices[0];

@@ -173,7 +173,7 @@ public sealed partial class LegCommander(
             var code = FlightOf(command.Target).Code;
             MarkMerge(command.Target, ChoiceStatus.Conflicting);
             error = await RebaseOntoBaseAsync(code, cancellationToken) is { } why
-                ? $"{error}; {why}{(await ConflictsAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : ": its last leg goes around to resolve it")}"
+                ? $"{error}; {why}{(await ConflictsAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : ": its last leg is redone to resolve it")}"
                 : $"{error}: it is being rebased onto its base and reviewed afresh, and the merge is offered again once that passes";
         }
 
@@ -267,11 +267,27 @@ public sealed partial class LegCommander(
                 await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
                 // A base that is no branch on the remote is the remote's default first, as when its PR opened.
                 var repaired = await RepairBaseAsync(flight, cancellationToken);
+                // The branch as pushed from elsewhere (its conflicts resolved by the controller, or by another node) is taken
+                // first: rebasing the plane's older commits met conflicts already resolved there, and rang for them (#344).
+                var remote = $"origin/{repaired.Branch}";
+                if ((await git.RunAsync(["merge-base", "--is-ancestor", "HEAD", remote], flight.Worktree, cancellationToken)).Ok)
+                {
+                    await git.RunAsync(["merge", "--ff-only", "--quiet", remote], flight.Worktree, cancellationToken);
+                }
+                // A branch that holds its base already (merged in, as a squashing merge queue allows) has nothing to rebase.
+                if ((await git.RunAsync(["merge-base", "--is-ancestor", repaired.Base, "HEAD"], flight.Worktree, cancellationToken)).Ok)
+                {
+                    await PushAsync(repaired, cancellationToken);
+                    return (repaired, null);
+                }
                 var rebase = await git.RunAsync(["rebase", repaired.Base], flight.Worktree, cancellationToken);
                 if (!rebase.Ok)
                 {
                     await git.RunAsync(["rebase", "--abort"], flight.Worktree, cancellationToken);
-                    return (repaired, $"rebasing {code} onto {repaired.Base} conflicts ({rebase.Why}): rebase its plane by hand, or go around its last leg to");
+                    // git's progress lines ("Rebasing (1/3)") say nothing of the conflict: only what it could not apply is kept.
+                    var stopped = string.Join(" ", rebase.Why.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .Where(l => !l.StartsWith("Rebasing (", StringComparison.Ordinal)));
+                    return (repaired, $"rebasing {code} onto {repaired.Base} conflicts ({stopped})");
                 }
                 await PushAsync(repaired, cancellationToken);
                 return (repaired, null);
@@ -1017,7 +1033,7 @@ public sealed partial class LegCommander(
                 state.RaiseCard(CardBin.Ring, "leg-failed", Verbs.LegTarget(flight.Code, leg.Name),
                     $"{flight.Code}/{leg.Name} failed", report.Length > 0 ? report : null,
                     [
-                        new CardChoice { Label = "Go around", Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker gave up: {(report.Length > 0 ? report : "no reason given")}"] },
+                        new CardChoice { Label = $"Redo leg {leg.Name}", Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker gave up: {(report.Length > 0 ? report : "no reason given")}"] },
                         new CardChoice { Label = "Mark done anyway", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
                     ]);
                 break;
@@ -1088,7 +1104,7 @@ public sealed partial class LegCommander(
             }
             if (Unchanged(flight.Code, leg) is null)
             {
-                throw new FlightException($"{flight.Code}/{leg.Name} changed while GitHub was being asked: nothing more was done, look again and go around again");
+                throw new FlightException($"{flight.Code}/{leg.Name} changed while GitHub was being asked: nothing more was done, look again and redo the leg again");
             }
             flight = FlightOf(Verbs.FlightTarget(flight.Code));
         }
@@ -1103,7 +1119,7 @@ public sealed partial class LegCommander(
         var target = Verbs.LegTarget(flight.Code, leg.Name);
         var legs = state.Legs(flight.Code);
         Launching(LegsKey(flight.Code), $"{worker}, going around {flight.Code}/{leg.Name}", target,
-            new CardChoice { Label = "Go around", Verb = Verbs.GoAround, Target = target, Args = [why] },
+            new CardChoice { Label = $"Redo leg {leg.Name}", Verb = Verbs.GoAround, Target = target, Args = [why] },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
@@ -1161,7 +1177,7 @@ public sealed partial class LegCommander(
             case MergeKinds.Queued:
                 return (false, QueuedLine(flight.Code, mergeState.Place is { } place ? $"in the merge queue, {place}" : "in the merge queue"), MergeWays.Queued);
             case MergeKinds.Behind:
-                throw new FlightException($"#{pr.Number} is behind its base, so GitHub will not merge it: go around to rebase it, and it is reviewed afresh");
+                throw new FlightException($"#{pr.Number} is behind its base, so GitHub will not merge it: the node brings it up to date with its base, and it is reviewed afresh");
             case MergeKinds.ChangesRequested:
                 throw new FlightException($"#{pr.Number} has changes requested on GitHub: they are read first, then it merges");
             case MergeKinds.Blocked when mergeState.Reason is { } why && mergeState.FailedName is null:
@@ -1395,7 +1411,7 @@ public sealed partial class LegCommander(
             MergeKinds.Armed => (ChoiceStatus.Armed, merge.Progress, $"{code}'s PR #{number} merges when its checks pass", $"GitHub's auto-merge is armed: merging when checks pass{(merge.Progress is { } progress ? $", {progress} done" : "")}. GitHub merges it, with the node up or not."),
             MergeKinds.Queued => (ChoiceStatus.Queued, merge.Place, $"{code}'s PR #{number} is in the merge queue", QueuedLine(code, merge.Place is { } place ? $"in the merge queue, {place}" : "in the merge queue")),
             MergeKinds.Blocked => (ChoiceStatus.Blocked, merge.FailedName ?? merge.Reason, $"{code}'s PR #{number} is blocked: {merge.Reason}",
-                merge.FailedName is { } name ? $"GitHub blocks the merge: {name} failed. Go around to fix what it found, or re-run the check if it was a flake." : $"GitHub blocks the merge: {merge.Reason}."),
+                merge.FailedName is { } name ? $"GitHub blocks the merge: {name} failed. Redo the leg to fix it, or re-run the check if it was a flake." : $"GitHub blocks the merge: {merge.Reason}."),
             MergeKinds.ChangesRequested => (ChoiceStatus.ChangesRequested, null, $"{code}'s PR #{number} has changes requested", "A review on GitHub asks for changes. They are read first, then the merge is offered again."),
             _ => ((string?)null, null, null, null),
         };
@@ -1433,7 +1449,7 @@ public sealed partial class LegCommander(
         var choices = new List<CardChoice>();
         if (state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is { } last)
         {
-            choices.Add(new CardChoice { Label = $"Go around {last.Name}", Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name), Args = [goAroundWhy] });
+            choices.Add(new CardChoice { Label = $"Redo leg {last.Name}", Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name), Args = [goAroundWhy] });
         }
         if (rerun)
         {
@@ -1918,12 +1934,13 @@ public sealed partial class LegCommander(
         var detail = changes;
         if (last is { ReviewGoArounds: >= MaxReviewGoArounds })
         {
-            detail = $"{last.Name} has gone around {last.ReviewGoArounds} times on review findings: this is yours to decide (go around once more, mark it ready, or change what the review asks).\n{changes}";
+            // The findings first: a card shows its first lines, and this note there hid the problem it was about (PIL294's #357, 2026-10-27).
+            detail = $"{changes}\n{last.Name} has been redone {last.ReviewGoArounds} times on review findings: this is yours to decide (redo the leg once more, mark it ready, or change what the review asks).";
         }
         var choices = new List<CardChoice>();
         if (last is not null)
         {
-            choices.Add(new CardChoice { Label = $"Go around {last.Name}", Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [$"the review asked for changes: {changes}"] });
+            choices.Add(new CardChoice { Label = $"Redo leg {last.Name}", Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [$"the review asked for changes: {changes}"] });
         }
         choices.Add(new CardChoice { Label = "Ready anyway", Verb = Verbs.Review, Target = Verbs.FlightTarget(flight.Code), Args = ["pass", "ready anyway"] });
         state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review asks for changes", detail, choices, link: flight.PullRequestUrl);

@@ -189,9 +189,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 {
                     if (await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } notRebased)
                     {
-                        state.RaiseCard(CardBin.Ring, "pr-conflicts", subject, $"{flight.Code}'s PR #{number} left the merge queue on a conflict with its base",
-                            $"{notRebased}{(await legs.ConflictsAsync(flight.Code, notRebased, cancellationToken) is { } notSent ? $" ({notSent})" : ": its last leg goes around to resolve it")}",
-                            link: flight.PullRequestUrl);
+                        // Resolved by a worker the node sends, not rung: a conflict is pilot's to fix (#344 rang for one, 2026-10-27).
+                        await GoAroundOnConflictAsync(flight.Code, number, notRebased, flight.PullRequestUrl, cancellationToken);
                     }
                     else
                     {
@@ -461,7 +460,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             var headNow = pr?.Head ?? head;
             var (title, detail, link) = failed && checks is { FailedName: { } name }
-                ? ($"{flight.Code}'s PR #{number}: check {name} failed", $"The merge waited for the checks to pass, and {name} failed on {head[..Math.Min(8, head.Length)]}. Go around to fix what it found, re-run the checks if it was a flake, or merge again.{autoMergeNote}", checks.FailedLink)
+                ? ($"{flight.Code}'s PR #{number}: check {name} failed", $"The merge waited for the checks to pass, and {name} failed on {head[..Math.Min(8, head.Length)]}. Redo the leg to fix it, re-run the checks if it was a flake, or merge again.{autoMergeNote}", checks.FailedLink)
                 : ($"{flight.Code}'s merge did not go through", dropped + autoMergeNote, null);
             if (legs is null || !legs.ShowMergeFailed(flight.Code, headNow, method, title, detail, link ?? flight.PullRequestUrl, rerun: failed,
                     goAroundWhy: failed ? $"the PR's checks failed{(checks?.FailedName is { } n ? $" ({n})" : "")} on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push" : dropped))
