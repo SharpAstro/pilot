@@ -273,6 +273,21 @@ public sealed class WatchtowerPanelTests
     /// gains or loses its Remote Control link, or none runs: a card moved just as it was clicked (SE1, 2026-10-24).
     /// </summary>
     [Fact]
+    public void AWatchtowerBetweenTurnsIsRestingNotEndedAndOneStoppedByTheApiSaysWhy()
+    {
+        var view = NewView(out var renderer);
+        using var _ = renderer;
+
+        // Ended after its turn, as it is between cards: resting, not "ended" in the Ring colour.
+        var resting = Describe(view, CardsScreen.From([Card("c1")], [Tower() with { State = SessionState.Ended }]));
+        resting.ShouldContain("resting");
+        resting.ShouldNotContain("ended");
+
+        var stopped = Describe(view, CardsScreen.From([Card("c1")], [Tower() with { State = SessionState.Ended, ApiError = "rate limited" }]));
+        stopped.ShouldContain("ended: rate limited");
+    }
+
+    [Fact]
     public void ACardStaysPutWhateverTheWatchtowerShows()
     {
         float DismissAt(SessionRow? tower)
