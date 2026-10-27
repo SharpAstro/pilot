@@ -513,6 +513,248 @@ public sealed class SettingsPageTests
         }
     }
 
+    private static readonly RepoInfo[] Repos =
+    [
+        new() { Name = "tianwen", Path = @"C:\src\sharpastro\tianwen", GitHub = "SharpAstro/tianwen", Flights = 9 },
+        new() { Name = "pilot", Path = @"C:\src\sharpastro\pilot", GitHub = "SharpAstro/pilot", Flights = 7 },
+        new() { Name = "widget", Path = @"C:\src\my org\widget", Flights = 1 },
+        new() { Name = "a-repo-with-a-very-long-name-that-goes-past-any-chip-and-any-row", Path = @"C:\Users\a-very-long-user-name\source\repos\an-org-with-a-long-name\a-repo-with-a-very-long-name-that-goes-past-any-chip-and-any-row" },
+    ];
+
+    private static SettingsPage ListsPage() => Sample with
+    {
+        Settings =
+        [
+            new SettingRow { Key = "no-auto-merge-repos", Label = "No auto-merge repos", Detail = "Repos whose PRs the node never merges by itself", Value = "tianwen\nwidget", Saved = "tianwen\nwidget", Source = SettingSources.File, Many = true },
+            new SettingRow { Key = "repo-trackers", Label = "Repo trackers", Detail = "The tracker a bare number means in the repo", Value = "tianwen=shortcut", Saved = "tianwen=shortcut", Source = SettingSources.File, Many = true },
+        ],
+    };
+
+    /// <summary>What a frame holds: the tooltips by text and the text fields, to look at and to type into.</summary>
+    private static (string[] Tooltips, TextInputState[] Fields) Hovers(PilotChrome<RgbaImage> chrome, RgbaImageRenderer renderer, DateTimeOffset now)
+    {
+        var arranged = Layout.Engine.Arrange(chrome.Settings.Tree(now), new Rect<float>(0, 0, 1280, 3000), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        return (
+            [.. arranged.Select(a => a.Node.Tooltip).OfType<string>()],
+            [.. arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.TextInput>().Select(t => t.State)]);
+    }
+
+    private static async Task<(PilotChrome<RgbaImage> Chrome, RgbaImageRenderer Renderer, List<(string Verb, string[] Args)> Sent)> ListsAsync(Func<string, string[], SettingsReply>? reply = null)
+    {
+        var renderer = new RgbaImageRenderer(1280, 2000);
+        var chrome = Chrome(renderer);
+        var sent = new List<(string Verb, string[] Args)>();
+        chrome.Settings.Load = _ => Task.FromResult(ListsPage());
+        chrome.Settings.LoadRepos = _ => Task.FromResult(Repos);
+        chrome.Settings.Send = (verb, args, _) =>
+        {
+            lock (sent)
+            {
+                sent.Add((verb, args));
+            }
+            return Task.FromResult(reply?.Invoke(verb, args) ?? new SettingsReply("done"));
+        };
+        chrome.Show(PilotPage.Settings);
+        Draw(chrome);
+        await WaitAsync(() => chrome.Settings.Page is not null);
+        await WaitAsync(() => Look(chrome, renderer, DateTimeOffset.UtcNow).Texts.Contains("Choose a repo ▾"));
+        return (chrome, renderer, sent);
+    }
+
+    /// <summary>A list row offers the node's repos by name (the folder on hover, the ones already listed left out); Add sends the list with the pick.</summary>
+    [Fact]
+    public async Task AListRowOffersTheNodesReposByNameAndAddSendsTheListWithThePick()
+    {
+        var (chrome, renderer, sent) = await ListsAsync();
+        using var shot = renderer;
+        var now = DateTimeOffset.UtcNow;
+
+        Click(Regions(chrome), "settings:no-auto-merge-repos:choose");
+        var (texts, buttons) = Look(chrome, renderer, now);
+        buttons.ShouldContain("settings:no-auto-merge-repos:pick:pilot");
+        buttons.ShouldContain("settings:no-auto-merge-repos:pick:a-repo-with-a-very-long-name-that-goes-past-any-chip-and-any-row");
+        // tianwen and widget are listed already.
+        buttons.ShouldNotContain("settings:no-auto-merge-repos:pick:tianwen");
+        buttons.ShouldNotContain("settings:no-auto-merge-repos:pick:widget");
+        Hovers(chrome, renderer, now).Tooltips.ShouldContain(@"C:\src\sharpastro\pilot");
+        // Nothing is sent by choosing; Add is idle until a repo is chosen.
+        lock (sent)
+        {
+            sent.ShouldBeEmpty();
+        }
+
+        Click(Regions(chrome), "settings:no-auto-merge-repos:pick:pilot");
+        (texts, buttons) = Look(chrome, renderer, now);
+        texts.ShouldContain("pilot ▾");
+        buttons.ShouldNotContain("settings:no-auto-merge-repos:pick:pilot");
+        Click(Regions(chrome), "settings:no-auto-merge-repos:add");
+        await WaitAsync(() => { lock (sent) { return sent.Count == 1; } });
+        lock (sent)
+        {
+            sent.Single().Verb.ShouldBe(Verbs.Set);
+            sent.Single().Args.ShouldBe(["no-auto-merge-repos", "tianwen", "widget", "pilot"]);
+        }
+        // The node took it: the choice is spent.
+        await WaitAsync(() => Look(chrome, renderer, now).Texts.Count(t => t == "Choose a repo ▾") == 2);
+    }
+
+    /// <summary>Each entry is a chip whose × sends the list without it; the last one's × takes the setting out.</summary>
+    [Fact]
+    public async Task EachEntryIsAChipWhoseXSendsTheListWithoutIt()
+    {
+        var (chrome, renderer, sent) = await ListsAsync();
+        using var shot = renderer;
+        var (texts, buttons) = Look(chrome, renderer, DateTimeOffset.UtcNow);
+        texts.ShouldContain("tianwen");
+        texts.ShouldContain("widget");
+        texts.ShouldContain("tianwen=shortcut");
+        buttons.ShouldContain("settings:no-auto-merge-repos:remove:tianwen");
+
+        Click(Regions(chrome), "settings:no-auto-merge-repos:remove:tianwen");
+        Click(Regions(chrome), "settings:repo-trackers:remove:tianwen=shortcut");
+        await WaitAsync(() => { lock (sent) { return sent.Count == 2; } });
+        lock (sent)
+        {
+            sent.ShouldContain(s => s.Args.SequenceEqual(new[] { "no-auto-merge-repos", "widget" }));
+            sent.ShouldContain(s => s.Args.SequenceEqual(new[] { "repo-trackers", "default" }));
+        }
+    }
+
+    /// <summary>Repo trackers: the pick also chooses the tracker, and Add sends repo=tracker.</summary>
+    [Fact]
+    public async Task RepoTrackersAddsTheRepoWithTheChosenTracker()
+    {
+        var (chrome, renderer, sent) = await ListsAsync();
+        using var shot = renderer;
+
+        Click(Regions(chrome), "settings:repo-trackers:choose");
+        Click(Regions(chrome), "settings:repo-trackers:pick:pilot");
+        Click(Regions(chrome), "settings:repo-trackers:tracker:shortcut");
+        Click(Regions(chrome), "settings:repo-trackers:add");
+        await WaitAsync(() => { lock (sent) { return sent.Count == 1; } });
+        lock (sent)
+        {
+            sent.Single().Args.ShouldBe(["repo-trackers", "tianwen=shortcut", "pilot=shortcut"]);
+        }
+    }
+
+    /// <summary>A folder outside the node's repos is typed and sent as it is; a refusal's reason is shown, and the list stays as the node has it.</summary>
+    [Fact]
+    public async Task AFreePathOutsideTheReposIsSentAndARefusalsReasonIsShown()
+    {
+        var (chrome, renderer, sent) = await ListsAsync((_, args) => args.Contains(@"D:\clones\own")
+            ? new SettingsReply(@"refused: D:\clones\own is not a folder on this machine", ReplyKind.Refused)
+            : new SettingsReply("done"));
+        using var shot = renderer;
+        var now = DateTimeOffset.UtcNow;
+
+        var field = Hovers(chrome, renderer, now).Fields.First(f => f.Placeholder == "or a folder's path, then Enter");
+        field.Text = @"D:\clones\own";
+        await field.OnCommit!(field.Text);
+        await WaitAsync(() => chrome.Settings.Said?.StartsWith("refused", StringComparison.Ordinal) == true);
+
+        lock (sent)
+        {
+            sent.Single().Args.ShouldBe(["no-auto-merge-repos", "tianwen", "widget", @"D:\clones\own"]);
+        }
+        chrome.Settings.Said.ShouldBe(@"refused: D:\clones\own is not a folder on this machine");
+        var texts = Look(chrome, renderer, now).Texts;
+        texts.ShouldNotContain(@"D:\clones\own");
+        texts.ShouldContain("tianwen");
+    }
+
+    /// <summary>No role row's button reads "none": that choice is "default", the back-to-the-default pill is "reset", and the wire value stays none.</summary>
+    [Fact]
+    public async Task NoRoleButtonReadsNoneAndNoTwoButtonsOnARowReadDefault()
+    {
+        var page = Sample with
+        {
+            Settings =
+            [
+                new SettingRow { Key = "worker-model", Label = "Worker model", Detail = "A leg's worker; default leaves the choice to Claude Code", Value = "none", Saved = "none", Source = SettingSources.File, Choices = ["sonnet", "opus", "haiku", "none"] },
+                new SettingRow { Key = "worker-effort", Label = "Worker effort", Detail = "The effort each worker starts at; default leaves the choice to Claude Code", Value = "none", Source = SettingSources.Default, Choices = ["low", "medium", "high", "none"] },
+            ],
+        };
+        using var renderer = new RgbaImageRenderer(1280, 2000);
+        var chrome = Chrome(renderer);
+        var sent = new List<string[]>();
+        chrome.Settings.Load = _ => Task.FromResult(page);
+        chrome.Settings.Send = (_, args, _) =>
+        {
+            lock (sent)
+            {
+                sent.Add(args);
+            }
+            return Task.FromResult(new SettingsReply("done"));
+        };
+        chrome.Show(PilotPage.Settings);
+        Draw(chrome);
+        await WaitAsync(() => chrome.Settings.Page is not null);
+
+        var texts = Look(chrome, renderer, DateTimeOffset.UtcNow).Texts;
+        texts.ShouldNotContain("none");
+        // One "default" per row is the choice (the state line of an unset row says it too); "reset" is the one pill that takes a saved value out.
+        texts.Count(t => t == "default").ShouldBeGreaterThanOrEqualTo(2);
+        texts.Count(t => t == "reset").ShouldBe(1);
+        texts.ShouldContain("reset");
+        texts.ShouldContain("Worker model");
+        Click(Regions(chrome), "settings:worker-effort:none");
+        await WaitAsync(() => { lock (sent) { return sent.Count == 1; } });
+        lock (sent)
+        {
+            sent.Single().ShouldBe(["worker-effort", "none"]);
+        }
+    }
+
+    /// <summary>Captures of the list pickers narrow and wide, with long repo names and several chips, into PILOT_TEST_CAPTURE_DIR (nothing without it).</summary>
+    [Fact]
+    public async Task TheListPickersCapturedNarrowAndWideWithLongNamesAndSeveralChips()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR") is not { Length: > 0 } dir)
+        {
+            return;
+        }
+        Directory.CreateDirectory(dir);
+        var longName = Repos[3].Name;
+        var page = ListsPage() with
+        {
+            Settings =
+            [
+                .. ListsPage().Settings.Select(s => s.Key == "no-auto-merge-repos"
+                    ? s with { Value = $"tianwen\nwidget\nfc-sdk\ndir-lib\nsdl-vulkan-renderer\n{longName}", Saved = $"tianwen\nwidget\nfc-sdk\ndir-lib\nsdl-vulkan-renderer\n{longName}" }
+                    : s),
+                new SettingRow { Key = "worker-model", Label = "Worker model", Detail = "A leg's worker, unless its plan names a model; default leaves the choice to Claude Code", Value = "none", Saved = "none", Source = SettingSources.File, Choices = ["sonnet", "opus", "haiku", "none"] },
+            ],
+        };
+        foreach (var width in new[] { 700, 1400 })
+        {
+            using var renderer = new RgbaImageRenderer((uint)width, 900);
+            var chrome = Chrome(renderer);
+            chrome.Settings.Load = _ => Task.FromResult(page);
+            chrome.Settings.LoadRepos = _ => Task.FromResult<RepoInfo[]>([.. Repos, new RepoInfo { Name = "fc-sdk", Path = @"C:\src\sharpastro\FC.SDK" }, .. Enumerable.Range(1, 12).Select(i => new RepoInfo { Name = $"clone-{i}", Path = $@"C:\src\sharpastro\clone-{i}" })]);
+            chrome.Settings.Send = (_, _, _) => Task.FromResult(new SettingsReply("done"));
+            chrome.Show(PilotPage.Settings);
+            void Shot(string name)
+            {
+                chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, width, 900));
+                File.WriteAllBytes(Path.Combine(dir, $"settings-lists-{width}-{name}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, 900));
+            }
+            Shot("start");
+            await WaitAsync(() => chrome.Settings.Page is not null);
+            await Task.Delay(300, Ct);
+            Shot("closed");
+            // The chrome's own button hit goes to the picker as a press would.
+            var regions = new List<ClickableRegion>();
+            chrome.Settings.CollectPaintedRegions(regions);
+            Click(regions, "settings:no-auto-merge-repos:choose");
+            Shot("open");
+            regions.Clear();
+            chrome.Settings.CollectPaintedRegions(regions);
+            Click(regions, "settings:no-auto-merge-repos:pick:pilot");
+            Shot("picked");
+        }
+    }
+
     private static void Click(List<ClickableRegion> regions, string action) =>
         regions.First(r => r.Result is HitResult.ButtonHit b && b.Action == action).OnClick!.Invoke(InputModifier.None);
 

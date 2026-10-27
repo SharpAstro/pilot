@@ -264,6 +264,9 @@ if (remote is null)
     settings.LoadChecks = async (refresh, ct) => (await client.GetSetupChecksAsync(ct, refresh)) is { Success: true, Response: { } checks }
         ? checks
         : throw new InvalidOperationException("the node did not send its setup checks");
+    settings.LoadRepos = async ct => (await client.GetReposAsync(ct)) is { Success: true, Response: { } repos }
+        ? repos
+        : throw new InvalidOperationException("the node did not list its repos");
     settings.Send = (verb, args, ct) => SettingsCommands.SendAsync(client, verb, args, Who, ct);
     settings.LoadGrants = async ct => (await client.GrantsAsync(ct)) is { Success: true, Response: { } given }
         ? given

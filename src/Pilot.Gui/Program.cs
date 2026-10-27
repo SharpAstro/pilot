@@ -527,6 +527,9 @@ if (feed is not null && client is not null && clients is not null)
         chrome.Settings.LoadChecks = async (refresh, ct) => (await client.GetSetupChecksAsync(ct, refresh)) is { Success: true, Response: { } checks }
             ? checks
             : throw new InvalidOperationException("the node did not send its setup checks");
+        chrome.Settings.LoadRepos = async ct => (await client.GetReposAsync(ct)) is { Success: true, Response: { } repos }
+            ? repos
+            : throw new InvalidOperationException("the node did not list its repos");
         chrome.Settings.Send = (verb, args, ct) => SettingsCommands.SendAsync(client, verb, args, GuiSay.Who, ct);
         chrome.Settings.LoadGrants = async ct => (await client.GrantsAsync(ct)) is { Success: true, Response: { } given }
             ? given
