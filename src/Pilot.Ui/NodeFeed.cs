@@ -46,7 +46,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// </summary>
     private sealed record View(
         SessionRow[] Sessions, FlightRow[] Flights, LegRow[] Legs, CardRow[] Cards, JobRow[] Jobs, UsageRow? Usage, string? Stream,
-        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos);
+        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos, SummaryRow[] Summaries);
 
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(
@@ -76,7 +76,7 @@ internal sealed class NodeFeed : IAsyncDisposable
         _nodeInfo = nodeInfo;
         _socketPath = socketPath;
         _retry = retry ?? RetryDelay;
-        _view = new View([], [], [], [], [], null, null, $"connecting to the node on {socketPath}", false, null, null, []);
+        _view = new View([], [], [], [], [], null, null, $"connecting to the node on {socketPath}", false, null, null, [], []);
     }
 
     /// <summary>A feed on the node's own client.</summary>
@@ -140,6 +140,9 @@ internal sealed class NodeFeed : IAsyncDisposable
         var view = Volatile.Read(ref _view);
         return new JobsScreen(JobLine.Build(view.Jobs, now), view.Status + UpdateNoteOf(view), now);
     }
+
+    /// <summary>The summaries the node has kept, one per scope (<see cref="SummaryRow.Scope"/>).</summary>
+    public IReadOnlyList<SummaryRow> Summaries() => Volatile.Read(ref _view).Summaries;
 
     /// <summary>The cards panel: the open cards and the latest handled lines.</summary>
     public CardsScreen Cards()
@@ -380,6 +383,7 @@ internal sealed class NodeFeed : IAsyncDisposable
         LegRow[] legs = [.. _mirror.Legs.Values];
         CardRow[] cards = [.. _mirror.Cards.Values];
         JobRow[] jobs = [.. _mirror.Jobs.Values];
+        SummaryRow[] summaries = [.. _mirror.Summaries.Values];
         var usage = _mirror.Usage;
         var stream = _mirror.Stream;
         ImmutableInterlocked.Update(ref _view, view => view with
@@ -389,6 +393,7 @@ internal sealed class NodeFeed : IAsyncDisposable
             Legs = legs,
             Cards = cards,
             Jobs = jobs,
+            Summaries = summaries,
             Usage = usage,
             Stream = stream,
             Status = snapshot || !view.Connected ? $"live from the node on {_socketPath}" : view.Status,

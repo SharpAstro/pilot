@@ -105,8 +105,8 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
 }
 
 /// <summary>
-/// The Home page: the two verdicts at the top, flying and waiting on you, then every flight, session and job on the
-/// node as a chip. A chip opens the thing's own page through <see cref="OnFlight"/>, <see cref="OnSession"/> and
+/// The Home page: the Summary card first (what needs you and where it is, for the nodes in view), then the two verdicts,
+/// flying and waiting on you, then every flight, session and job on the node as a chip. A chip opens the thing's own page through <see cref="OnFlight"/>, <see cref="OnSession"/> and
 /// <see cref="OnJob"/>. Generic over the surface, as the other pages are.
 /// </summary>
 internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
@@ -137,6 +137,11 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>The window's node selection: its pills in the top bar, and the nodes picked are the things shown.</summary>
     public NodeFilter? Nodes { get; set; }
 
+    /// <summary>The window's summaries: the card at the top reads its row from it and its button presses through it. Null draws no card.</summary>
+    public SummaryBoard? Summary { get; set; }
+
+    private readonly SummaryCard _card = new();
+
     /// <summary>Opens a flight's page on Flights.</summary>
     public Action<FlightLine>? OnFlight { get; set; }
 
@@ -166,11 +171,15 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                 Cards = screen.Cards with { Open = [.. screen.Cards.Open.Where(c => nodes.Shows(screen.Cards.NodeOf(c)))] },
             };
         }
-        var blocks = new List<Layout.Node>
+        var blocks = new List<Layout.Node>();
+        // The summary of the nodes the window shows comes first: it is what the person came to read.
+        if (Summary is { } board && _card.Build(board, board.Shelf.Fleet(Nodes), FlightsPalette.Standard, screen.Flights.AsOf) is { } card)
         {
-            Layout.Builder.Text(screen.Flying, 16f, screen.Flying == "Nothing is flying" ? Dim : Live).RowH(28f),
-            Layout.Builder.Text(screen.Waiting, 16f, screen.Waiting == "Nothing waits on you" ? Dim : Ring).RowH(28f),
-        };
+            blocks.Add(card);
+            blocks.Add(Layout.Builder.Spacer().RowH(14f));
+        }
+        blocks.Add(Layout.Builder.Text(screen.Flying, 16f, screen.Flying == "Nothing is flying" ? Dim : Live).RowH(28f));
+        blocks.Add(Layout.Builder.Text(screen.Waiting, 16f, screen.Waiting == "Nothing waits on you" ? Dim : Ring).RowH(28f));
         Section(blocks, "Flights", screen.FlightChips, "no flight is flying or held");
         Section(blocks, "Sessions", screen.SessionChips, "no live session");
         Section(blocks, "Background tasks", screen.JobChips, "no job running or queued");

@@ -22,6 +22,11 @@ internal sealed partial class FlightsView<TSurface>
     /// <summary>The cards panel as this frame shows it: the open page finds its flight's card that offers the merge.</summary>
     public CardsScreen? Cards { get; set; }
 
+    /// <summary>The window's summaries: the flight's page shows its own and asks for a new one. Null shows none.</summary>
+    public SummaryBoard? Summary { get; set; }
+
+    private readonly SummaryCard _summaryCard = new();
+
     /// <summary>Runs a card's choice, as the panel's button does, so the card closes once it is done.</summary>
     public Action<CardRow, int>? OnAnswerCard { get; set; }
 
@@ -161,6 +166,11 @@ internal sealed partial class FlightsView<TSurface>
         var legs = detail.Legs.Count == 0
             ? [Layout.Builder.Text(line.Node is null or { Here: true } ? "no legs yet: Plan a leg" : "no legs yet", 13f, Dim).RowH(24f)]
             : detail.Legs.Select(l => LegBlock(line.Code, l)).ToList();
+        // The flight's own summary leads what scrolls: the legs are the detail under it.
+        if (Summary is { } board && _summaryCard.Build(board, board.Shelf.Flight(line.Code, line.Node), P, _screen.AsOf) is { } summary)
+        {
+            legs.Insert(0, summary);
+        }
 
         List<Layout.Node> page =
         [

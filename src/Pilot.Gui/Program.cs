@@ -393,6 +393,35 @@ if (feed is not null && client is not null && clients is not null)
         loop.RequestRedraw();
     }, "a Flights action");
     chrome.Flights.OnOpen = location => OpenAway(location, () => chrome.Flights.Say($"could not open {location}"));
+    // The Summary cards on Home and on a flight's page: Summarise is a verb on the node the summary is of, and the card shows
+    // it running until the node answers. The row it then shows is the node's own, from the stream, never this answer's.
+    chrome.Summaries.Track = (run, what) => tracker.Run(run, what);
+    chrome.Summaries.Changed = loop.RequestRedraw;
+    chrome.Summaries.CanSteer = CanSteer;
+    chrome.Summaries.Send = async ask =>
+    {
+        if (clients.For(ask.Node) is not { } to)
+        {
+            return FleetClients.WatchOnly(ask.Node);
+        }
+        try
+        {
+            var envelope = await to.SendAsync(ask.Request(GuiSay.Who), cts.Token);
+            clients.NoteRefusal(ask.Node, envelope);
+            var refused = !envelope.Success ? envelope.Error : envelope.Response is { Ok: false } answer ? answer.Error : null;
+            Console.WriteLine($"pilot-gui: summarise {ask.Scope} on {ask.Node.Name}: {refused ?? "done"}");
+            return refused;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or System.Text.Json.JsonException)
+        {
+            return $"the node could not be reached ({ex.Message})";
+        }
+        catch (TaskCanceledException) when (!cts.IsCancellationRequested)
+        {
+            // The client gives up on a call after 100 s, a summary may take longer: the node keeps it all the same.
+            return "the node did not answer in time, and a summary it made late still shows here";
+        }
+    };
     // The Background tasks page: a job's log followed while it is selected, Cancel a verb on the node.
     chrome.Jobs.CanCommand = true;
     chrome.Jobs.LoadLog = async (node, id, ct) => (await (clients.For(node, command: false) ?? throw new InvalidOperationException($"no connection to {node?.Name ?? "this node"}")).GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
@@ -634,6 +663,7 @@ loop.OnRender = () =>
             chrome.Flights.Jobs = pages.JobRows;
             jobs = pages.Jobs;
             repos = pages.Repos;
+            chrome.Summaries.Shelf = pages.Summaries ?? SummaryShelf.Empty;
             fleet = made.Item2;
         }
     }

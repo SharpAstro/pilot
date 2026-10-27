@@ -116,6 +116,8 @@ internal sealed class PilotChrome<TSurface>
         Home.About = About;
         Settings.Nodes = Nodes;
         Home.Nodes = Nodes;
+        Home.Summary = Summaries;
+        Flights.Summary = Summaries;
         Chat.About = About;
         Chat.Nodes = Nodes;
         // The Autopilot switch, in every page's header, for the node the window shows.
@@ -165,6 +167,12 @@ internal sealed class PilotChrome<TSurface>
 
     /// <summary>Whether the pages show only what is in play (the default) or everything: kept across pages for the window's life, and across a restart when the chrome was given a file.</summary>
     public PlayFilter Play { get; }
+
+    /// <summary>
+    /// The window's summaries, which Home's card and each flight's page read and press through: the host sets its
+    /// <see cref="SummaryBoard.Shelf"/> with every build of the pages, and its <see cref="SummaryBoard.Send"/> to ask a node.
+    /// </summary>
+    public SummaryBoard Summaries { get; } = new();
 
     /// <summary>The Home page: what flies, what waits on the controller, and a chip for each thing.</summary>
     public HomeView<TSurface> Home { get; }
