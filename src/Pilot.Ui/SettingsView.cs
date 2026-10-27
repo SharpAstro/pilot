@@ -57,7 +57,8 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     // Checks: what the node last measured (null until it first answers); Checking: a read the person is waiting on is out
     // (the first, a refresh, or the one after a fix), so the rows say so; Working: the ids of the controls pressed and not yet answered.
     // Repos: the node's tracked repos the list pickers offer (null until read); ReposProblem: why they could not be read.
-    private sealed record Seen(SettingsPage? Page, SetupChecks? Checks, bool Checking, string? ChecksProblem, GrantInfo[] Given, string[] Held, string? Problem, System.Collections.Immutable.ImmutableHashSet<string> Working, RepoInfo[]? Repos = null, string? ReposProblem = null);
+    // ChecksTicket: the ticket of the checks read shown, so a slower, older read cannot put its answer over a newer one.
+    private sealed record Seen(SettingsPage? Page, SetupChecks? Checks, bool Checking, string? ChecksProblem, GrantInfo[] Given, string[] Held, string? Problem, System.Collections.Immutable.ImmutableHashSet<string> Working, RepoInfo[]? Repos = null, string? ReposProblem = null, long ChecksTicket = 0);
 
     private Seen _read = new(null, null, false, null, [], [], null, []);
     private CancellationTokenSource? _reading;
@@ -74,10 +75,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     // Counts the settings a reply swapped in, so a read that began before one does not put the old row back.
     private long _swaps;
-    // Orders the checks reads: an answer older than one already shown is dropped; _waited counts the reads someone waits on.
-    private readonly Lock _checkTickets = new();
+    // Orders the checks reads: each takes a ticket, and an answer older than the one in Seen.ChecksTicket is dropped;
+    // _waited counts the reads someone waits on.
     private long _ticket;
-    private long _shown;
     private int _waited;
 
     /// <summary>Reads the node's settings page (its settings alone, which the node answers at once); null where there is no node to read (a snapshot file).</summary>
@@ -236,11 +236,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         {
             return;
         }
-        long ticket;
-        lock (_checkTickets)
-        {
-            ticket = ++_ticket;
-        }
+        var ticket = Interlocked.Increment(ref _ticket);
         if (waited)
         {
             Interlocked.Increment(ref _waited);
@@ -250,15 +246,10 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         try
         {
             var measured = await load(refresh, cancellationToken).ConfigureAwait(false);
-            lock (_checkTickets)
-            {
-                // An answer older than the one already shown (a slow read passed by a refresh) is not shown.
-                if (ticket > _shown)
-                {
-                    _shown = ticket;
-                    System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { Checks = measured, ChecksProblem = null });
-                }
-            }
+            // An answer older than the one already shown (a slow read passed by a refresh) is not shown.
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => ticket > read.ChecksTicket
+                ? read with { Checks = measured, ChecksProblem = null, ChecksTicket = ticket }
+                : read);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
         {
