@@ -164,7 +164,7 @@ public sealed class ShortcutTracker(HttpClient http, Func<string?> token) : ITra
     /// One call to the API with the token. With <paramref name="refuse"/> (what was asked), a missing token or a refusal throws
     /// a FlightException; without it they answer null, as a read does.
     /// </summary>
-    private async Task<JsonDocument?> CallAsync(HttpMethod method, string url, object? body, string? refuse, CancellationToken cancellationToken)
+    private async Task<JsonDocument?> CallAsync(HttpMethod method, string url, string? body, string? refuse, CancellationToken cancellationToken)
     {
         if (token() is not { Length: > 0 } secret)
         {
@@ -175,7 +175,7 @@ public sealed class ShortcutTracker(HttpClient http, Func<string?> token) : ITra
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         if (body is not null)
         {
-            request.Content = JsonContent.Create(body);
+            request.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
         }
         try
         {
@@ -190,6 +190,37 @@ public sealed class ShortcutTracker(HttpClient http, Func<string?> token) : ITra
         {
             return refuse is null ? null : throw new FlightException($"{refuse}: {ex.Message}");
         }
+    }
+
+    private static string LabelsBody(IEnumerable<string> names)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteStartArray("labels");
+            foreach (var name in names)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("name", name);
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+        return System.Text.Encoding.UTF8.GetString(stream.ToArray());
+    }
+
+    private static string TextBody(string text)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("text", text);
+            writer.WriteEndObject();
+        }
+        return System.Text.Encoding.UTF8.GetString(stream.ToArray());
     }
 
     private async Task<string[]?> StoryLabelsAsync(int id, string? refuse, CancellationToken cancellationToken)
@@ -211,7 +242,7 @@ public sealed class ShortcutTracker(HttpClient http, Func<string?> token) : ITra
         if (!have.Contains(label, StringComparer.Ordinal))
         {
             // A label not yet in the workspace is made by naming it in the story's update.
-            using var _ = await CallAsync(HttpMethod.Put, Url(id), new { labels = have.Append(label).Select(n => new { name = n }).ToArray() }, refuse, cancellationToken);
+            using var _ = await CallAsync(HttpMethod.Put, Url(id), LabelsBody(have.Append(label)), refuse, cancellationToken);
         }
     }
 
@@ -221,12 +252,12 @@ public sealed class ShortcutTracker(HttpClient http, Func<string?> token) : ITra
         var have = await StoryLabelsAsync(id, refuse, cancellationToken) ?? [];
         if (have.Contains(label, StringComparer.Ordinal))
         {
-            using var _ = await CallAsync(HttpMethod.Put, Url(id), new { labels = have.Where(n => n != label).Select(n => new { name = n }).ToArray() }, refuse, cancellationToken);
+            using var _ = await CallAsync(HttpMethod.Put, Url(id), LabelsBody(have.Where(n => n != label)), refuse, cancellationToken);
         }
     }
 
     public async Task CommentAsync(string repoPath, int id, string body, CancellationToken cancellationToken)
     {
-        using var _ = await CallAsync(HttpMethod.Post, Url(id) + "/comments", new { text = body }, $"Shortcut would not take the comment on sc-{id}", cancellationToken);
+        using var _ = await CallAsync(HttpMethod.Post, Url(id) + "/comments", TextBody(body), $"Shortcut would not take the comment on sc-{id}", cancellationToken);
     }
 }
