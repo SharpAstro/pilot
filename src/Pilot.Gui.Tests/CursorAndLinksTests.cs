@@ -71,7 +71,9 @@ public sealed class CursorAndLinksTests
         flights.CollectPaintedRegions(regions);
         ShouldPointAtButtonsOnly(regions);
         regions.ShouldContain(r => r.Result is HitResult.ListItemHit);
-        TextOf(Buttons(flights.Tree(screen), 200), "pr:TIA1611").ShouldEndWith(Followable.Away);
+        // The PR link is a place of the app (the Pull requests page), so it carries no arrow; the small arrow beside it is the way out.
+        TextOf(Buttons(flights.Tree(screen), 200), "pr:TIA1611").ShouldNotContain(Followable.Away);
+        TextOf(Buttons(flights.Tree(screen), 200), "pr:TIA1611:browser").ShouldBe("↗");
 
         flights.HandleInput(new InputEvent.KeyDown(InputKey.Enter, InputModifier.None)).ShouldBeTrue();
         chrome.Render(new SessionsScreen([], "test", Now), screen, new RectF32(0, 0, 1280, 800));
@@ -81,7 +83,8 @@ public sealed class CursorAndLinksTests
 
         // The flight's own page.
         var page = Buttons(flights.Tree(screen), 200);
-        TextOf(page, "pr:TIA1611").ShouldEndWith(Followable.Away);
+        TextOf(page, "pr:TIA1611").ShouldNotContain(Followable.Away);
+        TextOf(page, "pr:TIA1611:browser").ShouldBe("↗");
         TextOf(page, "artifact:TIA1611:render:The planets").ShouldEndWith(Followable.Away);
         TextOf(page, "artifact:TIA1611:render:Preview").ShouldEndWith(Followable.Away);
         TextOf(page, "artifact-folder:TIA1611:render:The planets").ShouldEndWith(Followable.Away);
