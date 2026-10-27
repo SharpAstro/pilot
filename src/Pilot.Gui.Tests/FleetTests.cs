@@ -379,7 +379,7 @@ public sealed class FleetTests
 
         FleetLine.From(gone.Where, here: false, canCommand: true, null, down).Maintenance.ShouldBeTrue();
         var capture = Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR") is { Length: > 0 } dir ? dir : null;
-        using var renderer = new RgbaImageRenderer((uint)width, 460);
+        using var renderer = new RgbaImageRenderer((uint)width, 760);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.LinkFleet();
         chrome.Nodes.Choices = [live, busy, gone];
@@ -392,13 +392,13 @@ public sealed class FleetTests
         var flights = new FlightsScreen(FlightLine.Order([Flight("TIA1611", 1611, "Planets on the GPU", live), Flight("TIA1612", 1612, "Mount model", busy), Flight("TIA1613", 1613, "Guider calibration", gone, "DE2")]), "test", heard);
 
         chrome.Show(PilotPage.Fleet);
-        chrome.Render(sessions, flights, null, null, screen, new RectF32(0, 0, width, 460));
+        chrome.Render(sessions, flights, null, null, screen, new RectF32(0, 0, width, 760));
         void Keep(string name)
         {
             if (capture is not null)
             {
                 Directory.CreateDirectory(capture);
-                File.WriteAllBytes(Path.Combine(capture, $"{name}-{width}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, 460));
+                File.WriteAllBytes(Path.Combine(capture, $"{name}-{width}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, 760));
             }
         }
         Keep("fleet-day");
@@ -406,7 +406,7 @@ public sealed class FleetTests
         {
             chrome.Flights.Mode = mode;
             chrome.Show(PilotPage.Flights);
-            chrome.Render(sessions, flights, null, null, screen, new RectF32(0, 0, width, 460));
+            chrome.Render(sessions, flights, null, null, screen, new RectF32(0, 0, width, 760));
             Keep(name);
         }
     }
