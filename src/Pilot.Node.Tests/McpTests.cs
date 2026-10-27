@@ -253,10 +253,12 @@ public sealed class McpTests : IAsyncLifetime
         (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(1);
         updated = true;
         input.Feed("""{"jsonrpc":"2.0","id":2,"method":"ping"}""");
-        (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(2);
 
-        // Once, and after the reply in hand: the tools may differ on the new binary.
-        (await output.NextAsync()).GetProperty("method").GetString().ShouldBe("notifications/tools/list_changed");
+        // The reply and, once, the tools may differ on the new binary. Either comes first: the server's own watch can see the
+        // update before the ping is answered, and hands over as a quiet server does (failed so on CI twice, 2026-10-27).
+        var two = new[] { await output.NextAsync(), await output.NextAsync() };
+        two.Count(m => m.TryGetProperty("id", out var id) && id.GetInt32() == 2).ShouldBe(1);
+        two.Count(m => m.TryGetProperty("method", out var method) && method.GetString() == "notifications/tools/list_changed").ShouldBe(1);
         child.Args.ShouldBe(["--node-socket", _node.SocketPath, "mcp"]);
         child.Heard.Count.ShouldBe(2);
         JsonDocument.Parse(child.Heard[0]).RootElement.GetProperty("method").GetString().ShouldBe("initialize");
