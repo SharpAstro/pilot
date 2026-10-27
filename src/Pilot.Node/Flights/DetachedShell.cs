@@ -43,7 +43,7 @@ public sealed class DetachedShell : IDisposable
         var inner = Path.ChangeExtension(logPath, ".ps1");
         var outer = WrapperOf(inner);
         var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
-        File.WriteAllText(inner, ShellScript.Body(ShellScript.Unwrap(command)), utf8);
+        File.WriteAllText(inner, Utf8Output + "\n" + ShellScript.Body(ShellScript.Unwrap(command)), utf8);
         File.WriteAllText(outer, WindowsWrapper(inner, outer, exitPath), utf8);
         return new DetachedShell([inner, outer], () => StartWindows(JobName(jobId, logPath), outer, cwd, logPath));
     }
@@ -69,6 +69,7 @@ public sealed class DetachedShell : IDisposable
     /// </summary>
     internal static string WindowsWrapper(string inner, string outer, string exitPath) =>
         $$"""
+        {{Utf8Output}}
         {{EnvironmentLines()}}& pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{Quote(inner)}}
         $code = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 1 }
         [System.IO.File]::WriteAllText({{Quote(exitPath + ".tmp")}}, "$code")
@@ -77,6 +78,13 @@ public sealed class DetachedShell : IDisposable
         exit $code
 
         """;
+
+    /// <summary>
+    /// The first line of both scripts: their output is UTF-8, which the log is read as. Without it, on a machine whose console
+    /// code page is not UTF-8, a job's non-ASCII output (pwsh's, or a native child's on the inherited console) reached the log
+    /// in the OEM code page and read as U+FFFD (windows-latest on #357).
+    /// </summary>
+    private const string Utf8Output = "try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }";
 
     /// <summary>The build environment (<see cref="BuildEnvironment"/>) as the wrapper sets it, one <c>$env:</c> line each.</summary>
     private static string EnvironmentLines() =>
