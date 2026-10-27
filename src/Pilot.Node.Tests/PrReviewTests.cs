@@ -64,11 +64,24 @@ internal static class PrOrigins
         {
             return;
         }
-        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        // A review the node posted is ended by a task of its own after the reviewer's grace, which may still hold a folder of the
+        // test as it ends: tried again for a few seconds before it counts as a failure.
+        for (var attempt = 1; ; attempt++)
         {
-            File.SetAttributes(file, FileAttributes.Normal);
+            try
+            {
+                foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                {
+                    File.SetAttributes(file, FileAttributes.Normal);
+                }
+                Directory.Delete(root, recursive: true);
+                return;
+            }
+            catch (IOException) when (attempt < 50)
+            {
+                Thread.Sleep(100);
+            }
         }
-        Directory.Delete(root, recursive: true);
     }
 }
 
