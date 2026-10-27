@@ -44,6 +44,15 @@ public sealed record CommandRequest
     public string? Why { get; init; }
 
     /// <summary>
+    /// Names this one attempt at the command: the CLI fills it with a fresh id per invocation, or with the one the caller
+    /// gives it (<c>PILOT_REQUEST_ID</c>) to retry a command that timed out. The node runs a command with an id it has
+    /// seen once, and answers a repeat with the first's result (waiting for it if it is still running). Null for a
+    /// client that does not retry (the GUI, a card's button): every send runs.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RequestId { get; init; }
+
+    /// <summary>
     /// Set by the node when it let an assistant's your-only command through because the autopilot is on, so the command's
     /// result and its black-box line say so. Never read from the wire: a client cannot claim it.
     /// </summary>
@@ -81,12 +90,26 @@ public sealed record CommandResult
     /// <summary>What the command made, when it made something with an id of its own: a <c>run</c>'s job (<c>j3</c>).</summary>
     public string? Made { get; init; }
 
+    /// <summary>The setting's row as it stands after a <c>set node</c> that saved it, so a page shows it from the answer; null for any other command or a refusal.</summary>
+    public SettingRow? Setting { get; init; }
+
     /// <summary>Whether the node ran it as an assistant's your-only command because the autopilot is on (<see cref="CommandRequest.Autopilot"/>).</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Autopilot { get; init; }
 
     /// <summary>The message the sender acted on (<see cref="CommandRequest.Why"/>), when it gave one.</summary>
     public string? Why { get; init; }
+
+    /// <summary>
+    /// Set when the command is queued, not done: it has waited for a commander's lock past the patience, and this says what holds
+    /// it (<c>waiting for merge flight/TIA1 (since 14:03:07)</c>). The command runs once the lock frees, and its outcome comes on the stream and on a Handled card.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Waiting { get; init; }
+
+    /// <summary>The result a queued command ends with, for the node's own use (a retry by its request id is handed it); never on the wire.</summary>
+    [JsonIgnore]
+    public Task<CommandResult>? Later { get; init; }
 
     /// <summary>
     /// The number of the <see cref="CommandResultEvent"/> that carries this result on the stream, so the client that
@@ -130,6 +153,12 @@ public static class Verbs
     public const string FlyAnyway = "fly-anyway";
 
     /// <summary>
+    /// The arg a <c>create-flight</c> may carry after its item: create it although the item carries another node's
+    /// <c>pilot node:</c> label. It is no part of the title.
+    /// </summary>
+    public const string AnywayFlag = "--anyway";
+
+    /// <summary>
     /// <c>land flight/&lt;code&gt;</c>: its work is in. Its worktree is removed when it is clean (never when it holds
     /// changes); its branch and code are kept, and flights connected to it are cleared.
     /// </summary>
@@ -169,6 +198,12 @@ public static class Verbs
     /// its worker's or the watchtower's): the leg is done, its failure kept in the report, and the flight goes on.
     /// </summary>
     public const string FinishLeg = "finish-leg";
+
+    /// <summary>
+    /// <c>wait-leg flight/&lt;code&gt;/&lt;leg&gt; [path=&lt;file&gt;] [until=&lt;ISO time&gt;] [why…]</c>: the flying leg's worker waits on a file or a time
+    /// with no job; it ends its turn and the node wakes it once when it comes. Needs a file or a time, and a time not past.
+    /// </summary>
+    public const string WaitLeg = "wait-leg";
 
     /// <summary>
     /// <c>go-around flight/&lt;code&gt;/&lt;leg&gt; &lt;why…&gt;</c>: its worker stopped and a fresh one started, briefed from the
@@ -213,8 +248,14 @@ public static class Verbs
     /// </summary>
     public const string Run = "run";
 
-    /// <summary><c>cancel-job job/&lt;id&gt;</c>: stops a running job; its owner is told, as of any job's end.</summary>
+    /// <summary>
+    /// <c>cancel-job job/&lt;id&gt;</c>: stops a running job; its owner is told, as of any job's end. With <see cref="ForceArg"/> it
+    /// kills the job's wrapper and every process the node has seen under it at once, with no grace.
+    /// </summary>
     public const string CancelJob = "cancel-job";
+
+    /// <summary>The arg of <see cref="CancelJob"/> that kills the whole process tree, descendants that outlived the wrapper too.</summary>
+    public const string ForceArg = "force";
 
     /// <summary>What a job target starts with: <c>job/&lt;id&gt;</c>.</summary>
     public const string JobTargetPrefix = "job/";
@@ -246,7 +287,7 @@ public static class Verbs
     /// <c>pr-verdict pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt; approve|changes|comment &lt;report&gt; [&lt;path:line finding&gt;…]</c>: a PR
     /// reviewer's verdict, its report and then each finding on a line; a card carries it to the controller, and the
     /// review's worktree goes when it closes.
-    /// On the controller's own PR only <c>comment</c> is taken, as GitHub takes nothing else there.
+    /// On the controller's own PR every verdict is taken and kept for the status and label, but it posts as a comment, as GitHub takes nothing else there.
     /// </summary>
     public const string PrVerdict = "pr-verdict";
 
@@ -255,6 +296,12 @@ public static class Verbs
     /// login, an inline comment on each finding whose line is in the diff; the controller's, as a merge is, and only once.
     /// </summary>
     public const string PostReview = "post-review";
+
+    /// <summary>
+    /// <c>fix-pr pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>: a fixer session on the PR's branch, for what its reviewer's changes verdict found (#290).
+    /// The node starts one itself on the controller's own PR; this is the choice on the card of anyone else's.
+    /// </summary>
+    public const string FixPr = "fix-pr";
 
     /// <summary><c>extend-budget flight/&lt;code&gt;/&lt;leg&gt; &lt;tokens&gt;</c>: raises the leg's budget, in weighted tokens, to the new figure.</summary>
     public const string ExtendBudget = "extend-budget";
@@ -284,13 +331,14 @@ public static class Verbs
 
     /// <summary>
     /// <c>set node &lt;key&gt; [value…]</c>: saves a setting in the node's settings file (no value, or <c>default</c>, takes
-    /// it out); the node restarts to run with it once no job would be cut short. This machine only.
+    /// it out); the node restarts to run with it at once; jobs carry on under the next node. This machine only.
     /// </summary>
     public const string Set = "set";
 
     /// <summary>
     /// <c>setup node &lt;check&gt;</c>: makes the fix a setup check offers (<c>autostart</c>, <c>hooks</c>, <c>lan</c>,
-    /// <c>firewall</c>, <c>trust</c>); <c>setup node no-autostart</c> takes the logon entry out. This machine only.
+    /// <c>firewall</c>, <c>defender</c>, <c>trust</c>); <c>setup node defender --processes</c> excludes the build processes as well
+    /// as the folders from Windows Defender; <c>setup node no-autostart</c> takes the logon entry out. This machine only.
     /// </summary>
     public const string Setup = "setup";
 

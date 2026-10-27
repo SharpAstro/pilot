@@ -103,7 +103,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
     private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
     private static readonly RGBAColor32 Faint = new(0x5c, 0x5f, 0x6c, 0xff);
-    private static readonly RGBAColor32 Track = new(0x2a, 0x2c, 0x38, 0xff);
+    internal static readonly RGBAColor32 Track = new(0x2a, 0x2c, 0x38, 0xff);
     private static readonly RGBAColor32 Working = new(0x4c, 0xc3, 0x8a, 0xff);
     private static readonly RGBAColor32 Waiting = new(0xf0, 0xb4, 0x3c, 0xff);
     private static readonly RGBAColor32 Idle = new(0x6f, 0x9b, 0xd8, 0xff);
@@ -116,6 +116,9 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     // Model, Last response, Spend and the archive button are the columns a narrow window drops, each as it can no longer
     // have its whole width (Optional), so the Session column keeps its SessionMin for the role and the name. The engine
     // decides, from the room it has; no width is measured here.
+
+    /// <summary>The open session's attachments and the viewer that opens one; the chrome shares one with the Flights page.</summary>
+    public AttachmentGallery Gallery { get; set; } = new();
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
 
@@ -151,11 +154,11 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// <summary>What a watch-only node's disabled actions say.</summary>
     public static string SteerHint(NodeMark node) => $"Connect to {node.Name} to steer";
 
-    /// <summary>The selected session's name, which the say bar names as its target.</summary>
     /// <summary>The flight of the session in front, open as a transcript or else selected: its cards are lit in the panel.</summary>
     public string? FocusFlight =>
         (Transcript.IsOpen ? _lines.FirstOrDefault(l => l.Key == Transcript.Key) : Selected >= 0 && Selected < _lines.Count ? _lines[Selected] : null)?.Row.Flight;
 
+    /// <summary>The selected session's name, which the say bar names as its target.</summary>
     private string? SayTarget => Selected >= 0 && Selected < _lines.Count ? _lines[Selected].Name : null;
 
     /// <summary>The open session's transcript, shown in place of the table: double-click a row, Enter, or Open transcript.</summary>
@@ -195,8 +198,25 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// <summary>Opens the new-flight wizard with a repo chosen (by its name): the menu's New flight in it.</summary>
     public Action<string>? OnNewFlight { get; set; }
 
-    /// <summary>Puts text on the clipboard; the menu's Copy entries. Null where the host has no clipboard.</summary>
-    public Action<string>? CopyText { get; set; }
+    // The right-click menu of the links that leave the app (Answer in the browser): Copy URL.
+    private readonly LinkMenu _links = new();
+
+    /// <summary>Puts text on the clipboard; the menu's Copy entries and the links' Copy URL. Null where the host has no clipboard.</summary>
+    public Action<string>? CopyText
+    {
+        get => _links.CopyText;
+        set => _links.CopyText = value;
+    }
+
+    /// <summary>Asks the host for a frame, for the links' "Copied" notice that fades; set by the host.</summary>
+    public Action? Changed
+    {
+        get => _links.Changed;
+        set => _links.Changed = value;
+    }
+
+    /// <summary>The links' menu: its open items and its notice.</summary>
+    internal LinkMenu Links => _links;
 
     /// <summary>Whether a row's right-click menu is open.</summary>
     public bool MenuOpen => _menu.IsOpen;
@@ -296,7 +316,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     public void Render(SessionsScreen screen, RectF32 bounds)
     {
         BeginFrame();
-        RenderLayout(Tree(screen), bounds);
+        RenderLayout(Tree(screen), bounds, drawFill: Gallery.DrawFill);
     }
 
     /// <summary>
@@ -426,10 +446,19 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     public override bool HandleInput(InputEvent evt)
     {
+        // A link's menu, and the keys that reach it, ahead of the list's: the transcript's links are painted in this widget too.
+        if (evt is InputEvent.KeyDown linkKey && (Transcript.IsOpen ? Transcript.Links : _links).HandleKey(linkKey, this))
+        {
+            return true;
+        }
         // Enter opens the selected session's transcript; Escape goes back to the table.
         if (evt is InputEvent.KeyDown { Key: InputKey.Enter } && !Transcript.IsOpen && Selected >= 0 && Selected < _lines.Count && Transcript.Load is not null)
         {
             Transcript.Open(_lines[Selected]);
+            return true;
+        }
+        if (evt is InputEvent.KeyDown { Key: var viewerKey } && Gallery.HandleKey(viewerKey))
+        {
             return true;
         }
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && Transcript.IsOpen)
@@ -468,9 +497,11 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         page = About?.Over(page) ?? page;
         // The open transcript's chips that did not fit on a row, as a menu over the page.
         page = Transcript.Over(page, HeaderHeight);
-        return _menu.IsOpen
+        page = Gallery.Over(page);
+        page = _menu.IsOpen
             ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg))
             : page;
+        return _links.Over(page);
     }
 
     /// <summary>
@@ -583,7 +614,11 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         Transcript.CopyText = CopyText;
         Transcript.OpenLink = OnOpen;
         var open = _whole.FirstOrDefault(l => l.Key == Transcript.Key) ?? screen.Lines.FirstOrDefault(l => l.Key == Transcript.Key);
-        return Transcript.Tree(live: open?.Row.State is not (null or Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed), open?.Row.Subagents, open, screen.AsOf);
+        var transcript = Transcript.Tree(live: open?.Row.State is not (null or Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed), open?.Row.Subagents, open, screen.AsOf);
+        // The session's details: the node's copies of the images it recorded, over its transcript.
+        return open is not null && Gallery.Section($"session:{open.Key}", AttachmentGallery.Of(open.Row.Artifacts, open.Node)) is { } attachments
+            ? Layout.Builder.VStack(attachments.Pad(Gutter, 6f), transcript.HStar()).Stretch()
+            : transcript;
     }
 
     // Open the selected session's transcript; say the bar's text to all shown; archive every ended session, and show or hide
@@ -685,7 +720,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             Metered(line.Context, line.ContextFraction, body),
             Cell(Layout.Builder.Text(line.LastResponse, 14f, body)),
             Cell(Layout.Builder.Text(line.State, 14f, stateColor),
-                line.WaitingFor is { } waitingFor ? Layout.Builder.Text(waitingFor, 11f, Dim) : null),
+                (line.WaitingFor ?? line.EndedBecause) is { } detail ? Layout.Builder.Text(detail, 11f, Dim) : null),
             Metered(line.Spend, line.SpendFraction, body),
             Act(line, index),
         };
@@ -716,10 +751,10 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     // waiting on you that can be answered in the browser, the link that opens it there.
     private Layout.Node NameLine(SessionLine line)
     {
-        var name = Layout.Builder.Text(line.Name, 12f, Dim);
+        var name = Layout.Builder.Text(line.ShownName, 12f, Dim);
         var answer = line.AnswerUrl is { } url && OnOpen is { } open
-            ? Layout.Builder.Text("Answer in the browser" + Followable.Away, 11f, Bright, TextAlign.Center).Pad(8f, 1f).WAuto().Bg(AnswerBg).BgHover(AnswerHoverBg)
-                .Follows(new HitResult.ButtonHit($"session:{line.Key}:answer"), _ => open(url))
+            ? _links.OnLink(Layout.Builder.Text("Answer in the browser" + Followable.Away, 11f, Bright, TextAlign.Center).Pad(8f, 1f).WAuto().Bg(AnswerBg).BgHover(AnswerHoverBg)
+                .Follows(new HitResult.ButtonHit($"session:{line.Key}:answer"), _ => open(url)), url)
             : null;
         if (line.Row.Subagents is not { Length: > 0 } subagents)
         {
@@ -798,20 +833,28 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             return Cell(label);
         }
 
-        var filled = Math.Clamp(f, 0f, 1f);
-        var bar = filled switch
+        return Cell(label, Layout.Builder.VStack(Layout.Builder.Spacer().RowH(7f), Bar(f).RowH(4f)));
+    }
+
+    /// <summary>
+    /// A bar filled to <paramref name="fraction"/> (0 to 1) over its track, in the meter colour for how full it is. Its height is the
+    /// caller's: the session rows' share, and Home's machine gauges, draw the same bar.
+    /// </summary>
+    internal static Layout.Node Bar(float fraction)
+    {
+        var filled = Math.Clamp(fraction, 0f, 1f);
+        return filled switch
         {
             <= 0f => Layout.Builder.Spacer().Bg(Track),
-            >= 1f => Layout.Builder.Spacer().Bg(MeterColor(f)),
+            >= 1f => Layout.Builder.Spacer().Bg(MeterColor(filled)),
             _ => Layout.Builder.HStack(
-                    Layout.Builder.Spacer().Bg(MeterColor(f)).WStar(filled).HStar(),
+                    Layout.Builder.Spacer().Bg(MeterColor(filled)).WStar(filled).HStar(),
                     Layout.Builder.Spacer().WStar(1f - filled).HStar())
                 .Bg(Track),
         };
-        return Cell(label, Layout.Builder.VStack(Layout.Builder.Spacer().RowH(7f), bar.RowH(4f)));
     }
 
-    private static RGBAColor32 MeterColor(float fraction) => fraction switch
+    internal static RGBAColor32 MeterColor(float fraction) => fraction switch
     {
         >= 0.9f => Failed,
         >= 0.7f => Waiting,

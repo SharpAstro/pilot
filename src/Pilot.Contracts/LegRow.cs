@@ -52,6 +52,18 @@ public sealed record LegRow
     /// <summary>How many fresh workers it took after the first: each go-around starts one, briefed anew.</summary>
     public int GoArounds { get; init; }
 
+    /// <summary>
+    /// How many of those <see cref="GoArounds"/> were a done leg sent round on its review's findings: the count the node caps,
+    /// as a leg that failed or stalled and went round again is not a review asking for what no worker can do.
+    /// </summary>
+    public int ReviewGoArounds { get; init; }
+
+    /// <summary>
+    /// How many <see cref="ReviewGoArounds"/> the watchtower may send before the card is the person's: here, so the node
+    /// (LegCommander) and the flight page read one number and cannot drift.
+    /// </summary>
+    public const int MaxReviewGoArounds = 3;
+
     /// <summary>What the last <c>finish-leg</c> or check said: the worker's report, or why the check failed.</summary>
     public string? Report { get; init; }
 
@@ -77,9 +89,36 @@ public sealed record LegRow
     /// </summary>
     public PackageWait? Hold { get; init; }
 
+    /// <summary>
+    /// What its worker waits on without a job (<c>pilot leg wait</c>): a file to appear or a time to come. The worker ends its
+    /// turn; the node looks about every minute and wakes it once when it comes. Null when it waits on nothing.
+    /// </summary>
+    public LegWait? Wait { get; init; }
+
     public DateTimeOffset? StartedAt { get; init; }
 
     public DateTimeOffset? FinishedAt { get; init; }
+}
+
+/// <summary>A leg's worker waiting on a file or a time, with no job: what it waits for, why, and since when.</summary>
+public sealed record LegWait
+{
+    /// <summary>The file whose appearance wakes the worker; null for a wait on a time alone.</summary>
+    public string? Path { get; init; }
+
+    /// <summary>
+    /// The time that wakes the worker (a wait on a time alone), or, with a <see cref="Path"/>, the time past which the wait rings
+    /// the person once and goes on waiting. Null for a file wait with no limit.
+    /// </summary>
+    public DateTimeOffset? Until { get; init; }
+
+    /// <summary>Why the worker waits, in its words; empty when it said nothing.</summary>
+    public string Why { get; init; } = "";
+
+    public required DateTimeOffset Since { get; init; }
+
+    /// <summary>Whether the wait past its <see cref="Until"/> has rung already.</summary>
+    public bool Rung { get; init; }
 }
 
 /// <summary>
@@ -94,6 +133,17 @@ public sealed record Artifact
     public required string Location { get; init; }
 
     public required DateTimeOffset At { get; init; }
+
+    /// <summary>
+    /// The id of the copy the node keeps of an image (<see cref="NodeWire.AttachmentRoute"/> serves it), which outlives the
+    /// file at <see cref="Location"/>; null for a URL, a file that is not an image, or an artifact recorded before copies.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Attachment { get; init; }
+
+    /// <summary>The copy's extension without the dot (<c>png</c>); null when there is no <see cref="Attachment"/>.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? AttachmentExt { get; init; }
 }
 
 /// <summary>One step of a leg's checklist.</summary>

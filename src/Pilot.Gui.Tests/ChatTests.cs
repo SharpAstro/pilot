@@ -69,6 +69,61 @@ public sealed class ChatTests
     }
 
     [Fact]
+    public async Task NewWatchtowerAsksFirstThenRestartsItAndKeepItLeavesIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chat = NewChat(renderer);
+        var restarts = 0;
+        chat.OnRestart = () =>
+        {
+            restarts++;
+            return Task.FromResult<string?>(null);
+        };
+        await Read(chat, 6);
+
+        // One press only asks: the restart stops what the watchtower is doing.
+        Click(chat, "chat:restart");
+        restarts.ShouldBe(0);
+        Described(chat).ShouldContain("Stop it and start fresh");
+        Click(chat, "chat:restart-no");
+        restarts.ShouldBe(0);
+        Described(chat).ShouldContain("New watchtower");
+
+        await Capture("chat-restart");
+        Click(chat, "chat:restart");
+        await Capture("chat-restart-confirm", confirming: true);
+        Click(chat, "chat:restart-yes");
+        restarts.ShouldBe(1);
+        Described(chat).ShouldContain("New watchtower");
+
+        // A page with no restart to call shows no button.
+        chat.OnRestart = null;
+        Described(chat).ShouldNotContain("New watchtower");
+    }
+
+    private static async Task Capture(string name, bool confirming = false)
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var dir = Path.GetDirectoryName(capture) ?? ".";
+        foreach (var (width, height) in new[] { (700, 500), (1600, 600) })
+        {
+            using var shot = new RgbaImageRenderer((uint)width, (uint)height);
+            var view = NewChat(shot);
+            view.OnRestart = () => Task.FromResult<string?>(null);
+            await Read(view, 6);
+            if (confirming)
+            {
+                Click(view, "chat:restart");
+            }
+            view.Render(new RectF32(0, 0, width, height));
+            File.WriteAllBytes(Path.Combine(dir, $"{name}-{width}.png"), SharpAstro.Png.PngWriter.Encode(shot.Surface.Pixels, width, height));
+        }
+    }
+
+    [Fact]
     public async Task TheChatShowsAPersonsMessageAReplyInMarkdownAFoldedCallAWorkingLineAndTheDivider()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
@@ -164,7 +219,8 @@ public sealed class ChatTests
             await Task.Delay(50, TestContext.Current.CancellationToken);
         }
 
-        sent.ShouldBe(["pilot"]);
+        // With the question it answers, so a reply like "Leave it" is never read without it.
+        sent.ShouldBe(["pilot (my answer to: Which repo should the flight fly in?)"]);
     }
 
     [Fact]
@@ -192,7 +248,7 @@ public sealed class ChatTests
         {
             await Task.Delay(50, TestContext.Current.CancellationToken);
         }
-        sent.ShouldBe(["a"]);
+        sent.ShouldBe(["a (my answer to: Which?)"]);
     }
 
     [Fact]
@@ -607,6 +663,108 @@ public sealed class ChatTests
         if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 } capture)
         {
             File.WriteAllBytes(capture, SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, 1280, 800));
+        }
+    }
+
+    [Fact]
+    public async Task AQuestionSitsUnderTheFeedAboveTheBoxAndCoversNoneOfIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var entries = Enumerable.Range(0, 30).Select(i => new TranscriptEntry
+        {
+            Index = i, Kind = TranscriptKind.Assistant, At = At.AddSeconds(i),
+            Text = i == 29 ? "Three flights are in the air.\n\nShould I file the five pilot feature issues and start tianwen#1824?" : $"Reply {i}: a line long enough to wrap once the window is narrow, said by the watchtower about its flights.",
+        }).ToArray();
+        var chat = NewChat(renderer, Page(entries, question: "Should I file the five pilot feature issues and start tianwen#1824?",
+            choices: ["Yes, file all five and take #1824", "File the five issues only", "Take #1824 only", "Leave it for now"]));
+        await Read(chat, 30);
+
+        var arranged = Layout.Engine.Arrange(chat.Tree(), new Rect<float>(0, 0, 1280, 800), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        // The feed's scroll is the first; the question's card has its own under it.
+        var feed = arranged.Where(a => a.Node.Scroll is not null).OrderBy(a => a.Bounds.Y).First().Bounds;
+        var choice = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "chat:choice:1" }).Bounds;
+        var box = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).Bounds;
+
+        // The choices are below the feed's last pixel and above the box: nothing of the conversation is under them.
+        choice.Y.ShouldBeGreaterThanOrEqualTo(feed.Y + feed.Height);
+        (choice.Y + choice.Height).ShouldBeLessThanOrEqualTo(box.Y);
+
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 } capture)
+        {
+            var dir = Path.GetDirectoryName(capture) ?? ".";
+            foreach (var (width, height) in new[] { (900, 700), (2000, 900) })
+            {
+                using var shot = new RgbaImageRenderer((uint)width, (uint)height);
+                var view = NewChat(shot, Page(entries, question: "Should I file the five pilot feature issues and start tianwen#1824?",
+                    choices: ["Yes, file all five and take #1824", "File the five issues only", "Take #1824 only", "Leave it for now"]));
+                await Read(view, 30);
+                view.Render(new RectF32(0, 0, width, height));
+                File.WriteAllBytes(Path.Combine(dir, $"chat-question-{width}.png"), SharpAstro.Png.PngWriter.Encode(shot.Surface.Pixels, width, height));
+            }
+        }
+    }
+
+    private const string LongQuestion =
+        "Three flights are in the air and two more are waiting on a review. Before I file the five pilot feature issues I need to know " +
+        "whether tianwen#1824 should start now, on the node that holds the training flights, or wait until the reviews have landed, " +
+        "because starting it now takes the last free slot and the two waiting reviews would then queue behind it for about an hour. " +
+        "If you would rather I file the issues first and leave the flight for later, say so; if the order does not matter to you, " +
+        "I will file the five issues, start tianwen#1824, and tell you when the reviews are free to run.";
+
+    private static readonly string[] LongChoices =
+    [
+        "Yes, file all five and take #1824 now",
+        "File the five issues only, leave #1824",
+        "Take #1824 only, file the issues later",
+        "Wait for the two reviews, then do both",
+        "Leave it for now",
+    ];
+
+    [Fact]
+    public async Task ALongQuestionOnAShortWindowKeepsTheFeedAndStaysAboveTheBox()
+    {
+        var entries = Enumerable.Range(0, 30).Select(i => new TranscriptEntry
+        {
+            Index = i, Kind = TranscriptKind.Assistant, At = At.AddSeconds(i),
+            Text = $"Reply {i}: a line long enough to wrap once the window is narrow, said by the watchtower about its flights.",
+        }).ToArray();
+        var capture = Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 } c ? c : null;
+
+        foreach (var (width, height) in new[] { (900, 400), (1600, 900) })
+        {
+            using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+            var chat = NewChat(renderer, Page(entries, question: LongQuestion, choices: LongChoices));
+            await Read(chat, 30);
+
+            // The card's cap follows the page's height, which a render tells it; a second one draws the bar the first one measured.
+            chat.Render(new RectF32(0, 0, width, height));
+            chat.Render(new RectF32(0, 0, width, height));
+            if (capture is not null)
+            {
+                File.WriteAllBytes(Path.Combine(Path.GetDirectoryName(capture) ?? ".", $"chat-ask-{width}x{height}.png"), SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, height));
+            }
+
+            var arranged = Layout.Engine.Arrange(chat.Tree(), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+            var box = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).Bounds;
+            // Two scrolls: the feed above and, under it, the card's own.
+            var scrolls = arranged.Where(a => a.Node.Scroll is not null).Select(a => a.Bounds).OrderBy(b => b.Y).ToList();
+            scrolls.Count.ShouldBe(2);
+            var (feed, card) = (scrolls[0], scrolls[1]);
+
+            // The feed keeps room to read in, and the card (and so everything in it) ends above the box.
+            if (height == 400)
+            {
+                feed.Height.ShouldBeGreaterThanOrEqualTo(100f);
+            }
+            (card.Y + card.Height).ShouldBeLessThanOrEqualTo(box.Y);
+            card.Y.ShouldBeGreaterThanOrEqualTo(feed.Y + feed.Height);
+
+            // The choices sit under the card's text, outside its scroll: every one in view, below the text, above the box.
+            var pills = arranged.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: var action } && action.StartsWith("chat:choice:", StringComparison.Ordinal)).Select(a => a.Bounds).ToList();
+            pills.Count.ShouldBe(LongChoices.Length);
+            pills.ShouldAllBe(p => p.Y >= card.Y + card.Height && p.Y + p.Height <= box.Y);
+            // The text keeps room for its header and a line or more, and the choices do not cost the page its box.
+            card.Height.ShouldBeGreaterThanOrEqualTo(40f);
         }
     }
 }

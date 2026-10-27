@@ -45,18 +45,41 @@ internal sealed class PilotChrome<TSurface>
     private static readonly RGBAColor32 RailHover = new(0x22, 0x24, 0x2e, 0xff);
     private static readonly RGBAColor32 RailActive = new(0x26, 0x33, 0x4a, 0xff);
 
-    /// <summary>What each page is on the rail: its glyph, its name, the chord that reaches it, and why it is locked, if it is.</summary>
+    /// <summary>
+    /// What each page is on the rail, top to bottom: its glyph, its name, the chord that reaches it, and why it is locked, if
+    /// it is. The chords count down the rail, Ctrl+1 at the top: numbered by the enum, Chat and Repos (added later) sat at 8
+    /// and 7 between 1 and 2, and the tooltip said a third number, the enum's (SE1, 2026-10-27).
+    /// </summary>
     internal static readonly IReadOnlyList<(PilotPage Page, string Icon, string Label, KeyChord Shortcut, string? Locked)> Pages =
     [
         (PilotPage.Home, "\U0001F3E0", "Home", new KeyChord(InputKey.D1, InputModifier.Ctrl), null),
-        (PilotPage.Chat, "\U0001F5FC", "Chat", new KeyChord(InputKey.D8, InputModifier.Ctrl), null),
-        (PilotPage.Sessions, "\U0001F4AC", "Sessions", new KeyChord(InputKey.D2, InputModifier.Ctrl), null),
-        (PilotPage.Flights, "✈", "Flights", new KeyChord(InputKey.D3, InputModifier.Ctrl), null),
-        (PilotPage.Repos, "📁", "Repos", new KeyChord(InputKey.D7, InputModifier.Ctrl), null),
-        (PilotPage.Jobs, "⚒", "Background tasks", new KeyChord(InputKey.D4, InputModifier.Ctrl), null),
-        (PilotPage.Fleet, "\U0001F310", "Fleet", new KeyChord(InputKey.D5, InputModifier.Ctrl), null),
-        (PilotPage.Settings, "⚙", "Settings", new KeyChord(InputKey.D6, InputModifier.Ctrl), null),
+        (PilotPage.Chat, "\U0001F5FC", "Chat", new KeyChord(InputKey.D2, InputModifier.Ctrl), null),
+        (PilotPage.Sessions, "\U0001F4AC", "Sessions", new KeyChord(InputKey.D3, InputModifier.Ctrl), null),
+        (PilotPage.Flights, "✈", "Flights", new KeyChord(InputKey.D4, InputModifier.Ctrl), null),
+        (PilotPage.Repos, "📁", "Repos", new KeyChord(InputKey.D5, InputModifier.Ctrl), null),
+        (PilotPage.Jobs, "📋", "Background tasks", new KeyChord(InputKey.D6, InputModifier.Ctrl), null),
+        (PilotPage.Fleet, "\U0001F310", "Fleet", new KeyChord(InputKey.D7, InputModifier.Ctrl), null),
+        (PilotPage.Settings, "⚙", "Settings", new KeyChord(InputKey.D8, InputModifier.Ctrl), null),
     ];
+
+    /// <summary>
+    /// The Background tasks page's glyph on the rail, and what it says on hover: a job that failed in play (the last
+    /// <see cref="PlayFilter.JobsFinished"/>) is a red dot, one running the arrows going round, one only waiting its turn
+    /// a clock, and none of those the clipboard. The rail showed the same hammer and pick whatever its jobs did (SE1,
+    /// 2026-10-25). Each glyph is one the rail's emoji face draws: an hourglass, a stopwatch and a red exclamation drew
+    /// nothing. A badge on the glyph itself waits for DIR.Lib's tab items to carry one.
+    /// </summary>
+    internal static (string Glyph, string? Said) JobsGlyph(JobsScreen? jobs, DateTimeOffset now)
+    {
+        var rows = jobs?.Lines.Select(l => l.Row).ToList() ?? [];
+        var running = rows.Count(r => r.State == JobState.Running);
+        var waiting = rows.Count(r => r.State == JobState.Queued);
+        var failed = rows.Count(r => r.State == JobState.Failed && r.EndedAt is { } ended && now - ended <= PlayFilter.JobsFinished);
+        var parts = new[] { running > 0 ? $"{running} running" : null, waiting > 0 ? $"{waiting} waiting" : null, failed > 0 ? $"{failed} failed just now" : null }
+            .OfType<string>().ToList();
+        var glyph = failed > 0 ? "🔴" : running > 0 ? "🔄" : waiting > 0 ? "🕓" : "📋";
+        return (glyph, parts.Count == 0 ? null : string.Join(", ", parts));
+    }
 
     private readonly List<TabItem<PilotPage>> _items = [];
     private Action<PilotPage>? _select;
@@ -76,16 +99,19 @@ internal sealed class PilotChrome<TSurface>
         _renderer = renderer;
         Play = new PlayFilter(playFile);
         Sessions = sessions;
-        Flights = new FlightsView<TSurface>(renderer);
+        Flights = new FlightsView<TSurface>(renderer) { Gallery = sessions.Gallery };
         Jobs = new JobsView<TSurface>(renderer);
         Fleet = new FleetView<TSurface>(renderer);
         Settings = new SettingsView<TSurface>(renderer);
         Repos = new ReposView<TSurface>(renderer);
         Cards = new CardsView<TSurface>(renderer);
         Chat = new ChatView<TSurface>(renderer);
+        // A card's in-app link (the watchtower card's Fleet link) opens that page, in either host.
+        Cards.OnGoTo = link => { if (link == InAppLinks.Fleet) { Show(PilotPage.Fleet); } };
         Tooltips = new TooltipLayer<TSurface>(renderer);
         // A flight page's Merge is its card's own choice, run as the panel runs it.
         Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
+        Flights.CardWorking = Cards.WorkingOn;
         Home = new HomeView<TSurface>(renderer);
         sessions.ShareWith(Flights, Repos, Jobs, Fleet, Settings, Cards, Chat);
         // The panel's watchtower foot is the way into the chat.
@@ -180,6 +206,9 @@ internal sealed class PilotChrome<TSurface>
     public SessionsView<TSurface> Sessions { get; }
 
     public FlightsView<TSurface> Flights { get; }
+
+    /// <summary>The attachments the Flights and Sessions pages show: the host gives it a lookup that fetches and decodes, and a painter.</summary>
+    public AttachmentGallery Gallery => Sessions.Gallery;
 
     /// <summary>The Repos page: every tracked repo with its worktrees and PRs.</summary>
     public ReposView<TSurface> Repos { get; }
@@ -515,7 +544,8 @@ internal sealed class PilotChrome<TSurface>
 
     /// <summary>
     /// Gives the Fleet page's "N waiting on you" its link: the Sessions page, filtered to that node alone, the first session
-    /// waiting on you selected and at the head of the list. <paramref name="show"/> switches the page where the host keeps it itself.
+    /// waiting on you selected and at the head of the list. Also gives the panel's line for a node out of reach (<see cref="CardsView{TSurface}.OnFleet"/>)
+    /// its link: that node's row on this page, selected. <paramref name="show"/> switches the page where the host keeps it itself.
     /// </summary>
     public void LinkFleet(Action<PilotPage>? show = null)
     {
@@ -528,6 +558,13 @@ internal sealed class PilotChrome<TSurface>
             Sessions.Transcript.Close();
             // A node's rows are unmarked while it is the only one there is; otherwise marked with the key the pick is.
             Sessions.SelectFirst(l => l.Row.State == SessionState.Waiting && (l.Node is null ? line.Here : l.Node.Key == line.Where));
+        });
+        // The panel's line for a node out of reach: its row on this page, selected, among all the nodes (a pick of others would hide it).
+        Cards.OnFleet = node => Navigate(() =>
+        {
+            Switch(PilotPage.Fleet, show);
+            Nodes.ShowAll();
+            Fleet.SelectNode(node.Where);
         });
     }
 
@@ -630,17 +667,21 @@ internal sealed class PilotChrome<TSurface>
         Render(screen, flights, cards, jobs, fleet, null, bounds);
 
     /// <param name="repos">The Repos page's screen; null shows it empty, as a snapshot file has no repos.</param>
-    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, ReposScreen? repos, RectF32 bounds)
+    /// <param name="machines">Each shown node's machine, for the Home page's blocks; null shows none, as a snapshot file from an older node has none.</param>
+    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, ReposScreen? repos, RectF32 bounds, IReadOnlyList<MachineLine>? machines = null)
     {
         _items.Clear();
+        var tasks = JobsGlyph(jobs, screen.AsOf);
         foreach (var (page, icon, label, shortcut, locked) in Pages)
         {
+            var (glyph, said) = page == PilotPage.Jobs ? tasks : (icon, null);
             _items.Add(new TabItem<PilotPage>(label, page)
             {
-                Icon = icon,
+                Icon = glyph,
                 IsEnabled = locked is null,
-                // The rail has room for a glyph only, so the name, the chord and a locked page's reason are the tooltip's.
-                Tooltip = locked is null ? $"{label} (Ctrl+{(int)page + 1})" : $"{label} — {locked}",
+                // The rail has room for a glyph only, so the name, the chord, what the page's things are doing and a locked
+                // page's reason are the tooltip's.
+                Tooltip = locked is null ? $"{label}{(said is null ? "" : $": {said}")} (Ctrl+{shortcut.Key - InputKey.D0})" : $"{label} — {locked}",
                 Shortcut = shortcut,
                 OnSelect = _select ??= Show,
             });
@@ -721,7 +762,7 @@ internal sealed class PilotChrome<TSurface>
                     break;
                 case PageKey:
                     Home.Render(new HomeScreen(flights ?? new FlightsScreen([], screen.Source, screen.AsOf), screen,
-                        jobs ?? new JobsScreen([], screen.Source, screen.AsOf), cards ?? CardsScreen.Empty), rect);
+                        jobs ?? new JobsScreen([], screen.Source, screen.AsOf), cards ?? CardsScreen.Empty, machines), rect);
                     break;
             }
         }

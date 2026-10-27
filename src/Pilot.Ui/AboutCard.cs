@@ -19,7 +19,7 @@ internal sealed class AboutCard
     /// <summary>The keys, as the card lists them.</summary>
     public static readonly IReadOnlyList<(string Keys, string What)> Keys =
     [
-        ("Ctrl+1 to Ctrl+8", "Home, Sessions, Flights, Background tasks, Fleet, Settings, Repos and Chat"),
+        ("Ctrl+1 to Ctrl+8", "Home, Chat, Sessions, Flights, Repos, Background tasks, Fleet and Settings: the rail, top to bottom"),
         ("Ctrl+S", "the say bar, to the selected session"),
         ("Enter, double-click", "a session's transcript"),
         ("Right-click", "a row's menu"),
@@ -108,9 +108,15 @@ internal sealed class AboutCard
         return Restart is { } restart ? light.Follows(new HitResult.ButtonHit("about:restart"), _ => restart()) : light;
     }
 
-    /// <summary><paramref name="page"/>, with the card over its top right while it is open.</summary>
+    /// <summary>
+    /// <paramref name="page"/>, with the card at its top right while it is open, hanging under the top bar's row of buttons.
+    /// Pinned to the window's corner it lay over that row and covered most of the ?, whose click then landed on the card's ×
+    /// (DE1, 2026-10-26): the same toggle by luck. Under the row, the ? stays itself, and closes it as it opened it.
+    /// </summary>
     public Layout.Node Over(Layout.Node page, FlightsPalette? night = null) => IsOpen
-        ? Layout.Builder.Overlay(page, Layout.Builder.Anchored(Card(night), Layout.DockSide.Right, margin: 12f))
+        ? Layout.Builder.Overlay(page, Layout.Builder.VStack(
+            Layout.Builder.Spacer().WStar().HFixed(TopBar.ButtonsBottom),
+            Layout.Builder.Anchored(Card(night), Layout.DockSide.Right, margin: 12f).WStar().HStar()))
         : page;
 
     private Layout.Node Card(FlightsPalette? night)

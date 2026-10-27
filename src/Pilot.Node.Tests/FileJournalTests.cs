@@ -54,6 +54,57 @@ public sealed class FileJournalTests : IDisposable
     }
 
     [Fact]
+    public void ACompactionKeepsJobsPrReviewsUsageAndTheMachineForARestart()
+    {
+        var job = new JobRow
+        {
+            Id = "j1", Command = "dotnet test", Cwd = "/r/w", Owner = "a1b2c3d4", State = JobState.Succeeded, LogPath = "/tmp/j1.log",
+            Timeout = TimeSpan.FromHours(2), StartedAt = DateTimeOffset.UnixEpoch, EndedAt = DateTimeOffset.UnixEpoch.AddMinutes(3), ExitCode = 0,
+        };
+        var review = new PrReviewRow
+        {
+            Repo = "acme/widget", Number = 7, Url = "https://github.com/acme/widget/pull/7", Base = "main", Head = "4f2c9a01d6e8",
+            ClonePath = "/r", Worktree = "/r/.claude/worktrees/review-widget-7", Reviewer = "du1-review-widget-7",
+            State = PrReviewState.Closed, StartedAt = DateTimeOffset.UnixEpoch,
+        };
+        var usage = new UsageRow { ReadAt = DateTimeOffset.UnixEpoch.AddHours(1), FiveHour = new UsageWindow { UsedPercent = 42, ResetsAt = DateTimeOffset.UnixEpoch.AddHours(3) } };
+        var machine = new MachineRow
+        {
+            SampledAt = DateTimeOffset.UnixEpoch.AddHours(2), CpuPercent = 34, Cores = 8, MemoryUsed = 21L << 30, MemoryTotal = 32L << 30,
+            Gpu = new MachineGpu { Percent = 81, MemoryUsed = 6L << 30, MemoryTotal = 12L << 30 },
+            Processes = [new MachineProcess { Pid = 4242, Name = "dotnet", CpuPercent = 55, MemoryBytes = 1L << 30 }],
+        };
+
+        using (var journal = new FileJournal(_folder, maxDeltas: 4))
+        {
+            var state = new NodeState(journal, TimeProvider.System);
+            state.PutJob(job);
+            state.PutPrReview(review);
+            state.PutUsage(usage);
+            state.PutMachine(machine);
+            // Enough deltas for the journal to compact more than once, so none of the above is left to the deltas.
+            for (var i = 0; i < 12; i++)
+            {
+                state.Execute(Note($"n{i}"));
+            }
+        }
+
+        // A compaction keeps the snapshot and journal it replaces as .bak-<seq>.
+        Directory.EnumerateFiles(_folder, FileJournal.JournalFile + ".bak-*").ShouldNotBeEmpty();
+        using var again = new FileJournal(_folder, maxDeltas: 4);
+        var restored = new NodeState(again, TimeProvider.System);
+        restored.Jobs().ShouldBe([job]);
+        // Not the whole row: its Findings array is compared by reference.
+        var keptReview = restored.PrReviews().ShouldHaveSingleItem();
+        (keptReview.Repo, keptReview.Number, keptReview.Head, keptReview.State).ShouldBe((review.Repo, review.Number, review.Head, review.State));
+        restored.Usage().ShouldBe(usage);
+        var kept = restored.Machine().ShouldNotBeNull();
+        kept.SampledAt.ShouldBe(machine.SampledAt);
+        kept.Line().ShouldBe(machine.Line());
+        kept.Processes.Select(p => p.Pid).ShouldBe([4242]);
+    }
+
+    [Fact]
     public void ARestartKeepsEveryRecord()
     {
         var was = Run(state =>

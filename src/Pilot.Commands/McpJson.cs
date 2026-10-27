@@ -33,7 +33,7 @@ internal sealed record InitializeResult(string ProtocolVersion, ServerCapabiliti
 
 internal sealed record ServerCapabilities(ListCapability Tools, ResourcesCapability Resources);
 
-/// <summary>A capability whose list never changes while the server runs: the command tree is fixed at build time.</summary>
+/// <summary>A capability whose list may change: tools do when the session is handed over to an updated binary.</summary>
 internal sealed record ListCapability(bool ListChanged = false);
 
 internal sealed record ResourcesCapability(bool Subscribe = false, bool ListChanged = false);

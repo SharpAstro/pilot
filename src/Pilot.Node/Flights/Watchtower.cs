@@ -53,6 +53,13 @@ public sealed class Watchtower(
     /// <summary>How often it looks.</summary>
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// How long a Ring card it was told may stay open before it is told once more, which wakes or starts it if it has gone.
+    /// Told only once, an ended watchtower was never woken for a card it had heard of and left open: PIL338's review asked
+    /// for changes and nobody sent the leg round until the person asked why nothing landed (SE1, 2026-10-27).
+    /// </summary>
+    public TimeSpan RetellAfter { get; init; } = TimeSpan.FromMinutes(30);
+
     /// <summary>How long it is kept once there is nothing to watch, idle, before it is stopped.</summary>
     public TimeSpan QuietFor { get; init; } = TimeSpan.FromMinutes(15);
 
@@ -64,6 +71,16 @@ public sealed class Watchtower(
 
     /// <summary>How long a started watchtower has to show up in the listing before it counts as gone.</summary>
     public TimeSpan ShowUpGrace { get; init; } = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// How long after its last reply an ended watchtower is resumed rather than replaced: inside the prompt cache's hour, with a
+    /// margin. Resumed warm, its context is read from the cache; past it, the whole context is read again at full price, more
+    /// than a fresh one's brief, so a fresh one starts instead.
+    /// </summary>
+    public TimeSpan CacheWarmFor { get; init; } = TimeSpan.FromMinutes(55);
+
+    /// <summary>The share of its context window past which an ended watchtower is replaced, not resumed, warm or not.</summary>
+    public double ResumeBelow { get; init; } = 0.75;
 
     /// <summary>How it runs the CLI, socket and all: <see cref="Briefs.Run"/>.</summary>
     public string Pilot { get; init; } = "pilot";
@@ -80,11 +97,16 @@ public sealed class Watchtower(
     private readonly SemaphoreSlim _one = new(1, 1);
     private string? _briefed;
     private bool _briefedRead;
-    private readonly HashSet<string> _told = new HashSet<string>(StringComparer.Ordinal);
+    // Each open card it was told, and when; a Ring card still open RetellAfter on is told once more (_retold).
+    private readonly Dictionary<string, DateTimeOffset> _told = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _retold = new(StringComparer.Ordinal);
     private string? _job;
     private DateTimeOffset? _startedAt;
     private DateTimeOffset _nextTry = DateTimeOffset.MinValue;
     private DateTimeOffset? _resumedAfter;
+
+    // An ended watchtower a resuming say did not reach: replaced by a fresh one, not said to again.
+    private string? _resumeRefused;
     private bool _adopted;
     // When there was last something to watch; the node's start counts, so one running then is kept QuietFor first.
     private DateTimeOffset? _watchingAt;
@@ -118,10 +140,17 @@ public sealed class Watchtower(
         }
     }
 
+    /// <summary>
+    /// Whether a row is this node's watchtower: by its name, or by the role the tracker kept for it when it was renamed
+    /// (then its name still starts with the machine's code, which the tracker put back).
+    /// </summary>
+    private bool IsWatchtower(SessionRow row) =>
+        row.Name == Name || (row.Role == SessionRole.Watchtower && row.Name.StartsWith($"{options.Machine.ToLowerInvariant()}-", StringComparison.Ordinal));
+
     /// <summary>The watchtower's row now: the one it started, else the newest of its name, live first.</summary>
     public SessionRow? Current()
     {
-        var rows = state.Sessions().Where(s => s.Name == Name).ToList();
+        var rows = state.Sessions().Where(IsWatchtower).ToList();
         return rows.FirstOrDefault(r => r.Id == _job)
             ?? rows.OrderByDescending(Live).ThenByDescending(r => r.StartedAt).FirstOrDefault();
     }
@@ -130,7 +159,8 @@ public sealed class Watchtower(
     public string SessionsFile => Path.Combine(options.DataFolder, "watchtower-sessions");
 
     /// <summary>One watchtower the node has had: the row it ran as, its latest Claude session (a say resumes it under a new id that holds the history), when it began and why.</summary>
-    public sealed record Generation(string Job, string? SessionId, DateTimeOffset StartedAt, string? Why);
+    public sealed record Generation(string Job, string? SessionId, DateTimeOffset StartedAt, string? Why,
+        DateTimeOffset? EndedAt = null, DateTimeOffset? LastReplyAt = null, string? EndedBecause = null);
 
     private readonly Lock _generationsLock = new();
     private List<Generation>? _generations;
@@ -146,17 +176,30 @@ public sealed class Watchtower(
         {
             _generations ??= LoadGenerations();
             var changed = false;
-            foreach (var row in state.Sessions().Where(s => s.Name == Name))
+            foreach (var row in state.Sessions().Where(IsWatchtower))
             {
                 var at = _generations.FindIndex(g => g.Job == row.Id);
                 if (at < 0)
                 {
                     _generations.Add(new Generation(row.Id, row.SessionId, row.StartedAt, null));
+                    at = _generations.Count - 1;
                     changed = true;
                 }
                 else if (_generations[at].SessionId != row.SessionId)
                 {
                     _generations[at] = _generations[at] with { SessionId = row.SessionId };
+                    changed = true;
+                }
+                var known = _generations[at];
+                if (row.State is SessionState.Ended or SessionState.Failed && known.EndedAt is null)
+                {
+                    // Noted as the row is first seen ended: when it ended, when it last replied and why.
+                    _generations[at] = known with { EndedAt = time.GetUtcNow(), LastReplyAt = row.LastResponseAt, EndedBecause = row.EndedBecause };
+                    changed = true;
+                }
+                else if (known.EndedAt is not null && row.EndedBecause is { } because && because != known.EndedBecause)
+                {
+                    _generations[at] = known with { EndedBecause = because };
                     changed = true;
                 }
             }
@@ -191,7 +234,8 @@ public sealed class Watchtower(
                 var parts = line.Split('\t');
                 if (parts.Length >= 3 && DateTimeOffset.TryParse(parts[2], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var at))
                 {
-                    found.Add(new Generation(parts[0], parts[1].Length == 0 ? null : parts[1], at, parts.Length > 3 && parts[3].Length > 0 ? parts[3] : null));
+                    found.Add(new Generation(parts[0], parts[1].Length == 0 ? null : parts[1], at, parts.Length > 3 && parts[3].Length > 0 ? parts[3] : null,
+                        TimeAt(parts, 4), TimeAt(parts, 5), parts.Length > 6 && parts[6].Length > 0 ? parts[6] : null));
                 }
             }
         }
@@ -202,18 +246,98 @@ public sealed class Watchtower(
         return found;
     }
 
+    private static DateTimeOffset? TimeAt(string[] parts, int at) =>
+        parts.Length > at && DateTimeOffset.TryParse(parts[at], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var found) ? found : null;
+
+    private static string Stamp(DateTimeOffset? at) => at?.ToString("O", System.Globalization.CultureInfo.InvariantCulture) ?? "";
+
+    private static string OneLine(string? text) => (text ?? "").ReplaceLineEndings(" ").Replace('\t', ' ');
+
     private void SaveGenerations(List<Generation> generations)
     {
         try
         {
             Directory.CreateDirectory(options.DataFolder);
             File.WriteAllLines(SessionsFile, generations.Select(g =>
-                string.Join('\t', g.Job, g.SessionId ?? "", g.StartedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture), (g.Why ?? "").ReplaceLineEndings(" ").Replace('\t', ' '))));
+                string.Join('\t', g.Job, g.SessionId ?? "", g.StartedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture), OneLine(g.Why),
+                Stamp(g.EndedAt), Stamp(g.LastReplyAt), OneLine(g.EndedBecause))));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Kept in memory all the same; the rows of its name bring back what a restart loses.
         }
+    }
+
+    /// <summary>More watchtowers started in the last hour than this is churning.</summary>
+    public int MaxStartsPerHour { get; set; } = 3;
+
+    /// <summary>Watchtowers that end a median of less than this after their last reply, over the last hour, are churning.</summary>
+    public TimeSpan ShortLifetime { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>How many that replied and ended in the last hour it takes before their lifetime is judged.</summary>
+    public int MinEndedToJudge { get; set; } = 2;
+
+    /// <summary>How the watchtower is doing, from <see cref="Generations"/> and its row; null when the node keeps none.</summary>
+    public WatchtowerHealth? Health()
+    {
+        if (!options.Watchtower)
+        {
+            return null;
+        }
+        var now = time.GetUtcNow();
+        var all = Generations();
+        var row = Current();
+        var lastHour = all.Count(g => now - g.StartedAt <= TimeSpan.FromHours(1));
+        var last24 = all.Count(g => now - g.StartedAt <= TimeSpan.FromHours(24));
+        var lifetimes = all
+            .Where(g => g.EndedAt is { } end && now - end <= TimeSpan.FromHours(1) && g.LastReplyAt is not null)
+            .Select(g => g.EndedAt!.Value - g.LastReplyAt!.Value)
+            .Order()
+            .ToList();
+        TimeSpan? typical = lifetimes.Count == 0 ? null
+            : lifetimes.Count % 2 == 1 ? lifetimes[lifetimes.Count / 2] : (lifetimes[lifetimes.Count / 2 - 1] + lifetimes[lifetimes.Count / 2]) / 2;
+        var lastEnded = all.Where(g => g.EndedAt is not null).OrderByDescending(g => g.EndedAt).FirstOrDefault()?.EndedBecause;
+        var churning = lastHour > MaxStartsPerHour || (lifetimes.Count >= MinEndedToJudge && typical < ShortLifetime);
+
+        var summary = $"{lastHour} watchtower{(lastHour == 1 ? "" : "s")} in the last hour ({last24} in 24 h)";
+        if (typical is { } after)
+        {
+            var secs = Math.Max(0, (int)Math.Round(after.TotalSeconds));
+            var mins = (int)Math.Round(after.TotalMinutes);
+            var span = secs < 60 ? $"{secs} second{(secs == 1 ? "" : "s")}" : $"{mins} minute{(mins == 1 ? "" : "s")}";
+            summary += $"; each ended about {span} after its reply";
+        }
+        if (lastEnded is { Length: > 0 })
+        {
+            summary += $"; the last ended because: {lastEnded}";
+        }
+        return new WatchtowerHealth
+        {
+            State = row?.State,
+            Id = row?.Id,
+            StartedAt = row?.StartedAt,
+            ContextTokens = row?.ContextTokens ?? 0,
+            ContextWindow = row?.ContextWindow ?? 0,
+            StartsLastHour = lastHour,
+            StartsLast24h = last24,
+            TypicalLifetimeAfterReply = typical,
+            LastEndedBecause = lastEnded,
+            Churning = churning,
+            Summary = summary,
+        };
+    }
+
+    /// <summary>One For-you card while it churns, its text kept to the counts; closed once it calms down.</summary>
+    private void KeepChurnCard(WatchtowerHealth? health)
+    {
+        if (health is not { Churning: true })
+        {
+            state.CloseCardsAbout(Verbs.WatchtowerTarget, "it calmed down", CardKinds.WatchtowerChurning);
+            return;
+        }
+        const string title = "The watchtower keeps ending";
+        var card = state.RaiseCard(CardBin.ForYou, CardKinds.WatchtowerChurning, Verbs.WatchtowerTarget, title, health.Summary, link: InAppLinks.Fleet);
+        state.UpdateCard(card.Id, title, health.Summary, card.Choices, InAppLinks.Fleet);
     }
 
     private volatile bool _lastFromPerson;
@@ -266,6 +390,7 @@ public sealed class Watchtower(
             var row = Current();
             // Kept every look, so a row archived before anyone asked for the chat is still known by its session.
             Generations();
+            KeepChurnCard(Health());
             var watching = Watching();
             if (watching is not null || _watchingAt is null)
             {
@@ -302,6 +427,26 @@ public sealed class Watchtower(
                 if (_startedAt is { } started && now - started < ShowUpGrace && (row is null || row.Id != _job))
                 {
                     return;
+                }
+                // One that ended (its turn over, or stopped when quiet) on the brief it has is woken only when there is something
+                // to say to it: in place while its cache is warm, where the say resumes it; past that, a fresh one, below. Started
+                // afresh after every ended turn instead, SE1 began 83 in a day (2026-10-25), each reading its brief again cold.
+                if (row is { State: SessionState.Ended } && Briefed() == BriefFingerprint() && row.Id != _resumeRefused)
+                {
+                    if (Untold().Count == 0)
+                    {
+                        return;
+                    }
+                    if (Warm(row, now))
+                    {
+                        _job = row.Id;
+                        if (await TellNewCardsAsync(row, cancellationToken) == false)
+                        {
+                            // Not delivered: the next look starts a fresh one rather than trying this one again.
+                            _resumeRefused = row.Id;
+                        }
+                        return;
+                    }
                 }
                 // Kept by the node by itself, so held while the 5-hour window is spent, and started by the next look once it has reset;
                 // a restart asked for (restart-watchtower, or the card's Try now) is a person's, and goes ahead.
@@ -391,12 +536,34 @@ public sealed class Watchtower(
         }
     }
 
+    /// <summary>
+    /// The name the row this node started has now, when it is not <see cref="Name"/>: noted on the row as <c>renamed to
+    /// &lt;name&gt;</c>, which is why it no longer counts as the watchtower. Null when it is under its own name, or gone.
+    /// </summary>
+    private string? NoteRename()
+    {
+        if (_job is not { } job || state.Sessions().FirstOrDefault(s => s.Id == job) is not { } row || row.Name == Name)
+        {
+            return null;
+        }
+        var because = $"renamed to {row.Name}";
+        if (row.EndedBecause != because)
+        {
+            state.PutSession(row with { EndedBecause = because });
+        }
+        return row.Name;
+    }
+
     /// <summary>Starts a fresh watchtower, stopping <paramref name="replacing"/> first; false, with a ring, when it could not.</summary>
     private async Task<bool> StartAsync(string why, CancellationToken cancellationToken, SessionRow? replacing = null)
     {
         if (!options.Watchtower)
         {
             return false;
+        }
+        if (NoteRename() is { } renamed)
+        {
+            why += $"; the one it started was renamed to {renamed}";
         }
         if (replacing is not null)
         {
@@ -415,7 +582,7 @@ public sealed class Watchtower(
         try
         {
             Directory.CreateDirectory(folder);
-            var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower));
+            var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower), options.Machine);
             fingerprint = BriefFingerprint();
             _job = await launcher.StartAsync(new WorkerStart(Name, folder, null, brief, Model: Models.Model(RoleModels.Watchtower), Effort: Models.Effort(RoleModels.Watchtower), RemoteControl: true,
                 // A background session's AskUserQuestion blocks until someone answers it in claude agents, and a say to the chat is read only between tool calls: it asks in an ask block instead.
@@ -436,6 +603,7 @@ public sealed class Watchtower(
         _startedAt = time.GetUtcNow();
         _resumedAfter = null;
         RememberStart(_job, why);
+        KeepChurnCard(Health());
         RecordBrief(fingerprint);
         TellAllOpen();
         state.CloseCardsAbout(Verbs.WatchtowerTarget, "a fresh one started", Down, Stopped);
@@ -457,10 +625,10 @@ public sealed class Watchtower(
         _job = null;
         _startedAt = null;
         state.RaiseCard(CardBin.Handled, "watchtower-parked", Verbs.WatchtowerTarget,
-            $"Stopped the watchtower: nothing to watch for {QuietFor.TotalMinutes:0} minutes; the next flight, job or ring starts a fresh one");
+            $"Stopped the watchtower: nothing to watch for {QuietFor.TotalMinutes:0} minutes; the next card resumes it within the hour, else starts a fresh one");
     }
 
-    private string BriefFingerprint() => Briefs.WatchtowerFingerprint(Name, Pilot, Models.Model(RoleModels.Watchtower));
+    private string BriefFingerprint() => Briefs.WatchtowerFingerprint(Name, Pilot, Models.Model(RoleModels.Watchtower), options.Machine);
 
     /// <summary>The fingerprint of the brief the running watchtower was started with, or null when the node has no record of it.</summary>
     private string? Briefed()
@@ -498,22 +666,41 @@ public sealed class Watchtower(
     /// <summary>Takes every open card as told: a fresh watchtower has them in its brief.</summary>
     private void TellAllOpen()
     {
+        var now = time.GetUtcNow();
         foreach (var card in state.Cards(openOnly: true))
         {
-            _told.Add(card.Id);
+            _told.TryAdd(card.Id, now);
         }
     }
 
-    /// <summary>Says the cards it has not heard of to it, in one message; true when there were any to say.</summary>
-    private async Task<bool> TellNewCardsAsync(SessionRow row, CancellationToken cancellationToken)
+    /// <summary>
+    /// The open cards it has not heard of, oldest first: not its own, not Handled lines, not about itself; and once, a Ring
+    /// card it was told <see cref="RetellAfter"/> ago that is still open.
+    /// </summary>
+    private List<CardRow> Untold()
     {
-        var fresh = state.Cards(openOnly: true)
-            .Where(c => c.Bin != CardBin.Handled && c.Kind != RaisedKind && c.Subject != Verbs.WatchtowerTarget && !_told.Contains(c.Id))
+        var now = time.GetUtcNow();
+        return state.Cards(openOnly: true)
+            .Where(c => c.Bin != CardBin.Handled && c.Kind != RaisedKind && c.Subject != Verbs.WatchtowerTarget
+                && (!_told.TryGetValue(c.Id, out var told) || c.Bin == CardBin.Ring && now - told >= RetellAfter && !_retold.Contains(c.Id)))
             .OrderBy(c => c.At)
             .ToList();
+    }
+
+    /// <summary>Whether an ended watchtower is resumed rather than replaced: its cache still warm, and room left in its window.</summary>
+    private bool Warm(SessionRow row, DateTimeOffset now) =>
+        row.LastResponseAt is { } last && now - last < CacheWarmFor
+        && (row.ContextWindow <= 0 || row.ContextTokens < row.ContextWindow * ResumeBelow);
+
+    /// <summary>
+    /// Says the cards it has not heard of to it, in one message: null when there were none, else whether the say went through.
+    /// </summary>
+    private async Task<bool?> TellNewCardsAsync(SessionRow row, CancellationToken cancellationToken)
+    {
+        var fresh = Untold();
         if (fresh.Count == 0)
         {
-            return false;
+            return null;
         }
 
         var text = (fresh.Count == 1 ? "A card opened:" : $"{fresh.Count} cards opened:") + "\n" + string.Join("\n", fresh.Select(Briefs.CardLine))
@@ -521,11 +708,15 @@ public sealed class Watchtower(
         var result = await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [text], Who = LegWatch.Who }, cancellationToken);
         if (result.Ok)
         {
+            var now = time.GetUtcNow();
             foreach (var card in fresh)
             {
-                _told.Add(card.Id);
+                if (!_told.TryAdd(card.Id, now))
+                {
+                    _retold.Add(card.Id);
+                }
             }
         }
-        return true;
+        return result.Ok;
     }
 }

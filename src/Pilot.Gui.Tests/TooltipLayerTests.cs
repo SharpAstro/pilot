@@ -56,11 +56,76 @@ public sealed class TooltipLayerTests
         }
     }
 
+    // A line's width in design units by the test font, as the layer measures it from the window's.
+    private static float Measure(string text)
+    {
+        using var renderer = new RgbaImageRenderer(1, 1);
+        return renderer.MeasureText(text.AsSpan(), SessionsCapture.FontPath, 12f).Width;
+    }
+
+    [Fact]
+    public void AWideLineIsMeasuredNotCountedAndABlankLineStaysAGap()
+    {
+        var window = new Rect<float>(0, 0, 2000, 1000);
+        var anchor = new RectF32(1700, 200, 280, 40);
+        // 58 capitals are far wider than 58 average glyphs: counted by characters, this line overran the box.
+        var wide = string.Join(" ", Enumerable.Repeat("WMWMWMWMW", 12));
+
+        Box(new TooltipRequest(wide, anchor) { Side = Layout.DockSide.Left }, window).Width.ShouldBeLessThanOrEqualTo(TooltipLayer<RgbaImage>.MaxWidth + 20f);
+        TooltipLayer<RgbaImage>.Lines(wide, Measure).ShouldAllBe(l => Measure(l) <= TooltipLayer<RgbaImage>.MaxWidth);
+
+        TooltipLayer<RgbaImage>.Lines("first paragraph\n\n\nsecond paragraph\n", Measure).ShouldBe(["first paragraph", "", "second paragraph"]);
+    }
+
+    [Fact]
+    public void AWordWhoseFirstHalfIsStillTooWideComesOutInPiecesThatEachFit()
+    {
+        // 100 units a character: four fill a line, so a 30-character word's first half (15) is itself far too wide.
+        var word = new string('x', 30);
+
+        var lines = TooltipLayer<RgbaImage>.Lines(word, Wide).ToList();
+
+        lines.ShouldAllBe(l => Wide(l) <= TooltipLayer<RgbaImage>.MaxWidth);
+        string.Concat(lines).ShouldBe(word);
+    }
+
+    [Fact]
+    public void AWordOfEmojiNeverYieldsALoneSurrogate()
+    {
+        foreach (var prefix in new[] { "", "a", "ab" })
+        {
+            for (var count = 1; count <= 25; count++)
+            {
+                var word = prefix + string.Concat(Enumerable.Repeat("😀", count));
+                var lines = TooltipLayer<RgbaImage>.Lines(word, Wide).ToList();
+
+                string.Concat(lines).ShouldBe(word);
+                lines.ShouldAllBe(l => HoldsWholePairs(l), $"'{prefix}' + {count} emoji");
+            }
+        }
+    }
+
+    // 100 units a character: four fill a line. A method, not a local function, as the assertions take it in an expression.
+    private static float Wide(string text) => text.Length * 100f;
+
+    // No high surrogate without the low one after it, and no low one without the high one before it.
+    private static bool HoldsWholePairs(string text)
+    {
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (char.IsHighSurrogate(text[i]) ? i + 1 >= text.Length || !char.IsLowSurrogate(text[++i]) : char.IsLowSurrogate(text[i]))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // The box the tooltip is drawn in: the arranged node with its background, the widest one.
     private static Rect<float> Box(TooltipRequest request, Rect<float> window)
     {
         using var renderer = new RgbaImageRenderer(1, 1);
-        return Layout.Engine.Arrange(TooltipLayer<RgbaImage>.Tree(request), window, new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f))
+        return Layout.Engine.Arrange(TooltipLayer<RgbaImage>.Tree(request, Measure), window, new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f))
             .Where(a => a.Node.Background is not null)
             .Select(a => a.Bounds)
             .OrderByDescending(b => b.Width * b.Height)

@@ -18,7 +18,7 @@ internal static class FileHolders
         }
         try
         {
-            return Query(path);
+            return Query([path]);
         }
         catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or MarshalDirectiveException or ArgumentException)
         {
@@ -26,7 +26,67 @@ internal static class FileHolders
         }
     }
 
-    private static IReadOnlyList<string> Query(string path)
+    /// <summary>
+    /// The processes holding any of the first <paramref name="cap"/> files under <paramref name="folder"/>, as <c>name (pid n)</c>:
+    /// Restart Manager, else <c>handle.exe</c> when it is on PATH. Empty when neither can tell; never throws.
+    /// </summary>
+    public static IReadOnlyList<string> OfFolder(string folder, int cap = 200)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return [];
+        }
+        try
+        {
+            var files = Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories).Take(cap).ToArray();
+            if (files.Length > 0 && Query(files) is { Count: > 0 } found)
+            {
+                return [.. found.Distinct()];
+            }
+            return HandleExe(folder);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DllNotFoundException or EntryPointNotFoundException or MarshalDirectiveException or ArgumentException)
+        {
+            return HandleExe(folder);
+        }
+    }
+
+    private static IReadOnlyList<string> HandleExe(string folder)
+    {
+        try
+        {
+            var exe = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+                .Select(d => Path.Combine(d.Trim(), "handle.exe")).FirstOrDefault(File.Exists);
+            if (exe is null)
+            {
+                return [];
+            }
+            var start = new System.Diagnostics.ProcessStartInfo(exe) { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
+            start.ArgumentList.Add("-accepteula");
+            start.ArgumentList.Add("-nobanner");
+            start.ArgumentList.Add(folder);
+            using var process = System.Diagnostics.Process.Start(start);
+            if (process is null)
+            {
+                return [];
+            }
+            var output = process.StandardOutput.ReadToEndAsync();
+            if (!process.WaitForExit(15_000))
+            {
+                process.Kill();
+                return [];
+            }
+            // Lines read: "name.exe   pid: 1234   type: File   B4: C:\path".
+            return [.. System.Text.RegularExpressions.Regex.Matches(output.Result, @"^(\S+)\s+pid:\s*(\d+)", System.Text.RegularExpressions.RegexOptions.Multiline)
+                .Select(m => $"{m.Groups[1].Value} (pid {m.Groups[2].Value})").Distinct()];
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            return [];
+        }
+    }
+
+    private static IReadOnlyList<string> Query(string[] paths)
     {
         var key = new char[33];
         if (RmStartSession(out var session, 0, key) != 0)
@@ -35,7 +95,7 @@ internal static class FileHolders
         }
         try
         {
-            if (RmRegisterResources(session, 1, [path], 0, null, 0, null) != 0)
+            if (RmRegisterResources(session, (uint)paths.Length, paths, 0, null, 0, null) != 0)
             {
                 return [];
             }

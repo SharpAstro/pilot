@@ -74,11 +74,39 @@ public class TrackerBriefTests
     }
 
     [Fact]
+    public void TheWorkerValidatorAndReviewerBriefsSayAPrBodyNamesAnArtifactAndPointAtPilotAttachments()
+    {
+        var flight = Row(TrackerKind.GitHub);
+
+        string[] briefs =
+        [
+            Briefs.For(flight, Leg(), [Leg()]),
+            Briefs.Validate(flight, Leg(), [Leg()], "pilot"),
+            Briefs.Review(flight, [Leg()], Plane, "pilot"),
+        ];
+        foreach (var brief in briefs)
+        {
+            brief.ShouldContain("GitHub takes no image from gh");
+            brief.ShouldContain("pilot attachments <code>");
+        }
+    }
+
+    [Fact]
     public void AGitHubFlightsValidatorAndReviewerSayNothingOfAnyTracker()
     {
         var flight = Row(TrackerKind.GitHub);
 
         Briefs.Validate(flight, Leg(), [Leg()], "pilot").ShouldNotContain("stories-get-by-id");
         Briefs.Review(flight, [Leg()], Plane, "pilot").ShouldNotContain("stories-get-by-id");
+    }
+
+    [Fact]
+    public void AReviewerReadsTheSuiteFromCiAndRerunsOnlyTheLegsChecksThroughTheNode()
+    {
+        // TIA1814's reviewers ran the whole suite themselves, filled their context, and stopped without a verdict.
+        var brief = Briefs.Review(Row(TrackerKind.GitHub), [Leg()], Plane, "pilot");
+        brief.ShouldContain("Do not run the whole test suite");
+        brief.ShouldContain("`gh pr checks`");
+        brief.ShouldContain("`pilot run -- <check>`");
     }
 }

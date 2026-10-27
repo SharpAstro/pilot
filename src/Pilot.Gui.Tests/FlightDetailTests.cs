@@ -87,6 +87,35 @@ public sealed class FlightDetailTests
     }
 
     [Fact]
+    public void ThePageSaysWhatTheReviewAsksInFullAndThatTheNextRoundIsYoursPastTheCap()
+    {
+        // PIL294's page showed a "review changes" chip and every step ticked, while the findings sat on a card cut short.
+        var asks = "1) CI is red: LayoutDrivenTests rejects JobsView.cs:680. 2) The memory gate takes the smaller of the estimate and job-memory, so a job that measured 8 GB starts with 2 GB free.";
+        var flight = Flight() with { Review = new ReviewRow { State = ReviewState.Changes, Reviewer = "du1-tia1611-review", Report = asks, StartedAt = Live.At } };
+        var legs = Legs().Select(l => l.Name == "render" ? l with { State = LegState.Done, ReviewGoArounds = 3 } : l).ToArray();
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var view = new FlightsView<RgbaImage>(renderer);
+        // The prose wraps word by word, one leaf each: read the leaves back as the text a person would see.
+        string Said(FlightRow row, LegRow[] rows) => string.Concat(System.Text.RegularExpressions.Regex.Matches(CellLayout.Describe(Layout.Engine.Arrange(
+            Layout.Builder.VStack([.. view.ReviewAsks(FlightDetail.From(FlightLine.Build([row], [], Now, rows).Single(), Now))]),
+            new Rect<int>(0, 0, 400, 40), CellMeasureContext.PixelAuthored)), @"Leaf Text ""(.*)"" \(")
+            .Select(m => m.Groups[1].Value.EndsWith(' ') ? m.Groups[1].Value : m.Groups[1].Value + "\n"));
+
+        var said = Said(flight, legs);
+
+        said.ShouldContain("The review asks for changes:");
+        said.ShouldContain("JobsView.cs:680");
+        said.ShouldContain("starts with 2 GB free");
+        said.ShouldContain("render has been redone 3 times");
+        said.ShouldContain("Redo leg render on the review's card once more, or Ready anyway");
+        // An earlier capped leg with a later one planned after it is not the person's round: the node still lets the watchtower go around.
+        var planned = legs.Append(legs[0] with { Name = "polish", Order = 3, State = LegState.Planned, ReviewGoArounds = 0 }).ToArray();
+        Said(flight, planned).ShouldNotContain("the next round is yours");
+        // A review that passed, or none, says nothing here.
+        Said(Flight(), Legs()).Trim().ShouldBeEmpty();
+    }
+
+    [Fact]
     public void ADumpListsEveryLegStepAndArtifact()
     {
         var dump = FlightDetail.From(Line(), Now).ToDump();
@@ -175,6 +204,43 @@ public sealed class FlightDetailTests
         flights.CollectPaintedRegions(regions);
         regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:merge-card" }).OnClick!.Invoke(InputModifier.None);
         answered.ShouldBe((ready, 1));
+
+        // While that Merge is with the node, the page's button reads "Merge …" and takes no second press, as the panel's does.
+        chrome.Cards.NoteWorking("c9", "card:c9:1");
+        chrome.Render(new SessionsScreen([], "test", Now), new FlightsScreen([Line()], "test", Now), CardsScreen.From([ready, other]), new RectF32(0, 0, 1600, 900));
+        regions.Clear();
+        flights.CollectPaintedRegions(regions);
+        regions.Any(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:merge-card" }).ShouldBeFalse();
+        chrome.Cards.NoteWorking("c9", null);
+    }
+
+    [Fact]
+    public void CapturesOfTheFlightPagesMergeIdleAndPendingAtNarrowAndWideWindows()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var dir = Path.GetDirectoryName(capture) ?? ".";
+        var ready = new CardRow
+        {
+            Id = "c9", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/TIA1611", Title = "TIA1611's PR #7 is ready to merge",
+            At = Now, State = CardState.Open, Choices = [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/TIA1611", Args = ["abc1234"], Status = ChoiceStatus.Passing }],
+        };
+        foreach (var (width, height) in new[] { (900, 900), (1800, 900) })
+        {
+            foreach (var pending in new[] { false, true })
+            {
+                using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+                var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+                chrome.Flights.CanCommand = true;
+                chrome.Show(PilotPage.Flights);
+                chrome.Flights.OpenDetail("TIA1611");
+                chrome.Cards.NoteWorking("c9", pending ? "card:c9:1" : null);
+                chrome.Render(new SessionsScreen([], "test", Now), new FlightsScreen([Line()], "test", Now), CardsScreen.From([ready]), new RectF32(0, 0, width, height));
+                File.WriteAllBytes(Path.Combine(dir, $"flight-merge-{(pending ? "pending" : "idle")}-{width}.png"), SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, height));
+            }
+        }
     }
 
     [Fact]
@@ -277,6 +343,36 @@ public sealed class FlightDetailTests
     /// text really gets. Laid out as a stack, the text was measured with the label's room too, came out a line short, and
     /// its last line ran over the row under it (PIL189's page, SE1 2026-10-24).
     /// </summary>
+    [Theory]
+    [InlineData(900f, 1f)]
+    [InlineData(1900f, 1f)]
+    [InlineData(1900f, 1.25f)]
+    [InlineData(1900f, 1.5f)]
+    [InlineData(1300f, 1.5f)]
+    public void ScrolledToItsEndThePageShowsTheLastLegsReportToItsLastWord(float width, float dpi)
+    {
+        // PIL294's page at its end cut the last leg's report off at the window's bottom.
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Flights;
+        string Long(string tail) => string.Join(" ", Enumerable.Repeat("words that wrap over several lines", 12)) + " " + tail;
+        var legs = Enumerable.Range(1, 4).Select(i => Legs()[1] with
+        {
+            Name = $"leg{i}", Order = i, Goal = Long("G"), DoneWhen = Long("D"), Report = Long(i == 4 ? "LASTWORD" : "R"),
+            Checklist = [.. Enumerable.Range(1, 5).Select(s => new CheckItem { Text = Long("S"), Done = true })],
+        }).ToArray();
+        var screen = new FlightsScreen([FlightLine.Build([Flight()], [], Now, legs).Single()], "live", Now);
+        flights.OpenDetail("TIA1611");
+        var window = new Rect<float>(0, 0, width, 700);
+        var pixels = new PixelMeasureContext<RgbaImage>(vessel, SessionsCapture.FontPath, dpi);
+
+        Layout.Engine.Arrange(flights.Tree(screen), window, pixels);
+        flights.HandleInput(new InputEvent.KeyDown(InputKey.End, InputModifier.None)).ShouldBeTrue();
+        var arranged = Layout.Engine.Arrange(flights.Tree(screen), window, pixels);
+
+        var last = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v.StartsWith("LASTWORD", StringComparison.Ordinal)).Bounds;
+        (last.Y + last.Height).ShouldBeLessThanOrEqualTo(window.Height, "the last word is inside the window at the scroll's end");
+    }
+
     [Fact]
     public void AWrappedGoalPushesItsDoneWhenDownRatherThanRunningOverIt()
     {
@@ -474,5 +570,15 @@ public sealed class FlightDetailTests
 
         texts.ShouldNotContain(t => t.Contains("pilot/review", StringComparison.Ordinal));
         regions.Any(r => r.Result is HitResult.ButtonHit { Action: "review:TIA1611" }).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AFlyingLegWaitingOnAFileSaysWhatItWaitsFor()
+    {
+        var legs = Legs();
+        legs[0] = legs[0] with { Wait = new LegWait { Path = @"C:\x\done.txt", Since = Live.At } };
+        var line = FlightLine.Build([Flight()], [], Now, legs).Single();
+
+        FlightDetail.From(line, Now).Legs.Single(l => l.Name == "render").State.ShouldBe(@"waiting for C:\x\done.txt");
     }
 }

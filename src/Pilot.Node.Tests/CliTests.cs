@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using System.Diagnostics;
 using Pilot.Commands;
 using Pilot.Contracts;
@@ -17,19 +18,29 @@ public sealed class CliTests : IAsyncLifetime
 
     private string Repo => Path.Combine(_root, "tianwen");
 
+    [Fact]
+    public void PilotNodesPrintsAWatchtowerLineMarkedWhenChurning()
+    {
+        var now = new DateTimeOffset(2026, 10, 26, 12, 0, 0, TimeSpan.Zero);
+        var calm = new WatchtowerHealth { State = SessionState.Idle, Id = "3a1b2c3d4e", StartedAt = now.AddHours(-2), ContextTokens = 41_000, ContextWindow = 200_000, StartsLast24h = 3 };
+
+        NodeTargets.WatchtowerLine(calm, now).ShouldBe("watchtower idle · 3a1b2c3d · 2 h · 41k/200k · 3 started in 24 h");
+        NodeTargets.WatchtowerLine(calm with { Churning = true, LastEndedBecause = "process gone" }, now)
+            .ShouldEndWith("last ended: process gone  " + WatchtowerWords.ChurningMark);
+        NodeTargets.WatchtowerLine(null, now).ShouldBe("no watchtower kept");
+    }
+
+    [Fact]
+    public async Task PilotNodesStillListsAPeerThatDoesNotAnswer()
+    {
+        // Nothing listens on port 1.
+        (await NodeTargets.WatchtowerLineAsync("127.0.0.1:1", TimeSpan.FromSeconds(1), Ct)).ShouldBe("watchtower: not reached (the node did not answer)");
+    }
+
     public async ValueTask InitializeAsync()
     {
-        // A repo with a bare origin, so a flight's push is a real one.
-        var origin = Path.Combine(_root, "origin.git");
-        Directory.CreateDirectory(Repo);
-        Git(_root, "init", "-q", "--bare", "-b", "main", origin);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        Git(Repo, "remote", "add", "origin", origin);
-        Git(Repo, "push", "-q", "-u", "origin", "main");
-        Git(Repo, "remote", "set-head", "origin", "main");
+        // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
+        SeedRepo.Make(_root);
         _node = await NodeHarness.StartAsync(Ct);
     }
 
@@ -79,6 +90,40 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TheSessionsListShowsTheNodesCodeBeforeANameWithoutAMachinePrefix()
+    {
+        var code = _node.Options.Machine.ToLowerInvariant();
+        SessionRow Row(string id, string name) => new()
+        {
+            Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = _root,
+            Role = SessionRole.AdHoc, ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Idle, SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
+        };
+        _node.State.PutSession(Row("a1b2c3d4", "stargazer"));
+        _node.State.PutSession(Row("b2c3d4e5", "zz9-other-worker"));
+
+        var (exit, output, error) = await Pilot(_root, "sessions");
+
+        exit.ShouldBe(0, error);
+        output.ShouldContain($"a1b2c3d4  {code}-stargazer  ");
+        output.ShouldContain("b2c3d4e5  zz9-other-worker  ");
+        output.ShouldNotContain($"{code}-zz9");
+    }
+
+    [Fact]
+    public void TheSessionsTextLeavesAPrefixedNameAsItIsAndAnUnprefixedOneAsItIsWithoutACode()
+    {
+        SessionRow Row(string name) => new()
+        {
+            Id = "a1b2c3d4", SessionId = "a1b2c3d4-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = "/r",
+            Role = SessionRole.AdHoc, ContextTokens = 0, ContextWindow = 1, State = SessionState.Idle, SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
+        };
+
+        PilotCommand.Sessions([Row("stargazer")], "SE1").ShouldStartWith("a1b2c3d4  se1-stargazer  ");
+        PilotCommand.Sessions([Row("de1-stargazer")], "SE1").ShouldStartWith("a1b2c3d4  de1-stargazer  ");
+        PilotCommand.Sessions([Row("stargazer")]).ShouldStartWith("a1b2c3d4  stargazer  ");
+    }
+
+    [Fact]
     public async Task ADirectFlightIsFlownFromTheCliAloneUpToItsLanding()
     {
         // The controller, in the repo: a flight and its one leg.
@@ -96,6 +141,7 @@ public sealed class CliTests : IAsyncLifetime
         var plane = Path.Combine(flight.Worktree, "src");
         Directory.CreateDirectory(plane);
         File.WriteAllText(Path.Combine(plane, "shader.glsl"), "void main() {}\n");
+        File.WriteAllBytes(Path.Combine(plane, "capture.png"), [0x89, 0x50, 0x4E, 0x47]);
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "The planet shader");
         await Ok(plane, "check", "1");
@@ -174,12 +220,86 @@ public sealed class CliTests : IAsyncLifetime
         var outside = await Pilot(_root, "check", "1");
         (outside.Exit, outside.Error).ShouldBe((2, "pilot: this folder is in no flight's plane; name the leg with --leg <code>/<leg>" + Environment.NewLine));
 
+        var outsideWait = await Pilot(_root, "leg", "wait", "--for-file", "x.flag");
+        (outsideWait.Exit, outsideWait.Error).ShouldBe((2, "pilot: this folder is in no flight's plane; name the leg with --leg <code>/<leg>" + Environment.NewLine));
+
         var idle = await Pilot(plane, "leg", "finish", "done");
         idle.Error.ShouldContain("TIA7 has no leg flying");
 
-        await Ok(_root, "leg", "plan", "TIA7", "one", "--goal", "g", "--done-when", "d", "--item", "a step");
+        await Ok(_root, "leg", "plan", "TIA7", "one", "--goal", "Do the work", "--done-when", "Its check passes", "--item", "a step");
         (await Pilot(_root, "check", "1", "--leg", "TIA7/one")).Exit.ShouldBe(0);
         _node.State.Legs("TIA7").Single().Checklist.Single().Done.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task PilotJobsNamesTheJobHoldingTheQueueOnlyWhileAJobWaits()
+    {
+        JobRow Job(string id, JobState state) => new()
+        {
+            Id = id, Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = state,
+            LogPath = Path.Combine(_root, id + ".log"), Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+        };
+        // Recovery runs in the background and fails any Running or Queued row it finds as left behind: let it finish first.
+        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        _node.State.PutJob(Job("j1", JobState.Running));
+
+        (await Pilot(_root, "jobs")).Output.ShouldNotContain("holds the queue");
+
+        _node.State.PutJob(Job("j2", JobState.Queued));
+        (await Pilot(_root, "jobs")).Output.ShouldContain("j1 holds the queue (se1-tia1-parser), held for 5m");
+    }
+
+    [Fact]
+    public async Task PilotJobCancelForceSendsCancelJobWithForceAndTheJobEndsForced()
+    {
+        var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        runner.MinFreeMemory = 0;
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        // Not a bare sleep, which the node refuses: the echo makes it a job.
+        await Ok(_root, "run", "--", "sleep 30; echo slept");
+        var id = _node.State.Jobs().Single().Id;
+        for (var i = 0; _node.State.Jobs().Single().State != JobState.Running; i++)
+        {
+            i.ShouldBeLessThan(500, "the job did not start");
+            await Task.Delay(20, Ct);
+        }
+
+        var (exit, output, error) = await Pilot(_root, "job", id, "cancel", "--force");
+
+        exit.ShouldBe(0, $"{output}{error}");
+        JobRow ended;
+        for (var i = 0; (ended = _node.State.Jobs().Single()).EndedAt is null; i++)
+        {
+            i.ShouldBeLessThan(300, "the job did not end");
+            await Task.Delay(100, Ct);
+        }
+        ended.State.ShouldBe(JobState.Cancelled);
+        ended.Error.ShouldNotBeNull().ShouldStartWith("cancelled (forced) by ");
+    }
+
+    [Fact]
+    public async Task PilotJobCancelWithoutForceIsAPlainCancel()
+    {
+        var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        runner.MinFreeMemory = 0;
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await Ok(_root, "run", "--", "sleep 30; echo slept");
+        var id = _node.State.Jobs().Single().Id;
+        for (var i = 0; _node.State.Jobs().Single().State != JobState.Running; i++)
+        {
+            i.ShouldBeLessThan(500, "the job did not start");
+            await Task.Delay(20, Ct);
+        }
+
+        await Ok(_root, "job", id, "cancel");
+        JobRow ended;
+        for (var i = 0; (ended = _node.State.Jobs().Single()).EndedAt is null; i++)
+        {
+            i.ShouldBeLessThan(300, "the job did not end");
+            await Task.Delay(100, Ct);
+        }
+
+        ended.Error.ShouldStartWith("cancelled by ");
     }
 
     /// <summary>A flight whose first leg is done and whose second, render, has started: its validator is flying.</summary>
@@ -309,6 +429,47 @@ public sealed class CliTests : IAsyncLifetime
         PilotCommand.Caller(snapshot, "a1a2a3a4-0000-4000-8000-000000000000").ShouldBe("du1-tia1-parser");
     }
 
+    private static SnapshotEvent SnapshotWith(MachineRow? machine) => new()
+    {
+        Seq = 1, At = DateTimeOffset.UnixEpoch, Stream = "s", Notes = [], Sessions = [], Machine = machine,
+    };
+
+    private static MachineRow Machine(double cpu, long used, long total, MachineGpu? gpu = null) => new()
+    {
+        SampledAt = DateTimeOffset.UnixEpoch, CpuPercent = cpu, Cores = 8, MemoryUsed = used, MemoryTotal = total, Gpu = gpu,
+    };
+
+    [Fact]
+    public void StatusSaysTheMachineInALineWithItsGpu()
+    {
+        const long Gb = 1L << 30;
+        var machine = Machine(34, 21 * Gb, 32 * Gb, new MachineGpu { Percent = 81, MemoryUsed = (long)(6.1 * Gb), MemoryTotal = 12 * Gb });
+
+        machine.Line().ShouldBe("cpu 34% · gpu 81% (6.1/12 GB) · mem 21/32 GB");
+        PilotCommand.Status(SnapshotWith(machine)).ShouldContain("machine  cpu 34% · gpu 81% (6.1/12 GB) · mem 21/32 GB");
+        StatusMarkdown.Build(SnapshotWith(machine)).ShouldContain("- **machine** cpu 34% · gpu 81% (6.1/12 GB) · mem 21/32 GB");
+    }
+
+    [Fact]
+    public void StatusLeavesTheGpuOutOfTheMachineLineWhenTheNodeHasNone()
+    {
+        const long Gb = 1L << 30;
+        var machine = Machine(7, 3 * Gb / 2, 16 * Gb);
+
+        machine.Line().ShouldBe("cpu 7% · mem 1.5/16 GB");
+        PilotCommand.Status(SnapshotWith(machine)).ShouldContain("machine  cpu 7% · mem 1.5/16 GB");
+        StatusMarkdown.Build(SnapshotWith(machine)).ShouldContain("- **machine** cpu 7% · mem 1.5/16 GB");
+        // A GPU whose memory the platform does not say still shows its share.
+        Machine(7, Gb, 16 * Gb, new MachineGpu { Percent = 40 }).Line().ShouldBe("cpu 7% · gpu 40% · mem 1/16 GB");
+    }
+
+    [Fact]
+    public void StatusPrintsNoMachineLineWhenTheSnapshotHasNoRow()
+    {
+        PilotCommand.Status(SnapshotWith(null)).ShouldNotContain("machine");
+        StatusMarkdown.Build(SnapshotWith(null)).ShouldNotContain("machine");
+    }
+
     [Fact]
     public async Task StatusWritesMarkdownForOutputFormatMarkdownAndPlainTextWhenNoHostCanRenderAuto()
     {
@@ -317,13 +478,28 @@ public sealed class CliTests : IAsyncLifetime
         await Ok(_root, "leg", "plan", "TIA1611", "gpu", "--goal", "Draw the planets", "--done-when", "The capture shows them", "--item", "Write the shader", "--item", "Capture it");
         await Ok(_root, "leg", "start", "TIA1611", "gpu");
         await Ok(flight.Worktree, "check", "1");
+        File.WriteAllBytes(Path.Combine(flight.Worktree, "capture.png"), [0x89, 0x50, 0x4E, 0x47]);
         await Ok(flight.Worktree, "artifact", "capture.png", "The planets");
 
         var (_, markdown, _) = await Pilot(_root, "status", "--output-format", "markdown");
         markdown.ShouldContain("## Flights");
         markdown.ShouldContain("### TIA1611 · Planets on the GPU");
         markdown.ShouldContain("| 1 | gpu | flying | 1/2 |");
-        markdown.ShouldContain($"![The planets]({Path.Combine(flight.Worktree, "capture.png").Replace('\\', '/')})");
+        // The node's copy is shown, not the plane's file, so it still renders once the plane's file is gone.
+        var kept = _node.State.Flights().Single().Code;
+        var copy = Directory.GetFiles(Path.Combine(Path.GetFullPath(_node.Options.DataFolder), "attachments", kept)).Single().Replace('\\', '/');
+        markdown.ShouldContain($"![The planets]({copy})");
+        markdown.ShouldNotContain(Path.Combine(flight.Worktree, "capture.png").Replace('\\', '/'));
+        File.Delete(Path.Combine(flight.Worktree, "capture.png"));
+        (await Pilot(_root, "status", "--output-format", "markdown")).Output.ShouldContain($"![The planets]({copy})");
+
+        // pilot attachments lists the flight's copies with their paths, and every one with no argument.
+        var (_, listed, _) = await Pilot(_root, "attachments", "TIA1611");
+        listed.ShouldContain("TIA1611/gpu");
+        listed.ShouldContain("The planets");
+        listed.Replace('\\', '/').ShouldContain(copy);
+        (await Pilot(_root, "attachments")).Output.ShouldBe(listed);
+        (await Pilot(_root, "attachments", "TIA9999")).Output.ShouldBe("No attachments for TIA9999.\n");
 
         // The tests' host has no terminal, as the GUI's command bar and the MCP server have none: auto is plain, and rich the source.
         var (_, auto, _) = await Pilot(_root, "status");
@@ -419,7 +595,7 @@ public sealed class CliTests : IAsyncLifetime
                 Worktrees = [new WorktreeStatus { Path = "C:/r/pilot/.claude/worktrees/x", Branch = "flight/X1", Flight = "X1", Dirty = true, Files = 2, Added = 5, Removed = 1 }],
                 PullRequests =
                 [
-                    new PullRequestStatus { Number = 7, Title = "A|B is *ready*", Head = "flight/X1", Url = "https://example.com/pull/7", Flight = "X1", Checks = "passing" },
+                    new PullRequestStatus { Number = 7, Title = "A|B is *ready*", Head = "flight/X1", Url = "https://example.com/pull/7", Flight = "X1", Checks = "passing", Labels = ["pilot node: SE1", "bug"] },
                     new PullRequestStatus { Number = 8, Title = "wip", Head = "wip", Draft = true },
                 ],
                 Errors = ["gh offline"],
@@ -431,12 +607,13 @@ public sealed class CliTests : IAsyncLifetime
         markdown.ShouldContain("## pilot");
         markdown.ShouldContain("main, clean, ahead 1, behind 3 of main, 2 flights");
         markdown.ShouldContain("| flight/X1 | X1 | dirty | 2 | +5 -1 |");
-        markdown.ShouldContain(@"| [#7 A\|B is \*ready\*](https://example.com/pull/7) | flight/X1 | X1 | ready | passing |");
-        markdown.ShouldContain("| #8 wip | wip |  | draft |  |");
+        markdown.ShouldContain(@"| [#7 A\|B is \*ready\*](https://example.com/pull/7) | flight/X1 | X1 | ready | passing | pilot node: SE1, bug |");
+        markdown.ShouldContain("| #8 wip | wip |  | draft |  |  |");
         markdown.ShouldContain("- gh offline");
         markdown.ShouldNotContain("other");
         ReposMarkdown.Build(rows, all: true).ShouldContain("(detached), clean, 0 flights, untracked");
         ReposMarkdown.Build([], all: false).ShouldBe(PilotCommand.Repos([], all: false));
-        PilotCommand.Repos(rows, all: false).ShouldContain("PR #7 A|B is *ready*  flight/X1  X1  ready  checks passing");
+        PilotCommand.Repos(rows, all: false).ShouldContain("PR #7 A|B is *ready*  flight/X1  X1  ready  checks passing  labels pilot node: SE1, bug");
+        PilotCommand.Repos(rows, all: false).ShouldNotContain("draft  labels");
     }
 }

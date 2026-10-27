@@ -57,8 +57,12 @@ public static class NodeApp
         builder.Services.AddSingleton<HookBook>();
         builder.Services.AddSingleton(services => new TranscriptBook(services.GetRequiredService<SessionTrackerOptions>().Profile));
         builder.Services.AddSingleton<IGit, GitCli>();
-        builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>()));
+        builder.Services.AddSingleton(services => new RemovalQueue(RemovalQueue.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()));
+        // First: tried once at the start, before any service touches the paths it holds.
+        builder.Services.AddHostedService(services => new RemovalQueueStart(services.GetRequiredService<RemovalQueue>(), services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>(), services.GetRequiredService<RemovalQueue>()));
         builder.Services.AddSingleton<StopGate>();
+        builder.Services.AddSingleton(new Attachments(options.DataFolder));
         // nuget.org's public flat container: what a flight connected to a releasing flight waits for.
         builder.Services.AddSingleton<INuGetFeed>(_ => new NuGetOrgFeed(new HttpClient(new HttpClientHandler { AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate }) { Timeout = TimeSpan.FromSeconds(30) }));
         builder.Services.AddSingleton<PackageReleases>();
@@ -69,6 +73,7 @@ public static class NodeApp
             var flights = ActivatorUtilities.CreateInstance<FlightCommander>(services);
             flights.Models = services.GetRequiredService<RoleModels>();
             flights.Machine = options.Machine;
+            flights.Attachments = services.GetRequiredService<Attachments>();
             var models = services.GetRequiredService<RoleModels>();
             var trackers = new List<ITracker> { new ShortcutTracker(new HttpClient { Timeout = TimeSpan.FromSeconds(30) }, () => ShortcutTracker.TokenFrom(models.ShortcutToken)) };
             if (services.GetService<IGitHub>() is { } gitHub)
@@ -83,7 +88,9 @@ public static class NodeApp
             return flights;
         });
         builder.Services.AddSingleton<RepoCatalog>();
-        builder.Services.AddSingleton<RepoWatch>();
+        builder.Services.AddSingleton(services => new RepoWatch(
+            services.GetRequiredService<NodeState>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<Planes>(),
+            services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>()) { Machine = options.Machine });
         builder.Services.AddHostedService(services => services.GetRequiredService<RepoWatch>());
         builder.Services.AddSingleton<RepoSync>();
         builder.Services.AddSingleton<RepoCommander>();
@@ -98,7 +105,9 @@ public static class NodeApp
             var legs = ActivatorUtilities.CreateInstance<LegCommander>(services);
             legs.Models = services.GetRequiredService<RoleModels>();
             legs.Gate = services.GetRequiredService<StartGate>();
+            legs.Attachments = services.GetRequiredService<Attachments>();
             legs.Releases = services.GetRequiredService<PackageReleases>();
+            legs.SiblingSync = services.GetRequiredService<RepoSync>();
             return legs;
         });
         builder.Services.AddSingleton(services =>
@@ -166,6 +175,39 @@ public static class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<UsageReader>());
         builder.Services.AddSingleton(services =>
         {
+            var state = services.GetRequiredService<NodeState>();
+            var tracker = services.GetRequiredService<SessionTracker>();
+            var jobs = services.GetRequiredService<JobRunner>();
+            return new MachineSampler(state, services.GetRequiredService<TimeProvider>())
+            {
+                // A session's name, or the watchtower's role for the node's own; a job's id. A job's tree is walked from its root.
+                Owners = () =>
+                {
+                    var sessions = state.Sessions().ToDictionary(s => s.Id, StringComparer.Ordinal);
+                    var owners = new List<(string, int)>();
+                    foreach (var (id, pid) in tracker.LivePids())
+                    {
+                        if (sessions.TryGetValue(id, out var row))
+                        {
+                            owners.Add((row.Role == SessionRole.Watchtower ? MachineSampler.WatchtowerOwner : row.Name, pid));
+                        }
+                    }
+                    foreach (var (id, pid) in jobs.RunningPids())
+                    {
+                        owners.Add((id, pid));
+                    }
+                    return owners;
+                },
+                Logger = services.GetService<ILogger<MachineSampler>>(),
+            };
+        });
+        // Off for a test node, whose stream a sample every few seconds would number into the deltas the test counts.
+        if (options.MachineSampling)
+        {
+            builder.Services.AddHostedService(services => services.GetRequiredService<MachineSampler>());
+        }
+        builder.Services.AddSingleton(services =>
+        {
             var commands = services.GetRequiredService<NodeCommands>();
             var nodeOptions = services.GetRequiredService<NodeOptions>();
             return new JobRunner(services.GetRequiredService<NodeState>(), nodeOptions, services.GetRequiredService<TimeProvider>())
@@ -178,7 +220,20 @@ public static class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<JobRunner>());
         builder.Services.AddSingleton<FlightAdvance>();
         builder.Services.AddHostedService(services => services.GetRequiredService<FlightAdvance>());
-        builder.Services.AddSingleton<PrChecks>();
+        builder.Services.AddSingleton(services =>
+        {
+            var recheck = ActivatorUtilities.CreateInstance<PrRecheck>(services);
+            recheck.Fleet = services.GetRequiredService<FlightCommander>().Fleet;
+            return recheck;
+        });
+        builder.Services.AddHostedService(services => services.GetRequiredService<PrRecheck>());
+        // A failed check is run again once before the node sends a leg round on it.
+        builder.Services.AddSingleton(services =>
+        {
+            var checks = ActivatorUtilities.CreateInstance<PrChecks>(services);
+            checks.RerunFirst = true;
+            return checks;
+        });
         builder.Services.AddHostedService(services => services.GetRequiredService<PrChecks>());
         builder.Services.AddSingleton<ISummaryModel>(_ => new ClaudeSummaryModel(Path.Combine(options.DataFolder, "summary")));
         builder.Services.AddSingleton(services => new Summaries(services.GetRequiredService<NodeState>(), services.GetRequiredService<ISummaryModel>(), services.GetRequiredService<TimeProvider>())
@@ -199,7 +254,6 @@ public static class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<NodeUpdater>());
         // The Settings page: a saved setting restarts the node to run with it, and the setup checklist's fixes.
         builder.Services.AddSingleton<NodeRestarter>();
-        builder.Services.AddHostedService(services => services.GetRequiredService<NodeRestarter>());
         builder.Services.AddSingleton(services => new NodeSetup(options, Environment.ProcessPath ?? "pilot-node",
             services.GetRequiredService<SessionTrackerOptions>().Profile.Root)
         {
@@ -215,6 +269,7 @@ public static class NodeApp
             services.GetRequiredService<ILogger<SessionTracker>>())
         {
             Hooks = services.GetRequiredService<HookBook>(),
+            Attachments = services.GetRequiredService<Attachments>(),
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.
@@ -253,6 +308,7 @@ public static class NodeApp
             // grant, as a command is made with one.
             var granted = get && (path is NodeWire.ReposRoute or NodeWire.RepoStatusRoute or NodeWire.IssuesRoute or NodeWire.ChatRoute
                 || path.StartsWith(NodeWire.SessionsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/transcript", StringComparison.Ordinal)
+                || path.StartsWith(NodeWire.AttachmentsRoute + "/", StringComparison.Ordinal)
                 || path.StartsWith(NodeWire.JobsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/log", StringComparison.Ordinal));
             return watching || (post && path == NodeWire.GrantsRoute) ? NodeRouteAccess.Open
                 : (post && path == NodeWire.CommandsRoute) || granted ? NodeRouteAccess.Command
@@ -310,7 +366,7 @@ public static class NodeApp
         var startedAt = DateTimeOffset.UtcNow;
         var version = typeof(NodeApp).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
-        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models) => Results.Json(
+        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower) => Results.Json(
             ResponseEnvelope<NodeInfo>.Ok(new NodeInfo
             {
                 WireVersion = NodeWire.Version,
@@ -326,6 +382,7 @@ public static class NodeApp
                 Autopilot = models.Autopilot,
                 AcceptsFleetFlights = models.AcceptsFleetFlights,
                 Account = state.Usage()?.Account,
+                Watchtower = watchtower.Health(),
             }),
             PilotJsonContext.Default.ResponseEnvelopeNodeInfo));
 
@@ -383,20 +440,37 @@ public static class NodeApp
                     ? Results.Json(ResponseEnvelope<TranscriptPage>.Ok(page), PilotJsonContext.Default.ResponseEnvelopeTranscriptPage)
                     : Results.Json(ResponseEnvelope<TranscriptPage>.Fail($"{row.Name} has no transcript yet", 404), PilotJsonContext.Default.ResponseEnvelopeTranscriptPage, statusCode: 404));
 
+        // The copy of an image an artifact names, as the file; the artifact (a leg's or a session's) says whose it is.
+        app.MapGet(NodeWire.AttachmentPattern, (string id, NodeState state, Attachments attachments) =>
+        {
+            var found = state.Flights().SelectMany(f => state.Legs(f.Code).SelectMany(l => l.Artifacts).Select(a => (Owner: f.Code, Artifact: a)))
+                .Concat(state.Sessions().SelectMany(s => (s.Artifacts ?? []).Select(a => (Owner: s.Id, Artifact: a))))
+                .FirstOrDefault(x => x.Artifact?.Attachment == id);
+            if (found.Artifact?.AttachmentExt is not { } ext || attachments.PathOf(found.Owner, id, ext) is not { } path || !File.Exists(path))
+            {
+                return Results.NotFound();
+            }
+            return Results.File(path, Attachments.ContentType(ext));
+        });
+
         // The conversation with the watchtower as one feed, across every watchtower there has been, read on from where the last read stopped.
         app.MapGet(NodeWire.ChatRoute, (int? after, WatchtowerChat chat) =>
             Results.Json(ResponseEnvelope<ChatPage>.Ok(chat.Page(after ?? -1)), PilotJsonContext.Default.ResponseEnvelopeChatPage));
 
         // A job's output, its end, for the Background tasks page; the whole is in its log, on this machine.
-        app.MapGet(NodeWire.JobLogPattern, (string id, NodeState state) =>
+        // With its pid, the process tree under it and, when its wrapper has exited while a process it started holds it, that fact.
+        app.MapGet(NodeWire.JobLogPattern, (string id, NodeState state, JobRunner jobs) =>
             state.Jobs().FirstOrDefault(j => j.Id == id) is not { } job
                 ? Results.Json(ResponseEnvelope<JobLog>.Fail($"There is no job {id}", 404), PilotJsonContext.Default.ResponseEnvelopeJobLog, statusCode: 404)
-                : Results.Json(ResponseEnvelope<JobLog>.Ok(JobLogs.Tail(job.LogPath) ?? new JobLog { Lines = [], Length = 0 }), PilotJsonContext.Default.ResponseEnvelopeJobLog));
+                : Results.Json(ResponseEnvelope<JobLog>.Ok(jobs.Describe(job, JobLogs.Tail(job.LogPath) ?? new JobLog { Lines = [], Length = 0 })), PilotJsonContext.Default.ResponseEnvelopeJobLog));
 
         // The new-flight wizard's reads: the repos a flight can be made in, and a repo's open issues (through gh).
         // This machine only: the LAN policy lets no route through it does not name.
         app.MapGet(NodeWire.SettingsRoute, async (NodeSettingsCommands settings, CancellationToken cancellationToken) =>
             Results.Json(ResponseEnvelope<SettingsPage>.Ok(await settings.PageAsync(cancellationToken)), PilotJsonContext.Default.ResponseEnvelopeSettingsPage));
+        // The setup checks run programs (netsh, gh): their own route, cached with the time they were measured.
+        app.MapGet(NodeWire.SettingsChecksRoute, async (NodeSettingsCommands settings, bool? refresh, CancellationToken cancellationToken) =>
+            Results.Json(ResponseEnvelope<SetupChecks>.Ok(await settings.SetupChecksAsync(refresh ?? false, cancellationToken)), PilotJsonContext.Default.ResponseEnvelopeSetupChecks));
         app.MapGet(NodeWire.ReposRoute, (RepoCatalog repos) =>
             Results.Json(ResponseEnvelope<RepoInfo[]>.Ok(repos.Repos()), PilotJsonContext.Default.ResponseEnvelopeRepoInfoArray));
         app.MapGet(NodeWire.RepoStatusRoute, async (RepoWatch watch, bool? refresh, CancellationToken cancellationToken) =>

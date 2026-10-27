@@ -47,6 +47,7 @@ public sealed class NodeState
     private readonly Dictionary<(string Flight, string Name), LegRow> _legs = [];
     private readonly Dictionary<string, CardRow> _cards = new Dictionary<string, CardRow>(StringComparer.Ordinal);
     private UsageRow? _usage;
+    private MachineRow? _machine;
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
     private readonly Dictionary<string, PrReviewRow> _prReviews = new Dictionary<string, PrReviewRow>(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, SummaryRow> _summaries = new Dictionary<string, SummaryRow>(StringComparer.Ordinal);
@@ -247,6 +248,31 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>
+    /// Changes the flight <paramref name="code"/> as it is now, in one step: <paramref name="change"/> is given the row as it stands and
+    /// returns the row to keep, so a writer that read the flight earlier (a command whose GitHub call was out) never puts a
+    /// stale copy over what another has written meanwhile. Nothing when the flight is gone or <paramref name="change"/> returns null.
+    /// Returns the row kept, or null.
+    /// </summary>
+    public FlightRow? UpdateFlight(string code, Func<FlightRow, FlightRow?> change)
+    {
+        lock (_gate)
+        {
+            if (!_flights.TryGetValue(code, out var known) || change(known) is not { } changed)
+            {
+                return null;
+            }
+            if (!Same(known, changed))
+            {
+                Publish(new FlightChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = changed });
+            }
+            return changed;
+        }
+    }
+
+    /// <summary>Whether two rows of a flight are the same in everything a record compares.</summary>
+    internal static bool SameFlight(FlightRow a, FlightRow b) => Same(a, b);
+
     /// <summary>The legs of <paramref name="flight"/>, in their order; every leg when it is null.</summary>
     public LegRow[] Legs(string? flight = null)
     {
@@ -354,11 +380,14 @@ public sealed class NodeState
     }
 
     /// <summary>Gives an open card new choices (a merge's checks turned green, say); false when it is not open or nothing changed.</summary>
-    public bool UpdateChoices(string id, IReadOnlyList<CardChoice> choices)
+    public bool UpdateChoices(string id, IReadOnlyList<CardChoice> choices, IReadOnlyList<CardChoice>? ifStill = null)
     {
         lock (_gate)
         {
-            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open || card.Choices.SequenceEqual(choices))
+            // With ifStill, a compare-and-set: written only while the card still holds the choices the caller read, so a press
+            // that armed the merge between that read and this write is not undone.
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open || card.Choices.SequenceEqual(choices)
+                || ifStill is not null && !card.Choices.SequenceEqual(ifStill))
             {
                 return false;
             }
@@ -596,6 +625,31 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>The machine as last sampled; null before any.</summary>
+    public MachineRow? Machine()
+    {
+        lock (_gate)
+        {
+            return _machine;
+        }
+    }
+
+    /// <summary>
+    /// Puts the machine sampled when it changed meaningfully (<see cref="Pilot.Node.Flights.MachineSampler.Differs"/>): a sample every few
+    /// seconds would otherwise put a delta for each, and the journal would fill with CPU jitter.
+    /// </summary>
+    public void PutMachine(MachineRow sampled)
+    {
+        lock (_gate)
+        {
+            if (_machine is { } held && !Pilot.Node.Flights.MachineSampler.Differs(held, sampled))
+            {
+                return;
+            }
+            Publish(new MachineChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Machine = sampled });
+        }
+    }
+
     /// <summary>Removes a session row; nothing happens when there is none.</summary>
     public void RemoveSession(string id)
     {
@@ -646,15 +700,15 @@ public sealed class NodeState
     /// <param name="error">Why it was not done, or null when it was.</param>
     /// <param name="way">Which way it went (<see cref="CommandResult.Way"/>).</param>
     /// <param name="sessionId">The target's new session id (<see cref="CommandResult.SessionId"/>).</param>
-    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null)
+    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null, string? waiting = null)
     {
         lock (_gate)
         {
-            return CompleteLocked(command, error, way, sessionId, made);
+            return CompleteLocked(command, error, way, sessionId, made, setting, waiting);
         }
     }
 
-    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null)
+    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null, string? waiting = null)
     {
         var result = new CommandResult
         {
@@ -666,8 +720,10 @@ public sealed class NodeState
             Way = error is null ? way : null,
             SessionId = error is null ? sessionId : null,
             Made = error is null ? made : null,
+            Setting = error is null ? setting : null,
             Autopilot = command.Autopilot,
             Why = command.Why is { } why && why.Trim().Length > 0 ? why.Trim() : null,
+            Waiting = error is null ? waiting : null,
             Seq = _seq + 1,
         };
         Publish(new CommandResultEvent { Seq = result.Seq, At = _time.GetUtcNow(), Result = result });
@@ -776,6 +832,9 @@ public sealed class NodeState
             case UsageChangedEvent usage:
                 _usage = usage.Usage;
                 break;
+            case MachineChangedEvent machine:
+                _machine = machine.Machine;
+                break;
             case JobAddedEvent added:
                 _jobs[added.Job.Id] = added.Job;
                 break;
@@ -814,6 +873,7 @@ public sealed class NodeState
             _cards[card.Id] = card;
         }
         _usage = snapshot.Usage;
+        _machine = snapshot.Machine;
         foreach (var job in snapshot.Jobs ?? [])
         {
             _jobs[job.Id] = job;
@@ -840,6 +900,7 @@ public sealed class NodeState
         Legs = [.. _legs.Values],
         Cards = [.. _cards.Values],
         Usage = _usage,
+        Machine = _machine,
         Jobs = [.. _jobs.Values],
         PrReviews = [.. _prReviews.Values],
         Summaries = [.. _summaries.Values],

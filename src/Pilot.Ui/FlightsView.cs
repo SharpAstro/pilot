@@ -45,10 +45,23 @@ internal sealed record FlightLine
     /// <summary>The node it flies on, when the page merges several; null on a page of one node, this window's.</summary>
     public NodeMark? Node { get; init; }
 
+    /// <summary>
+    /// The name of the node this flight's row comes from while the window cannot reach that node (its last known row, which may
+    /// be long out of date and cannot be commanded); null while the node answers. Set by <see cref="FleetPages.Merge"/> from the
+    /// feed's own reachability, the state the Fleet page and the panel read (pilot #325).
+    /// </summary>
+    public string? Stale { get; init; }
+
+    /// <summary>What says the row is a stale copy, <c>stale (DE1 unreachable)</c>, in words so colour never carries it alone; null while not stale.</summary>
+    public string? StaleMark => Stale is { } node ? $"stale ({node} unreachable)" : null;
+
+    /// <summary>The state's detail as every page shows it: the stale mark first, then what holds the flight or when it landed.</summary>
+    public string? ShownDetail => StaleMark is { } mark ? (StateDetail is null ? mark : $"{mark} · {StateDetail}") : StateDetail;
+
     /// <summary>The line as a dump writes it.</summary>
     public string ToDumpLine()
     {
-        var line = string.Join(" | ", Code, Title, Where, StateDetail is null ? State : $"{State} ({StateDetail})", Legs, Branch, Sessions);
+        var line = string.Join(" | ", Code, Title, Where, ShownDetail is null ? State : $"{State} ({ShownDetail})", Legs, Branch, Sessions);
         return Node is { } node ? $"{node.Name} | {line}" : line;
     }
 
@@ -75,7 +88,7 @@ internal sealed record FlightLine
         }
         var text = $"{legs.Count} {(legs.Count == 1 ? "leg" : "legs")} · {legs.Count(l => l.State == LegState.Done)} done";
         return legs.FirstOrDefault(l => l.State == LegState.Failed) is { } failed ? $"{text} · {failed.Name} failed"
-            : legs.FirstOrDefault(l => l.State == LegState.Flying) is { } flying ? $"{text} · {flying.Name} flying{(flying.GoArounds > 0 ? $" (go-around {flying.GoArounds})" : "")}"
+            : legs.FirstOrDefault(l => l.State == LegState.Flying) is { } flying ? $"{text} · {flying.Name} {(flying.Wait is { } wait ? FlightWaiting.WaitText(wait) : "flying")}{(flying.GoArounds > 0 ? $" (go-around {flying.GoArounds})" : "")}"
             : legs.FirstOrDefault(l => l.Hold is not null) is { } held ? $"{text} · {held.Name} {FlightWaiting.LegState(held)}"
             : text;
     }
@@ -193,7 +206,7 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
         }
         if ((flying ?? failed) is { } stuck)
         {
-            actions.Add(new FlightAction($"Go around {stuck.Name}", Verbs.GoAround, Verbs.LegTarget(code, stuck.Name), []) { WhyPrompt = $"why go around {stuck.Name}?" });
+            actions.Add(new FlightAction($"Redo leg {stuck.Name}", Verbs.GoAround, Verbs.LegTarget(code, stuck.Name), []) { WhyPrompt = $"why redo leg {stuck.Name}?" });
         }
         var allDone = legs.Count > 0 && legs.All(l => l.State == LegState.Done);
         if (allDone && (flight.PullRequest is null || flight.Review is null))
@@ -235,6 +248,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     // Column widths of the list, as they are before a reader drags a divider.
     private const float CodeWidth = 120f;
+    // Wide enough for "stale (DE1 unreachable)" in 11 pt under the code.
+    private const float StaleCodeWidth = 150f;
+    // What is dropped once it is this narrow: a title in a sliver of a column was drawn over the State beside it.
+    private const float WhatDropBelow = 60f;
     private const float WhereWidth = 140f;
     private const float StateWidth = 160f;
     private const float BranchWidth = 150f;
@@ -347,8 +364,26 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>The window's In play / Everything choice, whose pills sit beside the node pills; null shows everything, as a capture does.</summary>
     public PlayFilter? Play { get; set; }
 
-    /// <summary>Puts text on the clipboard; the row menu's Copy entries. Null where the host has no clipboard.</summary>
-    public Action<string>? CopyText { get; set; }
+    // The right-click menu of the page's links that leave the app (a PR, an artifact, a folder): Copy URL. Its own state, but
+    // the scrim of whichever menu is open takes the next right press, so it and the row menu are never up together.
+    private readonly LinkMenu _links = new();
+
+    /// <summary>Puts text on the clipboard; the row menu's Copy entries and the links' Copy URL. Null where the host has no clipboard.</summary>
+    public Action<string>? CopyText
+    {
+        get => _links.CopyText;
+        set => _links.CopyText = value;
+    }
+
+    /// <summary>Asks the host for a frame, for the links' "Copied" notice that fades; set by the host.</summary>
+    public Action? Changed
+    {
+        get => _links.Changed;
+        set => _links.Changed = value;
+    }
+
+    /// <summary>The links' menu: its open items and its notice.</summary>
+    internal LinkMenu Links => _links;
 
     // A row's right-click menu, hung where the press was.
     private readonly DropdownMenuState<string> _menu = new();
@@ -375,10 +410,11 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             foreach (var action in FlightAction.For(line))
             {
-                items.Add(new DropdownItem<string>(action.WhyPrompt is null && action.ChatMessage is null ? action.Label : action.Label + "…", action.Verb)
-                {
-                    OnChoose = () => Choose(action, flight.Code),
-                });
+                var label = action.WhyPrompt is null && action.ChatMessage is null ? action.Label : action.Label + "…";
+                // Shown and dead, with the reason, while its node is unreachable: the verb goes to the node.
+                items.Add(line.Stale is not null
+                    ? DropdownItem<string>.Disabled(label, action.Verb, StaleWhy(line))
+                    : new DropdownItem<string>(label, action.Verb) { OnChoose = () => Choose(action, flight.Code) });
             }
         }
         items.Add(new DropdownItem<string>("Open flight", "flight") { OnChoose = () => OpenDetail(flight.Code) });
@@ -421,7 +457,11 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     public void Render(FlightsScreen screen, RectF32 bounds)
     {
         BeginFrame();
-        RenderLayout(Tree(screen), bounds, drawFill: DrawCanvas);
+        RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
+        {
+            DrawCanvas(fill, rect);
+            Gallery.DrawFill(fill, rect);
+        });
     }
 
     /// <summary>
@@ -518,7 +558,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     // only while the flight still offers that action.
     private IEnumerable<Layout.Node> WhyRow(FlightLine line)
     {
-        if (_asking is not { } asking || asking.Code != line.Code
+        if (_asking is not { } asking || asking.Code != line.Code || line.Stale is not null
             || !FlightAction.For(line).Any(a => a.Verb == asking.Action.Verb && a.Target == asking.Action.Target))
         {
             yield break;
@@ -552,6 +592,15 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                 default:
                     return false;
             }
+        }
+        // A link's menu, and the keys that reach it, ahead of the page's.
+        if (evt is InputEvent.KeyDown linkKey && _links.HandleKey(linkKey, this))
+        {
+            return true;
+        }
+        if (evt is InputEvent.KeyDown { Key: var viewerKey } && Gallery.HandleKey(viewerKey))
+        {
+            return true;
         }
         // An open why field takes Escape ahead of the page's own (the field has the keyboard while it is focused; this is for after).
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && _asking is not null)
@@ -595,7 +644,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         }
         var page = Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch();
         page = About?.Over(page, NightOrNull) ?? page;
-        return _menu.IsOpen ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg)) : page;
+        page = Gallery.Over(page);
+        page = _menu.IsOpen ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg)) : page;
+        return _links.Over(page);
     }
 
     /// <summary>The selected flight: its legs, its review, its artifacts, and what can be done with it.</summary>
@@ -606,7 +657,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         foreach (var leg in line.LegRows.Take(5))
         {
             var steps = leg.Checklist.Length == 0 ? "" : $" · {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";
-            var color = leg.Hold is not null ? Held : leg.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
+            var color = leg.Hold is not null || (leg.Wait is not null && leg.State == LegState.Flying) ? Held : leg.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
             var legState = $"{FlightWaiting.LegState(leg)}{steps}{(leg.GoArounds > 0 ? $" · go-around {leg.GoArounds}" : "")}";
             legs.Add(Layout.Builder.HStack(
                     Layout.Builder.Text($"{leg.Order}. {leg.Name}", 13f, Body).WFixed(150f),
@@ -676,7 +727,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             foreach (var action in FlightAction.For(line))
             {
-                buttons.Add(Pill(action.Label, $"flight:{line.Code}:{action.Verb}", () => Choose(action, line.Code)));
+                buttons.Add(ActionButton(line, action, $"flight:{line.Code}:{action.Verb}"));
             }
         }
 
@@ -703,11 +754,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         _ => flight.Review?.StatusState switch { "success" => Flying, "failure" => Held, _ => Dim },
     };
 
+    // A link that leaves the app: a click opens it, a right-click offers Copy URL (over the row's own menu, which stays on the rest of the row).
     private Layout.Node Link(string text, string location, string action) =>
-        Layout.Builder.Text(text + Followable.Away, 12f, Landed)
+        _links.OnLink(Layout.Builder.Text(text + Followable.Away, 12f, Landed)
             .BgHover(RowHoverBg)
             .Follows(new HitResult.ButtonHit(action), _ => OnOpen?.Invoke(location))
-            .RowH(20f);
+            .RowH(20f), location);
 
     private Layout.Node Pill(string label, string action, Action onClick) =>
         Layout.Builder.Text(label, 12f, Bright, TextAlign.Center)
@@ -775,7 +827,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         }
 
         var marked = screen.Lines.Any(l => l.Node is not null);
-        var columns = Columns(marked);
+        var columns = Columns(marked, screen.Lines.Any(l => l.Stale is not null));
         var rows = new Layout.Node[screen.Lines.Count];
         for (var i = 0; i < rows.Length; i++)
         {
@@ -789,14 +841,18 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             .Stretch();
     }
 
-    /// <summary>The list's columns, header and rows both over them: Node only while the page merges several nodes.</summary>
-    private static IReadOnlyList<ListColumn> Columns(bool marked)
+    /// <summary>
+    /// The list's columns, header and rows both over them: Node only while the page merges several nodes. A stale row's mark sits
+    /// under its code, so the Flight column is wide enough for it while one shows. Repo is dropped on a narrow window, as
+    /// Branch and Sessions are: as a fixed column it ran into What at 760 wide and overprinted it.
+    /// </summary>
+    private static IReadOnlyList<ListColumn> Columns(bool marked, bool stale)
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Fixed("Flight", CodeWidth),
-            ListColumn.Star("What"),
-            ListColumn.Fixed("Repo", WhereWidth),
+            ListColumn.Fixed("Flight", stale ? StaleCodeWidth : CodeWidth),
+            new ListColumn("What", Layout.Sizing.Star(1f, 0f), WhatDropBelow),
+            ListColumn.Optional("Repo", WhereWidth),
             ListColumn.Fixed("State", StateWidth),
             ListColumn.Fixed("Legs", LegsWidth),
             ListColumn.Optional("Branch", BranchWidth),
@@ -822,19 +878,29 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     private static Layout.Node Whole(Layout.Node node, string text, int fits) => text.Length > fits ? node.WithTooltip(text) : node;
 
+    /// <summary>The colour of a flight's state: dim for a stale row, which no longer says what the flight is doing.</summary>
+    private RGBAColor32 StateColor(FlightLine line) =>
+        line.Stale is not null ? Dim : line.Row.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
+
     private Layout.Node Row(FlightLine line, int index, bool marked, IReadOnlyList<ListColumn> columns)
     {
-        var landed = line.Row.State == FlightState.Landed;
-        var color = line.Row.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
+        // A stale row is drawn as a landed one is, dim: its state is the last the node told, not what it is now.
+        var landed = line.Row.State == FlightState.Landed || line.Stale is not null;
+        var color = StateColor(line);
         var text = landed ? Dim : Bright;
         var cells = new List<Layout.Node>
         {
-            ListTable.Top(Layout.Builder.Text(line.Code, 15f, text)),
+            // A stale row's mark is under its code, in words and in the amber of a held thing: at a narrow width the State column is off the page.
+            line.StaleMark is { } mark
+                ? Layout.Builder.VStack(
+                    Layout.Builder.Text(line.Code, 15f, text).RowH(22f),
+                    Whole(Layout.Builder.Text(mark, 11f, Held).RowH(18f), mark, 0))
+                : ListTable.Top(Layout.Builder.Text(line.Code, 15f, text)),
             ListTable.Top(Whole(Layout.Builder.Text(line.Title, 14f, landed ? Dim : Body), line.Title, TitleFits)),
             ListTable.Top(Layout.Builder.Text(line.Where, 13f, Dim)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.State, 14f, color).RowH(22f),
-                Whole(Layout.Builder.Text(line.StateDetail ?? "", 11f, line.Row.State == FlightState.Held ? Body : Dim).RowH(18f), line.StateDetail ?? "", StateDetailFits)),
+                Whole(Layout.Builder.Text(line.StateDetail ?? "", 11f, line.Row.State == FlightState.Held && line.Stale is null ? Body : Dim).RowH(18f), line.StateDetail ?? "", StateDetailFits)),
             ListTable.Top(Whole(Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body), line.Legs, LegsFits)),
             ListTable.Top(Layout.Builder.Text(line.Branch, 12f, Dim)),
             ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body)),

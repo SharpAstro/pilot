@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
+using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
 
@@ -10,35 +11,23 @@ namespace Pilot.Node.Tests;
 /// Reviews applied by the node, and phase 3's done-when: two flights, one connected to the other, flown and landed by
 /// the node's own machinery (fresh workers, the review, the cards) with no per-flight pilot session anywhere.
 /// </summary>
-public sealed class ReviewTests : IDisposable
+public abstract class ReviewTestsBase : IDisposable
 {
-    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+    private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2r-" + Guid.NewGuid().ToString("N")[..8]);
-    private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
-    private readonly FakeWorkers _workers = new();
-    private readonly FakeGitHub _github = new();
-    private readonly FlightCommander _flights;
-    private readonly LegCommander _legs;
+    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2r-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private protected readonly FakeWorkers _workers = new();
+    private protected readonly FakeGitHub _github = new();
+    private protected readonly FlightCommander _flights;
+    private protected readonly LegCommander _legs;
 
-    public ReviewTests()
+    protected ReviewTestsBase()
     {
-        // A repo with a bare origin, so a flight's push is a real one.
-        var origin = Path.Combine(_root, "origin.git");
-        Directory.CreateDirectory(Repo);
-        Git(_root, "init", "-q", "--bare", "-b", "main", origin);
-        Git(Repo, "init", "-q", "-b", "main");
-        // The node's own rebases make commits, and a CI runner has no identity of its own to make them with.
-        Git(Repo, "config", "user.email", "t@example.com");
-        Git(Repo, "config", "user.name", "t");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        Git(Repo, "remote", "add", "origin", origin);
-        Git(Repo, "push", "-q", "-u", "origin", "main");
-        Git(Repo, "remote", "set-head", "origin", "main");
+        // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
+        SeedRepo.Make(_root);
         var git = new GitCli();
-        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers);
+        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers, _github);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
         _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, git, new Planes(git), _flights, options, TimeProvider.System)
         {
@@ -46,7 +35,7 @@ public sealed class ReviewTests : IDisposable
         };
     }
 
-    private string Repo => Path.Combine(_root, "tianwen");
+    private protected string Repo => Path.Combine(_root, "tianwen");
 
     public void Dispose()
     {
@@ -64,7 +53,7 @@ public sealed class ReviewTests : IDisposable
         Directory.Delete(_root, recursive: true);
     }
 
-    private static string Git(string cwd, params string[] args)
+    private protected static string Git(string cwd, params string[] args)
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
@@ -78,16 +67,39 @@ public sealed class ReviewTests : IDisposable
         return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
     }
 
-    private Task<CommandResult> Run(string verb, string target, string who, params string[] args) =>
-        verb is Verbs.CreateFlight or Verbs.Connect or Verbs.Land
-            ? _flights.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct)
-            : _legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct);
+    private protected async Task<CommandResult> Run(string verb, string target, string who, params string[] args)
+    {
+        if (verb is Verbs.CreateFlight or Verbs.Connect or Verbs.Land)
+        {
+            return await _flights.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct);
+        }
+        var result = await _legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct);
+        if (verb == Verbs.OpenPr && result.Ok)
+        {
+            await Started(_legs, target[(target.IndexOf('/') + 1)..]);
+        }
+        return result;
+    }
 
-    private FlightRow F(string code) => _state.Flights().Single(f => f.Code == code);
+    /// <summary>
+    /// Waits until the flight's sessions the command began are recorded: open-pr answers "started" once its reviewer is reserved, and
+    /// the review is on the flight only after the reviewer is up, which a loaded machine does not do within the command.
+    /// </summary>
+    private protected static async Task Started(LegCommander legs, string code)
+    {
+        var clock = Stopwatch.StartNew();
+        while (legs.Starting(code))
+        {
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20), $"{code}'s reviewer was not recorded");
+            await Task.Delay(10, Ct);
+        }
+    }
 
-    private CardRow[] Open() => _state.Cards(openOnly: true);
+    private protected FlightRow F(string code) => _state.Flights().Single(f => f.Code == code);
 
-    private async Task<FlightRow> NewFlight(string issue, string leg)
+    private protected CardRow[] Open() => _state.Cards(openOnly: true);
+
+    private protected async Task<FlightRow> NewFlight(string issue, string leg)
     {
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "controller", issue, "Flight " + issue)).Ok.ShouldBeTrue();
         var flight = _state.Flights().OrderByDescending(f => f.CreatedAt).First();
@@ -96,7 +108,7 @@ public sealed class ReviewTests : IDisposable
     }
 
     /// <summary>A leg flown as a worker flies it: started by the node, a commit in the plane, its step ticked, finished by the worker.</summary>
-    private async Task Fly(FlightRow flight, string leg, int lines = 1)
+    private protected async Task Fly(FlightRow flight, string leg, int lines = 1)
     {
         var start = await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, leg), "controller");
         start.Error.ShouldBeNull();
@@ -108,9 +120,9 @@ public sealed class ReviewTests : IDisposable
         (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, leg), worker, "done", "did it")).Error.ShouldBeNull();
     }
 
-    private string Reviewer(string code) => $"du1-{code.ToLowerInvariant()}-review";
+    private protected string Reviewer(string code) => $"du1-{code.ToLowerInvariant()}-review";
 
-    private void Usage(double fiveHour, double sevenDay = 10) =>
+    private protected void Usage(double fiveHour, double sevenDay = 10) =>
         _state.PutUsage(new UsageRow
         {
             ReadAt = DateTimeOffset.UtcNow,
@@ -118,7 +130,7 @@ public sealed class ReviewTests : IDisposable
             SevenDay = new UsageWindow { UsedPercent = sevenDay, ResetsAt = DateTimeOffset.UtcNow.AddDays(3) },
         });
 
-    private async Task<WorkerStart> Review(string issue, int lines, double fiveHour, bool priority = false, Dictionary<string, string>? roles = null)
+    private protected async Task<WorkerStart> Review(string issue, int lines, double fiveHour, bool priority = false, Dictionary<string, string>? roles = null)
     {
         Usage(fiveHour);
         var flight = await NewFlight(issue, "parser");
@@ -128,6 +140,41 @@ public sealed class ReviewTests : IDisposable
         return _workers.Started.Last();
     }
 
+    private protected static string[] PilotLabels(HashSet<string>? labels) => [.. (labels ?? []).Where(l => l.StartsWith("pilot: ", StringComparison.Ordinal))];
+
+    /// <summary>A flight whose done leg's PR passed its review, so its marks are set and its ready card open.</summary>
+    private protected async Task<(FlightRow Flight, int Pr)> Passed(string issue)
+    {
+        var flight = await NewFlight(issue, "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        (await Run(Verbs.Review, $"flight/{flight.Code}", Reviewer(flight.Code), "pass", "fine")).Ok.ShouldBeTrue();
+        return (F(flight.Code), _github.Pr!.Number);
+    }
+
+    private protected void Window(double used, TimeSpan resetsIn) =>
+        _state.PutUsage(new UsageRow { ReadAt = DateTimeOffset.UtcNow, FiveHour = new UsageWindow { UsedPercent = used, ResetsAt = DateTimeOffset.UtcNow + resetsIn } });
+
+    // A flight with its PR passed and ready, then armed natively on its head while the checks run.
+    private protected async Task<(FlightRow Flight, PullRequest Pr, PrChecks Checks)> ArmedPassedFlight(string issue)
+    {
+        var flight = await NewFlight(issue, "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "fine")).Ok.ShouldBeTrue();
+        var pr = _github.Pr.ShouldNotBeNull();
+        _github.AutoMergeAllowed = true;
+        _github.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", pr.Head)).Error.ShouldBeNull();
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull().ShouldContain(LegCommander.ArmedByGitHub);
+        _github.AutoMergeArmed.ShouldHaveSingleItem();
+        return (F(flight.Code), pr, new PrChecks(_state, _github, TimeProvider.System, legs: _legs));
+    }
+}
+
+/// <summary>Part 1 of ReviewTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class ReviewTests1 : ReviewTestsBase
+{
     [Fact]
     public async Task HighUsageMakesALightReviewSaidInItsBriefAndOnThePrReadyCard()
     {
@@ -283,6 +330,8 @@ public sealed class ReviewTests : IDisposable
         _state.Cards().Single(c => c.Id == card.Id).Outcome.ShouldBe("merged on GitHub as #71");
         F("TIA3").State.ShouldBe(FlightState.Landed);
         _github.Merged.ShouldBeEmpty();
+        // Its issue is closed with it, whatever GitHub made of the PR's Closes line.
+        _github.ClosedIssues.ShouldBe([(3, "Landed in #71 (TIA3).")]);
     }
 
     [Fact]
@@ -334,16 +383,198 @@ public sealed class ReviewTests : IDisposable
         F("TIA20").MergeQueue.ShouldBe("in the merge queue, position 1");
     }
 
-    private static string[] PilotLabels(HashSet<string>? labels) => [.. (labels ?? []).Where(l => l.StartsWith("pilot: ", StringComparison.Ordinal))];
-
-    /// <summary>A flight whose done leg's PR passed its review, so its marks are set and its ready card open.</summary>
-    private async Task<(FlightRow Flight, int Pr)> Passed(string issue)
+    [Fact]
+    public async Task OnAutopilotTheNodeMergesAPassedFlightItselfOnceItsChecksAreNotFailingAndOnlyOnce()
     {
-        var flight = await NewFlight(issue, "parser");
+        // The watchtower may never merge, so the night's passed PRs sat for seven hours with the autopilot on (SE1, 2026-10-26).
+        var (flight, pr) = await Passed("30");
+        var ready = Open().Single(c => c.Kind == LegCommander.PrReady);
+        _github.Checks = ChoiceStatus.Passing;
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        // Off: the merge is the person's, as ever.
+        await checks.LookAsync(Ct);
+        _github.Merged.ShouldBeEmpty();
+        Open().ShouldContain(c => c.Id == ready.Id);
+
+        // On: the node merges it from its card, closes the card and says so.
+        var on = NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!;
+        _legs.Models = new RoleModels(on);
+        await checks.LookAsync(Ct);
+        _github.Merged.ShouldHaveSingleItem().Item1.ShouldBe(pr);
+        Open().ShouldNotContain(c => c.Id == ready.Id);
+        _state.Cards().ShouldContain(c => c.Kind == CardKinds.AutopilotRan && c.Subject == $"flight/{flight.Code}");
+
+        // Once a head, not every look.
+        await checks.LookAsync(Ct);
+        _github.Merged.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task OnAutopilotAFailingPrIsNotMerged()
+    {
+        var (_, _) = await Passed("31");
+        _github.Checks = ChoiceStatus.Failing;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+
+        await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
+
+        _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task OnAutopilotFailedChecksRunAgainOnceAHeadBeforeTheLegIsSentRound()
+    {
+        // A test that fails by chance is not a go-around: the node runs the failed runs again first (2026-10-27).
+        var (flight, pr) = await Passed("33");
+        _github.Checks = ChoiceStatus.Pending;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        var time = new ManualTime(DateTimeOffset.UtcNow);
+        var checks = new PrChecks(_state, _github, time, _flights, _legs) { RerunFirst = true };
+        await checks.LookAsync(Ct);
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
+
+        _github.Checks = ChoiceStatus.Failing;
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        // Run again once, the merge still armed, the review still passed, a Handled line saying so.
+        _github.Reruns.ShouldBe([pr]);
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        _state.Cards().ShouldContain(c => c.Kind == "checks-rerun" && c.Bin == CardBin.Handled);
+
+        // Still failing once the runs had their time: now the leg is sent round, and nothing is run again.
+        time.Advance(checks.RerunGrace + TimeSpan.FromMinutes(1));
+        await checks.LookAsync(Ct);
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+        _github.Reruns.ShouldBe([pr]);
+    }
+
+    [Fact]
+    public async Task AFailedCheckUnderGitHubsAutoMergeRunsAgainWithTheAutoMergeLeftArmed()
+    {
+        // Armed through GitHub's own auto-merge: the rerun leaves it armed, so a check green on its second run merges.
+        var (flight, pr) = await Passed("34");
+        _github.AutoMergeAllowed = true;
+        _github.Checks = ChoiceStatus.Pending;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        var checks = new PrChecks(_state, _github, new ManualTime(DateTimeOffset.UtcNow), _flights, _legs) { RerunFirst = true };
+        await checks.LookAsync(Ct);
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
+
+        _github.Checks = ChoiceStatus.Failing;
+        await checks.LookAsync(Ct);
+
+        _github.Reruns.ShouldBe([pr]);
+        _github.AutoMergeDisarmed.ShouldBeEmpty();
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+    }
+
+    [Fact]
+    public async Task OnAutopilotAMergeThatWaitedForChecksWhichThenFailSendsTheLegBackAsChangesNotOntoAForYouCard()
+    {
+        // With the autopilot off a failing PR is sent back from its PR-ready card; the merge the node armed itself must go round the same way.
+        var (flight, pr) = await Passed("32");
+        _github.Checks = ChoiceStatus.Pending;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        // Armed by the node: its PR-ready card closes and the merge waits for the checks.
+        await checks.LookAsync(Ct);
+        _github.Merged.ShouldBeEmpty();
+        var armed = F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
+        (armed[0], armed[^1]).ShouldBe((_github.Pr!.Head, LegCommander.ArmedByAutopilot));
+        Open().ShouldNotContain(c => c.Kind == LegCommander.PrReady);
+
+        _github.Checks = ChoiceStatus.Failing;
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        _github.Merged.ShouldBeEmpty();
+        F(flight.Code).MergeWhenGreen.ShouldBeNull();
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+        _github.DraftCalls.ShouldContain((pr, true));
+        _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.MergeDropped);
+        var card = Open().ShouldHaveSingleItem();
+        (card.Kind, card.Title).ShouldBe((LegCommander.ReviewChanges, $"{flight.Code}'s review asks for changes"));
+        card.Detail.ShouldNotBeNull().ShouldStartWith("the PR's checks failed on ");
+        (await Run(Verbs.GoAround, $"flight/{flight.Code}/parser", "controller", "fix the checks")).Error.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AMergeThePersonPressedWhileChecksRanStillDropsOntoAForYouCardWhenTheyFailOnAutopilot()
+    {
+        var (flight, _) = await Passed("33");
+        _github.Checks = ChoiceStatus.Pending;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        (await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8])).Ok.ShouldBeTrue();
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull().ShouldNotContain(LegCommander.ArmedByAutopilot);
+        // Choosing Merge on the card closes it.
+        _state.CloseCard(Open().Single(c => c.Kind == LegCommander.PrReady).Id, "chose Merge", "controller").ShouldBeTrue();
+
+        _github.Checks = ChoiceStatus.Failing;
+        await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
+
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        Open().ShouldContain(c => c.Kind == PrChecks.MergeDropped && c.Bin == CardBin.ForYou);
+    }
+
+    [Fact]
+    public async Task AnAutopilotMergeRefusedRingsOnceAndItsCardClosesWhenTheFlightIsRebasedAndReviewedAfresh()
+    {
+        var (flight, _) = await Passed("34");
+        var ready = Open().Single(c => c.Kind == LegCommander.PrReady);
+        _github.Checks = ChoiceStatus.Passing;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        // The PR moved past the head the card offers, so the merge is refused as an unread head.
+        _github.Pr = _github.Pr! with { Head = "beef0000beef0000" };
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        _github.Merged.ShouldBeEmpty();
+        Open().Where(c => c.Kind == PrChecks.AutopilotMergeRefused).ShouldHaveSingleItem().Subject.ShouldBe($"flight/{flight.Code}");
+        Open().ShouldContain(c => c.Id == ready.Id);
+
+        // Main moved: the flight is rebased and reviewed afresh, and the refused merge's card, with its stale head, goes with its PR-ready card.
+        _github.Pr = _github.Pr! with { Mergeable = "CONFLICTING" };
+        await checks.LookAsync(Ct);
+
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.PrReady || c.Kind == PrChecks.AutopilotMergeRefused);
+    }
+
+    [Fact]
+    public async Task APrDroppedFromTheQueueOnAConflictIsRebasedAndReviewedAfreshNotOfferedMergeAgain()
+    {
+        // PIL207's #238 left the queue on merge_conflict and its card offered Merge, which could only be refused again (SE1, 2026-10-25).
+        var flight = await NewFlight("21", "parser");
         await Fly(flight, "parser");
-        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
-        (await Run(Verbs.Review, $"flight/{flight.Code}", Reviewer(flight.Code), "pass", "fine")).Ok.ShouldBeTrue();
-        return (F(flight.Code), _github.Pr!.Number);
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA21"), "controller");
+        (await Run(Verbs.Review, "flight/TIA21", Reviewer("TIA21"), "pass", "fine")).Ok.ShouldBeTrue();
+        _state.CloseCard(Open().ShouldHaveSingleItem().Id, "done", "controller").ShouldBeTrue();
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        var startedBefore = _workers.Started.Count;
+        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: false, RemovedAt: DateTimeOffset.UtcNow.AddSeconds(-5), RemovedReason: "merge_conflict");
+        await checks.LookAsync(Ct);
+
+        Open().ShouldNotContain(c => c.Choices.Any(ch => ch.Verb == Verbs.Merge));
+        // The Handled card is the rebase's success: a failed rebase rings with a card of the same words in a different bin and kind.
+        var handled = _state.Cards().Where(c => c.Kind == PrChecks.QueueDropped && c.Subject == "flight/TIA21").ShouldHaveSingleItem();
+        handled.Bin.ShouldBe(CardBin.Handled);
+        _state.Cards().ShouldNotContain(c => c.Kind == "pr-conflicts");
+        // Rebased onto its base and reviewed afresh: the old pass is of a head that is gone, and a review leg was started.
+        Git(F("TIA21").Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
+        F("TIA21").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        _workers.Started.Count.ShouldBe(startedBefore + 1);
+        // Once a removal, as for any other: the rebase count, not only the card count, holds still.
+        await checks.LookAsync(Ct);
+        _workers.Started.Count.ShouldBe(startedBefore + 1);
+        _state.Cards().Count(c => c.Kind == PrChecks.QueueDropped && c.Subject == "flight/TIA21").ShouldBe(1);
     }
 
     [Fact]
@@ -449,7 +680,11 @@ public sealed class ReviewTests : IDisposable
         var again = F(flight.Code);
         (again.GitHubHead, again.GitHubLabel, again.GitHubDisagrees).ShouldBe((reviewed, "pilot: passed", null));
     }
+}
 
+/// <summary>Part 2 of ReviewTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class ReviewTests2 : ReviewTestsBase
+{
     [Fact]
     public async Task APrThatIsNotOpenIsNotNoted()
     {
@@ -495,11 +730,54 @@ public sealed class ReviewTests : IDisposable
         // Its card dismissed after a rebase by hand moved its head, then merged on GitHub.
         (await Run(Verbs.Dismiss, $"card/{Open().ShouldHaveSingleItem().Id}", "controller", "rebased by hand")).Ok.ShouldBeTrue();
         _github.Pr = _github.Pr! with { State = "MERGED" };
+        _github.CloseIssueFails = "HTTP 403";
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights).LookAsync(Ct);
 
         F("TIA5").State.ShouldBe(FlightState.Landed);
-        Open().ShouldHaveSingleItem().Title.ShouldBe("TIA5 landed");
+        // An issue gh would not close is the person's, said once; the flight lands all the same.
+        Open().Select(c => c.Title).ShouldBe(["TIA5 landed, but issue #5 is still open", "TIA5 landed"], ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task AFlightWhosePrWasClosedWithNothingOfItsOwnLeftLandsAndOneWithWorkRings()
+    {
+        // PIL274: its work went in through another PR, a rebase left its branch empty, its PR was closed, and it stayed
+        // flying while reviewers were started on the empty PR.
+        var empty = await NewFlight("6", "parser");
+        await Fly(empty, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA6"), "controller");
+        Git(empty.Worktree, "reset", "-q", "--hard", "origin/main");
+        _github.Pr = _github.Pr! with { State = "CLOSED" };
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights);
+
+        await checks.LookAsync(Ct);
+
+        F("TIA6").State.ShouldBe(FlightState.Landed);
+        _state.Cards().ShouldContain(c => c.Kind == PrChecks.ClosedLanded && c.Subject == "flight/TIA6");
+    }
+
+    [Fact]
+    public async Task AFlightWhosePrWasClosedWithWorkOfItsOwnRingsOnceAndStaysFlying()
+    {
+        var flight = await NewFlight("7", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA7"), "controller");
+        _github.Pr = _github.Pr! with { State = "CLOSED" };
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights);
+
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        F("TIA7").State.ShouldBe(FlightState.Flying);
+        var ring = Open().Where(c => c.Kind == PrChecks.ClosedWithWork).ShouldHaveSingleItem();
+        ring.Title.ShouldBe($"TIA7's PR #{F("TIA7").PullRequest} was closed without a merge");
+        ring.Detail.ShouldNotBeNull().ShouldContain("not in its base");
+
+        // Dismissed, it is the person's answer: the next look does not ring it again.
+        _state.CloseCard(ring.Id, "known", "controller").ShouldBeTrue();
+        await checks.LookAsync(Ct);
+        Open().ShouldNotContain(c => c.Kind == PrChecks.ClosedWithWork);
     }
 
     [Fact]
@@ -607,8 +885,78 @@ public sealed class ReviewTests : IDisposable
         (await Run(Verbs.GoAround, "flight/TIA7/parser", "controller", "fix the checks")).Error.ShouldBeNull();
     }
 
-    private void Window(double used, TimeSpan resetsIn) =>
-        _state.PutUsage(new UsageRow { ReadAt = DateTimeOffset.UtcNow, FiveHour = new UsageWindow { UsedPercent = used, ResetsAt = DateTimeOffset.UtcNow + resetsIn } });
+    [Fact]
+    public async Task PastThreeReviewGoAroundsTheWatchtowerMayNotSendTheLegRoundAgainButThePersonMay()
+    {
+        // TIA1241 went round six times overnight on review findings the worker could not act on (SE1, 2026-10-26).
+        var flight = await NewFlight("40", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA40"), "controller");
+        var leg = _state.Legs("TIA40").Single();
+        _state.PutLeg(leg with { GoArounds = LegCommander.MaxReviewGoArounds, ReviewGoArounds = LegCommander.MaxReviewGoArounds });
+        (await Run(Verbs.Review, "flight/TIA40", Reviewer("TIA40"), "changes", "the PR's body closes the round's issue")).Ok.ShouldBeTrue();
+
+        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
+        card.Detail.ShouldNotBeNull().ShouldContain("this is yours to decide");
+        // What the review asks comes first, where a card cut to its first lines still shows it (PIL294's #357).
+        card.Detail.ShouldStartWith("the PR's body closes the round's issue");
+
+        // The note is for the person: the go-around's args become the next worker's brief, which is told what the review asked.
+        card.Choices.Single(c => c.Verb == Verbs.GoAround).Args.ShouldNotBeNull().ShouldAllBe(a => !a.Contains("yours to decide"));
+
+        (await Run(Verbs.GoAround, "flight/TIA40/parser", "du1-watchtower", "the review asked for changes")).Error.ShouldNotBeNull().ShouldContain("the person's call");
+        // Nor the node's own, as on a conflict (PIL338 went round seven times).
+        (await Run(Verbs.GoAround, "flight/TIA40/parser", LegWatch.Who, "the PR conflicts with its base")).Error.ShouldNotBeNull().ShouldContain("the person's call");
+        // "Ready anyway" is the same way round the person, so the watchtower may not take it either.
+        (await Run(Verbs.Review, "flight/TIA40", "du1-watchtower", "pass", "ready anyway")).Error.ShouldNotBeNull().ShouldContain("the person's call");
+        F("TIA40").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+        (await Run(Verbs.GoAround, "flight/TIA40/parser", "controller", "once more, with the PR edited")).Error.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task PastThreeReviewGoAroundsThePersonMayPassTheReviewReadyAnyway()
+    {
+        var flight = await NewFlight("41", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA41"), "controller");
+        var leg = _state.Legs("TIA41").Single();
+        _state.PutLeg(leg with { GoArounds = LegCommander.MaxReviewGoArounds, ReviewGoArounds = LegCommander.MaxReviewGoArounds });
+        (await Run(Verbs.Review, "flight/TIA41", Reviewer("TIA41"), "changes", "the PR's body closes the round's issue")).Ok.ShouldBeTrue();
+
+        (await Run(Verbs.Review, "flight/TIA41", "controller", "pass", "ready anyway")).Error.ShouldBeNull();
+
+        F("TIA41").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+    }
+
+    [Fact]
+    public async Task GoAroundsOfALegThatFailedOrStalledDoNotCountTowardsTheReviewCap()
+    {
+        var flight = await NewFlight("42", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA42"), "controller");
+        // Three go-arounds, none of them on the review: the leg went round for its own failures before it was done.
+        var leg = _state.Legs("TIA42").Single();
+        _state.PutLeg(leg with { GoArounds = LegCommander.MaxReviewGoArounds, ReviewGoArounds = 0 });
+        (await Run(Verbs.Review, "flight/TIA42", Reviewer("TIA42"), "changes", "a test is missing")).Ok.ShouldBeTrue();
+
+        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
+        card.Detail.ShouldNotBeNull().ShouldNotContain("yours to decide");
+        (await Run(Verbs.Review, "flight/TIA42", "du1-watchtower", "pass", "ready anyway")).Error.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AGoAroundOnAReviewsChangesIsCountedApartFromOneOnAFailedLeg()
+    {
+        var flight = await NewFlight("43", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA43"), "controller");
+        (await Run(Verbs.Review, "flight/TIA43", Reviewer("TIA43"), "changes", "a test is missing")).Ok.ShouldBeTrue();
+
+        (await Run(Verbs.GoAround, "flight/TIA43/parser", "du1-watchtower", "the review asked for changes")).Error.ShouldBeNull();
+
+        var gone = _state.Legs("TIA43").Single();
+        (gone.GoArounds, gone.ReviewGoArounds).ShouldBe((1, 1));
+    }
 
     [Fact]
     public async Task AReviewerOverASpentWindowWaitsSaysUntilWhenAndStartsByItselfOnceItHasReset()
@@ -659,7 +1007,11 @@ public sealed class ReviewTests : IDisposable
         (await Run(Verbs.StartReview, Verbs.FlightTarget("TIA9"), "controller")).Error.ShouldBeNull();
         F("TIA9").Review.ShouldBeNull();
     }
+}
 
+/// <summary>Part 3 of ReviewTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class ReviewTests3 : ReviewTestsBase
+{
     [Fact]
     public async Task APassedPrRebasedOverASpentWindowIsReviewedAfreshOnlyOnceItHasReset()
     {
@@ -707,8 +1059,75 @@ public sealed class ReviewTests : IDisposable
         Git(flight.Worktree, "status", "--porcelain").ShouldBeEmpty();
     }
 
+    // A merge that conflicts exits non-zero, and leaves the conflict in the tree for the test to resolve.
+    private static void MergeLeavingConflict(string cwd, string other)
+    {
+        try
+        {
+            Git(cwd, "-c", "user.email=t@example.com", "-c", "user.name=t", "merge", "-q", "--no-commit", other);
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
     [Fact]
-    public async Task APassedPrWhoseRebaseConflictsIsSentBackAsChangesSoItsDoneLegGoesAround()
+    public async Task APlaneBehindItsBranchPushedFromElsewhereWithTheConflictResolvedTakesItAndRaisesNoConflict()
+    {
+        var flight = await NewFlight("17", "parser");
+        File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA17"), "controller");
+        File.WriteAllText(Path.Combine(Repo, "README.md"), "ours\n");
+        Git(Repo, "commit", "-qam", "README on main");
+        Git(Repo, "push", "-q", "origin", "main");
+        // The controller resolves the conflict on another clone and pushes the branch (#344): the plane is behind it.
+        var branch = F("TIA17").Branch;
+        var elsewhere = Path.Combine(_root, "elsewhere");
+        Git(_root, "clone", "-q", Git(Repo, "remote", "get-url", "origin").Trim(), elsewhere);
+        Git(elsewhere, "checkout", "-q", branch);
+        MergeLeavingConflict(elsewhere, "origin/main");
+        File.WriteAllText(Path.Combine(elsewhere, "README.md"), "resolved\n");
+        Git(elsewhere, "add", ".");
+        Git(elsewhere, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "resolve");
+        Git(elsewhere, "push", "-q", "origin", $"HEAD:{branch}");
+        var resolved = Git(elsewhere, "rev-parse", "HEAD").Trim();
+
+        (await _legs.RebaseOntoBaseAsync("TIA17", Ct)).ShouldBeNull();
+
+        Git(F("TIA17").Worktree, "rev-parse", "HEAD").Trim().ShouldBe(resolved);
+        File.ReadAllText(Path.Combine(F("TIA17").Worktree, "README.md")).Trim().ShouldBe("resolved");
+        Open().ShouldNotContain(c => c.Kind == "pr-conflicts");
+        Open().ShouldNotContain(c => c.Kind == LegCommander.MergeFailed);
+    }
+
+    [Fact]
+    public async Task ABranchThatAlreadyHoldsItsBaseIsPushedWithNoRebase()
+    {
+        var flight = await NewFlight("18", "parser");
+        File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
+        await Fly(flight, "parser");
+        File.WriteAllText(Path.Combine(Repo, "README.md"), "ours\n");
+        Git(Repo, "commit", "-qam", "README on main");
+        Git(Repo, "push", "-q", "origin", "main");
+        // The base is merged into the branch with the conflict resolved: a rebase of its commits would conflict again.
+        var wt = F("TIA18").Worktree;
+        Git(wt, "fetch", "-q", "origin");
+        MergeLeavingConflict(wt, "origin/main");
+        File.WriteAllText(Path.Combine(wt, "README.md"), "resolved\n");
+        Git(wt, "add", ".");
+        Git(wt, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "merge main");
+        var head = Git(wt, "rev-parse", "HEAD").Trim();
+
+        (await _legs.RebaseOntoBaseAsync("TIA18", Ct)).ShouldBeNull();
+
+        Git(wt, "rev-parse", "HEAD").Trim().ShouldBe(head);
+        Git(wt, "rev-parse", $"origin/{F("TIA18").Branch}").Trim().ShouldBe(head);
+        Open().ShouldNotContain(c => c.Kind == "pr-conflicts");
+    }
+
+    [Fact]
+    public async Task APassedPrWhoseRebaseConflictsIsSentBackAsChangesAndItsDoneLegGoesAroundByItself()
     {
         var flight = await NewFlight("8", "parser");
         File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
@@ -723,10 +1142,33 @@ public sealed class ReviewTests : IDisposable
         await new PrChecks(_state, _github, TimeProvider.System, legs: _legs).LookAsync(Ct);
 
         F("TIA8").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
-        var card = Open().ShouldHaveSingleItem();
-        card.Kind.ShouldBe(LegCommander.ReviewChanges);
-        card.Detail.ShouldNotBeNull().ShouldStartWith("the PR conflicts with its base");
-        (await Run(Verbs.GoAround, "flight/TIA8/parser", "controller", "resolve the conflicts")).Error.ShouldBeNull();
+        // No one is asked: the node sends the done leg round to resolve it.
+        _state.Legs("TIA8").ShouldHaveSingleItem().State.ShouldBe(LegState.Flying);
+        Open().ShouldNotContain(c => c.Kind == "pr-conflicts");
+    }
+
+    [Fact]
+    public async Task APrThatConflictsUnderAReviewAskingForChangesGoesAroundByItselfOnceAHead()
+    {
+        var flight = await NewFlight("9", "parser");
+        File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA9"), "controller");
+        (await Run(Verbs.Review, "flight/TIA9", Reviewer("TIA9"), "changes", "the parser drops the last line")).Ok.ShouldBeTrue();
+        File.WriteAllText(Path.Combine(Repo, "README.md"), "ours\n");
+        Git(Repo, "commit", "-qam", "README on main");
+        Git(Repo, "push", "-q", "origin", "main");
+        _github.Pr = _github.Pr! with { Mergeable = "CONFLICTING" };
+        var checks = new PrChecks(_state, _github, TimeProvider.System, legs: _legs);
+
+        await checks.LookAsync(Ct);
+
+        var leg = _state.Legs("TIA9").ShouldHaveSingleItem();
+        leg.State.ShouldBe(LegState.Flying);
+        leg.GoArounds.ShouldBe(1);
+        // Once a head: the same conflicting head looked at again sends no second worker.
+        await checks.LookAsync(Ct);
+        _state.Legs("TIA9").ShouldHaveSingleItem().GoArounds.ShouldBe(1);
     }
 
     [Fact]
@@ -740,7 +1182,7 @@ public sealed class ReviewTests : IDisposable
 
         var card = Open().ShouldHaveSingleItem();
         (card.Kind, card.Detail).ShouldBe((LegCommander.ReviewChanges, "the parser drops the last line"));
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Go around parser", Verbs.GoAround), ("Ready anyway", Verbs.Review)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Redo leg parser", Verbs.GoAround), ("Ready anyway", Verbs.Review)]);
 
         // The go-around reopens the done leg with the review's words; its finish pushes and starts a fresh review.
         var goAround = card.Choices[0];
@@ -808,7 +1250,7 @@ public sealed class ReviewTests : IDisposable
     public async Task ALegCannotBeNamedReviewAndAReviewerIsNoWorker()
     {
         await NewFlight("3", "parser");
-        (await Run(Verbs.PlanLeg, "flight/TIA3", "controller", "name=review", "goal=g", "done-when=d")).Error.ShouldNotBeNull().ShouldStartWith("review names the flight's reviewer");
+        (await Run(Verbs.PlanLeg, "flight/TIA3", "controller", "name=review", "goal=Do the work", "done-when=Its check passes")).Error.ShouldNotBeNull().ShouldStartWith("review names the flight's reviewer");
         Pilot.Node.Sessions.SessionRoles.Resolve("du1-tia3-review").ShouldBe(new Pilot.Node.Sessions.SessionRoleInfo(SessionRole.Reviewer, "TIA3", null, null));
     }
 
@@ -846,22 +1288,6 @@ public sealed class ReviewTests : IDisposable
         // Every session the node started was a leg's worker or a flight's reviewer: no pilot per flight.
         _workers.Started.Select(s => s.Name).ShouldBe(["du1-tia10-core", Reviewer("TIA10"), "du1-tia11-ui", Reviewer("TIA11")]);
         _github.Merged.Count.ShouldBe(2);
-    }
-
-    // A flight with its PR passed and ready, then armed natively on its head while the checks run.
-    private async Task<(FlightRow Flight, PullRequest Pr, PrChecks Checks)> ArmedPassedFlight(string issue)
-    {
-        var flight = await NewFlight(issue, "parser");
-        await Fly(flight, "parser");
-        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
-        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "fine")).Ok.ShouldBeTrue();
-        var pr = _github.Pr.ShouldNotBeNull();
-        _github.AutoMergeAllowed = true;
-        _github.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
-        (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", pr.Head)).Error.ShouldBeNull();
-        F(flight.Code).MergeWhenGreen.ShouldNotBeNull().ShouldContain(LegCommander.ArmedByGitHub);
-        _github.AutoMergeArmed.ShouldHaveSingleItem();
-        return (F(flight.Code), pr, new PrChecks(_state, _github, TimeProvider.System, legs: _legs));
     }
 
     [Fact]

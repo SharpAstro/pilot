@@ -9,7 +9,7 @@ using Pilot.Contracts;
 // Console.Lib rather than painted on pixels: the Sessions page (1), the Flights page (2) with its
 // buttons, the Background tasks page (3), the Fleet page (4), and the watchtower's panel with its cards, all live from
 // this machine's node or one on the LAN.
-var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN, host:port; else PILOT_NODE, else this machine's" };
+var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN: host:port, or its name (SE1) or host; else PILOT_NODE, else this machine's" };
 var socketOption = new Option<string?>("--node-socket") { Description = "This machine's node's socket; else PILOT_NODE_SOCKET, else this user's default" };
 var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 sessions, 3 flights, 4 jobs, 5 fleet, 6 settings, 7 repos, 8 chat, Alt+Left or Backspace back and Alt+Right forward, Ctrl+T the chat with the watchtower, q quits")
 {
@@ -22,11 +22,23 @@ if (parsed.Errors.Count > 0 || parsed.Action is System.CommandLine.Help.HelpActi
 }
 
 var nodeTarget = parsed.GetValue(nodeOption) ?? (Environment.GetEnvironmentVariable(NodeTargets.EnvironmentVariable) is { Length: > 0 } env ? env : null);
-var remote = nodeTarget is not null && NodeClient.IsEndpoint(nodeTarget, out var endpoint) ? endpoint : null;
+// A name (DE1) is found on the LAN as the CLI finds it; one no node announces is refused, not taken for this machine.
+string? remote = null;
+if (nodeTarget is not null)
+{
+    var (resolved, _, unknown) = await NodeTargets.ResolveAsync(nodeTarget, CancellationToken.None);
+    if (unknown is not null)
+    {
+        System.Console.Error.WriteLine($"pilot-tui: {unknown}");
+        return 2;
+    }
+    remote = resolved is not null && NodeClient.IsEndpoint(resolved, out var endpoint) ? endpoint : null;
+}
 string[] nodeArgs = remote is not null ? ["--node", remote] : ["--node-socket", NodeSocket.Resolve(parsed.GetValue(socketOption))];
 const string Who = "tui";
 
-using var client = NodeTargets.Connect(remote, parsed.GetValue(socketOption));
+// No remote is this machine's socket: PILOT_NODE is folded into nodeTarget already, so it is not read again.
+using var client = NodeTargets.Connect(remote, parsed.GetValue(socketOption), here: remote is null);
 await using var feed = NodeFeed.For(client);
 // The fleet beyond this node: every node heard on the LAN or granted to this user, watched on its own stream, its rows
 // merged into every page.
@@ -175,6 +187,12 @@ chat.OnSend = async text =>
     Redraw();
     return refused;
 };
+chat.OnRestart = async () =>
+{
+    var refused = await ChatCommands.RestartWatchtowerAsync(client, Who, stop.Token);
+    Redraw();
+    return refused;
+};
 chat.Changed = Redraw;
 chat.OpenLink = url => DashboardCommands.Open(url);
 cards.OnChat = () =>
@@ -189,19 +207,22 @@ jobs.LoadLog = async (node, id, ct) => (await (clients.For(node, command: false)
     : throw new InvalidOperationException($"the node did not send {id}'s log");
 jobs.Changed = Redraw;
 // Cancel is the selected job's, whose log is followed: its node's.
-jobs.OnCancel = job => _ = Task.Run(async () =>
+Action<JobRow> CancelJob(bool force) => job => _ = Task.Run(async () =>
 {
+    var what = force ? "force cancel" : "cancel";
     if (clients.For(jobs.FollowingNode) is not { } to)
     {
-        flights.Say($"cancel {job.Id}: {FleetClients.WatchOnly(jobs.FollowingNode)}");
+        flights.Say($"{what} {job.Id}: {FleetClients.WatchOnly(jobs.FollowingNode)}");
         Redraw();
         return;
     }
-    var envelope = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = [], Who = Who }, stop.Token);
+    var envelope = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = force ? [Verbs.ForceArg] : [], Who = Who }, stop.Token);
     clients.NoteRefusal(jobs.FollowingNode, envelope);
-    flights.Say(envelope.Success && envelope.Response is { Ok: true } ? $"cancelled {job.Id}" : $"cancel {job.Id}: {envelope.Response?.Error ?? envelope.Error}");
+    flights.Say(envelope.Success && envelope.Response is { Ok: true } ? $"{(force ? "force cancelled" : "cancelled")} {job.Id}" : $"{what} {job.Id}: {envelope.Response?.Error ?? envelope.Error}");
     Redraw();
 });
+jobs.OnCancel = CancelJob(force: false);
+jobs.OnForceCancel = CancelJob(force: true);
 jobs.OnOpen = location => DashboardCommands.Open(location);
 // The Fleet page: Connect asks a node for a grant; the merged lists then steer it.
 void Connect(string where, string machine) => _ = Task.Run(async () =>
@@ -249,6 +270,12 @@ if (remote is null)
     settings.Load = async ct => (await client.GetSettingsAsync(ct)) is { Success: true, Response: { } page }
         ? page
         : throw new InvalidOperationException("the node did not send its settings");
+    settings.LoadChecks = async (refresh, ct) => (await client.GetSetupChecksAsync(ct, refresh)) is { Success: true, Response: { } checks }
+        ? checks
+        : throw new InvalidOperationException("the node did not send its setup checks");
+    settings.LoadRepos = async ct => (await client.GetReposAsync(ct)) is { Success: true, Response: { } repos }
+        ? repos
+        : throw new InvalidOperationException("the node did not list its repos");
     settings.Send = (verb, args, ct) => SettingsCommands.SendAsync(client, verb, args, Who, ct);
     settings.LoadGrants = async ct => (await client.GrantsAsync(ct)) is { Success: true, Response: { } given }
         ? given
@@ -331,7 +358,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.Jobs => jobs.Tree(pages.Jobs),
             PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, now)),
             PilotPage.Settings => settings.Tree(now),
-            _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards)),
+            _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };
         var cardsScreen = pages.Cards;
         flights.Jobs = pages.JobRows;

@@ -13,6 +13,8 @@ public sealed class HookBookTests
 {
     private static readonly DateTimeOffset At = new(2026, 10, 19, 6, 0, 0, TimeSpan.Zero);
 
+    internal static JsonElement HookOf(string name, string extra = "") => Hook(name, extra);
+
     private static JsonElement Hook(string name, string extra = "") =>
         JsonDocument.Parse($$"""{"session_id":"{{AgentRows.SessionA}}","hook_event_name":"{{name}}","cwd":"/work"{{extra}}}""").RootElement;
 
@@ -97,6 +99,28 @@ public sealed class HookRowTests : IDisposable
         row.WaitingFor.ShouldBe("permission to use Bash");
         // A session whose process is gone is the listing's, whatever its last hook said.
         SessionRowBuilder.Build(Agent(null, status: null), TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc, hook).State.ShouldBe(SessionState.Ended);
+    }
+
+    [Fact]
+    public void ASessionEndHookWithNoProcessSaysWhyItEndedWithTheHooksReason()
+    {
+        var withReason = new HookBook();
+        withReason.Apply(HookBookTests.HookOf("SessionEnd", ",\"reason\":\"logout\""), DateTimeOffset.UtcNow);
+        var hook = withReason.Of(AgentRows.SessionA).ShouldNotBeNull();
+        hook.EndReason.ShouldBe("logout");
+
+        SessionRowBuilder.Build(Agent(null, status: null), TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc, hook).EndedBecause.ShouldBe("session ended (logout)");
+        SessionRowBuilder.Build(Agent(null, status: null), TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc,
+            hook with { EndReason = null }).EndedBecause.ShouldBe("session ended");
+        // Live again: nothing to say.
+        SessionRowBuilder.Build(Agent(4343), TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc, hook).EndedBecause.ShouldBeNull();
+    }
+
+    [Fact]
+    public void AListingThatSaysDoneOrFailedWithNoProcessSaysSo()
+    {
+        SessionRowBuilder.Build(Agent(null, status: null), TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc).EndedBecause
+            .ShouldBe("Claude Code lists it as done with no process");
     }
 
     [Fact]

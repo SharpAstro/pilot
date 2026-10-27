@@ -22,17 +22,22 @@ namespace Pilot.Commands;
 /// by the same handler as the CLI, so a new verb lands here with no change. A call is from the client by the name it gave
 /// in <c>initialize</c> (else <c>mcp</c>), or from the Claude session running the server where the node knows it, as a
 /// CLI command is, so the watchtower's own merge or land is still refused when it comes this way.
-/// <para>A server lives as long as its host session, so it outlives an update: it holds the binaries open, and a host that
-/// never restarts it would keep it on the old release. It therefore watches the version installed beside it, after each
-/// message and on a quiet timer between them, and when that is no longer the one it runs as it finishes the reply in hand and
-/// ends <see cref="RunAsync"/>, so the process exits with 0 and the host (Claude restarts a stdio server it lost) starts the
-/// new binary.</para>
+/// <para>A server lives as long as its host session, so it outlives an update, and a host never restarts a stdio server
+/// it lost (Claude Code does not), so ending on an update would drop pilot's tools from the session until it is
+/// restarted by hand. It therefore watches the version installed beside it, after each message and on a quiet timer
+/// between them, and when that is no longer the one it runs as it hands the session over instead: it starts the new
+/// binary's <c>pilot mcp</c> (same node, no window), replays the client's <c>initialize</c> to it, tells the client
+/// <c>notifications/tools/list_changed</c> once, and relays every line both ways until either end closes, so
+/// <see cref="RunAsync"/> ends only when the client or the new server does. An install moves running binaries aside, so
+/// this process staying alive blocks nothing. If the new binary cannot be started it logs why and keeps serving as it is.</para>
 /// </remarks>
 /// <param name="installed">The version installed now (null: unknown); by default the <c>VERSION</c> marker of the folder this runs from.</param>
 /// <param name="watch">How long a quiet input waits before the installed version is looked at again.</param>
-/// <param name="log">Where the one line saying why it stopped goes (default: standard error, as stdout is the protocol's).</param>
+/// <param name="log">Where the line saying what it did about a new version goes (default: standard error, as stdout is the protocol's).</param>
+/// <param name="startChild">Starts the new binary's <c>pilot mcp</c> with these arguments (default: the <c>pilot</c> beside this process); throws when it cannot.</param>
 internal sealed class McpServer(string cwd, string? node, string? socket,
-    Func<CancellationToken, Task<string?>>? installed = null, TimeSpan? watch = null, TextWriter? log = null)
+    Func<CancellationToken, Task<string?>>? installed = null, TimeSpan? watch = null, TextWriter? log = null,
+    Func<string[], McpChild>? startChild = null)
 {
     /// <summary>The version this process runs as, without the commit after it (2.0.12+3969354 is 2.0.12).</summary>
     internal static string Running { get; } = Plain(typeof(McpServer).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0");
@@ -63,12 +68,24 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
 
     private readonly Dictionary<string, (string[] Path, Command Command)> _tools = Tools(PilotCommand.Build(cwd, TextWriter.Null, TextWriter.Null, "mcp", agent: true));
 
+    private (string? Node, bool Here, string? Why)? _resolved;
+
+    /// <summary>The client's <c>initialize</c> request as it came, to replay to a server it is handed over to.</summary>
+    private string? _initialize;
+
+    /// <summary>Set when a handover failed: this server serves on as it is and does not try again.</summary>
+    private bool _stays;
+
+    private const string Initialized = """{"jsonrpc":"2.0","method":"notifications/initialized"}""";
+    private const string ToolsChanged = """{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}""";
+
     /// <summary>Who the calls are from: the client by its name from <c>initialize</c>, until then <c>mcp</c>.</summary>
     internal string Who { get; private set; } = "mcp";
 
     /// <summary>
     /// Answers each line of <paramref name="input"/> on <paramref name="output"/> until the input ends, or until the installed
-    /// version is not the one this runs as (checked after the reply in hand, and while the input is quiet).
+    /// version is not the one this runs as (checked after the reply in hand, and while the input is quiet) and the session is
+    /// handed over to the new binary, which then runs until either end closes.
     /// </summary>
     public async Task RunAsync(TextReader input, TextWriter output, CancellationToken cancellationToken)
     {
@@ -84,10 +101,13 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
             if (!arrived)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (await ReplacedAsync(source, cancellationToken) is { } quiet)
+                if (!_stays && await ReplacedAsync(source, cancellationToken) is { } quiet)
                 {
-                    Stop(quiet);
-                    return;
+                    if (await HandOverAsync(quiet, reading, input, output, cancellationToken))
+                    {
+                        return;
+                    }
+                    _stays = true;
                 }
                 continue;
             }
@@ -100,13 +120,130 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
                 await output.WriteLineAsync(reply);
                 await output.FlushAsync(cancellationToken);
             }
-            if (await ReplacedAsync(source, cancellationToken) is { } now)
-            {
-                Stop(now);
-                return;
-            }
             reading = input.ReadLineAsync(cancellationToken).AsTask();
+            if (!_stays && await ReplacedAsync(source, cancellationToken) is { } now)
+            {
+                if (await HandOverAsync(now, reading, input, output, cancellationToken))
+                {
+                    return;
+                }
+                _stays = true;
+            }
         }
+    }
+
+    private void Say(string message) => (log ?? Console.Error).WriteLine($"pilot mcp: {message}");
+
+    /// <summary>
+    /// Starts the new binary's server and relays the session to it. False when it could not be brought up (nothing was
+    /// relayed, the client has heard nothing), true once the relay has run its course.
+    /// </summary>
+    private async Task<bool> HandOverAsync(string now, Task<string?> reading, TextReader input, TextWriter output, CancellationToken cancellationToken)
+    {
+        McpChild child;
+        try
+        {
+            child = (startChild ?? StartBinary)(ChildArgs());
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Say($"pilot {now} is installed and this server runs {Running}, but its pilot mcp cannot start ({ex.Message}): serving on as {Running}");
+            return false;
+        }
+        using (child)
+        {
+            try
+            {
+                if (_initialize is { } hello)
+                {
+                    await child.Input.WriteLineAsync(hello);
+                    await child.Input.FlushAsync(cancellationToken);
+                    if (await child.Output.ReadLineAsync(cancellationToken) is null)
+                    {
+                        throw new IOException("it ended before it answered initialize");
+                    }
+                    await child.Input.WriteLineAsync(Initialized);
+                    await child.Input.FlushAsync(cancellationToken);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
+            {
+                Say($"pilot {now} is installed and this server runs {Running}, but its pilot mcp did not come up ({ex.Message}): serving on as {Running}");
+                return false;
+            }
+            Say($"pilot {now} is installed and this server runs {Running}: handing the session over to its pilot mcp");
+            await output.WriteLineAsync(ToolsChanged);
+            await output.FlushAsync(cancellationToken);
+
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var up = PumpAsync(reading, input, child.Input, stop.Token);
+            var down = PumpAsync(child.Output.ReadLineAsync(stop.Token).AsTask(), child.Output, output, stop.Token);
+            await Task.WhenAny(up, down);
+            await stop.CancelAsync();
+            try
+            {
+                await Task.WhenAll(up, down);
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException)
+            {
+            }
+        }
+        return true;
+    }
+
+    /// <summary>Copies lines from <paramref name="from"/> to <paramref name="to"/>, the first being the read already in flight, until one ends.</summary>
+    private static async Task PumpAsync(Task<string?> first, TextReader from, TextWriter to, CancellationToken cancellationToken)
+    {
+        var next = first;
+        while (await next.WaitAsync(cancellationToken) is { } line)
+        {
+            if (!string.IsNullOrWhiteSpace(line))
+            {
+                await to.WriteLineAsync(line);
+                await to.FlushAsync(cancellationToken);
+            }
+            next = from.ReadLineAsync(cancellationToken).AsTask();
+        }
+    }
+
+    /// <summary>The root options that name the node, then <c>mcp</c>: what the new server is started with.</summary>
+    private string[] ChildArgs() =>
+        [.. node is null ? [] : new[] { "--node", node }, .. socket is null ? [] : new[] { "--node-socket", socket }, "mcp"];
+
+    /// <summary>The <c>pilot</c> beside this process, not <see cref="Environment.ProcessPath"/>: an install moves the running binary aside under another name.</summary>
+    private McpChild StartBinary(string[] args)
+    {
+        var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+        var info = new System.Diagnostics.ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "pilot.exe" : "pilot"))
+        {
+            WorkingDirectory = cwd,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            StandardInputEncoding = utf8,
+            StandardOutputEncoding = utf8,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in args)
+        {
+            info.ArgumentList.Add(arg);
+        }
+        var process = System.Diagnostics.Process.Start(info) ?? throw new IOException("no process started");
+        return new McpChild(process.StandardInput, process.StandardOutput, () =>
+        {
+            try
+            {
+                process.StandardInput.Close();
+                if (!process.WaitForExit(2000))
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+            }
+            process.Dispose();
+        });
     }
 
     /// <summary>The installed version when it is another one than <see cref="Running"/>, else null (also when it cannot be told).</summary>
@@ -123,9 +260,6 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         }
         return now is { Length: > 0 } && Plain(now) != Running ? Plain(now) : null;
     }
-
-    private void Stop(string now) =>
-        (log ?? Console.Error).WriteLine($"pilot mcp: pilot {now} is installed and this server runs {Running}: exiting so the host restarts it on the new one");
 
     /// <summary>The version the <c>VERSION</c> marker of this binary's folder says (its first line: version, then runtime); null for a build that has none.</summary>
     private static Task<string?> InstalledMarkerAsync(CancellationToken cancellationToken)
@@ -160,6 +294,10 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         {
             return Reply(id, InvalidRequest, "a request names its method");
         }
+        if (method == "initialize" && id is not null)
+        {
+            _initialize = line;
+        }
         if (id is not { } answering)
         {
             // notifications/initialized, notifications/cancelled: nothing to say back. Calls run one at a time, so a
@@ -183,7 +321,19 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         {
             return Reply(answering, ex.Code, ex.Message);
         }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // A node dropping mid-call (a closed socket, a disposed or cancelled request) or anything unforeseen is an answer,
+            // never the end of the server: the host would have to restart it by hand.
+            var said = $"{Restarting} ({ex.GetType().Name}: {ex.Message})";
+            return method == "tools/call"
+                ? Reply(answering, new ToolCallResult([new TextContent($"pilot: {said}")], IsError: true), McpJsonContext.Default.ToolCallResult)
+                : Reply(answering, InternalError, said);
+        }
     }
+
+    /// <summary>What a call or read says when the node is not there: it may be restarting, so the next call may well work.</summary>
+    private const string Restarting = "the node is restarting (or not running): try again in a moment";
 
     private InitializeResult Initialize(InitializeParams given)
     {
@@ -193,7 +343,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         }
         var protocol = given.ProtocolVersion is { } asked && Protocols.Contains(asked) ? asked : Protocol;
         var version = typeof(McpServer).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
-        return new InitializeResult(protocol, new ServerCapabilities(new ListCapability(), new ResourcesCapability()), new McpImplementation("pilot", version),
+        return new InitializeResult(protocol, new ServerCapabilities(new ListCapability(ListChanged: true), new ResourcesCapability()), new McpImplementation("pilot", version),
             "pilot v2's node. The tools are pilot's commands, named by their path (flight_create, leg_plan, check, cards, answer), and do what "
             + "the CLI does: a refusal says why. Inside a flight's plane a leg's tools need no leg named. The resources are the node's flights, "
             + "legs, cards and sessions as JSON.");
@@ -217,8 +367,18 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         }
         var output = new StringWriter();
         var error = new StringWriter();
-        var exit = await PilotCommand.InvokeAsync([.. NodeArgs(), .. args], cwd, output, error, Who, bySession: true, console: false, cancellationToken, agent: true);
+        var (target, here, unknown) = await ResolvedAsync(cancellationToken);
+        if (unknown is not null)
+        {
+            return new ToolCallResult([new TextContent($"pilot: {unknown}")], IsError: true);
+        }
+        var exit = await PilotCommand.InvokeAsync([.. NodeArgs(target, here), .. args], cwd, output, error, Who, bySession: true, console: false, cancellationToken, agent: true);
         var said = (output.ToString() + error.ToString()).TrimEnd();
+        if (exit == 3)
+        {
+            // The CLI's "no node answers": for a server that stays up, the node is coming back, not to be started by hand.
+            said = $"pilot: {Restarting} ({said.Replace("pilot: ", "")})";
+        }
         return new ToolCallResult([new TextContent(said.Length > 0 ? said : exit == 0 ? "ok" : $"exit {exit}")], IsError: exit != 0);
     }
 
@@ -229,15 +389,23 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         {
             throw new McpException(ResourceNotFound, $"there is no resource {read.Uri}; resources/list lists them");
         }
-        using var client = NodeTargets.Connect(node, socket);
+        // The node named as the tools resolve it: a name read raw went to this machine's socket, so one server read resources
+        // from this node while its tools ran on another. Resolved once, as it listens on the LAN for a few seconds.
+        var (target, here, unknown) = await ResolvedAsync(cancellationToken);
+        if (unknown is not null)
+        {
+            throw new McpException(InternalError, unknown);
+        }
+        using var client = NodeTargets.Connect(target, socket, here: here);
         SnapshotEvent snapshot;
         try
         {
             snapshot = await PilotCommand.SnapshotAsync(client, cancellationToken);
         }
-        catch (Exception ex) when (ex is HttpRequestException or SocketException or IOException or WebSocketException)
+        catch (Exception ex) when (ex is HttpRequestException or SocketException or IOException or WebSocketException or ObjectDisposedException
+            || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
         {
-            throw new McpException(InternalError, $"no node answers on {client.SocketPath} ({ex.Message}); start it with pilot-gui or pilot-node");
+            throw new McpException(InternalError, $"{Restarting} (no node answers on {client.SocketPath}: {ex.Message})");
         }
         var text = resource.Name switch
         {
@@ -250,7 +418,25 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
     }
 
     /// <summary>The node this server was started against, passed on to every command it runs.</summary>
-    private string[] NodeArgs() => [.. node is null ? [] : new[] { "--node", node }, .. socket is null ? [] : new[] { "--node-socket", socket }];
+    // The node resolved once, as a host:port or this machine's socket: a name passed on would be looked up again on the LAN
+    // by every tool call, and tools and resources could find different nodes.
+    private static string[] NodeArgs(string? target, bool here, string? socket) => here || target is null
+        ? ["--node-socket", NodeSocket.Resolve(socket)]
+        : ["--node", target, .. socket is null ? [] : new[] { "--node-socket", socket }];
+
+    private string[] NodeArgs(string? target, bool here) => NodeArgs(target, here, socket);
+
+    /// <summary>The node named, resolved on first use and kept; a name not heard is tried again next time.</summary>
+    private async Task<(string? Node, bool Here, string? Why)> ResolvedAsync(CancellationToken cancellationToken)
+    {
+        _resolved ??= await NodeTargets.ResolveAsync(node, cancellationToken);
+        var resolved = _resolved.Value;
+        if (resolved.Why is not null)
+        {
+            _resolved = null;
+        }
+        return resolved;
+    }
 
     /// <summary>Every command with an action, by its tool name: its path from the root, joined with <c>_</c>.</summary>
     internal static Dictionary<string, (string[] Path, Command Command)> Tools(RootCommand root)
@@ -441,4 +627,14 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
     {
         public int Code { get; } = code;
     }
+}
+
+/// <summary>A server started to take over a session: where to write its lines, where to read them, and how to end it.</summary>
+internal sealed class McpChild(TextWriter input, TextReader output, Action? stop = null) : IDisposable
+{
+    public TextWriter Input { get; } = input;
+
+    public TextReader Output { get; } = output;
+
+    public void Dispose() => stop?.Invoke();
 }

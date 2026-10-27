@@ -293,7 +293,7 @@ public sealed record NodeSettings
                 }
                 return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var memory) && memory is >= 0 and <= 1024
                     ? (settings with { JobMemoryGigabytes = memory }, null)
-                    : (null, "job-memory takes the free memory in GB a job waits for, 0 to not wait");
+                    : (null, "job-memory takes the least free memory in GB a second job waits for (a floor under its measured need), 0 for the measured need alone");
             case PriorityStartLimitKey:
                 if (clear)
                 {
@@ -311,13 +311,23 @@ public sealed record NodeSettings
                     ? (settings with { WeekLimit = weekly }, null)
                     : (null, "week-limit takes the 7-day window's share in percent, above 0 and up to 100");
             case PriorityReposKey:
-                return clear
-                    ? (settings with { PriorityRepos = null }, null)
-                    : (settings with { PriorityRepos = [.. given.Distinct(StringComparer.OrdinalIgnoreCase)] }, null);
+            {
+                if (clear)
+                {
+                    return (settings with { PriorityRepos = null }, null);
+                }
+                var (priority, priorityError) = RepoNames(given);
+                return priority is null ? (null, priorityError) : (settings with { PriorityRepos = priority }, null);
+            }
             case NoAutoMergeReposKey:
-                return clear
-                    ? (settings with { NoAutoMergeRepos = null }, null)
-                    : (settings with { NoAutoMergeRepos = [.. given.Distinct(StringComparer.OrdinalIgnoreCase)] }, null);
+            {
+                if (clear)
+                {
+                    return (settings with { NoAutoMergeRepos = null }, null);
+                }
+                var (noMerge, noMergeError) = RepoNames(given);
+                return noMerge is null ? (null, noMergeError) : (settings with { NoAutoMergeRepos = noMerge }, null);
+            }
             case RepoTrackersKey:
             {
                 if (clear)
@@ -327,12 +337,17 @@ public sealed record NodeSettings
                 var entries = new List<string>();
                 foreach (var entry in given)
                 {
-                    var at = entry.IndexOf('=');
-                    var repo = at > 0 ? entry[..at].Trim() : "";
+                    // The last '=' splits, as a folder given by path may hold one.
+                    var at = entry.LastIndexOf('=');
                     var tracker = at > 0 ? entry[(at + 1)..].Trim().ToLowerInvariant() : "";
-                    if (repo.Length == 0 || tracker is not ("github" or "shortcut"))
+                    if (at <= 0 || entry[..at].Trim().Length == 0 || tracker is not ("github" or "shortcut"))
                     {
                         return (null, "repo-trackers takes repo=tracker entries, as in bullclip-backend=shortcut (github or shortcut)");
+                    }
+                    var (repo, folderError) = RepoName(entry[..at].Trim());
+                    if (repo is null)
+                    {
+                        return (null, folderError);
                     }
                     entries.RemoveAll(e => e.StartsWith(repo + "=", StringComparison.OrdinalIgnoreCase));
                     entries.Add($"{repo}={tracker}");
@@ -377,6 +392,38 @@ public sealed record NodeSettings
             default:
                 return (null, $"there is no setting {key}; there are {string.Join(", ", Keys)}");
         }
+    }
+
+    // A repo as the lists name it: its folder's name. A path (what the page's free entry sends for a clone the picker does not
+    // list) must be a folder on this machine, and stands for its name; a bare name is taken as it is.
+    private static (string? Name, string? Error) RepoName(string entry)
+    {
+        if (!Path.IsPathRooted(entry) && !entry.Contains('/') && !entry.Contains('\\'))
+        {
+            return (entry, null);
+        }
+        var full = Path.GetFullPath(entry);
+        return Directory.Exists(full) && Path.GetFileName(Path.TrimEndingDirectorySeparator(full)) is { Length: > 0 } name
+            ? (name, null)
+            : (null, $"{entry} is not a folder on this machine");
+    }
+
+    private static (string[]? Names, string? Error) RepoNames(string[] given)
+    {
+        var names = new List<string>();
+        foreach (var entry in given)
+        {
+            var (name, error) = RepoName(entry);
+            if (name is null)
+            {
+                return (null, error);
+            }
+            if (!names.Contains(name, StringComparer.OrdinalIgnoreCase))
+            {
+                names.Add(name);
+            }
+        }
+        return ([.. names], null);
     }
 
     /// <summary>The tracker a bare number means in <paramref name="repo"/> (its folder name): its <see cref="RepoTrackersKey"/> entry, else GitHub.</summary>

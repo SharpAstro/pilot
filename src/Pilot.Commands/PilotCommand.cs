@@ -11,7 +11,7 @@ namespace Pilot.Commands;
 /// command needs no leg named: the flight is the one whose worktree holds the folder, and the leg its one flying,
 /// which is how a worker ticks its own checklist.
 /// </summary>
-/// <remarks>Exit codes: 0 done, 1 refused by the node (it says why), 2 usage, 3 no node.</remarks>
+/// <remarks>Exit codes: 0 done, 1 refused by the node (it says why), 2 usage, 3 no node, 4 the node did not answer in time (the command may still run), 5 the node queued it behind a lock (it runs there, not done yet).</remarks>
 public static class PilotCommand
 {
     /// <param name="who">Who the commands are from: <c>cli</c> for a terminal (a Claude session running it is named by its
@@ -19,8 +19,30 @@ public static class PilotCommand
     /// <param name="console">The console host, pilot itself: only it has standard streams of its own for <c>pilot mcp</c> to serve on.</param>
     /// <param name="agent">Whether the commands are a Claude session's, where the caller knows; null reads it from the environment (<see cref="IsAgent(bool, bool?)"/>).</param>
     /// <param name="sessionId">The Claude session running the commands, where the caller knows; null reads <c>CLAUDE_CODE_SESSION_ID</c> from the environment.</param>
-    public static Task<int> RunAsync(string[] args, string cwd, TextWriter output, TextWriter error, CancellationToken cancellationToken, string who = "cli", bool console = false, bool? agent = null, string? sessionId = null, RichOutput? rich = null) =>
-        InvokeAsync(args, cwd, output, error, who, bySession: who == "cli", console, cancellationToken, agent, sessionId, rich);
+    /// <param name="requestId">The id the node dedupes the command by (<see cref="CommandRequest.RequestId"/>), to retry one that timed out; null for the CLI reads <c>PILOT_REQUEST_ID</c>, else each command gets a fresh one.</param>
+    /// <param name="commandTimeout">How long a command waits for the node's answer before it says so and exits 4; null is <see cref="DefaultCommandTimeout"/>.</param>
+    public static Task<int> RunAsync(string[] args, string cwd, TextWriter output, TextWriter error, CancellationToken cancellationToken, string who = "cli", bool console = false, bool? agent = null, string? sessionId = null, RichOutput? rich = null, string? requestId = null, TimeSpan? commandTimeout = null) =>
+        InvokeAsync(args, cwd, output, error, who, bySession: who == "cli", console, cancellationToken, agent, sessionId, rich,
+            requestId ?? (who == "cli" && Environment.GetEnvironmentVariable(RequestIdVariable) is { Length: > 0 } given ? given : null), commandTimeout);
+
+    /// <summary>The environment variable a caller retrying a command sets to the id of the attempt that timed out.</summary>
+    public const string RequestIdVariable = "PILOT_REQUEST_ID";
+
+    /// <summary>
+    /// How long a command waits for the node's answer: below the 120 s a Claude Code Bash call is allowed, so the CLI says the
+    /// node has not answered while its caller can still read it, rather than being killed with no output.
+    /// </summary>
+    public static readonly TimeSpan DefaultCommandTimeout = TimeSpan.FromSeconds(100);
+
+    /// <summary>The command's exit code when the node did not answer in time.</summary>
+    public const int ExitTimedOut = 4;
+
+    /// <summary>The command's exit code when the node queued it behind a lock held for longer than it would wait: it runs there, and is not done yet.</summary>
+    public const int ExitQueued = 5;
+
+    /// <summary>The node held a command past the deadline; it may still be running there.</summary>
+    internal sealed class CommandTimeoutException(TimeSpan deadline) : Exception(
+        $"the node has not answered in {deadline.TotalSeconds.ToString("0.##", CultureInfo.InvariantCulture)} s; the command may still run: check pilot status before sending it again");
 
     /// <summary>
     /// Whether a command sent from here is a Claude session's (<see cref="CommandRequest.Agent"/>): Claude Code puts
@@ -39,9 +61,9 @@ public static class PilotCommand
     /// the MCP server's are), before <paramref name="who"/>.</param>
     /// <param name="agent">Whether the commands are a Claude session's, where the host knows; null reads it from the environment (<see cref="IsAgent"/>).</param>
     /// <param name="sessionId">The Claude session running the commands, where the caller knows; null reads <c>CLAUDE_CODE_SESSION_ID</c> from the environment.</param>
-    internal static async Task<int> InvokeAsync(string[] args, string cwd, TextWriter output, TextWriter error, string who, bool bySession, bool console, CancellationToken cancellationToken, bool? agent = null, string? sessionId = null, RichOutput? rich = null)
+    internal static async Task<int> InvokeAsync(string[] args, string cwd, TextWriter output, TextWriter error, string who, bool bySession, bool console, CancellationToken cancellationToken, bool? agent = null, string? sessionId = null, RichOutput? rich = null, string? requestId = null, TimeSpan? commandTimeout = null)
     {
-        var root = Build(cwd, output, error, who, bySession, console, agent, sessionId, rich);
+        var root = Build(cwd, output, error, who, bySession, console, agent, sessionId, rich, requestId, commandTimeout);
         var parsed = root.Parse(args);
         if (args.Length == 0)
         {
@@ -62,8 +84,11 @@ public static class PilotCommand
     }
 
     /// <summary>The command tree; actions write to <paramref name="output"/> and <paramref name="error"/>, and resolve folders against <paramref name="cwd"/>.</summary>
-    internal static RootCommand Build(string cwd, TextWriter output, TextWriter error, string who = "cli", bool bySession = true, bool console = false, bool? agent = null, string? sessionId = null, RichOutput? rich = null)
+    internal static RootCommand Build(string cwd, TextWriter output, TextWriter error, string who = "cli", bool bySession = true, bool console = false, bool? agent = null, string? sessionId = null, RichOutput? rich = null, string? requestId = null, TimeSpan? commandTimeout = null)
     {
+        var deadline = commandTimeout ?? DefaultCommandTimeout;
+        // One id per invocation, so the timeout message can name it for a retry (PILOT_REQUEST_ID) that the node dedupes.
+        requestId ??= NewRequestId();
         var byAgent = IsAgent(bySession, agent);
         sessionId ??= Environment.GetEnvironmentVariable("CLAUDE_CODE_SESSION_ID");
         var socket = new Option<string?>("--node-socket")
@@ -73,7 +98,7 @@ public static class PilotCommand
         };
         var node = new Option<string?>("--node")
         {
-            Description = "A node on the LAN, host:port (pilot nodes finds them); else PILOT_NODE, else this machine's. Commands need pilot connect first",
+            Description = "A node on the LAN: host:port, or its name (SE1) or host as pilot nodes lists them; else PILOT_NODE, else this machine's. Commands need pilot connect first",
             Recursive = true,
         };
         var outputFormat = new Option<string>("--output-format")
@@ -89,7 +114,17 @@ public static class PilotCommand
         {
             command.SetAction(async (parseResult, ct) =>
             {
-                using var client = NodeTargets.Connect(parseResult.GetValue(node), parseResult.GetValue(socket));
+                // A socket named and no node is this machine's, whatever PILOT_NODE says: how the MCP server, the GUI and the TUI
+                // hand a command the node they resolved, so the variable cannot send it elsewhere.
+                var (target, here, unknown) = parseResult.GetValue(node) is null && parseResult.GetValue(socket) is not null
+                    ? (null, true, null)
+                    : await NodeTargets.ResolveAsync(parseResult.GetValue(node), ct);
+                if (unknown is not null)
+                {
+                    await error.WriteLineAsync($"pilot: {unknown}");
+                    return 2;
+                }
+                using var client = NodeTargets.Connect(target, parseResult.GetValue(socket), here: here);
                 try
                 {
                     return await run(parseResult, client, ct);
@@ -98,6 +133,11 @@ public static class PilotCommand
                 {
                     await error.WriteLineAsync($"pilot: {ex.Message}");
                     return 2;
+                }
+                catch (CommandTimeoutException ex)
+                {
+                    await error.WriteLineAsync($"pilot: {ex.Message} (to retry it safely, set {RequestIdVariable}={requestId})");
+                    return ExitTimedOut;
                 }
                 catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException or IOException or System.Net.WebSockets.WebSocketException)
                 {
@@ -111,7 +151,7 @@ public static class PilotCommand
         // Who a command is from: the Claude session running this host when it may be one, else the host; a leg's worker
         // or a flight's reviewer when the plane says so, as they are named already.
         Task<int> Send(NodeClient client, string verb, string target, string[] args, string sender, CancellationToken ct, string? why = null) =>
-            SendAsync(client, verb, target, args, sender, bySession && sender == who, byAgent, why, cwd, sessionId, output, ct);
+            SendAsync(client, verb, target, args, sender, bySession && sender == who, byAgent, why, cwd, sessionId, output, requestId, deadline, ct);
 
         // What an assistant says it acted on, for the commands that are the person's alone (merge, land, a setting, setup, an
         // update): the node keeps it in the black box and on the card it raises (autopilot off) or the Handled line it leaves (on).
@@ -165,24 +205,46 @@ public static class PilotCommand
             var snapshot = await SnapshotAsync(client, ct);
             var maintenance = false;
             bool? autopilot = null;
+            string? dataFolder = null;
             try
             {
                 var info = await client.GetNodeAsync(ct);
                 maintenance = info.Maintenance;
                 autopilot = info.Autopilot;
+                dataFolder = info.DataFolder;
             }
             catch (HttpRequestException)
             {
                 // The node's own word on itself is a line more: the flights and sessions are what status is for.
             }
             var everyFlight = parseResult.GetValue(allFlights);
-            await WriteAsync(parseResult.GetValue(outputFormat), () => Status(snapshot, maintenance: maintenance, autopilot: autopilot, all: everyFlight),
-                () => StatusMarkdown.Build(snapshot, maintenance, autopilot, everyFlight));
+            var format = parseResult.GetValue(outputFormat);
+            var copies = format is "plain" or "text" ? new Dictionary<string, string>() : await AttachmentCopies.ResolveAsync(AttachmentCopies.Of(snapshot), client, dataFolder, ct);
+            await WriteAsync(format, () => Status(snapshot, maintenance: maintenance, autopilot: autopilot, all: everyFlight),
+                () => StatusMarkdown.Build(snapshot, maintenance, autopilot, everyFlight, copies));
+            return 0;
+        });
+        var attachmentsOwner = new Argument<string?>("flight-or-session") { Description = "A flight's code or a session's name; none lists every one", Arity = ArgumentArity.ZeroOrOne };
+        var attachments = Action(new Command("attachments", "The images the node keeps copies of, with where each is") { Arguments = { attachmentsOwner } }, async (p, client, ct) =>
+        {
+            var snapshot = await SnapshotAsync(client, ct);
+            var owner = p.GetValue(attachmentsOwner);
+            string? dataFolder = null;
+            try
+            {
+                dataFolder = (await client.GetNodeAsync(ct)).DataFolder;
+            }
+            catch (HttpRequestException)
+            {
+                // The paths then fall back to the default data folder's layout; a copy not found there is shown missing.
+            }
+            var copies = AttachmentCopies.Of(snapshot, owner);
+            await output.WriteAsync(AttachmentCopies.List(copies, await AttachmentCopies.ResolveAsync(copies, client, dataFolder, ct), client, dataFolder, owner));
             return 0;
         });
         var sessions = Action(new Command("sessions", "Every Claude session on the machine"), async (_, client, ct) =>
         {
-            await output.WriteAsync(Sessions(await client.GetSessionsAsync(ct)));
+            await output.WriteAsync(Sessions(await client.GetSessionsAsync(ct), await MachineAsync(client, ct)));
             return 0;
         });
 
@@ -219,9 +281,10 @@ public static class PilotCommand
         var issue = Arg("issue", "The issue the flight flies");
         var title = Words("title", "What it is for, in a line", required: false);
         var repo = new Option<string?>("--repo") { Description = "The repo's checkout (any of its worktrees); else this folder" };
-        var create = Action(new Command("create", "A flight on an issue of this repo, and its plane") { Arguments = { issue, title }, Options = { repo } },
+        var anyway = new Option<bool>(Verbs.AnywayFlag) { Description = "Create it although the issue carries another node's pilot node: label; says so on the issue" };
+        var create = Action(new Command("create", "A flight on an issue of this repo, and its plane") { Arguments = { issue, title }, Options = { repo, anyway } },
             (p, client, ct) => Send(client, Verbs.CreateFlight, Verbs.RepoTarget(RepoPath(client, p.GetValue(repo), cwd)),
-                [p.GetValue(issue)!, .. p.GetValue(title) ?? []], who, ct));
+                [p.GetValue(issue)!, .. p.GetValue(title) ?? [], .. p.GetValue(anyway) ? new[] { Verbs.AnywayFlag } : []], who, ct));
 
         var code = Arg("code", "The flight's code, as TIA1611");
         var other = Arg("other", "The flight it waits for");
@@ -326,11 +389,30 @@ public static class PilotCommand
         var goAround = Action(new Command("go-around", "Stop the leg's worker and start a fresh one, told why") { Arguments = { why }, Options = { leg } },
             (p, client, ct) => OnLeg(p, client, Verbs.GoAround, _ => [Join(p, why)], ct));
 
+        var forFile = new Option<string?>("--for-file") { Description = "A file whose appearance wakes the worker (a relative path is from here)" };
+        var until = new Option<string?>("--until") { Description = "A time: alone it wakes the worker then; with --for-file it rings once past it and goes on waiting (14:30, or 2026-10-27T09:00)" };
+        var waitWhy = Words("why", "Why it waits: the wake-up says it back", required: false);
+        var wait = Action(new Command("wait", "Wait on a file or a time with no job: end your turn after it, the node wakes you once it comes") { Arguments = { waitWhy }, Options = { forFile, until, leg } },
+            (p, client, ct) =>
+            {
+                var args = new List<string>();
+                if (p.GetValue(forFile) is { Length: > 0 } file)
+                {
+                    args.Add($"path={(Path.IsPathRooted(file) ? file : Path.GetFullPath(file, cwd))}");
+                }
+                if (p.GetValue(until) is { Length: > 0 } at)
+                {
+                    args.Add($"until={ParseUntil(at, DateTimeOffset.Now).ToString("o", System.Globalization.CultureInfo.InvariantCulture)}");
+                }
+                args.AddRange(p.GetValue(waitWhy) ?? []);
+                return OnLeg(p, client, Verbs.WaitLeg, _ => [.. args], ct);
+            });
+
         var tokens = Arg("tokens", "The new budget in weighted tokens, as 6000000");
         var extend = Action(new Command("extend", "Raise the leg's budget") { Arguments = { tokens }, Options = { leg } },
             (p, client, ct) => OnLeg(p, client, Verbs.ExtendBudget, _ => [p.GetValue(tokens)!], ct));
 
-        var legCommand = new Command("leg", "Legs: plan, remove, start, validate, finish, go around, extend") { Subcommands = { plan, remove, start, validate, finish, goAround, extend } };
+        var legCommand = new Command("leg", "Legs: plan, remove, start, validate, finish, wait, go around, extend") { Subcommands = { plan, remove, start, validate, finish, wait, goAround, extend } };
 
         // check, artifact
         var step = Words("step", "The step's number, or the start of its text");
@@ -341,11 +423,25 @@ public static class PilotCommand
         var location = Arg("location", "A path or a URL");
         var artifactTitle = Words("title", "What it shows", required: false);
         var artifact = Action(new Command("artifact", "Record something to look at on the leg") { Arguments = { location, artifactTitle }, Options = { leg } },
-            (p, client, ct) =>
+            async (p, client, ct) =>
             {
                 var where = p.GetValue(location)!;
                 var full = Path.IsPathRooted(where) || where.Contains("://", StringComparison.Ordinal) ? where : Path.GetFullPath(where, cwd);
-                return OnLeg(p, client, Verbs.AddArtifact, _ => [full, .. p.GetValue(artifactTitle) ?? []], ct);
+                if (p.GetValue(leg) is null)
+                {
+                    // Outside every plane the artifact goes on the Claude session running this, which a flight's leg would not be.
+                    var snapshot = await SnapshotAsync(client, ct);
+                    var here = Path.TrimEndingDirectorySeparator(Path.GetFullPath(cwd)) + Path.DirectorySeparatorChar;
+                    var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                    var inPlane = snapshot.Flights.Any(f => f.State != FlightState.Landed
+                        && here.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(f.Worktree)) + Path.DirectorySeparatorChar, comparison));
+                    if (!inPlane && sessionId is { Length: > 0 }
+                        && snapshot.Sessions.FirstOrDefault(s => string.Equals(s.SessionId, sessionId, StringComparison.OrdinalIgnoreCase)) is { } session)
+                    {
+                        return await Send(client, Verbs.AddArtifact, Verbs.SessionTarget(session.Id), [full, .. p.GetValue(artifactTitle) ?? []], who, ct);
+                    }
+                }
+                return await OnLeg(p, client, Verbs.AddArtifact, _ => [full, .. p.GetValue(artifactTitle) ?? []], ct);
             });
 
         // review: the reviewer's verdict, from its plane (or a PR review's worktree); or the controller's "ready anyway" with --flight
@@ -388,17 +484,26 @@ public static class PilotCommand
             });
         // review pr: a fresh reviewer on any PR, pinned at its head in a worktree of the node's own
         var prRef = Arg("pr", "The PR: owner/repo#n, or its URL");
-        var reviewPr = Action(new Command("pr", "Start a reviewer on any PR, pinned at its head; its verdict comes back as a card") { Arguments = { prRef } },
+        var reviewPr = Action(new Command("pr", "Start a reviewer on any PR, pinned at its head; its verdict comes back as a card. To have pilot look at a PR again later, put the 'pilot: recheck' label on it") { Arguments = { prRef } },
             (p, client, ct) =>
             {
                 var pr = Pr(p.GetValue(prRef)!);
                 return Send(client, Verbs.ReviewPr, Verbs.PrTarget(pr.Repo, pr.Number), [], who, ct);
+            });
+        // review fix: the fixer of a PR whose review asked for changes, as its card's Fix it starts it (#350: tianwen #1857's
+        // fixer could not start, its card was gone, and nothing but a script could start it again)
+        var reviewFix = Action(new Command("fix", "Start a fixer on a PR whose review asked for changes, as its card's Fix it does") { Arguments = { prRef } },
+            (p, client, ct) =>
+            {
+                var pr = Pr(p.GetValue(prRef)!);
+                return Send(client, Verbs.FixPr, Verbs.PrTarget(pr.Repo, pr.Number), [], who, ct);
             });
         var review = new Command("review", "Review any PR (review pr), or give a review's verdict: a flight's pass offers the merge and changes rings for a go-around; a PR's rings with its findings")
         {
             Subcommands =
             {
                 reviewPr,
+                reviewFix,
                 Verdict("pass", "A flight's review: ready, the merge is offered"),
                 Verdict("changes", "A flight's or a PR's review: changes asked for, each one in the report"),
                 Verdict("approve", "A PR's review: it is right as it is"),
@@ -441,14 +546,15 @@ public static class PilotCommand
                     ? (await SnapshotAsync(client, ct)).Sessions.FirstOrDefault(s => string.Equals(s.SessionId, sessionId, StringComparison.OrdinalIgnoreCase))
                     : null;
                 var target = owner is null ? Verbs.NodeTarget : Verbs.SessionTarget(owner.Id);
-                var sent = await client.SendAsync(new CommandRequest
+                var sent = await SendCommandAsync(client, new CommandRequest
                 {
                     Verb = Verbs.Run,
                     Target = target,
                     Args = [cwd, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
                     Who = owner?.Name ?? who,
                     Agent = byAgent,
-                }, ct);
+                    RequestId = requestId,
+                }, deadline, ct);
                 if (sent is not { Success: true, Response: { Ok: true, Made: { } job } })
                 {
                     await output.WriteLineAsync($"refused: run: {sent.Response?.Error ?? sent.Error}");
@@ -470,9 +576,14 @@ public static class PilotCommand
             });
         var jobsCommand = Action(new Command("jobs", "The node's jobs, running first"), async (_, client, ct) =>
         {
-            var jobs = (await SnapshotAsync(client, ct)).Jobs.OrderBy(j => j.State switch { JobState.Running => 0, JobState.Queued => 1, _ => 2 })
+            var all = (await SnapshotAsync(client, ct)).Jobs;
+            var jobs = all.OrderBy(j => j.State switch { JobState.Running => 0, JobState.Queued => 1, _ => 2 })
             .ThenByDescending(j => j.StartedAt).Take(20).ToList();
             await output.WriteAsync(jobs.Count == 0 ? "No jobs.\n" : string.Concat(jobs.Select(j => JobLine(j) + "\n")));
+            if (JobQueue.HolderLine(all, DateTimeOffset.UtcNow) is { } holder)
+            {
+                await output.WriteLineAsync(holder);
+            }
             return 0;
         });
         var jobId = Arg("job", "The job's id, as j3");
@@ -489,6 +600,18 @@ public static class PilotCommand
             // writer, where a plain read of the file here was refused while the job ran, and it works from the LAN too.
             if (await client.GetJobLogAsync(job.Id, ct) is { Success: true, Response: { } log })
             {
+                if (log.Pid is { } pid)
+                {
+                    await output.WriteLineAsync($"  pid {pid}");
+                }
+                foreach (var process in log.Tree ?? [])
+                {
+                    await output.WriteLineAsync($"  {new string(' ', process.Depth * 2)}{process.Name} {process.Pid}");
+                }
+                if (log.Stuck is { } stuck)
+                {
+                    await output.WriteLineAsync($"  stuck: {stuck}; pilot job {job.Id} cancel --force ends it");
+                }
                 foreach (var line in log.Lines.TakeLast(15))
                 {
                     await output.WriteLineAsync($"  | {line}");
@@ -496,8 +619,9 @@ public static class PilotCommand
             }
             return 0;
         });
-        var cancelJob = Action(new Command("cancel", "Stop a running job; its owner is told") { Arguments = { jobId } },
-            (p, client, ct) => Send(client, Verbs.CancelJob, Verbs.JobTarget(p.GetValue(jobId)!), [], who, ct));
+        var cancelForce = new Option<bool>("--force") { Description = "Kill the job's wrapper and every process under it at once, including ones that outlived the wrapper and hold its output" };
+        var cancelJob = Action(new Command("cancel", "Stop a running job; its owner is told") { Arguments = { jobId }, Options = { cancelForce } },
+            (p, client, ct) => Send(client, Verbs.CancelJob, Verbs.JobTarget(p.GetValue(jobId)!), p.GetValue(cancelForce) ? [Verbs.ForceArg] : [], who, ct));
         jobShow.Subcommands.Add(cancelJob);
 
         // say, note
@@ -556,7 +680,7 @@ public static class PilotCommand
                     }
                     else
                     {
-                        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Say, Target = target, Args = [words], Who = sender, Agent = byAgent }, ct);
+                        var envelope = await SendCommandAsync(client, new CommandRequest { Verb = Verbs.Say, Target = target, Args = [words], Who = sender, Agent = byAgent, RequestId = $"{requestId}:{row.Id}" }, deadline, ct);
                         if (envelope.Success && envelope.Response is { Ok: true } result)
                         {
                             await output.WriteLineAsync($"ok {target}{(result.Way is { } way ? $" ({way})" : "")}  {label}");
@@ -697,6 +821,7 @@ public static class PilotCommand
             foreach (var peer in peers)
             {
                 await output.WriteLineAsync($"{peer.EndPoint}  {peer.DisplayName}{(peer.Properties.TryGetValue("machine", out var m) ? $"  ({m})" : "")}");
+                await output.WriteLineAsync("  " + await NodeTargets.WatchtowerLineAsync(peer.EndPoint.ToString()!, TimeSpan.FromSeconds(2), ct));
             }
             return 0;
         });
@@ -779,7 +904,8 @@ public static class PilotCommand
         // The Settings page's, for a terminal and an agent: this machine's node only.
         var settings = Action(new Command("settings", "This node's setup checklist and settings, and where each setting's value comes from"), async (_, client, ct) =>
         {
-            var page = await client.GetSettingsAsync(ct);
+            // The settings and the checklist are two routes: the checks run programs, so the page does not wait on them.
+            var page = await client.GetSettingsWithChecksAsync(ct);
             if (page is not { Success: true, Response: { } shown })
             {
                 await output.WriteLineAsync($"refused: {page.Error}");
@@ -807,18 +933,19 @@ public static class PilotCommand
         });
         var settingKey = Arg("setting", "lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory or lan-port");
         var settingValue = Words("value", "Its value (every folder, for repo-roots); none, or default, takes it out", required: false);
-        var set = Action(new Command("set", "Save a setting; the node restarts to run with it once no job runs") { Arguments = { settingKey, settingValue }, Options = { actingOn } },
+        var set = Action(new Command("set", "Save a setting; the node restarts to run with it at once, jobs carry on") { Arguments = { settingKey, settingValue }, Options = { actingOn } },
             (p, client, ct) => Send(client, Verbs.Set, Verbs.NodeTarget, [p.GetValue(settingKey)!, .. p.GetValue(settingValue) ?? []], who, ct, p.GetValue(actingOn)));
-        var checkKey = Arg("check", "autostart, no-autostart, hooks, lan, firewall or trust");
-        var setupCommand = Action(new Command("setup", "Make a setup check's fix: the logon entry, the hooks, the LAN, the firewall rule (asks for elevation), the trust prompt") { Arguments = { checkKey }, Options = { actingOn } },
-            (p, client, ct) => Send(client, Verbs.Setup, Verbs.NodeTarget, [p.GetValue(checkKey)!], who, ct, p.GetValue(actingOn)));
+        var checkKey = Arg("check", "autostart, no-autostart, hooks, lan, firewall, defender or trust");
+        var defenderProcesses = new Option<bool>("--processes") { Description = "With defender: exclude pilot-node, dotnet, MSBuild, VBCSCompiler and testhost as processes too, not only the folders" };
+        var setupCommand = Action(new Command("setup", "Make a setup check's fix: the logon entry, the hooks, the LAN, the firewall rule and the Defender exclusions (each asks for elevation), the trust prompt") { Arguments = { checkKey }, Options = { defenderProcesses, actingOn } },
+            (p, client, ct) => Send(client, Verbs.Setup, Verbs.NodeTarget, [p.GetValue(checkKey)!, .. p.GetValue(defenderProcesses) ? new[] { "--processes" } : []], who, ct, p.GetValue(actingOn)));
         settings.Subcommands.Add(set);
         settings.Subcommands.Add(setupCommand);
 
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, summary, summarise, update, archive, ring, flag, handled, nodes, connectNode, grants, settings },
+            Subcommands = { status, attachments, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, summary, summarise, update, archive, ring, flag, handled, nodes, connectNode, grants, settings },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
@@ -837,6 +964,16 @@ public static class PilotCommand
             root.Subcommands.Add(mcp);
         }
         return root;
+    }
+
+    /// <summary>A time as typed: a full date and time, or a clock time (<c>14:30</c>), which is the next such time from <paramref name="now"/>.</summary>
+    internal static DateTimeOffset ParseUntil(string text, DateTimeOffset now)
+    {
+        if (!DateTimeOffset.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeLocal, out var at))
+        {
+            throw new UsageException($"cannot read '{text}' as a time; give 14:30 or 2026-10-27T09:00");
+        }
+        return TimeSpan.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, out _) && at <= now ? at.AddDays(1) : at;
     }
 
     /// <summary>
@@ -989,10 +1126,36 @@ public static class PilotCommand
         }
     }
 
-    private static async Task<int> SendAsync(NodeClient client, string verb, string target, string[] args, string who, bool bySession, bool agent, string? why, string cwd, string? sessionId, TextWriter output, CancellationToken cancellationToken)
+    private static string NewRequestId() => Guid.NewGuid().ToString("N");
+
+    /// <summary>
+    /// The node's answer to a command, or <see cref="CommandTimeoutException"/> once it has not answered in <paramref name="deadline"/>:
+    /// the client itself waits without limit, as a command may run for minutes, so the CLI sets its own, and says so.
+    /// </summary>
+    private static async Task<ResponseEnvelope<CommandResult>> SendCommandAsync(NodeClient client, CommandRequest request, TimeSpan deadline, CancellationToken cancellationToken)
+    {
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(deadline);
+        try
+        {
+            return await client.SendAsync(request, budget.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && budget.IsCancellationRequested)
+        {
+            throw new CommandTimeoutException(deadline);
+        }
+    }
+
+    private static async Task<int> SendAsync(NodeClient client, string verb, string target, string[] args, string who, bool bySession, bool agent, string? why, string cwd, string? sessionId, TextWriter output, string requestId, TimeSpan deadline, CancellationToken cancellationToken)
     {
         who = await SenderAsync(client, who, bySession, agent, cwd, sessionId, cancellationToken);
-        var envelope = await client.SendAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who, Agent = agent, Why = why }, cancellationToken);
+        var envelope = await SendCommandAsync(client, new CommandRequest { Verb = verb, Target = target, Args = args, Who = who, Agent = agent, Why = why, RequestId = requestId }, deadline, cancellationToken);
+        if (envelope.Success && envelope.Response is { Ok: true, Waiting: { Length: > 0 } waiting })
+        {
+            // Queued behind a lock the node's other work holds: not done, and not to be sent again, as it runs once the lock frees.
+            await output.WriteLineAsync($"queued: {verb} {target}: {waiting}; it runs when that is done, and its outcome comes on the event stream and a Handled card (pilot status)");
+            return ExitQueued;
+        }
         if (envelope.Success && envelope.Response is { Ok: true } result)
         {
             await output.WriteLineAsync($"ok: {verb} {target}{(result.Way is { } way ? $" ({way})" : "")}");
@@ -1007,7 +1170,7 @@ public static class PilotCommand
             {
                 await output.WriteLineAsync($"created issue #{issueNumber}");
             }
-            if (verb is Verbs.Overlap or Verbs.Separate or Verbs.Summarise && result.Made is { Length: > 0 } told)
+            if (verb is Verbs.Overlap or Verbs.Separate or Verbs.WaitLeg or Verbs.Summarise && result.Made is { Length: > 0 } told)
             {
                 await output.WriteLineAsync(told);
             }
@@ -1066,6 +1229,10 @@ public static class PilotCommand
         {
             text.AppendLine($"usage  {usage.Line(DateTimeOffset.UtcNow, TimeZoneInfo.Local)}");
         }
+        if (!newestOnly && code is null && snapshot.Machine is { } machine)
+        {
+            text.AppendLine($"machine  {machine.Line()}");
+        }
         var flights = snapshot.Flights.OrderBy(f => f.State == FlightState.Landed).ThenByDescending(f => f.CreatedAt).ToList();
         if (newestOnly)
         {
@@ -1111,10 +1278,19 @@ public static class PilotCommand
             {
                 text.AppendLine(LandedHidden(landed));
             }
-            foreach (var review in snapshot.PrReviews.Where(r => r.State != PrReviewState.Closed).OrderBy(r => r.StartedAt))
+            foreach (var review in snapshot.PrReviews.Where(r => r.State != PrReviewState.Closed || r.Fixer is not null).OrderBy(r => r.StartedAt))
             {
-                var how = review.State == PrReviewState.Reviewing ? $"reviewing, {review.Reviewer}" : $"{review.Verdict}, on card {review.Card}";
+                var how = review.State switch
+                {
+                    PrReviewState.Reviewing => $"reviewing, {review.Reviewer}",
+                    PrReviewState.Closed => $"{review.Verdict}, closed",
+                    _ => $"{review.Verdict}, on card {review.Card}",
+                };
                 text.AppendLine($"PR {review.Repo}#{review.Number}  {review.Title ?? review.Url}  ({how}, at {review.Head[..Math.Min(8, review.Head.Length)]})");
+                if (review.Fixer is { } fixer)
+                {
+                    text.AppendLine($"  fixing, {fixer}, round {review.FixRound ?? 1}");
+                }
             }
             var open = snapshot.Cards.Where(c => c.State == CardState.Open).ToList();
             if (open.Count > 0)
@@ -1171,14 +1347,14 @@ public static class PilotCommand
     }
 
     /// <summary>Every session, a line each: name, role and flight, state, model, context and spend.</summary>
-    internal static string Sessions(IReadOnlyList<SessionRow> rows)
+    internal static string Sessions(IReadOnlyList<SessionRow> rows, string? machine = null)
     {
         var text = new System.Text.StringBuilder();
         foreach (var row in rows)
         {
             var flight = row.Flight is null ? "" : $" {row.Flight}{(row.Leg is { } leg ? "/" + leg : "")}";
             var budget = row.Budget is { } b ? $" of {b.ToString("N0", CultureInfo.InvariantCulture)}" : "";
-            text.AppendLine($"{row.Id}  {row.Name}  {row.Role.ToString().ToLowerInvariant()}{flight}  {row.State.ToString().ToLowerInvariant()}  {row.Model ?? "-"}  {row.ContextTokens.ToString("N0", CultureInfo.InvariantCulture)}/{row.ContextWindow.ToString("N0", CultureInfo.InvariantCulture)}  {row.SpendWeighted.ToString("N0", CultureInfo.InvariantCulture)}{budget}");
+            text.AppendLine($"{row.Id}  {MachineName.Shown(row.Name, machine)}  {row.Role.ToString().ToLowerInvariant()}{flight}  {row.State.ToString().ToLowerInvariant()}  {row.Model ?? "-"}  {row.ContextTokens.ToString("N0", CultureInfo.InvariantCulture)}/{row.ContextWindow.ToString("N0", CultureInfo.InvariantCulture)}  {row.SpendWeighted.ToString("N0", CultureInfo.InvariantCulture)}{budget}{(row.EndedBecause is { } why ? $"  ({why})" : "")}");
         }
         return text.Length == 0 ? "No sessions.\n" : text.ToString();
     }
@@ -1203,7 +1379,7 @@ public static class PilotCommand
             }
             foreach (var pr in repo.PullRequests)
             {
-                text.AppendLine($"    PR #{pr.Number} {pr.Title}  {pr.Head}{(pr.Flight is { } f ? $"  {f}" : "")}  {(pr.Draft ? "draft" : "ready")}{(pr.Checks is { } checks ? $"  checks {checks}" : "")}");
+                text.AppendLine($"    PR #{pr.Number} {pr.Title}  {pr.Head}{(pr.Flight is { } f ? $"  {f}" : "")}  {(pr.Draft ? "draft" : "ready")}{(pr.Checks is { } checks ? $"  checks {checks}" : "")}{(pr.Labels.Length > 0 ? $"  labels {string.Join(", ", pr.Labels)}" : "")}");
             }
             foreach (var problem in repo.Errors)
             {

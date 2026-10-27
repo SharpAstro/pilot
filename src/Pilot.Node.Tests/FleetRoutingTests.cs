@@ -294,6 +294,8 @@ public sealed class FleetRoutingTests : IDisposable
 
         public FlightRow[] Flights { get; init; } = [];
 
+        public PrReviewRow[] PrReviews { get; init; } = [];
+
         public RepoInfo[] Repos { get; set; } = [];
 
         public string? Refuse { get; set; }
@@ -327,7 +329,7 @@ public sealed class FleetRoutingTests : IDisposable
         public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken)
         {
             Reach();
-            return Task.FromResult(new FleetLoad(Usage, Flights));
+            return Task.FromResult(new FleetLoad(Usage, Flights, PrReviews));
         }
 
         public Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken)

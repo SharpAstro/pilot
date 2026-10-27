@@ -47,7 +47,11 @@ internal sealed class TranscriptEntryView
     private const float LabelWidth = 96f;
 
     // The time column down the right of every entry and tool line: hh:mm:ss, wide enough for any.
-    private const float TimeWidth = 64f;
+    private const float TimeWidth = 74f;
+
+    // Kept clear right of the time: a feed's scrollbar is drawn over the rows' right edge, and took the seconds' last digit
+    // ("20:40:3"). The bar's width with a pixel either side; gone once DIR.Lib reserves the bar's column: SharpAstro/DIR.Lib#161.
+    internal const float ScrollGutter = ListScrollController.ScrollBarBaseWidthPx + 4f;
 
     // A call's line: the tool's column, the caret's column the unfolded body is indented by, and how many of a failed
     // call's last lines show while it is folded.
@@ -274,8 +278,11 @@ internal sealed class TranscriptEntryView
     // time. Every entry is stamped by Claude Code, and a reader asks "when was that" of a long run (SE1, 2026-10-25).
     internal static Layout.Node Stamp(DateTimeOffset? at) =>
         at is { } when
-            ? Layout.Builder.Text(when.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture), 11f, Faint, TextAlign.Far).WFixed(TimeWidth)
-                .WithTooltip(when.ToLocalTime().ToString("ddd d MMM yyyy HH:mm:ss zzz", CultureInfo.InvariantCulture), Layout.DockSide.Left)
+            ? Layout.Builder.HStack(
+                    Layout.Builder.Text(when.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture), 11f, Faint, TextAlign.Far).WStar()
+                        .WithTooltip(when.ToLocalTime().ToString("ddd d MMM yyyy HH:mm:ss zzz", CultureInfo.InvariantCulture), Layout.DockSide.Left),
+                    Layout.Builder.Spacer().WFixed(ScrollGutter))
+                .WFixed(TimeWidth)
             : Layout.Builder.Spacer().WFixed(TimeWidth);
 
     // A line of a command or its output. One helper for all of it, so a monospace face for a text leaf lands here once:

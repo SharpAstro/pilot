@@ -71,6 +71,24 @@ public sealed record PrReviewRow
     /// <summary>The posted review's page.</summary>
     public string? PostedUrl { get; init; }
 
+    /// <summary>When the node put the PR in its base's merge queue after an approve or comment verdict (#279); a review is decided once.</summary>
+    public DateTimeOffset? QueuedAt { get; init; }
+
+    /// <summary>Why the node did not queue it, and never will for this review: a changes-free PR that moved, failed, closed, or has no queue.</summary>
+    public string? QueueNote { get; init; }
+
+    /// <summary>The session fixing what a changes verdict found (#290), <c>&lt;machine&gt;-fix-&lt;repo&gt;-&lt;n&gt;</c>; null while none was started.</summary>
+    public string? Fixer { get; init; }
+
+    /// <summary>The fixer's background job, the first eight of its session id.</summary>
+    public string? FixerJob { get; init; }
+
+    /// <summary>The fixer's worktree, <c>&lt;clone&gt;/.claude/worktrees/fix-&lt;repo&gt;-&lt;n&gt;</c>, on the PR's own branch.</summary>
+    public string? FixWorktree { get; init; }
+
+    /// <summary>Which round of fixing the fixer is on, 1 for the first; null while there is no fixer.</summary>
+    public int? FixRound { get; init; }
+
     public required DateTimeOffset StartedAt { get; init; }
 
     public DateTimeOffset? FinishedAt { get; init; }

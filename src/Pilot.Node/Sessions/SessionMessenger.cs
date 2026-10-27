@@ -122,7 +122,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             // cut its turn off.
             await tracker.PollAsync(cancellationToken);
             var rows = state.Sessions();
-            var row = rows.FirstOrDefault(r => r.Id == id) ?? throw new SessionDeliveryException($"There is no session {id}");
+            var row = Find(rows, id) ?? throw new SessionDeliveryException($"There is no session {id}: give its row id, or the name of one live session, as pilot sessions lists them");
             if (compact && row is not { Kind: SessionKind.Background, State: SessionState.Idle })
             {
                 throw new SessionDeliveryException(row.Kind == SessionKind.Background
@@ -136,7 +136,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                     return (SayWays.Resumed, await ResumeAsync(row, text, cancellationToken));
                 default:
                     RefuseAmbiguous(row, rows);
-                    await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who)), cancellationToken);
+                    await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who), ReplyTo(rows, row, command.Who)), cancellationToken);
                     return (SayWays.Relayed, null);
             }
         }
@@ -145,6 +145,21 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             gate.Release();
         }
     }
+
+    /// <summary>
+    /// The session a say names: by its row id, else by its name when one live session has it. A name was refused
+    /// ("There is no session de1-pilot-4d", 2026-10-28), though pilot sessions shows it and the intercom finds a session by it.
+    /// </summary>
+    public static SessionRow? Find(SessionRow[] rows, string idOrName) =>
+        rows.FirstOrDefault(r => r.Id == idOrName)
+        ?? (rows.Where(r => r.Name == idOrName && r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle).ToList() is [var only] ? only : null);
+
+    /// <summary>
+    /// The row a relayed message's answer goes to: the sender's, when it is a live session on this node other than the
+    /// recipient; null for a person or a client, who reads the answer in the recipient's own reply.
+    /// </summary>
+    public static string? ReplyTo(SessionRow[] rows, SessionRow recipient, string? who) =>
+        who is { Length: > 0 } && Find(rows, who) is { } sender && sender.Id != recipient.Id ? sender.Id : null;
 
     /// <summary>The way to <paramref name="row"/>, or why there is none.</summary>
     public static string Choose(SessionRow row) => (row.Kind, row.State) switch
@@ -183,7 +198,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             {
                 await delivery.StopAsync(row.SessionId, cancellationToken);
             }
-            var resumed = await delivery.ResumeAsync(new ResumeRequest(row.SessionId, row.Name == row.Id ? null : row.Name, row.Cwd, text, RemoteControl: row.RemoteControlUrl is not null), cancellationToken);
+            var resumed = await delivery.ResumeAsync(new ResumeRequest(row.SessionId, tracker.ListedName(row), row.Cwd, text, RemoteControl: row.RemoteControlUrl is not null), cancellationToken);
             tracker.CompleteResume(row.Id, resumed);
             return resumed;
         }

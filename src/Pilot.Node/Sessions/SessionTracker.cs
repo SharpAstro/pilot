@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Pilot.Contracts;
+using Pilot.Node.Flights;
 
 namespace Pilot.Node.Sessions;
 
@@ -29,7 +30,17 @@ public sealed class SessionTracker : BackgroundService
     private readonly Dictionary<string, DateTimeOffset> _endedAt = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
     private readonly Dictionary<string, SessionTranscripts> _transcripts = new Dictionary<string, SessionTranscripts>(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTimeOffset> _stale = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
-    private readonly Dictionary<string, string?> _repos = new Dictionary<string, string?>(StringComparer.Ordinal);
+    // The role the node gave each session it started (seen from a name that said so), by row id, with its machine prefix.
+    private readonly Dictionary<string, (SessionRoleInfo Role, string? Prefix)> _given = new Dictionary<string, (SessionRoleInfo, string?)>(StringComparer.Ordinal);
+    // The name each session is listed under, by row id: a row renamed away from the node's naming shows another one, but is resumed under this.
+    private readonly Dictionary<string, string> _listedNames = new Dictionary<string, string>(StringComparer.Ordinal);
+    private readonly Dictionary<string, string?> _repos =new Dictionary<string, string?>(StringComparer.Ordinal);
+
+    // By row id: that a background row's session turned up listed under a new session id, which this tracker did not resume.
+    private readonly Dictionary<string, string> _resumedAs = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    private static bool HasProcess(IReadOnlyList<ClaudeAgentRow> listed, string sessionId) =>
+        listed.Any(a => a.SessionId == sessionId && a.Pid is not null);
 
     // A resumed session continues under a new session id; its row keeps its id and follows it there. By session id:
     // the row each copy belongs to, and the ids it left behind, whose listed rows are not sessions of their own.
@@ -47,6 +58,9 @@ public sealed class SessionTracker : BackgroundService
 
     /// <summary>The hooks sessions post: a row follows its session's latest one while the session runs.</summary>
     public HookBook Hooks { get; init; } = new();
+
+    /// <summary>Where the images a session's artifacts name are kept; an archived session's copies go. Null keeps none.</summary>
+    public Attachments? Attachments { get; init; }
 
     /// <summary>
     /// A session working in a flight's worktree belongs to that flight, however it was started: an ad hoc session opened
@@ -153,16 +167,27 @@ public sealed class SessionTracker : BackgroundService
     /// </summary>
     public IDisposable BeginResume(SessionRow row)
     {
+        var name = ListedName(row);
         _gate.Wait();
         try
         {
-            _resuming[row.Id] = (row.Name == row.Id ? null : row.Name, row.Cwd);
+            _resuming[row.Id] = (name, row.Cwd);
         }
         finally
         {
             _gate.Release();
         }
         return new Resuming(this, row.Id);
+    }
+
+    /// <summary>
+    /// The name a row's session is resumed under, and listed by: its own, not the one its row shows (a renamed session's row
+    /// carries the node's prefix before it). Null for a session with no name.
+    /// </summary>
+    public string? ListedName(SessionRow row)
+    {
+        var name = _listedNames.TryGetValue(row.Id, out var listed) ? listed : row.Name;
+        return name == row.Id ? null : name;
     }
 
     /// <summary>
@@ -196,7 +221,7 @@ public sealed class SessionTracker : BackgroundService
             Put(previous with
             {
                 // Said to again: back in the lists if it was put away.
-                SessionId = newSessionId, State = SessionState.Working, WaitingFor = null, Archived = false,
+                SessionId = newSessionId, State = SessionState.Working, WaitingFor = null, Archived = false, EndedBecause = null,
                 EarlierSessionIds = inPlace ? previous.EarlierSessionIds : [.. previous.EarlierSessionIds ?? [], previous.SessionId],
             });
         }
@@ -265,7 +290,24 @@ public sealed class SessionTracker : BackgroundService
             }
             if (present.Add(id) && !_resuming.ContainsKey(id))
             {
+                var isNew = !_rows.ContainsKey(id);
                 Track(agent, id, now);
+                if (isNew && agent.Kind == "background" && _rows.TryGetValue(id, out var added))
+                {
+                    // A background session listed under a new session id, though nobody here resumed it: it continues an
+                    // older row of the same name and folder, which has no process now. A session the node's own flights start
+                    // (a watchtower, a leg worker) is always started fresh under the same name, so it is never a resume; nor is a
+                    // row that already says why it ended.
+                    foreach (var older in _rows.Values.Where(r => r.Id != id && r.Kind == SessionKind.Background && r.Name == added.Name
+                        && r.Role == SessionRole.AdHoc && added.Role == SessionRole.AdHoc && r.EndedBecause is null
+                        && string.Equals(r.Cwd, added.Cwd, StringComparison.OrdinalIgnoreCase) && r.SessionId != added.SessionId).ToList())
+                    {
+                        if (!_resumedAs.ContainsKey(older.Id) && !HasProcess(listed, older.SessionId))
+                        {
+                            _resumedAs[older.Id] = $"resumed as {id}";
+                        }
+                    }
+                }
             }
         }
 
@@ -273,6 +315,10 @@ public sealed class SessionTracker : BackgroundService
         {
             if (present.Contains(id) || _resuming.ContainsKey(id))
             {
+                if (_resumedAs.TryGetValue(id, out var resumed) && previous.State is SessionState.Ended or SessionState.Failed && previous.EndedBecause != resumed)
+                {
+                    Put(previous with { EndedBecause = resumed });
+                }
                 continue;
             }
 
@@ -280,7 +326,11 @@ public sealed class SessionTracker : BackgroundService
             {
                 // It was running and is no longer listed: its process went. The row stays, as it was, as ended.
                 _endedAt[id] = now;
-                Put(previous with { State = SessionState.Ended, WaitingFor = null });
+                var why = _resumedAs.TryGetValue(id, out var resumed) ? resumed
+                    : Hooks.Of(previous.SessionId) is { State: SessionState.Ended } hook
+                        ? hook.EndReason is { Length: > 0 } reason ? $"session ended ({reason})" : "session ended"
+                        : "its process went (no longer listed)";
+                Put(previous with { State = SessionState.Ended, WaitingFor = null, EndedBecause = why });
             }
             else if (now - _endedAt.GetValueOrDefault(id, now) > _options.EndedRetention)
             {
@@ -310,8 +360,22 @@ public sealed class SessionTracker : BackgroundService
         return id;
     }
 
+    // The process of each live session, by row id, as the last listing gave it; read by the machine sampler off the poll's thread.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _pids = new(StringComparer.Ordinal);
+
+    /// <summary>The live sessions' processes, as (row id, pid): what the machine sampler marks the node's own processes by.</summary>
+    public List<(string Id, int Pid)> LivePids() => [.. _pids.Select(p => (p.Key, p.Value))];
+
     private void Track(ClaudeAgentRow agent, string id, DateTimeOffset now)
     {
+        if (agent.Pid is { } listedPid)
+        {
+            _pids[id] = listedPid;
+        }
+        else
+        {
+            _pids.TryRemove(id, out _);
+        }
         var live = agent.Pid is not null;
         var ended = !live && SessionStates.Map(agent.Status, agent.State, live) is SessionState.Ended or SessionState.Failed;
 
@@ -352,13 +416,42 @@ public sealed class SessionTracker : BackgroundService
         }
 
         // A row built afresh from the listing keeps the copies it followed: they are this row's history, not the listing's.
-        var built = SessionRowBuilder.Build(agent, facts, record, repo, JoinFlight(SessionRoles.Resolve(agent.Name, background: agent.Kind == "background"), agent.Cwd), Hooks.Of(agent.SessionId));
+        var role = SessionRoles.Resolve(agent.Name, background: agent.Kind == "background");
+        string? renamed = null;
+        if (role.Role != SessionRole.AdHoc)
+        {
+            // The name says what the node made it: kept by row, so a rename later does not lose it.
+            _given[id] = (role, SessionRoles.MachinePrefixOf(agent.Name));
+        }
+        else if (_given.TryGetValue(id, out var gave) && agent.Name is { Length: > 0 })
+        {
+            // Renamed away from the node's naming: still the session the node started, and its row still shows the prefix.
+            role = gave.Role;
+            if (gave.Prefix is { } prefix && !agent.Name.StartsWith(prefix + "-", StringComparison.Ordinal))
+            {
+                renamed = $"{prefix}-{agent.Name}";
+            }
+        }
+        if (agent.Name is { Length: > 0 })
+        {
+            _listedNames[id] = agent.Name;
+        }
+        var built = SessionRowBuilder.Build(agent, facts, record, repo, JoinFlight(role, agent.Cwd), Hooks.Of(agent.SessionId));
+        if (renamed is not null)
+        {
+            built = built with { Name = renamed };
+        }
         Put(built with
         {
             Id = id,
             EarlierSessionIds = _rows.TryGetValue(id, out var known) ? known.EarlierSessionIds : null,
+            // A watchtower's rename is noted by the watchtower, on the row as the node holds it, not the listing's: it stays
+            // while the row is under that name. So does the note that the session was resumed under another id.
+            EndedBecause = ended && _resumedAs.TryGetValue(id, out var resumedAs) ? resumedAs
+                : built.EndedBecause ?? (_state.Sessions().FirstOrDefault(r => r.Id == id)?.EndedBecause is { } noted && noted == $"renamed to {built.Name}" ? noted : null),
             // Put away stays put away while it stays ended; running again brings it back.
             Archived = known is { Archived: true } && ended,
+            Artifacts = known?.Artifacts,
             // The same subagents as before are the same array, or the row would differ on every poll.
             Subagents = known?.Subagents is { } were && built.Subagents is { } are && were.SequenceEqual(are) ? were : built.Subagents,
         });
@@ -395,9 +488,42 @@ public sealed class SessionTracker : BackgroundService
 
             foreach (var archived in rows)
             {
+                // Its copies go with it: the artifacts stay listed, without what they kept.
+                if (!undo && archived.Artifacts is { Length: > 0 } kept && kept.Any(a => a.Attachment is not null))
+                {
+                    Attachments?.Remove(archived.Id);
+                    Put(archived with { Archived = true, Artifacts = [.. kept.Select(a => a with { Attachment = null, AttachmentExt = null })] });
+                    continue;
+                }
                 Put(archived with { Archived = !undo });
             }
             return _state.Complete(command, null, way: $"{rows.Count} {(rows.Count == 1 ? "session" : "sessions")} {(undo ? "back" : "archived")}");
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Records an artifact on a session outside any flight, its image copied under the session's own folder; a second of the
+    /// same title replaces the first. A <see cref="FlightException"/> says why not: no such session, or an image that is not there.
+    /// </summary>
+    public void AddArtifact(string id, Artifact artifact)
+    {
+        _gate.Wait();
+        try
+        {
+            if (!_rows.TryGetValue(id, out var row))
+            {
+                throw new FlightException($"there is no session {id}");
+            }
+            var had = row.Artifacts ?? [];
+            if (Attachments is not null)
+            {
+                artifact = Attachments.Keep(row.Id, artifact, had.FirstOrDefault(a => a.Title == artifact.Title));
+            }
+            Put(row with { Artifacts = [.. had.Where(a => a.Title != artifact.Title), artifact] });
         }
         finally
         {
@@ -414,7 +540,12 @@ public sealed class SessionTracker : BackgroundService
     private void Forget(string id, string sessionId, bool keepStale = false)
     {
         _rows.Remove(id);
+        _pids.TryRemove(id, out _);
+        Attachments?.Remove(id);
+        _resumedAs.Remove(id);
         _endedAt.Remove(id);
+        _given.Remove(id);
+        _listedNames.Remove(id);
         _transcripts.Remove(sessionId);
         foreach (var copy in _rowOf.Where(c => c.Value == id).Select(c => c.Key).ToList())
         {
@@ -438,6 +569,10 @@ public sealed class SessionTracker : BackgroundService
         {
             _rows[row.Id] = row;
             _endedAt[row.Id] = now;
+            if (row.Role != SessionRole.AdHoc && SessionRoles.MachinePrefixOf(row.Name) is { } kept)
+            {
+                _given[row.Id] = (new SessionRoleInfo(row.Role, row.Flight, row.Leg, null), kept);
+            }
             // The resumes it followed, as the store kept them: without them, a restarted node would take each copy a
             // resume left behind for a session of its own, and the row's own copy for a new row.
             if (!row.SessionId.StartsWith(row.Id, StringComparison.Ordinal))

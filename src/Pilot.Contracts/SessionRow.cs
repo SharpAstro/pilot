@@ -62,6 +62,10 @@ public sealed record SessionRow
     /// <summary>The flight code the session flies in (<c>TIA1611</c>), or null for the watchtower and ad hoc sessions.</summary>
     public string? Flight { get; init; }
 
+    /// <summary>What the session recorded to be looked at while in no flight (<c>pilot artifact</c>); null when nothing.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Artifact[]? Artifacts { get; init; }
+
     /// <summary>The leg the session flies (<c>node</c>), or null when it flies none.</summary>
     public string? Leg { get; init; }
 
@@ -135,6 +139,17 @@ public sealed record SessionRow
 
     /// <summary>Its budget in weighted tokens, from its leg; null when it has none (the watchtower, an ad hoc session).</summary>
     public long? Budget { get; init; }
+
+    /// <summary>
+    /// Why it ended, while <see cref="State"/> is <see cref="SessionState.Ended"/> or <see cref="SessionState.Failed"/>: its
+    /// process went (no longer listed), a SessionEnd hook (with the hook's reason when it gave one), Claude Code listing it
+    /// done, blocked or failed with no process (a <c>claude --bg</c> job that exited), or that it was resumed under a new
+    /// session id. Also the watchtower's note that a live row turned up renamed (<c>renamed to &lt;name&gt;</c>), which a
+    /// live row carries. Otherwise null on a live row (working again clears it) and where no cause is known, so rows still
+    /// compare equal as records.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? EndedBecause { get; init; }
 
     /// <summary>
     /// Its Remote Control link, <c>https://claude.ai/code/&lt;bridgeSessionId&gt;</c>, from the session record's

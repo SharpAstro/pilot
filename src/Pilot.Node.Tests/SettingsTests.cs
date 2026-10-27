@@ -118,9 +118,22 @@ public sealed class SettingsTests : IDisposable
         (channel.Value, channel.Saved, channel.Pending, channel.Source).ShouldBe(("stable", "beta", true, SettingSources.Default));
         channel.Choices.ShouldBe(["stable", "beta"]);
         page.Settings.Select(s => s.Key).ShouldBe(NodeSettings.Keys);
-        page.Checks.Select(c => c.Key).ShouldContain(NodeSetup.AutostartKey);
+        // The page carries no checklist: it has its own route.
+        page.Checks.ShouldBeEmpty();
+        (await node.Client.GetSetupChecksAsync(Ct)).Response.ShouldNotBeNull().Checks.Select(c => c.Key).ShouldContain(NodeSetup.AutostartKey);
 
-        // The job limits are in force at once, no restart: one waiting for the queue would wait on what it is meant to clear.
+        // A running job does not hold a restart: the answer is the same with one running (jobs carry on under the next node).
+        node.State.PutJob(new JobRow
+        {
+            Id = "j1", Command = "dotnet test", Cwd = _root, State = JobState.Running, LogPath = Path.Combine(_root, "j1.log"),
+            Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow,
+        });
+        var withJob = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["update-channel", "beta"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        withJob.Way.ShouldNotBeNull().ShouldStartWith("saved; it applies at the node's next start");
+        withJob.Way.ShouldNotContain("once no job runs");
+        (await node.Client.GetSettingsAsync(Ct)).Response!.Restart.ShouldBeNull();
+
+        // The job limits are in force at once, no restart.
         var jobs = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["max-jobs", "3"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
         jobs.Way.ShouldBe("max-jobs saved as 3, and in force now");
         node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().MaxRunning.ShouldBe(3);
@@ -131,6 +144,122 @@ public sealed class SettingsTests : IDisposable
         refused.Error.ShouldBe("max-jobs takes a number, 1 to 64");
         var watchtower = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["lan", "on"], Who = $"{node.Options.Machine.ToLowerInvariant()}-watchtower" }, Ct)).Response.ShouldNotBeNull();
         watchtower.Error.ShouldNotBeNull().ShouldContain("is the controller's");
+    }
+
+    // The settings commands over a node's own parts, with a setup whose every program run is counted, and a clock a test moves.
+    private (NodeSettingsCommands Commands, Func<int> Runs, Pilot.Node.Tests.Sessions.ManualTime Time) CountingSettings(NodeHarness node, Func<string, IReadOnlyList<string>, TimeSpan, (int Exit, string Output)>? run = null)
+    {
+        var runs = 0;
+        var time = new Pilot.Node.Tests.Sessions.ManualTime(new DateTimeOffset(2026, 10, 27, 9, 0, 0, TimeSpan.Zero));
+        var setup = new NodeSetup(node.Options, Path.Combine(_root, "pilot-node.exe"), _root)
+        {
+            Run = (program, args, budget) =>
+            {
+                Interlocked.Increment(ref runs);
+                return run?.Invoke(program, args, budget) ?? (1, "");
+            },
+        };
+        var services = node.App.Services;
+        var commands = new NodeSettingsCommands(node.Options, node.State, services.GetRequiredService<NodeRestarter>(), setup, time,
+            services.GetRequiredService<Pilot.Node.Flights.JobRunner>(), services.GetRequiredService<RoleModels>());
+        return (commands, () => Volatile.Read(ref runs), time);
+    }
+
+    [Fact]
+    public async Task TheSettingsPageRunsNoSetupCheck()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var (commands, runs, _) = CountingSettings(node);
+
+        var page = await commands.PageAsync(Ct);
+
+        page.Settings.Select(s => s.Key).ShouldBe(NodeSettings.Keys);
+        page.Checks.ShouldBeEmpty();
+        runs().ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task TheChecksRouteAnswersFromItsCacheWithTheTimeMeasuredAndRunsAgainOnRefreshOrAge()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        // Where reading a check runs a program (gh, and netsh on Windows), it is counted.
+        var (commands, runs, time) = CountingSettings(node);
+        var measuredAt = time.GetUtcNow();
+
+        var first = await commands.SetupChecksAsync(refresh: false, Ct);
+        var afterFirst = runs();
+        first.CheckedAt.ShouldBe(measuredAt);
+        first.Checks.Select(c => c.Key).ShouldContain(NodeSetup.GhKey);
+        first.Checks.Single(c => c.Key == NodeSetup.GhKey).Runs.ShouldBe("runs gh, which asks GitHub");
+        first.Checks.Single(c => c.Key == NodeSetup.AutostartKey).Runs.ShouldBeNull();
+        afterFirst.ShouldBeGreaterThan(0);
+
+        // Looked at again within the cache age: the same answer, measured then, with nothing run.
+        time.Advance(TimeSpan.FromSeconds(3));
+        var cached = await commands.SetupChecksAsync(refresh: false, Ct);
+        cached.CheckedAt.ShouldBe(measuredAt);
+        runs().ShouldBe(afterFirst);
+
+        // A refresh runs them again and says when.
+        var refreshed = await commands.SetupChecksAsync(refresh: true, Ct);
+        refreshed.CheckedAt.ShouldBe(measuredAt.AddSeconds(3));
+        runs().ShouldBe(afterFirst * 2);
+
+        // Older than the cache age: run again without being asked.
+        time.Advance(TimeSpan.FromSeconds(11));
+        (await commands.SetupChecksAsync(refresh: false, Ct)).CheckedAt.ShouldBe(measuredAt.AddSeconds(14));
+        runs().ShouldBe(afterFirst * 3);
+    }
+
+    [Fact]
+    public async Task TheChecksRouteAnswersOverTheWire()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+
+        var before = DateTimeOffset.UtcNow;
+        var checks = (await node.Client.GetSetupChecksAsync(Ct)).Response.ShouldNotBeNull();
+        checks.CheckedAt.ShouldBeGreaterThanOrEqualTo(before.AddSeconds(-1));
+        checks.Checks.Select(c => c.Key).ShouldContain(NodeSetup.UsageKey);
+
+        // The CLI and the pages that show both read the page with the checks filled in from their route.
+        var both = (await node.Client.GetSettingsWithChecksAsync(Ct)).Response.ShouldNotBeNull();
+        both.Checks.Select(c => c.Key).ShouldBe(checks.Checks.Select(c => c.Key));
+        both.Settings.Select(s => s.Key).ShouldBe(NodeSettings.Keys);
+    }
+
+    [Fact]
+    public async Task SetNodeAnswersWithTheChangedSettingsNewRow()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+
+        // Pending until the node restarts: the row says what the file holds, and what the node runs with.
+        var channel = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["update-channel", "beta"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        channel.Setting.ShouldNotBeNull().ShouldSatisfyAllConditions(
+            s => s.Key.ShouldBe(NodeSettings.UpdateChannelKey),
+            s => s.Saved.ShouldBe("beta"),
+            s => s.Value.ShouldBe("stable"),
+            s => s.Pending.ShouldBeTrue());
+
+        // A live setting: the row is read after it is applied, so its running value is the new one.
+        var jobs = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["max-jobs", "3"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        jobs.Setting.ShouldNotBeNull().ShouldSatisfyAllConditions(
+            s => s.Key.ShouldBe(NodeSettings.MaxJobsKey),
+            s => s.Value.ShouldBe("3"),
+            s => s.Saved.ShouldBe("3"),
+            s => s.Pending.ShouldBeFalse());
+        var maintenance = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["maintenance", "on"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        maintenance.Setting.ShouldNotBeNull().Value.ShouldBe("on");
+
+        // The row is the page's own row for it.
+        var page = (await node.Client.GetSettingsAsync(Ct)).Response.ShouldNotBeNull();
+        var onPage = page.Settings.Single(s => s.Key == NodeSettings.MaxJobsKey);
+        var answered = jobs.Setting.ShouldNotBeNull();
+        (answered.Key, answered.Label, answered.Value, answered.Saved, answered.Source, answered.Pending).ShouldBe((onPage.Key, onPage.Label, onPage.Value, onPage.Saved, onPage.Source, onPage.Pending));
+        answered.Choices.ShouldBe(onPage.Choices);
+
+        // A refusal carries none.
+        var refused = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["max-jobs", "lots"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        refused.Setting.ShouldBeNull();
     }
 
     [Fact]
@@ -267,6 +396,47 @@ public sealed class SettingsTests : IDisposable
         result.Way.ShouldBe("merge-method saved as squash; the next merge uses it");
         node.App.Services.GetRequiredService<RoleModels>().MergeMethod.ShouldBe("squash");
         (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == "merge-method").Choices.ShouldBe(["rebase", "squash", "merge"]);
+    }
+
+    /// <summary>A list entry that names a folder by path must be one, and stands for the folder's name; a repo-trackers entry must be repo=tracker.</summary>
+    [Fact]
+    public async Task SetRefusesAListEntryThatIsNotAFolderAndTakesAFolderByItsName()
+    {
+        var clone = Directory.CreateDirectory(Path.Combine(_root, "my-clone")).FullName;
+        var missing = Path.Combine(_root, "missing");
+
+        foreach (var key in new[] { "priority-repos", "no-auto-merge-repos" })
+        {
+            NodeSettings.With(new NodeSettings(), key, ["tianwen", missing]).ShouldBe((null, $"{missing} is not a folder on this machine"));
+        }
+        NodeSettings.With(new NodeSettings(), "repo-trackers", [$"{missing}=shortcut"]).ShouldBe((null, $"{missing} is not a folder on this machine"));
+        NodeSettings.With(new NodeSettings(), "repo-trackers", ["tianwen=jira"]).Error.ShouldNotBeNull().ShouldContain("repo=tracker");
+        NodeSettings.With(new NodeSettings(), "repo-trackers", ["tianwen"]).Error.ShouldNotBeNull().ShouldContain("repo=tracker");
+        NodeSettings.With(new NodeSettings(), "repo-trackers", [clone]).Error.ShouldNotBeNull().ShouldContain("repo=tracker");
+
+        NodeSettings.With(new NodeSettings(), "no-auto-merge-repos", ["tianwen", clone, "TIANWEN"]).Settings!.NoAutoMergeRepos.ShouldBe(["tianwen", "my-clone"]);
+        NodeSettings.With(new NodeSettings(), "repo-trackers", [$"{clone}=Shortcut"]).Settings!.RepoTrackers.ShouldBe(["my-clone=shortcut"]);
+
+        // Through the node: the refusal's reason is the reply's, and nothing is written.
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var refused = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["no-auto-merge-repos", missing], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        refused.Ok.ShouldBeFalse();
+        refused.Error.ShouldBe($"{missing} is not a folder on this machine");
+        (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == "no-auto-merge-repos").Saved.ShouldBeNull();
+    }
+
+    /// <summary>A role's model and effort rows say "default leaves the choice to Claude Code" where the wire value is still none.</summary>
+    [Fact]
+    public async Task ARoleRowsHelpSaysDefaultLeavesTheChoiceToClaudeCode()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+
+        var rows = (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Where(s => NodeSettings.IsRoleKey(s.Key)).ToArray();
+
+        rows.ShouldNotBeEmpty();
+        rows.ShouldAllBe(r => r.Choices.Contains("none"));
+        rows.ShouldAllBe(r => r.Detail.Contains("default leaves the choice to Claude Code"));
+        rows.ShouldAllBe(r => !r.Detail.Contains("none leaves"));
     }
 
     [Fact]

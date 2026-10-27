@@ -28,19 +28,8 @@ public sealed class PrMarksTests : IDisposable
 
     public PrMarksTests()
     {
-        // A repo with a bare origin, so a flight's push is a real one.
-        var origin = Path.Combine(_root, "origin.git");
-        Directory.CreateDirectory(Repo);
-        Git(_root, "init", "-q", "--bare", "-b", "main", origin);
-        Git(Repo, "init", "-q", "-b", "main");
-        Git(Repo, "config", "user.email", "t@example.com");
-        Git(Repo, "config", "user.name", "t");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        Git(Repo, "remote", "add", "origin", origin);
-        Git(Repo, "push", "-q", "-u", "origin", "main");
-        Git(Repo, "remote", "set-head", "origin", "main");
+        // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
+        SeedRepo.Make(_root);
         var git = new GitCli();
         _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
@@ -114,6 +103,40 @@ public sealed class PrMarksTests : IDisposable
         Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), verdict, report);
 
     private static string[] Pilot(HashSet<string>? labels) => [.. (labels ?? []).Where(l => l.StartsWith("pilot: ", StringComparison.Ordinal))];
+
+    [Fact]
+    public async Task OpeningAFlightsPrLabelsItWithThisNodesCodeAndAStateLabelChangeLeavesItBe()
+    {
+        var flight = await Opened();
+
+        _github.IssueLabels[71].ShouldBe(["pilot node: DU1"]);
+        // The state label is the PR's one pilot: label; the node label is another kind and stays through every swap.
+        Pilot(_github.Labels[71]).ShouldBe(["pilot: reviewing"]);
+        (await Verdict(flight.Code, "pass", "every Done-when holds")).Error.ShouldBeNull();
+        Pilot(_github.Labels[71]).ShouldBe(["pilot: passed"]);
+        _github.IssueLabels[71].ShouldBe(["pilot node: DU1"]);
+    }
+
+    [Fact]
+    public async Task APilotLabelSwapLeavesANodeLabelInPlace()
+    {
+        _github.Labels[5] = ["pilot node: DU1", "pilot: reviewing", "bug"];
+
+        await _github.SetPilotLabelAsync(Repo, 5, "pilot: changes", Ct);
+
+        _github.Labels[5].OrderBy(l => l, StringComparer.Ordinal).ShouldBe(["bug", "pilot node: DU1", "pilot: changes"]);
+    }
+
+    [Fact]
+    public async Task ANodeLabelGitHubRefusesOnTheNewPrIsACardNotAFailedPr()
+    {
+        _github.IssueLabelFails = "label refused";
+
+        var flight = await Opened();
+
+        flight.PullRequest.ShouldBe(71);
+        _state.Cards(openOnly: false).Single(c => c.Kind == "node-label-refused").Detail.ShouldNotBeNull().ShouldContain("label refused");
+    }
 
     [Fact]
     public async Task AReviewStartsPendingOnTheHeadItReadsAndTheFlightRowKeepsWhatWasSet()

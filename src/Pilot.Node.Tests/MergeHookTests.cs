@@ -22,7 +22,22 @@ public sealed class MergeHookTests : IDisposable
     }
 
     private static string Input(string command, string tool = "Bash") =>
-        new JsonObject { ["hook_event_name"] = "PreToolUse", ["tool_name"] = tool, ["tool_input"] = new JsonObject { ["command"] = command }, ["cwd"] = "/work/plane" }.ToJsonString();
+        new JsonObject { ["hook_event_name"] = "PreToolUse", ["tool_name"] = tool, ["tool_input"] = new JsonObject { ["command"] = command }, ["cwd"] = "/work/repo/.claude/worktrees/plane" }.ToJsonString();
+
+    [Theory]
+    [InlineData("/work/repo/.claude/worktrees/pil12", true)]
+    [InlineData(@"C:\r\pilot\.claude\worktrees\agent-1", true)]
+    [InlineData(@"C:\Users\me\AppData\Local\pilot2\watchtower", true)]
+    [InlineData(@"C:\r\pilot", false)]
+    [InlineData("/work/repo", false)]
+    public void OnlyASessionTheNodeStartedIsGuarded(string folder, bool guarded) => MergeGuard.Guarded(folder).ShouldBe(guarded);
+
+    [Fact]
+    public void ThePersonsOwnSessionMergesAsTheySay()
+    {
+        var input = new JsonObject { ["hook_event_name"] = "PreToolUse", ["tool_name"] = "Bash", ["tool_input"] = new JsonObject { ["command"] = "gh pr merge 249 --squash" }, ["cwd"] = "/work/repo" }.ToJsonString();
+        MergeGuard.Decide(input, Git("flight/x")).ShouldBeNull();
+    }
 
     /// <summary>A repo whose default branch is main and whose checkout is on <paramref name="branch"/>.</summary>
     private static MergeGuard.GitQuery Git(string? branch, string? defaultBranch = "origin/main") => (_, args) =>
@@ -63,6 +78,38 @@ public sealed class MergeHookTests : IDisposable
     public void AMergeOrAPushToMainIsRefusedNamingPilotFlightMerge(string command)
     {
         Decide(command).ShouldNotBeNull().ShouldContain("pilot flight merge");
+    }
+
+    private static string? DecideAs(string tool, string command) =>
+        MergeGuard.Decide(Input(command, tool), Git("flight/x"), machine: "DE1");
+
+    [Theory]
+    [InlineData("Bash", "claude --bg -n tia1241-nudge")]
+    [InlineData("Bash", "claude --bg --name tia1241-nudge 'do it'")]
+    [InlineData("Bash", "claude --bg --name=tia1241-nudge")]
+    [InlineData("Bash", "claude -n tia1241-nudge --bg")]
+    [InlineData("Bash", "cd /work/plane && nohup claude --bg -n tia1241-nudge")]
+    [InlineData("Bash", "bash -c 'claude --bg -n tia1241-nudge'")]
+    [InlineData("PowerShell", "claude --bg -n tia1241-nudge")]
+    [InlineData("PowerShell", "claude.exe --bg -n tia1241-nudge")]
+    [InlineData("PowerShell", "pwsh -Command \"claude --bg -n tia1241-nudge\"")]
+    public void AnUnprefixedBackgroundSessionIsRefusedNamingThePrefixedOne(string tool, string command)
+    {
+        DecideAs(tool, command).ShouldNotBeNull().ShouldContain("de1-tia1241-nudge");
+    }
+
+    [Theory]
+    [InlineData("Bash", "claude --bg -n de1-tia1241-nudge")]
+    [InlineData("Bash", "claude --bg -n DE1-tia1241-nudge")]
+    [InlineData("PowerShell", "claude --bg --name de1-pil283-review")]
+    [InlineData("Bash", "claude -n tia1241-nudge")]
+    [InlineData("Bash", "claude --bg 'a prompt'")]
+    [InlineData("Bash", "claude --version")]
+    [InlineData("Bash", "claude mcp list")]
+    [InlineData("Bash", "echo claude --bg -n tia1241-nudge")]
+    public void APrefixedOrUnrelatedClaudeCallPasses(string tool, string command)
+    {
+        DecideAs(tool, command).ShouldBeNull();
     }
 
     [Theory]
@@ -277,7 +324,7 @@ public sealed class MergeHookTests : IDisposable
 
         MergeGuard.Decide(Input("cd ../other && git push"), git).ShouldNotBeNull();
 
-        folders.ShouldAllBe(f => f.Replace('\\', '/').EndsWith("/work/other", StringComparison.Ordinal));
+        folders.ShouldAllBe(f => f.Replace('\\', '/').EndsWith("/.claude/worktrees/other", StringComparison.Ordinal));
     }
 
     [Theory]

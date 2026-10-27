@@ -38,15 +38,18 @@ internal sealed class NodeFeed : IAsyncDisposable
     private long _reposAtTicks = DateTimeOffset.MinValue.UtcTicks;
     private long _reposWantedUntilTicks = DateTimeOffset.MinValue.UtcTicks;
     private int _reposLoading;
+    // What stamps DownSince: the wall clock, a test's own where it says when a node went down.
+    private readonly Func<DateTimeOffset> _clock;
 
     /// <summary>
     /// The node as this feed last saw it: its rows, its usage, how the connection stands, what the node said it is
     /// (<paramref name="Node"/>, its machine and account, for the fleet; <paramref name="NodeVersion"/>, as of the last
-    /// connection: an update restarts the node under this window) and its repos.
+    /// connection: an update restarts the node under this window), its repos and when its stream went down
+    /// (<paramref name="DownSince"/>: its first failed open, or its drop after being live; null while it is up, and before the first try failed).
     /// </summary>
     private sealed record View(
         SessionRow[] Sessions, FlightRow[] Flights, LegRow[] Legs, CardRow[] Cards, JobRow[] Jobs, UsageRow? Usage, string? Stream,
-        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos, SummaryRow[] Summaries);
+        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos, SummaryRow[] Summaries, DateTimeOffset? DownSince = null, MachineRow? Machine = null);
 
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(
@@ -68,8 +71,9 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// <param name="nodeInfo">Asks the node what it is, on each connection, its version included (null: never asked).</param>
     public NodeFeed(Func<long?, string?, CancellationToken, Task<INodeEvents>> open, string socketPath, TimeSpan? retry = null,
         Func<CancellationToken, Task<string?>>? nodeVersion = null, Func<CancellationToken, Task<NodeInfo>>? nodeInfo = null,
-        Func<CancellationToken, Task<RepoStatus[]?>>? repoLoader = null)
+        Func<CancellationToken, Task<RepoStatus[]?>>? repoLoader = null, Func<DateTimeOffset>? clock = null)
     {
+        _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _repoLoader = repoLoader;
         _open = open;
         _nodeVersion = nodeVersion;
@@ -85,6 +89,9 @@ internal sealed class NodeFeed : IAsyncDisposable
             nodeInfo: client.GetNodeAsync,
             repoLoader: async ct => await client.GetRepoStatusAsync(ct).ConfigureAwait(false) is { Success: true, Response: { } repos } ? repos : null);
 
+    /// <summary>The node's machine as it last sampled it (as <see cref="Usage"/> is carried); null from a node that sends none, and until its snapshot is in.</summary>
+    public MachineRow? Machine => Volatile.Read(ref _view).Machine;
+
     /// <summary>What the node said it is, as of its last connection; null until it has.</summary>
     public NodeInfo? Node => Volatile.Read(ref _view).Node;
 
@@ -96,6 +103,7 @@ internal sealed class NodeFeed : IAsyncDisposable
         return new NodeSummary
         {
             Connected = view.Connected,
+            DownSince = view.DownSince,
             Status = view.Status,
             Node = view.Node,
             Stream = view.Stream,
@@ -107,6 +115,8 @@ internal sealed class NodeFeed : IAsyncDisposable
             Held = view.Flights.Count(f => f.State == FlightState.Held),
             JobsRunning = view.Jobs.Count(j => j.State == JobState.Running),
             JobsQueued = view.Jobs.Count(j => j.State == JobState.Queued),
+            JobHolder = JobQueue.HolderLine(view.Jobs, now),
+            LegWait = view.Legs.Where(l => l.State == LegState.Flying && l.Wait is not null).Select(l => FlightWaiting.WaitText(l.Wait!)).FirstOrDefault(),
             Rings = view.Cards.Count(c => c.State == CardState.Open && c.Bin == CardBin.Ring),
         };
     }
@@ -125,6 +135,19 @@ internal sealed class NodeFeed : IAsyncDisposable
 
     /// <summary>Whether a stream is open and has delivered its snapshot.</summary>
     public bool Connected => Volatile.Read(ref _view).Connected;
+
+    /// <summary>
+    /// Whether the stream is up and when it went down, from one read of the view, so the two agree: the merged panel holds a
+    /// node's cards back while it is not <c>Connected</c>, and names it with the time it has been out of reach.
+    /// </summary>
+    public (bool Connected, DateTimeOffset? DownSince) Reach
+    {
+        get
+        {
+            var view = Volatile.Read(ref _view);
+            return (view.Connected, view.DownSince);
+        }
+    }
 
     /// <summary>Why there is no node, when the GUI could not start one: the header says it while it retries.</summary>
     public string? Problem { get; set; }
@@ -214,7 +237,9 @@ internal sealed class NodeFeed : IAsyncDisposable
     {
         var view = Volatile.Read(ref _view);
         var usage = view.Usage;
-        return new SessionsScreen(SessionLine.Build(view.Sessions, now), view.Status + UpdateNoteOf(view), now,
+        var code = view.Node?.MachinePrefix is { Length: > 0 } prefix ? prefix : null;
+        var lines = SessionLine.Build(view.Sessions, now);
+        return new SessionsScreen(code is null ? lines : [.. lines.Select(l => l with { NodeCode = code })], view.Status + UpdateNoteOf(view), now,
             usage is { HasFigures: true } ? usage.Line(now, TimeZoneInfo.Local) : null, usage?.Account?.Line());
     }
 
@@ -292,7 +317,8 @@ internal sealed class NodeFeed : IAsyncDisposable
             {
                 await Task.Delay(NodeRefresh, cancellationToken).ConfigureAwait(false);
                 // The node as the immutable view holds it: no lock to take (the feed never waits on a reader).
-                (bool, bool) Seen() => (Node?.Maintenance ?? false, Node?.AcceptsFleetFlights ?? false);
+                // The watchtower's words are in it, so its starts and its churning mark move on the Fleet page.
+                (bool, bool, string?) Seen() => (Node?.Maintenance ?? false, Node?.AcceptsFleetFlights ?? false, Pilot.Commands.WatchtowerWords.Line(Node?.Watchtower, DateTimeOffset.UtcNow));
                 var before = Seen();
                 await AskVersionAsync(cancellationToken).ConfigureAwait(false);
                 if (Seen() != before)
@@ -385,6 +411,7 @@ internal sealed class NodeFeed : IAsyncDisposable
         JobRow[] jobs = [.. _mirror.Jobs.Values];
         SummaryRow[] summaries = [.. _mirror.Summaries.Values];
         var usage = _mirror.Usage;
+        var machine = _mirror.Machine;
         var stream = _mirror.Stream;
         ImmutableInterlocked.Update(ref _view, view => view with
         {
@@ -395,16 +422,20 @@ internal sealed class NodeFeed : IAsyncDisposable
             Jobs = jobs,
             Summaries = summaries,
             Usage = usage,
+            Machine = machine,
             Stream = stream,
             Status = snapshot || !view.Connected ? $"live from the node on {_socketPath}" : view.Status,
             Connected = true,
+            DownSince = null,
         });
         Interlocked.Increment(ref _version);
     }
 
     private void SetStatus(string status, bool connected)
     {
-        ImmutableInterlocked.Update(ref _view, view => view with { Status = status, Connected = connected });
+        // The first moment it is seen down: a node that stays down keeps the time it went, each retry only restates why.
+        var at = _clock();
+        ImmutableInterlocked.Update(ref _view, view => view with { Status = status, Connected = connected, DownSince = connected ? null : view.DownSince ?? at });
         Interlocked.Increment(ref _version);
     }
 

@@ -101,9 +101,15 @@ internal sealed class NodeFilter
         foreach (var choice in Choices)
         {
             var key = choice.Key;
-            yield return CardsView<RgbaImage>.HeaderPill(choice.Name, $"nodes:{key}", modifiers => Pick(key, modifiers), !all && _picked.Contains(key) ? lit : plain, night?.Bright);
+            yield return CardsView<RgbaImage>.HeaderPill(Label(choice), $"nodes:{key}", modifiers => Pick(key, modifiers), !all && _picked.Contains(key) ? lit : plain, night?.Bright);
         }
     }
+
+    /// <summary>
+    /// A node's pill: its name, and "(this)" for the node this window runs against, which the page's lines call "this node"
+    /// (in maintenance, its usage). Without it nothing on screen said which pill that was (SE1, 2026-10-27).
+    /// </summary>
+    internal static string Label(NodeMark node) => node.Here ? $"{node.Name} (this)" : node.Name;
 
     /// <summary>The pills in a line, for a dump or a test: <c>[All nodes] SE1 LE1</c>, the lit ones bracketed.</summary>
     public string Line() =>
@@ -234,8 +240,11 @@ internal sealed class PlayFilter
 /// Every page's screen for the nodes a window shows: each node's rows merged, marked with their node when there is more
 /// than one, and filtered by the window's <see cref="NodeFilter"/>.
 /// </summary>
-internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights, JobsScreen Jobs, IReadOnlyList<JobRow> JobRows, CardsScreen Cards, ReposScreen? Repos = null, SummaryShelf? Summaries = null)
+internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights, JobsScreen Jobs, IReadOnlyList<JobRow> JobRows, CardsScreen Cards, ReposScreen? Repos = null, SummaryShelf? Summaries = null, IReadOnlyList<MachineLine>? Machines = null)
 {
+    /// <summary>Whether a feed's <see cref="NodeFeed.Reach"/> says its node cannot be reached: down since a first failed try or a drop. The one test the panel's held lines and the flights' stale marks share.</summary>
+    private static bool Unreachable((bool Connected, DateTimeOffset? DownSince) reach) => !reach.Connected && reach.DownSince is not null;
+
     /// <summary>
     /// Merges <paramref name="feeds"/> (this window's node first, then the others, each node once). This window's node's
     /// rows stay unmarked while it is the only node to choose, as they were before there was a fleet; another node's rows are
@@ -254,10 +263,24 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
         var here = feeds[0].Feed;
         var hereSessions = here.Screen(now);
         var sessions = SessionLine.Order(shown.SelectMany(f => f.Feed.Screen(now).Lines.Select(l => l with { Node = Mark(f.Mark) })));
-        var flights = FlightLine.Order(shown.SelectMany(f => f.Feed.Flights(now).Lines.Select(l => l with { Node = Mark(f.Mark) })));
+        // Read once per node, so a node that answers between two reads is not both reachable and not: the panel's held lines and
+        // the flights' stale marks below read this one answer, which is the state the Fleet page shows too.
+        var reach = shown.Select(f => (f.Mark, f.Feed, f.Feed.Reach)).ToList();
+        // A flight on a node the window cannot reach is its last known row, marked stale with that node's name: it may be long
+        // out of date and its commands cannot go anywhere (pilot #325).
+        var flights = FlightLine.Order(reach.SelectMany(f => f.Feed.Flights(now).Lines.Select(l => l with { Node = Mark(f.Mark), Stale = Unreachable(f.Reach) ? f.Mark.Name : null })));
         var jobs = JobLine.Order(shown.SelectMany(f => f.Feed.JobsPage(now).Lines.Select(l => l with { Node = Mark(f.Mark) })));
-        var cards = CardsScreen.Merge(shown.Select(f => (Mark(f.Mark), f.Feed.Cards())), feeds[0].Feed.Cards().Watchtower);
+        // A node the window cannot reach gives the panel none of its cards, which may be long answered and cannot be commanded
+        // now (DE1, 2026-10-26: its stale copy stood on the panel and in its counts for hours). One line each says how many it
+        // held, and the node's own answer fills the panel again when it is back.
+        var cards = CardsScreen.Merge(
+            reach.Where(f => f.Reach.Connected).Select(f => (Mark(f.Mark), f.Feed.Cards())),
+            feeds[0].Feed.Cards().Watchtower,
+            reach.Where(f => Unreachable(f.Reach)).Select(f => HeldNode.Of(f.Mark, f.Reach.DownSince!.Value, f.Feed.Cards(), now)));
         var repos = RepoLine.Order(shown.SelectMany(f => f.Feed.Repos(now, reposWanted).Lines.Select(l => l.Marked(Mark(f.Mark)))));
+        // A node's machine as it last sampled it; none from a node that sends no row (an older one), and none from one the window
+        // cannot reach, whose last figures may be long out of date.
+        var machines = reach.Where(f => !Unreachable(f.Reach)).Select(f => (f.Mark, Row: f.Feed.Machine)).Where(f => f.Row is not null).Select(f => new MachineLine(Mark(f.Mark), f.Row!)).ToList();
         var source = several ? $"{hereSessions.Source} · {filter.Choices.Count} nodes{(filter.All ? "" : $", showing {string.Join(", ", filter.Choices.Where(c => filter.Shows(c)).Select(c => c.Name))}")}" : hereSessions.Source;
         return new FleetPages(
             hereSessions with { Lines = sessions, Source = source },
@@ -268,7 +291,8 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
             new ReposScreen(repos, several ? source : hereSessions.Source, now),
             // Every node's summaries, shown or not: the card picks the node it asks about, from the window's node selection.
             new SummaryShelf(filter.Choices, feeds.SelectMany(f => f.Feed.Summaries().Select(s => (Key: (f.Mark.Key, s.Scope), Row: s)))
-                .ToDictionary(x => x.Key, x => x.Row)));
+                .ToDictionary(x => x.Key, x => x.Row)),
+            machines);
     }
 }
 

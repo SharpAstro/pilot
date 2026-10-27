@@ -13,30 +13,32 @@ namespace Pilot.Node.Tests;
 /// stopped, the node looking for the package on nuget.org and starting the leg afresh once it is there. Real git repos (the
 /// flight's and a sibling's), the real commanders and watch, fakes for the workers, the checks, GitHub and nuget.org.
 /// </summary>
-public sealed class LegHoldTests : IDisposable
+public abstract class LegHoldTestsBase : IDisposable
 {
-    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+    private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static readonly DateTimeOffset Start = new(2026, 10, 26, 9, 0, 0, TimeSpan.Zero);
+    private protected static readonly DateTimeOffset Start = new(2026, 10, 26, 9, 0, 0, TimeSpan.Zero);
 
-    private const string Nu1102 = "/w/src/App/App.csproj : error NU1102: Unable to find package Drawboard.Core with version (>= 1.2.7) [/w/src/App/App.csproj]";
+    private protected const string Nu1102 = "/w/src/App/App.csproj : error NU1102: Unable to find package Drawboard.Core with version (>= 1.2.7) [/w/src/App/App.csproj]";
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2h-" + Guid.NewGuid().ToString("N")[..8]);
-    private readonly ManualTime _time = new(Start);
-    private readonly NodeState _state;
-    private readonly FakeWorkers _workers = new();
-    private readonly FakeChecks _checks = new();
-    private readonly FakeGitHub _github = new();
-    private readonly FakeNuGetFeed _feed = new();
-    private readonly FlightCommander _flights;
-    private readonly LegCommander _legs;
-    private readonly PackageWatch _watch;
+    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2h-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly ManualTime _time = new(Start);
+    private protected readonly NodeState _state;
+    private protected readonly FakeWorkers _workers = new();
+    private protected readonly FakeChecks _checks = new();
+    private protected readonly FakeGitHub _github = new();
+    private protected readonly FakeNuGetFeed _feed = new();
+    private protected readonly FlightCommander _flights;
+    private protected readonly LegCommander _legs;
+    private protected readonly PackageWatch _watch;
 
-    public LegHoldTests()
+    protected LegHoldTestsBase()
     {
         Directory.CreateDirectory(Repo);
         Git(Repo, "init", "-q", "-b", "main");
         File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
+        // A check that builds or tests needs a solution where it runs (leg plan refuses one that does not): a stub, in the plane's root.
+        File.WriteAllText(Path.Combine(Repo, "Tianwen.slnx"), "<Solution />\n");
         Commit(Repo, "first");
         _state = new NodeState(new InMemoryJournal(), _time);
         var git = new GitCli();
@@ -49,9 +51,9 @@ public sealed class LegHoldTests : IDisposable
         _watch = new PackageWatch(_state, _flights, _feed, _github, _time, _legs);
     }
 
-    private string Repo => Path.Combine(_root, "tianwen");
+    private protected string Repo => Path.Combine(_root, "tianwen");
 
-    private string Core => Path.Combine(_root, "Drawboard.Core");
+    private protected string Core => Path.Combine(_root, "Drawboard.Core");
 
     public void Dispose()
     {
@@ -69,7 +71,7 @@ public sealed class LegHoldTests : IDisposable
         Directory.Delete(_root, recursive: true);
     }
 
-    private static string Git(string cwd, params string[] args)
+    private protected static string Git(string cwd, params string[] args)
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
@@ -83,14 +85,14 @@ public sealed class LegHoldTests : IDisposable
         return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
     }
 
-    private static void Commit(string repo, string message)
+    private protected static void Commit(string repo, string message)
     {
         Git(repo, "add", ".");
         Git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", message);
     }
 
     /// <summary>A sibling clone of the org whose merged main releases Drawboard.Core in the given line.</summary>
-    private void MakeSiblingARelease(string line = "1.2")
+    private protected void MakeSiblingARelease(string line = "1.2")
     {
         Directory.CreateDirectory(Core);
         Git(Core, "init", "-q", "-b", "main");
@@ -105,13 +107,13 @@ public sealed class LegHoldTests : IDisposable
         Commit(Core, "releases");
     }
 
-    private Task<CommandResult> Leg(string verb, string target, params string[] args) =>
+    private protected Task<CommandResult> Leg(string verb, string target, params string[] args) =>
         _legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct);
 
-    private LegRow L(string name) => _state.Legs("TIA1").Single(l => l.Name == name);
+    private protected LegRow L(string name) => _state.Legs("TIA1").Single(l => l.Name == name);
 
     /// <summary>TIA1 with two legs, parser started and flying.</summary>
-    private async Task FlyingParser(string? check = null)
+    private protected async Task FlyingParser(string? check = null)
     {
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
         var parser = new List<string> { "name=parser", "goal=Parse the ephemeris", "done-when=The parser tests pass", "item=Write the parser" };
@@ -124,7 +126,11 @@ public sealed class LegHoldTests : IDisposable
         (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
         L("parser").State.ShouldBe(LegState.Flying);
     }
+}
 
+/// <summary>Part 1 of LegHoldTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class LegHoldTests1 : LegHoldTestsBase
+{
     [Fact]
     public async Task AWorkerFailingOnAPackageASiblingIsPublishingHoldsItsLegWithNoRingAndItsWorkerStopped()
     {
@@ -248,7 +254,11 @@ public sealed class LegHoldTests : IDisposable
 
         L("parser").State.ShouldBe(LegState.Failed);
     }
+}
 
+/// <summary>Part 2 of LegHoldTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class LegHoldTests2 : LegHoldTestsBase
+{
     [Fact]
     public async Task TheAutopilotStartsNothingWhileALegHoldsAndTheNodeStartsItAfreshWhenTheFakeFeedListsTheVersion()
     {

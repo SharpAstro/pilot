@@ -7,17 +7,17 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>A planner finds its flight looks like part of another: one card asks, the answer is kept per pair, and the flight's leg planning waits.</summary>
-public sealed class OverlapTests : IDisposable
+public abstract class OverlapTestsBase : IDisposable
 {
-    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+    private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2o-" + Guid.NewGuid().ToString("N")[..8]);
-    private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
-    private readonly FakeWorkers _workers = new();
-    private readonly FlightCommander _flights;
-    private readonly LegCommander _legs;
+    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2o-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private protected readonly FakeWorkers _workers = new();
+    private protected readonly FlightCommander _flights;
+    private protected readonly LegCommander _legs;
 
-    public OverlapTests()
+    protected OverlapTestsBase()
     {
         Directory.CreateDirectory(Repo);
         Git(Repo, "init", "-q", "-b", "main");
@@ -27,9 +27,9 @@ public sealed class OverlapTests : IDisposable
         (_flights, _legs) = Commanders(_state);
     }
 
-    private string Repo => Path.Combine(_root, "tianwen");
+    private protected string Repo => Path.Combine(_root, "tianwen");
 
-    private (FlightCommander, LegCommander) Commanders(NodeState state)
+    private protected (FlightCommander, LegCommander) Commanders(NodeState state)
     {
         var git = new GitCli();
         var flights = new FlightCommander(state, new Planes(git), TimeProvider.System);
@@ -53,7 +53,7 @@ public sealed class OverlapTests : IDisposable
         Directory.Delete(_root, recursive: true);
     }
 
-    private static string Git(string cwd, params string[] args)
+    private protected static string Git(string cwd, params string[] args)
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
@@ -67,14 +67,14 @@ public sealed class OverlapTests : IDisposable
         return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
     }
 
-    private Task<CommandResult> Leg(string verb, string target, params string[] args) =>
+    private protected Task<CommandResult> Leg(string verb, string target, params string[] args) =>
         Leg(_legs, verb, target, args);
 
-    private static Task<CommandResult> Leg(LegCommander legs, string verb, string target, params string[] args) =>
+    private protected static Task<CommandResult> Leg(LegCommander legs, string verb, string target, params string[] args) =>
         legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct);
 
     /// <summary>TIA1 (the one TIA2 looks like part of) and TIA2.</summary>
-    private async Task TwoFlights()
+    private protected async Task TwoFlights()
     {
         foreach (var issue in new[] { "1", "2" })
         {
@@ -82,10 +82,16 @@ public sealed class OverlapTests : IDisposable
         }
     }
 
-    private Task<CommandResult> Ask(string why = "it edits the same parser") => Leg(Verbs.Overlap, "flight/TIA2", "TIA1", why);
+    private protected Task<CommandResult> Ask(string why = "it edits the same parser") => Leg(Verbs.Overlap, "flight/TIA2", "TIA1", why);
 
-    private CardRow[] Cards() => [.. _state.Cards().Where(c => c.Kind == LegCommander.OverlapKind)];
+    private protected CardRow[] Cards() => [.. _state.Cards().Where(c => c.Kind == LegCommander.OverlapKind)];
 
+    private protected FlightRow F(string code) => _state.Flights().Single(f => f.Code == code);
+}
+
+/// <summary>Part 1 of OverlapTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class OverlapTests1 : OverlapTestsBase
+{
     [Fact]
     public async Task OverlapOnAFreshPairRingsOneCardWithFoldAndPlanSeparatelyAndTellsThePlannerToEndItsTurn()
     {
@@ -129,7 +135,7 @@ public sealed class OverlapTests : IDisposable
         await Ask();
         var card = Cards().Single();
 
-        var plan = await Leg(Verbs.PlanLeg, "flight/TIA2", "name=parser", "goal=g", "done-when=d");
+        var plan = await Leg(Verbs.PlanLeg, "flight/TIA2", "name=parser", "goal=Do the work", "done-when=Its check passes");
         var planned = await Leg(Verbs.Planned, "flight/TIA2", "done");
 
         foreach (var refused in new[] { plan, planned })
@@ -140,7 +146,7 @@ public sealed class OverlapTests : IDisposable
         }
         _state.Legs("TIA2").ShouldBeEmpty();
         // The other flight is not held by it.
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=g", "done-when=d")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Do the work", "done-when=Its check passes")).Ok.ShouldBeTrue();
     }
 
     [Fact]
@@ -184,7 +190,7 @@ public sealed class OverlapTests : IDisposable
         fresh.Brief.ShouldContain("flight connect TIA2 TIA1");
 
         // Its legs can be planned now.
-        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=parser", "goal=g", "done-when=d")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=parser", "goal=Do the work", "done-when=Its check passes")).Ok.ShouldBeTrue();
     }
 
     [Fact]
@@ -206,13 +212,11 @@ public sealed class OverlapTests : IDisposable
         _workers.Started.Count.ShouldBe(1);
     }
 
-    private FlightRow F(string code) => _state.Flights().Single(f => f.Code == code);
-
     [Fact]
     public async Task FoldRecordsItOnThePairClosesTheCardAndAddsTheIssueToTheOtherFlightWhosePlannerIsToldToPlanLegsAfterItsOwn()
     {
         await TwoFlights();
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Rework the parser", "done-when=d")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Rework the parser", "done-when=Its check passes")).Ok.ShouldBeTrue();
         (await Leg(Verbs.PlanFlight, "flight/TIA2")).Ok.ShouldBeTrue();
         (await Leg(Verbs.PlanFlight, "flight/TIA1")).Ok.ShouldBeTrue();
         _workers.Started.Select(w => w.Name).ShouldBe(["du1-tia2-plan", "du1-tia1-plan"]);
@@ -315,7 +319,11 @@ public sealed class OverlapTests : IDisposable
         Cards().ShouldHaveSingleItem().State.ShouldBe(CardState.Open);
         _workers.Started.ShouldBeEmpty();
     }
+}
 
+/// <summary>Part 2 of OverlapTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class OverlapTests2 : OverlapTestsBase
+{
     [Fact]
     public async Task FoldingIntoAFlightWhosePrIsOpenIsRefusedForThePrWouldNotCloseTheIssue()
     {
@@ -496,8 +504,8 @@ public sealed class OverlapTests : IDisposable
         var held = F("TIA2");
         held.State.ShouldBe(FlightState.Held);
         held.Connections.ShouldBe(["TIA1"]);
-        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=parser", "goal=Rework the parser", "done-when=d")).Ok.ShouldBeTrue();
-        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=render", "goal=Render it", "done-when=d")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=parser", "goal=Rework the parser", "done-when=Its check passes")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=render", "goal=Render it", "done-when=Its check passes")).Ok.ShouldBeTrue();
         var planned = await Leg(Verbs.Planned, "flight/TIA2", "connected to TIA1: both edit src/Parser.cs");
         planned.Ok.ShouldBeTrue();
         var card = _state.Cards().Single(c => c.Kind == LegCommander.PlannedKind && c.Subject == "flight/TIA2");
@@ -513,7 +521,7 @@ public sealed class OverlapTests : IDisposable
         await TwoFlights();
         (await Leg(Verbs.PlanFlight, "flight/TIA2")).Ok.ShouldBeTrue();
 
-        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=docs", "goal=Write the docs", "done-when=d")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=docs", "goal=Write the docs", "done-when=Its check passes")).Ok.ShouldBeTrue();
         var planned = await Leg(Verbs.Planned, "flight/TIA2", "one leg");
 
         planned.Ok.ShouldBeTrue();

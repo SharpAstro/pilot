@@ -304,6 +304,23 @@ public sealed class AutopilotTests
     }
 
     [Fact]
+    public async Task ANoAutoMergeReposPrMergeIsAskedNotRunByAnAssistantEvenWithAutopilotOn()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Ready(node);
+        (await Send(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", args: ["autopilot", "on"]))).Error.ShouldBeNull();
+        (await Send(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", args: ["no-auto-merge-repos", "widget"]))).Error.ShouldBeNull();
+
+        var asked = await Send(node, Command(Verbs.Merge, "pr/acme/widget#7", Assistant, agent: true, Why, Head));
+
+        asked.Error.ShouldNotBeNull().ShouldContain("waits on their card");
+        node.GitHub.Merged.ShouldBeEmpty();
+        var card = Ask(node);
+        card.Title.ShouldContain("merge acme/widget#7");
+        node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.AutopilotRan);
+    }
+
+    [Fact]
     public async Task AutopilotOnWithNoMessageSaysSoAndARefusedCommandLeavesNoHandledCard()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

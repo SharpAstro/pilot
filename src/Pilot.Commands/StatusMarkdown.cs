@@ -12,7 +12,7 @@ internal static class StatusMarkdown
 {
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
 
-    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool? autopilot = null, bool all = false)
+    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyDictionary<string, string>? copies = null)
     {
         var text = new StringBuilder();
         text.AppendLine("# pilot status").AppendLine();
@@ -34,6 +34,10 @@ internal static class StatusMarkdown
         if (snapshot.Usage is { HasFigures: true } usage)
         {
             facts.Add($"**usage** {Text(usage.Line(DateTimeOffset.UtcNow, TimeZoneInfo.Local))}");
+        }
+        if (snapshot.Machine is { } machine)
+        {
+            facts.Add($"**machine** {Text(machine.Line())}");
         }
         if (facts.Count > 0)
         {
@@ -99,22 +103,35 @@ internal static class StatusMarkdown
             {
                 foreach (var artifact in leg.Artifacts)
                 {
-                    text.AppendLine(IsImage(artifact.Location)
-                        ? $"![{Text(artifact.Title)}]({Destination(artifact.Location)})"
-                        : $"- {Text(leg.Name)}: [{Text(artifact.Title)}]({Destination(artifact.Location)})");
+                    // The node's copy outlives the plane's file, so it is what is shown when there is one.
+                    var kept = artifact.Attachment is { } id && copies is not null && copies.TryGetValue(id, out var copy) ? copy : null;
+                    var shown = kept ?? artifact.Location;
+                    text.AppendLine(kept is not null || IsImage(artifact.Location)
+                        ? $"![{Text(artifact.Title)}]({Destination(shown)})"
+                        : $"- {Text(leg.Name)}: [{Text(artifact.Title)}]({Destination(shown)})");
                     text.AppendLine();
                 }
             }
         }
 
-        var reviews = snapshot.PrReviews.Where(r => r.State != PrReviewState.Closed).OrderBy(r => r.StartedAt).ToList();
+        // A review stays listed while its fix is on, even once the review itself closed (#290).
+        var reviews = snapshot.PrReviews.Where(r => r.State != PrReviewState.Closed || r.Fixer is not null).OrderBy(r => r.StartedAt).ToList();
         if (reviews.Count > 0)
         {
             text.AppendLine("## PR reviews").AppendLine();
             foreach (var review in reviews)
             {
-                var how = review.State == PrReviewState.Reviewing ? $"reviewing, {review.Reviewer}" : $"{review.Verdict}, on card {review.Card}";
+                var how = review.State switch
+                {
+                    PrReviewState.Reviewing => $"reviewing, {review.Reviewer}",
+                    PrReviewState.Closed => $"{review.Verdict}, closed",
+                    _ => $"{review.Verdict}, on card {review.Card}",
+                };
                 text.AppendLine($"- [{Text($"{review.Repo}#{review.Number}")}]({review.Url}) {Text(review.Title ?? "")} ({Text(how)}, at `{review.Head[..Math.Min(8, review.Head.Length)]}`)");
+                if (review.Fixer is { } fixer)
+                {
+                    text.AppendLine($"  - {Text($"fixing, {fixer}, round {review.FixRound ?? 1}")}");
+                }
             }
             text.AppendLine();
         }
