@@ -87,6 +87,28 @@ public sealed class FlightDetailTests
     }
 
     [Fact]
+    public void ThePageSaysWhatTheReviewAsksInFullAndThatTheNextRoundIsYoursPastTheCap()
+    {
+        // PIL294's page showed a "review changes" chip and every step ticked, while the findings sat on a card cut short.
+        var asks = "1) CI is red: LayoutDrivenTests rejects JobsView.cs:680. 2) The memory gate takes the smaller of the estimate and job-memory, so a job that measured 8 GB starts with 2 GB free.";
+        var flight = Flight() with { Review = new ReviewRow { State = ReviewState.Changes, Reviewer = "du1-tia1611-review", Report = asks, StartedAt = Live.At } };
+        var legs = Legs().Select(l => l.Name == "render" ? l with { State = LegState.Done, ReviewGoArounds = 3 } : l).ToArray();
+        string Said(FlightRow row, LegRow[] rows) => CellLayout.Describe(Layout.Engine.Arrange(
+            Layout.Builder.VStack([.. FlightsView<RgbaImage>.ReviewAsks(FlightDetail.From(FlightLine.Build([row], [], Now, rows).Single(), Now))]),
+            new Rect<int>(0, 0, 400, 40), CellMeasureContext.PixelAuthored));
+
+        var said = Said(flight, legs);
+
+        said.ShouldContain("The review asks for changes:");
+        said.ShouldContain("JobsView.cs:680");
+        said.ShouldContain("starts with 2 GB free");
+        said.ShouldContain("render has been redone 3 times");
+        said.ShouldContain("Redo leg render once more, or Ready anyway");
+        // A review that passed, or none, says nothing here.
+        Said(Flight(), Legs()).Trim().ShouldBeEmpty();
+    }
+
+    [Fact]
     public void ADumpListsEveryLegStepAndArtifact()
     {
         var dump = FlightDetail.From(Line(), Now).ToDump();

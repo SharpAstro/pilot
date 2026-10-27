@@ -186,6 +186,7 @@ internal sealed partial class FlightsView<TSurface>
         {
             page.Add(ready);
         }
+        page.AddRange(ReviewAsks(detail));
         // The node's copies of the images the legs recorded, above the legs: the links in each leg stay as they were.
         var scrolled = Gallery.Section($"flight:{line.Code}", detail.Attachments) is { } attachments ? [attachments, .. legs] : legs;
         return Layout.Builder.VStack(
@@ -367,6 +368,28 @@ internal sealed partial class FlightsView<TSurface>
             .WithAutoRows()
             .WStar()
             .HAuto();
+
+    // As the node's LegCommander.MaxReviewGoArounds: past it, redoing the leg on the review's findings is the person's call.
+    private const int ReviewRedoCap = 3;
+
+    /// <summary>
+    /// What the review asks, in full, where the flight is read: the page showed only a "review changes" chip while the findings,
+    /// the red CI and the reached cap sat on a card cut to three lines (PIL294's #357, 2026-10-27). Nothing unless it asks.
+    /// </summary>
+    internal static IEnumerable<Layout.Node> ReviewAsks(FlightDetail detail)
+    {
+        if (detail.Line.Row.Review is not { State: ReviewState.Changes, Report: { Length: > 0 } report })
+        {
+            yield break;
+        }
+        yield return Layout.Builder.Text("The review asks for changes:", 13f, Held).RowH(22f);
+        yield return Prose(report, 13f, Body);
+        if (detail.Legs.LastOrDefault(l => l.Row.ReviewGoArounds >= ReviewRedoCap) is { } capped)
+        {
+            yield return Prose($"{capped.Name} has been redone {capped.Row.ReviewGoArounds} times on the review's findings, so the next round is yours: "
+                + $"Redo leg {capped.Name} once more, or Ready anyway if the findings should not hold it up.", 12f, Held);
+        }
+    }
 
     private static Layout.Node Prose(string text, float size, RGBAColor32 color) => WrappedProse.Of(text, size, color);
 }
