@@ -339,7 +339,7 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
             {
                 state.RaiseCard(CardBin.Ring, "pr-conflicts", subject, $"{code}'s PR #{entry.Number} conflicts with its base", $"{why} ({notSent})", link: pr.Url);
             }
-            return await FinishAsync(entry, pr, $"{why}{(notSent is null ? ": sent back as changes, its last leg goes around to resolve it" : $" ({notSent}), rung")}", LabelOf(code), cancellationToken);
+            return await FinishAsync(entry, pr, $"{why}{(notSent is null ? ": sent back as changes, its last leg redone to resolve it" : $" ({notSent}), rung")}", LabelOf(code), cancellationToken);
         }
 
         if (checks == ChoiceStatus.Failing && flight.Review is { State: ReviewState.Passed })

@@ -107,7 +107,7 @@ public sealed class GoAroundFromCardTests : IDisposable
         var failed = node.State.Cards(openOnly: true).ShouldHaveSingleItem();
         failed.Kind.ShouldBe(LegCommander.MergeFailed);
 
-        var result = await Answer(node, failed, "Go around parser");
+        var result = await Answer(node, failed, "Redo leg parser");
 
         result.Error.ShouldBeNull();
         ShouldHaveGoneAround(node, failed, "build (linux)");

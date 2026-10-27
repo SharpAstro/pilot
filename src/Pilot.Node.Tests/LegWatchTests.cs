@@ -81,7 +81,7 @@ public sealed class LegWatchTests
         _said.ShouldBeEmpty();
         var card = Open().ShouldHaveSingleItem();
         (card.Bin, card.Kind, card.Subject).ShouldBe((CardBin.ForYou, LegWatch.Stopped, "flight/TIA1/parser"));
-        card.Choices.Select(c => c.Label).ShouldBe(["Resume now", "Go around"]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Resume now", "Redo leg parser"]);
 
         _time.Advance(TimeSpan.FromHours(2) + TimeSpan.FromMinutes(3));
         await _watch.LookAsync(Ct);
@@ -108,7 +108,7 @@ public sealed class LegWatchTests
         _said.ShouldBeEmpty();
         var card = Open().ShouldHaveSingleItem();
         (card.Bin, card.Kind).ShouldBe((CardBin.Ring, LegWatch.Stopped));
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Resume", Verbs.Say), ("Go around", Verbs.GoAround)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Resume", Verbs.Say), ("Redo leg parser", Verbs.GoAround)]);
     }
 
     [Fact]
@@ -179,7 +179,7 @@ public sealed class LegWatchTests
         _said.Count.ShouldBe(2);
         var card = Open().ShouldHaveSingleItem();
         (card.Bin, card.Kind).ShouldBe((CardBin.Ring, LegWatch.Idle));
-        card.Choices.Select(c => c.Label).ShouldBe(["Nudge", "Go around"]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Nudge", "Redo leg parser"]);
     }
 
     [Fact]
@@ -205,7 +205,7 @@ public sealed class LegWatchTests
 
         var card = Open().ShouldHaveSingleItem();
         (card.Kind, card.Detail).ShouldBe((LegWatch.Waiting, "permission to run rm -rf build"));
-        card.Choices.Select(c => c.Label).ShouldBe(["Go around"]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Redo leg parser"]);
 
         Worker(SessionState.Working);
         await _watch.LookAsync(Ct);
