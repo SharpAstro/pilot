@@ -108,11 +108,13 @@ public sealed class SettingsPageTests
         var defender = ok
             ? new SetupCheck { Key = "defender", Title = "Windows Defender exclusions", Ok = true, Optional = true, Line = "7 folders excluded, as recorded at the last fix on 2026-10-27" }
             : new SetupCheck { Key = "defender", Title = "Windows Defender exclusions", Ok = false, Optional = true, Line = DefenderLong, Fix = "Exclude (asks for elevation)" };
-        var page = Sample with { Checks = [.. Sample.Checks.Where(c => c.Key != "defender"), defender] };
+        var checks = Measured(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(3));
+        checks = checks with { Checks = [.. checks.Checks.Where(c => c.Key != "defender"), defender] };
         using var renderer = new RgbaImageRenderer((uint)width, 900);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         var sent = new List<(string Verb, string[] Args)>();
-        chrome.Settings.Load = _ => Task.FromResult(page);
+        chrome.Settings.Load = _ => Task.FromResult(Sample);
+        chrome.Settings.LoadChecks = (_, _) => Task.FromResult(checks);
         chrome.Settings.Send = (verb, args, _) =>
         {
             lock (sent)
@@ -125,7 +127,7 @@ public sealed class SettingsPageTests
 
         void Draw() => chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, width, 900));
         Draw();
-        await WaitAsync(() => chrome.Settings.Page is not null);
+        await WaitAsync(() => chrome.Settings.Page is not null && chrome.Settings.Checks is not null);
         Draw();
         if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR") is { Length: > 0 } dir)
         {
