@@ -1,3 +1,4 @@
+using Console.Lib;
 using DIR.Lib;
 using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
@@ -144,6 +145,280 @@ public sealed class LinkMenuTests
         using var renderer = new RgbaImageRenderer(300, 800);
         return [.. Layout.Engine.Arrange(view.Tree(screen), new Rect<float>(0, 0, 300, 800), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f))
             .Select(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } ? t.Value : null).OfType<string>()];
+    }
+
+    // ---- The other pages (SharpAstro/pilot#337, link-menu-pages) ----
+
+    private static readonly DateTimeOffset Now = Live.At.AddHours(2);
+    private const string FlightPrUrl = "https://github.com/x/tianwen/pull/7";
+
+    private static FlightRow Flight() => new()
+    {
+        Code = "TIA1611", Repo = "tianwen", RepoPath = "/r/tianwen", Issue = 1611, Title = "Planets on the GPU", Branch = "flight/tia1611",
+        Worktree = "/r/tianwen/.claude/worktrees/tia1611", Base = "origin/main", State = FlightState.Flying, CreatedAt = Live.At,
+        PullRequest = 7, PullRequestUrl = FlightPrUrl,
+    };
+
+    private static LegRow[] Legs() =>
+    [
+        new()
+        {
+            Flight = "TIA1611", Name = "render", Order = 1, Goal = "Draw the planets.", DoneWhen = "The capture shows all eight.", State = LegState.Flying,
+            Artifacts = [new Artifact { Title = "The planets", Location = @"C:\caps\planets.png", At = Live.At.AddMinutes(5) }, new Artifact { Title = "Preview", Location = "https://example.org/preview", At = Live.At.AddMinutes(20) }],
+        },
+    ];
+
+    private static FlightsScreen FlightsScreenOf() => new([FlightLine.Build([Flight()], [], Now, Legs()).Single()], "test", Now);
+
+    private static SessionRow WaitingRow() => new()
+    {
+        Id = "a1b2c3d4", SessionId = "a1b2c3d4-0000-4000-8000-000000000000", Name = "push-it", Kind = SessionKind.Interactive, Cwd = "/r/pilot",
+        Role = SessionRole.AdHoc, State = SessionState.Waiting, WaitingFor = "permission to use Bash", WaitingSince = Now - new TimeSpan(9, 37, 0),
+        Asking = "Bash: git push origin main", RemoteControlUrl = RcUrl, ContextTokens = 50_000, ContextWindow = 200_000, SpendWeighted = 1_000,
+        LastResponseAt = Now.AddHours(-9), StartedAt = Live.At,
+    };
+
+    private static SessionsScreen WaitingScreen() => new(SessionLine.Build([WaitingRow()], Now), "test", Now);
+
+    private static ReposScreen ReposScreenOf() =>
+        new(RepoLine.Build(SessionsCapture.LoadRepos(SessionsCapture.ReposSamplePath), [], [], [], [], Live.At), "live", Live.At);
+
+    private static PilotChrome<RgbaImage> NewChrome(RgbaImageRenderer renderer) =>
+        new(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+
+    private static List<ClickableRegion> RegionsOf(IPixelWidget widget)
+    {
+        var regions = new List<ClickableRegion>();
+        widget.CollectPaintedRegions(regions);
+        return regions;
+    }
+
+    // Who a right press at the point belongs to, as the router decides it: the topmost painted part with a menu of its own.
+    private static ClickableRegion? Owner(List<ClickableRegion> regions, float x, float y) =>
+        regions.LastOrDefault(r => r.OnContextMenu is not null && x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height);
+
+    private static PointerPress PressIn(ClickableRegion r, float dx = 4f, float dy = 4f) => new(r.X + dx, r.Y + dy, MouseButton.Right, InputModifier.None, 1);
+
+    [Fact]
+    public void ARightClickOnTheFlightPagesPrLinkOffersCopyUrlAndNothingElse()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var copied = new List<string>();
+        var chrome = NewChrome(renderer);
+        var flights = chrome.Flights;
+        flights.CopyText = copied.Add;
+        var screen = FlightsScreenOf();
+        chrome.Show(PilotPage.Flights);
+        flights.OpenDetail("TIA1611");
+        chrome.Render(new SessionsScreen([], "test", Now), screen, new RectF32(0, 0, 1280, 800));
+
+        var pr = RegionsOf(flights).Single(r => r.Result is HitResult.ButtonHit { Action: "pr:TIA1611" });
+        var press = PressIn(pr);
+        Owner(RegionsOf(flights), press.X, press.Y).ShouldBe(pr);
+        pr.OnContextMenu!.Invoke(press);
+
+        flights.Links.MenuItems.Select(i => i.Label).ShouldBe([LinkMenu.CopyLabel]);
+        // Not the row menu, which is for a row of the list.
+        flights.MenuItems.ShouldBeEmpty();
+        chrome.Render(new SessionsScreen([], "test", Now), screen, new RectF32(0, 0, 1280, 800));
+        RegionsOf(flights).ShouldContain(r => r.Result is HitResult.ListItemHit);
+        flights.Links.MenuItems[0].OnChoose!();
+        copied.ShouldBe([FlightPrUrl]);
+    }
+
+    [Fact]
+    public void EveryLinkOnTheFlightPageCopiesItsOwnLocation()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var copied = new List<string>();
+        var chrome = NewChrome(renderer);
+        var flights = chrome.Flights;
+        flights.CopyText = copied.Add;
+        chrome.Show(PilotPage.Flights);
+        flights.OpenDetail("TIA1611");
+        chrome.Render(new SessionsScreen([], "test", Now), FlightsScreenOf(), new RectF32(0, 0, 1280, 800));
+
+        var expected = new Dictionary<string, string>
+        {
+            ["pr:TIA1611"] = FlightPrUrl,
+            ["artifact:TIA1611:render:The planets"] = @"C:\caps\planets.png",
+            ["artifact:TIA1611:render:Preview"] = "https://example.org/preview",
+            ["artifact-folder:TIA1611:render:The planets"] = @"C:\caps",
+        };
+        foreach (var (action, location) in expected)
+        {
+            var link = RegionsOf(flights).Single(r => r.Result is HitResult.ButtonHit b && b.Action == action);
+            link.OnContextMenu.ShouldNotBeNull(action).Invoke(PressIn(link));
+            flights.Links.MenuItems[0].OnChoose!();
+            copied[^1].ShouldBe(location, action);
+        }
+    }
+
+    [Fact]
+    public void ALinkInTheFlightsPanelWinsOverItsRowsMenuAndTheRestOfTheRowKeepsIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chrome = NewChrome(renderer);
+        var flights = chrome.Flights;
+        flights.CopyText = _ => { };
+        chrome.Show(PilotPage.Flights);
+        chrome.Render(new SessionsScreen([], "test", Now), FlightsScreenOf(), new RectF32(0, 0, 1280, 800));
+        var regions = RegionsOf(flights);
+
+        // On the link under the list: Copy URL.
+        var pr = regions.Single(r => r.Result is HitResult.ButtonHit { Action: "pr:TIA1611" });
+        Owner(regions, pr.X + 4f, pr.Y + 4f).ShouldBe(pr);
+
+        // Elsewhere on the row: the row's own menu, with the link menu left shut.
+        var row = regions.Single(r => r.Result is HitResult.ListItemHit);
+        var owner = Owner(regions, row.X + row.Width - 6f, row.Y + 6f);
+        owner.ShouldNotBeNull();
+        owner.Value.Result.ShouldBeOfType<HitResult.ListItemHit>();
+        owner.Value.OnContextMenu!.Invoke(new PointerPress(row.X + row.Width - 6f, row.Y + 6f, MouseButton.Right, InputModifier.None, 1));
+        flights.MenuItems.Select(i => i.Label).ShouldContain("Open flight");
+        flights.Links.MenuItems.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void SessionsAnswerInTheBrowserHasCopyUrlAndTheRowsMenuStaysOffTheLink()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var copied = new List<string>();
+        var sessions = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, CopyText = copied.Add, OnOpen = _ => { } };
+        var screen = WaitingScreen();
+        sessions.Render(screen, new RectF32(0, 0, 1280, 800));
+        var regions = RegionsOf(sessions);
+
+        var pill = regions.Single(r => r.Result is HitResult.ButtonHit { Action: "session:a1b2c3d4:answer" });
+        Owner(regions, pill.X + 4f, pill.Y + 4f).ShouldBe(pill);
+        pill.OnContextMenu!.Invoke(PressIn(pill));
+        sessions.Links.MenuItems.Select(i => i.Label).ShouldBe([LinkMenu.CopyLabel]);
+        sessions.MenuOpen.ShouldBeFalse();
+        sessions.Links.MenuItems[0].OnChoose!();
+        copied.ShouldBe([RcUrl]);
+
+        // Off the link, on the same row: the row's menu.
+        sessions.Render(screen, new RectF32(0, 0, 1280, 800));
+        regions = RegionsOf(sessions);
+        var list = regions.Single(r => r.Result is HitResult.ListItemHit);
+        var owner = Owner(regions, list.X + list.Width - 6f, list.Y + 6f);
+        owner.ShouldNotBeNull();
+        owner.Value.Result.ShouldBeOfType<HitResult.ListItemHit>();
+        owner.Value.OnContextMenu!.Invoke(new PointerPress(list.X + list.Width - 6f, list.Y + 6f, MouseButton.Right, InputModifier.None, 1));
+        sessions.MenuOpen.ShouldBeTrue();
+        sessions.Links.MenuItems.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ATranscriptsAnswerInTheBrowserHasCopyUrl()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var copied = new List<string>();
+        var sessions = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, CopyText = copied.Add, OnOpen = _ => { } };
+        var screen = WaitingScreen();
+        sessions.Transcript.Load = (_, _, _, _) => Task.FromResult(new TranscriptPage { Total = 0, Entries = [] });
+        sessions.Tree(screen);
+        sessions.Transcript.Open(screen.Lines[0]);
+        sessions.Render(screen, new RectF32(0, 0, 1280, 800));
+
+        var answer = RegionsOf(sessions).Single(r => r.Result is HitResult.ButtonHit { Action: "transcript:answer" });
+        answer.OnContextMenu.ShouldNotBeNull().Invoke(PressIn(answer));
+        sessions.Transcript.Links.MenuItems.Select(i => i.Label).ShouldBe([LinkMenu.CopyLabel]);
+        sessions.Transcript.Links.MenuItems[0].OnChoose!();
+        copied.ShouldBe([RcUrl]);
+    }
+
+    // Every link that leaves the app, whatever the page: its text ends in the away mark, and a right-click on it has the menu.
+    private static List<Layout.Node> AwayLinks(Layout.Node tree) =>
+    [
+        .. Layout.Engine.Arrange(tree, new Rect<int>(0, 0, 200, 80), CellMeasureContext.PixelAuthored)
+            .Select(a => a.Node)
+            .Where(n => n.Hit is HitResult.ButtonHit && n is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.EndsWith(Followable.Away, StringComparison.Ordinal)),
+    ];
+
+    private static void EveryAwayLinkHasTheMenu(string page, List<Layout.Node> links, int atLeast)
+    {
+        links.Count.ShouldBeGreaterThanOrEqualTo(atLeast, page);
+        foreach (var link in links)
+        {
+            link.OnContextMenu.ShouldNotBeNull($"{page}: {((HitResult.ButtonHit)link.Hit!).Action}");
+        }
+    }
+
+    [Fact]
+    public void EveryAwayLinkOnTheFlightSessionsReposHomeAndFleetPagesCarriesTheLinkMenu()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chrome = NewChrome(renderer);
+        chrome.Flights.CopyText = _ => { };
+        chrome.Flights.OnOpen = _ => { };
+        chrome.Sessions.CopyText = _ => { };
+        chrome.Sessions.OnOpen = _ => { };
+        chrome.Repos.CopyText = _ => { };
+        chrome.Repos.OnOpen = _ => { };
+        var flights = FlightsScreenOf();
+
+        // The flights list, with its selected flight's panel under it; then the flight's own page.
+        EveryAwayLinkHasTheMenu("flights", AwayLinks(chrome.Flights.Tree(flights)), 1);
+        chrome.Flights.OpenDetail("TIA1611");
+        EveryAwayLinkHasTheMenu("flight", AwayLinks(chrome.Flights.Tree(flights)), 4);
+
+        EveryAwayLinkHasTheMenu("sessions", AwayLinks(chrome.Sessions.Tree(WaitingScreen())), 1);
+
+        var repos = ReposScreenOf();
+        chrome.Show(PilotPage.Repos);
+        chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, null, repos, new RectF32(0, 0, 1280, 800));
+        chrome.Repos.HandleInput(new InputEvent.KeyDown(InputKey.Right, InputModifier.None)).ShouldBeTrue();
+        EveryAwayLinkHasTheMenu("repos", AwayLinks(chrome.Repos.Tree(repos)), 2);
+
+        // Home and Fleet have no link that leaves the app today; the day one gains one, it is held to the same rule.
+        var home = new HomeScreen(flights, WaitingScreen(), new JobsScreen([], "test", Now), CardsScreen.Empty);
+        EveryAwayLinkHasTheMenu("home", AwayLinks(chrome.Home.Tree(home)), 0);
+        EveryAwayLinkHasTheMenu("fleet", AwayLinks(chrome.Fleet.Tree(new FleetScreen([], Live.At))), 0);
+    }
+
+    [Fact]
+    public void AReposPrLinkOffersCopyUrlForThatPr()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var copied = new List<string>();
+        var chrome = NewChrome(renderer);
+        chrome.Repos.CopyText = copied.Add;
+        var screen = ReposScreenOf();
+        chrome.Show(PilotPage.Repos);
+        chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, null, screen, new RectF32(0, 0, 1280, 800));
+        chrome.Repos.HandleInput(new InputEvent.KeyDown(InputKey.Right, InputModifier.None)).ShouldBeTrue();
+        chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, null, screen, new RectF32(0, 0, 1280, 800));
+
+        var pr = RegionsOf(chrome.Repos).First(r => r.Result is HitResult.ButtonHit { Action: "pr:205" });
+        pr.OnContextMenu.ShouldNotBeNull().Invoke(PressIn(pr));
+        chrome.Repos.Links.MenuItems.Select(i => i.Label).ShouldBe([LinkMenu.CopyLabel]);
+        chrome.Repos.Links.MenuItems[0].OnChoose!();
+        copied.ShouldBe(["https://github.com/example-org/orbit/pull/205"]);
+    }
+
+    [Fact]
+    public void CapturesOfTheFlightPageWithTheMenuOpenOverItsPrLink()
+    {
+        // Written where PILOT_TEST_CAPTURE says, else beside the temp files; never into the plane.
+        var dir = Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 } capture
+            ? Path.GetDirectoryName(capture) ?? "."
+            : Path.Combine(Path.GetTempPath(), "pilot-linkmenu-captures");
+        Directory.CreateDirectory(dir);
+        foreach (var (width, height) in new[] { (640, 520), (1280, 640) })
+        {
+            using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+            var chrome = NewChrome(renderer);
+            chrome.Flights.CopyText = _ => { };
+            var screen = FlightsScreenOf();
+            chrome.Show(PilotPage.Flights);
+            chrome.Flights.OpenDetail("TIA1611");
+            chrome.Render(new SessionsScreen([], "test", Now), screen, new RectF32(0, 0, width, height));
+            var pr = RegionsOf(chrome.Flights).Single(r => r.Result is HitResult.ButtonHit { Action: "pr:TIA1611" });
+            pr.OnContextMenu!.Invoke(PressIn(pr, 30f, 10f));
+            chrome.Render(new SessionsScreen([], "test", Now), screen, new RectF32(0, 0, width, height));
+            File.WriteAllBytes(Path.Combine(dir, $"link-menu-flight-{width}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, height));
+        }
     }
 
     [Fact]
