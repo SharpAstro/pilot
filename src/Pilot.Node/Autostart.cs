@@ -126,6 +126,15 @@ public static class Autostart
             && string.Equals(text, SystemdUnit(parsed.Path, parsed.Args), StringComparison.Ordinal);
     }
 
+    /// <summary>The unit file's text on Linux, null elsewhere or when there is none.</summary>
+    public static string? UnitText() => OperatingSystem.IsLinux() && File.Exists(UnitPath()) ? File.ReadAllText(UnitPath()) : null;
+
+    /// <summary>The path and arguments the <c>ExecStart=</c> of <paramref name="unitText"/> holds; null when it has none or does not read.</summary>
+    public static (string Path, IReadOnlyList<string> Args)? ExecOf(string unitText) =>
+        unitText.Replace("\r\n", "\n").Split('\n').FirstOrDefault(l => l.StartsWith("ExecStart=", StringComparison.Ordinal)) is { } exec
+            ? ParseExecStart(exec["ExecStart=".Length..])
+            : null;
+
     /// <summary>Whether the entry in place is current: always on Windows, else the unit file against <see cref="SystemdUnit"/>.</summary>
     public static bool EntryIsCurrent() => !OperatingSystem.IsLinux() || !File.Exists(UnitPath()) || UnitIsCurrent(File.ReadAllText(UnitPath()));
 

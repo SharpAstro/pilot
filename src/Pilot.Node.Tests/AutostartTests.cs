@@ -71,6 +71,38 @@ public sealed class AutostartTests
         Autostart.UnitIsCurrent(unit).ShouldBeTrue();
     }
 
+    [Fact]
+    public void ExecOfReadsThePathAndOptionsOfTheUnitInPlace()
+    {
+        var unit = Autostart.SystemdUnit("/opt/pilot-node", ["--data", "/x y", "--lan"]).Replace("\n", "\r\n");
+
+        var own = Autostart.ExecOf(unit).ShouldNotBeNull();
+
+        own.Path.ShouldBe("/opt/pilot-node");
+        own.Args.ShouldBe(["--data", "/x y", "--lan"]);
+        Autostart.ExecOf("[Service]\n").ShouldBeNull();
+    }
+
+    [Fact]
+    public void ASetupCheckFlagsAStaleUnitForRewriteAndPassesACurrentOne()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pilot-setup-" + Guid.NewGuid().ToString("N"));
+        NodeSetup Setup(string unit) => new(new NodeOptions("/tmp/n.sock", root), "/opt/pilot-node", Path.Combine(root, ".claude"))
+        {
+            AutostartEntry = () => "unit: ExecStart=/opt/pilot-node",
+            UnitText = () => unit,
+        };
+        var current = Autostart.SystemdUnit("/opt/pilot-node", ["--data", "/x"]);
+
+        var stale = Setup(current.Replace("Restart=always", "Restart=always\nKillMode=process")).Checks().Single(c => c.Key == NodeSetup.AutostartKey);
+        var ok = Setup(current).Checks().Single(c => c.Key == NodeSetup.AutostartKey);
+
+        stale.Ok.ShouldBeFalse();
+        stale.Fix.ShouldBe("Rewrite");
+        ok.Ok.ShouldBeTrue();
+        ok.Fix.ShouldBeNull();
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("ExecStart=\"/unclosed")]

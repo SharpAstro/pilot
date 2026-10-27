@@ -75,6 +75,12 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     public Func<string, string, bool> OpenWindow { get; init; } = OpenConsoleWindow;
 
     /// <summary>The Shortcut token in force (the environment's, else the saved one); the node gives the live setting, a test replaces it.</summary>
+    /// <summary>What starts the node at logon, as <see cref="Autostart.Entry"/> says; a test's seam.</summary>
+    public Func<string?> AutostartEntry { get; init; } = Autostart.Entry;
+
+    /// <summary>The systemd unit's text, null when there is none (always, off Linux); a test's seam.</summary>
+    public Func<string?> UnitText { get; init; } = Autostart.UnitText;
+
     public Func<string?> ShortcutToken { get; init; } = () => Flights.ShortcutTracker.TokenFrom(NodeSettings.Read(options.SettingsFile).ShortcutToken);
 
     /// <summary>What reading the check <paramref name="key"/> runs or asks, for a page's "checking…" line; null when it only reads files.</summary>
@@ -89,10 +95,10 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     public IReadOnlyList<SetupCheck> Checks()
     {
         var checks = new List<SetupCheck>();
-        var entry = Autostart.Entry();
+        var entry = AutostartEntry();
         checks.Add(entry is null
             ? new SetupCheck { Key = AutostartKey, Title = "Starts at logon", Ok = false, Line = "nothing starts the node at logon: the fleet loses this machine until someone opens pilot", Fix = "Start at logon" }
-            : !Autostart.EntryIsCurrent()
+            : UnitText() is { } unitText && !Autostart.UnitIsCurrent(unitText)
                 ? new SetupCheck { Key = AutostartKey, Title = "Starts at logon", Ok = false, Line = $"the unit is out of date (it differs from the one this node writes, so a restart may take jobs down): {entry}", Fix = "Rewrite" }
                 : new SetupCheck { Key = AutostartKey, Title = "Starts at logon", Ok = true, Line = entry, Fix = null });
 
@@ -182,9 +188,16 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             case AutostartKey:
             {
                 // The node's options are the settings file's now, so the entry carries none but a socket that is not the default.
-                var args = options.SocketPath == NodeSocket.Resolve(null) ? Array.Empty<string>() : ["--node-socket", options.SocketPath];
+                IReadOnlyList<string> args = options.SocketPath == NodeSocket.Resolve(null) ? Array.Empty<string>() : ["--node-socket", options.SocketPath];
+                var path = nodePath;
+                // A stale unit is rewritten from its own ExecStart, so the options it carries (--data, --release-feed, ...)
+                // survive; only the missing entry is made from this node's path.
+                if (AutostartEntry() is not null && UnitText() is { } unitText && Autostart.ExecOf(unitText) is { } own)
+                {
+                    (path, args) = own;
+                }
                 var output = new StringWriter();
-                var exit = await Autostart.InstallAsync(nodePath, args, options.SocketPath, output, output, cancellationToken);
+                var exit = await Autostart.InstallAsync(path, args, options.SocketPath, output, output, cancellationToken);
                 return exit == 0 ? null : output.ToString().Trim();
             }
             case NoAutostartKey:
