@@ -40,23 +40,26 @@ public static class HookCommands
     /// The one exception is the node's own answer (a 200 with a body, which it gives only to a Stop it holds), written to
     /// <paramref name="stdout"/> for Claude Code to read.
     /// </summary>
-    public static async Task<int> HookAsync(string? socket, Stream stdin, TextWriter stdout)
+    /// <param name="budget">How long it waits for the node: <see cref="HookBudget"/> unless a test, which must not depend on how
+    /// busy the machine is, gives it more (StopGateTests waited past 2 s on a loaded machine and read no decision).</param>
+    public static async Task<int> HookAsync(string? socket, Stream stdin, TextWriter stdout, TimeSpan? budget = null)
     {
+        var wait = budget ?? HookBudget;
         try
         {
-            using var budget = new CancellationTokenSource(HookBudget);
+            using var limit = new CancellationTokenSource(wait);
             using var body = new MemoryStream();
-            await stdin.CopyToAsync(body, budget.Token);
+            await stdin.CopyToAsync(body, limit.Token);
             using var handler = NodeSocket.CreateHandler(NodeSocket.Resolve(socket));
-            using var http = new HttpClient(handler) { BaseAddress = NodeSocket.BaseAddress, Timeout = HookBudget };
+            using var http = new HttpClient(handler) { BaseAddress = NodeSocket.BaseAddress, Timeout = wait };
             using var content = new ByteArrayContent(body.ToArray());
             content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
-            using var response = await http.PostAsync(NodeWire.HooksRoute, content, budget.Token);
+            using var response = await http.PostAsync(NodeWire.HooksRoute, content, limit.Token);
             if (response.StatusCode == System.Net.HttpStatusCode.OK
-                && await response.Content.ReadAsStringAsync(budget.Token) is { Length: > 0 } answer)
+                && await response.Content.ReadAsStringAsync(limit.Token) is { Length: > 0 } answer)
             {
                 await stdout.WriteAsync(answer);
-                await stdout.FlushAsync(budget.Token);
+                await stdout.FlushAsync(limit.Token);
             }
         }
         catch (Exception)
