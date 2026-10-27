@@ -185,7 +185,19 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         {
             return Reply(answering, ex.Code, ex.Message);
         }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // A node dropping mid-call (a closed socket, a disposed or cancelled request) or anything unforeseen is an answer,
+            // never the end of the server: the host would have to restart it by hand.
+            var said = $"{Restarting} ({ex.GetType().Name}: {ex.Message})";
+            return method == "tools/call"
+                ? Reply(answering, new ToolCallResult([new TextContent($"pilot: {said}")], IsError: true), McpJsonContext.Default.ToolCallResult)
+                : Reply(answering, InternalError, said);
+        }
     }
+
+    /// <summary>What a call or read says when the node is not there: it may be restarting, so the next call may well work.</summary>
+    private const string Restarting = "the node is restarting (or not running): try again in a moment";
 
     private InitializeResult Initialize(InitializeParams given)
     {
@@ -226,6 +238,11 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         }
         var exit = await PilotCommand.InvokeAsync([.. NodeArgs(target, here), .. args], cwd, output, error, Who, bySession: true, console: false, cancellationToken, agent: true);
         var said = (output.ToString() + error.ToString()).TrimEnd();
+        if (exit == 3)
+        {
+            // The CLI's "no node answers": for a server that stays up, the node is coming back, not to be started by hand.
+            said = $"pilot: {Restarting} ({said.Replace("pilot: ", "")})";
+        }
         return new ToolCallResult([new TextContent(said.Length > 0 ? said : exit == 0 ? "ok" : $"exit {exit}")], IsError: exit != 0);
     }
 
@@ -249,9 +266,10 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         {
             snapshot = await PilotCommand.SnapshotAsync(client, cancellationToken);
         }
-        catch (Exception ex) when (ex is HttpRequestException or SocketException or IOException or WebSocketException)
+        catch (Exception ex) when (ex is HttpRequestException or SocketException or IOException or WebSocketException or ObjectDisposedException
+            || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
         {
-            throw new McpException(InternalError, $"no node answers on {client.SocketPath} ({ex.Message}); start it with pilot-gui or pilot-node");
+            throw new McpException(InternalError, $"{Restarting} (no node answers on {client.SocketPath}: {ex.Message})");
         }
         var text = resource.Name switch
         {
