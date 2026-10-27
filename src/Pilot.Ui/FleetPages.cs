@@ -266,9 +266,9 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
     {
         // A node that was heard and cannot be reached keeps its pill (dimmed, labelled last heard), as its row keeps its last
         // known state; one never heard stays out. Its rows keep their stale marks, and its commands stay refused.
-        var offered = feeds.Where(f => f.Mark.Here || f.Feed.Connected || f.Feed.Node is not null).ToList();
+        var offered = feeds.Select(f => (f.Mark, f.Feed, Reach: f.Feed.Reach)).Where(f => f.Mark.Here || f.Reach.Connected || (Unreachable(f.Reach) && f.Feed.Node is not null)).ToList();
         filter.Choices = [.. offered.Select(f => f.Mark)];
-        filter.Down = offered.Where(f => !f.Mark.Here && !f.Feed.Connected && f.Feed.Node is not null).ToDictionary(f => f.Mark.Key, f => f.Feed.Reach.DownSince);
+        filter.Down = offered.Where(f => !f.Mark.Here && Unreachable(f.Reach)).ToDictionary(f => f.Mark.Key, f => f.Reach.DownSince);
         var several = filter.Choices.Count > 1;
         var shown = feeds.Where(f => !several || filter.Shows(f.Mark)).ToList();
         // Another node's rows keep their mark while its stream is down: its last rows are still shown, and unmarked they
