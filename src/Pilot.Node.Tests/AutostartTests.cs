@@ -36,8 +36,6 @@ public sealed class AutostartTests
         unit.ShouldContain("ExecStart=/home/ada/.local/share/pilot2/bin/pilot-node --lan --repo-root \"/home/ada/src/my org\"\n");
         unit.ShouldContain("Restart=always");
         unit.ShouldContain($"RestartPreventExitStatus={NodeExitCodes.AlreadyRunning}");
-        // The node alone is the unit's to stop: its jobs run in the cgroup too, and outlive an update or restart (review of #357).
-        unit.ShouldContain("KillMode=process");
         unit.ShouldContain("WantedBy=default.target");
     }
 

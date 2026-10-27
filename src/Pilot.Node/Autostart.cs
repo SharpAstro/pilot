@@ -48,7 +48,6 @@ public static class Autostart
             Restart=always
             RestartSec=5
             RestartPreventExitStatus={NodeExitCodes.AlreadyRunning} {NodeExitCodes.StoreTooNew}
-            KillMode=process
 
             [Install]
             WantedBy=default.target
