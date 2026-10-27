@@ -558,7 +558,8 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             Top(Layout.Builder.Text(line.For, 13f, Dim)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.Untold ? $"{line.State} · owner not told" : line.State, 14f, line.Untold ? Queued : color).RowH(22f),
-                Layout.Builder.Text(stuck ?? line.StateDetail ?? "", 11f, stuck is null ? Dim : Queued).RowH(18f)),
+                // The state column can be narrower than the stuck line: it ends in an ellipsis and says the whole of it on hover.
+                (stuck is null ? Layout.Builder.Text(line.StateDetail ?? "", 11f, Dim) : Layout.Builder.Text(stuck, 11f, Queued).WithTooltip(stuck)).RowH(18f)),
             Top(Layout.Builder.Text(line.Started, 13f, Dim)),
             Top(Layout.Builder.Text(line.Took, 13f, ended ? Dim : Body)),
         };
@@ -623,7 +624,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             if (_confirmCancel == job.Id)
             {
                 // The question replaces the row's buttons, so nothing else can be pressed by a slip while it stands.
-                buttons.Add(Layout.Builder.Text($"Cancel {job.Id}? It stops now; its output so far stays in its log.", 12f, Bright).WAuto());
+                buttons.Add(Question($"Cancel {job.Id}? It stops now; its output so far stays in its log."));
                 buttons.Add(Pill("Cancel job", $"job:{job.Id}:cancel-yes", () => { _confirmCancel = null; cancel(job); }, Danger, DangerHover));
                 buttons.Add(Pill("Keep running", $"job:{job.Id}:cancel-no", () => _confirmCancel = null));
                 return Panel(facts, line, buttons);
@@ -631,7 +632,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             if (_confirmForce == job.Id && OnForceCancel is { } forceYes)
             {
                 // Its own question, as Cancel's: a force kills the wrapper and everything under it with no grace.
-                buttons.Add(Layout.Builder.Text($"Force cancel {job.Id}? It and every process under it are killed at once; its output so far stays in its log.", 12f, Bright).WAuto());
+                buttons.Add(Question($"Force cancel {job.Id}? It and every process under it are killed at once; its output so far stays in its log."));
                 buttons.Add(Pill("Force cancel job", $"job:{job.Id}:force-yes", () => { _confirmForce = null; forceYes(job); }, Danger, DangerHover));
                 buttons.Add(Pill("Keep running", $"job:{job.Id}:force-no", () => _confirmForce = null));
                 return Panel(facts, line, buttons);
@@ -682,9 +683,15 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
         if (below.Count > TreeRows)
         {
-            yield return Layout.Builder.Text($"and {below.Count - TreeRows} more", 12f, Dim).RowH(TreeRowHeight);
+            yield return Layout.Builder.HStack(
+                    Layout.Builder.Spacer().WFixed(FactLabel),
+                    Layout.Builder.Text($"and {below.Count - TreeRows} more", 12f, Dim).WStar())
+                .RowH(TreeRowHeight);
         }
     }
+
+    /// <summary>A confirm question beside its pills: padded as a pill is, so its text shares their middle.</summary>
+    private static Layout.Node Question(string text) => Layout.Builder.Text(text, 12f, Bright).Pad(0f, 4f).WAuto();
 
     private Layout.Node Panel(List<Layout.Node> facts, JobLine line, List<Layout.Node> buttons)
     {

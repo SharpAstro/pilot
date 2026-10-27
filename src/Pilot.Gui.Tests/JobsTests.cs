@@ -237,6 +237,9 @@ public sealed class JobsTests
         var described = Cells(jobs, screen);
 
         described.ShouldContain("process exited, output still held by 5120");
+        // The state column may cut it, so its whole text is the cell's hover.
+        Layout.Engine.Arrange(jobs.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored)
+            .Select(x => x.Node.Tooltip).ShouldContain("process exited, output still held by 5120");
         described.ShouldContain("Force cancel…");
         // The step it was on is not said over it.
         described.ShouldNotContain("Passed Parser.NestedGroups");
@@ -511,6 +514,60 @@ public sealed class JobsTests
                     Draw();
                 }
                 File.WriteAllBytes(Path.Combine(dir, $"job-cancel-{state}-{width}.png"),
+                    SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, height));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CapturesOfARunningJobsTreeAndTheForceCancelQuestionAtNarrowAndWideWindows()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var dir = Path.GetDirectoryName(capture) ?? ".";
+        // Many processes, long names: the tree is cut at four with a count, and a long name is the fact column's to carry.
+        JobProcessInfo[] many =
+        [
+            new("pwsh", 4812, 0), new("dotnet", 5120, 1), new("testhost", 6044, 2), new("conhost.exe --headless", 6100, 2),
+            new("node-with-a-rather-long-program-name", 6200, 3), new("msbuild", 6300, 1), new("vbcscompiler", 6400, 2),
+        ];
+        foreach (var (width, height) in new[] { (1280, 800), (2000, 900) })
+        {
+            foreach (var state in new[] { "tree", "tree-hover", "force-asked", "stuck" })
+            {
+                using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+                var (chrome, jobs) = Chrome(renderer);
+                jobs.CanCommand = true;
+                jobs.OnCancel = _ => { };
+                jobs.OnForceCancel = _ => { };
+                jobs.OnSession = _ => { };
+                var screen = ScreenWithPid();
+                var log = state == "stuck" ? LogWith(stuck: "process exited, output still held by 5120", tree: [new("dotnet", 5120, 1)]) : LogWith(tree: many);
+                var read = new SemaphoreSlim(0);
+                jobs.LoadLog = (_, _, _) => Task.FromResult(log);
+                jobs.Changed = () => read.Release();
+                chrome.Show(PilotPage.Jobs);
+                void Draw() => chrome.Render(new SessionsScreen([], "test", Live.At), null, null, screen, new RectF32(0, 0, width, height));
+                Draw();
+                (await read.WaitAsync(TimeSpan.FromSeconds(10), Ct)).ShouldBeTrue();
+                Draw();
+                if (state == "tree-hover")
+                {
+                    var page = Layout.Engine.Arrange(jobs.Tree(screen), new Rect<float>(52f, 0f, width - 52f, height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+                    var pill = page.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "job:j14:force" }).Bounds;
+                    jobs.Pointer = (pill.X + pill.Width / 2f, pill.Y + pill.Height / 2f);
+                    Draw();
+                }
+                else if (state == "force-asked")
+                {
+                    var arranged = Layout.Engine.Arrange(jobs.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
+                    var force = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "job:j14:force" });
+                    CellLayout.HitTest(arranged, force.Bounds.X + 1, force.Bounds.Y);
+                    Draw();
+                }
+                File.WriteAllBytes(Path.Combine(dir, $"job-force-{state}-{width}.png"),
                     SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, height));
             }
         }
