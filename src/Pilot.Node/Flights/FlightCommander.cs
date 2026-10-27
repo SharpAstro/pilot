@@ -379,6 +379,22 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
                 $"{flight.Title ?? flight.Item.Noun} ({flight.Item.Display}) is now {foldedInto}'s: its PR closes it, and {foldedInto}'s planner plans its points");
         }
 
+        // Its issue is closed with it once its PR merged: GitHub links a PR's "Closes #n" only sometimes (#302, #267 and #238
+        // merged and left #285, #254 and #207 open), and an issue open after its work landed looks like work still to do.
+        if (foldedInto is null && github is not null && flight.Item.Tracker == TrackerKind.GitHub && flight.PullRequest is { } merged
+            && await MergedAsync(flight, merged, cancellationToken))
+        {
+            try
+            {
+                await github.CloseIssueAsync(flight.RepoPath, flight.Issue, $"Landed in #{merged} ({flight.Code}).", cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                state.RaiseCard(CardBin.ForYou, "issue-left-open", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed, but issue #{flight.Issue} is still open",
+                    $"{ex.Message}. Close it by hand: its work is in PR #{merged}.", link: flight.PullRequestUrl);
+            }
+        }
+
         // Flights that waited for it may leave now. A folded flight's issue is the other flight's work and has not landed, so
         // those that waited for it wait for the other flight instead (not for themselves, not twice, not in a cycle).
         foreach (var waitingRow in state.Flights().Where(f => f.State != FlightState.Landed && f.Connections.Contains(flight.Code, StringComparer.Ordinal)).ToList())
@@ -408,6 +424,19 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
                 waiting = waiting with { PackageWaits = [.. waiting.PackageWaits, .. uses] };
             }
             state.PutFlight(Settle(waiting));
+        }
+    }
+
+    /// <summary>Whether the flight's PR <paramref name="number"/> merged, as GitHub says now; false when it cannot say.</summary>
+    private async Task<bool> MergedAsync(FlightRow flight, int number, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return github is not null && await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken) is { State: "MERGED" } pr && pr.Number == number;
+        }
+        catch (FlightException)
+        {
+            return false;
         }
     }
 
