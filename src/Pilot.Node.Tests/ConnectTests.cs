@@ -272,7 +272,7 @@ public sealed class ConnectTests : OverlapTestsBase
         var answered = await Leg(connect.Verb, connect.Target, connect.Args);
 
         answered.Ok.ShouldBeTrue();
-        answered.Made.ShouldNotBeNull().ShouldContain("TIA2 is connected to PIL294 on DE1");
+        answered.Made.ShouldNotBeNull().ShouldContain("TIA2 waits for PIL294 on DE1");
         var asker = F("TIA2");
         asker.Overlaps.ShouldHaveSingleItem().Answer.ShouldBe(OverlapAnswer.Connect);
         asker.State.ShouldBe(FlightState.Held);
