@@ -144,7 +144,28 @@ internal sealed class LinkMenu
             {
                 if (painted == action)
                 {
-                    // The links of the last paint, in the order they were painted, which is the order a reader meets them.
+                    // Under the link, at its left edge, so the menu hangs where the link's own text starts.
+                    OpenAt(url, region.X, region.Y + region.Height);
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (key.Key is InputKey.Tab && (key.Modifiers & ~InputModifier.Shift) == 0)
+        {
+            var links = Painted(widget);
+            if (links.Count == 0)
+            {
+                return false;
+            }
+            var now = links.FindIndex(l => l.Action == Focused);
+            Focused = links[now < 0 ? (shift ? links.Count - 1 : 0) : (now + (shift ? links.Count - 1 : 1)) % links.Count].Action;
+            return true;
+        }
+        return false;
+    }
+
+    // The links of the last paint, in the order they were painted, which is the order a reader meets them.
     private List<(string Action, ClickableRegion Region)> Painted(IPixelWidget widget)
     {
         var regions = new List<ClickableRegion>();
