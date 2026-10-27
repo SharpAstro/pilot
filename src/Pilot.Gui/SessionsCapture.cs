@@ -51,7 +51,7 @@ internal static class SessionsCapture
     /// <param name="openFlight">The code of the flight whose page the Flights page shows in place of its table.</param>
     public static SessionsView<RgbaImage> Render(RgbaImageRenderer renderer, SessionsScreen screen, float dpiScale = 1f, bool canSay = false,
         FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null, bool inPlay = false, IReadOnlyList<MachineLine>? machines = null,
-        string? hover = null, FlightsViewMode? flightsView = null)
+        string? hover = null, FlightsViewMode? flightsView = null, PullRequestsScreen? pullRequests = null)
     {
         var view = new SessionsView<RgbaImage>(renderer) { CanSay = canSay };
         var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = FontPath, DpiScale = dpiScale };
@@ -77,8 +77,9 @@ internal static class SessionsCapture
         {
             chrome.Flights.Mode = mode;
         }
+        chrome.PullRequests.OnRefresh = _ => Task.CompletedTask;
         var window = new RectF32(0, 0, renderer.Width, renderer.Height);
-        chrome.Render(screen, flights, cards, jobs, null, repos, window, machines);
+        chrome.Render(screen, flights, cards, jobs, null, repos, pullRequests, window, machines);
         if (hover is not null)
         {
             // The hover text the window shows once the pointer has rested on the region, painted last, over everything.
@@ -111,10 +112,10 @@ internal static class SessionsCapture
     /// <summary>Renders one frame to <paramref name="pngPath"/> and its rows to <c>&lt;pngPath&gt;.rows.txt</c>; returns the dump's path.</summary>
     public static string Write(SessionsScreen screen, string pngPath, int width, int height, bool canSay = false,
         FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null,
-        IReadOnlyList<MachineLine>? machines = null, string? hover = null, FlightsViewMode? flightsView = null)
+        IReadOnlyList<MachineLine>? machines = null, string? hover = null, FlightsViewMode? flightsView = null, PullRequestsScreen? pullRequests = null)
     {
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
-        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight, repos: repos, machines: machines, hover: hover, flightsView: flightsView);
+        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight, repos: repos, machines: machines, hover: hover, flightsView: flightsView, pullRequests: pullRequests);
         if (Path.GetDirectoryName(Path.GetFullPath(pngPath)) is { } folder)
         {
             Directory.CreateDirectory(folder);
@@ -129,12 +130,34 @@ internal static class SessionsCapture
             ? string.Concat(flights.Lines.Select(l => l.ToDumpLine() + "\n"))
             : page == PilotPage.Repos && repos is not null
                 ? string.Concat(repos.Lines.Where(l => l.Status.Tracked).SelectMany(l => l.Worktrees.Select(w => w.ToDumpLine()).Prepend(l.ToDumpLine())).Select(t => t + "\n"))
+            : page == PilotPage.PullRequests
+                ? PullRequestsDump(pullRequests) + "\n"
             : page == PilotPage.Jobs && jobs is not null
                 ? string.Concat(jobs.Lines.Select(l => l.ToDumpLine() + "\n"))
                 : page == PilotPage.Home
                     ? new HomeScreen(flights ?? new FlightsScreen([], screen.Source, screen.AsOf), screen, jobs ?? new JobsScreen([], screen.Source, screen.AsOf), cards ?? CardsScreen.Empty, machines).ToDump() + "\n"
                     : RowsText(screen), new UTF8Encoding(false));
         return rowsPath;
+    }
+
+    /// <summary>The Pull requests page's rows: a line a repo, then a line a PR with its label, flight, author, review and age.</summary>
+    public static string PullRequestsDump(PullRequestsScreen? screen)
+    {
+        if (screen?.Row is not { } row)
+        {
+            return "the node has not read the pull requests yet";
+        }
+        var text = new StringBuilder();
+        foreach (var group in row.Groups())
+        {
+            text.Append(group.Repo).Append("  ").Append(group.PullRequests.Length).Append('\n');
+            foreach (var pr in group.PullRequests)
+            {
+                text.Append("  #").Append(pr.Number).Append(' ').Append(pr.Title).Append(" | ").Append(pr.Label).Append(" | ").Append(pr.Flight ?? "no flight")
+                    .Append(" | ").Append(pr.Author).Append(" | review ").Append(pr.Review ?? "none").Append(" | updated ").Append(PullRequestsRow.Age(pr.UpdatedAt, screen.AsOf)).Append('\n');
+            }
+        }
+        return text.ToString().TrimEnd('\n');
     }
 
     /// <summary>One line per row, in drawing order, the fields as shown.</summary>

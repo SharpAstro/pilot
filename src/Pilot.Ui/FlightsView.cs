@@ -264,7 +264,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private FlightsPalette P => Mode == FlightsViewMode.Night && CanvasAvailable ? FlightsPalette.Night : FlightsPalette.Standard;
     private FlightsPalette? NightOrNull => ReferenceEquals(P, FlightsPalette.Night) ? P : null;
 
-    private static TextInputColors NightInput(FlightsPalette n) => new()
+    internal static TextInputColors NightInput(FlightsPalette n) => new()
     {
         Background = n.RowAltBg,
         BackgroundActive = n.HeaderBg,

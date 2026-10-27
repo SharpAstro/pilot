@@ -11,7 +11,7 @@ using Pilot.Contracts;
 // this machine's node or one on the LAN.
 var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN: host:port, or its name (SE1) or host; else PILOT_NODE, else this machine's" };
 var socketOption = new Option<string?>("--node-socket") { Description = "This machine's node's socket; else PILOT_NODE_SOCKET, else this user's default" };
-var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 sessions, 3 flights, 4 jobs, 5 fleet, 6 settings, 7 repos, 8 chat, Alt+Left or Backspace back and Alt+Right forward, Ctrl+T the chat with the watchtower, q quits")
+var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 sessions, 3 flights, 4 jobs, 5 fleet, 6 settings, 7 repos, 8 chat, 9 pull requests, Alt+Left or Backspace back and Alt+Right forward, Ctrl+T the chat with the watchtower, q quits")
 {
     Options = { nodeOption, socketOption },
 };
@@ -59,6 +59,7 @@ var flights = chrome.Flights;
 flights.CanvasAvailable = false; // cells cannot draw an arrow: the terminal keeps the list
 var jobs = chrome.Jobs;
 var repos = chrome.Repos;
+var pullRequests = chrome.PullRequests;
 var home = chrome.Home;
 var fleet = chrome.Fleet;
 var settings = chrome.Settings;
@@ -106,6 +107,16 @@ repos.SyncRepos = async ct =>
     return outcomes;
 };
 repos.Changed = Redraw;
+// The Pull requests page's Refresh asks the node to read GitHub now; the row comes back on the event stream.
+pullRequests.OnRefresh = async ct =>
+{
+    var result = (await client.SendAsync(new CommandRequest { Verb = Verbs.RefreshPullRequests, Target = Verbs.NodeTarget, Who = Who }, ct)).Response;
+    if (result is not { Ok: true })
+    {
+        throw new InvalidOperationException(result?.Error ?? "the node did not answer");
+    }
+};
+pullRequests.Changed = Redraw;
 flights.OnAction = action => _ = Task.Run(async () =>
 {
     flights.Say(clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, Who, stop.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node));
@@ -317,9 +328,11 @@ FleetPages? merged = null;
 chrome.LinkCardTranscripts(() => merged?.Sessions ?? feed.Screen(DateTimeOffset.UtcNow), () => merged?.Flights ?? feed.Flights(DateTimeOffset.UtcNow), shown => page = shown,
     () => merged?.Jobs ?? feed.JobsPage(DateTimeOffset.UtcNow));
 chrome.LinkRepos(shown => page = shown);
+chrome.LinkPullRequests(shown => page = shown);
 // The Fleet page's "N waiting on you" opens those sessions on the Sessions page.
 chrome.LinkFleet(shown => page = shown);
 repos.OnOpen = location => DashboardCommands.Open(location);
+pullRequests.OnOpen = location => DashboardCommands.Open(location);
 // The session menu's New flight in its repo: the Flights page, with the wizard open on it.
 sessions.OnNewFlight = repo =>
 {
@@ -370,6 +383,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.Sessions => sessions.Tree(pages.Sessions),
             PilotPage.Flights => flights.Tree(pages.Flights),
             PilotPage.Repos => repos.Tree(pages.Repos ?? new ReposScreen([], pages.Sessions.Source, now)),
+            PilotPage.PullRequests => pullRequests.Tree(pages.PullRequests ?? new PullRequestsScreen(null, pages.Sessions.Source, now), width),
             PilotPage.Jobs => jobs.Tree(pages.Jobs),
             PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, now)),
             PilotPage.Settings => settings.Tree(now),
@@ -468,6 +482,9 @@ void Handle(ConsoleInputEvent raw)
             break;
         case InputEvent.KeyDown(InputKey.D7, _):
             chrome.Show(PilotPage.Repos);
+            break;
+        case InputEvent.KeyDown(InputKey.D9, _):
+            chrome.Show(PilotPage.PullRequests);
             break;
         case InputEvent.KeyDown(InputKey.D8, _):
             chrome.Show(PilotPage.Chat);

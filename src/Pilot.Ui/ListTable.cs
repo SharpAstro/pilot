@@ -50,7 +50,7 @@ internal sealed class ListTable
     private const float TitleSize = 12f;
 
     /// <summary>The padding at both ends of a row, around stripe and columns.</summary>
-    private const float EndPad = 8f;
+    internal const float EndPad = 8f;
 
     private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
     private static readonly RGBAColor32 Faint = new(0x5c, 0x5f, 0x6c, 0xff);
@@ -115,11 +115,17 @@ internal sealed class ListTable
         return Volatile.Read(ref _byTitle).TryGetValue(title, out var width) ? width : declared;
     }
 
-    /// <summary>The header row: titles over the columns, a divider in each gap, the stripe's cell ahead of them.</summary>
-    public Layout.Node Header(IReadOnlyList<ListColumn> columns, DesignScale scale)
+    /// <summary>
+    /// The header row: titles over the columns, a divider in each gap, the stripe's cell ahead of them. With a
+    /// <paramref name="palette"/> the titles are painted in its dim (the colour of a page's secondary text, which reads on its
+    /// ground where the shared style's faint grey does not) and the row on its ground, so a night view has no blue in it.
+    /// </summary>
+    public Layout.Node Header(IReadOnlyList<ListColumn> columns, DesignScale scale, FlightsPalette? palette = null)
     {
         var specs = Lay(columns);
-        var style = Style;
+        // Night's dim is too dark to read as a title on its black (1.7:1), and its body red too (2.5:1): its bright red is the best it has.
+        var titles = palette is null ? Dim : ReferenceEquals(palette, FlightsPalette.Night) ? palette.Bright : palette.Dim;
+        var style = palette is null ? Style : new Layout.TableStyle(palette.Ground, titles, palette.Ground, titles) { Gap = ColumnGap, PadX = 0f };
         var header = Dropping(Layout.Builder.TableHeader(specs, null, null, in style, Widths, scale, TitleSize, _hitPrefix), columns);
         return Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(StripeWidth), header.WStar())
             .WithGap(ColumnGap)

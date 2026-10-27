@@ -48,6 +48,7 @@ public sealed class TopBarTests
         yield return ("background tasks", chrome.Jobs.Tree(new JobsScreen([], "test", now)));
         yield return ("fleet", chrome.Fleet.Tree(fleet));
         yield return ("repos", chrome.Repos.Tree(new ReposScreen([], "test", now)));
+        yield return ("pull requests", chrome.PullRequests.Tree(new PullRequestsScreen(null, "test", now)));
         yield return ("settings", chrome.Settings.Tree(now));
         yield return ("chat", chrome.Chat.Tree());
     }
