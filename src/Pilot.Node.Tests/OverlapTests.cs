@@ -93,7 +93,7 @@ public abstract class OverlapTestsBase : IDisposable
 public sealed class OverlapTests1 : OverlapTestsBase
 {
     [Fact]
-    public async Task OverlapOnAFreshPairRingsOneCardWithFoldAndPlanSeparatelyAndTellsThePlannerToEndItsTurn()
+    public async Task OverlapOnAFreshPairRingsOneCardWithFoldConnectAndPlanInParallelAndTellsThePlannerToEndItsTurn()
     {
         await TwoFlights();
 
@@ -103,15 +103,101 @@ public sealed class OverlapTests1 : OverlapTestsBase
         asked.Made.ShouldNotBeNull().ShouldContain("end your turn");
         var card = Cards().ShouldHaveSingleItem();
         (card.Bin, card.State, card.Subject).ShouldBe((CardBin.Ring, CardState.Open, "flight/TIA2"));
-        card.Title.ShouldBe("TIA2 looks like part of TIA1: it edits the same parser");
+        card.Title.ShouldBe("Connect TIA2 to TIA1 (it edits the same parser)");
         card.Choices.Select(c => (c.Label, c.Verb, c.Target, string.Join(' ', c.Args))).ShouldBe(
         [
             ("Fold into TIA1", Verbs.Fold, "flight/TIA2", "TIA1"),
-            ("Plan separately", Verbs.Separate, "flight/TIA2", "TIA1"),
+            ("Connect to TIA1", Verbs.ConnectOverlap, "flight/TIA2", "TIA1"),
+            ("Plan in parallel", Verbs.Separate, "flight/TIA2", "TIA1"),
         ]);
+        card.Choices.ShouldNotContain(c => c.Label.Contains("Leave it"));
         var recorded = _state.Flights().Single(f => f.Code == "TIA2").Overlaps.ShouldHaveSingleItem();
         (recorded.Other, recorded.Why, recorded.Answer).ShouldBe(("TIA1", "it edits the same parser", OverlapAnswer.Pending));
+        recorded.Files.ShouldBeNull();
+        recorded.Node.ShouldBeNull();
         _state.Flights().Single(f => f.Code == "TIA1").Overlaps.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TheSharedFilesAreNamedOnTheCardWithBothFlightsAndWhatEachChoiceDoes()
+    {
+        await TwoFlights();
+
+        (await Leg(Verbs.Overlap, "flight/TIA2", "TIA1", "file=src/DetachedShell.cs", "file=src/Parser.cs", "it edits the same parser")).Ok.ShouldBeTrue();
+
+        var card = Cards().ShouldHaveSingleItem();
+        card.Title.ShouldBe("Connect TIA2 to TIA1 (both change src/DetachedShell.cs, src/Parser.cs)");
+        var detail = card.Detail.ShouldNotBeNull();
+        detail.ShouldContain("TIA2 (Issue 2) overlaps TIA1 (Issue 1)");
+        detail.ShouldContain("Both change 2 files: src/DetachedShell.cs, src/Parser.cs.");
+        detail.ShouldContain("it edits the same parser");
+        detail.ShouldContain("Connect holds TIA2 until TIA1 has landed");
+        detail.ShouldContain("Plan in parallel");
+        detail.ShouldContain("Fold takes TIA2's issue into TIA1");
+        _state.Flights().Single(f => f.Code == "TIA2").Overlaps.ShouldHaveSingleItem().Files.ShouldBe(["src/DetachedShell.cs", "src/Parser.cs"]);
+    }
+
+    [Fact]
+    public async Task ALongListOfSharedFilesIsCutInTheTitleAndWholeInTheDetail()
+    {
+        await TwoFlights();
+        string[] files = [.. Enumerable.Range(1, 7).Select(i => $"src/File{i}.cs")];
+
+        (await Leg(Verbs.Overlap, "flight/TIA2", ["TIA1", .. files.Select(f => "file=" + f), "same area"])).Ok.ShouldBeTrue();
+
+        var card = Cards().Single();
+        card.Title.ShouldBe("Connect TIA2 to TIA1 (both change src/File1.cs, src/File2.cs, src/File3.cs, src/File4.cs and 3 more)");
+        card.Detail.ShouldNotBeNull().ShouldContain("src/File7.cs");
+    }
+
+    [Fact]
+    public async Task ConnectAnswerRecordsItConnectsTheFlightClosesTheCardAndStartsAFreshPlannerThatKnowsIt()
+    {
+        await TwoFlights();
+        (await Leg(Verbs.PlanFlight, "flight/TIA2")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.Overlap, "flight/TIA2", "TIA1", "file=src/Parser.cs", "same parser")).Ok.ShouldBeTrue();
+        var connect = Cards().Single().Choices.Single(c => c.Verb == Verbs.ConnectOverlap);
+
+        var answered = await Leg(connect.Verb, connect.Target, connect.Args);
+
+        answered.Ok.ShouldBeTrue();
+        answered.Made.ShouldNotBeNull().ShouldContain("TIA2 is connected to TIA1");
+        var asker = F("TIA2");
+        asker.Overlaps.ShouldHaveSingleItem().Answer.ShouldBe(OverlapAnswer.Connect);
+        asker.Connections.ShouldBe(["TIA1"]);
+        asker.State.ShouldBe(FlightState.Held);
+        var closed = Cards().Single();
+        (closed.State, closed.Outcome).ShouldBe((CardState.Closed, "connect TIA2 to TIA1"));
+        _workers.Stopped.ShouldBe(["job00001"]);
+        _workers.Started.Count.ShouldBe(2);
+        var fresh = _workers.Started[1];
+        fresh.Name.ShouldBe("du1-tia2-plan");
+        fresh.Brief.ShouldContain("the controller chose to connect TIA2 to it");
+        fresh.Brief.ShouldContain("both change src/Parser.cs");
+        // Its legs can be planned now, and it still waits for TIA1.
+        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=parser", "goal=Do the work", "done-when=Its check passes")).Ok.ShouldBeTrue();
+        F("TIA2").State.ShouldBe(FlightState.Held);
+        // Asked again, the answer comes back with no card; answered again, nothing starts.
+        (await Ask()).Made.ShouldNotBeNull().ShouldContain("TIA2 is connected to TIA1 and waits for it to land");
+        (await Leg(Verbs.ConnectOverlap, "flight/TIA2", "TIA1")).Made.ShouldNotBeNull().ShouldContain("already");
+        _workers.Started.Count.ShouldBe(2);
+        Cards().ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task ConnectAnswerIsRefusedWhenTheOtherWaitsForTheFlightAndTheCardStaysOpen()
+    {
+        await TwoFlights();
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.Connect, Target = "flight/TIA1", Args = ["TIA2"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        await Ask();
+
+        var refused = await Leg(Verbs.ConnectOverlap, "flight/TIA2", "TIA1");
+
+        refused.Error.ShouldNotBeNull().ShouldContain("neither would leave");
+        F("TIA2").Overlaps.ShouldHaveSingleItem().Answer.ShouldBe(OverlapAnswer.Pending);
+        F("TIA2").Connections.ShouldBeEmpty();
+        Cards().ShouldHaveSingleItem().State.ShouldBe(CardState.Open);
+        _workers.Started.ShouldBeEmpty();
     }
 
     [Fact]
@@ -180,13 +266,13 @@ public sealed class OverlapTests1 : OverlapTestsBase
         answered.Ok.ShouldBeTrue();
         _state.Flights().Single(f => f.Code == "TIA2").Overlaps.ShouldHaveSingleItem().Answer.ShouldBe(OverlapAnswer.Separate);
         var closed = Cards().Single();
-        (closed.State, closed.Outcome).ShouldBe((CardState.Closed, "plan separately from TIA1"));
+        (closed.State, closed.Outcome).ShouldBe((CardState.Closed, "plan in parallel with TIA1"));
         _workers.Stopped.ShouldBe(["job00001"]);
         _workers.Started.Count.ShouldBe(2);
         var fresh = _workers.Started[1];
         fresh.Name.ShouldBe("du1-tia2-plan");
         fresh.Brief.ShouldContain("TIA1");
-        fresh.Brief.ShouldContain("the controller chose to plan TIA2 separately");
+        fresh.Brief.ShouldContain("the controller chose to plan TIA2 in parallel");
         fresh.Brief.ShouldContain("flight connect TIA2 TIA1");
 
         // Its legs can be planned now.
@@ -204,7 +290,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
         var again = await Ask();
 
         again.Ok.ShouldBeTrue();
-        again.Made.ShouldNotBeNull().ShouldContain("answered before: plan TIA2 separately");
+        again.Made.ShouldNotBeNull().ShouldContain("answered before: plan TIA2 in parallel");
         _state.Cards().Length.ShouldBe(cards);
         Cards().ShouldHaveSingleItem().State.ShouldBe(CardState.Closed);
         // Answering it again starts no further planner.
@@ -481,11 +567,13 @@ public sealed class OverlapTests2 : OverlapTestsBase
         // An unknown answer is no "no overlap".
         section.ShouldContain("unknown");
         section.ShouldContain(" status`");
-        // What to do with each answer: fold asks the controller on this node, connect holds the flight, another node's flight or a PR is named.
-        section.ShouldContain("flight overlap TIA2 <other> <why");
+        // What to do with each answer: overlap asks the controller (with the shared files), connect holds the flight (on another node too), a peer's flight is never folded into, a PR is named.
+        section.ShouldContain("flight overlap TIA2 <other> file=<shared file>");
         section.ShouldContain("end your turn at once");
+        section.ShouldContain("connect it to the other or plan in parallel");
         section.ShouldContain("flight connect TIA2 <other>");
-        section.ShouldContain("neither folded nor connected");
+        section.ShouldContain("The other may be a flight of another node");
+        section.ShouldContain("cannot be folded into from here");
         section.ShouldContain("in your planned summary");
         section.ShouldContain("parallel (no file in common)");
     }

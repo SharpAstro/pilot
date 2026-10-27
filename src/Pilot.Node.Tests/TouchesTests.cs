@@ -132,7 +132,7 @@ public sealed class TouchesTests : IDisposable
         lines.ShouldBe(
         [
             // Folds first, then connects, then what is not known, then parallel.
-            "PIL300 (DE1): fold, both change src/JobRunner.cs, src/Lexer.cs, src/Parser.cs (3 of your 4 files); it flies on another node, so it can be neither folded nor connected from here: name it, its node and the shared files in your planned summary",
+            "PIL300 (DE1): fold, both change src/JobRunner.cs, src/Lexer.cs, src/Parser.cs (3 of your 4 files); it flies on another node, so it cannot be folded into from here: flight connect PIL375 PIL300 holds PIL375 until that node says it landed (or flight overlap PIL375 PIL300 file=src/JobRunner.cs file=src/Lexer.cs file=src/Parser.cs <why> to ask the controller whether to connect or plan in parallel), or plan beside it when the shared files are only touched in passing",
             "PIL294 (SE1): connect, both change src/DetachedShell.cs; flight connect PIL375 PIL294 so PIL375 branches off main once it has landed, or plan beside it when the shared files are only touched in passing",
             "PR #7 \"Fix lexer\": connect, both change src/Lexer.cs; an open PR is no flight to fold into or connect to: name it and the shared files in your planned summary, and plan the legs on those files to follow its merge",
             "PIL301 (DE1): unknown, its branch flight/pil301 is not pushed, so what it changes is not known",
@@ -150,7 +150,7 @@ public sealed class TouchesTests : IDisposable
         var result = await Touches(Mine);
 
         result.Made.ShouldBe(
-            "PIL294 (SE1): fold, both change src/Lexer.cs, src/Parser.cs (2 of your 4 files); when it is the same goal, flight overlap PIL375 PIL294 <why>; when it is another goal, flight connect PIL375 PIL294");
+            "PIL294 (SE1): fold, both change src/Lexer.cs, src/Parser.cs (2 of your 4 files); when it is the same goal, flight overlap PIL375 PIL294 file=src/Lexer.cs file=src/Parser.cs <why>; when it is another goal, flight connect PIL375 PIL294");
     }
 
     [Fact]

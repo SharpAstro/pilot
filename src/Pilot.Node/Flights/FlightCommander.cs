@@ -12,7 +12,7 @@ namespace Pilot.Node.Flights;
 /// <param name="workers">Stops the flight's sessions before its plane goes; null in a test that starts none.</param>
 /// <param name="github">Gives a flight made without a title its issue's, and the commit a landed PR merged as; null in a test that names its titles.</param>
 /// <param name="packages">Reads what a landing flight releases, for the flights connected to it to wait for; null in a test that has none wait for a package.</param>
-public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider time, IWorkerLauncher? workers = null, IGitHub? github = null, PackageReleases? packages = null)
+public sealed partial class FlightCommander(NodeState state, Planes planes, TimeProvider time, IWorkerLauncher? workers = null, IGitHub? github = null, PackageReleases? packages = null)
 {
     // The one lock of the flight verbs, which says what holds it (a command waiting past LockWait.Patience is told).
     private readonly NamedLock _one = new(time);
@@ -75,7 +75,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
                 switch (command.Verb)
                 {
                     case Verbs.Connect:
-                        Connect(command);
+                        made = await ConnectAsync(command, cancellationToken);
                         break;
                     case Verbs.Land:
                         await LandAsync(command, cancellationToken);
@@ -398,10 +398,24 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         }
     }
 
-    private void Connect(CommandRequest command)
+    /// <summary>
+    /// <c>connect flight/&lt;code&gt; &lt;other&gt;</c>: the flight holds until the other has landed. The other is a flight of this node, or
+    /// else one a reachable peer flies (see <see cref="ConnectPeerAsync"/>). Returns what the caller is told, or null.
+    /// </summary>
+    private async Task<string?> ConnectAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var flight = Find(command.Target);
-        var other = (command.Args ?? []) is [{ } code, ..] ? state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) : null;
+        var given = (command.Args ?? []) is [{ } code, ..] ? code : null;
+        var other = given is null ? null : state.Flights().FirstOrDefault(f => string.Equals(f.Code, given, StringComparison.OrdinalIgnoreCase));
+        if (other is null && given is not null)
+        {
+            return await ConnectPeerAsync(flight, given, null, cancellationToken);
+        }
+        return Connect(flight, other);
+    }
+
+    private string? Connect(FlightRow flight, FlightRow? other)
+    {
         if (other is null)
         {
             throw new FlightException($"connect needs the code of a flight {flight.Code} waits for, as in connect flight/{flight.Code} TIA1611");
@@ -412,9 +426,35 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         }
         if (flight.Connections.Contains(other.Code, StringComparer.Ordinal))
         {
-            return;
+            return null;
         }
         state.PutFlight(Settle(flight with { Connections = [.. flight.Connections, other.Code] }));
+        return null;
+    }
+
+    /// <summary>
+    /// Connects the flight to a flight of this node, as <c>connect</c> does, for the controller's answer to an overlap: one at a time with
+    /// the flight verbs. Throws <see cref="FlightException"/> with why it could not, and then changes nothing.
+    /// </summary>
+    public async Task ConnectToAsync(string code, string other, string? node, CancellationToken cancellationToken)
+    {
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            var flight = Find(Verbs.FlightTarget(code));
+            if (node is null)
+            {
+                Connect(flight, state.Flights().FirstOrDefault(f => string.Equals(f.Code, other, StringComparison.OrdinalIgnoreCase)));
+            }
+            else
+            {
+                await ConnectPeerAsync(flight, other, node, cancellationToken);
+            }
+        }
+        finally
+        {
+            _one.Release();
+        }
     }
 
     /// <summary>
@@ -781,7 +821,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         }
     }
 
-    /// <summary>A flight held while any flight it connects from has not landed or any package it waits for is not up, flying otherwise; a landed one stays landed.</summary>
+    /// <summary>A flight held while any flight it connects from (on this node or another) has not landed or any package it waits for is not up, flying otherwise; a landed one stays landed.</summary>
     private FlightRow Settle(FlightRow flight)
     {
         if (flight.State == FlightState.Landed)
@@ -789,7 +829,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             return flight;
         }
         var flights = state.Flights().ToDictionary(f => f.Code, StringComparer.Ordinal);
-        var held = flight.PackageWaits.Length > 0 || flight.Connections.Any(c => !flights.TryGetValue(c, out var other) || other.State != FlightState.Landed);
+        var held = flight.PackageWaits.Length > 0 || flight.PeerConnections.Length > 0 || flight.Connections.Any(c => !flights.TryGetValue(c, out var other) || other.State != FlightState.Landed);
         return flight with { State = held ? FlightState.Held : FlightState.Flying };
     }
 

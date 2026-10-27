@@ -214,22 +214,23 @@ public sealed partial class LegCommander
         return judgement.Pick switch
         {
             OverlapPick.Parallel => $"{other.Label}: parallel, no file in common",
-            OverlapPick.Fold => $"{other.Label}: fold, both change {named} ({shared.Length} of your {mine} files); {Advice(code, other, fold: true)}",
-            _ => $"{other.Label}: connect, both change {named}; {Advice(code, other, fold: false)}",
+            OverlapPick.Fold => $"{other.Label}: fold, both change {named} ({shared.Length} of your {mine} files); {Advice(code, other, shared, fold: true)}",
+            _ => $"{other.Label}: connect, both change {named}; {Advice(code, other, shared, fold: false)}",
         };
     }
 
-    // What the planner does with the line: a flight of this node can be folded into or connected to; a peer's flight or a PR cannot from here.
-    private static string Advice(string code, Touched other, bool fold)
+    // What the planner does with the line: a flight of this node can be folded into or connected to, a peer's flight connected to (never folded into); a PR neither.
+    private static string Advice(string code, Touched other, string[] shared, bool fold)
     {
+        var files = string.Join(' ', shared.Select(f => OverlapFileArg + f));
         if (other.FlightCode is { } flight && !other.OnPeer)
         {
             return fold
-                ? $"when it is the same goal, flight overlap {code} {flight} <why>; when it is another goal, flight connect {code} {flight}"
+                ? $"when it is the same goal, flight overlap {code} {flight} {files} <why>; when it is another goal, flight connect {code} {flight}"
                 : $"flight connect {code} {flight} so {code} branches off main once it has landed, or plan beside it when the shared files are only touched in passing";
         }
-        return other.FlightCode is not null
-            ? "it flies on another node, so it can be neither folded nor connected from here: name it, its node and the shared files in your planned summary"
+        return other.FlightCode is { } peerFlight
+            ? $"it flies on another node, so it cannot be folded into from here: flight connect {code} {peerFlight} holds {code} until that node says it landed (or flight overlap {code} {peerFlight} {files} <why> to ask the controller whether to connect or plan in parallel), or plan beside it when the shared files are only touched in passing"
             : "an open PR is no flight to fold into or connect to: name it and the shared files in your planned summary, and plan the legs on those files to follow its merge";
     }
 

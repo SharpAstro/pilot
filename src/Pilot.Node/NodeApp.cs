@@ -68,6 +68,8 @@ public static class NodeApp
         builder.Services.AddSingleton<PackageReleases>();
         builder.Services.AddSingleton<PackageWatch>();
         builder.Services.AddHostedService(services => services.GetRequiredService<PackageWatch>());
+        // A flight connected to a flight another node flies is held until that node says it landed.
+        builder.Services.AddHostedService(services => new PeerConnectionWatch(services.GetRequiredService<FlightCommander>(), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton(services =>
         {
             var flights = ActivatorUtilities.CreateInstance<FlightCommander>(services);

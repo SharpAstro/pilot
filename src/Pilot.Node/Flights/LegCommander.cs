@@ -57,7 +57,7 @@ public sealed partial class LegCommander(
     public static bool Handles(string verb) =>
         verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.ValidateLeg or Verbs.Check or Verbs.FinishLeg or Verbs.WaitLeg or Verbs.GoAround or Verbs.Merge or Verbs.RerunChecks
             or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review
-            or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Touches or Verbs.Fold or Verbs.Separate;
+            or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Touches or Verbs.Fold or Verbs.Separate or Verbs.ConnectOverlap;
 
     /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
     public Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken) =>
@@ -97,7 +97,10 @@ public sealed partial class LegCommander(
             switch (command.Verb)
             {
                 case Verbs.Overlap:
-                    made = AskOverlap(command);
+                    made = await AskOverlapAsync(command, cancellationToken);
+                    break;
+                case Verbs.ConnectOverlap:
+                    made = await ConnectAnswerAsync(command, cancellationToken);
                     break;
                 case Verbs.Fold:
                     made = await FoldAsync(command, cancellationToken);
