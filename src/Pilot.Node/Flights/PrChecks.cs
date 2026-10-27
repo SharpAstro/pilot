@@ -60,7 +60,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null } && !carded.Contains(Verbs.FlightTarget(f.Code))))
         {
             var legs = state.Legs(flight.Code);
-            if (legs.Length == 0 || legs.Any(l => l.State != LegState.Done))
+            // A leg not done is looked at too: a PR that merged under it is rung and its work sent to a new PR, never landed.
+            if (legs.Length == 0)
             {
                 continue;
             }
@@ -75,10 +76,17 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             catch (FlightException ex)
             {
+                if (MergedUnder(flight.Code))
+                {
+                    continue;
+                }
                 state.RaiseCard(CardBin.Ring, "not-landed", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{pr.Number} merged on GitHub, but the flight did not land", ex.Message);
             }
         }
     }
+
+    /// <summary>The landing found the PR merged under a leg and said so on its own ring: no second one.</summary>
+    private bool MergedUnder(string code) => state.Flights().FirstOrDefault(f => f.Code == code)?.MergedHead is not null;
 
     /// <summary>
     /// Every flight whose PR is done and open, as its merge queue has it. A merge through a queue only queues the PR, and the
@@ -485,6 +493,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     }
                     catch (FlightException ex)
                     {
+                        if (MergedUnder(flight.Code))
+                        {
+                            continue;
+                        }
                         // Merged, but something of the flight's would be left behind: said on a ring, never left in a log.
                         state.RaiseCard(CardBin.Ring, "not-landed", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number} merged on GitHub, but the flight did not land", ex.Message);
                     }

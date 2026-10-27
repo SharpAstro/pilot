@@ -1338,6 +1338,25 @@ public sealed partial class LegCommander(
 
         // A base that is not a branch on the remote is repaired first: the rebase it takes must be what is pushed.
         flight = await RepairBaseAsync(flight, cancellationToken);
+        if (flight.MergedHead is { } mergedHead)
+        {
+            // The earlier PR merged without these legs (#342): only what the plane holds past the merged head goes on, from the base as
+            // it now stands. --onto drops the merged commits whether the merge kept their ids or squashed them.
+            if (await planes.UncommittedAsync(flight.Worktree, cancellationToken) is { } dirty)
+            {
+                throw new FlightException($"{flight.Code}'s plane holds {dirty}: commit {(dirty.StartsWith("1 ", StringComparison.Ordinal) ? "it" : "them")}, then open the PR, which rebases the plane onto {flight.Base}");
+            }
+            await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
+            var onto = await git.RunAsync(["rebase", "--onto", flight.Base, mergedHead], flight.Worktree, cancellationToken);
+            if (!onto.Ok)
+            {
+                await git.RunAsync(["rebase", "--abort"], flight.Worktree, cancellationToken);
+                throw new FlightException($"rebasing {flight.Code}'s new work onto {flight.Base} conflicts ({onto.Why}): rebase its plane by hand (git rebase --onto {flight.Base} {mergedHead[..Math.Min(8, mergedHead.Length)]}), then open the PR");
+            }
+            flight = flight with { MergedHead = null };
+            state.PutFlight(flight);
+            state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s new work rebased onto {flight.Base}; a new PR opens", FlightCommander.MergedUnderLegKind);
+        }
         // Pushed every time, not only for a new PR: a go-around's commits must reach the PR before it is reviewed again.
         await PushAsync(flight, cancellationToken);
         var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
@@ -1692,6 +1711,12 @@ public sealed partial class LegCommander(
             return;
         }
         var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+        // Too late: GitHub merged it already. The new leg's work is not lost: it goes to a new PR from the merged base, and the node rings at once.
+        if (pr is { State: "MERGED" } && pr.Number == number)
+        {
+            flights.MarkMergedUnderLeg(flight, pr.Head, why);
+            return;
+        }
         var open = pr is { State: "OPEN" };
         var queued = open && await github.MergeQueueAsync(flight.RepoPath, number, cancellationToken) is { State: "OPEN", Queued: true };
         // Unknown is treated as armed, as EnsureNotArmedAsync does: the disarm is no error when it was not on.
