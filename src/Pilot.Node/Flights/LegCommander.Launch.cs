@@ -13,8 +13,14 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public sealed partial class LegCommander
 {
-    /// <summary>How long a command waits for its session start before it answers "started" and leaves the rest to a card.</summary>
+    /// <summary>
+    /// How long a command waits for its session start, once the launcher has been asked, before it answers "started" and leaves
+    /// the rest to a card.
+    /// </summary>
     public TimeSpan StartAnswerWithin { get; init; } = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>How long a command waits for the plane to be made ready (the work before the launcher is asked) before it answers "started" all the same.</summary>
+    public TimeSpan StartReadyWithin { get; init; } = TimeSpan.FromSeconds(15);
 
     /// <summary>The card a start that failed, or was given up as the flight moved on meanwhile, leaves.</summary>
     public const string StartFailedKind = "start-failed";
@@ -53,19 +59,22 @@ public sealed partial class LegCommander
 
         public Task<string?> Done { get; set; } = Task.FromResult<string?>(null);
 
+        /// <summary>Completed once the plane is ready and the launcher is being asked: from then on the start is as slow as the launcher.</summary>
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         /// <summary>0 open; 1 the command answered "started", so a failure goes to a card; 2 the failure is the command's to report.</summary>
         public int Decided;
     }
 
     /// <summary>
     /// Starts a session outside the lock, to be called under it with the reservation <paramref name="key"/> free. <paramref name="start"/>
-    /// readies the plane and starts the session, returning its job; <paramref name="record"/> runs under the lock again with the
+    /// readies the plane, calls the action it is given as the launcher is asked, and starts the session, returning its job; <paramref name="record"/> runs under the lock again with the
     /// job and returns null once it recorded it, or why the flight is no longer as it was (the job is then stopped);
     /// <paramref name="after"/> runs under the lock once it did.
     /// </summary>
     /// <param name="replacing">Takes the reservation over from a start still out, which then gives itself up silently.</param>
     /// <param name="quietFailure">Says a failure itself (its text), under the lock, where the command is never told it.</param>
-    private void Launching(string key, string what, string subject, CardChoice? again, Func<Task<string>> start, Func<string, string?> record,
+    private void Launching(string key, string what, string subject, CardChoice? again, Func<Action, Task<string>> start, Func<string, string?> record,
         Func<Task>? after = null, bool replacing = false, Func<string, Task>? quietFailure = null)
     {
         var token = new object();
@@ -82,7 +91,7 @@ public sealed partial class LegCommander
             var current = true;
             try
             {
-                job = await start();
+                job = await start(() => launch.Entered.TrySetResult());
                 await _one.WaitAsync(CancellationToken.None);
                 try
                 {
@@ -158,7 +167,12 @@ public sealed partial class LegCommander
         {
             return (null, null);
         }
-        await Task.WhenAny(Task.WhenAll(launches.Select(l => l.Done)), Task.Delay(StartAnswerWithin));
+        await Task.WhenAll(launches.Select(async l =>
+        {
+            // The plane's readying is work, not a launcher that hangs: it is waited for, up to a cap; the launcher's own time is not.
+            await Task.WhenAny(l.Done, l.Entered.Task, Task.Delay(StartReadyWithin));
+            await Task.WhenAny(l.Done, Task.Delay(StartAnswerWithin));
+        }));
         var still = new List<string>();
         string? error = null;
         foreach (var launch in launches)

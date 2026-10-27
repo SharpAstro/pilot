@@ -605,9 +605,10 @@ public sealed partial class LegCommander(
         var model = Models.Model(RoleModels.Worker);
         Launching(LegsKey(flight.Code), $"{validator}, to check {flight.Code}/{leg.Name} against the tree", target,
             new CardChoice { Label = $"Start {leg.Name}", Verb = Verbs.StartLeg, Target = target },
-            async () =>
+            async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
+                entering();
                 return await workers.StartAsync(new WorkerStart(validator, flight.RepoPath, PlaneOf(flight), brief, model, "low"), CancellationToken.None);
             },
             job =>
@@ -632,7 +633,7 @@ public sealed partial class LegCommander(
         var resumed = leg.Worker is not null && leg.Report?.StartsWith("resumed:", StringComparison.Ordinal) == true ? leg.Report : null;
         Launching(LegsKey(flight.Code), $"{worker}, on {flight.Code}/{leg.Name}", target,
             new CardChoice { Label = $"Start {leg.Name}", Verb = Verbs.StartLeg, Target = target },
-            async () =>
+            async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
                 await WarnSiblingsBehindAsync(flight, leg, CancellationToken.None);
@@ -643,6 +644,7 @@ public sealed partial class LegCommander(
                     var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
                     plane = new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : "");
                 }
+                entering();
                 return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed, machine: options.Machine), leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), CancellationToken.None);
             },
             job =>
@@ -1051,12 +1053,13 @@ public sealed partial class LegCommander(
         var legs = state.Legs(flight.Code);
         Launching(LegsKey(flight.Code), $"{worker}, going around {flight.Code}/{leg.Name}", target,
             new CardChoice { Label = "Go around", Verb = Verbs.GoAround, Target = target, Args = [why] },
-            async () =>
+            async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
                 var commits = await git.RunAsync(["log", "--oneline", $"{flight.Base}..HEAD"], flight.Worktree, CancellationToken.None);
                 var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
                 var brief = Briefs.For(flight, next, legs, why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket, machine: options.Machine);
+                entering();
                 return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), CancellationToken.None);
             },
             started =>
@@ -1531,9 +1534,10 @@ public sealed partial class LegCommander(
         var brief = Briefs.Plan(flight, state.Legs(flight.Code), Briefs.Run(Cli, Socket), options.Machine);
         Launching(PlanKey(flight.Code), $"{planner}, to plan {flight.Code}'s legs", subject,
             new CardChoice { Label = "Plan again", Verb = Verbs.PlanFlight, Target = subject },
-            async () =>
+            async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
+                entering();
                 return await workers.StartAsync(new WorkerStart(planner, flight.RepoPath, PlaneOf(flight), brief, Models.Model(RoleModels.Planner), Models.Effort(RoleModels.Planner)), CancellationToken.None);
             },
             job =>
@@ -1618,7 +1622,7 @@ public sealed partial class LegCommander(
         ReviewPlan? plan = null;
         Launching(ReviewKey(flight.Code), $"{reviewer}, to review {flight.Code}", subject,
             new CardChoice { Label = "Start review", Verb = Verbs.StartReview, Target = subject },
-            async () =>
+            async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
                 var commits = await git.RunAsync(["log", "--oneline", $"{flight.Base}..HEAD"], flight.Worktree, CancellationToken.None);
@@ -1630,6 +1634,7 @@ public sealed partial class LegCommander(
                 // GitHub can still report the head before a push for a moment, so it is only the fallback.
                 var planeHead = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, CancellationToken.None);
                 reviewedHead = planeHead.Ok && planeHead.Output.Trim() is { Length: > 0 } sha ? sha : await _marks.HeadAsync(flight, CancellationToken.None);
+                entering();
                 return await workers.StartAsync(new WorkerStart(reviewer, flight.RepoPath, PlaneOf(flight), brief, Models.ReviewerModel(plan.Depth), Models.ReviewerEffort(plan.Depth)), CancellationToken.None);
             },
             job =>
