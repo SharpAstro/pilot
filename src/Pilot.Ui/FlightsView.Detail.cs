@@ -127,9 +127,19 @@ internal sealed partial class FlightsView<TSurface>
             Pill("← Back", "flight:back", GoBack),
             Layout.Builder.Text(line.Code, 16f, Bright).WAuto(),
             Whole(Layout.Builder.Text(line.Title, 14f, Body).WStar(), line.Title, TitleFits),
-            // The stale mark is a line of its own below: here it overlapped the title and cut the buttons at a narrow width.
-            Layout.Builder.Text(line.StateDetail is null ? line.State : $"{line.State} ({line.StateDetail})", 13f, color, TextAlign.Far).WAuto(),
         };
+        // The PR is in the header, beside the title, with where it stands: it sat in the facts line below, past a long review chip.
+        if (flight.PullRequestUrl is { } url)
+        {
+            head.Add(Link($"PR #{flight.PullRequest}", url, $"pr:{line.Code}").WAuto());
+        }
+        if (FlightMarks.PrState(flight) is { } prState)
+        {
+            // The link's own height (20), so the two share one middle.
+            head.Add(Layout.Builder.Text(prState, 12f, PrStateColor(prState)).WAuto().RowH(20f));
+        }
+        // The stale mark is a line of its own below: here it overlapped the title and cut the buttons at a narrow width.
+        head.Add(Layout.Builder.Text(line.StateDetail is null ? line.State : $"{line.State} ({line.StateDetail})", 13f, color, TextAlign.Far).WAuto());
         // The buttons wrap onto lines of their own under the title, as Home's chips do: in the head row they took the title's room and
         // the last (a stale flight's dead "Remove render") ran past the page's edge at a narrow width.
         var buttons = CanCommand
@@ -140,10 +150,6 @@ internal sealed partial class FlightsView<TSurface>
         {
             Layout.Builder.Text($"{line.Where} · {line.Branch} · {line.Legs}", 12f, Dim).WAuto(),
         };
-        if (flight.PullRequestUrl is { } url)
-        {
-            facts.Add(Link($"PR #{flight.PullRequest}", url, $"pr:{line.Code}").WAuto());
-        }
         if (flight.Review is { } review)
         {
             facts.Add(Layout.Builder.Text($"review {review.State.ToString().ToLowerInvariant()}", 12f,
@@ -207,6 +213,9 @@ internal sealed partial class FlightsView<TSurface>
             .Pad(Gutter, 8f)
             .Stretch();
     }
+
+    // The PR's state in the palette's own colours, the word always beside it: green while it is open for review, amber in the queue, blue once merged, dim as a draft.
+    private RGBAColor32 PrStateColor(string state) => state switch { "open" => Flying, "queued" => Held, "merged" => Landed, _ => Dim };
 
     /// <summary>
     /// <paramref name="action"/>'s button, or for a stale flight (its node unreachable) the same words as a dead one: a verb goes
@@ -388,12 +397,18 @@ internal sealed partial class FlightsView<TSurface>
     /// </summary>
     internal IEnumerable<Layout.Node> ReviewAsks(FlightDetail detail)
     {
-        if (detail.Line.Row.Review is not { State: ReviewState.Changes, Report: { Length: > 0 } report })
+        if (detail.Line.Row.Review is not { State: ReviewState.Changes, Report: { Length: > 0 } report } review)
         {
             yield break;
         }
+        // Which head and round the report is from, and when the PR has moved on since: that report no longer speaks for the PR, so it is dimmed.
+        var current = detail.Line.Row.GitHubHead;
+        var older = review.ReviewedHead is { Length: > 0 } reviewed && current is { Length: > 0 } now
+            && !string.Equals(reviewed, now, StringComparison.OrdinalIgnoreCase);
+        var from = review.ReviewedHead is { Length: > 0 } read ? $"review of {FlightMarks.Short(read)}, round {review.GoAround + 1}" : $"review round {review.GoAround + 1}";
         yield return Layout.Builder.Text("The review asks for changes:", 13f, Held).RowH(22f);
-        yield return Prose(report, 13f, Body);
+        yield return Prose(older ? $"{from}; the head is now {FlightMarks.Short(current!)}" : from, 12f, older ? Held : Dim);
+        yield return Prose(report, 13f, older ? Dim : Body);
         // Only the flight's last leg, as the node (LegCommander) decides it: an earlier capped leg with a later one planned is not the person's yet.
         if (detail.Legs.LastOrDefault() is { } capped && capped.Row.ReviewGoArounds >= ReviewRedoCap)
         {

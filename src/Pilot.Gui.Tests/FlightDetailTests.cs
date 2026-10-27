@@ -115,6 +115,105 @@ public sealed class FlightDetailTests
         Said(Flight(), Legs()).Trim().ShouldBeEmpty();
     }
 
+    // The page's text leaves with the colour each is drawn in, and its clickable regions, at a width where nothing is cut.
+    private static (List<Layout.Content.Text> Leaves, List<ClickableRegion> Regions) LeavesOf(FlightRow flight, int width = 1600, Action<string>? onOpen = null)
+    {
+        using var vessel = new RgbaImageRenderer((uint)width, 800);
+        var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Flights;
+        flights.OnOpen = onOpen;
+        var screen = new FlightsScreen([FlightLine.Build([flight], [], Now, Legs()).Single()], "test", Now);
+        flights.Render(screen, new RectF32(0, 0, width, 800));
+        flights.OpenDetail("TIA1611");
+        flights.Render(screen, new RectF32(0, 0, width, 800));
+        var leaves = Layout.Engine.Arrange(flights.Tree(screen), new Rect<float>(0, 0, width, 800), new PixelMeasureContext<RgbaImage>(vessel, SessionsCapture.FontPath, 1f))
+            .Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().ToList();
+        var regions = new List<ClickableRegion>();
+        flights.CollectPaintedRegions(regions);
+        return (leaves, regions);
+    }
+
+    [Theory]
+    [InlineData("open", null, null, false)]
+    [InlineData("draft", null, null, true)]
+    [InlineData("queued", "in the merge queue, position 2", null, false)]
+    [InlineData("merged", null, "landed", false)]
+    public void TheHeaderCarriesThePrAsALinkWithItsStateAndTheFactsLineNoLonger(string state, string? queue, string? landed, bool draft)
+    {
+        var flight = Flight() with
+        {
+            MergeQueue = queue,
+            GitHubDraft = draft ? true : null,
+            State = landed is null ? FlightState.Flying : FlightState.Landed,
+            LandedAt = landed is null ? null : Live.At,
+        };
+        var opened = new List<string>();
+
+        var (leaves, regions) = LeavesOf(flight, onOpen: opened.Add);
+
+        var link = leaves.Single(t => t.Value.StartsWith("PR #7", StringComparison.Ordinal));
+        link.Value.ShouldEndWith(Followable.Away);
+        // Once, in the header: the facts line says the PR no longer.
+        leaves.Count(t => t.Value.Contains("PR #7", StringComparison.Ordinal)).ShouldBe(1);
+        var said = leaves.Single(t => t.Value == state);
+        // The state sits beside the link, after the code and the title.
+        leaves.IndexOf(said).ShouldBe(leaves.IndexOf(link) + 1);
+        leaves.FindIndex(t => t.Value == "TIA1611").ShouldBeLessThan(leaves.IndexOf(link));
+        // A link that leaves the app: a click opens it through the host's opener, a right-click offers Copy URL.
+        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "pr:TIA1611" }).OnClick!.Invoke(InputModifier.None);
+        opened.ShouldBe(["https://github.com/x/tianwen/pull/7"]);
+    }
+
+    [Fact]
+    public void AFlightWithNoPrHasNoLinkAndNoStateInItsHeader()
+    {
+        var (leaves, _) = LeavesOf(Flight() with { PullRequest = null, PullRequestUrl = null });
+
+        leaves.Any(t => t.Value.StartsWith("PR #", StringComparison.Ordinal)).ShouldBeFalse();
+        leaves.Any(t => t.Value is "open" or "draft" or "queued" or "merged").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AReportFromAnOlderHeadSaysSoAndIsDimmedWhileOneForTheCurrentHeadIsNot()
+    {
+        var asks = "1) CI is red: LayoutDrivenTests rejects JobsView.cs:680.";
+        var changes = new ReviewRow { State = ReviewState.Changes, Reviewer = "r", Report = asks, StartedAt = Live.At, GoAround = 2, ReviewedHead = "cafe0000aaaa" };
+
+        var (older, _) = LeavesOf(Flight() with { Review = changes, GitHubHead = "beef1111bbbb" });
+        var (current, _) = LeavesOf(Flight() with { Review = changes, GitHubHead = "CAFE0000AAAA" });
+
+        // Each word of the report is a leaf of its own colour: the older one is the dim shade, the current one the body's.
+        var oldWord = older.Single(t => t.Value == "LayoutDrivenTests ");
+        var curWord = current.Single(t => t.Value == "LayoutDrivenTests ");
+        oldWord.Color.ShouldNotBe(curWord.Color);
+        Contrast(oldWord.Color, FlightsPalette.Standard.PanelBg).ShouldBeGreaterThanOrEqualTo(4.5);
+        Contrast(oldWord.Color, FlightsPalette.Standard.Ground).ShouldBeGreaterThanOrEqualTo(4.5);
+        Joined(older).ShouldContain("review of cafe000, round 3; the head is now beef111");
+        Joined(current).ShouldContain("review of cafe000, round 3");
+        Joined(current).ShouldNotContain("the head is now");
+        // The head not yet known (no look at the PR) says nothing of a newer one, and the report is not dimmed.
+        var (unknown, _) = LeavesOf(Flight() with { Review = changes });
+        Joined(unknown).ShouldNotContain("the head is now");
+        unknown.Single(t => t.Value == "LayoutDrivenTests ").Color.ShouldBe(curWord.Color);
+        // A review that never recorded its head still says its round.
+        var (headless, _) = LeavesOf(Flight() with { Review = changes with { ReviewedHead = null }, GitHubHead = "beef1111bbbb" });
+        Joined(headless).ShouldContain("review round 3");
+    }
+
+    // The page's words as one string, a leaf's trailing space as a space: the wrapped prose reads as it does on the page.
+    private static string Joined(List<Layout.Content.Text> leaves) => string.Concat(leaves.Select(t => t.Value.EndsWith(' ') ? t.Value : t.Value + " "));
+
+    private static double Contrast(RGBAColor32 a, RGBAColor32 b)
+    {
+        static double Lin(byte v)
+        {
+            var s = v / 255.0;
+            return s <= 0.03928 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4);
+        }
+        static double Lum(RGBAColor32 c) => 0.2126 * Lin(c.Red) + 0.7152 * Lin(c.Green) + 0.0722 * Lin(c.Blue);
+        var (hi, lo) = (Math.Max(Lum(a), Lum(b)), Math.Min(Lum(a), Lum(b)));
+        return (hi + 0.05) / (lo + 0.05);
+    }
+
     [Fact]
     public void ADumpListsEveryLegStepAndArtifact()
     {
