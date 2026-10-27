@@ -35,6 +35,10 @@ internal static class StatusMarkdown
         {
             facts.Add($"**usage** {Text(usage.Line(DateTimeOffset.UtcNow, TimeZoneInfo.Local))}");
         }
+        if (snapshot.Machine is { } machine)
+        {
+            facts.Add($"**machine** {Text(machine.Line())}");
+        }
         if (facts.Count > 0)
         {
             foreach (var fact in facts)

@@ -297,7 +297,7 @@ public sealed class MachineTests
         Json(mirror.Machine).ShouldBe(Json(node.State.Machine()));
         mirror.Machine!.CpuPercent.ShouldBe(80);
         mirror.Machine.Gpu.ShouldBeNull();
-        mirror.Machine.Line().ShouldBe("CPU 80% (8 cores) · MEM 12.0/32.0 GB");
+        mirror.Machine.Line().ShouldBe("cpu 80% · mem 12/32 GB");
     }
 
     [Fact]

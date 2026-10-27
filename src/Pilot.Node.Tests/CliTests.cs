@@ -376,6 +376,47 @@ public sealed class CliTests : IAsyncLifetime
         PilotCommand.Caller(snapshot, "a1a2a3a4-0000-4000-8000-000000000000").ShouldBe("du1-tia1-parser");
     }
 
+    private static SnapshotEvent SnapshotWith(MachineRow? machine) => new()
+    {
+        Seq = 1, At = DateTimeOffset.UnixEpoch, Stream = "s", Notes = [], Sessions = [], Machine = machine,
+    };
+
+    private static MachineRow Machine(double cpu, long used, long total, MachineGpu? gpu = null) => new()
+    {
+        SampledAt = DateTimeOffset.UnixEpoch, CpuPercent = cpu, Cores = 8, MemoryUsed = used, MemoryTotal = total, Gpu = gpu,
+    };
+
+    [Fact]
+    public void StatusSaysTheMachineInALineWithItsGpu()
+    {
+        const long Gb = 1L << 30;
+        var machine = Machine(34, 21 * Gb, 32 * Gb, new MachineGpu { Percent = 81, MemoryUsed = (long)(6.1 * Gb), MemoryTotal = 12 * Gb });
+
+        machine.Line().ShouldBe("cpu 34% · gpu 81% (6.1/12 GB) · mem 21/32 GB");
+        PilotCommand.Status(SnapshotWith(machine)).ShouldContain("machine  cpu 34% · gpu 81% (6.1/12 GB) · mem 21/32 GB");
+        StatusMarkdown.Build(SnapshotWith(machine)).ShouldContain("- **machine** cpu 34% · gpu 81% (6.1/12 GB) · mem 21/32 GB");
+    }
+
+    [Fact]
+    public void StatusLeavesTheGpuOutOfTheMachineLineWhenTheNodeHasNone()
+    {
+        const long Gb = 1L << 30;
+        var machine = Machine(7, 3 * Gb / 2, 16 * Gb);
+
+        machine.Line().ShouldBe("cpu 7% · mem 1.5/16 GB");
+        PilotCommand.Status(SnapshotWith(machine)).ShouldContain("machine  cpu 7% · mem 1.5/16 GB");
+        StatusMarkdown.Build(SnapshotWith(machine)).ShouldContain("- **machine** cpu 7% · mem 1.5/16 GB");
+        // A GPU whose memory the platform does not say still shows its share.
+        Machine(7, Gb, 16 * Gb, new MachineGpu { Percent = 40 }).Line().ShouldBe("cpu 7% · gpu 40% · mem 1/16 GB");
+    }
+
+    [Fact]
+    public void StatusPrintsNoMachineLineWhenTheSnapshotHasNoRow()
+    {
+        PilotCommand.Status(SnapshotWith(null)).ShouldNotContain("machine");
+        StatusMarkdown.Build(SnapshotWith(null)).ShouldNotContain("machine");
+    }
+
     [Fact]
     public async Task StatusWritesMarkdownForOutputFormatMarkdownAndPlainTextWhenNoHostCanRenderAuto()
     {

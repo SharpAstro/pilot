@@ -37,20 +37,25 @@ public sealed record MachineRow
 
     private readonly MachineProcess[]? _processes;
 
-    /// <summary>The row in a line, as every client shows it: <c>CPU 42% (8 cores) · MEM 12.0/32.0 GB · GPU 7%</c>.</summary>
+    /// <summary>
+    /// The row in a line, as every client shows it: <c>cpu 34% · gpu 81% (6.1/12 GB) · mem 21/32 GB</c>. The GPU part is
+    /// left out when the node has no GPU, and its memory when the platform does not say it; GB go to one decimal only
+    /// where they are not whole.
+    /// </summary>
     public string Line()
     {
-        var parts = new List<string>
-        {
-            $"CPU {CpuPercent:0}% ({Cores} cores)",
-            $"MEM {MemoryUsed / (double)(1L << 30):0.0}/{MemoryTotal / (double)(1L << 30):0.0} GB",
-        };
+        var parts = new List<string> { $"cpu {CpuPercent:0}%" };
         if (Gpu is { } gpu)
         {
-            parts.Add($"GPU {gpu.Percent:0}%");
+            parts.Add(gpu.MemoryUsed is { } used && gpu.MemoryTotal is { } total
+                ? $"gpu {gpu.Percent:0}% ({Gigabytes(used)}/{Gigabytes(total)} GB)"
+                : $"gpu {gpu.Percent:0}%");
         }
+        parts.Add($"mem {Gigabytes(MemoryUsed)}/{Gigabytes(MemoryTotal)} GB");
         return string.Join(" · ", parts);
     }
+
+    private static string Gigabytes(long bytes) => (bytes / (double)(1L << 30)).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
 }
 
 /// <summary>The GPU's share in use, and its dedicated memory where it is told.</summary>
