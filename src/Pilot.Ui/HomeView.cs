@@ -273,9 +273,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     // The process table stops here on a wide page, so a row's name and its figures are not a screen apart.
     private const float TableMaxWidth = 960f;
 
-    // Past this many characters a process's name or owner may be cut by its column's ellipsis, so it carries its whole text on hover.
-    private const int NameFits = 24;
-    private const int OwnerFits = 28;
+    // A process's name and owner always carry their whole text on hover: a narrow window cuts even a short name with the column's ellipsis.
 
     private void Machines(List<Layout.Node> blocks, HomeScreen screen)
     {
@@ -320,14 +318,14 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                 Layout.Builder.Spacer().HStar()).WFixed(GaugeBarWidth),
             Layout.Builder.Text(gauge.Figure, 12f, Bright).WFixed(GaugeFigureWidth).HStar())
             .WithGap(GaugeGap)
-            .WFixed(GaugeLabelWidth + GaugeBarWidth + GaugeFigureWidth + 2 * GaugeGap)
+            .WAuto()
             .HFixed(GaugeRow);
 
     private Layout.Node ProcessRow(HomeScreen screen, MachineLine line, MachineProcess process)
     {
         var name = Layout.Builder.Text(process.Name, 13f, Bright).WStar().HStar();
         return Layout.Builder.HStack(
-            process.Name.Length > NameFits ? name.WithTooltip($"{process.Name} (pid {process.Pid})") : name,
+            name.WithTooltip($"{process.Name} (pid {process.Pid})"),
             Layout.Builder.Text(process.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture), 12f, Dim, TextAlign.Far).WFixed(PidWidth).HStar(),
             Layout.Builder.Text(MachineLine.Cpu(process), 13f, Bright, TextAlign.Far).WFixed(CpuWidth).HStar(),
             Layout.Builder.Text(MachineLine.Memory(process), 13f, Bright, TextAlign.Far).WFixed(MemoryWidth).HStar(),
@@ -343,7 +341,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         if (chip is null)
         {
             var cell = Layout.Builder.Text(owner ?? "", 12f, Dim).WFixed(OwnerWidth).HStar();
-            return owner?.Length > OwnerFits ? cell.WithTooltip(owner) : cell;
+            return owner is { Length: > 0 } ? cell.WithTooltip(owner) : cell;
         }
         var tint = chip.Tone is "queued" ? Amber : Green;
         var pill = chip.Kind == HomeChipKind.Session
@@ -352,7 +350,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         // Centred in the row, the pill one height with the chips of the sections above.
         return Layout.Builder.VStack(
             Layout.Builder.Spacer().HStar(),
-            (chip.Label.Length > OwnerFits ? pill.WithTooltip(chip.Label) : pill).RowH(24f),
+            pill.WithTooltip(chip.Label).RowH(24f),
             Layout.Builder.Spacer().HStar()).WFixed(OwnerWidth);
     }
 

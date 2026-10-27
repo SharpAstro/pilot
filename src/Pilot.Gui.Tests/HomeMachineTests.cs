@@ -243,6 +243,20 @@ public sealed class HomeMachineTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task AShortProcessNameCarriesItsWholeTextOnHoverToo()
+    {
+        var pages = await TwoNodes(new NodeFilter());
+        var row = pages.Machines![0].Row with { Processes = [Process(10, "node.exe", 40, 3L << 30, null)] };
+        var screen = new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, [pages.Machines![0] with { Row = row }]);
+        using var renderer = new RgbaImageRenderer(1280, 1600);
+        var home = new HomeView<RgbaImage>(renderer);
+
+        // A narrow window can cut even this name, so it carries its text whatever its length.
+        var arranged = Layout.Engine.Arrange(home.Tree(screen), new Rect<float>(0, 0, 420, 1600), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        arranged.Any(a => a.Node.Tooltip is { } t && t.Contains("node.exe")).ShouldBeTrue();
+    }
+
+    [Fact]
     public void TheBarsAndFiguresMeetTheContrastFloorOnTheirGround()
     {
         var page = new RGBAColor32(0x12, 0x13, 0x19, 0xff);
