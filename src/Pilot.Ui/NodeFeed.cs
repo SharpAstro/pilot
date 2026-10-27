@@ -172,7 +172,6 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// the node has read them (or when its clones have no org to read).
     /// </summary>
     public PullRequestsRow? PullRequests() => Volatile.Read(ref _view).PullRequests;
->>>>>>> 55113a2 (v2 GUI: a Pull requests page between Repos and Background tasks, drawn from the node's PullRequestsRow)
 
     /// <summary>The cards panel: the open cards and the latest handled lines.</summary>
     public CardsScreen Cards()
