@@ -99,7 +99,13 @@ internal sealed record FleetLine
     public string? AutopilotWord => Connected || LastKnown ? (Autopilot ? "autopilot on" : "autopilot off") : null;
 
     /// <summary>The mark a node in maintenance wears on its row.</summary>
-    public const string MaintenanceMark = "🔧 maintenance";
+    public const string MaintenanceMark = MaintenanceIcon + " " + MaintenanceWord;
+
+    /// <summary>The wrench the mark opens with; drawn in a leaf of its own, see <see cref="FleetView{TSurface}.MarkIconWidth"/>.</summary>
+    public const string MaintenanceIcon = "🔧";
+
+    /// <summary>The mark's words, which stay text beside the wrench.</summary>
+    public const string MaintenanceWord = "maintenance";
 
     /// <summary>The node's watchtower in words (<see cref="Pilot.Commands.WatchtowerWords.Line"/>); <c>—</c> for a node not reached, null for one that keeps none.</summary>
     public string? Watchtower { get; init; }
@@ -331,6 +337,15 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private const float SummaryRowHeight = 86f;
     private const float Gutter = 16f;
 
+    /// <summary>The one gap between the marks under a row's account, and between the last mark and the usage.</summary>
+    internal const float MarkGap = 8f;
+
+    /// <summary>
+    /// The wrench's box. An emoji is drawn with the emoji face but the measure had it at the primary face's fallback
+    /// width, narrower, so the mark ran into the next one; a fixed box does not depend on which face answers.
+    /// </summary>
+    internal const float MarkIconWidth = 18f;
+
     // Column widths, as they are before a reader drags a divider.
     private const float MachineWidth = 190f;
     private const float AccountWidth = 280f;
@@ -509,10 +524,12 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 Layout.Builder.Text(line.Account, 13f, line.LastKnown ? Dim : Body).RowH(22f),
                 line.Maintenance || line.AutopilotWord is not null || line.WatchtowerMark is not null
                     ? Layout.Builder.HStack([
-                            .. (line.Maintenance ? [Layout.Builder.Text(FleetLine.MaintenanceMark + (line.AsOf is { } asOf ? " " + asOf : ""), 11f, Ringing).WAuto()] : (Layout.Node[])[]),
+                            .. (line.Maintenance ? [Layout.Builder.HStack(
+                                Layout.Builder.Text(FleetLine.MaintenanceIcon, 11f, Ringing).WFixed(MarkIconWidth),
+                                Layout.Builder.Text(FleetLine.MaintenanceWord + (line.AsOf is { } asOf ? " " + asOf : ""), 11f, Ringing).WAuto()).WAuto()] : (Layout.Node[])[]),
                             .. (line.WatchtowerMark is { } towerMark ? [Layout.Builder.Text(towerMark, 11f, Ringing).WAuto()] : (Layout.Node[])[]),
                             .. (line.AutopilotWord is { } autopilot ? [Layout.Builder.Text(autopilot, 11f, line.Autopilot && !line.LastKnown ? Live : Dim).WAuto()] : (Layout.Node[])[]),
-                            Layout.Builder.Text(line.Connected ? line.Usage : line.State, 11f, Dim).WStar()]).WithGap(8f).RowH(18f)
+                            Layout.Builder.Text(line.Connected ? line.Usage : line.State, 11f, Dim).WStar()]).WithGap(MarkGap).RowH(18f)
                     : Layout.Builder.Text(line.Connected ? line.Usage : line.State, 11f, Dim).RowH(18f),
                 // Its own line, so a narrow column clips this one and not the marks above.
                 Layout.Builder.Text(line.Watchtower ?? "", 11f, line.WatchtowerChurning ? Ringing : Dim).RowH(16f),

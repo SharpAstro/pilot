@@ -244,7 +244,7 @@ public sealed class FleetTests
         var screen = new FleetScreen([FleetLine.From("node.sock", here: true, canCommand: true, null, Summary("laptop", "ada@example.org")), marked], Live.At);
         var described = CellLayout.Describe(Layout.Engine.Arrange(fleet.Tree(screen), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored));
 
-        described.Split('\n').Count(l => l.Contains("🔧 maintenance", StringComparison.Ordinal)).ShouldBe(1);
+        described.Split('\n').Count(l => l.Contains("maintenance", StringComparison.Ordinal)).ShouldBe(1);
     }
 
     /// <summary>A node in maintenance that goes unreachable keeps its mark, dated, its values dimmed and its status line says when it was last heard.</summary>
@@ -271,7 +271,7 @@ public sealed class FleetTests
         chrome.Show(PilotPage.Fleet);
         var arranged = Layout.Engine.Arrange(chrome.Fleet.Tree(new FleetScreen([line], Live.At)), new Rect<int>(0, 0, 1280, 400), CellMeasureContext.PixelAuthored);
         bool Has(string text) => arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == text);
-        Has($"{FleetLine.MaintenanceMark} as of {hhmm}").ShouldBeTrue();
+        Has($"{FleetLine.MaintenanceWord} as of {hhmm}").ShouldBeTrue();
         Has(line.State).ShouldBeTrue();
         Has("2 flying").ShouldBeTrue();
         arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().ShouldNotContain(b => b.Action.EndsWith(":maintenance", StringComparison.Ordinal));
@@ -451,5 +451,49 @@ public sealed class FleetTests
         Described(queued).ShouldContain("j14 holds the queue (xy1-orb204-parser), held for 11m 0s");
         Described(queued).ShouldContain(@"waiting for C:\x\done.txt");
         Described(Summary("laptop", "ada@example.org")).ShouldNotContain("holds the queue");
+    }
+
+    /// <summary>The marks under a row's account (maintenance, churning watchtower, autopilot, usage) each end a gap before the next starts, live and last known, narrow and wide.</summary>
+    [Theory]
+    [InlineData(false, 1280)]
+    [InlineData(false, 700)]
+    [InlineData(true, 1280)]
+    [InlineData(true, 700)]
+    public void TheMarksUnderTheAccountNeverOverlap(bool lastKnown, int width)
+    {
+        var churning = Calm with { Churning = true, StartsLast24h = 9, Summary = "12 watchtowers in the last hour" };
+        var summary = WithWatchtower(churning, connected: !lastKnown) with
+        {
+            Usage = "5h 41% · 7d 12%",
+            DownSince = lastKnown ? new DateTimeOffset(2026, 10, 28, 12, 5, 0, TimeSpan.Zero) : null,
+            Node = Summary("s2").Node! with { Maintenance = true, Autopilot = true, Watchtower = churning },
+        };
+        var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, summary, Live.At);
+        using var renderer = new RgbaImageRenderer((uint)width, 400);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Show(PilotPage.Fleet);
+
+        var arranged = Layout.Engine.Arrange(chrome.Fleet.Tree(new FleetScreen([line], Live.At)), new Rect<float>(0, 0, width, 400), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        var leaves = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text }).ToArray();
+        string TextOf(dynamic a) => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value;
+        var icon = leaves.Where(a => TextOf(a) == FleetLine.MaintenanceIcon).ShouldHaveSingleItem();
+        var word = leaves.Where(a => TextOf(a).StartsWith(FleetLine.MaintenanceWord, StringComparison.Ordinal)).ShouldHaveSingleItem();
+        var marks = new List<(string Name, float Left, float Right)> { ("maintenance", icon.Bounds.X, word.Bounds.X + word.Bounds.Width) };
+        foreach (var (name, text) in new[] { ("watchtower", line.WatchtowerMark), ("autopilot", line.AutopilotWord), ("usage", line.Connected ? line.Usage : line.State) })
+        {
+            if (text is not null)
+            {
+                var leaf = leaves.Where(a => TextOf(a) == text).ShouldHaveSingleItem();
+                marks.Add((name, leaf.Bounds.X, leaf.Bounds.X + leaf.Bounds.Width));
+            }
+        }
+
+        marks.Count.ShouldBeGreaterThanOrEqualTo(3);
+        icon.Bounds.Width.ShouldBeGreaterThanOrEqualTo(FleetView<RgbaImage>.MarkIconWidth);
+        marks.Sort((a, b) => a.Left.CompareTo(b.Left));
+        for (var i = 1; i < marks.Count; i++)
+        {
+            (marks[i].Left - marks[i - 1].Right).ShouldBeGreaterThanOrEqualTo(FleetView<RgbaImage>.MarkGap - 0.01f, $"{marks[i - 1].Name} then {marks[i].Name}");
+        }
     }
 }
