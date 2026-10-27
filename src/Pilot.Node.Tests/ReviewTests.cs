@@ -937,7 +937,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
-    public async Task APassedPrWhoseRebaseConflictsIsSentBackAsChangesSoItsDoneLegGoesAround()
+    public async Task APassedPrWhoseRebaseConflictsIsSentBackAsChangesAndItsDoneLegGoesAroundByItself()
     {
         var flight = await NewFlight("8", "parser");
         File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
@@ -952,10 +952,33 @@ public sealed class ReviewTests3 : ReviewTestsBase
         await new PrChecks(_state, _github, TimeProvider.System, legs: _legs).LookAsync(Ct);
 
         F("TIA8").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
-        var card = Open().ShouldHaveSingleItem();
-        card.Kind.ShouldBe(LegCommander.ReviewChanges);
-        card.Detail.ShouldNotBeNull().ShouldStartWith("the PR conflicts with its base");
-        (await Run(Verbs.GoAround, "flight/TIA8/parser", "controller", "resolve the conflicts")).Error.ShouldBeNull();
+        // No one is asked: the node sends the done leg round to resolve it.
+        _state.Legs("TIA8").ShouldHaveSingleItem().State.ShouldBe(LegState.Flying);
+        Open().ShouldNotContain(c => c.Kind == "pr-conflicts");
+    }
+
+    [Fact]
+    public async Task APrThatConflictsUnderAReviewAskingForChangesGoesAroundByItselfOnceAHead()
+    {
+        var flight = await NewFlight("9", "parser");
+        File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA9"), "controller");
+        (await Run(Verbs.Review, "flight/TIA9", Reviewer("TIA9"), "changes", "the parser drops the last line")).Ok.ShouldBeTrue();
+        File.WriteAllText(Path.Combine(Repo, "README.md"), "ours\n");
+        Git(Repo, "commit", "-qam", "README on main");
+        Git(Repo, "push", "-q", "origin", "main");
+        _github.Pr = _github.Pr! with { Mergeable = "CONFLICTING" };
+        var checks = new PrChecks(_state, _github, TimeProvider.System, legs: _legs);
+
+        await checks.LookAsync(Ct);
+
+        var leg = _state.Legs("TIA9").ShouldHaveSingleItem();
+        leg.State.ShouldBe(LegState.Flying);
+        leg.GoArounds.ShouldBe(1);
+        // Once a head: the same conflicting head looked at again sends no second worker.
+        await checks.LookAsync(Ct);
+        _state.Legs("TIA9").ShouldHaveSingleItem().GoArounds.ShouldBe(1);
     }
 
     [Fact]
