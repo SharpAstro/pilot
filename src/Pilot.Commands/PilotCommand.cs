@@ -11,7 +11,7 @@ namespace Pilot.Commands;
 /// command needs no leg named: the flight is the one whose worktree holds the folder, and the leg its one flying,
 /// which is how a worker ticks its own checklist.
 /// </summary>
-/// <remarks>Exit codes: 0 done, 1 refused by the node (it says why), 2 usage, 3 no node, 4 the node did not answer in time (the command may still run).</remarks>
+/// <remarks>Exit codes: 0 done, 1 refused by the node (it says why), 2 usage, 3 no node, 4 the node did not answer in time (the command may still run), 5 the node queued it behind a lock (it runs there, not done yet).</remarks>
 public static class PilotCommand
 {
     /// <param name="who">Who the commands are from: <c>cli</c> for a terminal (a Claude session running it is named by its
@@ -36,6 +36,9 @@ public static class PilotCommand
 
     /// <summary>The command's exit code when the node did not answer in time.</summary>
     public const int ExitTimedOut = 4;
+
+    /// <summary>The command's exit code when the node queued it behind a lock held for longer than it would wait: it runs there, and is not done yet.</summary>
+    public const int ExitQueued = 5;
 
     /// <summary>The node held a command past the deadline; it may still be running there.</summary>
     internal sealed class CommandTimeoutException(TimeSpan deadline) : Exception(
@@ -1061,6 +1064,12 @@ public static class PilotCommand
     {
         who = await SenderAsync(client, who, bySession, agent, cwd, sessionId, cancellationToken);
         var envelope = await SendCommandAsync(client, new CommandRequest { Verb = verb, Target = target, Args = args, Who = who, Agent = agent, Why = why, RequestId = requestId }, deadline, cancellationToken);
+        if (envelope.Success && envelope.Response is { Ok: true, Waiting: { Length: > 0 } waiting })
+        {
+            // Queued behind a lock the node's other work holds: not done, and not to be sent again, as it runs once the lock frees.
+            await output.WriteLineAsync($"queued: {verb} {target}: {waiting}; it runs when that is done, and its outcome comes on the event stream and a Handled card (pilot status)");
+            return ExitQueued;
+        }
         if (envelope.Success && envelope.Response is { Ok: true } result)
         {
             await output.WriteLineAsync($"ok: {verb} {target}{(result.Way is { } way ? $" ({way})" : "")}");

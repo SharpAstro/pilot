@@ -101,6 +101,17 @@ public sealed record CommandResult
     public string? Why { get; init; }
 
     /// <summary>
+    /// Set when the command is queued, not done: it has waited for a commander's lock past the patience, and this says what holds
+    /// it (<c>waiting for merge flight/TIA1 (since 14:03:07)</c>). The command runs once the lock frees, and its outcome comes on the stream and on a Handled card.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Waiting { get; init; }
+
+    /// <summary>The result a queued command ends with, for the node's own use (a retry by its request id is handed it); never on the wire.</summary>
+    [JsonIgnore]
+    public Task<CommandResult>? Later { get; init; }
+
+    /// <summary>
     /// The number of the <see cref="CommandResultEvent"/> that carries this result on the stream, so the client that
     /// posted the command can tell its own result from another client's.
     /// </summary>

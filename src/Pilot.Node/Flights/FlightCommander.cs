@@ -14,7 +14,11 @@ namespace Pilot.Node.Flights;
 /// <param name="packages">Reads what a landing flight releases, for the flights connected to it to wait for; null in a test that has none wait for a package.</param>
 public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider time, IWorkerLauncher? workers = null, IGitHub? github = null, PackageReleases? packages = null)
 {
-    private readonly SemaphoreSlim _one = new(1, 1);
+    // The one lock of the flight verbs, which says what holds it (a command waiting past LockWait.Patience is told).
+    private readonly NamedLock _one = new(time);
+
+    /// <summary>The lock the flight verbs share, and what holds it.</summary>
+    public NamedLock Lock => _one;
 
     // Two creates must not claim one code, but a create's git work (the checkout, the worktree) holds no other verb: it has its own lock.
     private readonly SemaphoreSlim _creating = new(1, 1);
@@ -52,12 +56,14 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
     public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.Connect or Verbs.Land or Verbs.FlyAnyway;
 
-    public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
+    /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
+    public Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken) =>
+        command.Verb == Verbs.CreateFlight
+            ? CreateOneAtATimeAsync(command, cancellationToken)
+            : LockWait.RunAsync(_one, state, time, command, token => RunUnderLockAsync(command, token), cancellationToken);
+
+    private async Task<CommandResult> RunUnderLockAsync(CommandRequest command, CancellationToken cancellationToken)
     {
-        if (command.Verb == Verbs.CreateFlight)
-        {
-            return await CreateOneAtATimeAsync(command, cancellationToken);
-        }
         await _one.WaitAsync(cancellationToken);
         try
         {

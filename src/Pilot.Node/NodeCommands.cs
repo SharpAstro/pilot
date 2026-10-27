@@ -57,6 +57,12 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         try
         {
             var result = await RunOnceAsync(command, cancellationToken);
+            if (result.Later is { } later)
+            {
+                // Queued behind a lock: the command is still to run, once. A retry by this id waits for what it ends with, and is handed that.
+                _ = SettleLaterAsync(id, command, mine, later);
+                return result;
+            }
             lock (_seenGate)
             {
                 if (result.Ok)
@@ -80,6 +86,35 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             }
             mine.SetException(ex);
             throw;
+        }
+    }
+
+    // A queued command's request id is settled as a command's is, by what the command ends with, once it has run.
+    private async Task SettleLaterAsync(string id, CommandRequest command, TaskCompletionSource<CommandResult> mine, Task<CommandResult> later)
+    {
+        try
+        {
+            var result = await later;
+            lock (_seenGate)
+            {
+                if (result.Ok)
+                {
+                    _seen[id] = new Seen(command.Verb, command.Target, mine, Get<TimeProvider>().GetUtcNow());
+                }
+                else
+                {
+                    _seen.Remove(id);
+                }
+            }
+            mine.SetResult(result);
+        }
+        catch (Exception ex)
+        {
+            lock (_seenGate)
+            {
+                _seen.Remove(id);
+            }
+            mine.SetException(ex);
         }
     }
 
@@ -132,9 +167,32 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         var result = await RouteAsync(command, cancellationToken);
         if (onAutopilot && result.Ok)
         {
-            Get<Autopilot>().Handled(command);
+            // A command queued behind a lock is no done command yet: its Handled line follows once it has run.
+            if (result.Later is { } later)
+            {
+                _ = HandledWhenDoneAsync(command, later);
+            }
+            else
+            {
+                Get<Autopilot>().Handled(command);
+            }
         }
         return result;
+    }
+
+    private async Task HandledWhenDoneAsync(CommandRequest command, Task<CommandResult> later)
+    {
+        try
+        {
+            if ((await later).Ok)
+            {
+                Get<Autopilot>().Handled(command);
+            }
+        }
+        catch (Exception)
+        {
+            // Its failure is on a Handled card already (LockWait): no line for a command that did not run.
+        }
     }
 
     // Whether a merge's flight or PR is in a repo whose PRs the node never merges by itself (no-auto-merge-repos).

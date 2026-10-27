@@ -13,7 +13,11 @@ namespace Pilot.Node.Flights;
 public sealed partial class LegCommander(
     NodeState state, IWorkerLauncher workers, ICheckRunner checks, IGitHub github, IGit git, Planes planes, FlightCommander flights, NodeOptions options, TimeProvider time)
 {
-    private readonly SemaphoreSlim _one = new(1, 1);
+    // The one lock of the leg verbs, which says what holds it (a command waiting past LockWait.Patience is told).
+    private readonly NamedLock _one = new(time);
+
+    /// <summary>The lock the leg verbs share, and what holds it.</summary>
+    public NamedLock Lock => _one;
 
     // What a flight's review leaves on its PR on GitHub: the COMMENT review, the pilot/review status, the pilot: label.
     private readonly PrMarks _marks = new(state, github, options);
@@ -55,7 +59,11 @@ public sealed partial class LegCommander(
             or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review
             or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Fold or Verbs.Separate;
 
-    public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
+    /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
+    public Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken) =>
+        LockWait.RunAsync(_one, state, time, command, token => RunQueuedAsync(command, token), cancellationToken);
+
+    private async Task<CommandResult> RunQueuedAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var launches = _launched.Value = [];
         await _one.WaitAsync(cancellationToken);
