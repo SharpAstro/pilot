@@ -550,22 +550,23 @@ public sealed class JobTests : IDisposable
     }
 
     [Fact]
-    public async Task AQueuedJobARestartOrphanedIsFailedAndItsOwnerTold()
+    public async Task AQueuedJobARestartLeftStaysQueuedAndRunsWhenRecovered()
     {
         _state.PutJob(new JobRow
         {
-            Id = "j1", Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = JobState.Queued,
+            Id = "j1", Command = Echo("from the queue"), Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = JobState.Queued,
             LogPath = Path.Combine(_root, "j1.log"), Timeout = JobRunner.DefaultTimeout, StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
         });
 
         await _jobs.RecoverAsync(Ct);
 
-        (_state.Jobs().Single().State, _state.Jobs().Single().Error).ShouldBe((JobState.Failed, "the node stopped before its turn came"));
+        var job = await Ended("j1");
+        (job.State, job.ExitCode).ShouldBe((JobState.Succeeded, 0));
         _said.Single().Args[0].ShouldContain("Your job j1");
     }
 
     [Fact]
-    public async Task AJobARestartOrphanedIsFailedAndItsOwnerTold()
+    public async Task ARunningJobWithNoProcessToFindIsFailedAndItsOwnerTold()
     {
         _state.PutJob(new JobRow
         {
@@ -576,7 +577,7 @@ public sealed class JobTests : IDisposable
         await _jobs.RecoverAsync(Ct);
 
         var job = _state.Jobs().Single();
-        (job.State, job.Error, job.Told).ShouldBe((JobState.Failed, "the node stopped while it ran, so its end was never seen", true));
+        (job.State, job.Error, job.Told).ShouldBe((JobState.Failed, "ended while the node was down, no exit recorded", true));
         _said.Single().Args[0].ShouldContain("Your job j1");
     }
 

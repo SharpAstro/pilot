@@ -66,6 +66,7 @@ internal sealed class NodeHarness : IAsyncDisposable
     public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false, bool watchtower = false, int? lanPort = null, bool localOnly = false, string? folder = null)
     {
         // Short: a socket path must fit in 107 bytes, and the temp folder on Windows is already long.
+        // An existing folder is a restart: the node starts on the data an earlier one left (see StopKeepingFolderAsync).
         folder ??= Path.Combine(Path.GetTempPath(), "p2t-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(folder);
         var options = new NodeOptions(Path.Combine(folder, NodeSocket.DefaultFileName), Path.Combine(folder, "data"), retainedDeltas, Watchtower: watchtower,
@@ -113,6 +114,15 @@ internal sealed class NodeHarness : IAsyncDisposable
             held.Dispose();
             throw;
         }
+    }
+
+    /// <summary>Stops the node and leaves its folder, so <c>StartAsync(folder: Folder)</c> starts the next node on the same data; the last one's dispose deletes it.</summary>
+    public async Task StopKeepingFolderAsync()
+    {
+        Client.Dispose();
+        await App.StopAsync();
+        await App.DisposeAsync();
+        _held.Dispose();
     }
 
     public async ValueTask DisposeAsync()
