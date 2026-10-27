@@ -46,6 +46,9 @@ internal sealed partial record SessionLine
     /// <summary>What it waits on, while it waits on you; null otherwise.</summary>
     public string? WaitingFor { get; init; }
 
+    /// <summary>Why it ended, or the note that it was renamed while it is live (<see cref="SessionRow.EndedBecause"/>); null when none.</summary>
+    public string? EndedBecause { get; init; }
+
     /// <summary>Since when it waits on you, while it does; null otherwise (<see cref="SessionRow.WaitingSince"/>).</summary>
     public DateTimeOffset? WaitingSince { get; init; }
 
@@ -88,7 +91,8 @@ internal sealed partial record SessionLine
     /// <summary>The line as the <c>.rows.txt</c> dump writes it: the fields in the order the row shows them.</summary>
     public string ToDumpLine()
     {
-        var state = WaitingFor is null ? State : $"{State} ({WaitingFor})";
+        var detail = WaitingFor ?? EndedBecause;
+        var state = detail is null ? State : $"{State} ({detail})";
         var line = string.Join(" | ", Role, ShownName, Model, Context, $"last response {LastResponse}", state, $"spend {Spend}");
         return Node is { } node ? $"{node.Name} | {line}" : line;
     }
@@ -125,6 +129,7 @@ internal sealed partial record SessionLine
             LastResponse = row.LastResponseAt is { } at ? Ago(now - at) : "none yet",
             State = IsStopped(row) ? "stopped" : StateText(row.State),
             WaitingFor = IsStopped(row) ? StopText(row, now) : row.State == SessionState.Waiting ? row.WaitingFor : null,
+            EndedBecause = row.EndedBecause,
             WaitingSince = row.State == SessionState.Waiting ? row.WaitingSince : null,
             Asking = row.State == SessionState.Waiting ? row.Asking : null,
             RemoteControlUrl = row.RemoteControlUrl,

@@ -18,6 +18,25 @@ public sealed class CliTests : IAsyncLifetime
 
     private string Repo => Path.Combine(_root, "tianwen");
 
+    [Fact]
+    public void PilotNodesPrintsAWatchtowerLineMarkedWhenChurning()
+    {
+        var now = new DateTimeOffset(2026, 10, 26, 12, 0, 0, TimeSpan.Zero);
+        var calm = new WatchtowerHealth { State = SessionState.Idle, Id = "3a1b2c3d4e", StartedAt = now.AddHours(-2), ContextTokens = 41_000, ContextWindow = 200_000, StartsLast24h = 3 };
+
+        NodeTargets.WatchtowerLine(calm, now).ShouldBe("watchtower idle · 3a1b2c3d · 2 h · 41k/200k · 3 started in 24 h");
+        NodeTargets.WatchtowerLine(calm with { Churning = true, LastEndedBecause = "process gone" }, now)
+            .ShouldEndWith("last ended: process gone  " + WatchtowerWords.ChurningMark);
+        NodeTargets.WatchtowerLine(null, now).ShouldBe("no watchtower kept");
+    }
+
+    [Fact]
+    public async Task PilotNodesStillListsAPeerThatDoesNotAnswer()
+    {
+        // Nothing listens on port 1.
+        (await NodeTargets.WatchtowerLineAsync("127.0.0.1:1", TimeSpan.FromSeconds(1), Ct)).ShouldBe("watchtower: not reached (the node did not answer)");
+    }
+
     public async ValueTask InitializeAsync()
     {
         // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
