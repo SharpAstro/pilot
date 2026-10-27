@@ -86,6 +86,11 @@ public abstract class PrFixTestsBase : IDisposable
         (await Run(Verbs.ReviewPr, pr, "controller")).Error.ShouldBeNull();
         var row = _reviews.Of(PrRef.Parse(pr)!).ShouldNotBeNull();
         (await Run(Verbs.PrVerdict, pr, row.Reviewer, [verdict, "Two things are wrong.", .. findings])).Error.ShouldBeNull();
+        // A review the node posted ends after the reviewer's grace, not with the verdict's answer: wait it out.
+        for (var i = 0; i < 500 && _reviews.Of(PrRef.Parse(pr)!) is { PostedId: not null, State: not PrReviewState.Closed }; i++)
+        {
+            await Task.Delay(10, Ct);
+        }
         return _reviews.Of(PrRef.Parse(pr)!).ShouldNotBeNull();
     }
 
