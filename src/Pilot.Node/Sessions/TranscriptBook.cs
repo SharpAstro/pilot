@@ -264,9 +264,9 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                 return entry;
             }
             var text = entry.Text;
-            if (text.EndsWith(ClaudeCliDelivery.RelayNote, StringComparison.Ordinal))
+            if (text.EndsWith(')') && text.LastIndexOf("\n\n" + ClaudeCliDelivery.RelayMark, StringComparison.Ordinal) is var mark and >= 0)
             {
-                text = text[..^ClaudeCliDelivery.RelayNote.Length].TrimEnd();
+                text = text[..mark].TrimEnd();
             }
             if (text.StartsWith(NodeVoice.Prefix, StringComparison.Ordinal))
             {
