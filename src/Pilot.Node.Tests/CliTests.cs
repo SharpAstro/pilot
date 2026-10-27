@@ -207,7 +207,7 @@ public sealed class CliTests : IAsyncLifetime
         var idle = await Pilot(plane, "leg", "finish", "done");
         idle.Error.ShouldContain("TIA7 has no leg flying");
 
-        await Ok(_root, "leg", "plan", "TIA7", "one", "--goal", "g", "--done-when", "d", "--item", "a step");
+        await Ok(_root, "leg", "plan", "TIA7", "one", "--goal", "Do the work", "--done-when", "Its check passes", "--item", "a step");
         (await Pilot(_root, "check", "1", "--leg", "TIA7/one")).Exit.ShouldBe(0);
         _node.State.Legs("TIA7").Single().Checklist.Single().Done.ShouldBeTrue();
     }

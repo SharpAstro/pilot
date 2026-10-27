@@ -213,7 +213,7 @@ public sealed class AttachmentTests : IAsyncDisposable
             (await flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(repo), Args = ["2", "Moons"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
             foreach (var code in new[] { "TIA1", "TIA2" })
             {
-                (await legs.RunAsync(new CommandRequest { Verb = Verbs.PlanLeg, Target = $"flight/{code}", Args = ["name=parser", "goal=g", "done-when=d"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+                (await legs.RunAsync(new CommandRequest { Verb = Verbs.PlanLeg, Target = $"flight/{code}", Args = ["name=parser", "goal=Do the work", "done-when=Its check passes"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
                 (await legs.RunAsync(new CommandRequest { Verb = Verbs.AddArtifact, Target = $"flight/{code}/parser", Args = [Shot(), "shot"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
             }
             Directory.Exists(Path.Combine(data, "attachments", "TIA1")).ShouldBeTrue();

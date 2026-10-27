@@ -1060,7 +1060,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     public async Task ALegCannotBeNamedReviewAndAReviewerIsNoWorker()
     {
         await NewFlight("3", "parser");
-        (await Run(Verbs.PlanLeg, "flight/TIA3", "controller", "name=review", "goal=g", "done-when=d")).Error.ShouldNotBeNull().ShouldStartWith("review names the flight's reviewer");
+        (await Run(Verbs.PlanLeg, "flight/TIA3", "controller", "name=review", "goal=Do the work", "done-when=Its check passes")).Error.ShouldNotBeNull().ShouldStartWith("review names the flight's reviewer");
         Pilot.Node.Sessions.SessionRoles.Resolve("du1-tia3-review").ShouldBe(new Pilot.Node.Sessions.SessionRoleInfo(SessionRole.Reviewer, "TIA3", null, null));
     }
 

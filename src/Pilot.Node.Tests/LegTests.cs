@@ -638,7 +638,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
 
         (await Leg(Verbs.Planned, "flight/TIA1")).Error.ShouldBe("TIA1 has no leg waiting to start: plan them with plan-leg first");
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=plan", "goal=g", "done-when=d")).Error
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=plan", "goal=Do the work", "done-when=Its check passes")).Error
             .ShouldBe("plan names the flight's planner, not a leg; call the leg something else");
     }
 
@@ -653,15 +653,17 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         (parser.Budget, parser.Model, parser.Check, parser.State).ShouldBe((4_000_000L, "sonnet", "dotnet test", LegState.Planned));
 
         // Planned again: replaced in its place.
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Parse it better", "done-when=x")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Parse it better", "done-when=The parser tests pass")).Ok.ShouldBeTrue();
         (L("parser").Order, L("parser").Goal).ShouldBe((1, "Parse it better"));
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=Bad Name", "goal=g", "done-when=d")).Error.ShouldNotBeNull().ShouldContain("lower-case");
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=Bad Name", "goal=Do the work", "done-when=Its check passes")).Error.ShouldNotBeNull().ShouldContain("lower-case");
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=x")).Error.ShouldNotBeNull().ShouldContain("goal and a done-when");
+        // A placeholder is no brief (PIL337 went out with goal 'x' and done-when 'y').
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=menu", "goal=x", "done-when=y")).Error.ShouldNotBeNull().ShouldContain("not 'x' and 'y'");
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "oops")).Error.ShouldNotBeNull().ShouldContain("key=value");
         // TIA1818's check, 2026-10-25: a bare | in a test filter pipes in every shell, so it is refused when planned.
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=filter", "goal=g", "done-when=d", "check=dotnet test --filter A|B"))
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=filter", "goal=Do the work", "done-when=Its check passes", "check=dotnet test --filter A|B"))
             .Error.ShouldNotBeNull().ShouldContain("--filter 'A|B'");
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=filter", "goal=g", "done-when=d", "check=dotnet test --filter 'A|B'")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=filter", "goal=Do the work", "done-when=Its check passes", "check=dotnet test --filter 'A|B'")).Ok.ShouldBeTrue();
     }
 
     [Fact]
@@ -681,7 +683,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.PlannedKind);
 
         // A leg planned afterwards goes at the end of what is left.
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=polish", "goal=g", "done-when=d")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=polish", "goal=Do the work", "done-when=Its check passes")).Ok.ShouldBeTrue();
         L("polish").Order.ShouldBe(3);
     }
 
@@ -739,7 +741,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
             (await flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
             foreach (var name in new[] { "parser", "render", "docs" })
             {
-                (await legs.RunAsync(new CommandRequest { Verb = Verbs.PlanLeg, Target = "flight/TIA1", Args = [$"name={name}", "goal=g", "done-when=d"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+                (await legs.RunAsync(new CommandRequest { Verb = Verbs.PlanLeg, Target = "flight/TIA1", Args = [$"name={name}", "goal=Do the work", "done-when=Its check passes"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
             }
 
             (await legs.RunAsync(new CommandRequest { Verb = Verbs.RemoveLeg, Target = "flight/TIA1/render", Args = ["not needed"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
