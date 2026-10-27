@@ -15,9 +15,9 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
 {
     private static readonly TimeSpan Quick = TimeSpan.FromSeconds(1);
 
-    // A command of another flight, while a launcher is held: it is not behind the hold if it answers long before the hold is let go
-    // (the test lets it go only at its end). Its own git work (readying a plane) is real and slower on a loaded machine, so the bound
-    // is far above the 1 s a start's answer is given, and far below a launcher that takes half a minute.
+    // Another flight's start-leg, while a launcher is held: it is not behind the hold if it answers long before the hold is let go
+    // (the test lets it go only at its end). It readies a real plane with git, slower on a loaded machine, so the bound is far above
+    // the 1 s of a command that does no git, and far below a launcher that takes half a minute.
     private static readonly TimeSpan NotHeld = TimeSpan.FromSeconds(10);
 
     private async Task<(CommandResult Result, TimeSpan Took)> Timed(Func<Task<CommandResult>> run)
@@ -92,12 +92,12 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
         // The launcher took the hold; every command after it is another flight's, and answers at once.
         await Until(() => _workers.Hold is null);
         var (plan, planTook) = await Timed(() => Leg(Verbs.PlanLeg, "flight/TIA2", "name=sun", "goal=Draw the sun", "done-when=It shows"));
-        (plan.Ok, planTook < NotHeld).ShouldBe((true, true), plan.Error);
+        (plan.Ok, planTook < Quick).ShouldBe((true, true), plan.Error);
         var (other, otherTook) = await Timed(() => Leg(Verbs.StartLeg, "flight/TIA2/moons"));
         (other.Ok, otherTook < NotHeld).ShouldBe((true, true), other.Error);
         L2("moons").State.ShouldBe(LegState.Flying);
         var (check, checkTook) = await Timed(() => Leg(Verbs.Check, "flight/TIA2/moons", "1"));
-        (check.Ok, checkTook < NotHeld).ShouldBe((true, true), check.Error);
+        (check.Ok, checkTook < Quick).ShouldBe((true, true), check.Error);
 
         // Up at last: the leg flies, recorded after the start.
         gate.SetResult();
