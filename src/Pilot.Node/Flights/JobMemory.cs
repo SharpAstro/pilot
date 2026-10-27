@@ -264,7 +264,7 @@ public sealed record JobKey(string Repo, string ToolVerb, string Target, string 
         return [.. segments.Where(s => s.Count > 0)];
     }
 
-    private static bool IsRedirection(string word) => word.Length > 0 && (word[0] == '>' || word[0] == '<' || (char.IsDigit(word[0]) && word.Contains('>')));
+    private static bool IsRedirection(string word) => word.Length > 0 && (word[0] == '>' || word[0] == '<' || word.StartsWith("&>", StringComparison.Ordinal) || (char.IsDigit(word[0]) && word.Contains('>')));
 }
 
 /// <summary>What a queued job is expected to need, and what that rests on.</summary>
