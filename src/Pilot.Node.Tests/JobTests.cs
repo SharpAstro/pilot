@@ -930,6 +930,56 @@ public sealed class JobTests : IDisposable
     }
 
     [Fact]
+    public async Task ARestartAskedForWhileAJobRunsLeavesItRunningForTheNextNodeToFollow()
+    {
+        var first = await Node.StartAsync(_root);
+        var id = first.Run(_root, "sleep 2; echo 'ended under the successor'").Made!;
+        var running = await first.UntilAsync(id, j => j.State == JobState.Running, Ct);
+        var lifetime = new RestartLifetime();
+        var successors = new List<string>();
+        var restarter = new NodeRestarter(lifetime, Microsoft.Extensions.Logging.Abstractions.NullLogger<NodeRestarter>.Instance)
+        {
+            NodePath = "/opt/pilot/pilot-node",
+            StartSuccessor = path =>
+            {
+                successors.Add(path);
+                return true;
+            },
+        };
+        var commands = new NodeSettingsCommands(new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), first.State, restarter, null!, TimeProvider.System, first.Jobs, null!);
+
+        var result = commands.RestartNode(new CommandRequest { Verb = Verbs.RestartNode, Target = Verbs.NodeTarget, Who = "se1-tia1-parser" });
+
+        // It does not wait for the job: the successor is started and the node stops at once, saying one job carries on.
+        result.Way.ShouldBe("the node restarts for se1-tia1-parser; 1 job carries on under the next node");
+        successors.ShouldBe(["/opt/pilot/pilot-node"]);
+        lifetime.Stopped.ShouldBeTrue();
+        first.Job(id).State.ShouldBe(JobState.Running);
+
+        await first.StopAsync();
+        first.Said.ShouldBeEmpty();
+        IsAlive(running.Pid!.Value).ShouldBeTrue();
+        using var second = await Node.StartAsync(_root);
+        second.Job(id).State.ShouldBe(JobState.Running);
+        second.Jobs.IsRunning(id).ShouldBeTrue();
+        var ended = await second.EndedAsync(id, Ct);
+        (ended.State, ended.Step).ShouldBe((JobState.Succeeded, "ended under the successor"));
+    }
+
+    private sealed class RestartLifetime : Microsoft.Extensions.Hosting.IHostApplicationLifetime
+    {
+        public bool Stopped { get; private set; }
+
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+
+        public CancellationToken ApplicationStopping => CancellationToken.None;
+
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+
+        public void StopApplication() => Stopped = true;
+    }
+
+    [Fact]
     public async Task AJobARestartedNodeFindsAgainEndsUnderItWithItsRealExitCodeAndItsOwnerIsToldOnce()
     {
         var first = await Node.StartAsync(_root);

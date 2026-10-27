@@ -63,6 +63,10 @@ pilot update             # install the latest now, whatever the policy
 
 An update swaps the files in place and restarts the node; flights, cards, workers and the watchtower carry on.
 
+`pilot node restart [why…]` restarts the node in place the same way, without an install, so a session never kills the
+process itself: the node starts its successor and stops, jobs are not waited for and the next node follows them again, and
+the answer says how many carry on.
+
 ## Use it
 
 ```bash

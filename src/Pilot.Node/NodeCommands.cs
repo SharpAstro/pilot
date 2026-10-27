@@ -300,6 +300,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return await Get<NodeUpdater>().RunAsync(command, cancellationToken);
         }
+        if (command.Verb == Verbs.RestartNode)
+        {
+            return Get<NodeSettingsCommands>().RestartNode(command);
+        }
         if (command.Verb == Verbs.Say)
         {
             return await Get<SessionMessenger>().SayAsync(command, cancellationToken);

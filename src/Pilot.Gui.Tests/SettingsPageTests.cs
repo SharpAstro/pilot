@@ -173,6 +173,75 @@ public sealed class SettingsPageTests
         }
     }
 
+    private const string LongSettings = @"C:\Users\ada.lovelace-with-a-long-profile-name\AppData\Roaming\Claude Code Config\profiles\work account\.claude\settings.json";
+
+    private const string Bin = @"C:\Users\ada\AppData\Local\Programs\pilot2\";
+
+    /// <summary>The claude-permissions check failing shows its Fix button, which is the node's setup verb, with its long line wrapped whole; passing shows none. Captures at a narrow and a wide size when PILOT_TEST_CAPTURE_DIR is set.</summary>
+    [Theory]
+    [InlineData(700, false)]
+    [InlineData(1280, false)]
+    [InlineData(700, true)]
+    [InlineData(1280, true)]
+    public async Task TheClaudePermissionsCheckShowsItsFixWhenFailingAndNoneWhenOk(int width, bool ok)
+    {
+        const uint Height = 1100;
+        var permissions = ok
+            ? new SetupCheck { Key = "claude-permissions", Title = "Claude Code permissions", Ok = true, Line = $"all 36 rules are in permissions.allow of {LongSettings}" }
+            : new SetupCheck
+            {
+                Key = "claude-permissions",
+                Title = "Claude Code permissions",
+                Ok = false,
+                Line = $"36 of 36 allow rules are not in permissions.allow of {LongSettings}, so a session may stop at a permission prompt for: pilot update, node, answer, dismiss, settings, job, jobs, cancel, leg, flight, review, tell, say, cards, status, sessions, {Bin}pilot-node.exe, {Bin}pilot.exe (Bash, PowerShell). "
+                    + "Allowing a command only lets Claude Code run it: the node still refuses a caller without the role, and merges and a person's cards stay guarded by the node and the merge guard.",
+                Fix = "Allow pilot's commands",
+            };
+        var checks = Measured(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(3));
+        checks = checks with { Checks = [.. checks.Checks.Take(2), permissions, .. checks.Checks.Skip(2)] };
+        using var renderer = new RgbaImageRenderer((uint)width, Height);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        var sent = new List<(string Verb, string[] Args)>();
+        chrome.Settings.Load = _ => Task.FromResult(Sample);
+        chrome.Settings.LoadChecks = (_, _) => Task.FromResult(checks);
+        chrome.Settings.Send = (verb, args, _) =>
+        {
+            lock (sent)
+            {
+                sent.Add((verb, args));
+            }
+            return Task.FromResult(new SettingsReply("done"));
+        };
+        chrome.Show(PilotPage.Settings);
+
+        void Draw() => chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, width, Height));
+        Draw();
+        await WaitAsync(() => chrome.Settings.Page is not null && chrome.Settings.Checks is not null);
+        Draw();
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR") is { Length: > 0 } dir)
+        {
+            File.WriteAllBytes(Path.Combine(dir, $"settings-claude-permissions-{(ok ? "ok" : "failing")}-{width}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, (int)Height));
+        }
+
+        var regions = new List<ClickableRegion>();
+        chrome.Settings.CollectPaintedRegions(regions);
+        var buttons = regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).ToList();
+        SettingsView<RgbaImage>.Summary(Sample, checks).ShouldStartWith(ok ? "1 of 7 setup steps left" : "2 of 7 setup steps left");
+        if (ok)
+        {
+            buttons.ShouldNotContain("settings:fix:claude-permissions");
+            return;
+        }
+
+        buttons.ShouldContain("settings:fix:claude-permissions");
+        Click(regions, "settings:fix:claude-permissions");
+        await WaitAsync(() => { lock (sent) { return sent.Count == 1; } });
+        lock (sent)
+        {
+            sent.ShouldContain(s => s.Verb == Verbs.Setup && s.Args.SequenceEqual(new[] { "claude-permissions" }));
+        }
+    }
+
     /// <summary>Maintenance and accept-fleet-flights are on / off rows: a pill each, the saved one chosen, and a pill is the node's set verb.</summary>
     [Fact]
     public async Task MaintenanceAndAcceptFleetFlightsAreOnOffRowsThatSendSet()

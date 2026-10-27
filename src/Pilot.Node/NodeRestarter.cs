@@ -21,17 +21,32 @@ public sealed class NodeRestarter(IHostApplicationLifetime lifetime, ILogger<Nod
     /// Restarts the node for <paramref name="why"/> now. Returns what became of it: null when it is stopping for its
     /// successor, else a line saying why it cannot.
     /// </summary>
-    public string? Request(string why)
+    public string? Request(string why) => Restart(why,
+        $"saved; it applies at the node's next start ({Path.GetFileName(NodePath)} is not pilot-node, so it does not restart itself)",
+        $"saved, but {NodePath} did not start; it applies at the node's next start");
+
+    /// <summary>
+    /// Restarts the node because someone asked (<c>pilot node restart</c>): as <see cref="Request"/>, but the refusals say
+    /// nothing was saved. <paramref name="beforeStop"/> runs once the successor has started and before this node stops, so what
+    /// it records is there for the next node.
+    /// </summary>
+    public string? Restart(string why, Action? beforeStop = null) => Restart(why,
+        $"the node did not restart: {Path.GetFileName(NodePath)} is not pilot-node, so it cannot start a successor of itself",
+        $"the node did not restart: {NodePath} did not start, so this node runs on",
+        beforeStop);
+
+    private string? Restart(string why, string notNode, string notStarted, Action? beforeStop = null)
     {
         if (!IsNode(NodePath))
         {
-            return $"saved; it applies at the node's next start ({Path.GetFileName(NodePath)} is not pilot-node, so it does not restart itself)";
+            return notNode;
         }
         if (!StartSuccessor(NodePath))
         {
-            return $"saved, but {NodePath} did not start; it applies at the node's next start";
+            return notStarted;
         }
         logger.LogInformation("restart: for {Why}", why);
+        beforeStop?.Invoke();
         lifetime.StopApplication();
         return null;
     }

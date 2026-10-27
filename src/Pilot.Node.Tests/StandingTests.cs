@@ -68,6 +68,7 @@ public sealed class StandingTests
             (Verbs.AnswerGrant, Verbs.NodeTarget, ["x", "allow"]),
             (Verbs.RevokeGrant, Verbs.NodeTarget, ["x"]),
             (Verbs.Update, Verbs.NodeTarget, ["install"]),
+            (Verbs.RestartNode, Verbs.NodeTarget, ["settings changed"]),
             (Verbs.RestartWatchtower, Verbs.WatchtowerTarget, []),
             (Verbs.PostReview, "flight/TIA1", []),
             (Verbs.SyncRepos, Verbs.NodeTarget, []),

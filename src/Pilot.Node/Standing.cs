@@ -40,12 +40,12 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
 
     /// <summary>
     /// The verbs that are the person's alone: merge and land, the node's settings and setup, a grant's answer and
-    /// revocation, an update, and a watchtower restart. (<c>connect</c> is a flight's dependency, so not here; a card's
+    /// revocation, an update, a restart of the node, and a watchtower restart. (<c>connect</c> is a flight's dependency, so not here; a card's
     /// dismissal is: see <see cref="YourOnly"/>.)
     /// </summary>
     public static readonly IReadOnlySet<string> YourOnlyVerbs = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.Merge, Verbs.RerunChecks, Verbs.Land, Verbs.Set, Verbs.Setup, Verbs.AnswerGrant, Verbs.RevokeGrant, Verbs.Update, Verbs.RestartWatchtower,
+        Verbs.Merge, Verbs.RerunChecks, Verbs.Land, Verbs.Set, Verbs.Setup, Verbs.AnswerGrant, Verbs.RevokeGrant, Verbs.Update, Verbs.RestartNode, Verbs.RestartWatchtower,
     };
 
     /// <summary>
