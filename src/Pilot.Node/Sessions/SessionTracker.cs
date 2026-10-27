@@ -36,6 +36,12 @@ public sealed class SessionTracker : BackgroundService
     private readonly Dictionary<string, string> _listedNames = new Dictionary<string, string>(StringComparer.Ordinal);
     private readonly Dictionary<string, string?> _repos =new Dictionary<string, string?>(StringComparer.Ordinal);
 
+    // By row id: that a background row's session turned up listed under a new session id, which this tracker did not resume.
+    private readonly Dictionary<string, string> _resumedAs = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    private static bool HasProcess(IReadOnlyList<ClaudeAgentRow> listed, string sessionId) =>
+        listed.Any(a => a.SessionId == sessionId && a.Pid is not null);
+
     // A resumed session continues under a new session id; its row keeps its id and follows it there. By session id:
     // the row each copy belongs to, and the ids it left behind, whose listed rows are not sessions of their own.
     private readonly Dictionary<string, string> _rowOf = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -215,7 +221,7 @@ public sealed class SessionTracker : BackgroundService
             Put(previous with
             {
                 // Said to again: back in the lists if it was put away.
-                SessionId = newSessionId, State = SessionState.Working, WaitingFor = null, Archived = false,
+                SessionId = newSessionId, State = SessionState.Working, WaitingFor = null, Archived = false, EndedBecause = null,
                 EarlierSessionIds = inPlace ? previous.EarlierSessionIds : [.. previous.EarlierSessionIds ?? [], previous.SessionId],
             });
         }
@@ -284,7 +290,24 @@ public sealed class SessionTracker : BackgroundService
             }
             if (present.Add(id) && !_resuming.ContainsKey(id))
             {
+                var isNew = !_rows.ContainsKey(id);
                 Track(agent, id, now);
+                if (isNew && agent.Kind == "background" && _rows.TryGetValue(id, out var added))
+                {
+                    // A background session listed under a new session id, though nobody here resumed it: it continues an
+                    // older row of the same name and folder, which has no process now. A session the node's own flights start
+                    // (a watchtower, a leg worker) is always started fresh under the same name, so it is never a resume; nor is a
+                    // row that already says why it ended.
+                    foreach (var older in _rows.Values.Where(r => r.Id != id && r.Kind == SessionKind.Background && r.Name == added.Name
+                        && r.Role == SessionRole.AdHoc && added.Role == SessionRole.AdHoc && r.EndedBecause is null
+                        && string.Equals(r.Cwd, added.Cwd, StringComparison.OrdinalIgnoreCase) && r.SessionId != added.SessionId).ToList())
+                    {
+                        if (!_resumedAs.ContainsKey(older.Id) && !HasProcess(listed, older.SessionId))
+                        {
+                            _resumedAs[older.Id] = $"resumed as {id}";
+                        }
+                    }
+                }
             }
         }
 
@@ -292,6 +315,10 @@ public sealed class SessionTracker : BackgroundService
         {
             if (present.Contains(id) || _resuming.ContainsKey(id))
             {
+                if (_resumedAs.TryGetValue(id, out var resumed) && previous.State is SessionState.Ended or SessionState.Failed && previous.EndedBecause != resumed)
+                {
+                    Put(previous with { EndedBecause = resumed });
+                }
                 continue;
             }
 
@@ -299,7 +326,11 @@ public sealed class SessionTracker : BackgroundService
             {
                 // It was running and is no longer listed: its process went. The row stays, as it was, as ended.
                 _endedAt[id] = now;
-                Put(previous with { State = SessionState.Ended, WaitingFor = null });
+                var why = _resumedAs.TryGetValue(id, out var resumed) ? resumed
+                    : Hooks.Of(previous.SessionId) is { State: SessionState.Ended } hook
+                        ? hook.EndReason is { Length: > 0 } reason ? $"session ended ({reason})" : "session ended"
+                        : "its process went (no longer listed)";
+                Put(previous with { State = SessionState.Ended, WaitingFor = null, EndedBecause = why });
             }
             else if (now - _endedAt.GetValueOrDefault(id, now) > _options.EndedRetention)
             {
@@ -400,6 +431,10 @@ public sealed class SessionTracker : BackgroundService
         {
             Id = id,
             EarlierSessionIds = _rows.TryGetValue(id, out var known) ? known.EarlierSessionIds : null,
+            // A watchtower's rename is noted by the watchtower, on the row as the node holds it, not the listing's: it stays
+            // while the row is under that name. So does the note that the session was resumed under another id.
+            EndedBecause = ended && _resumedAs.TryGetValue(id, out var resumedAs) ? resumedAs
+                : built.EndedBecause ?? (_state.Sessions().FirstOrDefault(r => r.Id == id)?.EndedBecause is { } noted && noted == $"renamed to {built.Name}" ? noted : null),
             // Put away stays put away while it stays ended; running again brings it back.
             Archived = known is { Archived: true } && ended,
             Artifacts = known?.Artifacts,
@@ -492,6 +527,7 @@ public sealed class SessionTracker : BackgroundService
     {
         _rows.Remove(id);
         Attachments?.Remove(id);
+        _resumedAs.Remove(id);
         _endedAt.Remove(id);
         _given.Remove(id);
         _listedNames.Remove(id);

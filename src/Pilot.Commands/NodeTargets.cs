@@ -94,6 +94,34 @@ public static class NodeTargets
     public static bool Forget(string endpoint, string? tokenFile = null) => Held(tokenFile).Forget(endpoint);
 
     /// <summary>
+    /// The watchtower line of the node at <paramref name="endpoint"/> (<c>GET /api/v1/node</c>, no grant needed), asked with
+    /// <paramref name="timeout"/>; a node that does not answer says so, and one that keeps none says that.
+    /// </summary>
+    public static async Task<string> WatchtowerLineAsync(string endpoint, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        if (!NodeClient.IsEndpoint(endpoint, out var target))
+        {
+            return "watchtower: not reached (no address)";
+        }
+        try
+        {
+            using var remote = NodeClient.Remote(target);
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            limit.CancelAfter(timeout);
+            var info = await remote.GetNodeAsync(limit.Token);
+            return WatchtowerLine(info.Watchtower, DateTimeOffset.UtcNow);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or System.Text.Json.JsonException or OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            return "watchtower: not reached (the node did not answer)";
+        }
+    }
+
+    /// <summary>A node's watchtower for <c>pilot nodes</c>, the churning mark after it.</summary>
+    public static string WatchtowerLine(WatchtowerHealth? health, DateTimeOffset now) =>
+        WatchtowerWords.Line(health, now) is { } line ? line + (health is { Churning: true } ? "  " + WatchtowerWords.ChurningMark : "") : "no watchtower kept";
+
+    /// <summary>
     /// The nodes announcing themselves on the LAN within <paramref name="listen"/>: LAN.Lib's beacon, listened to and never
     /// sent. With <paramref name="enough"/>, it returns as soon as the nodes heard satisfy it.
     /// </summary>

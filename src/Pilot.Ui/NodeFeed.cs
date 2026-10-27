@@ -311,7 +311,8 @@ internal sealed class NodeFeed : IAsyncDisposable
             {
                 await Task.Delay(NodeRefresh, cancellationToken).ConfigureAwait(false);
                 // The node as the immutable view holds it: no lock to take (the feed never waits on a reader).
-                (bool, bool) Seen() => (Node?.Maintenance ?? false, Node?.AcceptsFleetFlights ?? false);
+                // The watchtower's words are in it, so its starts and its churning mark move on the Fleet page.
+                (bool, bool, string?) Seen() => (Node?.Maintenance ?? false, Node?.AcceptsFleetFlights ?? false, Pilot.Commands.WatchtowerWords.Line(Node?.Watchtower, DateTimeOffset.UtcNow));
                 var before = Seen();
                 await AskVersionAsync(cancellationToken).ConfigureAwait(false);
                 if (Seen() != before)

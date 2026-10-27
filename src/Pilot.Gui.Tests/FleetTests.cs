@@ -300,6 +300,79 @@ public sealed class FleetTests
             .Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().ShouldNotContain(b => b.Action.EndsWith(":maintenance", StringComparison.Ordinal));
     }
 
+    private static NodeSummary WithWatchtower(WatchtowerHealth? health, bool connected = true) =>
+        Summary("s2", connected: connected) with { Node = Summary("s2").Node! with { Watchtower = health } };
+
+    private static WatchtowerHealth Calm => new()
+    {
+        State = SessionState.Idle, Id = "3a1b2c3d4e5f", StartedAt = Live.At.AddHours(-2), ContextTokens = 41_000, ContextWindow = 200_000, StartsLast24h = 3,
+    };
+
+    [Fact]
+    public void ACalmWatchtowerReadsInWordsAndIsNotMarked()
+    {
+        var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, WithWatchtower(Calm), Live.At);
+
+        line.Watchtower.ShouldBe("watchtower idle · 3a1b2c3d · 2 h · 41k/200k · 3 started in 24 h");
+        line.WatchtowerMark.ShouldBeNull();
+        line.WatchtowerSummary.ShouldBeNull();
+        line.ToDumpLine().ShouldEndWith(" | watchtower idle · 3a1b2c3d · 2 h · 41k/200k · 3 started in 24 h");
+        new FleetScreen([line], Live.At).Summary.ShouldBe("1 node · 1 live");
+    }
+
+    [Fact]
+    public void AChurningWatchtowerIsMarkedWithItsCountLifetimeAndReason()
+    {
+        var churning = Calm with { Churning = true, StartsLast24h = 9, TypicalLifetimeAfterReply = TimeSpan.FromMinutes(4), LastEndedBecause = "process gone",
+            Summary = "12 watchtowers in the last hour; each ended about 2 minutes after its reply" };
+        var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, WithWatchtower(churning), Live.At);
+        const string summary = "12 watchtowers in the last hour; each ended about 2 minutes after its reply";
+        line.WatchtowerSummary.ShouldBe(summary);
+        line.ToDumpLine().ShouldEndWith(" | " + summary);
+
+        line.WatchtowerChurning.ShouldBeTrue();
+        line.WatchtowerMark.ShouldBe("⚠ watchtower churning (9 in 24 h)");
+        line.Watchtower!.ShouldContain("typically ends 4 min after its last reply");
+        line.Watchtower!.ShouldContain("last ended: process gone");
+        line.ToDumpLine().ShouldContain("⚠ watchtower churning (9 in 24 h)");
+        new FleetScreen([line], Live.At).Summary.ShouldBe("1 node · 1 live · 1 with a churning watchtower");
+
+        // Drawn: the mark is on the row, at a narrow width too.
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Show(PilotPage.Fleet);
+        foreach (var width in new[] { 1280, 700 })
+        {
+            Layout.Engine.Arrange(chrome.Fleet.Tree(new FleetScreen([line], Live.At)), new Rect<int>(0, 0, width, 400), CellMeasureContext.PixelAuthored)
+                .Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == line.WatchtowerMark).ShouldNotBeEmpty();
+            Layout.Engine.Arrange(chrome.Fleet.Tree(new FleetScreen([line], Live.At)), new Rect<int>(0, 0, width, 400), CellMeasureContext.PixelAuthored)
+                .Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == summary).ShouldNotBeEmpty();
+        }
+    }
+
+    [Fact]
+    public void ANodeNotReachedSaysNothingOfItsWatchtower()
+    {
+        var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, WithWatchtower(Calm with { Churning = true }, connected: false), Live.At);
+
+        line.Watchtower.ShouldBe("—");
+        line.WatchtowerChurning.ShouldBeFalse();
+        line.WatchtowerMark.ShouldBeNull();
+    }
+
+    [Fact]
+    public void TheWatchtowerCardsFleetLinkOpensTheFleetPage()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer));
+        chrome.Page.ShouldBe(PilotPage.Home);
+
+        chrome.Cards.OnGoTo.ShouldNotBeNull();
+        chrome.Cards.OnGoTo(InAppLinks.Fleet);
+
+        chrome.Page.ShouldBe(PilotPage.Fleet);
+    }
+
     [Fact]
     public void AFleetRowWithNothingWaitingHasNoWaitingButton()
     {

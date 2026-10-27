@@ -89,6 +89,9 @@ public static class CardKinds
     /// </summary>
     public const string SessionWaiting = "session-waiting";
 
+    /// <summary>The node's watchtower keeps ending (<see cref="WatchtowerHealth.Churning"/>): one For-you card about it, its text kept up to date, closed when it calms down.</summary>
+    public const string WatchtowerChurning = "watchtower-churning";
+
     /// <summary>
     /// An assistant's your-only command (a merge, a landing, a setting) waiting on the person with the autopilot off (#208): a
     /// For-you card whose <c>Allow</c> runs the command as the person and whose <c>Deny</c> closes it, the asking session
@@ -177,6 +180,16 @@ public enum CardBin
     /// <summary>What the watchtower or the node did itself: one line, born closed, never a count.</summary>
     [JsonStringEnumMemberName("handled")]
     Handled,
+}
+
+/// <summary>Links a card can carry that a client opens inside itself instead of handing to the system.</summary>
+public static class InAppLinks
+{
+    /// <summary>The Fleet page.</summary>
+    public const string Fleet = "pilot:fleet";
+
+    /// <summary>Whether <paramref name="link"/> is one a client opens itself.</summary>
+    public static bool Is(string link) => link.StartsWith("pilot:", StringComparison.Ordinal);
 }
 
 /// <summary>Whether a card still waits.</summary>

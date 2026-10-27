@@ -262,6 +262,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>Opens the watchtower's Remote Control link.</summary>
     public Action<string>? OnOpen { get; set; }
 
+    /// <summary>Opens a card's in-app link (<see cref="InAppLinks"/>, <c>pilot:fleet</c>): the host shows that page.</summary>
+    public Action<string>? OnGoTo { get; set; }
+
     /// <summary>The session a card is about, whose transcript its <b>Its transcript</b> opens; null for a card about none.</summary>
     public Func<CardRow, SessionLine?>? TranscriptOf { get; set; }
 
@@ -564,9 +567,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
             // session's link is its button, Answer in the browser, so its title is no second one.
             card.Link is { } titleLink && card.Kind != CardKinds.SessionWaiting
-                ? Whole(_links.OnLink(Layout.Builder.Text(Titled(card) + Followable.Away, 14f, Link)
+                ? Whole(_links.OnLink(Layout.Builder.Text(Titled(card) + (InAppLinks.Is(titleLink) ? "" : Followable.Away), 14f, Link)
                     .BgHover(CardHover)
-                    .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => OnOpen?.Invoke(titleLink))
+                    .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => (InAppLinks.Is(titleLink) ? OnGoTo : OnOpen)?.Invoke(titleLink))
                     .RowH(22f), titleLink), card.Title, card.Title.Length > TitleFits)
                 : Whole(Layout.Builder.Text(Titled(card), 14f, Bright).RowH(22f), card.Title, card.Title.Length > TitleFits),
         };

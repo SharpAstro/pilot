@@ -67,6 +67,7 @@ public static class SessionRowBuilder
             hookWaitingAt = hooked == SessionState.Waiting ? hook.At : null;
         }
         var waiting = state == SessionState.Waiting;
+        var endedBecause = state is SessionState.Ended or SessionState.Failed ? EndedBecause(agent, state, hook) : null;
         var pending = waiting ? transcripts.PendingTool : null;
         // A question is no call it asks leave to run: what it waits on (WaitingFor) is the question already.
         var asking = pending is { Name: not "AskUserQuestion" } ? pending.Summary is { Length: > 0 } summary ? $"{pending.Name}: {summary}" : pending.Name : null;
@@ -102,9 +103,25 @@ public static class SessionRowBuilder
             ApiError = apiError,
             ApiErrorResetsAt = transcripts.Stop?.ResetsAt,
             Budget = role.Budget,
+            EndedBecause = endedBecause,
             RemoteControlUrl = record?.BridgeSessionId is { Length: > 0 } bridge ? $"https://claude.ai/code/{bridge}" : null,
             StartedAt = agent.StartedAt ?? DateTimeOffset.UnixEpoch,
         };
+    }
+
+    /// <summary>Why a row the listing and hooks say ended did: its SessionEnd hook's word, else the listing's state with no process.</summary>
+    private static string? EndedBecause(ClaudeAgentRow agent, SessionState state, HookState? hook)
+    {
+        if (hook is { State: SessionState.Ended } ended && agent.Pid is null)
+        {
+            return ended.EndReason is { Length: > 0 } reason ? $"session ended ({reason})" : "session ended";
+        }
+        if (agent.Pid is null)
+        {
+            var listed = agent.State is { Length: > 0 } s ? s : state.ToString().ToLowerInvariant();
+            return $"Claude Code lists it as {listed} with no process";
+        }
+        return null;
     }
 }
 

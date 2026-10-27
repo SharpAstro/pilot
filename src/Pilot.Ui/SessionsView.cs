@@ -720,7 +720,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             Metered(line.Context, line.ContextFraction, body),
             Cell(Layout.Builder.Text(line.LastResponse, 14f, body)),
             Cell(Layout.Builder.Text(line.State, 14f, stateColor),
-                line.WaitingFor is { } waitingFor ? Layout.Builder.Text(waitingFor, 11f, Dim) : null),
+                (line.WaitingFor ?? line.EndedBecause) is { } detail ? Layout.Builder.Text(detail, 11f, Dim) : null),
             Metered(line.Spend, line.SpendFraction, body),
             Act(line, index),
         };
