@@ -252,6 +252,14 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return Get<JobRunner>().Cancel(command);
         }
+        if (command.Verb == Verbs.PauseJob)
+        {
+            return Get<JobRunner>().Pause(command);
+        }
+        if (command.Verb == Verbs.ResumeJob)
+        {
+            return Get<JobRunner>().Resume(command);
+        }
         if (command.Verb == Verbs.Digest)
         {
             Get<Digest>().Raise(Get<TimeProvider>().GetUtcNow());
