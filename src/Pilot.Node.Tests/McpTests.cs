@@ -262,6 +262,149 @@ public sealed class McpTests : IAsyncLifetime
         log.ToString().ShouldContain("pilot 99.0.0 is installed");
     }
 
+    private const string Restarting = "the node is restarting (or not running): try again in a moment";
+
+    [Fact]
+    public async Task ANodeThatGoesDownIsAToolAndResourceErrorAndTheNextCallAfterItIsBackWorks()
+    {
+        var first = await NodeHarness.StartAsync(Ct);
+        var folder = first.Folder;
+        var socket = first.SocketPath;
+        var input = new FedReader();
+        var output = new LineWriter();
+        var server = new McpServer(folder, node: null, socket: socket);
+        var running = server.RunAsync(input, output, Ct);
+        NodeHarness? second = null;
+        try
+        {
+            input.Feed(Initialize);
+            await output.NextAsync();
+            input.Feed(Call(2, "note", """{"text":["before"]}"""));
+            Result(await output.NextAsync()).IsError.ShouldBeFalse();
+
+            await first.DisposeAsync();
+
+            input.Feed(Call(3, "status", "{}"));
+            var down = Result(await output.NextAsync());
+            down.IsError.ShouldBeTrue();
+            down.Text.ShouldContain(Restarting);
+            input.Feed("""{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"pilot://cards"}}""");
+            var read = await output.NextAsync();
+            read.GetProperty("error").GetProperty("code").GetInt32().ShouldBe(-32603);
+            read.GetProperty("error").GetProperty("message").GetString()!.ShouldContain(Restarting);
+            running.IsCompleted.ShouldBeFalse();
+
+            second = await NodeHarness.StartAsync(Ct, folder: folder);
+            second.SocketPath.ShouldBe(socket);
+            input.Feed(Call(5, "note", """{"text":["after"]}"""));
+            Result(await output.NextAsync()).ShouldBe((false, "ok: note node"));
+            input.Feed("""{"jsonrpc":"2.0","id":6,"method":"resources/read","params":{"uri":"pilot://cards"}}""");
+            (await output.NextAsync()).GetProperty("result").GetProperty("contents")[0].GetProperty("text").GetString().ShouldBe("[]");
+            running.IsCompleted.ShouldBeFalse();
+        }
+        finally
+        {
+            input.Dispose();
+            await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+            if (second is not null)
+            {
+                await second.DisposeAsync();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task TheToolsComeFromTheCommandTreeNotTheNode_ANodeStartedLaterAnswersTheNextCall()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "p2t-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(folder);
+        var socket = Path.Combine(folder, NodeSocket.DefaultFileName);
+        var input = new FedReader();
+        var output = new LineWriter();
+        var running = new McpServer(folder, node: null, socket: socket).RunAsync(input, output, Ct);
+        NodeHarness? node = null;
+        try
+        {
+            input.Feed("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""");
+            var tools = (await output.NextAsync()).GetProperty("result").GetProperty("tools").EnumerateArray().Select(t => t.GetProperty("name").GetString()).ToList();
+            tools.ShouldContain("flight_review");
+            tools.ShouldContain("note");
+            tools.Count.ShouldBe(McpServer.Tools(PilotCommand.Build(folder, TextWriter.Null, TextWriter.Null, "mcp", agent: true)).Count);
+
+            input.Feed(Call(2, "note", """{"text":["early"]}"""));
+            var early = Result(await output.NextAsync());
+            early.IsError.ShouldBeTrue();
+            early.Text.ShouldContain(Restarting);
+
+            node = await NodeHarness.StartAsync(Ct, folder: folder);
+            node.SocketPath.ShouldBe(socket);
+            input.Feed(Call(3, "note", """{"text":["late"]}"""));
+            Result(await output.NextAsync()).ShouldBe((false, "ok: note node"));
+        }
+        finally
+        {
+            input.Dispose();
+            await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+            if (node is not null)
+            {
+                await node.DisposeAsync();
+            }
+            else
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ARemoteNodeNobodyListensOn_IsTheSameToolErrorAndTheServerKeepsGoing()
+    {
+        using var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        probe.Start();
+        var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+
+        var server = new McpServer(_node.Folder, node: $"127.0.0.1:{port}", socket: null);
+        var replies = await Serve(server,
+            Call(1, "status", "{}"),
+            """{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"pilot://cards"}}""",
+            """{"jsonrpc":"2.0","id":3,"method":"ping"}""");
+
+        var status = Result(replies[0]);
+        status.IsError.ShouldBeTrue();
+        status.Text.ShouldContain(Restarting);
+        replies[1].GetProperty("error").GetProperty("message").GetString()!.ShouldContain(Restarting);
+        replies[2].GetProperty("id").GetInt32().ShouldBe(3);
+    }
+
+    /// <summary>A reader fed one line at a time by the test; it ends when disposed.</summary>
+    private sealed class FedReader : TextReader
+    {
+        private readonly System.Threading.Channels.Channel<string> _lines = System.Threading.Channels.Channel.CreateUnbounded<string>();
+
+        public void Feed(string line) => _lines.Writer.TryWrite(line);
+
+        public override async ValueTask<string?> ReadLineAsync(CancellationToken cancellationToken) =>
+            await _lines.Reader.WaitToReadAsync(cancellationToken) && _lines.Reader.TryRead(out var line) ? line : null;
+
+        protected override void Dispose(bool disposing) => _lines.Writer.TryComplete();
+    }
+
+    /// <summary>A writer that hands each line written to whoever waits for the next.</summary>
+    private sealed class LineWriter : StringWriter
+    {
+        private readonly System.Threading.Channels.Channel<string> _lines = System.Threading.Channels.Channel.CreateUnbounded<string>();
+
+        public override Task WriteLineAsync(string? value)
+        {
+            _lines.Writer.TryWrite(value ?? "");
+            return Task.CompletedTask;
+        }
+
+        public async Task<JsonElement> NextAsync() =>
+            JsonDocument.Parse(await _lines.Reader.ReadAsync(Ct).AsTask().WaitAsync(TimeSpan.FromSeconds(30), Ct)).RootElement.Clone();
+    }
+
     /// <summary>A reader whose lines never come, until it is disposed.</summary>
     private sealed class BlockedReader : TextReader
     {
