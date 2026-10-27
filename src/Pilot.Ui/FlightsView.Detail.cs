@@ -408,13 +408,76 @@ internal sealed partial class FlightsView<TSurface>
         var from = review.ReviewedHead is { Length: > 0 } read ? $"review of {FlightMarks.Short(read)}, round {review.GoAround + 1}" : $"review round {review.GoAround + 1}";
         yield return Layout.Builder.Text("The review asks for changes:", 13f, Held).RowH(22f);
         yield return Prose(older ? $"{from}; the head is now {FlightMarks.Short(current!)}" : from, 12f, older ? Held : Dim);
-        yield return Prose(report, 13f, older ? Dim : Body);
+        // The report is Markdown, as the transcript's words are (a finding a list item, a name in backticks as code), folded to
+        // each finding's first lines until Show all opens it; a report that fits shows no pill.
+        var code = detail.Line.Row.Code;
+        var open = _reportOpen.Contains(code);
+        var (cut, folded) = ReviewReport.Fold(report);
+        yield return ReportMarkdown(open ? report : cut, open, older);
+        if (folded)
+        {
+            // Clear of the last finding's line: the pill sat on its marker.
+            yield return Layout.Builder.Spacer().HFixed(4f);
+            yield return Layout.Builder.HStack(
+                    Pill(open ? "Show less" : "Show all", $"flight:{code}:review-fold", () =>
+                    {
+                        if (!_reportOpen.Remove(code))
+                        {
+                            _reportOpen.Add(code);
+                        }
+                    }),
+                    Layout.Builder.Spacer().WStar())
+                .RowH(28f);
+        }
         // Only the flight's last leg, as the node (LegCommander) decides it: an earlier capped leg with a later one planned is not the person's yet.
         if (detail.Legs.LastOrDefault() is { } capped && capped.Row.ReviewGoArounds >= ReviewRedoCap)
         {
             yield return Prose($"{capped.Name} has been redone {capped.Row.ReviewGoArounds} times on the review's findings, so the next round is yours: "
                 + $"Redo leg {capped.Name} on the review's card once more, or Ready anyway if the findings should not hold it up.", 12f, Held);
         }
+    }
+
+    // The flights whose review report is opened past each finding's first lines, by code: per flight, as the transcript holds its opened entries.
+    private readonly HashSet<string> _reportOpen = [];
+
+    // Each report's tree, parsed once per text, whether it is opened, older than the PR's head and in the night palette: the page builds its rows every frame, and a node is immutable.
+    private readonly Dictionary<(string Text, bool Open, bool Older, bool Night), Layout.Node> _reports = [];
+    private const int ReportsKept = 16;
+
+    private Layout.Node ReportMarkdown(string text, bool open, bool older)
+    {
+        var key = (text, open, older, NightOrNull is not null);
+        if (!_reports.TryGetValue(key, out var document))
+        {
+            if (_reports.Count >= ReportsKept)
+            {
+                _reports.Clear();
+            }
+            _reports[key] = document = Layout.Builder.Markdown(text, ReportStyle(older) with { OnLink = Follow });
+        }
+        return document;
+    }
+
+    // Links open through the page's own opener, and only web pages, as the transcript's do.
+    private void Follow(string url)
+    {
+        if (TranscriptEntryView.WebLink(url) is { } web)
+        {
+            OnOpen?.Invoke(web);
+        }
+    }
+
+    /// <summary>
+    /// The transcript's style for the report (<see cref="TranscriptEntryView.Prose"/> itself on the standard palette, its colours
+    /// from the palette in the night view, which has no blue or white to spend), and a dimmed one for a report of an older head:
+    /// the same renderer with the text a step down, code and strong text kept readable.
+    /// </summary>
+    private Layout.MarkdownStyle ReportStyle(bool older)
+    {
+        var style = NightOrNull is { } n
+            ? new Layout.MarkdownStyle { Text = n.Bright, Strong = n.Held, Emphasis = n.Body, Code = n.Held, CodeBackground = n.GhostBg, Link = n.Held, Muted = n.Dim }
+            : TranscriptEntryView.Prose;
+        return older ? style with { Text = Dim, Strong = Body, Emphasis = Dim, Code = Body, Link = Dim, Muted = Dim } : style;
     }
 
     private static Layout.Node Prose(string text, float size, RGBAColor32 color) => WrappedProse.Of(text, size, color);

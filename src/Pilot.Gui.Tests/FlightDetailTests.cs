@@ -199,6 +199,134 @@ public sealed class FlightDetailTests
         Joined(headless).ShouldContain("review round 3");
     }
 
+    private static ReviewRow Changes(string report) => new() { State = ReviewState.Changes, Reviewer = "r", Report = report, StartedAt = Live.At, GoAround = 0, ReviewedHead = "cafe0000aaaa" };
+
+    [Fact]
+    public void AReportWrittenAsAMarkdownListShowsOneListItemPerFindingWithItsNamesAsCode()
+    {
+        var report = "1. CI is red: `LayoutDrivenTests` rejects `JobsView.cs:680`.\n2. The memory gate takes the smaller of the estimate and `job-memory`.\n3. A **third** finding.";
+
+        var (leaves, _) = LeavesOf(Flight() with { Review = Changes(report) });
+
+        // One marker per finding, in the list's own column, so the findings do not run together as one paragraph.
+        leaves.Where(t => t.Value is "1." or "2." or "3.").Select(t => t.Value).ShouldBe(["1.", "2.", "3."]);
+        // A backticked name is drawn in the transcript's code colour, in a leaf of its own, and the prose around it is not.
+        var code = leaves.Single(t => t.Value.StartsWith("LayoutDrivenTests", StringComparison.Ordinal));
+        code.Color.ShouldBe(TranscriptEntryView.Prose.Code);
+        leaves.Single(t => t.Value.StartsWith("job-memory", StringComparison.Ordinal)).Color.ShouldBe(TranscriptEntryView.Prose.Code);
+        leaves.Single(t => t.Value == "rejects ").Color.ShouldBe(TranscriptEntryView.Prose.Text);
+        leaves.Single(t => t.Value.StartsWith("third", StringComparison.Ordinal)).Color.ShouldBe(TranscriptEntryView.Prose.Strong);
+        // The backticks are not shown, and a report that fits has no Show all.
+        leaves.Any(t => t.Value.Contains('`')).ShouldBeFalse();
+        leaves.Any(t => t.Value is "Show all" or "Show less").ShouldBeFalse();
+        // Contrast against the panel the report is drawn on, in the transcript's colours.
+        Contrast(code.Color, FlightsPalette.Standard.PanelBg).ShouldBeGreaterThanOrEqualTo(4.5);
+    }
+
+    [Fact]
+    public void ALongReportFoldsEachFindingToItsFirstLinesAndShowAllOpensItAndShowLessFoldsItAgain()
+    {
+        string Finding(int n) => $"{n}. Finding {n} starts here\n   detail A{n}\n   detail B{n}\n   detail C{n}\n   detail D{n}";
+        var report = string.Join("\n", Enumerable.Range(1, 3).Select(Finding));
+        using var vessel = new RgbaImageRenderer(1600, 800);
+        var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Flights;
+        var screen = new FlightsScreen([FlightLine.Build([Flight() with { Review = Changes(report) }], [], Now, Legs()).Single()], "test", Now);
+        flights.Render(screen, new RectF32(0, 0, 1600, 800));
+        flights.OpenDetail("TIA1611");
+        string Said()
+        {
+            flights.Render(screen, new RectF32(0, 0, 1600, 800));
+            return string.Concat(Layout.Engine.Arrange(flights.Tree(screen), new Rect<float>(0, 0, 1600, 800), new PixelMeasureContext<RgbaImage>(vessel, SessionsCapture.FontPath, 1f))
+                .Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value.EndsWith(' ') ? t.Value : t.Value + " "));
+        }
+        void Press()
+        {
+            var regions = new List<ClickableRegion>();
+            flights.CollectPaintedRegions(regions);
+            regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:review-fold" }).OnClick!.Invoke(InputModifier.None);
+        }
+
+        var folded = Said();
+
+        // Each finding's first three lines show, the rest wait; nothing is cut without a pill to open it.
+        folded.ShouldContain("Finding 1 starts here");
+        folded.ShouldContain("detail B1");
+        folded.ShouldContain("Finding 3 starts here");
+        folded.ShouldNotContain("detail C1");
+        folded.ShouldNotContain("detail D3");
+        folded.ShouldContain("Show all");
+        Press();
+        var opened = Said();
+        opened.ShouldContain("detail D1");
+        opened.ShouldContain("detail D3");
+        opened.ShouldContain("Show less");
+        opened.ShouldNotContain("Show all");
+        Press();
+        Said().ShouldNotContain("detail D1");
+        // The open state is the flight's: another flight's page starts folded.
+        ReviewReport.Fold(report).Folded.ShouldBeTrue();
+        ReviewReport.Fold("1. short\n2. short too").ShouldBe(("1. short\n2. short too", false));
+    }
+
+    [Fact]
+    public void CapturesOfTheReviewReportFoldedOpenedAndOlderAtNarrowAndWideWindowsInBothPalettes()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var dir = Path.GetDirectoryName(capture) ?? ".";
+        var report = """
+            1. **CI is red on `LayoutDrivenTests`.** It rejects `JobsView.cs:680`: a text leaf there is wider than its column.
+               The check the leg names runs `dotnet test Pilot.Gui.Tests -c Release`, and it fails the same way on the PR's head.
+               Fix the column width or wrap the leaf with `WrappedProse.Of`; do not loosen the test.
+               The failure first showed in round 1 and the second round did not touch it, so the leg's report claiming green is wrong.
+            2. **The memory gate takes the wrong minimum.** `JobMemory.Gate` uses the smaller of the estimate and `job-memory`, so a job that measured 8 GB starts with 2 GB free.
+               See `src/Pilot.Node/Jobs/JobMemory.cs:112` and the test `AJobThatMeasuredMoreThanItsEstimate` that does not cover it.
+            3. **A link in the report is dropped.** [the issue](https://github.com/SharpAstro/pilot/issues/383) is shown as plain words in the transcript's own tree.
+               Check `Follow` against `TranscriptEntryView.WebLink`.
+               Add a test that clicks it.
+            4. Short one: `README.md` still says `pilot review changes` takes one line.
+            """;
+        foreach (var (width, night, open, older) in new[] { (900, false, false, false), (1800, false, false, false), (900, true, false, false), (1800, true, true, false), (1800, false, true, true) })
+        {
+            var flight = Flight() with { Review = Changes(report), GitHubHead = older ? "beef1111bbbb" : "cafe0000aaaa" };
+            var screen = new FlightsScreen([FlightLine.Build([flight], [], Now, Legs()).Single()], "test", Now);
+            using var renderer = new RgbaImageRenderer((uint)width, 1300);
+            var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+            if (night)
+            {
+                chrome.Flights.Mode = FlightsViewMode.Night;
+            }
+            chrome.Show(PilotPage.Flights);
+            chrome.Flights.OpenDetail("TIA1611");
+            chrome.Render(new SessionsScreen([], "test", Now), screen, new RectF32(0, 0, width, 1300));
+            if (open)
+            {
+                var regions = new List<ClickableRegion>();
+                chrome.Flights.CollectPaintedRegions(regions);
+                regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:review-fold" }).OnClick!.Invoke(InputModifier.None);
+                chrome.Render(new SessionsScreen([], "test", Now), screen, new RectF32(0, 0, width, 1300));
+            }
+            File.WriteAllBytes(Path.Combine(dir, $"review-{width}{(night ? "-night" : "")}{(open ? "-open" : "")}{(older ? "-older" : "")}.png"), SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, 1300));
+        }
+    }
+
+    [Fact]
+    public void AFoldedReportKeepsItsStructureAndAClosedFence()
+    {
+        var report = "Intro\n\n1. First\n   ```\n   code 1\n   code 2\n   code 3\n   ```\n2. Second";
+
+        var (text, folded) = ReviewReport.Fold(report);
+
+        folded.ShouldBeTrue();
+        text.ShouldContain("1. First");
+        text.ShouldContain("2. Second");
+        text.ShouldNotContain("code 2");
+        // The fence the cut left open is closed, so item 2 is not swallowed into it.
+        text.Split('\n').Count(l => l.TrimStart().StartsWith("```", StringComparison.Ordinal)).ShouldBe(2);
+    }
+
     // The page's words as one string, a leaf's trailing space as a space: the wrapped prose reads as it does on the page.
     private static string Joined(List<Layout.Content.Text> leaves) => string.Concat(leaves.Select(t => t.Value.EndsWith(' ') ? t.Value : t.Value + " "));
 

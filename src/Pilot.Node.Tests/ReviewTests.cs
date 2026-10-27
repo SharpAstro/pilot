@@ -275,6 +275,23 @@ public sealed class ReviewTests1 : ReviewTestsBase
         (RoleModels.Unset.ReviewerModel(ReviewDepth.Deep), RoleModels.Unset.ReviewerEffort(ReviewDepth.Standard), RoleModels.Unset.ReviewerEffort(ReviewDepth.Deep)).ShouldBe((null, null, "high"));
     }
 
+    /// <summary>The flight's page draws the report as Markdown (PIL383), so the reviewer is asked to write it as that.</summary>
+    [Fact]
+    public async Task TheReviewersBriefAsksForItsReportAsMarkdownOneListItemPerFinding()
+    {
+        var flight = await NewFlight("1", "parser");
+        await Fly(flight, "parser");
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA1"), "controller")).Error.ShouldBeNull();
+
+        var verdict = _workers.Started.Last().Brief.Split("## Your verdict")[1];
+
+        verdict.ShouldContain("as Markdown: one list item per finding");
+        verdict.ShouldContain("short first line that says what is wrong, then the detail");
+        verdict.ShouldContain("Put every code name, path");
+        verdict.ShouldContain("in backticks");
+        verdict.ShouldContain("\"Show all\"");
+    }
+
     [Fact]
     public async Task APrOpensAFreshReviewerAndOnlyItsPassOffersTheMerge()
     {
