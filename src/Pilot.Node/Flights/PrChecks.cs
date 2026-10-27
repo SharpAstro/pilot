@@ -176,7 +176,58 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             if (pr is not null && pr.Number == flight.PullRequest)
             {
                 await legs.NoteGitHubAsync(flight.Code, pr, state.Flights().FirstOrDefault(f => f.Code == flight.Code)?.MergeQueue?.StartsWith("in the merge queue", StringComparison.Ordinal) == true, cancellationToken);
+                await ResolveConflictsAsync(flight.Code, pr, cancellationToken);
             }
+        }
+    }
+
+    /// <summary>
+    /// A flight's PR that conflicts with its base, whatever its review said and with no merge card open (those are rebased
+    /// from the card): rebased by the node, once a head, while no leg flies and no reviewer reads; a rebase that conflicts
+    /// sends the last leg around to resolve it. Only a passed PR's card did this, so a PR that conflicted under a review
+    /// asking for changes, or still flying, sat DIRTY until someone said so (#339, #340, 2026-10-27).
+    /// </summary>
+    private async Task ResolveConflictsAsync(string code, PullRequest pr, CancellationToken cancellationToken)
+    {
+        if (legs is null || pr.Mergeable != "CONFLICTING"
+            || state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying, Review: { State: not ReviewState.Reviewing }, PullRequest: { } number } flight
+            || number != pr.Number
+            || state.Legs(code) is not { Length: > 0 } flown || flown.Any(l => l.State != LegState.Done)
+            || state.Cards(openOnly: true).Any(c => c.Kind is LegCommander.PrReady or LegCommander.MergeFailed && c.Subject == Verbs.FlightTarget(code))
+            || !_rebased.Add($"{code} {pr.Head}"))
+        {
+            return;
+        }
+        if (await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } why)
+        {
+            await GoAroundOnConflictAsync(code, number, why, pr.Url, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// The node's rebase of a flight conflicted: its last leg goes around to resolve it, told what its review still asks for
+    /// too. A passed review is turned to Changes first, as a go-around of a done leg needs. Rung only when that is refused.
+    /// </summary>
+    private async Task GoAroundOnConflictAsync(string code, int number, string why, string? url, CancellationToken cancellationToken)
+    {
+        if (legs is null || state.Flights().FirstOrDefault(f => f.Code == code) is not { } flight || state.Legs(code) is not { Length: > 0 } flown)
+        {
+            return;
+        }
+        var asked = flight.Review is { State: ReviewState.Changes, Report: { Length: > 0 } report } ? $" Its review also asks for changes, make them too: {report}" : "";
+        var refused = flight.Review is { State: ReviewState.Passed } ? await legs.ConflictsAsync(code, why, cancellationToken) : null;
+        if (refused is null)
+        {
+            var result = await legs.RunAsync(new CommandRequest
+            {
+                Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, flown[^1].Name), Who = "node",
+                Args = [$"the PR conflicts with its base ({why}): rebase the plane onto its base, resolving every conflict so both sides' work stays, rerun the check, and push.{asked}"],
+            }, cancellationToken);
+            refused = result.Ok ? null : result.Error ?? "the go-around did not start";
+        }
+        if (refused is not null)
+        {
+            state.RaiseCard(CardBin.Ring, "pr-conflicts", Verbs.FlightTarget(code), $"{code}'s PR #{number} conflicts with its base", $"{why} ({refused})", link: url);
         }
     }
 
@@ -462,11 +513,9 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             if (conflicts || merge is { Kind: MergeKinds.Behind })
             {
                 if (legs is not null && _rebased.Add($"{flight.Code} {head}")
-                    && await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } why
-                    && await legs.ConflictsAsync(flight.Code, why, cancellationToken) is { } notSent)
+                    && await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } why)
                 {
-                    // Not sent back (no passed review to turn): rung, with what to do.
-                    state.RaiseCard(CardBin.Ring, "pr-conflicts", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number} conflicts with its base", $"{why} ({notSent})", link: pr?.Url);
+                    await GoAroundOnConflictAsync(flight.Code, number, why, pr?.Url, cancellationToken);
                 }
                 // The rebase closes the card when it starts a fresh review; one still open says what is wrong and offers the go-around.
                 if (legs is not null && state.Cards(openOnly: true).Any(c => c.Id == card.Id))
