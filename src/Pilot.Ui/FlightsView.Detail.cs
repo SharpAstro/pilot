@@ -43,6 +43,7 @@ internal sealed partial class FlightsView<TSurface>
     public void OpenDetail(string code)
     {
         Opening?.Invoke();
+        ClearSelection();
         _openCode = code;
         // Its row is shown whatever In play says while its page is open, and selected once the page is shut.
         _pinned = code;
@@ -53,6 +54,7 @@ internal sealed partial class FlightsView<TSurface>
     {
         _selectPinned = _pinned is not null && _pinned == _openCode;
         _openCode = null;
+        ClearSelection();
     }
 
     // The flight a jump opened: its row stays on the page whatever In play says, until the selection moves off it.
@@ -125,8 +127,8 @@ internal sealed partial class FlightsView<TSurface>
         var head = new List<Layout.Node>
         {
             Pill("← Back", "flight:back", GoBack),
-            Layout.Builder.Text(line.Code, 16f, Bright).WAuto(),
-            Whole(Layout.Builder.Text(line.Title, 14f, Body).WStar(), line.Title, TitleFits),
+            Layout.Builder.Text(line.Code, 16f, Bright).WAuto().Selectable(),
+            Whole(Layout.Builder.Text(line.Title, 14f, Body).WStar().Selectable(), line.Title, TitleFits),
         };
         // The PR is in the header, beside the title, with where it stands: it sat in the facts line below, past a long review chip.
         if (flight.PullRequestUrl is { } url)
@@ -136,10 +138,10 @@ internal sealed partial class FlightsView<TSurface>
         if (FlightMarks.PrState(flight) is { } prState)
         {
             // The link's own height (20), so the two share one middle.
-            head.Add(Layout.Builder.Text(prState, 12f, PrStateColor(prState)).WAuto().RowH(20f));
+            head.Add(Layout.Builder.Text(prState, 12f, PrStateColor(prState)).WAuto().RowH(20f).Selectable());
         }
         // The stale mark is a line of its own below: here it overlapped the title and cut the buttons at a narrow width.
-        head.Add(Layout.Builder.Text(line.StateDetail is null ? line.State : $"{line.State} ({line.StateDetail})", 13f, color, TextAlign.Far).WAuto());
+        head.Add(Layout.Builder.Text(line.StateDetail is null ? line.State : $"{line.State} ({line.StateDetail})", 13f, color, TextAlign.Far).WAuto().Selectable());
         // The buttons wrap onto lines of their own under the title, as Home's chips do: in the head row they took the title's room and
         // the last (a stale flight's dead "Remove render") ran past the page's edge at a narrow width.
         var buttons = CanCommand
@@ -148,17 +150,17 @@ internal sealed partial class FlightsView<TSurface>
 
         var facts = new List<Layout.Node>
         {
-            Layout.Builder.Text($"{line.Where} · {line.Branch} · {line.Legs}", 12f, Dim).WAuto(),
+            Layout.Builder.Text($"{line.Where} · {line.Branch} · {line.Legs}", 12f, Dim).WAuto().Selectable(),
         };
         if (flight.Review is { } review)
         {
             facts.Add(Layout.Builder.Text($"review {review.State.ToString().ToLowerInvariant()}", 12f,
-                review.State == ReviewState.Passed ? Flying : review.State == ReviewState.Changes ? Held : Dim).WAuto());
+                review.State == ReviewState.Passed ? Flying : review.State == ReviewState.Changes ? Held : Dim).WAuto().Selectable());
         }
         var marks = FlightMarks.From(flight);
         if (marks.Line is { } markLine)
         {
-            facts.Add(Layout.Builder.Text(markLine, 12f, MarksColor(flight)).WAuto());
+            facts.Add(Layout.Builder.Text(markLine, 12f, MarksColor(flight)).WAuto().Selectable());
         }
         if (marks.ReviewUrl is { } reviewUrl)
         {
@@ -166,11 +168,11 @@ internal sealed partial class FlightsView<TSurface>
         }
         if (marks.Warning is { } warning)
         {
-            facts.Add(Layout.Builder.Text($"⚠ GitHub: {warning}", 12f, Held).WAuto());
+            facts.Add(Layout.Builder.Text($"⚠ GitHub: {warning}", 12f, Held).WAuto().Selectable());
         }
         if (marks.Pending is { } pending)
         {
-            facts.Add(Layout.Builder.Text(pending, 12f, Held).WAuto());
+            facts.Add(Layout.Builder.Text(pending, 12f, Held).WAuto().Selectable());
         }
         facts.Add(Layout.Builder.Spacer().WStar());
 
@@ -283,7 +285,7 @@ internal sealed partial class FlightsView<TSurface>
                     _ => (session.Leg is { } leg ? $"flying {leg}" : "working", "Worker"),
                 };
                 var color = session.State == SessionState.Waiting ? Held : Flying;
-                yield return Layout.Builder.Text($"{doing} · {session.Name} · {session.State.ToString().ToLowerInvariant()}", 12f, color).WAuto();
+                yield return Layout.Builder.Text($"{doing} · {session.Name} · {session.State.ToString().ToLowerInvariant()}", 12f, color).WAuto().Selectable();
                 if (OnSession is { } open)
                 {
                     // Named for whose it is: beside two sessions, two "Its transcript" said nothing of which was which.
@@ -320,16 +322,16 @@ internal sealed partial class FlightsView<TSurface>
         var color = leg.Row.Hold is not null || (leg.Row.Wait is not null && leg.Row.State == LegState.Flying) ? Held : leg.Row.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
         var head = new List<Layout.Node>
         {
-            Layout.Builder.Text($"{leg.Order}. {leg.Name}", 15f, Bright).WAuto(),
-            Layout.Builder.Text(leg.State, 13f, color).WAuto(),
+            Layout.Builder.Text($"{leg.Order}. {leg.Name}", 15f, Bright).WAuto().Selectable(),
+            Layout.Builder.Text(leg.State, 13f, color).WAuto().Selectable(),
         };
         if (leg.StepsText is { } steps)
         {
-            head.Add(Layout.Builder.Text(steps, 12f, Dim).WAuto());
+            head.Add(Layout.Builder.Text(steps, 12f, Dim).WAuto().Selectable());
         }
         if (leg.GoArounds is { } goArounds)
         {
-            head.Add(Layout.Builder.Text(goArounds, 12f, Held).WAuto());
+            head.Add(Layout.Builder.Text(goArounds, 12f, Held).WAuto().Selectable());
         }
         head.Add(Layout.Builder.Spacer().WStar());
 
@@ -342,7 +344,7 @@ internal sealed partial class FlightsView<TSurface>
         }
         foreach (var step in leg.Steps)
         {
-            rows.Add(Labelled(Layout.Builder.Text(step.Done ? "[x]" : "[ ]", 12f, step.Done ? Flying : Dim), 28f, 8f, Prose(step.Text, 12f, step.Done ? Dim : Body)));
+            rows.Add(Labelled(Layout.Builder.Text(step.Done ? "[x]" : "[ ]", 12f, step.Done ? Flying : Dim).Selectable(), 28f, 8f, Prose(step.Text, 12f, step.Done ? Dim : Body)));
         }
         if (leg.Report is { } report)
         {
@@ -359,7 +361,7 @@ internal sealed partial class FlightsView<TSurface>
             {
                 links.Add(Link("folder", folder, $"artifact-folder:{code}:{leg.Name}:{artifact.Title}").WAuto());
             }
-            links.Add(Layout.Builder.Text($"{artifact.When} · {artifact.Location}", 11f, Faint, trim: TextTrim.Start).WStar());
+            links.Add(Layout.Builder.Text($"{artifact.When} · {artifact.Location}", 11f, Faint, trim: TextTrim.Start).WStar().Selectable());
             rows.Add(Layout.Builder.HStack([.. links]).WithGap(10f).RowH(20f));
         }
         return Layout.Builder.VStack([.. rows])
@@ -406,7 +408,7 @@ internal sealed partial class FlightsView<TSurface>
         var older = review.ReviewedHead is { Length: > 0 } reviewed && current is { Length: > 0 } now
             && !string.Equals(reviewed, now, StringComparison.OrdinalIgnoreCase);
         var from = review.ReviewedHead is { Length: > 0 } read ? $"review of {FlightMarks.Short(read)}, round {review.GoAround + 1}" : $"review round {review.GoAround + 1}";
-        yield return Layout.Builder.Text("The review asks for changes:", 13f, Held).RowH(22f);
+        yield return Layout.Builder.Text("The review asks for changes:", 13f, Held).RowH(22f).Selectable();
         yield return Prose(older ? $"{from}; the head is now {FlightMarks.Short(current!)}" : from, 12f, older ? Held : Dim);
         // The report is Markdown, as the transcript's words are (a finding a list item, a name in backticks as code), folded to
         // each finding's first lines until Show all opens it; a report that fits shows no pill.
@@ -453,7 +455,7 @@ internal sealed partial class FlightsView<TSurface>
             {
                 _reports.Clear();
             }
-            _reports[key] = document = Layout.Builder.Markdown(text, ReportStyle(older) with { OnLink = Follow });
+            _reports[key] = document = SelectableTree.Of(Layout.Builder.Markdown(text, ReportStyle(older) with { OnLink = Follow }));
         }
         return document;
     }
@@ -480,5 +482,5 @@ internal sealed partial class FlightsView<TSurface>
         return older ? style with { Text = Dim, Strong = Body, Emphasis = Dim, Code = Body, Link = Dim, Muted = Dim } : style;
     }
 
-    private static Layout.Node Prose(string text, float size, RGBAColor32 color) => WrappedProse.Of(text, size, color);
+    private static Layout.Node Prose(string text, float size, RGBAColor32 color) => WrappedProse.Of(text, size, color, selectable: true);
 }
