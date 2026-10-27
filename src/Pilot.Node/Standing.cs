@@ -49,6 +49,15 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     };
 
     /// <summary>
+    /// What the lookout does as the person's assistant when the autopilot is on (see NodeCommands.RunAsync): a flight's merge,
+    /// its landing, a rerun of its checks, and a card's answer or dismissal. The node's settings, setup, grants and updates stay the person's.
+    /// </summary>
+    public static readonly IReadOnlySet<string> LookoutOnAutopilot = new HashSet<string>(StringComparer.Ordinal)
+    {
+        Verbs.Merge, Verbs.Land, Verbs.RerunChecks, Verbs.Answer, Verbs.Dismiss,
+    };
+
+    /// <summary>
     /// What the lookout may not do beyond <see cref="YourOnlyVerbs"/>: a review's verdict or its posting to GitHub in the
     /// person's name, syncing the repos, an issue made in their name, and the answer to an overlap (fold retires a flight the
     /// way a landing does, separate restarts a planner on the person's answer).

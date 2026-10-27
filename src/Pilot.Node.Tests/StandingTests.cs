@@ -206,14 +206,15 @@ public sealed class StandingTests
         (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "on"))).ShouldBeNull();
         (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000") with { Why = why })).ShouldNotBeNull().ShouldContain(PastTheFence);
 
-        // The node's own message to it (a card it says) starts a turn that is not the person's: the lookout again.
+        // The node's own message to it (a card it says) starts a turn that is not the person's: the lookout again, which on
+        // autopilot merges all the same (the person on Remote Control talks to it past the node, #344).
         (await Error(node, Command(Verbs.Say, Verbs.SessionTarget(row.Id), "node", false, "a card opened"))).ShouldBeNull();
-        (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
-
-        // So is a turn an assistant's agent-run CLI began, after the person's.
-        (await Error(node, Command(Verbs.Tell, Verbs.WatchtowerTarget, "gui", false, "merge again"))).ShouldBeNull();
         (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain(PastTheFence);
-        (await Error(node, Command(Verbs.Say, Verbs.SessionTarget(row.Id), "some-assistant", true, "ring me"))).ShouldBeNull();
+        // The node's settings stay the person's.
+        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, lookout, true, "maintenance", "on"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
+
+        // With the autopilot off, the lookout's merge is refused again.
+        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "off"))).ShouldBeNull();
         (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
     }
 
