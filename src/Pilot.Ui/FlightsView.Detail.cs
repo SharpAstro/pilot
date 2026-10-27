@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using DIR.Lib;
 using Pilot.Contracts;
 
@@ -163,6 +164,7 @@ internal sealed partial class FlightsView<TSurface>
         }
         facts.Add(Layout.Builder.Spacer().WStar());
 
+        _legBlocks.Clear();
         var legs = detail.Legs.Count == 0
             ? [Layout.Builder.Text(line.Node is null or { Here: true } ? "no legs yet: Plan a leg" : "no legs yet", 13f, Dim).RowH(24f)]
             : detail.Legs.Select(l => LegBlock(line.Code, l)).ToList();
@@ -343,12 +345,54 @@ internal sealed partial class FlightsView<TSurface>
             links.Add(Layout.Builder.Text($"{artifact.When} · {artifact.Location}", 11f, Faint, trim: TextTrim.Start).WStar());
             rows.Add(Layout.Builder.HStack([.. links]).WithGap(10f).RowH(20f));
         }
-        return Layout.Builder.VStack([.. rows])
+        var block = Layout.Builder.VStack([.. rows])
             .WithGap(4f)
             .Pad(12f, 8f)
             .Bg(PanelBg)
             .WStar()
             .HAuto();
+        _legBlocks[leg.Name] = block;
+        return block;
+    }
+
+    // The node of each leg's block in the page built last, so layout can say where one sits (see RevealLeg).
+    private readonly Dictionary<string, Layout.Node> _legBlocks = [];
+
+    // The leg a card's link asked the page to scroll to, until the layout that knows where its block sits has run.
+    private string? _revealLeg;
+
+    /// <summary>Opens <paramref name="code"/>'s page with leg <paramref name="leg"/>'s block scrolled into view, once layout knows where it sits.</summary>
+    public void OpenDetail(string code, string leg)
+    {
+        OpenDetail(code);
+        _revealLeg = leg;
+    }
+
+    // Scrolls the asked-for leg to the top of the page's scroll, from the arrangement just made; true when the offset moved and the page wants painting again.
+    private bool RevealLeg(ImmutableArray<Layout.ArrangedNode<float>> arranged)
+    {
+        if (_revealLeg is not { } leg || _openCode is null)
+        {
+            return false;
+        }
+        if (!_legBlocks.TryGetValue(leg, out var block))
+        {
+            // Its page is not on show yet (or the leg is not on it): asked again on the next frame, until the page is closed.
+            return false;
+        }
+        foreach (var node in arranged)
+        {
+            if (ReferenceEquals(node.Node, block))
+            {
+                _revealLeg = null;
+                var before = _detailScroll.AtomOffset;
+                var (start, _) = _detailScroll.ContentExtentOf(new RectF32(node.Bounds.X, node.Bounds.Y, node.Bounds.Width, node.Bounds.Height));
+                // A span as tall as the view aligns by its start: the leg's block at the top.
+                _detailScroll.RevealExtent(start, start + MathF.Max(node.Bounds.Height, _detailScroll.Viewport.Height + 1f));
+                return _detailScroll.AtomOffset != before;
+            }
+        }
+        return false;
     }
 
     private const float DetailLabelWidth = 76f;

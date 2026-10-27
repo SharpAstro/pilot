@@ -457,11 +457,16 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     public void Render(FlightsScreen screen, RectF32 bounds)
     {
         BeginFrame();
-        RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
+        var arranged = RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
         {
             DrawCanvas(fill, rect);
             Gallery.DrawFill(fill, rect);
         });
+        // A leg a card's link asked for: the layout just made knows where its block sits, so scroll there and paint again at the new offset.
+        if (RevealLeg(arranged))
+        {
+            Render(screen, bounds);
+        }
     }
 
     /// <summary>

@@ -116,6 +116,24 @@ public sealed class CardSummaryTests
     }
 
     [Fact]
+    public void MarkdownAndPlainPrintTheFlightAndLegOfACardAboutALeg()
+    {
+        var snapshot = new SnapshotEvent
+        {
+            Seq = 1, At = DateTimeOffset.UnixEpoch, Stream = "s", Notes = [], Sessions = [],
+            Cards =
+            [
+                new CardRow { Id = "c1", Bin = CardBin.Ring, Kind = "leg-failed", Subject = "flight/X1/a", Title = "It failed", At = DateTimeOffset.UnixEpoch, State = CardState.Open },
+                new CardRow { Id = "c2", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/X1", Title = "Ready", At = DateTimeOffset.UnixEpoch, State = CardState.Open },
+            ],
+        };
+
+        PilotCommand.Cards(snapshot).ShouldContain("X1/a");
+        CardsMarkdown.Build(snapshot).ShouldContain("`X1/a`");
+        PilotCommand.Cards(snapshot with { Cards = [snapshot.Cards[1]] }).ShouldNotContain("leg ");
+    }
+
+    [Fact]
     public void MarkdownAndPlainShowTheSummaryAboveTheDetail()
     {
         var snapshot = new SnapshotEvent

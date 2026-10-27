@@ -8,13 +8,13 @@ internal static class WrappedProse
     /// <summary>
     /// A sentence that wraps at the width it is given, each word a text leaf ending in its space as Markdown's paragraphs
     /// are: a text leaf is one line, and wrapping the words is what lets it follow the window and the terminal alike.
-    /// <paramref name="maxLines"/> cuts it after that many lines; 0 is no cap.
+    /// <paramref name="maxLines"/> cuts it after that many lines; 0 is no cap. <paramref name="link"/> may answer a word (with its
+    /// punctuation) with a node of its own, drawn in the word's place: a link in the middle of the sentence.
     /// </summary>
-    public static Layout.Node Of(string text, float size, RGBAColor32 color, int maxLines = 0)
+    public static Layout.Node Of(string text, float size, RGBAColor32 color, int maxLines = 0, Func<string, Layout.Node?>? link = null)
     {
         var words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
-            .SelectMany(Pieces)
-            .Select(piece => Layout.Builder.Text(piece, size, color).WAuto())
+            .SelectMany(word => link?.Invoke(word) is { } linked ? [linked] : Pieces(word).Select(piece => Layout.Builder.Text(piece, size, color).WAuto()))
             .ToArray();
         var wrap = Layout.Builder.WrapH(words).WithLineGap(size * 0.2f);
         return (maxLines > 0 ? wrap.WithMaxLines(maxLines) : wrap).WStar();

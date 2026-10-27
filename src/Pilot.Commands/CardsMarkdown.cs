@@ -33,6 +33,10 @@ internal static class CardsMarkdown
                 var by = card.ClosedBy is { } closedBy ? $", by {closedBy}" : "";
                 text.AppendLine($"**closed**: {Markdown.Text($"{card.Outcome}{by}")}").AppendLine();
             }
+            if (CardLeg.Of(card) is { } leg)
+            {
+                text.AppendLine($"leg `{leg}`").AppendLine();
+            }
             if (card.Summary is { Length: > 0 } summary)
             {
                 text.AppendLine(Markdown.Text(summary)).AppendLine();

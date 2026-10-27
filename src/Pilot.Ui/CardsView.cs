@@ -259,6 +259,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>Opens the Fleet page on <paramref name="node"/>'s row: what a click on its held line (a node out of reach) does.</summary>
     public Action<NodeMark>? OnFleet { get; set; }
 
+    /// <summary>Called with the flight code and the leg name when a card's leg link is clicked: the window opens the flight's page at that leg.</summary>
+    public Action<string, string>? OnLeg { get; set; }
+
     /// <summary>Opens the watchtower's Remote Control link.</summary>
     public Action<string>? OnOpen { get; set; }
 
@@ -564,6 +567,19 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     private static Layout.Node Whole(Layout.Node node, string text, bool cut) => cut ? node.WithTooltip(text, Layout.DockSide.Left) : node;
 
+    /// <summary>Whether a word of text is the leg's name, or its <c>code/leg</c>, with the punctuation a sentence puts round it.</summary>
+    private static bool LegWord(string text, CardLeg leg) =>
+        text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Any(w =>
+        {
+            var bare = w.Trim('\'', '"', '`', '(', ')', ',', '.', ':', ';', '!', '?');
+            return bare == leg.Leg || bare == leg.ToString();
+        });
+
+    private Layout.Node LegLink(CardRow card, CardLeg leg, string text, float size) =>
+        Layout.Builder.Text(text, size, Link)
+            .BgHover(CardHover)
+            .Follows(new HitResult.ButtonHit($"card:{card.Id}:leg"), _ => OnLeg?.Invoke(leg.Code, leg.Leg));
+
     /// <summary>The card's title as shown: a landed flight's starts with 🛬. The node's title is left as it raised it.</summary>
     internal static string Titled(CardRow card) => card.Kind == "landed" ? "🛬 " + card.Title : card.Title;
 
@@ -577,6 +593,18 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private Layout.Node Card(CardRow card, NodeMark? node, bool closed = false, bool merged = false)
     {
         var accent = merged ? Live : closed ? Dim : card.Bin == CardBin.Ring ? Ring : ForYou;
+        var leg = CardLeg.Of(card);
+        // The first place the leg's name is in the title or the summary is the link; a later one is plain, so one card has one link to its leg.
+        var linked = false;
+        Func<float, Func<string, Layout.Node?>> linker = size => word =>
+        {
+            if (linked || leg is not { } about || !LegWord(word, about))
+            {
+                return null;
+            }
+            linked = true;
+            return LegLink(card, about, word.TrimEnd() + " ", size).WAuto();
+        };
         var lines = new List<Layout.Node>
         {
             Layout.Builder.Text($"{(merged ? "merged" : card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).RowH(16f),
@@ -588,13 +616,19 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                     .BgHover(CardHover)
                     .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => (InAppLinks.Is(titleLink) ? OnGoTo : OnOpen)?.Invoke(titleLink))
                     .RowH(22f), titleLink), card.Title, card.Title.Length > TitleFits)
-                : Whole(Layout.Builder.Text(Titled(card), 14f, Bright).RowH(22f), card.Title, card.Title.Length > TitleFits),
+                : Whole((leg is { } titled && LegWord(card.Title, titled) ? WrappedProse.Of(Titled(card), 14f, Bright, 1, linker(14f)) : Layout.Builder.Text(Titled(card), 14f, Bright)).RowH(22f),
+                    card.Title, card.Title.Length > TitleFits),
         };
         // The summary is the card's body; the raw detail is folded under it. A card from an old node has no summary and shows its detail as before.
         var summary = card.Summary is { Length: > 0 } said ? said : null;
         if (summary is not null)
         {
-            lines.Add(Whole(WrappedProse.Of(summary, 12f, Body, SummaryLines), summary, summary.Length > SummaryFits));
+            lines.Add(Whole(WrappedProse.Of(summary, 12f, Body, SummaryLines, linker(12f)), summary, summary.Length > SummaryFits));
+        }
+        // The leg's name was not in the words above: a small link row of its own, so the leg is one click away all the same.
+        if (leg is { } about && !linked)
+        {
+            lines.Add(LegLink(card, about, about.ToString(), 12f).RowH(20f));
         }
         if (card.Detail is { Length: > 0 } detail && detail != summary)
         {
