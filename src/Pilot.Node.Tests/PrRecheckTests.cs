@@ -347,6 +347,70 @@ public sealed class PrRecheckTests : IDisposable
     }
 
     [Fact]
+    public async Task AReviewedPrWhoseChangesNobodyIsFixingStartsItsFixerAndKeepsTheChangesLabel()
+    {
+        // tianwen #1857: its fixer could not start, and once that was cleared the recheck took the label off with nothing started.
+        _github.Login = "ada";
+        await ReviewedAsync("changes");
+        Review()!.Fixer.ShouldBeNull();
+        _workers.Started.Clear();
+        // The PR's branch, which the fixer works on: in the origin, and said by gh.
+        PrOrigins.Git(Path.Combine(_root, "work-widget"), "push", "-q", "origin", "HEAD:refs/heads/feature/seven");
+        _github.Prs["acme/widget#7"] = Pr("OPEN") with { HeadRef = "feature/seven" };
+
+        await LookAsync();
+
+        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-fix-widget-7");
+        Review()!.Fixer.ShouldBe("du1-fix-widget-7");
+        Handled().ShouldBe([$"recheck of widget#7: its review asks for changes at {Short(_head)}, fixer started"]);
+        _github.Labels[7].ShouldBe([PilotMarks.Changes]);
+    }
+
+    /// <summary>A changes review the recheck would start a fixer on, the PR's own and its branch in place, then changed by <paramref name="shape"/>.</summary>
+    private async Task NoFixerAsync(Func<PrReviewRow, PrReviewRow> shape, string why, string login = "ada")
+    {
+        _github.Login = login;
+        await ReviewedAsync("changes");
+        PrOrigins.Git(Path.Combine(_root, "work-widget"), "push", "-q", "origin", "HEAD:refs/heads/feature/seven");
+        _github.Prs["acme/widget#7"] = Pr("OPEN") with { HeadRef = "feature/seven" };
+        _state.PutPrReview(shape(Review()!));
+        _workers.Started.Clear();
+
+        await LookAsync();
+
+        _workers.Started.ShouldBeEmpty();
+        Review()!.Fixer.ShouldBeNull();
+        Handled().ShouldBe([$"recheck of widget#7: nothing to do at {Short(_head)}: its review asks for changes, and no fixer starts: {why}"]);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrRecheck.FailedKind);
+        _github.Labels[7].ShouldBe([PilotMarks.Changes]);
+    }
+
+    [Fact]
+    public async Task ARecheckStartsNoFixerOnAReviewThatAsksAQuestionOfDesign() =>
+        await NoFixerAsync(r => r with { Findings = [new PrFinding { Path = "README.md", Line = 1, Body = "design: is this wanted?", Inline = false }] },
+            "its review asks a question of design, which is the author's to decide");
+
+    [Fact]
+    public async Task ARecheckStartsNoFixerOnceTheRoundsAreCapped() =>
+        await NoFixerAsync(r => r with { FixRound = PrReviews.MaxFixRounds },
+            $"{PrReviews.MaxFixRounds} rounds of fixes have pushed and it still asks for changes, so no more start");
+
+    [Fact]
+    public async Task ARecheckStartsNoFixerOnSomeoneElsesPrUntilFixItIsChosen() =>
+        await NoFixerAsync(r => r, "it is ada's PR, and Fix it has not been chosen", login: "grace");
+
+    [Fact]
+    public async Task TheFixerGuardSaysNoForARepoTheNodeDoesNotTrack()
+    {
+        // A recheck only looks at tracked repos, so this is the guard itself: a repo that left the roots between look and fix gets none.
+        _github.Login = "ada";
+        var review = await ReviewedAsync("changes");
+
+        (await _reviews.WhyNoFixerAsync(new PrRef("acme", "gadget", 7), review, Ct)).ShouldBe("acme/gadget is not a repo the node tracks");
+        (await _reviews.WhyNoFixerAsync(new PrRef("acme", "widget", 7), review, Ct)).ShouldBeNull();
+    }
+
+    [Fact]
     public async Task AReviewedPrWithNothingToDoSaysWhereItStands()
     {
         await ReviewedAsync();

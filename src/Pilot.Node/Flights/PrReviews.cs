@@ -1007,8 +1007,41 @@ public sealed class PrReviews(
         }
         catch (FlightException ex)
         {
-            state.RaiseCard(CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start", ex.Message, link: review.Url);
+            // Retry is the same Fix it: once what stopped it is cleared (a branch checked out elsewhere), it starts the fixer.
+            state.RaiseCard(CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start", ex.Message,
+                [new CardChoice { Label = "Retry", Verb = Verbs.FixPr, Target = subject }], link: review.Url);
         }
+    }
+
+    /// <summary>
+    /// Why a fixer must not start on its own for this review, or null when one may: the guards <see cref="FixAfterPostAsync"/> keeps
+    /// (an untracked repo, a flight's PR, a design question, the cap on rounds, a PR that is not the controller's own and has not
+    /// been chosen Fix it on). A recheck asks this before it starts a fixer, so it starts none the post deliberately did not.
+    /// </summary>
+    public async Task<string?> WhyNoFixerAsync(PrRef pr, PrReviewRow review, CancellationToken cancellationToken)
+    {
+        if (TrackedClone(pr) is null)
+        {
+            return $"{pr.Repo} is not a repo the node tracks";
+        }
+        if (FlightOwns(pr))
+        {
+            return "a flight owns it, so its own legs fix it";
+        }
+        if (review.Findings.Any(IsDesign))
+        {
+            return "its review asks a question of design, which is the author's to decide";
+        }
+        var rounds = review.FixRound ?? 0;
+        if (rounds >= MaxFixRounds)
+        {
+            return $"{rounds} rounds of fixes have pushed and it still asks for changes, so no more start";
+        }
+        if (rounds == 0 && !Own(review, await github.LoginAsync(cancellationToken)))
+        {
+            return $"it is {review.Author ?? "someone else"}'s PR, and Fix it has not been chosen";
+        }
+        return null;
     }
 
     /// <summary>The Fix it choice: the same fixer, started on the controller's word on a PR that is not their own.</summary>

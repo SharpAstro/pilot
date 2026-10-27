@@ -490,11 +490,20 @@ public static class PilotCommand
                 var pr = Pr(p.GetValue(prRef)!);
                 return Send(client, Verbs.ReviewPr, Verbs.PrTarget(pr.Repo, pr.Number), [], who, ct);
             });
+        // review fix: the fixer of a PR whose review asked for changes, as its card's Fix it starts it (#350: tianwen #1857's
+        // fixer could not start, its card was gone, and nothing but a script could start it again)
+        var reviewFix = Action(new Command("fix", "Start a fixer on a PR whose review asked for changes, as its card's Fix it does") { Arguments = { prRef } },
+            (p, client, ct) =>
+            {
+                var pr = Pr(p.GetValue(prRef)!);
+                return Send(client, Verbs.FixPr, Verbs.PrTarget(pr.Repo, pr.Number), [], who, ct);
+            });
         var review = new Command("review", "Review any PR (review pr), or give a review's verdict: a flight's pass offers the merge and changes rings for a go-around; a PR's rings with its findings")
         {
             Subcommands =
             {
                 reviewPr,
+                reviewFix,
                 Verdict("pass", "A flight's review: ready, the merge is offered"),
                 Verdict("changes", "A flight's or a PR's review: changes asked for, each one in the report"),
                 Verdict("approve", "A PR's review: it is right as it is"),
