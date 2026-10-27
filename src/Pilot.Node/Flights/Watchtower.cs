@@ -53,6 +53,13 @@ public sealed class Watchtower(
     /// <summary>How often it looks.</summary>
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// How long a Ring card it was told may stay open before it is told once more, which wakes or starts it if it has gone.
+    /// Told only once, an ended watchtower was never woken for a card it had heard of and left open: PIL338's review asked
+    /// for changes and nobody sent the leg round until the person asked why nothing landed (SE1, 2026-10-27).
+    /// </summary>
+    public TimeSpan RetellAfter { get; init; } = TimeSpan.FromMinutes(30);
+
     /// <summary>How long it is kept once there is nothing to watch, idle, before it is stopped.</summary>
     public TimeSpan QuietFor { get; init; } = TimeSpan.FromMinutes(15);
 
@@ -90,7 +97,9 @@ public sealed class Watchtower(
     private readonly SemaphoreSlim _one = new(1, 1);
     private string? _briefed;
     private bool _briefedRead;
-    private readonly HashSet<string> _told = new HashSet<string>(StringComparer.Ordinal);
+    // Each open card it was told, and when; a Ring card still open RetellAfter on is told once more (_retold).
+    private readonly Dictionary<string, DateTimeOffset> _told = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _retold = new(StringComparer.Ordinal);
     private string? _job;
     private DateTimeOffset? _startedAt;
     private DateTimeOffset _nextTry = DateTimeOffset.MinValue;
@@ -538,17 +547,26 @@ public sealed class Watchtower(
     /// <summary>Takes every open card as told: a fresh watchtower has them in its brief.</summary>
     private void TellAllOpen()
     {
+        var now = time.GetUtcNow();
         foreach (var card in state.Cards(openOnly: true))
         {
-            _told.Add(card.Id);
+            _told.TryAdd(card.Id, now);
         }
     }
 
-    /// <summary>The open cards it has not heard of, oldest first: not its own, not Handled lines, not about itself.</summary>
-    private List<CardRow> Untold() => state.Cards(openOnly: true)
-        .Where(c => c.Bin != CardBin.Handled && c.Kind != RaisedKind && c.Subject != Verbs.WatchtowerTarget && !_told.Contains(c.Id))
-        .OrderBy(c => c.At)
-        .ToList();
+    /// <summary>
+    /// The open cards it has not heard of, oldest first: not its own, not Handled lines, not about itself; and once, a Ring
+    /// card it was told <see cref="RetellAfter"/> ago that is still open.
+    /// </summary>
+    private List<CardRow> Untold()
+    {
+        var now = time.GetUtcNow();
+        return state.Cards(openOnly: true)
+            .Where(c => c.Bin != CardBin.Handled && c.Kind != RaisedKind && c.Subject != Verbs.WatchtowerTarget
+                && (!_told.TryGetValue(c.Id, out var told) || c.Bin == CardBin.Ring && now - told >= RetellAfter && !_retold.Contains(c.Id)))
+            .OrderBy(c => c.At)
+            .ToList();
+    }
 
     /// <summary>Whether an ended watchtower is resumed rather than replaced: its cache still warm, and room left in its window.</summary>
     private bool Warm(SessionRow row, DateTimeOffset now) =>
@@ -571,9 +589,13 @@ public sealed class Watchtower(
         var result = await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [text], Who = LegWatch.Who }, cancellationToken);
         if (result.Ok)
         {
+            var now = time.GetUtcNow();
             foreach (var card in fresh)
             {
-                _told.Add(card.Id);
+                if (!_told.TryAdd(card.Id, now))
+                {
+                    _retold.Add(card.Id);
+                }
             }
         }
         return result.Ok;
