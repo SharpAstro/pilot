@@ -241,7 +241,10 @@ public sealed class SettingsTests : IDisposable
 
         // The row is the page's own row for it.
         var page = (await node.Client.GetSettingsAsync(Ct)).Response.ShouldNotBeNull();
-        jobs.Setting.ShouldBe(page.Settings.Single(s => s.Key == NodeSettings.MaxJobsKey));
+        var onPage = page.Settings.Single(s => s.Key == NodeSettings.MaxJobsKey);
+        var answered = jobs.Setting.ShouldNotBeNull();
+        (answered.Key, answered.Label, answered.Value, answered.Saved, answered.Source, answered.Pending).ShouldBe((onPage.Key, onPage.Label, onPage.Value, onPage.Saved, onPage.Source, onPage.Pending));
+        answered.Choices.ShouldBe(onPage.Choices);
 
         // A refusal carries none.
         var refused = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["max-jobs", "lots"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
