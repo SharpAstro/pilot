@@ -15,7 +15,8 @@ public sealed record ResumeRequest(string SessionId, string? Name, string Cwd, s
 
 /// <summary>A session to reach over the intercom: the name SendMessage knows it by, and its kind, which tells its row in a listing from another of the same name.</summary>
 /// <param name="From">The name the message comes from, as the recipient reads it: <see cref="ClaudeCliDelivery.RelayFrom"/> of the command's sender.</param>
-public sealed record RelayRequest(string Name, SessionKind Kind, string Text, string From);
+/// <param name="ReplyTo">The sender's session row, when it is one on this node: the recipient is told to answer with a say to it.</param>
+public sealed record RelayRequest(string Name, SessionKind Kind, string Text, string From, string? ReplyTo = null);
 
 /// <summary>A delivery that did not happen, with why: the say's error.</summary>
 public sealed class SessionDeliveryException(string message) : Exception(message);
@@ -232,16 +233,28 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, string relay
     /// asked for a reply, and the recipient SendMessage'd it back to the relay, which failed, instead of answering in
     /// its own turn, where the GUI reads it.
     /// </summary>
-    public static string RelayText(string text) => text.Trim() + "\n\n" + RelayNote;
+    public static string RelayText(string text, string? replyTo = null) =>
+        text.Trim() + "\n\n" + (replyTo is { Length: > 0 } ? ReplyNote(replyTo) : RelayNote);
 
-    /// <summary>The closing line <see cref="RelayText"/> adds; the transcript page leaves it off what a person reads.</summary>
-    public const string RelayNote = "(Sent through the pilot node. The sender cannot be messaged back: answer in your own reply, not with SendMessage.)";
+    /// <summary>How each closing line <see cref="RelayText"/> adds begins: the transcript page cuts a prompt there, leaving it off what a person reads.</summary>
+    public const string RelayMark = "(Sent through the pilot node.";
+
+    /// <summary>The closing line <see cref="RelayText"/> adds when the sender is a person or a client: the answer is the recipient's own reply.</summary>
+    public const string RelayNote = RelayMark + " The sender cannot be messaged back: answer in your own reply, not with SendMessage.)";
+
+    /// <summary>
+    /// The closing line when the sender is a session on this node: the way back is a say to its row, as SendMessage
+    /// reaches only the relay, gone once it has sent. A session told only to answer in its own reply SendMessage'd its
+    /// answer anyway, to an address that had gone, and the sender never heard it (DE1's pilot session, 2026-10-28).
+    /// </summary>
+    public static string ReplyNote(string replyTo) =>
+        $"{RelayMark} To answer, run: pilot say {replyTo} \"<your answer>\". Not SendMessage: it cannot reach the sender.)";
 
     public async Task<string> RelayAsync(RelayRequest request, CancellationToken cancellationToken)
     {
         var mark = $"======== {Convert.ToHexStringLower(Guid.NewGuid().ToByteArray()[..4])} ========";
         var kind = request.Kind == SessionKind.Background ? "bg" : "interactive";
-        var prompt = string.Format(System.Globalization.CultureInfo.InvariantCulture, RelayPrompt, mark, kind, request.Name, RelayText(request.Text));
+        var prompt = string.Format(System.Globalization.CultureInfo.InvariantCulture, RelayPrompt, mark, kind, request.Name, RelayText(request.Text, request.ReplyTo));
         Directory.CreateDirectory(relayFolder);
         var run = await ClaudeCli.RunAsync(RelayArguments(request.From), prompt, relayFolder, RelayTimeout, cancellationToken);
 
