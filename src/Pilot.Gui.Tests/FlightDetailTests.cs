@@ -93,9 +93,13 @@ public sealed class FlightDetailTests
         var asks = "1) CI is red: LayoutDrivenTests rejects JobsView.cs:680. 2) The memory gate takes the smaller of the estimate and job-memory, so a job that measured 8 GB starts with 2 GB free.";
         var flight = Flight() with { Review = new ReviewRow { State = ReviewState.Changes, Reviewer = "du1-tia1611-review", Report = asks, StartedAt = Live.At } };
         var legs = Legs().Select(l => l.Name == "render" ? l with { State = LegState.Done, ReviewGoArounds = 3 } : l).ToArray();
-        string Said(FlightRow row, LegRow[] rows) => CellLayout.Describe(Layout.Engine.Arrange(
-            Layout.Builder.VStack([.. FlightsView<RgbaImage>.ReviewAsks(FlightDetail.From(FlightLine.Build([row], [], Now, rows).Single(), Now))]),
-            new Rect<int>(0, 0, 400, 40), CellMeasureContext.PixelAuthored));
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var view = new FlightsView<RgbaImage>(renderer);
+        // The prose wraps word by word, one leaf each: read the leaves back as the text a person would see.
+        string Said(FlightRow row, LegRow[] rows) => string.Concat(System.Text.RegularExpressions.Regex.Matches(CellLayout.Describe(Layout.Engine.Arrange(
+            Layout.Builder.VStack([.. view.ReviewAsks(FlightDetail.From(FlightLine.Build([row], [], Now, rows).Single(), Now))]),
+            new Rect<int>(0, 0, 400, 40), CellMeasureContext.PixelAuthored)), @"Leaf Text ""(.*)"" \(")
+            .Select(m => m.Groups[1].Value.EndsWith(' ') ? m.Groups[1].Value : m.Groups[1].Value + "\n"));
 
         var said = Said(flight, legs);
 
@@ -103,7 +107,10 @@ public sealed class FlightDetailTests
         said.ShouldContain("JobsView.cs:680");
         said.ShouldContain("starts with 2 GB free");
         said.ShouldContain("render has been redone 3 times");
-        said.ShouldContain("Redo leg render once more, or Ready anyway");
+        said.ShouldContain("Go around render on the review's card once more, or Ready anyway");
+        // An earlier capped leg with a later one planned after it is not the person's round: the node still lets the watchtower go around.
+        var planned = legs.Append(legs[0] with { Name = "polish", Order = 3, State = LegState.Planned, ReviewGoArounds = 0 }).ToArray();
+        Said(flight, planned).ShouldNotContain("the next round is yours");
         // A review that passed, or none, says nothing here.
         Said(Flight(), Legs()).Trim().ShouldBeEmpty();
     }
