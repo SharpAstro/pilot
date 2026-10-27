@@ -521,6 +521,29 @@ public sealed class LinkMenuTests
     }
 
     [Fact]
+    public void CapturesOfAKeyboardFocusedLinkWithItsMenuOpenUnderIt()
+    {
+        // Written where PILOT_TEST_CAPTURE says, else beside the temp files; never into the plane.
+        var dir = Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 } capture
+            ? Path.GetDirectoryName(capture) ?? "."
+            : Path.Combine(Path.GetTempPath(), "pilot-linkmenu-captures");
+        Directory.CreateDirectory(dir);
+        var longCard = PrCard() with { Title = "DIR112 landed: the whole of a very long title that runs past the panel's width" };
+        foreach (var (width, height) in new[] { (300, 360), (480, 360) })
+        {
+            using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+            var (view, _) = Panel(renderer);
+            var screen = CardsScreen.From([longCard, WaitingCard()]);
+            view.Render(screen, new RectF32(0, 0, width, height));
+            view.HandleInput(Key(InputKey.Tab));
+            view.Render(screen, new RectF32(0, 0, width, height));
+            view.HandleInput(Key(InputKey.F10, InputModifier.Shift));
+            view.Render(screen, new RectF32(0, 0, width, height));
+            File.WriteAllBytes(Path.Combine(dir, $"link-menu-keyboard-{width}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, height));
+        }
+    }
+
+    [Fact]
     public void CapturesOfTheFlightPageWithTheMenuOpenOverItsPrLink()
     {
         // Written where PILOT_TEST_CAPTURE says, else beside the temp files; never into the plane.
