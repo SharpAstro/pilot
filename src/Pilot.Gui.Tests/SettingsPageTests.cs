@@ -463,7 +463,8 @@ public sealed class SettingsPageTests
         buttons.ShouldNotContain("settings:lan:off");
         buttons.ShouldContain("settings:lan:on");
         chrome.Settings.Page!.Settings.Single(s => s.Key == "lan").Value.ShouldBe("on");
-        Volatile.Read(ref sends).ShouldBe(1);
+        // The send runs on the thread pool, so it is waited for; the second press was refused at once, before it.
+        await WaitAsync(() => Volatile.Read(ref sends) > 0);
 
         reply.SetResult(new SettingsReply("refused: the node's command line gives lan, and wins", ReplyKind.Refused));
         await WaitAsync(() => chrome.Settings.Said!.StartsWith("refused", StringComparison.Ordinal));
@@ -473,6 +474,7 @@ public sealed class SettingsPageTests
         buttons.ShouldContain("settings:lan:off");
         chrome.Settings.Page.Settings.Single(s => s.Key == "lan").Value.ShouldBe("on");
         chrome.Settings.Said.ShouldBe("refused: the node's command line gives lan, and wins");
+        Volatile.Read(ref sends).ShouldBe(1);
     }
 
     /// <summary>Captures of the page narrow and wide, checks loading and loaded, with long lines, into the folder named by PILOT_TEST_CAPTURE_DIR (nothing without it).</summary>
