@@ -148,6 +148,9 @@ internal sealed record FleetLine
 
     public required int Rings { get; init; }
 
+    /// <summary>The status as the lines it is drawn on: a last-known one is two (when last heard, then why), so each reads in full; any other is one.</summary>
+    public string[] StateLines => LastKnown && State.IndexOf(" (", StringComparison.Ordinal) is > 0 and var cut ? [State[..cut], State[(cut + 1)..]] : [State];
+
     public string ToDumpLine() => string.Join(" | ", Machine, Where + (Here ? " (this window)" : ""), State, Account, Usage.Length == 0 ? "-" : Usage, Sessions, Flights, Jobs,
         Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : "watch only") + (AutopilotWord is { } autopilot ? " | " + autopilot : "") + (Maintenance ? " | " + MaintenanceMark + (AsOf is { } asOf ? " " + asOf : "") : "")
         + (JobHolder is { } holder ? " | " + holder : "")
@@ -538,7 +541,8 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                     : Layout.Builder.Text(line.Connected ? line.Usage : "", 11f, Dim).RowH(18f),
                 // An unreachable node's last known usage and its status (when last heard, why) each have a line of their own, so they read in full.
                 Layout.Builder.Text(line.Connected ? "" : line.Usage, 11f, Dim).RowH(LastKnownUsageHeight(line)),
-                Layout.Builder.Text(line.Connected ? "" : line.State, 11f, Dim).RowH(line.Connected ? 0f : 16f),
+                Layout.Builder.Text(line.Connected ? "" : line.StateLines[0], 11f, Dim).RowH(line.Connected ? 0f : 16f),
+                Layout.Builder.Text(line.StateLines.Length > 1 ? line.StateLines[1] : "", 11f, Dim).RowH(line.StateLines.Length > 1 ? 16f : 0f),
                 // Its own line, so a narrow column clips this one and not the marks above.
                 Layout.Builder.Text(line.Watchtower ?? "", 11f, line.WatchtowerChurning ? Ringing : Dim).RowH(16f),
                 // A churning one says why, on a line of its own under the words.
@@ -551,7 +555,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f),
         };
         var row = Table.Row(Columns, Layout.Builder.Spacer().Bg(line.Connected ? Live : Away), cells)
-            .RowH((line.WatchtowerSummary is null ? RowHeight : SummaryRowHeight) + (line.Connected ? 0f : 16f) + LastKnownUsageHeight(line))
+            .RowH((line.WatchtowerSummary is null ? RowHeight : SummaryRowHeight) + (line.Connected ? 0f : 16f) + (line.StateLines.Length > 1 ? 16f : 0f) + LastKnownUsageHeight(line))
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index));
