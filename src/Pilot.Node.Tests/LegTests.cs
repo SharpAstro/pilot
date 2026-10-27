@@ -51,10 +51,17 @@ internal sealed class FakeChecks : ICheckRunner
 
     public List<(string Command, string Cwd)> Runs { get; } = [];
 
-    public Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken)
+    /// <summary>Awaited as each run begins: a check that takes as long as the test says. Null answers at once.</summary>
+    public Func<Task>? OnRun { get; set; }
+
+    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken)
     {
         Runs.Add((command, cwd));
-        return Task.FromResult(Next);
+        if (OnRun is { } wait)
+        {
+            await wait();
+        }
+        return Next;
     }
 }
 
@@ -1068,6 +1075,34 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         _workers.Stopped.ShouldBe(["job00001"]);
         // The next leg may go now.
         (await Leg(Verbs.StartLeg, "flight/TIA1/render")).Ok.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ALegsCheckRunsWithoutTheLockSoOtherCommandsAreAnsweredAndARetriedFinishDoesNotRunItAgain()
+    {
+        await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+        var gate = new TaskCompletionSource();
+        _checks.OnRun = () => gate.Task;
+
+        var finishing = Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+        for (var i = 0; i < 100 && _checks.Runs.Count == 0; i++)
+        {
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+        _checks.Runs.Count.ShouldBe(1);
+
+        // The check holds no lock: the worker's retry is answered at once, refused, and runs no second check (DE1, 2026-10-28:
+        // a ten-minute check held every flight's commands, and each retry queued another).
+        var retry = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in").WaitAsync(TimeSpan.FromSeconds(4), TestContext.Current.CancellationToken);
+        retry.Error.ShouldNotBeNull().ShouldContain("rerunning parser's check already");
+        _checks.Runs.Count.ShouldBe(1);
+
+        gate.SetResult();
+        (await finishing).Ok.ShouldBeTrue();
+        L("parser").State.ShouldBe(LegState.Done);
     }
 
     [Fact]

@@ -989,8 +989,20 @@ public sealed partial class LegCommander(
                         state.PutLeg(leg);
                         check = corrected;
                     }
-                    // The Done-when, rerun: v1's rule, the one that kept a leg from being called done on a worker's word.
-                    var run = await checks.RunAsync(check, flight.Worktree, cancellationToken);
+                    // The Done-when, rerun: v1's rule, the one that kept a leg from being called done on a worker's word. Run without the
+                    // lock: a check is a build and a test suite, and held under it every other flight's command queued behind it for its ten
+                    // minutes, timed out, and its worker went idle and rang (DE1, 2026-10-28). The flight is this finish's meanwhile, so a
+                    // worker's retry after a timeout is refused rather than running the same check again.
+                    var seen = leg;
+                    CheckRun run;
+                    using (Calling(flight.Code, $"rerunning {leg.Name}'s check"))
+                    {
+                        run = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken));
+                    }
+                    leg = Unchanged(flight.Code, seen) is { } still
+                        ? still
+                        : throw new FlightException($"{flight.Code}/{seen.Name} changed while its check ran: nothing was recorded, look again and finish again");
+                    flight = FlightOf(Verbs.FlightTarget(flight.Code));
                     if (!run.Passed)
                     {
                         // A restore that fails on a package a sibling is publishing is the leg's to wait out, not to fail.
