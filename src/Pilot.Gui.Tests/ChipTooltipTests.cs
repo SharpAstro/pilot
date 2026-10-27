@@ -123,6 +123,6 @@ public sealed class ChipTooltipTests
         tree.ShouldNotBeNull();
         // Measured by characters, as a test without a font has it: 58 fill a line.
         float ByChars(string text) => text.Length * (TooltipLayer<RgbaImage>.MaxWidth / 58f);
-        TooltipLayer<RgbaImage>.Lines(request.Text, ByChars).ShouldAllBe(l => ByChars(l) <= TooltipLayer<RgbaImage>.MaxWidth);
+        TooltipLayer<RgbaImage>.Lines(request.Text, ByChars).All(l => ByChars(l) <= TooltipLayer<RgbaImage>.MaxWidth).ShouldBeTrue();
     }
 }
