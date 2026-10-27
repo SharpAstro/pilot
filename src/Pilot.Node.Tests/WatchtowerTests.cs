@@ -219,6 +219,27 @@ public sealed class WatchtowerTests : IDisposable
     }
 
     [Fact]
+    public async Task ARingCardItWasToldAndLeftOpenWakesItOnceMoreAfterHalfAnHourNotEveryLook()
+    {
+        await _tower.LookAsync(Ct);
+        Row("job00001", SessionState.Working);
+        _state.RaiseCard(CardBin.Ring, "review-changes", "flight/TIA9", "TIA9's review asks for changes");
+        await _tower.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+
+        // Its turn ended with the card still open: told once more after RetellAfter, which resumes it, and not again.
+        _time.Advance(TimeSpan.FromMinutes(5));
+        Row("job00001", SessionState.Ended, lastResponse: _time.GetUtcNow());
+        _time.Advance(TimeSpan.FromMinutes(26));
+        await _tower.LookAsync(Ct);
+        _said.Count.ShouldBe(2);
+        _said[1].Args[0].ShouldContain("TIA9's review asks for changes");
+        _time.Advance(TimeSpan.FromMinutes(31));
+        await _tower.LookAsync(Ct);
+        _said.Count.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task OneThatEndedIsReplacedForANewCardOnceItsCacheIsColdOrItsWindowMostlySpent()
     {
         await _tower.LookAsync(Ct);
