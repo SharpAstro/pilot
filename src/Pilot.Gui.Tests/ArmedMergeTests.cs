@@ -40,7 +40,7 @@ public sealed class ArmedMergeTests
         Id = "c2", Bin = CardBin.Ring, Kind = "merge-failed", Subject = "flight/PIL244", Title = $"PIL244's PR #251: check {LongCheck} failed", Detail = FailedDetail,
         Choices =
         [
-            new CardChoice { Label = "Go around armed-in-gui", Verb = Verbs.GoAround, Target = "flight/PIL244/armed-in-gui", Args = ["the PR's checks failed"] },
+            new CardChoice { Label = "Redo leg armed-in-gui", Verb = Verbs.GoAround, Target = "flight/PIL244/armed-in-gui", Args = ["the PR's checks failed"] },
             new CardChoice { Label = "Re-run checks", Verb = Verbs.RerunChecks, Target = "flight/PIL244", Args = ["77018f1", "rebase"] },
             Merge(null, "Merge again"),
         ],
@@ -188,7 +188,7 @@ public sealed class ArmedMergeTests
         // Under the old 320-character threshold, yet at a narrow panel's width the first paragraph wraps past the cap and the
         // second gets one line: both are cut by the line cap with no ellipsis, so the whole text is on hover (ui-changes.md section 3).
         var detail = "GitHub blocks the merge: a required check has yet to report on 77018f1c, or a branch rule keeps it from merging, and the PR page says which one it is.\n"
-            + "Go around to fix what it found, re-run the checks if it was a flake, or merge again once that is dealt with.";
+            + "Redo the leg to fix what it found, re-run the checks if it was a flake, or merge again once that is dealt with.";
         detail.Length.ShouldBeInRange(230, 300);
         var arranged = Arrange(Disarmed() with { Detail = detail }, width, out var renderer);
         using var _ = renderer;

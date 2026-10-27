@@ -621,8 +621,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 {
                     var what = conflicts ? "conflicts with its base" : "is behind its base";
                     legs.ShowMergeFailed(flight.Code, head, "", $"{flight.Code}'s PR #{number} {what}",
-                        conflicts ? "GitHub cannot merge it until the conflict is resolved. The node rebases it by itself, once a head; one that conflicts is a go-around: the last leg resolves it."
-                            : "GitHub will not merge it until it is rebased onto its base. The node rebases it by itself, once a head; a go-around does it by hand.",
+                        conflicts ? "GitHub cannot merge it until the conflict is resolved. The node rebases it by itself, once a head; one that conflicts is a redo of the leg (a go-around): the last leg resolves it."
+                            : "GitHub will not merge it until it is rebased onto its base. The node rebases it by itself, once a head; redoing the leg (a go-around) does it by hand.",
                         pr?.Url ?? card.Link, rerun: false,
                         goAroundWhy: $"the PR {what}: rebase the plane onto its base, resolving every conflict so both sides' work stays, rerun the check, and push",
                         mergeAgain: false, kind: LegCommander.PrReady);
