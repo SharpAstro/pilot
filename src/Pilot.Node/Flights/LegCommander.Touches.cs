@@ -226,7 +226,7 @@ public sealed partial class LegCommander
         if (other.FlightCode is { } flight && !other.OnPeer)
         {
             return fold
-                ? $"when it is the same goal, flight overlap {code} {flight} {files} <why>; when it is another goal, flight connect {code} {flight}"
+                ? $"when it is the same goal, flight overlap {code} {flight} {Verbs.OverlapPickArg}{Verbs.OverlapPickFold} {files} <why>; when it is another goal, flight connect {code} {flight}"
                 : $"flight connect {code} {flight} so {code} branches off main once it has landed, or plan beside it when the shared files are only touched in passing";
         }
         return other.FlightCode is { } peerFlight

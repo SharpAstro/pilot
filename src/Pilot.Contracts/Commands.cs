@@ -381,6 +381,18 @@ public static class Verbs
     public const string OverlapFileArg = "file=";
 
     /// <summary>
+    /// The prefix of an argument of <see cref="Overlap"/> that carries the pick <c>touches</c> made, <c>pick=fold</c> or <c>pick=connect</c>
+    /// (none is connect): the card's title says the choice the planner leans to. A flight of another node is never titled fold.
+    /// </summary>
+    public const string OverlapPickArg = "pick=";
+
+    /// <summary>The pick <c>pick=</c> carries for a flight that is part of the same goal as the other.</summary>
+    public const string OverlapPickFold = "fold";
+
+    /// <summary>The pick <c>pick=</c> carries for a flight that depends on the other, and the default.</summary>
+    public const string OverlapPickConnect = "connect";
+
+    /// <summary>
     /// <c>fold flight/&lt;code&gt; &lt;other&gt;</c>: the answer that the flight is part of the other. Records it, closes the
     /// card, adds the flight's issue to the other flight (its PR closes it too), retires the asking flight (landed, marked folded
     /// into the other, its planner stopped and its plane removed) and starts the other flight's planner to plan the issue's points

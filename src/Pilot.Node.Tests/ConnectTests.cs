@@ -243,6 +243,18 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    public async Task AFoldPickForAPeerFlightIsStillTitledAConnect()
+    {
+        await TwoFlights();
+        Peer("DE1", Theirs("PIL294", 294));
+
+        (await Leg(Verbs.Overlap, "flight/TIA2", "PIL294", "pick=fold", "file=src/DetachedShell.cs", "same goal")).Ok.ShouldBeTrue();
+
+        Cards().ShouldHaveSingleItem().Title.ShouldBe("Connect TIA2 to PIL294 on DE1 (both change DetachedShell.cs)");
+        F("TIA2").Overlaps.ShouldHaveSingleItem().Pick.ShouldBe(Verbs.OverlapPickConnect);
+    }
+
+    [Fact]
     public async Task FoldIntoAFlightOfAnotherNodeIsRefusedWithAReasonAndNothingChanges()
     {
         await TwoFlights();

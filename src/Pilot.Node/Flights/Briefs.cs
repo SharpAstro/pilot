@@ -376,8 +376,8 @@ public static class Briefs
         text.AppendLine("this node's flights with their issues and legs).");
         text.AppendLine($"- `{run} nodes` lists the other pilot nodes on the LAN; `{run} summary --fleet` is the node's kept summary of the flights in play on every node it holds a grant for (what needs the controller, where it is), with its age.");
         text.AppendLine("What to do with each answer:");
-        text.AppendLine($"- fold (a large share of your files): when it is the same goal as that flight's, `{run} flight overlap {flight.Code} <other> file=<shared file> file=<shared file> <why>`");
-        text.AppendLine("  (every shared file the line names, each as file=<path>; the why in words), then end your turn at once: plan no leg and do not say planned.");
+        text.AppendLine($"- fold (a large share of your files): when it is the same goal as that flight's, `{run} flight overlap {flight.Code} <other> pick=fold file=<shared file> file=<shared file> <why>`");
+        text.AppendLine("  (pick=fold so the card is titled a fold; every shared file the line names, each as file=<path>; the why in words), then end your turn at once: plan no leg and do not say planned.");
         text.AppendLine("  The controller is asked on a card naming both flights and the shared files, to fold this flight into the other (only a flight of this");
         text.AppendLine("  node), connect it to the other or plan in parallel, and a fresh planner is started with the answer. When the pair has been answered");
         text.AppendLine("  already the command returns the answer straight away, with no card: follow it. When the goal is another, treat the line as a connect.");

@@ -330,9 +330,11 @@ public static class PilotCommand
             (p, client, ct) => Send(client, Verbs.Planned, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(plannedSummary) ?? [], who, ct));
         var overlapWhy = Words("why", "Why it looks like part of the other");
         var overlapFiles = new Option<string[]>("--file") { Description = "A file both flights change (repo-relative, as flight touches names it); give it once per file", AllowMultipleArgumentsPerToken = false };
-        var overlap = Action(new Command("overlap", "The planner found the flight to overlap another, on this node or another: asks the controller to fold it in (this node only), connect it or plan in parallel") { Arguments = { code, other, overlapWhy }, Options = { overlapFiles } },
+        var overlapPick = new Option<string?>("--pick") { Description = "What flight touches picked for this flight: fold (this node's flight only) or connect (the default); the card's title says it" };
+        overlapPick.AcceptOnlyFromAmong(Verbs.OverlapPickFold, Verbs.OverlapPickConnect);
+        var overlap = Action(new Command("overlap", "The planner found the flight to overlap another, on this node or another: asks the controller to fold it in (this node only), connect it or plan in parallel") { Arguments = { code, other, overlapWhy }, Options = { overlapFiles, overlapPick } },
             (p, client, ct) => Send(client, Verbs.Overlap, Verbs.FlightTarget(p.GetValue(code)!),
-                [p.GetValue(other)!, .. (p.GetValue(overlapFiles) ?? []).Select(f => Verbs.OverlapFileArg + f), .. p.GetValue(overlapWhy) ?? []], who, ct));
+                [p.GetValue(other)!, .. (p.GetValue(overlapPick) is { } pick ? new[] { Verbs.OverlapPickArg + pick } : []), .. (p.GetValue(overlapFiles) ?? []).Select(f => Verbs.OverlapFileArg + f), .. p.GetValue(overlapWhy) ?? []], who, ct));
         var touchedFiles = Words("file", "A file the flight's legs will change, repo-relative, as many as the legs have");
         var touches = Action(new Command("touches", "The planner's overlap check: compares the files its legs will change with every other flight in the air on every node and every open PR, and says fold, connect or parallel for each") { Arguments = { code, touchedFiles } },
             (p, client, ct) => Send(client, Verbs.Touches, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(touchedFiles) ?? [], who, ct));

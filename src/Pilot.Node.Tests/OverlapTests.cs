@@ -165,6 +165,45 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    public async Task AFoldPickTitlesTheCardAFoldAndKeepsThePickOnTheRow()
+    {
+        await TwoFlights();
+
+        (await Leg(Verbs.Overlap, "flight/TIA2", "TIA1", "pick=fold", "file=src/DetachedShell.cs", "file=src/Parser.cs", "same goal")).Ok.ShouldBeTrue();
+
+        var card = Cards().ShouldHaveSingleItem();
+        card.Title.ShouldBe("Fold TIA2 into TIA1 (both change DetachedShell.cs, Parser.cs)");
+        // Still all three choices: the title says what the planner leans to, the controller answers.
+        card.Choices.Select(c => c.Label).ShouldBe(["Fold into TIA1", "Connect to TIA1", "Plan in parallel"]);
+        var recorded = F("TIA2").Overlaps.ShouldHaveSingleItem();
+        (recorded.Pick, recorded.Why, recorded.Files).ShouldBe((Verbs.OverlapPickFold, "same goal", ["src/DetachedShell.cs", "src/Parser.cs"]));
+    }
+
+    [Fact]
+    public async Task AConnectPickTitlesTheCardAConnectAsDoesNoPick()
+    {
+        await TwoFlights();
+
+        (await Leg(Verbs.Overlap, "flight/TIA2", "TIA1", "pick=connect", "file=src/Parser.cs", "it edits the same parser")).Ok.ShouldBeTrue();
+
+        Cards().ShouldHaveSingleItem().Title.ShouldBe("Connect TIA2 to TIA1 (both change Parser.cs)");
+        F("TIA2").Overlaps.ShouldHaveSingleItem().Pick.ShouldBe(Verbs.OverlapPickConnect);
+    }
+
+    [Fact]
+    public async Task AnUnknownPickIsRefusedAndNothingIsRecorded()
+    {
+        await TwoFlights();
+
+        var asked = await Leg(Verbs.Overlap, "flight/TIA2", "TIA1", "pick=leave", "file=src/Parser.cs", "same parser");
+
+        asked.Ok.ShouldBeFalse();
+        asked.Error.ShouldNotBeNull().ShouldContain("pick= is fold or connect");
+        Cards().ShouldBeEmpty();
+        F("TIA2").Overlaps.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task ConnectAnswerRecordsItConnectsTheFlightClosesTheCardAndStartsAFreshPlannerThatKnowsIt()
     {
         await TwoFlights();

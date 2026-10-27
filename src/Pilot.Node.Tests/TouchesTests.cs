@@ -150,7 +150,7 @@ public sealed class TouchesTests : IDisposable
         var result = await Touches(Mine);
 
         result.Made.ShouldBe(
-            "PIL294 (SE1): fold, both change src/Lexer.cs, src/Parser.cs (2 of your 4 files); when it is the same goal, flight overlap PIL375 PIL294 file=src/Lexer.cs file=src/Parser.cs <why>; when it is another goal, flight connect PIL375 PIL294");
+            "PIL294 (SE1): fold, both change src/Lexer.cs, src/Parser.cs (2 of your 4 files); when it is the same goal, flight overlap PIL375 PIL294 pick=fold file=src/Lexer.cs file=src/Parser.cs <why>; when it is another goal, flight connect PIL375 PIL294");
     }
 
     [Fact]

@@ -289,12 +289,13 @@ public sealed partial class LegCommander(
                 // Armed on GitHub by a hand the node did not see: the plane is not rebased for a push that would be refused.
                 await EnsureNotArmedAsync(flight, cancellationToken);
                 await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
-                // A base that is no branch on the remote is the remote's default first, as when its PR opened.
-                var repaired = await RepairBaseAsync(flight, cancellationToken);
                 // The branch as pushed from elsewhere (its conflicts resolved by the controller, or by another node) is taken
                 // first: rebasing the plane's older commits met conflicts already resolved there, and rang for them (#344).
                 // What the remote holds that the plane lacks and is not a fast-forward is merged in as well, before any rebase: a push never drops it.
-                await TakeRemoteAsync(repaired, cancellationToken);
+                // Before the base is repaired too: that rebases the plane, and the remote's pre-rebase commits merged in after it would be duplicated.
+                await TakeRemoteAsync(flight, cancellationToken);
+                // A base that is no branch on the remote is the remote's default first, as when its PR opened.
+                var repaired = await RepairBaseAsync(flight, cancellationToken);
                 // A branch that holds its base already (merged in, as a squashing merge queue allows) has nothing to rebase.
                 if ((await git.RunAsync(["merge-base", "--is-ancestor", repaired.Base, "HEAD"], flight.Worktree, cancellationToken)).Ok)
                 {

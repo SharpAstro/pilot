@@ -282,6 +282,12 @@ public sealed record OverlapRow
     /// <summary>The files both change, as the planner's <c>touches</c> said them; null when it did not say.</summary>
     public string[]? Files { get; init; }
 
+    /// <summary>
+    /// The choice the planner leans to, as <c>touches</c> picked it (<c>fold</c> or <c>connect</c>): what the card's title says. Null
+    /// when it did not say, which reads as connect.
+    /// </summary>
+    public string? Pick { get; init; }
+
     /// <summary>Why it looks like part of the other, as the planner said it.</summary>
     public required string Why { get; init; }
 

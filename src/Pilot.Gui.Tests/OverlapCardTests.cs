@@ -32,9 +32,11 @@ public sealed class OverlapCardTests
         return all.Length > 4 ? $"{string.Join(", ", all.Take(4))} and {all.Length - 4} more" : files;
     }
 
-    private static CardRow Local(string files = "DetachedShell.cs") => new()
+    /// <summary>A flight of this node: titled a fold when the planner's pick was fold, a connect otherwise.</summary>
+    private static CardRow Local(string files = "DetachedShell.cs", bool fold = true) => new()
     {
-        Id = "c1", Bin = CardBin.Ring, Kind = CardKinds.Overlap, Subject = "flight/PIL365", Title = $"Connect PIL365 to PIL294 (both change {Named(files)})",
+        Id = "c1", Bin = CardBin.Ring, Kind = CardKinds.Overlap, Subject = "flight/PIL365",
+        Title = $"{(fold ? "Fold PIL365 into PIL294" : "Connect PIL365 to PIL294")} (both change {Named(files)})",
         Detail = Detail("PIL365 (v2: a flight's push never drops commits) overlaps PIL294 (v2: the shell of a detached worker keeps its output).", files,
             "Fold takes PIL365's issue into PIL294."),
         Choices = [Choice("Fold into PIL294", Verbs.Fold), Choice("Connect to PIL294", Verbs.ConnectOverlap), Choice("Plan in parallel", Verbs.Separate)],
@@ -73,7 +75,12 @@ public sealed class OverlapCardTests
             words.ShouldContain("Connect to PIL294");
             words.ShouldContain("Plan in parallel");
             words.ShouldNotContain(w => w.Contains("Leave it", StringComparison.OrdinalIgnoreCase));
-            string.Join(' ', words).ShouldContain("Connect PIL365 to PIL294");
+            string.Join(' ', words).ShouldContain("Fold PIL365 into PIL294");
+        }
+        arranged = Arrange(Local(fold: false), width, out renderer);
+        using (renderer)
+        {
+            string.Join(' ', Words(arranged)).ShouldContain("Connect PIL365 to PIL294");
         }
     }
 
@@ -104,6 +111,7 @@ public sealed class OverlapCardTests
         var cases = new (string Name, CardRow[] Cards)[]
         {
             ("this-node", [Local()]),
+            ("this-node-connect", [Local(fold: false)]),
             ("another-node-long", [OnAnotherNode()]),
             ("both", [Local(LongFiles), OnAnotherNode()]),
         };

@@ -65,8 +65,16 @@ public sealed partial class LegCommander
         {
             throw new FlightException($"{other.Code} has landed: its work is in, so build on it instead of folding into it");
         }
-        var files = args.Skip(1).TakeWhile(a => a.StartsWith(OverlapFileArg, StringComparison.Ordinal)).Select(a => a[OverlapFileArg.Length..].Trim()).Where(a => a.Length > 0).ToArray();
-        var why = string.Join(' ', args.Skip(1 + files.Length)).Trim();
+        var named = args.Skip(1).TakeWhile(a => a.StartsWith(OverlapFileArg, StringComparison.Ordinal) || a.StartsWith(Verbs.OverlapPickArg, StringComparison.Ordinal)).ToArray();
+        var files = named.Where(a => a.StartsWith(OverlapFileArg, StringComparison.Ordinal)).Select(a => a[OverlapFileArg.Length..].Trim()).Where(a => a.Length > 0).ToArray();
+        var picked = named.Where(a => a.StartsWith(Verbs.OverlapPickArg, StringComparison.Ordinal)).Select(a => a[Verbs.OverlapPickArg.Length..].Trim().ToLowerInvariant()).LastOrDefault();
+        if (picked is not null && picked is not (Verbs.OverlapPickFold or Verbs.OverlapPickConnect))
+        {
+            throw new FlightException($"pick= is {Verbs.OverlapPickFold} or {Verbs.OverlapPickConnect}, not '{picked}'");
+        }
+        // A flight of another node is never folded into: its card says connect whatever touches leaned to.
+        var fold = picked == Verbs.OverlapPickFold && node is null;
+        var why = string.Join(' ', args.Skip(1 + named.Length)).Trim();
 
         if (flight.Overlaps.FirstOrDefault(o => o.Other == other.Code) is { } known)
         {
@@ -83,7 +91,7 @@ public sealed partial class LegCommander
 
         state.PutFlight(flight with
         {
-            Overlaps = [.. flight.Overlaps, new OverlapRow { Other = other.Code, Node = node, Files = files.Length > 0 ? files : null, Why = why, Answer = OverlapAnswer.Pending, At = time.GetUtcNow() }],
+            Overlaps = [.. flight.Overlaps, new OverlapRow { Other = other.Code, Node = node, Files = files.Length > 0 ? files : null, Pick = fold ? Verbs.OverlapPickFold : Verbs.OverlapPickConnect, Why = why, Answer = OverlapAnswer.Pending, At = time.GetUtcNow() }],
         });
         var target = Verbs.FlightTarget(flight.Code);
         var at = node is null ? other.Code : $"{other.Code} on {node}";
@@ -102,7 +110,9 @@ public sealed partial class LegCommander
         choices.Add(new CardChoice { Label = $"Connect to {other.Code}", Verb = Verbs.ConnectOverlap, Target = target, Args = [other.Code] });
         choices.Add(new CardChoice { Label = "Plan in parallel", Verb = Verbs.Separate, Target = target, Args = [other.Code] });
 
-        var card = state.RaiseCard(CardBin.Ring, OverlapKind, target, $"Connect {flight.Code} to {at} ({shared})", OverlapDetail(flight, other, node, files, why), choices);
+        // The title names the choice the planner leans to: a fold reads "Fold PIL365 into PIL294", a connect "Connect PIL365 to PIL294".
+        var title = fold ? $"Fold {flight.Code} into {at} ({shared})" : $"Connect {flight.Code} to {at} ({shared})";
+        var card = state.RaiseCard(CardBin.Ring, OverlapKind, target, title, OverlapDetail(flight, other, node, files, why), choices);
         return $"asked the controller on card {card.Id}: {flight.Code} overlaps {at}. Plan no leg and say no planned: end your turn now, you are started again with the answer";
     }
 
