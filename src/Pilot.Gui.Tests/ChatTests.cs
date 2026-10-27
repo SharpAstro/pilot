@@ -69,6 +69,61 @@ public sealed class ChatTests
     }
 
     [Fact]
+    public async Task NewWatchtowerAsksFirstThenRestartsItAndKeepItLeavesIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chat = NewChat(renderer);
+        var restarts = 0;
+        chat.OnRestart = () =>
+        {
+            restarts++;
+            return Task.FromResult<string?>(null);
+        };
+        await Read(chat, 6);
+
+        // One press only asks: the restart stops what the watchtower is doing.
+        Click(chat, "chat:restart");
+        restarts.ShouldBe(0);
+        Described(chat).ShouldContain("Stop it and start fresh");
+        Click(chat, "chat:restart-no");
+        restarts.ShouldBe(0);
+        Described(chat).ShouldContain("New watchtower");
+
+        await Capture("chat-restart");
+        Click(chat, "chat:restart");
+        await Capture("chat-restart-confirm", confirming: true);
+        Click(chat, "chat:restart-yes");
+        restarts.ShouldBe(1);
+        Described(chat).ShouldContain("New watchtower");
+
+        // A page with no restart to call shows no button.
+        chat.OnRestart = null;
+        Described(chat).ShouldNotContain("New watchtower");
+    }
+
+    private static async Task Capture(string name, bool confirming = false)
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var dir = Path.GetDirectoryName(capture) ?? ".";
+        foreach (var (width, height) in new[] { (700, 500), (1600, 600) })
+        {
+            using var shot = new RgbaImageRenderer((uint)width, (uint)height);
+            var view = NewChat(shot);
+            view.OnRestart = () => Task.FromResult<string?>(null);
+            await Read(view, 6);
+            if (confirming)
+            {
+                Click(view, "chat:restart");
+            }
+            view.Render(new RectF32(0, 0, width, height));
+            File.WriteAllBytes(Path.Combine(dir, $"{name}-{width}.png"), SharpAstro.Png.PngWriter.Encode(shot.Surface.Pixels, width, height));
+        }
+    }
+
+    [Fact]
     public async Task TheChatShowsAPersonsMessageAReplyInMarkdownAFoldedCallAWorkingLineAndTheDivider()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
