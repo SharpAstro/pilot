@@ -66,7 +66,7 @@ public sealed class JobTests : IDisposable
     // Not a bare sleep, which the node refuses (SleepOnly): the echo is what makes it a job.
     private static string Sleep(int seconds) => $"sleep {seconds}; echo slept";
 
-    /// <summary>The log as it is: the job's wrapper may still hold it open for writing a moment after the exit file shows, and a plain File.ReadAllText then fails on Windows.</summary>
+    /// <summary>A file as it is: the job's wrapper (or the child that writes its pid) may still hold it open for writing a moment after it shows, and a plain File.ReadAllText then fails on Windows.</summary>
     private static string ReadLog(string path)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
@@ -215,11 +215,11 @@ public sealed class JobTests : IDisposable
             : $"sleep 60 & echo $! > '{pidFile}'; wait";
         var id = Run(command).Made!;
         await Until(id, j => j.State == JobState.Running);
-        for (var i = 0; i < 300 && !(File.Exists(pidFile) && File.ReadAllText(pidFile).Trim().Length > 0); i++)
+        for (var i = 0; i < 300 && !(File.Exists(pidFile) && ReadLog(pidFile).Trim().Length > 0); i++)
         {
             await Task.Delay(50, Ct);
         }
-        var childPid = int.Parse(File.ReadAllText(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        var childPid = int.Parse(ReadLog(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
         IsAlive(childPid).ShouldBeTrue();
 
         _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" }).Ok.ShouldBeTrue();
@@ -246,11 +246,11 @@ public sealed class JobTests : IDisposable
             : $"sleep 60 & echo $! > '{pidFile}'; wait";
         var id = Run(command).Made!;
         var running = await Until(id, j => j.State == JobState.Running);
-        for (var i = 0; i < 300 && !(File.Exists(pidFile) && File.ReadAllText(pidFile).Trim().Length > 0); i++)
+        for (var i = 0; i < 300 && !(File.Exists(pidFile) && ReadLog(pidFile).Trim().Length > 0); i++)
         {
             await Task.Delay(50, Ct);
         }
-        var childPid = int.Parse(File.ReadAllText(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        var childPid = int.Parse(ReadLog(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
         IsAlive(childPid).ShouldBeTrue();
 
         // The tree under the wrapper, as the log read gives it, once the child is in it: it is remembered from here on.
@@ -307,11 +307,11 @@ public sealed class JobTests : IDisposable
             : $"sleep 60 & echo $! > '{pidFile}'; wait";
         var id = Run(command).Made!;
         await Until(id, j => j.State == JobState.Running);
-        for (var i = 0; i < 300 && !(File.Exists(pidFile) && File.ReadAllText(pidFile).Trim().Length > 0); i++)
+        for (var i = 0; i < 300 && !(File.Exists(pidFile) && ReadLog(pidFile).Trim().Length > 0); i++)
         {
             await Task.Delay(50, Ct);
         }
-        var childPid = int.Parse(File.ReadAllText(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        var childPid = int.Parse(ReadLog(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
 
         _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Args = [Verbs.ForceArg], Who = "controller" }).Ok.ShouldBeTrue();
         var job = await Ended(id);
@@ -939,11 +939,11 @@ public sealed class JobTests : IDisposable
         var first = await Node.StartAsync(_root);
         var id = first.Run(_root, command).Made!;
         await first.UntilAsync(id, j => j.State == JobState.Running, Ct);
-        for (var i = 0; i < 300 && !(File.Exists(pidFile) && File.ReadAllText(pidFile).Trim().Length > 0); i++)
+        for (var i = 0; i < 300 && !(File.Exists(pidFile) && ReadLog(pidFile).Trim().Length > 0); i++)
         {
             await Task.Delay(50, Ct);
         }
-        var childPid = int.Parse(File.ReadAllText(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        var childPid = int.Parse(ReadLog(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
         await first.StopAsync();
         IsAlive(childPid).ShouldBeTrue();
 
