@@ -119,7 +119,7 @@ public sealed class SettingsPageTests
             {
                 sent.Add((verb, args));
             }
-            return Task.FromResult("done");
+            return Task.FromResult(new SettingsReply("done"));
         };
         chrome.Show(PilotPage.Settings);
 
