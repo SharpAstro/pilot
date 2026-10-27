@@ -187,6 +187,12 @@ chat.OnSend = async text =>
     Redraw();
     return refused;
 };
+chat.OnRestart = async () =>
+{
+    var refused = await ChatCommands.RestartWatchtowerAsync(client, Who, stop.Token);
+    Redraw();
+    return refused;
+};
 chat.Changed = Redraw;
 chat.OpenLink = url => DashboardCommands.Open(url);
 cards.OnChat = () =>

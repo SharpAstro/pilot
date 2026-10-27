@@ -85,6 +85,16 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// </summary>
     public Func<string, Task<string?>>? OnSend { get; set; }
 
+    /// <summary>
+    /// Stops the watchtower and starts a fresh one: null when the node took it, else what it said in refusing it. A stop-gap
+    /// for a watchtower gone quiet when it should not have; the node keeps one running by itself. Null leaves the page
+    /// without the button.
+    /// </summary>
+    public Func<Task<string?>>? OnRestart { get; set; }
+
+    // The header's New watchtower was pressed and waits for its confirm: it stops what the watchtower is doing.
+    private bool _confirmRestart;
+
     /// <summary>Runs the task a click starts where the host tracks it (its <c>tracker.Run</c>, drained at shutdown); null leaves it to run unobserved.</summary>
     public Action<Func<Task>, string>? Track { get; set; }
 
@@ -266,6 +276,36 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         Changed?.Invoke();
     }
 
+    /// <summary>Asks the node for a fresh watchtower; a refusal is said in the chat as a refused message is.</summary>
+    public async Task RestartAsync()
+    {
+        if (OnRestart is not { } restart)
+        {
+            return;
+        }
+        Interlocked.Increment(ref _sending);
+        Changed?.Invoke();
+        string? refused;
+        try
+        {
+            refused = await restart();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException)
+        {
+            refused = $"refused: {ex.Message}";
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _sending);
+        }
+        ImmutableInterlocked.Update(ref _notices, notices => refused is null
+            ? []
+            : notices.Add($"{refused} · a new watchtower") is var more && more.Count > NoticesKept ? more.RemoveAt(0) : more);
+        _scroll.ScrollToEnd();
+        Refresh();
+        Changed?.Invoke();
+    }
+
     private static string Clip(string message)
     {
         var line = message.ReplaceLineEndings(" ");
@@ -292,6 +332,31 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                 _scroll.ScrollToEnd();
                 Changed?.Invoke();
             }));
+        }
+        if (OnRestart is not null && Load is not null)
+        {
+            if (_confirmRestart)
+            {
+                buttons.Add(CardsView<TSurface>.HeaderPill("Stop it and start fresh", "chat:restart-yes", () =>
+                {
+                    _confirmRestart = false;
+                    var restart = RestartAsync();
+                    Track?.Invoke(() => restart, "restart the watchtower");
+                }));
+                buttons.Add(CardsView<TSurface>.HeaderPill("Keep it", "chat:restart-no", () =>
+                {
+                    _confirmRestart = false;
+                    Changed?.Invoke();
+                }));
+            }
+            else
+            {
+                buttons.Add(CardsView<TSurface>.HeaderPill("New watchtower", "chat:restart", () =>
+                {
+                    _confirmRestart = true;
+                    Changed?.Invoke();
+                }));
+            }
         }
         var top = TopBar.Build(new PageHeader("chat")
         {

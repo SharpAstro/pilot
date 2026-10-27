@@ -377,6 +377,12 @@ if (feed is not null && client is not null && clients is not null)
         Console.WriteLine($"pilot-gui: tell watchtower: {refused ?? "told"}");
         return refused;
     };
+    chrome.Chat.OnRestart = async () =>
+    {
+        var refused = await ChatCommands.RestartWatchtowerAsync(client, GuiSay.Who, cts.Token);
+        Console.WriteLine($"pilot-gui: restart watchtower: {refused ?? "restarted"}");
+        return refused;
+    };
     chrome.Chat.Track = (run, what) => tracker.Run(run, what);
     chrome.Chat.Changed = loop.RequestRedraw;
     chrome.Chat.OpenLink = url => OpenAway(url);
