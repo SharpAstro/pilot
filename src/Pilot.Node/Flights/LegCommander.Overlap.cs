@@ -122,10 +122,6 @@ public sealed partial class LegCommander
         static string Named(FlightRow row) => row.Title is { Length: > 0 } title ? $"{row.Code} ({title})" : row.Code;
         var text = new System.Text.StringBuilder();
         text.Append($"{Named(flight)} overlaps {Named(other)}{(node is null ? "" : $", which flies on {node}")}.");
-        if (files.Length > 0)
-        {
-            text.Append($" Both change {files.Length} file{(files.Length == 1 ? "" : "s")}: {string.Join(", ", ShortNames(files))}.");
-        }
         text.Append($" The planner says: {why}.");
         text.Append($" Connect holds {flight.Code} until {other.Code} has landed.");
         text.Append(" Plan in parallel flies both; the second to land resolves the conflicts.");
@@ -133,6 +129,11 @@ public sealed partial class LegCommander
             ? $" Fold takes {flight.Code}'s issue into {other.Code}."
             : $" {flight.Code} cannot be folded into it from here.");
         text.Append(" Its planner waits for your answer.");
+        // Last: the card's detail is cut at a few rows (its whole text on hover), and a long file list must not cut what the choices do.
+        if (files.Length > 0)
+        {
+            text.Append($" Both change {files.Length} file{(files.Length == 1 ? "" : "s")}: {string.Join(", ", ShortNames(files))}.");
+        }
         return text.ToString();
     }
 
@@ -177,7 +178,7 @@ public sealed partial class LegCommander
         }
 
         // The connect first: it can refuse (the other waits for this flight), and then nothing is recorded and the card stays open.
-        await OffLockAsync(null, () => flights.ConnectToAsync(flight.Code, known.Other, known.Node, cancellationToken));
+        var told = await OffLockAsync(null, () => flights.ConnectToAsync(flight.Code, known.Other, known.Node, cancellationToken));
         flight = FlightOf(command.Target);
         if (flight.Overlaps.FirstOrDefault(o => o.Other == known.Other)?.Answer != OverlapAnswer.Pending)
         {
@@ -190,7 +191,8 @@ public sealed partial class LegCommander
 
         await StopPlannerAsync(flight, cancellationToken);
         StartPlanner(flight, replacing: true);
-        return $"{flight.Code} is connected to {at}: it waits for it to land; a fresh planner is started with the answer";
+        // What the connect said stands: for a flight that landed already it is "nothing to wait for", not "waits".
+        return $"{told ?? $"{flight.Code} is connected to {at}: it waits for it to land"}; a fresh planner is started with the answer";
     }
 
     /// <summary>

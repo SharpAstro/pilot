@@ -434,9 +434,10 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
 
     /// <summary>
     /// Connects the flight to a flight of this node, as <c>connect</c> does, for the controller's answer to an overlap: one at a time with
-    /// the flight verbs. Throws <see cref="FlightException"/> with why it could not, and then changes nothing.
+    /// the flight verbs. Throws <see cref="FlightException"/> with why it could not, and then changes nothing. Returns what the connect
+    /// said of a flight of another node (that it waits, or that it has landed already and there is nothing to wait for), or null.
     /// </summary>
-    public async Task ConnectToAsync(string code, string other, string? node, CancellationToken cancellationToken)
+    public async Task<string?> ConnectToAsync(string code, string other, string? node, CancellationToken cancellationToken)
     {
         await _one.WaitAsync(cancellationToken);
         try
@@ -444,12 +445,9 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
             var flight = Find(Verbs.FlightTarget(code));
             if (node is null)
             {
-                Connect(flight, state.Flights().FirstOrDefault(f => string.Equals(f.Code, other, StringComparison.OrdinalIgnoreCase)));
+                return Connect(flight, state.Flights().FirstOrDefault(f => string.Equals(f.Code, other, StringComparison.OrdinalIgnoreCase)));
             }
-            else
-            {
-                await ConnectPeerAsync(flight, other, node, cancellationToken);
-            }
+            return await ConnectPeerAsync(flight, other, node, cancellationToken);
         }
         finally
         {

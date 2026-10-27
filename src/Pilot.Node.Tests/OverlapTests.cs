@@ -134,6 +134,8 @@ public sealed class OverlapTests1 : OverlapTestsBase
         detail.ShouldContain("Connect holds TIA2 until TIA1 has landed");
         detail.ShouldContain("Plan in parallel");
         detail.ShouldContain("Fold takes TIA2's issue into TIA1");
+        // The files last: the card's detail is cut at a few rows, and a long list must not cut what each choice does.
+        detail.IndexOf("Both change", StringComparison.Ordinal).ShouldBeGreaterThan(detail.IndexOf("Fold takes", StringComparison.Ordinal));
         _state.Flights().Single(f => f.Code == "TIA2").Overlaps.ShouldHaveSingleItem().Files.ShouldBe(["src/DetachedShell.cs", "src/Parser.cs"]);
     }
 
@@ -148,6 +150,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
         var card = Cards().Single();
         card.Title.ShouldBe("Connect TIA2 to TIA1 (both change File1.cs, File2.cs, File3.cs, File4.cs and 3 more)");
         card.Detail.ShouldNotBeNull().ShouldContain("File7.cs");
+        card.Detail.ShouldContain("Both change 7 files: File1.cs");
     }
 
     [Fact]

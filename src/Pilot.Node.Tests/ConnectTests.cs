@@ -175,6 +175,57 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    public async Task ConnectToAPeerFlightThatWaitsForThisOneOnThisNodeIsRefusedWhereItsWaitIsAPeerConnection()
+    {
+        await TwoFlights();
+        // A flight on another node waits for a flight of this one in its PeerConnections (its Connections hold its own node's codes).
+        Peer("DE1", Theirs("PIL294", 294) with { PeerConnections = [new PeerConnection { Code = "TIA2", Node = "DU1", Since = DateTimeOffset.UtcNow }] });
+
+        var refused = await Connect("TIA2", "PIL294");
+
+        refused.Ok.ShouldBeFalse();
+        refused.Error.ShouldNotBeNull().ShouldContain("already waits for TIA2");
+        refused.Error.ShouldContain("neither would leave");
+        F("TIA2").PeerConnections.ShouldBeEmpty();
+        F("TIA2").State.ShouldBe(FlightState.Flying);
+    }
+
+    [Fact]
+    public async Task ConnectAnswerToAPeerFlightThatWaitsForThisOneIsRefusedAndTheCardStaysOpen()
+    {
+        await TwoFlights();
+        Peer("DE1", Theirs("PIL294", 294) with { PeerConnections = [new PeerConnection { Code = "TIA2", Node = "DU1", Since = DateTimeOffset.UtcNow }] });
+        await Overlap("PIL294");
+
+        var answered = await Leg(Verbs.ConnectOverlap, "flight/TIA2", "PIL294");
+
+        answered.Ok.ShouldBeFalse();
+        answered.Error.ShouldNotBeNull().ShouldContain("neither would leave");
+        F("TIA2").Overlaps.ShouldHaveSingleItem().Answer.ShouldBe(OverlapAnswer.Pending);
+        F("TIA2").PeerConnections.ShouldBeEmpty();
+        Cards().ShouldHaveSingleItem().State.ShouldBe(CardState.Open);
+    }
+
+    [Fact]
+    public async Task ConnectAnswerToAPeerFlightThatHasLandedSaysThereIsNothingToWaitFor()
+    {
+        await TwoFlights();
+        var peer = Peer("DE1", Theirs("PIL294", 294));
+        await Overlap("PIL294");
+
+        // It landed while the card was open.
+        peer.Flights = [Theirs("PIL294", 294, FlightState.Landed)];
+        var answered = await Leg(Verbs.ConnectOverlap, "flight/TIA2", "PIL294");
+
+        answered.Ok.ShouldBeTrue();
+        var told = answered.Made.ShouldNotBeNull();
+        told.ShouldContain("has landed on DE1 already");
+        told.ShouldNotContain("waits for");
+        F("TIA2").PeerConnections.ShouldBeEmpty();
+        F("TIA2").State.ShouldBe(FlightState.Flying);
+    }
+
+    [Fact]
     public async Task OverlapWithAPeerFlightRingsACardOfConnectAndPlanInParallelOnlyAndNamesTheNode()
     {
         await TwoFlights();

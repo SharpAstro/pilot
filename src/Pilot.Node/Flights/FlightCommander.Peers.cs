@@ -95,6 +95,11 @@ public sealed partial class FlightCommander
             {
                 throw new FlightException($"{flight.Code} cannot wait for {peer.Flight.Code} on {peer.Node}: it already waits for {flight.Code}, so neither would leave");
             }
+            // The peer's wait for a flight of another node is in its PeerConnections (its Connections hold codes of its own node's flights only).
+            if (peer.Flight.PeerConnections.Any(c => string.Equals(c.Code, flight.Code, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new FlightException($"{flight.Code} cannot wait for {peer.Flight.Code} on {peer.Node}: it already waits for {flight.Code} on {Machine}, so neither would leave");
+            }
             wait = new PeerConnection { Code = peer.Flight.Code, Node = peer.Node, Since = time.GetUtcNow() };
         }
         else if (knownNode is not null && why.Count > 0)
