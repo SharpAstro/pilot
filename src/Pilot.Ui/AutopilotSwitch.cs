@@ -65,7 +65,7 @@ internal static class AutopilotCommands
     /// </summary>
     public static async Task<string> SetAsync(NodeClient client, bool on, string who, CancellationToken cancellationToken)
     {
-        var said = await SettingsCommands.SendAsync(client, Verbs.Set, ["autopilot", on ? "on" : "off"], who, cancellationToken);
+        var said = (await SettingsCommands.SendAsync(client, Verbs.Set, ["autopilot", on ? "on" : "off"], who, cancellationToken)).Line;
         return $"autopilot {(on ? "on" : "off")}: {said.ReplaceLineEndings(" ").Trim()}";
     }
 }

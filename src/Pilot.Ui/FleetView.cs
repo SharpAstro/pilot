@@ -526,7 +526,7 @@ internal static class FleetCommands
     {
         var node = new NodeMark(line.Where, line.Where, line.Machine, line.Here);
         return clients.For(node) is { } client
-            ? $"{line.Machine}: {await SettingsCommands.SendAsync(client, Verbs.Set, ["maintenance", on ? "on" : "off"], who, cancellationToken)}"
+            ? $"{line.Machine}: {(await SettingsCommands.SendAsync(client, Verbs.Set, ["maintenance", on ? "on" : "off"], who, cancellationToken)).Line}"
             : FleetClients.WatchOnly(node);
     }
 }

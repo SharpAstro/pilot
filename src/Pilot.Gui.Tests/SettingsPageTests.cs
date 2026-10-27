@@ -1,4 +1,5 @@
 using DIR.Lib;
+using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Pilot.Ui;
 using SharpAstro.Png;
@@ -15,22 +16,28 @@ public sealed class SettingsPageTests
     private static readonly SettingsPage Sample = new()
     {
         File = @"C:\Users\ada\AppData\Local\pilot2\settings.json",
-        Checks =
-        [
-            new SetupCheck { Key = "autostart", Title = "Starts at logon", Ok = true, Line = @"C:\WINDOWS\system32\conhost.exe --headless C:\Users\ada\AppData\Local\Programs\pilot2\pilot-node.exe" },
-            new SetupCheck { Key = "hooks", Title = "Claude Code hooks", Ok = true, Line = @"in C:\Users\ada\.claude\settings.json" },
-            new SetupCheck { Key = "lan", Title = "On the LAN", Ok = true, Line = "listening on port 47731 and announcing itself as DE1" },
-            new SetupCheck { Key = "firewall", Title = "Firewall", Ok = false, Line = "no rule named pilot-node: other machines' connections are dropped before they reach the node", Fix = "Allow (asks for elevation)" },
-            new SetupCheck { Key = "trust", Title = "Watchtower folder trusted", Ok = true, Line = @"C:\Users\ada\AppData\Local\pilot2\watchtower, through C:\" },
-            new SetupCheck { Key = "gh", Title = "GitHub CLI signed in", Ok = true, Line = "Logged in to github.com account ada (keyring)" },
-            new SetupCheck { Key = "usage", Title = "Usage figures", Ok = false, Optional = true, Line = "no rate-limits.json: a status line that writes it gives the fleet this machine's usage" },
-        ],
         Settings =
         [
             new SettingRow { Key = "lan", Label = "On the LAN", Detail = "Listen on the LAN and announce it", Value = "on", Saved = "on", Source = SettingSources.File, Choices = ["on", "off"] },
             new SettingRow { Key = "machine", Label = "Machine prefix", Detail = "Two letters and a number", Value = "DE1", Source = SettingSources.Default },
             new SettingRow { Key = "repo-roots", Label = "Repo roots", Detail = "Folders of git clones the new-flight wizard offers", Value = @"C:\src\sharpastro" + "\n" + @"C:\src\my org", Saved = @"C:\src\sharpastro" + "\n" + @"C:\src\my org", Source = SettingSources.File, Many = true },
             new SettingRow { Key = "update-channel", Label = "Update channel", Detail = "stable or beta", Value = "stable", Saved = "beta", Source = SettingSources.File, Choices = ["stable", "beta"], Pending = true },
+        ],
+    };
+
+    /// <summary>The checks as the node measured them, <paramref name="age"/> before <paramref name="now"/>.</summary>
+    private static SetupChecks Measured(DateTimeOffset now, TimeSpan age) => new()
+    {
+        CheckedAt = now - age,
+        Checks =
+        [
+            new SetupCheck { Key = "autostart", Title = "Starts at logon", Ok = true, Line = @"C:\WINDOWS\system32\conhost.exe --headless C:\Users\ada\AppData\Local\Programs\pilot2\pilot-node.exe" },
+            new SetupCheck { Key = "hooks", Title = "Claude Code hooks", Ok = true, Line = @"in C:\Users\ada\.claude\settings.json" },
+            new SetupCheck { Key = "lan", Title = "On the LAN", Ok = true, Line = "listening on port 47731 and announcing itself as DE1" },
+            new SetupCheck { Key = "firewall", Title = "Firewall", Ok = false, Runs = "runs netsh", Line = "no rule named pilot-node: other machines' connections are dropped before they reach the node", Fix = "Allow (asks for elevation)" },
+            new SetupCheck { Key = "trust", Title = "Watchtower folder trusted", Ok = true, Line = @"C:\Users\ada\AppData\Local\pilot2\watchtower, through C:\" },
+            new SetupCheck { Key = "gh", Title = "GitHub CLI signed in", Ok = true, Runs = "runs gh, which asks GitHub", Line = "Logged in to github.com account ada (keyring)" },
+            new SetupCheck { Key = "usage", Title = "Usage figures", Ok = false, Optional = true, Line = "no rate-limits.json: a status line that writes it gives the fleet this machine's usage" },
         ],
     };
 
@@ -41,31 +48,33 @@ public sealed class SettingsPageTests
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         var sent = new List<(string Verb, string[] Args)>();
         var loaded = new TaskCompletionSource();
+        var measured = Measured(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(3));
         chrome.Settings.Load = _ =>
         {
             loaded.TrySetResult();
             return Task.FromResult(Sample);
         };
+        chrome.Settings.LoadChecks = (_, _) => Task.FromResult(measured);
         chrome.Settings.Send = (verb, args, _) =>
         {
             lock (sent)
             {
                 sent.Add((verb, args));
             }
-            return Task.FromResult("done");
+            return Task.FromResult(new SettingsReply("done"));
         };
         chrome.Show(PilotPage.Settings);
 
         chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 1280, 900));
         await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);
-        await WaitAsync(() => chrome.Settings.Page is not null);
+        await WaitAsync(() => chrome.Settings.Page is not null && chrome.Settings.Checks is not null);
         chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 1280, 900));
         if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 } capture)
         {
             File.WriteAllBytes(capture, PngWriter.Encode(renderer.Surface.Pixels, 1280, 900));
         }
 
-        SettingsView<RgbaImage>.Summary(Sample).ShouldBe("1 of 6 setup steps left · 1 saved for the next start");
+        SettingsView<RgbaImage>.Summary(Sample, measured).ShouldBe("1 of 6 setup steps left · 1 saved for the next start");
         var regions = new List<ClickableRegion>();
         chrome.Settings.CollectPaintedRegions(regions);
         var buttons = regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).ToList();
@@ -162,7 +171,7 @@ public sealed class SettingsPageTests
             {
                 sent.Add((verb, args));
             }
-            return Task.FromResult("done");
+            return Task.FromResult(new SettingsReply("done"));
         };
         chrome.Show(PilotPage.Settings);
 
@@ -228,7 +237,7 @@ public sealed class SettingsPageTests
                         given.RemoveAll(g => g.Id == args[0]);
                     }
                 }
-                return Task.FromResult("done");
+                return Task.FromResult(new SettingsReply("done"));
             };
             chrome.Show(PilotPage.Settings);
 
@@ -268,6 +277,200 @@ public sealed class SettingsPageTests
         {
             File.Delete(tokens);
         }
+    }
+
+    /// <summary>The page drawn with the clock the chrome gives it, as the rows are drawn: the words each shows and the buttons it offers.</summary>
+    private static (string[] Texts, string[] Buttons) Look(PilotChrome<RgbaImage> chrome, RgbaImageRenderer renderer, DateTimeOffset now)
+    {
+        var arranged = Layout.Engine.Arrange(chrome.Settings.Tree(now), new Rect<float>(0, 0, 1280, 3000), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        return (
+            [.. arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value.Trim())],
+            [.. arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(h => h.Action)]);
+    }
+
+    private static PilotChrome<RgbaImage> Chrome(RgbaImageRenderer renderer) =>
+        new(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+
+    private static void Draw(PilotChrome<RgbaImage> chrome) => chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 1280, 2000));
+
+    private static List<ClickableRegion> Regions(PilotChrome<RgbaImage> chrome)
+    {
+        Draw(chrome);
+        var regions = new List<ClickableRegion>();
+        chrome.Settings.CollectPaintedRegions(regions);
+        return regions;
+    }
+
+    /// <summary>The settings are drawn as soon as they are read; each check row says "checking…" until the checks answer, and then how old they are.</summary>
+    [Fact]
+    public async Task TheSettingsShowWhileTheChecksAreStillBeingRead()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 2000);
+        var chrome = Chrome(renderer);
+        var now = DateTimeOffset.UtcNow;
+        var checksGate = new TaskCompletionSource<SetupChecks>(TaskCreationOptions.RunContinuationsAsynchronously);
+        chrome.Settings.Load = _ => Task.FromResult(Sample);
+        chrome.Settings.LoadChecks = (_, _) => checksGate.Task;
+        chrome.Show(PilotPage.Settings);
+
+        Draw(chrome);
+        await WaitAsync(() => chrome.Settings.Page is not null);
+        var (texts, _) = Look(chrome, renderer, now);
+        texts.ShouldContain("Machine prefix");
+        texts.ShouldContain("Update channel");
+        texts.ShouldContain(t => t.StartsWith("checking…", StringComparison.Ordinal));
+        texts.ShouldNotContain(t => t.Contains("checked ", StringComparison.Ordinal));
+        chrome.Settings.Checks.ShouldBeNull();
+        // The header counts setup steps once they are known, and says what it can meanwhile.
+        SettingsView<RgbaImage>.Summary(Sample, null).ShouldBe("1 saved for the next start");
+
+        checksGate.SetResult(Measured(now, TimeSpan.FromSeconds(12)));
+        await WaitAsync(() => chrome.Settings.Checks is not null);
+        (texts, _) = Look(chrome, renderer, now);
+        texts.ShouldNotContain(t => t.StartsWith("checking…", StringComparison.Ordinal));
+        texts.ShouldContain("done · checked 12s ago");
+        texts.ShouldContain("to do · checked 12s ago");
+        texts.ShouldContain("optional · checked 12s ago");
+        // A measurement that has aged is marked, not shown as current.
+        Look(chrome, renderer, now + TimeSpan.FromMinutes(3)).Texts.ShouldContain("done · checked 3m ago (stale)");
+    }
+
+    /// <summary>Refresh reads the checks again with refresh on, the rows say what that runs while it is out, and the age starts over.</summary>
+    [Fact]
+    public async Task EachCheckRowShowsItsAgeAndRefreshReloadsWithRefresh()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 2000);
+        var chrome = Chrome(renderer);
+        var now = DateTimeOffset.UtcNow;
+        var asked = new List<bool>();
+        TaskCompletionSource<SetupChecks>? gate = null;
+        chrome.Settings.Load = _ => Task.FromResult(Sample);
+        chrome.Settings.LoadChecks = (refresh, _) =>
+        {
+            lock (asked)
+            {
+                asked.Add(refresh);
+            }
+            return refresh ? (gate = new TaskCompletionSource<SetupChecks>(TaskCreationOptions.RunContinuationsAsynchronously)).Task : Task.FromResult(Measured(now, TimeSpan.FromSeconds(12)));
+        };
+        // A fix is offered only where the page can send it.
+        chrome.Settings.Send = (_, _, _) => Task.FromResult(new SettingsReply("done"));
+        chrome.Show(PilotPage.Settings);
+
+        Draw(chrome);
+        await WaitAsync(() => chrome.Settings.Checks is not null);
+        Look(chrome, renderer, now).Texts.ShouldContain("done · checked 12s ago");
+        Look(chrome, renderer, now).Buttons.ShouldContain("settings:checks:refresh");
+
+        Click(Regions(chrome), "settings:checks:refresh");
+        await WaitAsync(() => gate is not null);
+        lock (asked)
+        {
+            asked.ShouldBe([false, true]);
+        }
+        // While the node measures: each row says what reading it runs, and the old lines are not shown as current.
+        var (texts, buttons) = Look(chrome, renderer, now);
+        texts.ShouldContain("checking… (runs netsh)");
+        texts.ShouldContain("checking… (runs gh, which asks GitHub)");
+        texts.ShouldContain("checking… (reads files)");
+        texts.ShouldNotContain(t => t.StartsWith("no rule named", StringComparison.Ordinal));
+        buttons.ShouldNotContain("settings:checks:refresh");
+        buttons.ShouldNotContain("settings:fix:firewall");
+
+        gate!.SetResult(Measured(now, TimeSpan.Zero));
+        await WaitAsync(() => chrome.Settings.Checks!.CheckedAt == now);
+        (texts, buttons) = Look(chrome, renderer, now);
+        texts.ShouldContain("done · checked 0s ago");
+        texts.ShouldNotContain(t => t.StartsWith("checking…", StringComparison.Ordinal));
+        buttons.ShouldContain("settings:checks:refresh");
+        buttons.ShouldContain("settings:fix:firewall");
+    }
+
+    /// <summary>A set's reply carries the changed row: it replaces the shown one at once, and neither the settings nor the checks are read again.</summary>
+    [Fact]
+    public async Task ASetsReplyRowReplacesTheShownRowWithNoSecondRead()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 2000);
+        var chrome = Chrome(renderer);
+        var now = DateTimeOffset.UtcNow;
+        var loads = 0;
+        var checkLoads = 0;
+        var changed = new SettingRow { Key = "update-channel", Label = "Update channel", Detail = "stable or beta", Value = "beta", Saved = "beta", Source = SettingSources.File, Choices = ["stable", "beta"] };
+        chrome.Settings.Load = _ =>
+        {
+            Interlocked.Increment(ref loads);
+            return Task.FromResult(Sample);
+        };
+        chrome.Settings.LoadChecks = (_, _) =>
+        {
+            Interlocked.Increment(ref checkLoads);
+            return Task.FromResult(Measured(now, TimeSpan.FromSeconds(1)));
+        };
+        chrome.Settings.Send = (_, _, _) => Task.FromResult(new SettingsReply("update-channel saved as beta; the node runs with it already", ReplyKind.Done, changed));
+        chrome.Show(PilotPage.Settings);
+
+        Draw(chrome);
+        await WaitAsync(() => chrome.Settings.Page is not null && chrome.Settings.Checks is not null);
+        chrome.Settings.Page!.Settings.Single(s => s.Key == "update-channel").Pending.ShouldBeTrue();
+        Look(chrome, renderer, now).Texts.ShouldContain("saved as beta: applies at the next start");
+
+        Click(Regions(chrome), "settings:update-channel:beta");
+        await WaitAsync(() => !chrome.Settings.Page!.Settings.Single(s => s.Key == "update-channel").Pending);
+
+        var row = chrome.Settings.Page!.Settings.Single(s => s.Key == "update-channel");
+        row.Value.ShouldBe("beta");
+        row.Saved.ShouldBe("beta");
+        Look(chrome, renderer, now).Texts.ShouldNotContain("saved as beta: applies at the next start");
+        chrome.Settings.Said.ShouldBe("update-channel saved as beta; the node runs with it already");
+        // The other rows are as they were, and no read came for the answer.
+        chrome.Settings.Page.Settings.Select(s => s.Key).ShouldBe(Sample.Settings.Select(s => s.Key));
+        Volatile.Read(ref loads).ShouldBe(1);
+        Volatile.Read(ref checkLoads).ShouldBe(1);
+    }
+
+    /// <summary>A pressed choice shows it is working until the node answers and is not clicked again; a refusal leaves the node's value and says why.</summary>
+    [Fact]
+    public async Task APressedChoiceShowsWorkingUntilTheReplyAndKeepsTheOldValueIfRefused()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 2000);
+        var chrome = Chrome(renderer);
+        var now = DateTimeOffset.UtcNow;
+        var reply = new TaskCompletionSource<SettingsReply>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sends = 0;
+        chrome.Settings.Load = _ => Task.FromResult(Sample);
+        chrome.Settings.LoadChecks = (_, _) => Task.FromResult(Measured(now, TimeSpan.FromSeconds(1)));
+        chrome.Settings.Send = (_, _, _) =>
+        {
+            Interlocked.Increment(ref sends);
+            return reply.Task;
+        };
+        chrome.Show(PilotPage.Settings);
+
+        Draw(chrome);
+        await WaitAsync(() => chrome.Settings.Page is not null && chrome.Settings.Checks is not null);
+        var (texts, buttons) = Look(chrome, renderer, now);
+        texts.ShouldNotContain("off…");
+        buttons.ShouldContain("settings:lan:off");
+
+        var regions = Regions(chrome);
+        Click(regions, "settings:lan:off");
+        // Pressed twice, it is sent once; the value is still the node's.
+        Click(regions, "settings:lan:off");
+        (texts, buttons) = Look(chrome, renderer, now);
+        texts.ShouldContain("off…");
+        buttons.ShouldNotContain("settings:lan:off");
+        buttons.ShouldContain("settings:lan:on");
+        chrome.Settings.Page!.Settings.Single(s => s.Key == "lan").Value.ShouldBe("on");
+        Volatile.Read(ref sends).ShouldBe(1);
+
+        reply.SetResult(new SettingsReply("refused: the node's command line gives lan, and wins", ReplyKind.Refused));
+        await WaitAsync(() => chrome.Settings.Said!.StartsWith("refused", StringComparison.Ordinal));
+        (texts, buttons) = Look(chrome, renderer, now);
+        texts.ShouldNotContain("off…");
+        texts.ShouldContain("off");
+        buttons.ShouldContain("settings:lan:off");
+        chrome.Settings.Page.Settings.Single(s => s.Key == "lan").Value.ShouldBe("on");
+        chrome.Settings.Said.ShouldBe("refused: the node's command line gives lan, and wins");
     }
 
     private static void Click(List<ClickableRegion> regions, string action) =>
