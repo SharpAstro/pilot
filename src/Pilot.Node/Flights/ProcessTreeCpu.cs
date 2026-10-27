@@ -61,7 +61,8 @@ public static class ProcessTreeCpu
         }
     }
 
-    private static List<(int Pid, int Parent)> Parents() => OperatingSystem.IsWindows() ? WindowsParents() : LinuxParents();
+    /// <summary>Every process's parent, as (pid, parent pid); empty where it cannot be read.</summary>
+    internal static List<(int Pid, int Parent)> Parents() =>OperatingSystem.IsWindows() ? WindowsParents() : LinuxParents();
 
     private static List<(int, int)> LinuxParents()
     {

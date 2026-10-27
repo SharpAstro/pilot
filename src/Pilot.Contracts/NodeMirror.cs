@@ -35,6 +35,9 @@ public sealed class NodeMirror
     /// <summary>The account's usage as last read; null before any.</summary>
     public UsageRow? Usage { get; private set; }
 
+    /// <summary>The node's machine as last sampled; null before any, and from an older node.</summary>
+    public MachineRow? Machine { get; private set; }
+
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
 
     /// <summary>The jobs, by id.</summary>
@@ -76,6 +79,7 @@ public sealed class NodeMirror
                 _cards[card.Id] = card;
             }
             Usage = snapshot.Usage;
+            Machine = snapshot.Machine;
             _jobs.Clear();
             foreach (var job in snapshot.Jobs ?? [])
             {
@@ -149,6 +153,9 @@ public sealed class NodeMirror
                 break;
             case UsageChangedEvent usage:
                 Usage = usage.Usage;
+                break;
+            case MachineChangedEvent machine:
+                Machine = machine.Machine;
                 break;
             case CommandResultEvent:
                 // A result changes no state; the deltas the command made carry that.

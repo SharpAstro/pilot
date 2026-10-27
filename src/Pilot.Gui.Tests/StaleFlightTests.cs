@@ -243,7 +243,7 @@ public sealed class StaleFlightTests : IAsyncDisposable
         described.ShouldContain("stale");
         described.ShouldContain("unreachable):");
         described.ShouldContain("answers");
-        texts.ShouldContain("Go around parser");
+        texts.ShouldContain("Redo leg parser");
         texts.ShouldContain("Remove render");
         stale.ShouldNotContain($"flight:ORB2:{Verbs.GoAround}");
         stale.ShouldNotContain($"flight:ORB2:{Verbs.RemoveLeg}");

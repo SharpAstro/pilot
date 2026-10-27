@@ -175,6 +175,39 @@ public static class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<UsageReader>());
         builder.Services.AddSingleton(services =>
         {
+            var state = services.GetRequiredService<NodeState>();
+            var tracker = services.GetRequiredService<SessionTracker>();
+            var jobs = services.GetRequiredService<JobRunner>();
+            return new MachineSampler(state, services.GetRequiredService<TimeProvider>())
+            {
+                // A session's name, or the watchtower's role for the node's own; a job's id. A job's tree is walked from its root.
+                Owners = () =>
+                {
+                    var sessions = state.Sessions().ToDictionary(s => s.Id, StringComparer.Ordinal);
+                    var owners = new List<(string, int)>();
+                    foreach (var (id, pid) in tracker.LivePids())
+                    {
+                        if (sessions.TryGetValue(id, out var row))
+                        {
+                            owners.Add((row.Role == SessionRole.Watchtower ? MachineSampler.WatchtowerOwner : row.Name, pid));
+                        }
+                    }
+                    foreach (var (id, pid) in jobs.RunningPids())
+                    {
+                        owners.Add((id, pid));
+                    }
+                    return owners;
+                },
+                Logger = services.GetService<ILogger<MachineSampler>>(),
+            };
+        });
+        // Off for a test node, whose stream a sample every few seconds would number into the deltas the test counts.
+        if (options.MachineSampling)
+        {
+            builder.Services.AddHostedService(services => services.GetRequiredService<MachineSampler>());
+        }
+        builder.Services.AddSingleton(services =>
+        {
             var commands = services.GetRequiredService<NodeCommands>();
             var nodeOptions = services.GetRequiredService<NodeOptions>();
             return new JobRunner(services.GetRequiredService<NodeState>(), nodeOptions, services.GetRequiredService<TimeProvider>())

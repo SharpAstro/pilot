@@ -109,7 +109,7 @@ public sealed class SignalTests
         var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
         (card.Bin, card.Kind, card.Detail).ShouldBe((CardBin.Ring, LegWatch.OverBudget, "1,200,000 of 1,000,000 weighted tokens; it keeps working until you choose"));
         card.Choices.Select(c => (c.Label, c.Verb, c.Args.FirstOrDefault())).ShouldBe(
-            [("Extend to 1,500,000", Verbs.ExtendBudget, "1500000"), ("Go around", Verbs.GoAround, "the last worker spent 1,200,000 of a 1,000,000 budget")]);
+            [("Extend to 1,500,000", Verbs.ExtendBudget, "1500000"), ("Redo leg parser", Verbs.GoAround, "the last worker spent 1,200,000 of a 1,000,000 budget")]);
 
         var git = new GitCli();
         var legs = new LegCommander(_state, new FakeWorkers(), new FakeChecks(), new FakeGitHub(), git, new Planes(git), new FlightCommander(_state, new Planes(git), _time),

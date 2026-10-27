@@ -339,7 +339,7 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
             {
                 state.RaiseCard(CardBin.Ring, "pr-conflicts", subject, $"{code}'s PR #{entry.Number} conflicts with its base", $"{why} ({notSent})", link: pr.Url);
             }
-            return await FinishAsync(entry, pr, $"{why}{(notSent is null ? ": sent back as changes, its last leg goes around to resolve it" : $" ({notSent}), rung")}", LabelOf(code), cancellationToken);
+            return await FinishAsync(entry, pr, $"{why}{(notSent is null ? ": sent back as changes, its last leg redone to resolve it" : $" ({notSent}), rung")}", LabelOf(code), cancellationToken);
         }
 
         if (checks == ChoiceStatus.Failing && flight.Review is { State: ReviewState.Passed })
@@ -474,8 +474,22 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
                 return await FinishAsync(entry, pr, $"nothing queued at {head}: {note}", stands, cancellationToken);
             }
         }
+        // Changes asked for and nobody fixing them: the fixer is what the recheck asks for. tianwen #1857's could not start (its
+        // branch was checked out elsewhere); once that was cleared, the label was taken off with nothing started.
+        string? noFixer = null;
+        if (review.State != PrReviewState.Reviewing && review.Verdict == "changes" && review.Fixer is null
+            && (noFixer = await reviews.WhyNoFixerAsync(new PrRef(entry.Repo.Split('/')[0], entry.Repo.Split('/')[1], entry.Number), review, cancellationToken)) is null)
+        {
+            var fixing = await reviews.RunAsync(new CommandRequest { Verb = Verbs.FixPr, Target = subject, Who = "node" }, cancellationToken);
+            if (!fixing.Ok)
+            {
+                Fail(entry, $"its review asks for changes, but the fixer did not start: {fixing.Error}", pr.Url);
+                return Outcome.Kept;
+            }
+            return await FinishAsync(entry, pr, $"its review asks for changes at {head}, fixer started", PilotMarks.Changes, cancellationToken);
+        }
         var standing = review.State == PrReviewState.Reviewing ? "its review is still reading it"
-            : review.Verdict == "changes" ? "its review asks for changes"
+            : review.Verdict == "changes" ? (noFixer is null ? "its review asks for changes, and its fixer is on it" : $"its review asks for changes, and no fixer starts: {noFixer}")
             : "its checks are still running";
         return await FinishAsync(entry, pr, $"nothing to do at {head}: {standing}", stands, cancellationToken);
     }

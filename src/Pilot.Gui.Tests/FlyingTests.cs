@@ -39,7 +39,7 @@ public sealed class FlyingTests
     {
         Labels(Line(Flight())).ShouldBe(["Plan a leg"]);
         Labels(Line(Flight(), Leg("parser", 1, LegState.Planned), Leg("render", 2, LegState.Planned))).ShouldBe(["Start parser", "Remove parser", "Plan a leg"]);
-        Labels(Line(Flight(), Leg("parser", 1, LegState.Done), Leg("render", 2, LegState.Flying))).ShouldBe(["Go around render", "Plan a leg"]);
+        Labels(Line(Flight(), Leg("parser", 1, LegState.Done), Leg("render", 2, LegState.Flying))).ShouldBe(["Redo leg render", "Plan a leg"]);
         Labels(Line(Flight(), Leg("parser", 1, LegState.Done))).ShouldBe(["Open PR", "Plan a leg"]);
         Labels(Line(Flight(pr: 7, review: new ReviewRow { State = ReviewState.Changes, Reviewer = "r", StartedAt = Live.At }), Leg("parser", 1, LegState.Done)))
             .ShouldBe(["Review again", "Plan a leg"]);
@@ -48,14 +48,14 @@ public sealed class FlyingTests
 
         // What needs words asks for them: a why under its button (Go around, Remove), the chat's box (Plan a leg); what does not is a verb at once.
         var actions = FlightAction.For(Line(Flight(), Leg("parser", 1, LegState.Flying)));
-        actions[0].WhyPrompt.ShouldBe("why go around parser?");
+        actions[0].WhyPrompt.ShouldBe("why redo leg parser?");
         actions[0].ChatMessage.ShouldBeNull();
         FlightAction.For(Line(Flight(), Leg("parser", 1, LegState.Planned)))[0]
             .ShouldBe(new FlightAction("Start parser", Verbs.StartLeg, "flight/TIA1611/parser", []), new FlightActionComparer());
         FlightAction.For(Line(Flight(), Leg("parser", 1, LegState.Planned)))[1].WhyPrompt.ShouldBe("why remove parser?");
         FlightAction.For(Line(Flight())).Single().ChatMessage.ShouldBe("plan a leg on TIA1611: ");
         FlightAction.For(Line(Flight())).Single().WhyPrompt.ShouldBeNull();
-        Labels(Line(Flight(), Leg("parser", 1, LegState.Flying), Leg("render", 2, LegState.Planned))).ShouldBe(["Go around parser", "Remove render", "Plan a leg"]);
+        Labels(Line(Flight(), Leg("parser", 1, LegState.Flying), Leg("render", 2, LegState.Planned))).ShouldBe(["Redo leg parser", "Remove render", "Plan a leg"]);
     }
 
     [Fact]
@@ -139,7 +139,7 @@ public sealed class FlyingTests
         Press(regions(), "flight:TIA1611:go-around");
         acted.ShouldBeEmpty();
         AsksWhy(chrome, regions()).ShouldBeTrue();
-        chrome.Flights.WhyInput.Placeholder.ShouldBe("why go around parser?");
+        chrome.Flights.WhyInput.Placeholder.ShouldBe("why redo leg parser?");
 
         // Enter with nothing typed keeps it open; with words it sends the verb with them as its argument, and the field goes.
         await chrome.Flights.WhyInput.OnCommit.ShouldNotBeNull()("   ");

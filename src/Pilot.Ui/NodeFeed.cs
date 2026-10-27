@@ -49,7 +49,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// </summary>
     private sealed record View(
         SessionRow[] Sessions, FlightRow[] Flights, LegRow[] Legs, CardRow[] Cards, JobRow[] Jobs, UsageRow? Usage, string? Stream,
-        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos, DateTimeOffset? DownSince = null);
+        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos, DateTimeOffset? DownSince = null, MachineRow? Machine = null);
 
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(
@@ -88,6 +88,9 @@ internal sealed class NodeFeed : IAsyncDisposable
         new(async (since, stream, ct) => new ClientEvents(await client.OpenEventsAsync(since, stream, ct).ConfigureAwait(false)), client.SocketPath,
             nodeInfo: client.GetNodeAsync,
             repoLoader: async ct => await client.GetRepoStatusAsync(ct).ConfigureAwait(false) is { Success: true, Response: { } repos } ? repos : null);
+
+    /// <summary>The node's machine as it last sampled it (as <see cref="Usage"/> is carried); null from a node that sends none, and until its snapshot is in.</summary>
+    public MachineRow? Machine => Volatile.Read(ref _view).Machine;
 
     /// <summary>What the node said it is, as of its last connection; null until it has.</summary>
     public NodeInfo? Node => Volatile.Read(ref _view).Node;
@@ -404,6 +407,7 @@ internal sealed class NodeFeed : IAsyncDisposable
         CardRow[] cards = [.. _mirror.Cards.Values];
         JobRow[] jobs = [.. _mirror.Jobs.Values];
         var usage = _mirror.Usage;
+        var machine = _mirror.Machine;
         var stream = _mirror.Stream;
         ImmutableInterlocked.Update(ref _view, view => view with
         {
@@ -413,6 +417,7 @@ internal sealed class NodeFeed : IAsyncDisposable
             Cards = cards,
             Jobs = jobs,
             Usage = usage,
+            Machine = machine,
             Stream = stream,
             Status = snapshot || !view.Connected ? $"live from the node on {_socketPath}" : view.Status,
             Connected = true,

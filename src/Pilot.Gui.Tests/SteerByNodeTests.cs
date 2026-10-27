@@ -221,7 +221,7 @@ public sealed class SteerByNodeTests : IAsyncDisposable
         var action = acted.ShouldHaveSingleItem();
         action.Node.ShouldNotBeNull().Where.ShouldBe(_le1.Endpoint);
         action.Args.ShouldBe(["it went in circles"]);
-        (await DashboardCommands.ActAsync(clients.For(action.Node).ShouldNotBeNull(), action, "gui", Ct)).ShouldBe("ok: Go around parser");
+        (await DashboardCommands.ActAsync(clients.For(action.Node).ShouldNotBeNull(), action, "gui", Ct)).ShouldBe("ok: Redo leg parser");
         _le1.Commands.Count.ShouldBe(1);
         _le1.Commands[0].ShouldContain("go-around");
         _le1.Commands[0].ShouldContain("it went in circles");

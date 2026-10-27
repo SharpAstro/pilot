@@ -78,6 +78,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+            if (pr is { State: "CLOSED" } && pr.Number == flight.PullRequest)
+            {
+                await ClosedUnmergedAsync(flight, pr.Number, cancellationToken);
+                continue;
+            }
             if (pr is not { State: "MERGED" } || pr.Number != flight.PullRequest)
             {
                 continue;
@@ -92,6 +97,47 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
         }
     }
+
+    /// <summary>
+    /// A flight whose PR was closed without a merge. Nothing past its base in its plane (a rebase left it empty, its work
+    /// having gone in another way): it lands, said on a Handled line. Work of its own: a ring, once, and it is not landed.
+    /// PIL274's PR was closed so, and the flight stayed flying while reviewers were started on an empty PR.
+    /// </summary>
+    private async Task ClosedUnmergedAsync(FlightRow flight, int number, CancellationToken cancellationToken)
+    {
+        var subject = Verbs.FlightTarget(flight.Code);
+        IReadOnlyList<string>? own;
+        try
+        {
+            own = await flights!.LandIfNothingOfItsOwnAsync(flight.Code, cancellationToken);
+        }
+        catch (FlightException ex)
+        {
+            own = [ex.Message];
+        }
+        if (own is null)
+        {
+            state.RaiseCard(CardBin.Handled, ClosedLanded, subject, $"{flight.Code} landed",
+                $"its PR #{number} was closed without a merge and its plane holds nothing past its base: its work is in");
+            return;
+        }
+        // Once per closed PR, dismissed or not: a dismissal is the person's answer, and the look comes round every 30 s.
+        var title = $"{flight.Code}'s PR #{number} was closed without a merge";
+        if (state.Cards().Any(c => c.Kind == ClosedWithWork && c.Subject == subject && c.Title == title))
+        {
+            return;
+        }
+        state.RaiseCard(CardBin.Ring, ClosedWithWork, subject, title,
+            own.Count > 0
+                ? $"its plane still holds {own.Count} commit{(own.Count == 1 ? "" : "s")} not in its base: {string.Join("; ", own)}. Reopen the PR, or drop the work and land the flight"
+                : "its plane cannot be read: reopen the PR, or land the flight by hand once its work is safe");
+    }
+
+    /// <summary>The Handled line of a flight landed because its closed PR left nothing of its own.</summary>
+    internal const string ClosedLanded = "closed-landed";
+
+    /// <summary>The ring of a flight whose PR was closed with work of its own still in its plane.</summary>
+    internal const string ClosedWithWork = "closed-with-work";
 
     /// <summary>
     /// Every flight whose PR is done and open, as its merge queue has it. A merge through a queue only queues the PR, and the
@@ -143,9 +189,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 {
                     if (await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } notRebased)
                     {
-                        state.RaiseCard(CardBin.Ring, "pr-conflicts", subject, $"{flight.Code}'s PR #{number} left the merge queue on a conflict with its base",
-                            $"{notRebased}{(await legs.ConflictsAsync(flight.Code, notRebased, cancellationToken) is { } notSent ? $" ({notSent})" : ": its last leg goes around to resolve it")}",
-                            link: flight.PullRequestUrl);
+                        // Resolved by a worker the node sends, not rung: a conflict is pilot's to fix (#344 rang for one, 2026-10-27).
+                        await GoAroundOnConflictAsync(flight.Code, number, notRebased, flight.PullRequestUrl, cancellationToken);
                     }
                     else
                     {
@@ -415,7 +460,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             var headNow = pr?.Head ?? head;
             var (title, detail, link) = failed && checks is { FailedName: { } name }
-                ? ($"{flight.Code}'s PR #{number}: check {name} failed", $"The merge waited for the checks to pass, and {name} failed on {head[..Math.Min(8, head.Length)]}. Go around to fix what it found, re-run the checks if it was a flake, or merge again.{autoMergeNote}", checks.FailedLink)
+                ? ($"{flight.Code}'s PR #{number}: check {name} failed", $"The merge waited for the checks to pass, and {name} failed on {head[..Math.Min(8, head.Length)]}. Redo the leg to fix it, re-run the checks if it was a flake, or merge again.{autoMergeNote}", checks.FailedLink)
                 : ($"{flight.Code}'s merge did not go through", dropped + autoMergeNote, null);
             if (legs is null || !legs.ShowMergeFailed(flight.Code, headNow, method, title, detail, link ?? flight.PullRequestUrl, rerun: failed,
                     goAroundWhy: failed ? $"the PR's checks failed{(checks?.FailedName is { } n ? $" ({n})" : "")} on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push" : dropped))

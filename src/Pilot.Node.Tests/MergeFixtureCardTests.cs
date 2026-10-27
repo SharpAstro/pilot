@@ -96,7 +96,7 @@ public sealed class MergeFixtureCardTests
         card.State.ShouldBe(CardState.Open);
         card.Title.ShouldContain(title);
         card.Link.ShouldBe(PrUrl);
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Go around parser", Verbs.GoAround)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Redo leg parser", Verbs.GoAround)]);
     }
 
     [Fact]

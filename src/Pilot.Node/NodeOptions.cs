@@ -25,7 +25,7 @@ public sealed record NodeOptions(
     string SocketPath, string DataFolder, int RetainedDeltas = NodeState.DefaultRetainedDeltas, string? MachinePrefix = null, bool Watchtower = true, string? WatchtowerFolderGiven = null,
     bool Lan = false, int LanPort = NodeWire.DefaultLanPort, bool LanAnnounce = true, int MaxJobs = 1, double JobMemoryGigabytes = 2,
     UpdatePolicy UpdatePolicy = UpdatePolicy.Off, string? ReleaseFeed = null, IReadOnlyList<string>? RepoRootsGiven = null,
-    UpdateChannel UpdateChannel = UpdateChannel.Stable, NodeSettings? Saved = null, IReadOnlySet<string>? CommandLineKeys = null, bool LocalOnly = false, bool LanLoopbackOnly = false)
+    UpdateChannel UpdateChannel = UpdateChannel.Stable, NodeSettings? Saved = null, IReadOnlySet<string>? CommandLineKeys = null, bool LocalOnly = false, bool LanLoopbackOnly = false, bool MachineSampling = true)
 {
     /// <summary>The settings file this node reads and the Settings page writes.</summary>
     public string SettingsFile => NodeSettings.PathIn(DataFolder);
