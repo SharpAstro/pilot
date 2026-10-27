@@ -616,6 +616,8 @@ runtime's processor count, a test host's default parallelism among it. It does n
 `MSBUILDNODECOUNT`, `MSBUILDCORELIMIT` and `MSBUILDNODELIMITOFFSET`, and with none): no environment variable does, only
 `-maxcpucount:4` or a `Directory.Build.rsp`, which edit the build.
 
+`pause-job job/<id>` freezes a running job's whole process tree (every process the node reads under it, and on Linux the job's process group too; `pilot job <id> pause`, the `job_pause` MCP tool, **Pause** in the GUI) and `resume-job` thaws it (`pilot job <id> resume`, `job_resume`). A paused job stays Running, so it keeps its slot. Its row records `PausedAt` and `PausedFor` and is the truth: a restarted node finds a paused job still frozen and reading paused, and resume, cancel and the timeout reach it by pid as for any job. Its timeout does not count the time it is paused, and cancel or a timeout thaw the tree before they kill it, so nothing is left frozen behind.
+
 A worker that finishes its own leg is stopped after 90 s, once it has said its report. Claude Code tears down a worktree
 its `-w` session entered when that job ends by itself, keeping the branch; the node checks a plane out again from its
 branch before any worker goes in, and lands one that is already gone.
