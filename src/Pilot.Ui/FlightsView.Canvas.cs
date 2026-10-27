@@ -141,6 +141,8 @@ internal sealed partial class FlightsView<TSurface>
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index))
             .WithContextMenu(at => OpenMenu(line, index, at))
+            // The same brief as the Home chip (#258); a cut line keeps its own whole-text tooltip, the innermost.
+            .WithTooltip(ChipBrief.Text(ChipBrief.Flight(line)))
             .DoubleClickable(_ =>
             {
                 ListCursor.MoveTo(index);

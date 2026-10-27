@@ -572,11 +572,9 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index))
-            .WithContextMenu(at => OpenMenu(line, index, at));
-        if (line.Row is { State: JobState.Running, Pid: { } pid })
-        {
-            row = row.WithTooltip($"pid {pid}");
-        }
+            .WithContextMenu(at => OpenMenu(line, index, at))
+            // The same brief as the Home chip (#258), which names the pid of a running job (the row's hover said only that before).
+            .WithTooltip(ChipBrief.Text(ChipBrief.Job(line)));
         // The selection stated as a background too: a terminal paints no focus of its own, and on pixels it is the focus colour.
         return index == Selected ? row.Bg(RowFocusBg) : (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }

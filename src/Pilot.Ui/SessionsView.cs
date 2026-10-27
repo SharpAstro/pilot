@@ -734,6 +734,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index))
             .WithContextMenu(at => OpenMenu(line, index, at))
+            // The same brief as the Home chip (#258).
+            .WithTooltip(ChipBrief.Text(ChipBrief.Session(line)))
             .DoubleClickable(_ =>
             {
                 Select(index);

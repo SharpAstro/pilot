@@ -36,7 +36,9 @@ internal static class ChipBrief
         var lines = new List<string>
         {
             Title(line.Title),
-            line.StateDetail is { Length: > 0 } detail ? $"{line.Code} · {line.State}: {detail}" : $"{line.Code} · {line.State}",
+            // A stale flight is its last known row, and its brief says so, as its chip's hover did before it had a brief.
+            line.Stale is { } stale ? $"{line.Code} was {line.State} when {stale} last answered"
+                : line.StateDetail is { Length: > 0 } detail ? $"{line.Code} · {line.State}: {detail}" : $"{line.Code} · {line.State}",
             LegLine(line),
         };
         if (flight.PullRequest is { } pr)
@@ -51,16 +53,15 @@ internal static class ChipBrief
     private static string LegLine(FlightLine line)
     {
         var legs = line.LegRows;
-        var leg = legs.FirstOrDefault(l => l.State == LegState.Failed)
-            ?? legs.FirstOrDefault(l => l.State == LegState.Flying)
-            ?? legs.FirstOrDefault(l => l.Hold is not null)
-            ?? legs.FirstOrDefault(l => l.State != LegState.Done);
-        if (leg is null)
+        // A failed, flying or held leg is already named at the end of line.Legs (FlightsView.LegsText), so it is said once, there.
+        if (legs.Any(l => l.State == LegState.Failed || l.State == LegState.Flying || l.Hold is not null))
         {
             return line.Legs;
         }
-        var goAround = leg.State == LegState.Flying && leg.GoArounds > 0 ? $" (go-around {leg.GoArounds})" : "";
-        return $"leg {leg.Name} {FlightWaiting.LegState(leg)}{goAround} · {line.Legs}";
+        // LegsText leaves the first leg not done out: it is the only one this adds.
+        return legs.FirstOrDefault(l => l.State != LegState.Done) is { } next
+            ? $"leg {next.Name} {FlightWaiting.LegState(next)} · {line.Legs}"
+            : line.Legs;
     }
 
     /// <summary>
@@ -76,7 +77,8 @@ internal static class ChipBrief
         }
         if (line.WaitingFor is { Length: > 0 } waitingFor)
         {
-            lines.Add(line.IsWaiting ? $"waiting on you: {waitingFor}" : waitingFor);
+            // Line 1 already says "waiting on you" for a waiting session, so this is only what it waits on.
+            lines.Add(waitingFor);
         }
         else if (line.IsWaiting && line.Asking is null)
         {
@@ -109,7 +111,9 @@ internal static class ChipBrief
             line.Row.State switch
             {
                 JobState.Queued => $"queued {line.Started}",
-                JobState.Running => $"running for {line.Took}, started {line.Started}",
+                JobState.Running => line.Row.Pid is { } pid
+                    ? $"running for {line.Took}, started {line.Started} · pid {pid}"
+                    : $"running for {line.Took}, started {line.Started}",
                 _ => line.StateDetail is { } how ? $"{line.State}: {how} after {line.Took}" : $"{line.State} after {line.Took}",
             },
         };

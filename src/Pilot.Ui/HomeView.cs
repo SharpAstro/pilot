@@ -360,16 +360,18 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private Layout.Node Chip(HomeChip chip)
     {
         var tint = chip.Tone switch { "held" or "queued" => Amber, "stale" => Stale, _ => Green };
-        return chip.Kind switch
+        var pill = chip.Kind switch
         {
-            // The chip of a stale flight still opens its page (the last known row); its words, not its tint, say why it is dim.
+            // The chip of a stale flight still opens its page (the last known row); its words, not its tint, say why it is dim,
+            // and its brief says it again in full (ChipBrief.Flight).
             HomeChipKind.Flight when chip.Tone == "stale" =>
-                CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint, StaleText)
-                    .WithTooltip($"{chip.Flight.Code} was {chip.Flight.State} when {chip.Flight.Stale} last answered"),
+                CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint, StaleText),
             HomeChipKind.Flight => CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint),
             HomeChipKind.Session => CardsView<TSurface>.Pill(chip.Label, $"home:session:{chip.Session!.Key}", () => OnSession?.Invoke(chip.Session), tint),
             _ => CardsView<TSurface>.Pill(chip.Label, $"home:job:{chip.Job!.Key}", () => OnJob?.Invoke(chip.Job), tint),
         };
+        // The brief opens below the chip, centred, and the tooltip layer keeps it inside the window (flipping above near the bottom).
+        return chip.Brief.Length > 0 ? pill.WithTooltip(chip.Brief) : pill;
     }
 
     public override bool HandleInput(InputEvent evt) => false;
