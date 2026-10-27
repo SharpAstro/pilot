@@ -315,6 +315,7 @@ public sealed class FleetTests
 
         line.Watchtower.ShouldBe("watchtower idle · 3a1b2c3d · 2 h · 41k/200k · 3 started in 24 h");
         line.WatchtowerMark.ShouldBeNull();
+        line.WatchtowerSummary.ShouldBeNull();
         line.ToDumpLine().ShouldEndWith(" | watchtower idle · 3a1b2c3d · 2 h · 41k/200k · 3 started in 24 h");
         new FleetScreen([line], Live.At).Summary.ShouldBe("1 node · 1 live");
     }
@@ -322,8 +323,12 @@ public sealed class FleetTests
     [Fact]
     public void AChurningWatchtowerIsMarkedWithItsCountLifetimeAndReason()
     {
-        var churning = Calm with { Churning = true, StartsLast24h = 9, TypicalLifetimeAfterReply = TimeSpan.FromMinutes(4), LastEndedBecause = "process gone" };
+        var churning = Calm with { Churning = true, StartsLast24h = 9, TypicalLifetimeAfterReply = TimeSpan.FromMinutes(4), LastEndedBecause = "process gone",
+            Summary = "12 watchtowers in the last hour; each ended about 2 minutes after its reply" };
         var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, WithWatchtower(churning), Live.At);
+        const string summary = "12 watchtowers in the last hour; each ended about 2 minutes after its reply";
+        line.WatchtowerSummary.ShouldBe(summary);
+        line.ToDumpLine().ShouldEndWith(" | " + summary);
 
         line.WatchtowerChurning.ShouldBeTrue();
         line.WatchtowerMark.ShouldBe("⚠ watchtower churning (9 in 24 h)");
@@ -340,6 +345,8 @@ public sealed class FleetTests
         {
             Layout.Engine.Arrange(chrome.Fleet.Tree(new FleetScreen([line], Live.At)), new Rect<int>(0, 0, width, 400), CellMeasureContext.PixelAuthored)
                 .Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == line.WatchtowerMark).ShouldNotBeEmpty();
+            Layout.Engine.Arrange(chrome.Fleet.Tree(new FleetScreen([line], Live.At)), new Rect<int>(0, 0, width, 400), CellMeasureContext.PixelAuthored)
+                .Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == summary).ShouldNotBeEmpty();
         }
     }
 
