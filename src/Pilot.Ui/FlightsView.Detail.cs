@@ -376,7 +376,7 @@ internal sealed partial class FlightsView<TSurface>
     /// What the review asks, in full, where the flight is read: the page showed only a "review changes" chip while the findings,
     /// the red CI and the reached cap sat on a card cut to three lines (PIL294's #357, 2026-10-27). Nothing unless it asks.
     /// </summary>
-    internal static IEnumerable<Layout.Node> ReviewAsks(FlightDetail detail)
+    internal IEnumerable<Layout.Node> ReviewAsks(FlightDetail detail)
     {
         if (detail.Line.Row.Review is not { State: ReviewState.Changes, Report: { Length: > 0 } report })
         {
@@ -384,10 +384,11 @@ internal sealed partial class FlightsView<TSurface>
         }
         yield return Layout.Builder.Text("The review asks for changes:", 13f, Held).RowH(22f);
         yield return Prose(report, 13f, Body);
-        if (detail.Legs.LastOrDefault(l => l.Row.ReviewGoArounds >= ReviewRedoCap) is { } capped)
+        // The node applies the cap to the flight's last leg by Order only (LegCommander.RaiseReviewChanges), so take that leg, then test it.
+        if (detail.Legs.OrderBy(l => l.Row.Order).LastOrDefault() is { } capped && capped.Row.ReviewGoArounds >= ReviewRedoCap)
         {
-            yield return Prose($"{capped.Name} has been redone {capped.Row.ReviewGoArounds} times on the review's findings, so the next round is yours: "
-                + $"Redo leg {capped.Name} once more, or Ready anyway if the findings should not hold it up.", 12f, Held);
+            yield return Prose($"{capped.Name} has been redone {capped.Row.ReviewGoArounds} times on the review's findings, so the next round is yours. "
+                + $"The review's card offers Go around {capped.Name} once more, or Ready anyway if the findings should not hold it up.", 12f, Held);
         }
     }
 

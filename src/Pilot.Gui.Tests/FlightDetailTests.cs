@@ -93,9 +93,13 @@ public sealed class FlightDetailTests
         var asks = "1) CI is red: LayoutDrivenTests rejects JobsView.cs:680. 2) The memory gate takes the smaller of the estimate and job-memory, so a job that measured 8 GB starts with 2 GB free.";
         var flight = Flight() with { Review = new ReviewRow { State = ReviewState.Changes, Reviewer = "du1-tia1611-review", Report = asks, StartedAt = Live.At } };
         var legs = Legs().Select(l => l.Name == "render" ? l with { State = LegState.Done, ReviewGoArounds = 3 } : l).ToArray();
-        string Said(FlightRow row, LegRow[] rows) => CellLayout.Describe(Layout.Engine.Arrange(
-            Layout.Builder.VStack([.. FlightsView<RgbaImage>.ReviewAsks(FlightDetail.From(FlightLine.Build([row], [], Now, rows).Single(), Now))]),
-            new Rect<int>(0, 0, 400, 40), CellMeasureContext.PixelAuthored));
+        using var renderer = new RgbaImageRenderer(1, 1);
+        var view = new FlightsView<RgbaImage>(renderer);
+        // The prose wraps into one leaf per word, so the page's words are the leaves' text joined back up.
+        string Said(FlightRow row, LegRow[] rows) => string.Concat(Layout.Engine.Arrange(
+                Layout.Builder.VStack([.. view.ReviewAsks(FlightDetail.From(FlightLine.Build([row], [], Now, rows).Single(), Now))]).HAuto(),
+                new Rect<float>(0, 0, 400, 1200), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f))
+            .Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value));
 
         var said = Said(flight, legs);
 
@@ -103,7 +107,11 @@ public sealed class FlightDetailTests
         said.ShouldContain("JobsView.cs:680");
         said.ShouldContain("starts with 2 GB free");
         said.ShouldContain("render has been redone 3 times");
-        said.ShouldContain("Redo leg render once more, or Ready anyway");
+        said.ShouldContain("card offers Go around render once more, or Ready anyway");
+        said.ShouldNotContain("Redo leg");
+        // The node caps only the last leg by Order: a leg planned after the capped one makes the round the watchtower's again.
+        var later = legs.Append(legs[0] with { Name = "polish", Order = legs.Max(l => l.Order) + 1, State = LegState.Planned, ReviewGoArounds = 0 }).ToArray();
+        Said(flight, later).ShouldNotContain("the next round is yours");
         // A review that passed, or none, says nothing here.
         Said(Flight(), Legs()).Trim().ShouldBeEmpty();
     }
