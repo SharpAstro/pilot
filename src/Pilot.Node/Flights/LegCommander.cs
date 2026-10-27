@@ -66,6 +66,8 @@ public sealed partial class LegCommander(
     private async Task<CommandResult> RunQueuedAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var launches = _launched.Value = [];
+        // Asked of the peers before the lock is taken: a slow one holds up this command, not the others.
+        var peerRefusal = await PeerRefusalAsync(command, cancellationToken);
         await _one.WaitAsync(cancellationToken);
         string? error = null;
         string? made = null;
@@ -73,6 +75,10 @@ public sealed partial class LegCommander(
         var merged = false;
         try
         {
+            if (peerRefusal is not null)
+            {
+                throw new FlightException(peerRefusal);
+            }
             switch (command.Verb)
             {
                 case Verbs.Overlap:
@@ -582,6 +588,31 @@ public sealed partial class LegCommander(
         state.RaiseCard(CardBin.Handled, LegRemovedKind, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}/{leg.Name} removed by {command.Who}", why.Length > 0 ? why : null);
     }
+
+    /// <summary>The ring a planner or a leg refused for a flight a peer node flies raises, naming the peer.</summary>
+    public const string FlownElsewhereKind = "flown-elsewhere";
+
+    /// <summary>
+    /// Why a plan-flight or start-leg is refused: a reachable peer node flies the flight's branch, and a flight is flown by one
+    /// node, so two nodes never fly one branch. Rings it on the flight. Null when none does (or the verb is another, or the flight unknown).
+    /// </summary>
+    private async Task<string?> PeerRefusalAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        if (command.Verb is not (Verbs.PlanFlight or Verbs.StartLeg) || state.Flights().FirstOrDefault(f => string.Equals(f.Code, CodeOf(command.Target), StringComparison.OrdinalIgnoreCase)) is not { State: not FlightState.Landed } flight)
+        {
+            return null;
+        }
+        if (await flights.FlownByPeerAsync(flight.RepoPath, null, flight.Branch, cancellationToken) is not { } peer)
+        {
+            return null;
+        }
+        var why = $"{peer.Code} flies {flight.Branch} on {peer.Node}: {flight.Code} is flown by one node, so it is not {(command.Verb == Verbs.PlanFlight ? "planned" : "started")} here";
+        state.RaiseCard(CardBin.Ring, FlownElsewhereKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} is flown on {peer.Node} too", why);
+        return why;
+    }
+
+    private static string CodeOf(string target) =>
+        target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? target[Verbs.FlightTargetPrefix.Length..].Split('/')[0] : "";
 
     private async Task StartAsync(CommandRequest command, CancellationToken cancellationToken)
     {

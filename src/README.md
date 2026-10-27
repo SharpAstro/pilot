@@ -518,6 +518,10 @@ pilot flight create <issue> [title…] [--repo <path>] [--anyway]   # labels the
 # The node label's life: put on the item at create, added to the flight's PR when it opens (never swapped with the `pilot:` state
 # labels), taken off the item when the flight lands, lands after its merge or is folded (a failure is said on the landed card), and
 # swept off any open GitHub issue no flying or held flight of this node is on at the next repo look (Shortcut stories: landing only).
+# A flight is flown by one node: besides the label, create-flight asks the fleet's reachable peers (matched by the repo's GitHub
+# remote), and one with a not-landed flight on the same issue or branch refuses it naming the peer and its flight ("PIL294 flies #294
+# on DE1: fly it there"); --anyway overrides a stale label, never a peer's live flight. plan-flight and start-leg are refused the same
+# way, with a Ring card, when a peer flies the flight's branch. An unreachable peer (3 s to answer) or a landed flight does not block.
 pilot flight plan <code>                       # a planner plans the legs from the issue
 pilot flight planned <code> [summary…]         # what the planner says when it is done
 pilot flight overlap <code> <other> <why…>     # the planner: this flight looks like part of <other>; rings a Fold / Plan separately card

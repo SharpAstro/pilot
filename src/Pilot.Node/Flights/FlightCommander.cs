@@ -175,15 +175,22 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         var repoPath = await planes.MainCheckoutAsync(path, cancellationToken)
             ?? throw new FlightException($"{path} is no git checkout");
         var repo = Path.GetFileName(repoPath);
+        var flights = state.Flights();
+        var prefix = FlightCodes.PrefixFor(repo, flights);
+        var code = FlightCodes.Next(prefix, item.Id, flights)
+            ?? throw new FlightException($"{prefix}{item.Id} and its suffixes {FlightCodes.Suffixes} are all taken");
+
+        // A flight is flown by one node: a peer that flies this item, or the branch this flight would get, answers for it, and
+        // --anyway does not override a flight that is live there (it only overrides a label, which can be stale).
+        if (await FlownByPeerAsync(repoPath, item, Planes.BranchOf(code, item), cancellationToken) is { } peerFlight)
+        {
+            throw new FlightException($"{peerFlight.Code} flies {item.Display} on {peerFlight.Node}: fly it there");
+        }
         var otherNode = await OtherNodeOfAsync(repoPath, item, cancellationToken);
         if (otherNode is not null && !anyway)
         {
             throw new FlightException($"{item.Noun} carries the label {PilotMarks.NodeLabel(otherNode)}: it is flying on {otherNode}, not on {Machine}. Fly it there, or give --anyway to create the flight here over {otherNode}'s label");
         }
-        var flights = state.Flights();
-        var prefix = FlightCodes.PrefixFor(repo, flights);
-        var code = FlightCodes.Next(prefix, item.Id, flights)
-            ?? throw new FlightException($"{prefix}{item.Id} and its suffixes {FlightCodes.Suffixes} are all taken");
 
         var title = string.Join(' ', args.Skip(1)).Trim();
         if (title.Length == 0 && Trackers?.Of(item.Tracker) is { } tracker)
@@ -219,6 +226,60 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         await LabelAsync(repoPath, item, code, otherNode, cancellationToken);
         return (code, null);
     }
+
+    /// <summary>A flight a peer node flies, as a refusal names it.</summary>
+    public sealed record PeerFlight(string Node, string Code);
+
+    /// <summary>How long the peers have, all at once, to say what they fly before they count as not flying it (an unreachable peer never blocks).</summary>
+    public static readonly TimeSpan PeerBudget = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// The not-landed flight a granted, reachable peer flies on this repo for <paramref name="item"/> (when given) or on
+    /// <paramref name="branch"/>, else null. The repo is matched by its GitHub remote, as the paths are each machine's own.
+    /// A peer that cannot be reached, refuses the grant or is too slow is taken as flying nothing.
+    /// </summary>
+    public async Task<PeerFlight?> FlownByPeerAsync(string repoPath, WorkItem? item, string branch, CancellationToken cancellationToken)
+    {
+        var peers = Fleet?.Peers() ?? [];
+        var gitHub = RepoCatalog.GitHubOf(Path.Combine(repoPath, ".git"));
+        if (peers.Count == 0 || gitHub is null)
+        {
+            return null;
+        }
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(PeerBudget);
+        var found = await Task.WhenAll(peers.Where(p => p.HasGrant).Select(p => PeerFlightAsync(p, gitHub, item, branch, budget.Token)));
+        return found.FirstOrDefault(f => f is not null);
+    }
+
+    private static async Task<PeerFlight?> PeerFlightAsync(IFleetPeer peer, string gitHub, WorkItem? item, string branch, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (await peer.ReposAsync(cancellationToken) is not { } repos
+                || repos.FirstOrDefault(r => string.Equals(r.GitHub, gitHub, StringComparison.OrdinalIgnoreCase))?.Path is not { } checkout)
+            {
+                return null;
+            }
+            var load = await peer.LoadAsync(cancellationToken);
+            var flies = load.Flights.FirstOrDefault(f => f.State != FlightState.Landed
+                && SamePath(f.RepoPath, checkout)
+                && (string.Equals(f.Branch, branch, StringComparison.OrdinalIgnoreCase) || (item is { } i && f.Tracker == i.Tracker && f.Issue == i.Id)));
+            if (flies is null)
+            {
+                return null;
+            }
+            var info = await peer.NodeAsync(cancellationToken);
+            return new PeerFlight(info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Endpoint, flies.Code);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or OperationCanceledException or System.Net.WebSockets.WebSocketException)
+        {
+            return null;
+        }
+    }
+
+    private static bool SamePath(string a, string b) =>
+        string.Equals(a.Replace('\\', '/').TrimEnd('/'), b.Replace('\\', '/').TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The node code another node's label on <paramref name="item"/> names, or null when it has none (this node's own is no other's).</summary>
     private async Task<string?> OtherNodeOfAsync(string repoPath, WorkItem item, CancellationToken cancellationToken)
