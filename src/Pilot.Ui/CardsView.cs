@@ -579,6 +579,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                     ? Whole(WrappedProse.Paragraphs(Titled(card), 14f, Bright, OverlapTitleLines), card.Title, card.Title.Length > TitleFits * OverlapTitleLines / 2)
                     : Whole(Layout.Builder.Text(Titled(card), 14f, Bright).RowH(22f), card.Title, card.Title.Length > TitleFits),
         };
+        if (card.Kind == CardKinds.Overlap)
+        {
+            // A title of several lines is set off from the detail under it.
+            lines.Add(Layout.Builder.Spacer().RowH(4f));
+        }
         if (card.Detail is { Length: > 0 } detail)
         {
             // Wraps within the panel, three lines at most (eight on a merge's); an explicit newline stays a break.

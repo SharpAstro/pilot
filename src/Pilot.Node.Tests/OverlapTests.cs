@@ -126,10 +126,10 @@ public sealed class OverlapTests1 : OverlapTestsBase
         (await Leg(Verbs.Overlap, "flight/TIA2", "TIA1", "file=src/DetachedShell.cs", "file=src/Parser.cs", "it edits the same parser")).Ok.ShouldBeTrue();
 
         var card = Cards().ShouldHaveSingleItem();
-        card.Title.ShouldBe("Connect TIA2 to TIA1 (both change src/DetachedShell.cs, src/Parser.cs)");
+        card.Title.ShouldBe("Connect TIA2 to TIA1 (both change DetachedShell.cs, Parser.cs)");
         var detail = card.Detail.ShouldNotBeNull();
         detail.ShouldContain("TIA2 (Issue 2) overlaps TIA1 (Issue 1)");
-        detail.ShouldContain("Both change 2 files: src/DetachedShell.cs, src/Parser.cs.");
+        detail.ShouldContain("Both change 2 files: DetachedShell.cs, Parser.cs.");
         detail.ShouldContain("it edits the same parser");
         detail.ShouldContain("Connect holds TIA2 until TIA1 has landed");
         detail.ShouldContain("Plan in parallel");
@@ -146,8 +146,8 @@ public sealed class OverlapTests1 : OverlapTestsBase
         (await Leg(Verbs.Overlap, "flight/TIA2", ["TIA1", .. files.Select(f => "file=" + f), "same area"])).Ok.ShouldBeTrue();
 
         var card = Cards().Single();
-        card.Title.ShouldBe("Connect TIA2 to TIA1 (both change src/File1.cs, src/File2.cs, src/File3.cs, src/File4.cs and 3 more)");
-        card.Detail.ShouldNotBeNull().ShouldContain("src/File7.cs");
+        card.Title.ShouldBe("Connect TIA2 to TIA1 (both change File1.cs, File2.cs, File3.cs, File4.cs and 3 more)");
+        card.Detail.ShouldNotBeNull().ShouldContain("File7.cs");
     }
 
     [Fact]

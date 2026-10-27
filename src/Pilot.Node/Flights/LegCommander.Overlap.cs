@@ -87,11 +87,12 @@ public sealed partial class LegCommander
         });
         var target = Verbs.FlightTarget(flight.Code);
         var at = node is null ? other.Code : $"{other.Code} on {node}";
-        var shared = files.Length switch
+        var names = ShortNames(files);
+        var shared = names.Length switch
         {
             0 => why,
-            > OverlapNamed => $"both change {string.Join(", ", files.Take(OverlapNamed))} and {files.Length - OverlapNamed} more",
-            _ => $"both change {string.Join(", ", files)}",
+            > OverlapNamed => $"both change {string.Join(", ", names.Take(OverlapNamed))} and {names.Length - OverlapNamed} more",
+            _ => $"both change {string.Join(", ", names)}",
         };
         List<CardChoice> choices = [];
         if (node is null)
@@ -105,6 +106,16 @@ public sealed partial class LegCommander
         return $"asked the controller on card {card.Id}: {flight.Code} overlaps {at}. Plan no leg and say no planned: end your turn now, you are started again with the answer";
     }
 
+    /// <summary>
+    /// The files as a card names them: by file name (<c>DetachedShell.cs</c>), where two share one by their path, so a long list fits the
+    /// panel. The row keeps the paths whole.
+    /// </summary>
+    private static string[] ShortNames(string[] files)
+    {
+        var shared = files.GroupBy(f => Path.GetFileName(f), StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return [.. files.Select(f => shared.Contains(Path.GetFileName(f)) ? f : Path.GetFileName(f))];
+    }
+
     /// <summary>What the overlap card says: both flights, the files, and what each choice does.</summary>
     private static string OverlapDetail(FlightRow flight, FlightRow other, string? node, string[] files, string why)
     {
@@ -113,7 +124,7 @@ public sealed partial class LegCommander
         text.Append($"{Named(flight)} overlaps {Named(other)}{(node is null ? "" : $", which flies on {node}")}.");
         if (files.Length > 0)
         {
-            text.Append($" Both change {files.Length} file{(files.Length == 1 ? "" : "s")}: {string.Join(", ", files)}.");
+            text.Append($" Both change {files.Length} file{(files.Length == 1 ? "" : "s")}: {string.Join(", ", ShortNames(files))}.");
         }
         text.Append($" The planner says: {why}.");
         text.Append($" Connect holds {flight.Code} until {other.Code} has landed.");

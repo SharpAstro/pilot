@@ -15,7 +15,7 @@ namespace Pilot.Gui.Tests;
 /// </summary>
 public sealed class OverlapCardTests
 {
-    private const string LongFiles = "src/Pilot.Node/Flights/DetachedShell.cs, src/Pilot.Node/Flights/JobRunner.cs, src/Pilot.Node/Flights/LegCommander.Touches.cs, src/Pilot.Ui/CardsView.cs and 3 more";
+    private const string LongFiles = "DetachedShell.cs, JobRunner.cs, LegCommander.Touches.cs, CardsView.cs and 3 more";
 
     private static CardChoice Choice(string label, string verb) => new() { Label = label, Verb = verb, Target = "flight/PIL365", Args = ["PIL294"] };
 
