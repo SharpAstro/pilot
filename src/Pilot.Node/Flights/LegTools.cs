@@ -256,6 +256,16 @@ public sealed record MergeState(string Kind, int Done = 0, int Total = 0, int? P
     public string? Place => Position is { } position ? $"position {position}" : null;
 }
 
+/// <summary>How a flight's branch is brought up to date with its base.</summary>
+public enum UpdateWay
+{
+    /// <summary>The branch is rebased onto its base and pushed with a lease (a rebase-queue repo).</summary>
+    Rebase,
+
+    /// <summary>The base is merged into the branch and pushed plain (a squash or merge repo).</summary>
+    Merge,
+}
+
 /// <summary>The GitHub calls a merge needs, so a test decides what GitHub says.</summary>
 public interface IGitHub
 {
@@ -310,6 +320,13 @@ public interface IGitHub
     /// waits on and does itself, node up or not. False when it is off or GitHub would not say. Kept for a while per repo.
     /// </summary>
     Task<bool> AutoMergeAllowedAsync(string repoPath, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// How a flight's branch is brought up to date with its base in the repo at <paramref name="repoPath"/>: by the default
+    /// branch's merge queue method (its ruleset's <c>merge_queue</c> rule), else by the repo's allowed merge methods. Kept for a
+    /// while per repo. <see cref="UpdateWay.Rebase"/> when GitHub would not say, as the node always did.
+    /// </summary>
+    Task<UpdateWay> UpdateWayAsync(string repoPath, CancellationToken cancellationToken);
 
     /// <summary>
     /// Arms GitHub's auto-merge on PR <paramref name="number"/>: it merges by <paramref name="method"/> once its required checks
@@ -754,6 +771,82 @@ public sealed class GhCli : IGitHub
 
     /// <summary><c>gh api repos/{owner}/{repo} --jq .allow_auto_merge</c>'s output: true only for <c>true</c>; <c>false</c>, <c>null</c> (a token that cannot see the setting) and nothing are off.</summary>
     internal static bool ParseAllowAutoMerge(string output) => output.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
+
+    private static readonly TimeSpan UpdateWayFor = TimeSpan.FromHours(1);
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (UpdateWay Way, DateTimeOffset At)> _updateWay = new(StringComparer.OrdinalIgnoreCase);
+
+    public async Task<UpdateWay> UpdateWayAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        if (_updateWay.TryGetValue(repoPath, out var known) && DateTimeOffset.UtcNow - known.At < UpdateWayFor)
+        {
+            return known.Way;
+        }
+        var (exit, repoJson, _) = await RunAsync(["api", "repos/{owner}/{repo}"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            // No answer: not kept, so the next push asks again.
+            return UpdateWay.Rebase;
+        }
+        var rules = "[]";
+        if (ParseDefaultBranch(repoJson) is { } branch)
+        {
+            var (rulesExit, rulesOutput, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/rules/branches/{branch}"], repoPath, cancellationToken);
+            if (rulesExit != 0)
+            {
+                return UpdateWay.Rebase;
+            }
+            rules = rulesOutput;
+        }
+        var way = ParseUpdateWay(rules, repoJson);
+        _updateWay[repoPath] = (way, DateTimeOffset.UtcNow);
+        return way;
+    }
+
+    /// <summary><c>gh api repos/{owner}/{repo}</c>'s <c>default_branch</c>; null when it is no JSON or has none.</summary>
+    internal static string? ParseDefaultBranch(string repoJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(repoJson);
+            return TextOf(doc.RootElement, "default_branch");
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// How a branch is brought up to date from <c>gh api repos/{o}/{r}/rules/branches/{branch}</c> and the repo's own JSON: a
+    /// <c>merge_queue</c> rule's <c>merge_method</c> (REBASE rebases, SQUASH and MERGE merge the base in); with no queue, the
+    /// repo's allowed methods (only rebase allowed rebases). Rebase when either is unreadable.
+    /// </summary>
+    internal static UpdateWay ParseUpdateWay(string rulesJson, string repoJson)
+    {
+        try
+        {
+            using var rules = JsonDocument.Parse(rulesJson);
+            if (rules.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var rule in rules.RootElement.EnumerateArray())
+                {
+                    if (TextOf(rule, "type") == "merge_queue")
+                    {
+                        var method = rule.TryGetProperty("parameters", out var p) ? TextOf(p, "merge_method") : null;
+                        return string.Equals(method, "REBASE", StringComparison.OrdinalIgnoreCase) || method is null ? UpdateWay.Rebase : UpdateWay.Merge;
+                    }
+                }
+            }
+            using var repo = JsonDocument.Parse(repoJson);
+            bool Allows(string name) => repo.RootElement.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+            return Allows("allow_squash_merge") || Allows("allow_merge_commit") ? UpdateWay.Merge : UpdateWay.Rebase;
+        }
+        catch (JsonException)
+        {
+            return UpdateWay.Rebase;
+        }
+    }
 
     // Not `gh pr merge --auto`: gh merges at once, arming nothing, when GitHub calls the PR immediately mergeable (CLEAN, HAS_HOOKS
     // or UNSTABLE: running checks that are not required leave it so). enablePullRequestAutoMerge refuses such a PR instead, and

@@ -191,6 +191,11 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task<bool> AutoMergeAllowedAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(AutoMergeAllowed);
 
+    /// <summary>How the repo's base is merged up to date, as UpdateWayAsync answers: a rebase-queue repo by default.</summary>
+    public UpdateWay UpdateWay { get; set; } = UpdateWay.Rebase;
+
+    public Task<UpdateWay> UpdateWayAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(UpdateWay);
+
     /// <summary>
     /// The mergeStateStatus GitHub gives the PR when auto-merge is armed on it: BLOCKED (a required check pending) by default;
     /// CLEAN, HAS_HOOKS and UNSTABLE are immediately mergeable, which gh's own <c>pr merge --auto</c> merges at once instead of
