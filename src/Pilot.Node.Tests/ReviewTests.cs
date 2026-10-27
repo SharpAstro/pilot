@@ -1151,6 +1151,38 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AMergeWayFlightAlreadyPushedWhoseBaseNeedsRepairIsPushedWithALeaseAndReviewedAfreshWithNoGoAround()
+    {
+        _github.UpdateWay = UpdateWay.Merge;
+        // As PIL126: cut from a feature branch that has landed on main and is no branch on the remote.
+        Git(Repo, "switch", "-q", "-c", "feat/landed");
+        File.WriteAllText(Path.Combine(Repo, "feature.txt"), "landed\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "the feature");
+        Git(Repo, "switch", "-q", "main");
+        Git(Repo, "cherry-pick", "feat/landed");
+        Git(Repo, "push", "-q", "origin", "main");
+        var flight = await NewFlight("19", "parser");
+        Git(flight.Worktree, "reset", "-q", "--hard", "feat/landed");
+        _state.PutFlight(F("TIA19") with { Base = "feat/landed" });
+        await Fly(F("TIA19"), "parser");
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA19"), "controller")).Error.ShouldBeNull();
+        // The PR is open and pushed; the plane then holds history that is not the pushed one and a base that needs repair again.
+        Git(flight.Worktree, "reset", "-q", "--hard", "feat/landed");
+        File.WriteAllText(Path.Combine(flight.Worktree, "more.txt"), "more\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "more work");
+        _state.PutFlight(F("TIA19") with { Base = "feat/landed" });
+
+        (await _legs.RebaseOntoBaseAsync("TIA19", Ct)).ShouldBeNull();
+
+        F("TIA19").Base.ShouldBe("origin/main");
+        Git(flight.Worktree, "ls-remote", "origin", "flight/tia19").ShouldStartWith(Git(flight.Worktree, "rev-parse", "HEAD").Trim());
+        F("TIA19").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        Open().ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task AFlightInARebaseQueueRepoBehindMainIsRebasedAsBefore()
     {
         _github.UpdateWay = UpdateWay.Rebase;

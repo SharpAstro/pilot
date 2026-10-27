@@ -1655,14 +1655,15 @@ public sealed partial class LegCommander(
     /// merges, rebase where it rebases), so CI never tests a branch already behind and a PR is not born conflicting. A conflict is
     /// aborted, leaving the plane as it was, and refused with the way to resolve it said. Returns the way used.
     /// </summary>
-    private async Task<UpdateWay> BringUpToDateAsync(FlightRow flight, CancellationToken cancellationToken)
+    private async Task<UpdateWay> BringUpToDateAsync(FlightRow flight, CancellationToken cancellationToken, bool repaired = false)
     {
         var way = await github.UpdateWayAsync(flight.RepoPath, Models.MergeMethod, cancellationToken);
         await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
         // A merge-way push is plain: history already pushed and since rewritten (an amend, a rebase from an older brief) would be
         // refused by the remote after the leg is recorded done. Said now, while the leg still flies for its worker to put right.
         var remote = $"origin/{flight.Branch}";
-        if (way == UpdateWay.Merge
+        // A repaired base rebased the branch on purpose and is pushed with a lease, so its rewritten history is expected.
+        if (way == UpdateWay.Merge && !repaired
             && (await git.RunAsync(["rev-parse", "--verify", "--quiet", $"{remote}^{{commit}}"], flight.Worktree, cancellationToken)).Ok
             && !(await git.RunAsync(["merge-base", "--is-ancestor", remote, "HEAD"], flight.Worktree, cancellationToken)).Ok)
         {
@@ -1700,7 +1701,7 @@ public sealed partial class LegCommander(
     private async Task PushAsync(FlightRow flight, bool repaired, CancellationToken cancellationToken)
     {
         await EnsureNotArmedAsync(flight, cancellationToken);
-        var way = await BringUpToDateAsync(flight, cancellationToken);
+        var way = await BringUpToDateAsync(flight, cancellationToken, repaired);
         // The node's push refuses a branch still lacking its base, however it came to be so.
         if (!(await git.RunAsync(["merge-base", "--is-ancestor", flight.Base, "HEAD"], flight.Worktree, cancellationToken)).Ok)
         {
