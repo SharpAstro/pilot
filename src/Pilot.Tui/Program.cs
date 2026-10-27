@@ -223,6 +223,21 @@ Action<JobRow> CancelJob(bool force) => job => _ = Task.Run(async () =>
 });
 jobs.OnCancel = CancelJob(force: false);
 jobs.OnForceCancel = CancelJob(force: true);
+jobs.OnPause = job => SendJobVerb(job, Verbs.PauseJob, "paused");
+jobs.OnResume = job => SendJobVerb(job, Verbs.ResumeJob, "resumed");
+void SendJobVerb(JobRow job, string verb, string done) => _ = Task.Run(async () =>
+{
+    if (clients.For(jobs.FollowingNode) is not { } to)
+    {
+        flights.Say($"{verb} {job.Id}: {FleetClients.WatchOnly(jobs.FollowingNode)}");
+        Redraw();
+        return;
+    }
+    var envelope = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.JobTarget(job.Id), Args = [], Who = Who }, stop.Token);
+    clients.NoteRefusal(jobs.FollowingNode, envelope);
+    flights.Say(envelope.Success && envelope.Response is { Ok: true } ? $"{done} {job.Id}" : $"{verb} {job.Id}: {envelope.Response?.Error ?? envelope.Error}");
+    Redraw();
+});
 jobs.OnOpen = location => DashboardCommands.Open(location);
 // The Fleet page: Connect asks a node for a grant; the merged lists then steer it.
 void Connect(string where, string machine) => _ = Task.Run(async () =>

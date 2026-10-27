@@ -38,6 +38,9 @@ internal sealed record JobLine
     /// <summary>What the selection follows: its id, which another node's job may share, so with that node's key before it.</summary>
     public string Key => Node is null or { Here: true } ? Id : $"{Node.Key}/{Id}";
 
+    /// <summary>Whether it is running with its process tree frozen.</summary>
+    public bool Paused => Row.State == JobState.Running && Row.PausedAt is not null;
+
     /// <summary>Whether it may still be cancelled: running or queued.</summary>
     public bool Live => Row.State is JobState.Running or JobState.Queued;
 
@@ -61,9 +64,10 @@ internal sealed record JobLine
         Id = job.Id,
         Command = job.Command,
         For = job.Flight is { } flight ? job.Leg is { } leg ? $"{flight}/{leg}" : flight : job.OwnerName ?? (job.Owner is null ? "a terminal" : job.Owner),
-        State = job.State.ToString().ToLowerInvariant(),
+        State = job.State == JobState.Running && job.PausedAt is not null ? "paused" : job.State.ToString().ToLowerInvariant(),
         StateDetail = job.State switch
         {
+            JobState.Running when job.PausedAt is { } pausedAt => $"since {SessionLine.Ago(now - pausedAt)}",
             JobState.Succeeded => "exit 0",
             JobState.Failed => job.Error ?? (job.ExitCode is { } code ? $"exit {code}" : null),
             JobState.Cancelled => job.Error,
@@ -92,9 +96,11 @@ internal sealed record JobsScreen(IReadOnlyList<JobLine> Lines, string Source, D
     {
         get
         {
-            var running = Lines.Count(l => l.Row.State == JobState.Running);
+            var paused = Lines.Count(l => l.Paused);
+            var running = Lines.Count(l => l.Row.State == JobState.Running) - paused;
             var queued = Lines.Count(l => l.Row.State == JobState.Queued);
             var summary = $"{Lines.Count} {(Lines.Count == 1 ? "job" : "jobs")} · {running} running";
+            summary = paused > 0 ? $"{summary} · {paused} paused" : summary;
             return queued > 0 ? $"{summary} · {queued} queued" : summary;
         }
     }
@@ -226,6 +232,12 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     /// <summary>Cancels a job: the node's <c>cancel-job</c>.</summary>
     public Action<JobRow>? OnCancel { get; set; }
+
+    /// <summary>Freezes a running job: the node's <c>pause-job</c>.</summary>
+    public Action<JobRow>? OnPause { get; set; }
+
+    /// <summary>Thaws a paused job: the node's <c>resume-job</c>.</summary>
+    public Action<JobRow>? OnResume { get; set; }
 
     /// <summary>
     /// The job whose Cancel was pressed and waits on its confirm: a cancel ends a run that may have taken hours, so one press
@@ -431,6 +443,14 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
         else if (CanCommand && line.Live && OnCancel is { } cancel)
         {
+            if (line.Paused && OnResume is { } resume)
+            {
+                items.Add(new DropdownItem<string>("Resume", "resume") { OnChoose = () => resume(job) });
+            }
+            else if (!line.Paused && job.State == JobState.Running && OnPause is { } pause)
+            {
+                items.Add(new DropdownItem<string>("Pause", "pause") { OnChoose = () => pause(job) });
+            }
             items.Add(new DropdownItem<string>("Cancel…", "cancel") { OnChoose = () => { _confirmForce = null; _confirmCancel = line.Key; } });
             if (job.State == JobState.Running && OnForceCancel is not null)
             {
@@ -548,7 +568,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private Layout.Node Row(JobLine line, int index, bool marked, IReadOnlyList<ListColumn> columns)
     {
         var ended = !line.Live;
-        var color = ColorOf(line.Row.State);
+        var color = line.Paused ? Queued : ColorOf(line.Row.State);
         // Only the followed job's log is read, so only it can say it is stuck; the word, in amber, is what the person acts on.
         var stuck = line.Row.State == JobState.Running ? StuckOf(line) : null;
         var cells = new List<Layout.Node>
@@ -636,6 +656,14 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                 buttons.Add(Pill("Force cancel job", $"job:{job.Id}:force-yes", () => { _confirmForce = null; forceYes(job); }, Danger, DangerHover));
                 buttons.Add(Pill("Keep running", $"job:{job.Id}:force-no", () => _confirmForce = null));
                 return Panel(facts, line, buttons);
+            }
+            if (line.Paused && OnResume is { } resume)
+            {
+                buttons.Add(Pill("Resume", $"job:{job.Id}:resume", () => resume(job)));
+            }
+            else if (!line.Paused && job.State == JobState.Running && OnPause is { } pause)
+            {
+                buttons.Add(Pill("Pause", $"job:{job.Id}:pause", () => pause(job)));
             }
             // Cancel (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Pill("Cancel…", $"job:{job.Id}:cancel", () => { _confirmForce = null; _confirmCancel = line.Key; }, Danger, DangerHover));

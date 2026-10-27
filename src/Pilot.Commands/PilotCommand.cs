@@ -623,6 +623,12 @@ public static class PilotCommand
         var cancelJob = Action(new Command("cancel", "Stop a running job; its owner is told") { Arguments = { jobId }, Options = { cancelForce } },
             (p, client, ct) => Send(client, Verbs.CancelJob, Verbs.JobTarget(p.GetValue(jobId)!), p.GetValue(cancelForce) ? [Verbs.ForceArg] : [], who, ct));
         jobShow.Subcommands.Add(cancelJob);
+        var pauseJob = Action(new Command("pause", "Freeze a running job's processes; it keeps its slot and its timeout stops") { Arguments = { jobId } },
+            (p, client, ct) => Send(client, Verbs.PauseJob, Verbs.JobTarget(p.GetValue(jobId)!), [], who, ct));
+        jobShow.Subcommands.Add(pauseJob);
+        var resumeJob = Action(new Command("resume", "Let a paused job run on") { Arguments = { jobId } },
+            (p, client, ct) => Send(client, Verbs.ResumeJob, Verbs.JobTarget(p.GetValue(jobId)!), [], who, ct));
+        jobShow.Subcommands.Add(resumeJob);
 
         // say, note
         var session = Arg("session", "The session's row id");
@@ -939,6 +945,10 @@ public static class PilotCommand
     internal static string JobLine(JobRow job)
     {
         var state = job.State.ToString().ToLowerInvariant();
+        if (job.State == JobState.Running && job.PausedAt is { } pausedAt)
+        {
+            state = $"paused since {pausedAt.ToLocalTime():HH:mm}";
+        }
         var end = job.Error is { } error ? $": {error}" : "";
         var took = (job.EndedAt ?? DateTimeOffset.UtcNow) - job.StartedAt;
         var told = job.EndedAt is not null && job.Owner is not null && !job.Told ? ", owner not told" : "";

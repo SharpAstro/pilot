@@ -473,6 +473,20 @@ if (feed is not null && client is not null && clients is not null)
     }, $"{(force ? "force cancel" : "cancel")} {job.Id}");
     chrome.Jobs.OnCancel = CancelJob(force: false);
     chrome.Jobs.OnForceCancel = CancelJob(force: true);
+    chrome.Jobs.OnPause = job => SendJobVerb(job, Verbs.PauseJob, "pause");
+    chrome.Jobs.OnResume = job => SendJobVerb(job, Verbs.ResumeJob, "resume");
+    void SendJobVerb(JobRow job, string verb, string word) => tracker.Run(async () =>
+    {
+        if (clients.For(chrome.Jobs.FollowingNode) is not { } to)
+        {
+            Console.WriteLine($"pilot-gui: {word} {job.Id}: {FleetClients.WatchOnly(chrome.Jobs.FollowingNode)}");
+            return;
+        }
+        var result = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.JobTarget(job.Id), Args = [], Who = GuiSay.Who }, cts.Token);
+        clients.NoteRefusal(chrome.Jobs.FollowingNode, result);
+        Console.WriteLine($"pilot-gui: {word} {job.Id}: {(result.Success && result.Response is { Ok: true } ? "done" : result.Response?.Error ?? result.Error)}");
+        loop.RequestRedraw();
+    }, $"{word} {job.Id}");
     chrome.Jobs.OnOpen = location => OpenAway(location);
     chrome.Jobs.CopyText = text => SetClipboardText(text);
     // Rows on a node this user cannot steer are watch-only: their actions say "Connect to <node> to steer", and a Connect

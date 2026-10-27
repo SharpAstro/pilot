@@ -692,9 +692,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         foreach (var job in Jobs.Where(j => j.Flight == flight.Code).OrderBy(j => j.State switch { JobState.Running => 0, JobState.Queued => 1, _ => 2 })
             .ThenByDescending(j => j.StartedAt).Take(2))
         {
-            var color = job.State switch { JobState.Running => Flying, JobState.Queued => Held, JobState.Succeeded => Landed, _ => Failed };
+            var isPaused = job.State == JobState.Running && job.PausedAt is not null;
+            var color = isPaused ? Held : job.State switch { JobState.Running => Flying, JobState.Queued => Held, JobState.Succeeded => Landed, _ => Failed };
             var waiting = job.State == JobState.Queued && job.Step is { } step ? $" ({step})" : "";
-            legs.Add(Layout.Builder.Text($"job {job.Id} {job.State.ToString().ToLowerInvariant()}{waiting}: {job.Command}", 12f, color).RowH(20f));
+            legs.Add(Layout.Builder.Text($"job {job.Id} {(isPaused ? "paused" : job.State.ToString().ToLowerInvariant())}{waiting}: {job.Command}", 12f, color).RowH(20f));
         }
 
         var artifacts = new List<Layout.Node> { Label("artifacts").RowH(20f) };

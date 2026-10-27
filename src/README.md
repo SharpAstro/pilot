@@ -543,6 +543,8 @@ pilot run [--timeout 90m] -- <command…>        # a long run handed to the node
 pilot jobs                                     # the node's jobs, running first
 pilot job <id>                                 # one job: its output's path, and while it runs its pid and process tree
 pilot job <id> cancel [--force]                # stops it, running or waiting; its owner is told. --force kills the whole tree at once (see Jobs)
+pilot job <id> pause                           # freezes a running job's processes; it keeps its slot and its timeout stops
+pilot job <id> resume                          # lets a paused job run on
 pilot mcp                                      # these commands as an MCP server over stdio (see The MCP server)
 ```
 
@@ -752,7 +754,8 @@ The **Background tasks** page (Ctrl+6) is the node's jobs: running first, then t
 start, then the ended, last ended first. Each row has the job's command, whom it wakes (the flight and leg, a session,
 or a terminal), its state with what it is doing, waits on or came to, when it started and how long it ran; a job that
 ended without its owner being told says so. The selected job shows its folder, log and timeout beside the end of its
-output (its last 200 lines, read from the node every 2 s while selected), with **Cancel** while it runs or waits,
+output (its last 200 lines, read from the node every 2 s while selected), with **Pause** while it runs and **Resume**
+while it is paused (a paused job reads *paused*, since when, here, in `pilot jobs` and on its flight's page), **Cancel** while it runs or waits,
 **Its session** (the transcript of the session it wakes, from when it was handed over) and **Open log**; its
 right-click menu adds its folder and Copy entries.
 
