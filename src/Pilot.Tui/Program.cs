@@ -355,7 +355,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.Jobs => jobs.Tree(pages.Jobs),
             PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, now)),
             PilotPage.Settings => settings.Tree(now),
-            _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards)),
+            _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };
         var cardsScreen = pages.Cards;
         flights.Jobs = pages.JobRows;

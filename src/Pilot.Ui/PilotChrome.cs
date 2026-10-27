@@ -659,7 +659,8 @@ internal sealed class PilotChrome<TSurface>
         Render(screen, flights, cards, jobs, fleet, null, bounds);
 
     /// <param name="repos">The Repos page's screen; null shows it empty, as a snapshot file has no repos.</param>
-    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, ReposScreen? repos, RectF32 bounds)
+    /// <param name="machines">Each shown node's machine, for the Home page's blocks; null shows none, as a snapshot file from an older node has none.</param>
+    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, ReposScreen? repos, RectF32 bounds, IReadOnlyList<MachineLine>? machines = null)
     {
         _items.Clear();
         var tasks = JobsGlyph(jobs, screen.AsOf);
@@ -753,7 +754,7 @@ internal sealed class PilotChrome<TSurface>
                     break;
                 case PageKey:
                     Home.Render(new HomeScreen(flights ?? new FlightsScreen([], screen.Source, screen.AsOf), screen,
-                        jobs ?? new JobsScreen([], screen.Source, screen.AsOf), cards ?? CardsScreen.Empty), rect);
+                        jobs ?? new JobsScreen([], screen.Source, screen.AsOf), cards ?? CardsScreen.Empty, machines), rect);
                     break;
             }
         }

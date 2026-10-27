@@ -240,7 +240,7 @@ internal sealed class PlayFilter
 /// Every page's screen for the nodes a window shows: each node's rows merged, marked with their node when there is more
 /// than one, and filtered by the window's <see cref="NodeFilter"/>.
 /// </summary>
-internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights, JobsScreen Jobs, IReadOnlyList<JobRow> JobRows, CardsScreen Cards, ReposScreen? Repos = null)
+internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights, JobsScreen Jobs, IReadOnlyList<JobRow> JobRows, CardsScreen Cards, ReposScreen? Repos = null, IReadOnlyList<MachineLine>? Machines = null)
 {
     /// <summary>Whether a feed's <see cref="NodeFeed.Reach"/> says its node cannot be reached: down since a first failed try or a drop. The one test the panel's held lines and the flights' stale marks share.</summary>
     private static bool Unreachable((bool Connected, DateTimeOffset? DownSince) reach) => !reach.Connected && reach.DownSince is not null;
@@ -278,6 +278,9 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
             feeds[0].Feed.Cards().Watchtower,
             reach.Where(f => Unreachable(f.Reach)).Select(f => HeldNode.Of(f.Mark, f.Reach.DownSince!.Value, f.Feed.Cards(), now)));
         var repos = RepoLine.Order(shown.SelectMany(f => f.Feed.Repos(now, reposWanted).Lines.Select(l => l.Marked(Mark(f.Mark)))));
+        // A node's machine as it last sampled it; none from a node that sends no row (an older one), and none from one the window
+        // cannot reach, whose last figures may be long out of date.
+        var machines = reach.Where(f => !Unreachable(f.Reach)).Select(f => (f.Mark, Row: f.Feed.Machine)).Where(f => f.Row is not null).Select(f => new MachineLine(Mark(f.Mark), f.Row!)).ToList();
         var source = several ? $"{hereSessions.Source} · {filter.Choices.Count} nodes{(filter.All ? "" : $", showing {string.Join(", ", filter.Choices.Where(c => filter.Shows(c)).Select(c => c.Name))}")}" : hereSessions.Source;
         return new FleetPages(
             hereSessions with { Lines = sessions, Source = source },
@@ -285,7 +288,8 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
             new JobsScreen(jobs, several ? source : here.JobsPage(now).Source, now),
             [.. shown.SelectMany(f => f.Feed.Jobs())],
             cards,
-            new ReposScreen(repos, several ? source : hereSessions.Source, now));
+            new ReposScreen(repos, several ? source : hereSessions.Source, now),
+            machines);
     }
 }
 

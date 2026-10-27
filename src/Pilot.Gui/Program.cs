@@ -67,6 +67,7 @@ FlightsScreen? capturedFlights = null;
 CardsScreen? capturedCards = null;
 JobsScreen? capturedJobs = null;
 ReposScreen? capturedRepos = null;
+MachineRow? capturedMachine = null;
 if (options.Snapshot is { } snapshotFile)
 {
     var snapshotPath = Path.GetFullPath(snapshotFile);
@@ -100,6 +101,7 @@ else if (options.Capture is not null)
             {
                 capturedFlights = new FlightsScreen(FlightLine.Build(live.Flights, live.Sessions, now, live.Legs), screen.Source, now);
                 capturedCards = CardsScreen.From(live.Cards);
+                capturedMachine = live.Machine;
                 capturedJobs = new JobsScreen(JobLine.Build(live.Jobs, now), screen.Source, now);
                 if (await oneShot.GetRepoStatusAsync(CancellationToken.None) is { Success: true, Response: { } read })
                 {
@@ -123,13 +125,14 @@ if (options.Capture is { } capturePath)
 {
     capturedFlights ??= snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
     capturedCards ??= snapshot is null ? null : CardsScreen.From(snapshot.Cards);
+    capturedMachine ??= snapshot?.Machine;
     capturedJobs ??= snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
     if (capturedRepos is null && snapshot is not null && File.Exists(SessionsCapture.ReposSamplePath))
     {
         capturedRepos = SessionsCapture.ReposScreenFor(snapshot, SessionsCapture.LoadRepos(SessionsCapture.ReposSamplePath), screen.Source);
     }
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
-        jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos);
+        jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)]);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;
@@ -592,6 +595,7 @@ CardsScreen? cards = snapshot is null ? null : CardsScreen.From(snapshot.Cards);
 JobsScreen? jobs = snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
 FleetScreen? fleet = null;
 ReposScreen? repos = null;
+IReadOnlyList<MachineLine>? machines = null;
 FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
 // A card about a leg opens its worker's transcript from the moment the card was raised.
 chrome.LinkCardTranscripts(() => screen, () => flights ?? new FlightsScreen([], screen.Source, screen.AsOf), jobs: () => jobs ?? new JobsScreen([], screen.Source, screen.AsOf));
@@ -695,12 +699,13 @@ loop.OnRender = () =>
             chrome.Flights.Jobs = pages.JobRows;
             jobs = pages.Jobs;
             repos = pages.Repos;
+            machines = pages.Machines;
             fleet = made.Item2;
         }
     }
 
     view.Ui.FrameId++;
-    chrome.Render(screen, flights, cards, jobs, fleet, repos, new RectF32(0, 0, width, height));
+    chrome.Render(screen, flights, cards, jobs, fleet, repos, new RectF32(0, 0, width, height), machines);
     // The hover text the router says is due, last, over everything.
     chrome.Tooltips.Render(router.Tooltip, new RectF32(0, 0, width, height));
     router.AfterPaint();

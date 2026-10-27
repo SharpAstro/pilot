@@ -50,7 +50,7 @@ internal static class SessionsCapture
     /// <param name="jobs">The Background tasks page's screen, drawn when <paramref name="page"/> is Jobs.</param>
     /// <param name="openFlight">The code of the flight whose page the Flights page shows in place of its table.</param>
     public static SessionsView<RgbaImage> Render(RgbaImageRenderer renderer, SessionsScreen screen, float dpiScale = 1f, bool canSay = false,
-        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null, bool inPlay = false)
+        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null, bool inPlay = false, IReadOnlyList<MachineLine>? machines = null)
     {
         var view = new SessionsView<RgbaImage>(renderer) { CanSay = canSay };
         var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = FontPath, DpiScale = dpiScale };
@@ -72,16 +72,17 @@ internal static class SessionsCapture
         {
             chrome.Flights.OpenDetail(openFlight);
         }
-        chrome.Render(screen, flights, cards, jobs, null, repos, new RectF32(0, 0, renderer.Width, renderer.Height));
+        chrome.Render(screen, flights, cards, jobs, null, repos, new RectF32(0, 0, renderer.Width, renderer.Height), machines);
         return view;
     }
 
     /// <summary>Renders one frame to <paramref name="pngPath"/> and its rows to <c>&lt;pngPath&gt;.rows.txt</c>; returns the dump's path.</summary>
     public static string Write(SessionsScreen screen, string pngPath, int width, int height, bool canSay = false,
-        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null)
+        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null,
+        IReadOnlyList<MachineLine>? machines = null)
     {
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
-        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight, repos: repos);
+        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight, repos: repos, machines: machines);
         if (Path.GetDirectoryName(Path.GetFullPath(pngPath)) is { } folder)
         {
             Directory.CreateDirectory(folder);
@@ -99,7 +100,7 @@ internal static class SessionsCapture
             : page == PilotPage.Jobs && jobs is not null
                 ? string.Concat(jobs.Lines.Select(l => l.ToDumpLine() + "\n"))
                 : page == PilotPage.Home
-                    ? new HomeScreen(flights ?? new FlightsScreen([], screen.Source, screen.AsOf), screen, jobs ?? new JobsScreen([], screen.Source, screen.AsOf), cards ?? CardsScreen.Empty).ToDump() + "\n"
+                    ? new HomeScreen(flights ?? new FlightsScreen([], screen.Source, screen.AsOf), screen, jobs ?? new JobsScreen([], screen.Source, screen.AsOf), cards ?? CardsScreen.Empty, machines).ToDump() + "\n"
                     : RowsText(screen), new UTF8Encoding(false));
         return rowsPath;
     }

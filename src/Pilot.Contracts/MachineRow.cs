@@ -38,25 +38,36 @@ public sealed record MachineRow
     private readonly MachineProcess[]? _processes;
 
     /// <summary>
+    /// The row's figures as every client shows them, one gauge each: CPU, then the GPU when the node has one, then memory. The
+    /// line (<see cref="Line"/>) and Home's bars both read these, so the two cannot disagree.
+    /// </summary>
+    public MachineGauge[] Gauges()
+    {
+        var gauges = new List<MachineGauge> { new("cpu", Fraction(CpuPercent), $"{CpuPercent:0}%") };
+        if (Gpu is { } gpu)
+        {
+            gauges.Add(new("gpu", Fraction(gpu.Percent), gpu.MemoryUsed is { } used && gpu.MemoryTotal is { } total
+                ? $"{gpu.Percent:0}% ({Gigabytes(used)}/{Gigabytes(total)} GB)"
+                : $"{gpu.Percent:0}%"));
+        }
+        gauges.Add(new("mem", MemoryTotal > 0 ? Fraction(MemoryUsed * 100d / MemoryTotal) : 0, $"{Gigabytes(MemoryUsed)}/{Gigabytes(MemoryTotal)} GB"));
+        return [.. gauges];
+    }
+
+    /// <summary>
     /// The row in a line, as every client shows it: <c>cpu 34% · gpu 81% (6.1/12 GB) · mem 21/32 GB</c>. The GPU part is
     /// left out when the node has no GPU, and its memory when the platform does not say it; GB go to one decimal only
     /// where they are not whole.
     /// </summary>
-    public string Line()
-    {
-        var parts = new List<string> { $"cpu {CpuPercent:0}%" };
-        if (Gpu is { } gpu)
-        {
-            parts.Add(gpu.MemoryUsed is { } used && gpu.MemoryTotal is { } total
-                ? $"gpu {gpu.Percent:0}% ({Gigabytes(used)}/{Gigabytes(total)} GB)"
-                : $"gpu {gpu.Percent:0}%");
-        }
-        parts.Add($"mem {Gigabytes(MemoryUsed)}/{Gigabytes(MemoryTotal)} GB");
-        return string.Join(" · ", parts);
-    }
+    public string Line() => string.Join(" · ", Gauges().Select(g => $"{g.Label} {g.Figure}"));
+
+    private static double Fraction(double percent) => Math.Clamp(percent / 100d, 0d, 1d);
 
     private static string Gigabytes(long bytes) => (bytes / (double)(1L << 30)).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
 }
+
+/// <summary>One figure of a <see cref="MachineRow"/>: its label (<c>cpu</c>, <c>gpu</c>, <c>mem</c>), how full it is (0 to 1, for a bar) and the number as written.</summary>
+public sealed record MachineGauge(string Label, double Fraction, string Figure);
 
 /// <summary>The GPU's share in use, and its dedicated memory where it is told.</summary>
 public sealed record MachineGpu
