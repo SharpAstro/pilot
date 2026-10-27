@@ -22,37 +22,10 @@ internal static class PullRequestsMarkdown
     }
 
     /// <summary>The counts above the list: <c>7 open · 3 ready · 2 checks running · 1 conflicts</c>, a state with none left out.</summary>
-    internal static string Summary(PullRequestsRow row)
-    {
-        var parts = new List<string> { $"{row.PullRequests.Length} open" };
-        void Count(PullRequestKind kind, string words)
-        {
-            if (row.PullRequests.Count(p => p.Kind == kind) is > 0 and var n)
-            {
-                parts.Add($"{n} {words}");
-            }
-        }
-        Count(PullRequestKind.Ready, "ready");
-        Count(PullRequestKind.ChecksRunning, "checks running");
-        Count(PullRequestKind.ChecksFailed, "checks failed");
-        Count(PullRequestKind.Conflicts, "conflicts");
-        Count(PullRequestKind.ChangesRequested, "changes requested");
-        return string.Join(" · ", parts);
-    }
+    internal static string Summary(PullRequestsRow row) => row.Summary();
 
     /// <summary>How long ago, in the unit that reads shortest: <c>just now</c>, <c>5m ago</c>, <c>3h ago</c>, <c>2d ago</c>.</summary>
-    internal static string Age(DateTimeOffset? then, DateTimeOffset now)
-    {
-        if (then is not { } at)
-        {
-            return "";
-        }
-        var span = now - at;
-        return span.TotalMinutes < 1 ? "just now"
-            : span.TotalHours < 1 ? $"{(int)span.TotalMinutes}m ago"
-            : span.TotalDays < 1 ? $"{(int)span.TotalHours}h ago"
-            : $"{(int)span.TotalDays}d ago";
-    }
+    internal static string Age(DateTimeOffset? then, DateTimeOffset now) => PullRequestsRow.Age(then, now);
 
     private static string Review(PullRequestRow pr) => pr.Review is { } review ? $"review {review}" : "";
 

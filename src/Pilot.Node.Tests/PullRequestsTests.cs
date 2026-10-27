@@ -319,6 +319,46 @@ public sealed class PullRequestsTests : IDisposable
         state.PullRequests().ShouldBe(row);
         // And the same row is the stream's snapshot.
         state.Snapshot().PullRequests.ShouldBe(row);
+        // It says who gh reads as, which the Pull requests page's Mine pill goes by.
+        row.Viewer.ShouldBe("controller");
+    }
+
+    [Fact]
+    public async Task TheRowSaysNoViewerWhenGhCannotSayWhoItReadsAsAndMineIsThenWhatIsNoFlights()
+    {
+        Clone("SharpAstro", "pilot");
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var github = new FakeGitHub { Login = null };
+        github.OrgPrs["SharpAstro"] = [Row("SharpAstro/pilot", 7, PullRequestKind.Ready) with { Author = "sebgod" }];
+
+        var row = (await Watch(state, github).RefreshAsync(Ct))!;
+
+        row.Viewer.ShouldBeNull();
+        var own = row.PullRequests[0];
+        row.IsMine(own).ShouldBeTrue();
+        row.IsMine(own with { Flight = "PIL1" }).ShouldBeFalse();
+        // With one, it is the author's login whatever the case, flight or none.
+        (row with { Viewer = "SebGod" }).IsMine(own with { Flight = "PIL1" }).ShouldBeTrue();
+        (row with { Viewer = "ada" }).IsMine(own).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TheCountsAndTheAgeAreReadOneWayForEveryClient()
+    {
+        var row = new PullRequestsRow
+        {
+            ReadAt = Noon,
+            PullRequests = [Row("a/b", 1, PullRequestKind.Ready), Row("a/b", 2, PullRequestKind.Ready), Row("a/b", 3, PullRequestKind.ChecksRunning), Row("a/b", 4, PullRequestKind.Conflicts), Row("a/b", 5, PullRequestKind.Draft)],
+        };
+
+        row.Summary().ShouldBe("5 open · 2 ready · 1 checks running · 1 conflicts");
+        PullRequestsRow.Age(Noon - TimeSpan.FromSeconds(20), Noon).ShouldBe("just now");
+        PullRequestsRow.Age(Noon - TimeSpan.FromMinutes(7), Noon).ShouldBe("7m ago");
+        PullRequestsRow.Age(Noon - TimeSpan.FromHours(3.5), Noon).ShouldBe("3h ago");
+        PullRequestsRow.Age(Noon - TimeSpan.FromDays(2), Noon).ShouldBe("2d ago");
+        PullRequestsRow.Age(null, Noon).ShouldBe("");
+        // The newest read's viewer, whichever node knew it.
+        PullRequestsRow.Merge([row with { Viewer = "sebgod", ReadAt = Noon - TimeSpan.FromMinutes(2) }, row with { Viewer = null }])!.Viewer.ShouldBe("sebgod");
     }
 
     [Fact]

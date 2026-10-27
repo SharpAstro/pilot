@@ -14,6 +14,7 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
 {
     private readonly object _gate = new();
     private Task<PullRequestsRow?>? _running;
+    private string? _viewer;
 
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(60);
 
@@ -84,6 +85,7 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
                 PullRequests = [.. prs.Select(p => p with { Flight = FlightOf(p, catalog, flights) })],
                 Errors = [.. errors],
                 ReadAt = time.GetUtcNow(),
+                Viewer = await ViewerAsync(),
             };
             state.PutPullRequests(row);
             return row;
@@ -94,6 +96,19 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
             {
                 _running = null;
             }
+        }
+    }
+
+    // The login gh reads as, asked until it answers and kept: it does not change while the node runs.
+    private async Task<string?> ViewerAsync()
+    {
+        try
+        {
+            return _viewer ??= await github.LoginAsync(CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is FlightException or HttpRequestException or IOException or System.ComponentModel.Win32Exception)
+        {
+            return null;
         }
     }
 

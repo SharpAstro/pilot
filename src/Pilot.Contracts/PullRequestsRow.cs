@@ -217,6 +217,45 @@ public sealed record PullRequestsRow
     /// <summary>When the node read it: how stale it is.</summary>
     public required DateTimeOffset ReadAt { get; init; }
 
+    /// <summary>The GitHub login the node reads as (gh's): whose PRs are <see cref="PullRequestRow.Author"/>'s own, for Mine. Null when gh did not say.</summary>
+    public string? Viewer { get; init; }
+
+    /// <summary>The counts above the list: <c>7 open · 3 ready · 2 checks running · 1 conflicts</c>, a state with none left out.</summary>
+    public string Summary()
+    {
+        var parts = new List<string> { $"{PullRequests.Length} open" };
+        void Count(PullRequestKind kind, string words)
+        {
+            if (PullRequests.Count(p => p.Kind == kind) is > 0 and var n)
+            {
+                parts.Add($"{n} {words}");
+            }
+        }
+        Count(PullRequestKind.Ready, "ready");
+        Count(PullRequestKind.ChecksRunning, "checks running");
+        Count(PullRequestKind.ChecksFailed, "checks failed");
+        Count(PullRequestKind.Conflicts, "conflicts");
+        Count(PullRequestKind.ChangesRequested, "changes requested");
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>How long ago, in the unit that reads shortest: <c>just now</c>, <c>5m ago</c>, <c>3h ago</c>, <c>2d ago</c>; empty for no time.</summary>
+    public static string Age(DateTimeOffset? then, DateTimeOffset now)
+    {
+        if (then is not { } at)
+        {
+            return "";
+        }
+        var span = now - at;
+        return span.TotalMinutes < 1 ? "just now"
+            : span.TotalHours < 1 ? $"{(int)span.TotalMinutes}m ago"
+            : span.TotalDays < 1 ? $"{(int)span.TotalHours}h ago"
+            : $"{(int)span.TotalDays}d ago";
+    }
+
+    /// <summary>Whether <paramref name="pr"/> is the person's own: authored by <see cref="Viewer"/>, or, when the node could not say who that is, not a flight's.</summary>
+    public bool IsMine(PullRequestRow pr) => Viewer is { Length: > 0 } viewer ? string.Equals(pr.Author, viewer, StringComparison.OrdinalIgnoreCase) : pr.Flight is null;
+
     /// <summary>
     /// The PRs grouped by repo (or only those that need the person, with <paramref name="needsMeOnly"/>), the repo with the PR that
     /// most needs the person first (ties: the most recently updated, then by name), each repo's PRs by the same rule, so the order
@@ -265,6 +304,7 @@ public sealed record PullRequestsRow
             PullRequests = [.. prs.Values],
             Errors = [.. read.SelectMany(r => r.Errors).Distinct()],
             ReadAt = read[^1].ReadAt,
+            Viewer = read.Select(r => r.Viewer).FirstOrDefault(v => v is not null),
         };
     }
 }
