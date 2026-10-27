@@ -388,7 +388,7 @@ internal sealed partial class FlightsView<TSurface>
         if (detail.Legs.LastOrDefault() is { } capped && capped.Row.ReviewGoArounds >= ReviewRedoCap)
         {
             yield return Prose($"{capped.Name} has been redone {capped.Row.ReviewGoArounds} times on the review's findings, so the next round is yours: "
-                + $"Go around {capped.Name} on the review's card once more, or Ready anyway if the findings should not hold it up.", 12f, Held);
+                + $"Redo leg {capped.Name} on the review's card once more, or Ready anyway if the findings should not hold it up.", 12f, Held);
         }
     }
 

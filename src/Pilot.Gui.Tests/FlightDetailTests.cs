@@ -107,7 +107,7 @@ public sealed class FlightDetailTests
         said.ShouldContain("JobsView.cs:680");
         said.ShouldContain("starts with 2 GB free");
         said.ShouldContain("render has been redone 3 times");
-        said.ShouldContain("Go around render on the review's card once more, or Ready anyway");
+        said.ShouldContain("Redo leg render on the review's card once more, or Ready anyway");
         // An earlier capped leg with a later one planned after it is not the person's round: the node still lets the watchtower go around.
         var planned = legs.Append(legs[0] with { Name = "polish", Order = 3, State = LegState.Planned, ReviewGoArounds = 0 }).ToArray();
         Said(flight, planned).ShouldNotContain("the next round is yours");
