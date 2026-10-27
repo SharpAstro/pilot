@@ -74,13 +74,13 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     /// <summary>Opens a window for a person (the trust prompt); false when it did not open. A test replaces it.</summary>
     public Func<string, string, bool> OpenWindow { get; init; } = OpenConsoleWindow;
 
-    /// <summary>The Shortcut token in force (the environment's, else the saved one); the node gives the live setting, a test replaces it.</summary>
     /// <summary>What starts the node at logon, as <see cref="Autostart.Entry"/> says; a test's seam.</summary>
     public Func<string?> AutostartEntry { get; init; } = Autostart.Entry;
 
     /// <summary>The systemd unit's text, null when there is none (always, off Linux); a test's seam.</summary>
     public Func<string?> UnitText { get; init; } = Autostart.UnitText;
 
+    /// <summary>The Shortcut token in force (the environment's, else the saved one); the node gives the live setting, a test replaces it.</summary>
     public Func<string?> ShortcutToken { get; init; } = () => Flights.ShortcutTracker.TokenFrom(NodeSettings.Read(options.SettingsFile).ShortcutToken);
 
     /// <summary>What reading the check <paramref name="key"/> runs or asks, for a page's "checking…" line; null when it only reads files.</summary>

@@ -48,10 +48,18 @@ cleanup() {
     [ -f "$BACKUP" ] && mv "$BACKUP" "$UNIT_FILE"
     systemctl --user daemon-reload >/dev/null 2>&1
     # The job's scope outlives the unit on purpose; this run's own is stopped here, not left for the next.
-    [ -n "$JOBPID" ] && kill "$JOBPID" >/dev/null 2>&1
-    systemctl --user list-units --plain --no-legend 'run-*.scope' 2>/dev/null | awk '{print $1}' | while read -r scope; do
-        systemctl --user show -p ControlGroup --value "$scope" 2>/dev/null | grep -q "$WORK" && systemctl --user stop "$scope" >/dev/null 2>&1
+    # Jobs run in pilot-job-<id>-<hash>.scope; this run's are the ones whose processes mention the scratch folder.
+    systemctl --user list-units --plain --no-legend 'pilot-job-*.scope' 2>/dev/null | awk '{print $1}' | while read -r scope; do
+        cg=$(systemctl --user show -p ControlGroup --value "$scope" 2>/dev/null)
+        [ -n "$cg" ] || continue
+        for p in $(cat "/sys/fs/cgroup$cg/cgroup.procs" 2>/dev/null); do
+            if tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -qF "$WORK"; then
+                systemctl --user stop "$scope" >/dev/null 2>&1
+                break
+            fi
+        done
     done
+    [ -n "$JOBPID" ] && kill "$JOBPID" >/dev/null 2>&1
     rm -rf "$WORK"
     [ "$FAILED" = 0 ] && [ "$code" = 0 ] && say "PASS" || say "exit $code"
     exit "$code"

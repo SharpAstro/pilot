@@ -71,14 +71,13 @@ public sealed class DetachedShellScopeTests
         {
             Assert.Skip("needs Linux with a systemd user bus that answers `systemctl --user`");
         }
-        var before = Environment.GetEnvironmentVariable("INVOCATION_ID");
         var dir = Path.Combine(Path.GetTempPath(), $"pilot-scope-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
         var log = Path.Combine(dir, "j1.log");
         var exit = log + ".exit";
         try
         {
-            Environment.SetEnvironmentVariable("INVOCATION_ID", "test");
+            NodeRestarter.UnitMainProcessOverride = true;
             using var shell = DetachedShell.For("j1", "sleep 30", dir, log, exit);
             using var process = shell.Start();
             try
@@ -99,9 +98,30 @@ public sealed class DetachedShellScopeTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("INVOCATION_ID", before);
+            NodeRestarter.UnitMainProcessOverride = null;
             Directory.Delete(dir, true);
         }
+    }
+
+    private const string ServiceCgroup = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/pilot-node.service\n";
+
+    [Fact]
+    public void TheMainProcessOfAServiceIsTheUnit()
+    {
+        NodeRestarter.IsUnitMainProcess("abc", ServiceCgroup, null, 42).ShouldBeTrue();
+        NodeRestarter.IsUnitMainProcess("abc", ServiceCgroup, "42", 42).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AnInheritedInvocationIdIsNotTheUnit()
+    {
+        // A node or test started from a job: the id is inherited, but the job's scope is its cgroup.
+        var scope = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/pilot-job-j1-ABC.scope\n";
+        NodeRestarter.IsUnitMainProcess("abc", scope, null, 42).ShouldBeFalse();
+        // A child of the node inside the unit's own cgroup: the exec pid is the node's, not its own.
+        NodeRestarter.IsUnitMainProcess("abc", ServiceCgroup, "41", 42).ShouldBeFalse();
+        NodeRestarter.IsUnitMainProcess(null, ServiceCgroup, null, 42).ShouldBeFalse();
+        NodeRestarter.IsUnitMainProcess("abc", null, null, 42).ShouldBeFalse();
     }
 
     private static bool UserBusAnswers()

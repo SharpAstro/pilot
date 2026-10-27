@@ -146,11 +146,11 @@ public sealed class DetachedShell : IDisposable
     internal static string ScopeUnit(string jobId, string logPath) =>
         string.Concat(JobName(jobId, logPath).Select(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' or ':' ? c : '_'));
 
-    /// <summary>The node runs under systemd (<c>INVOCATION_ID</c> is set) and <c>systemd-run</c> is installed.</summary>
+    /// <summary>The node is a systemd unit's main process (<see cref="NodeRestarter.IsUnitMainProcess()"/>) and <c>systemd-run</c> is installed.</summary>
     internal static bool UnderSystemd(out string? systemdRun)
     {
         systemdRun = null;
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("INVOCATION_ID")))
+        if (!NodeRestarter.IsUnitMainProcess())
         {
             return false;
         }

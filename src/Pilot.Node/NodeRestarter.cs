@@ -22,12 +22,58 @@ public sealed class NodeRestarter(IHostApplicationLifetime lifetime, ILogger<Nod
     public Func<string, bool> RestartedBySystemd { get; init; } = UnderSystemdUnit;
 
     /// <summary>
-    /// The node runs as <paramref name="nodePath"/> under a systemd unit (<c>INVOCATION_ID</c> is set, and it is
-    /// pilot-node): the unit restarts it when it exits, whatever the exit code but those in
+    /// The node runs as <paramref name="nodePath"/> as the main process of a systemd unit (see <see cref="IsUnitMainProcess"/>,
+    /// and it is pilot-node): the unit restarts it when it exits, whatever the exit code but those in
     /// <c>RestartPreventExitStatus</c>, so a clean stop is a restart and a successor would only fight the unit for the socket.
     /// </summary>
-    public static bool UnderSystemdUnit(string nodePath) =>
-        IsNode(nodePath) && !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("INVOCATION_ID"));
+    public static bool UnderSystemdUnit(string nodePath) => IsNode(nodePath) && IsUnitMainProcess();
+
+    /// <summary>A test's answer to <see cref="IsUnitMainProcess()"/>, in place of the real process's; null reads the process.</summary>
+    internal static bool? UnitMainProcessOverride { get; set; }
+
+    /// <summary>
+    /// This process is the main process of a systemd service. <c>INVOCATION_ID</c> alone is not enough: every child inherits it,
+    /// so a node started from a job of a systemd node sees it, and would stop on a restart with nothing to bring it back.
+    /// </summary>
+    internal static bool IsUnitMainProcess() => UnitMainProcessOverride ?? IsUnitMainProcess(
+        Environment.GetEnvironmentVariable("INVOCATION_ID"), ReadSelfCgroup(),
+        Environment.GetEnvironmentVariable("SYSTEMD_EXEC_PID"), Environment.ProcessId);
+
+    /// <summary>
+    /// The pure rule: an invocation id; a cgroup whose last segment is a <c>.service</c> (a job's scope or a login session is not);
+    /// and, where systemd gives <c>SYSTEMD_EXEC_PID</c>, that it is this process's pid, not an ancestor's inherited copy.
+    /// </summary>
+    internal static bool IsUnitMainProcess(string? invocationId, string? cgroup, string? execPid, int pid)
+    {
+        if (string.IsNullOrEmpty(invocationId) || string.IsNullOrWhiteSpace(cgroup))
+        {
+            return false;
+        }
+        var lines = cgroup.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var line = lines.FirstOrDefault(l => l.StartsWith("0::", StringComparison.Ordinal)) ?? lines[^1];
+        var path = line[(line.LastIndexOf(':') + 1)..].TrimEnd('/');
+        if (!path[(path.LastIndexOf('/') + 1)..].EndsWith(".service", StringComparison.Ordinal))
+        {
+            return false;
+        }
+        return string.IsNullOrEmpty(execPid) || execPid == pid.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static string? ReadSelfCgroup()
+    {
+        try
+        {
+            return OperatingSystem.IsLinux() ? File.ReadAllText("/proc/self/cgroup") : null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>
     /// Restarts the node for <paramref name="why"/> now. Returns what became of it: null when it is stopping for its
