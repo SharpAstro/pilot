@@ -555,7 +555,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 if (row.PausedAt is not null)
                 {
                     // Thawed first, by pid through the same table: nothing is left frozen, and a frozen tree is never killed unseen.
-                    Signal(id, process, stop: false);
+                    SignalTree(id, process, stop: false);
                 }
                 DetachedShell.TerminateJob(id, row.LogPath);
             }
@@ -564,7 +564,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     }
 
     /// <summary>Freezes or thaws the job's tree: every process read under it, and on Linux its process group; returns how many it reached.</summary>
-    private int Signal(string id, JobProcess process, bool stop)
+    private int SignalTree(string id, JobProcess process, bool stop)
     {
         var reached = 0;
         foreach (var info in Tree.Read(id, process).Tree)
@@ -610,7 +610,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 return state.Complete(command, pause ? $"job {id} is already paused" : $"job {id} is not paused");
             }
             var now = time.GetUtcNow();
-            if (Signal(id, process, stop: pause) == 0)
+            if (SignalTree(id, process, stop: pause) == 0)
             {
                 return state.Complete(command, pause ? $"job {id}'s process could not be paused" : $"job {id}'s process could not be resumed");
             }

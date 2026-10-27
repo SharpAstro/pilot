@@ -254,10 +254,9 @@ public static class Verbs
     /// </summary>
     public const string CancelJob = "cancel-job";
 
-<<<<<<< HEAD
     /// <summary>The arg of <see cref="CancelJob"/> that kills the whole process tree, descendants that outlived the wrapper too.</summary>
     public const string ForceArg = "force";
-=======
+
     /// <summary>
     /// <c>pause-job job/&lt;id&gt;</c>: freezes a running job's whole process tree. The job stays <see cref="JobState.Running"/>
     /// (it keeps its slot), its row says <see cref="JobRow.PausedAt"/>, and its timeout stops counting.
@@ -266,7 +265,6 @@ public static class Verbs
 
     /// <summary><c>resume-job job/&lt;id&gt;</c>: thaws a paused job's process tree; the time it was paused is added to <see cref="JobRow.PausedFor"/>.</summary>
     public const string ResumeJob = "resume-job";
->>>>>>> 2a6d917 (v2: pause-job and resume-job freeze and thaw a running job's whole process tree; the row records PausedAt and PausedFor, the timeout stops while paused, and cancel, timeout and node stop thaw the tree before killing it (#316))
 
     /// <summary>What a job target starts with: <c>job/&lt;id&gt;</c>.</summary>
     public const string JobTargetPrefix = "job/";
