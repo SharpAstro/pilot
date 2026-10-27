@@ -81,6 +81,9 @@ public sealed record CommandResult
     /// <summary>What the command made, when it made something with an id of its own: a <c>run</c>'s job (<c>j3</c>).</summary>
     public string? Made { get; init; }
 
+    /// <summary>The setting's row as it stands after a <c>set node</c> that saved it, so a page shows it from the answer; null for any other command or a refusal.</summary>
+    public SettingRow? Setting { get; init; }
+
     /// <summary>Whether the node ran it as an assistant's your-only command because the autopilot is on (<see cref="CommandRequest.Autopilot"/>).</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Autopilot { get; init; }
@@ -128,6 +131,12 @@ public static class Verbs
     /// that nuget.org does not serve, or never will), and flies when nothing else holds it.
     /// </summary>
     public const string FlyAnyway = "fly-anyway";
+
+    /// <summary>
+    /// The arg a <c>create-flight</c> may carry after its item: create it although the item carries another node's
+    /// <c>pilot node:</c> label. It is no part of the title.
+    /// </summary>
+    public const string AnywayFlag = "--anyway";
 
     /// <summary>
     /// <c>land flight/&lt;code&gt;</c>: its work is in. Its worktree is removed when it is clean (never when it holds
@@ -294,7 +303,8 @@ public static class Verbs
 
     /// <summary>
     /// <c>setup node &lt;check&gt;</c>: makes the fix a setup check offers (<c>autostart</c>, <c>hooks</c>, <c>lan</c>,
-    /// <c>firewall</c>, <c>trust</c>); <c>setup node no-autostart</c> takes the logon entry out. This machine only.
+    /// <c>firewall</c>, <c>defender</c>, <c>trust</c>); <c>setup node defender --processes</c> excludes the build processes as well
+    /// as the folders from Windows Defender; <c>setup node no-autostart</c> takes the logon entry out. This machine only.
     /// </summary>
     public const string Setup = "setup";
 

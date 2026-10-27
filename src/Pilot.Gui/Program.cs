@@ -91,7 +91,8 @@ else if (options.Capture is not null)
     {
         var rows = await oneShot.GetSessionsAsync(CancellationToken.None);
         var now = DateTimeOffset.UtcNow;
-        screen = new SessionsScreen(SessionLine.Build(rows, now), $"live from the node on {nodeWhere}", now);
+        var code = (await oneShot.GetNodeAsync(CancellationToken.None)).MachinePrefix is { Length: > 0 } prefix ? prefix : null;
+        screen = new SessionsScreen([.. SessionLine.Build(rows, now).Select(l => l with { NodeCode = code })], $"live from the node on {nodeWhere}", now);
         // The flights and the cards are on the stream's snapshot, which a capture reads once.
         await using (var events = await oneShot.OpenEventsAsync(since: null, stream: null, CancellationToken.None))
         {
@@ -270,9 +271,20 @@ if (feed is not null && client is not null && clients is not null)
         return envelope is { Success: true, Response: { } page } ? page : throw new InvalidOperationException(envelope.Error);
     };
     view.Transcript.Changed = loop.RequestRedraw;
+    // The attachments the pages show: each copy fetched from the node its flight or session is on (reading needs no grant
+    // on this machine, and a remote node's takes the one saved for it), decoded once, drawn as a texture.
+    var attachmentPictures = new AttachmentPictures(async (copy, ct) =>
+    {
+        var (status, _, bytes) = await clients.For(copy.Node, command: false)!.GetAttachmentAsync(copy.Id, ct);
+        return status == System.Net.HttpStatusCode.OK ? bytes : null;
+    }, loop.RequestRedraw);
+    chrome.Gallery.Lookup = attachmentPictures.Lookup;
+    chrome.Gallery.Failed = attachmentPictures.Failed;
+    chrome.Gallery.Draw = attachmentPictures.PaintOn(renderer);
     // The session menu's folder and copy entries.
     view.OnOpen = folder => OpenAway(folder);
     chrome.Flights.CopyText = text => SetClipboardText(text);
+    chrome.Flights.Changed = loop.RequestRedraw;
     // The ? card: this window and the node it talks to, asked again each time it opens.
     NodeInfo? nodeInfo = null;
     chrome.About.Facts = () => AboutFacts.For("pilot-gui", nodeInfo, nodeWhere);
@@ -299,6 +311,7 @@ if (feed is not null && client is not null && clients is not null)
         chrome.Flights.Wizard.Open(repo);
     };
     view.CopyText = text => SetClipboardText(text);
+    view.Changed = loop.RequestRedraw;
     // The Sessions page's archive buttons: a verb on the node, its answer under the say bar.
     view.OnAction = action => tracker.Run(async () =>
     {
@@ -355,6 +368,8 @@ if (feed is not null && client is not null && clients is not null)
     // The watchtower, from its panel: its Remote Control link one click away, and a shortcut to the Chat page.
     chrome.Cards.CanTell = true;
     chrome.Cards.OnOpen = url => OpenAway(url);
+    chrome.Cards.CopyText = text => SetClipboardText(text);
+    chrome.Cards.Changed = loop.RequestRedraw;
     // The Chat page reads the node's chat feed while it is open; what is typed in its box and a choice button go through the
     // node's tell, a refusal said in the chat itself.
     chrome.Chat.Load = async (after, ct) => (await client.GetChatAsync(after, ct)) is { Success: true, Response: { } chat }
@@ -364,6 +379,12 @@ if (feed is not null && client is not null && clients is not null)
     {
         var refused = await ChatCommands.TellAsync(client, text, GuiSay.Who, cts.Token);
         Console.WriteLine($"pilot-gui: tell watchtower: {refused ?? "told"}");
+        return refused;
+    };
+    chrome.Chat.OnRestart = async () =>
+    {
+        var refused = await ChatCommands.RestartWatchtowerAsync(client, GuiSay.Who, cts.Token);
+        Console.WriteLine($"pilot-gui: restart watchtower: {refused ?? "restarted"}");
         return refused;
     };
     chrome.Chat.Track = (run, what) => tracker.Run(run, what);
@@ -412,6 +433,7 @@ if (feed is not null && client is not null && clients is not null)
         return outcomes;
     };
     chrome.Repos.Changed = loop.RequestRedraw;
+    chrome.Repos.CopyText = text => SetClipboardText(text);
     chrome.Repos.OnNewFlight = line =>
     {
         chrome.Show(PilotPage.Flights);
@@ -516,6 +538,12 @@ if (feed is not null && client is not null && clients is not null)
         chrome.Settings.Load = async ct => (await client.GetSettingsAsync(ct)) is { Success: true, Response: { } page }
             ? page
             : throw new InvalidOperationException("the node did not send its settings");
+        chrome.Settings.LoadChecks = async (refresh, ct) => (await client.GetSetupChecksAsync(ct, refresh)) is { Success: true, Response: { } checks }
+            ? checks
+            : throw new InvalidOperationException("the node did not send its setup checks");
+        chrome.Settings.LoadRepos = async ct => (await client.GetReposAsync(ct)) is { Success: true, Response: { } repos }
+            ? repos
+            : throw new InvalidOperationException("the node did not list its repos");
         chrome.Settings.Send = (verb, args, ct) => SettingsCommands.SendAsync(client, verb, args, GuiSay.Who, ct);
         chrome.Settings.LoadGrants = async ct => (await client.GrantsAsync(ct)) is { Success: true, Response: { } given }
             ? given

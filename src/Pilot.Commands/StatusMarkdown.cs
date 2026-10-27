@@ -12,7 +12,7 @@ internal static class StatusMarkdown
 {
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
 
-    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool? autopilot = null, bool all = false)
+    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyDictionary<string, string>? copies = null)
     {
         var text = new StringBuilder();
         text.AppendLine("# pilot status").AppendLine();
@@ -99,9 +99,12 @@ internal static class StatusMarkdown
             {
                 foreach (var artifact in leg.Artifacts)
                 {
-                    text.AppendLine(IsImage(artifact.Location)
-                        ? $"![{Text(artifact.Title)}]({Destination(artifact.Location)})"
-                        : $"- {Text(leg.Name)}: [{Text(artifact.Title)}]({Destination(artifact.Location)})");
+                    // The node's copy outlives the plane's file, so it is what is shown when there is one.
+                    var kept = artifact.Attachment is { } id && copies is not null && copies.TryGetValue(id, out var copy) ? copy : null;
+                    var shown = kept ?? artifact.Location;
+                    text.AppendLine(kept is not null || IsImage(artifact.Location)
+                        ? $"![{Text(artifact.Title)}]({Destination(shown)})"
+                        : $"- {Text(leg.Name)}: [{Text(artifact.Title)}]({Destination(shown)})");
                     text.AppendLine();
                 }
             }

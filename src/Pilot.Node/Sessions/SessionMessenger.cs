@@ -183,7 +183,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             {
                 await delivery.StopAsync(row.SessionId, cancellationToken);
             }
-            var resumed = await delivery.ResumeAsync(new ResumeRequest(row.SessionId, row.Name == row.Id ? null : row.Name, row.Cwd, text, RemoteControl: row.RemoteControlUrl is not null), cancellationToken);
+            var resumed = await delivery.ResumeAsync(new ResumeRequest(row.SessionId, tracker.ListedName(row), row.Cwd, text, RemoteControl: row.RemoteControlUrl is not null), cancellationToken);
             tracker.CompleteResume(row.Id, resumed);
             return resumed;
         }

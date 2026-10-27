@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Pilot.Contracts;
+using Pilot.Node.Flights;
 
 namespace Pilot.Node.Sessions;
 
@@ -29,7 +30,11 @@ public sealed class SessionTracker : BackgroundService
     private readonly Dictionary<string, DateTimeOffset> _endedAt = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
     private readonly Dictionary<string, SessionTranscripts> _transcripts = new Dictionary<string, SessionTranscripts>(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTimeOffset> _stale = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
-    private readonly Dictionary<string, string?> _repos = new Dictionary<string, string?>(StringComparer.Ordinal);
+    // The role the node gave each session it started (seen from a name that said so), by row id, with its machine prefix.
+    private readonly Dictionary<string, (SessionRoleInfo Role, string? Prefix)> _given = new Dictionary<string, (SessionRoleInfo, string?)>(StringComparer.Ordinal);
+    // The name each session is listed under, by row id: a row renamed away from the node's naming shows another one, but is resumed under this.
+    private readonly Dictionary<string, string> _listedNames = new Dictionary<string, string>(StringComparer.Ordinal);
+    private readonly Dictionary<string, string?> _repos =new Dictionary<string, string?>(StringComparer.Ordinal);
 
     // A resumed session continues under a new session id; its row keeps its id and follows it there. By session id:
     // the row each copy belongs to, and the ids it left behind, whose listed rows are not sessions of their own.
@@ -47,6 +52,9 @@ public sealed class SessionTracker : BackgroundService
 
     /// <summary>The hooks sessions post: a row follows its session's latest one while the session runs.</summary>
     public HookBook Hooks { get; init; } = new();
+
+    /// <summary>Where the images a session's artifacts name are kept; an archived session's copies go. Null keeps none.</summary>
+    public Attachments? Attachments { get; init; }
 
     /// <summary>
     /// A session working in a flight's worktree belongs to that flight, however it was started: an ad hoc session opened
@@ -153,16 +161,27 @@ public sealed class SessionTracker : BackgroundService
     /// </summary>
     public IDisposable BeginResume(SessionRow row)
     {
+        var name = ListedName(row);
         _gate.Wait();
         try
         {
-            _resuming[row.Id] = (row.Name == row.Id ? null : row.Name, row.Cwd);
+            _resuming[row.Id] = (name, row.Cwd);
         }
         finally
         {
             _gate.Release();
         }
         return new Resuming(this, row.Id);
+    }
+
+    /// <summary>
+    /// The name a row's session is resumed under, and listed by: its own, not the one its row shows (a renamed session's row
+    /// carries the node's prefix before it). Null for a session with no name.
+    /// </summary>
+    public string? ListedName(SessionRow row)
+    {
+        var name = _listedNames.TryGetValue(row.Id, out var listed) ? listed : row.Name;
+        return name == row.Id ? null : name;
     }
 
     /// <summary>
@@ -352,13 +371,38 @@ public sealed class SessionTracker : BackgroundService
         }
 
         // A row built afresh from the listing keeps the copies it followed: they are this row's history, not the listing's.
-        var built = SessionRowBuilder.Build(agent, facts, record, repo, JoinFlight(SessionRoles.Resolve(agent.Name, background: agent.Kind == "background"), agent.Cwd), Hooks.Of(agent.SessionId));
+        var role = SessionRoles.Resolve(agent.Name, background: agent.Kind == "background");
+        string? renamed = null;
+        if (role.Role != SessionRole.AdHoc)
+        {
+            // The name says what the node made it: kept by row, so a rename later does not lose it.
+            _given[id] = (role, SessionRoles.MachinePrefixOf(agent.Name));
+        }
+        else if (_given.TryGetValue(id, out var gave) && agent.Name is { Length: > 0 })
+        {
+            // Renamed away from the node's naming: still the session the node started, and its row still shows the prefix.
+            role = gave.Role;
+            if (gave.Prefix is { } prefix && !agent.Name.StartsWith(prefix + "-", StringComparison.Ordinal))
+            {
+                renamed = $"{prefix}-{agent.Name}";
+            }
+        }
+        if (agent.Name is { Length: > 0 })
+        {
+            _listedNames[id] = agent.Name;
+        }
+        var built = SessionRowBuilder.Build(agent, facts, record, repo, JoinFlight(role, agent.Cwd), Hooks.Of(agent.SessionId));
+        if (renamed is not null)
+        {
+            built = built with { Name = renamed };
+        }
         Put(built with
         {
             Id = id,
             EarlierSessionIds = _rows.TryGetValue(id, out var known) ? known.EarlierSessionIds : null,
             // Put away stays put away while it stays ended; running again brings it back.
             Archived = known is { Archived: true } && ended,
+            Artifacts = known?.Artifacts,
             // The same subagents as before are the same array, or the row would differ on every poll.
             Subagents = known?.Subagents is { } were && built.Subagents is { } are && were.SequenceEqual(are) ? were : built.Subagents,
         });
@@ -395,9 +439,42 @@ public sealed class SessionTracker : BackgroundService
 
             foreach (var archived in rows)
             {
+                // Its copies go with it: the artifacts stay listed, without what they kept.
+                if (!undo && archived.Artifacts is { Length: > 0 } kept && kept.Any(a => a.Attachment is not null))
+                {
+                    Attachments?.Remove(archived.Id);
+                    Put(archived with { Archived = true, Artifacts = [.. kept.Select(a => a with { Attachment = null, AttachmentExt = null })] });
+                    continue;
+                }
                 Put(archived with { Archived = !undo });
             }
             return _state.Complete(command, null, way: $"{rows.Count} {(rows.Count == 1 ? "session" : "sessions")} {(undo ? "back" : "archived")}");
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Records an artifact on a session outside any flight, its image copied under the session's own folder; a second of the
+    /// same title replaces the first. A <see cref="FlightException"/> says why not: no such session, or an image that is not there.
+    /// </summary>
+    public void AddArtifact(string id, Artifact artifact)
+    {
+        _gate.Wait();
+        try
+        {
+            if (!_rows.TryGetValue(id, out var row))
+            {
+                throw new FlightException($"there is no session {id}");
+            }
+            var had = row.Artifacts ?? [];
+            if (Attachments is not null)
+            {
+                artifact = Attachments.Keep(row.Id, artifact, had.FirstOrDefault(a => a.Title == artifact.Title));
+            }
+            Put(row with { Artifacts = [.. had.Where(a => a.Title != artifact.Title), artifact] });
         }
         finally
         {
@@ -414,7 +491,10 @@ public sealed class SessionTracker : BackgroundService
     private void Forget(string id, string sessionId, bool keepStale = false)
     {
         _rows.Remove(id);
+        Attachments?.Remove(id);
         _endedAt.Remove(id);
+        _given.Remove(id);
+        _listedNames.Remove(id);
         _transcripts.Remove(sessionId);
         foreach (var copy in _rowOf.Where(c => c.Value == id).Select(c => c.Key).ToList())
         {
@@ -438,6 +518,10 @@ public sealed class SessionTracker : BackgroundService
         {
             _rows[row.Id] = row;
             _endedAt[row.Id] = now;
+            if (row.Role != SessionRole.AdHoc && SessionRoles.MachinePrefixOf(row.Name) is { } kept)
+            {
+                _given[row.Id] = (new SessionRoleInfo(row.Role, row.Flight, row.Leg, null), kept);
+            }
             // The resumes it followed, as the store kept them: without them, a restarted node would take each copy a
             // resume left behind for a session of its own, and the row's own copy for a new row.
             if (!row.SessionId.StartsWith(row.Id, StringComparison.Ordinal))

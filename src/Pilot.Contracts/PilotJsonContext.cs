@@ -24,6 +24,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(NodeEvent))]
 [JsonSerializable(typeof(SnapshotEvent))]
 [JsonSerializable(typeof(SessionRow))]
+[JsonSerializable(typeof(Artifact))]
 [JsonSerializable(typeof(FlightRow))]
 [JsonSerializable(typeof(OverlapRow))]
 [JsonSerializable(typeof(FoldedIssue))]
@@ -53,4 +54,5 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(ResponseEnvelope<ChatPage>))]
 [JsonSerializable(typeof(ResponseEnvelope<JobLog>))]
 [JsonSerializable(typeof(ResponseEnvelope<SettingsPage>))]
+[JsonSerializable(typeof(ResponseEnvelope<SetupChecks>))]
 public sealed partial class PilotJsonContext : JsonSerializerContext;

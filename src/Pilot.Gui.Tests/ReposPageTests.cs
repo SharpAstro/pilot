@@ -65,8 +65,8 @@ public sealed class ReposPageTests
     public void TheRailListsReposAfterFlightsAndItsChordKeepsTheOthersTheirKeys()
     {
         PilotChrome<RgbaImage>.Pages.Select(p => p.Page).Where(p => p != PilotPage.Chat).Take(4).ShouldBe([PilotPage.Home, PilotPage.Sessions, PilotPage.Flights, PilotPage.Repos]);
-        PilotChrome<RgbaImage>.Pages.Single(p => p.Page == PilotPage.Repos).Shortcut.ShouldBe(new KeyChord(InputKey.D7, InputModifier.Ctrl));
-        PilotChrome<RgbaImage>.Pages.Single(p => p.Page == PilotPage.Jobs).Shortcut.ShouldBe(new KeyChord(InputKey.D4, InputModifier.Ctrl));
+        PilotChrome<RgbaImage>.Pages.Single(p => p.Page == PilotPage.Repos).Shortcut.ShouldBe(new KeyChord(InputKey.D5, InputModifier.Ctrl));
+        PilotChrome<RgbaImage>.Pages.Single(p => p.Page == PilotPage.Jobs).Shortcut.ShouldBe(new KeyChord(InputKey.D6, InputModifier.Ctrl));
         PilotChrome<RgbaImage>.Pages.Single(p => p.Page == PilotPage.Repos).Locked.ShouldBeNull();
 
         using var renderer = new RgbaImageRenderer(1, 1);
@@ -100,6 +100,25 @@ public sealed class ReposPageTests
         lib117.ToDumpLine().ShouldBe("  flight/lib117 | no changes | LIB117 | idle (xy1-lib117-bump: last response 3m ago) | nothing | no PR");
 
         Screen().Summary.ShouldBe("2 repos · 3 worktrees · 2 open PRs");
+    }
+
+    [Fact]
+    public void APullRequestRowShowsItsLabelsTheNodeLabelIncluded()
+    {
+        var repo = Sample()[0];
+        var labelled = repo with { PullRequests = [.. repo.PullRequests.Select((p, i) => i == 0 ? p with { Labels = ["pilot node: SE1", "bug"] } : p)] };
+        var screen = RepoLine.Build([labelled], [], [], [], [], Live.At);
+        var line = screen[0];
+
+        line.Pulls[0].Labels.ShouldBe("pilot node: SE1, bug");
+        line.Pulls[1].Labels.ShouldBe("");
+        line.ToDumpLine().ShouldContain("ready | passing | pilot node: SE1, bug;");
+
+        using var renderer = new RgbaImageRenderer(1, 1);
+        var (_, repos) = Chrome(renderer);
+        var reposScreen = new ReposScreen(screen, "live", Live.At);
+        var arranged = Layout.Engine.Arrange(repos.Tree(reposScreen), new Rect<int>(0, 0, 1280, 600), CellMeasureContext.PixelAuthored);
+        arranged.ShouldNotBeEmpty();
     }
 
     [Fact]

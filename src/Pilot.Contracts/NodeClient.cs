@@ -23,7 +23,8 @@ public sealed class NodeClient : IDisposable
     {
         SocketPath = socketPath;
         _handler = NodeSocket.CreateHandler(socketPath);
-        _http = new HttpClient(_handler, disposeHandler: false) { BaseAddress = NodeSocket.BaseAddress };
+        // A command may run for minutes on the node (finish reruns the leg's check), so HttpClient's 100 s default is off.
+        _http = new HttpClient(_handler, disposeHandler: false) { BaseAddress = NodeSocket.BaseAddress, Timeout = Timeout.InfiniteTimeSpan };
         _events = new Uri("ws://localhost" + NodeWire.EventsRoute);
     }
 
@@ -32,7 +33,7 @@ public sealed class NodeClient : IDisposable
         SocketPath = endpoint;
         _token = token;
         _handler = new SocketsHttpHandler { ConnectTimeout = TimeSpan.FromSeconds(5) };
-        _http = new HttpClient(_handler, disposeHandler: false) { BaseAddress = baseAddress };
+        _http = new HttpClient(_handler, disposeHandler: false) { BaseAddress = baseAddress, Timeout = Timeout.InfiniteTimeSpan };
         if (token is not null)
         {
             _http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
@@ -87,6 +88,14 @@ public sealed class NodeClient : IDisposable
             ?? throw new HttpRequestException($"The node answered with an empty body ({(int)response.StatusCode})");
     }
 
+    /// <summary><c>GET /api/v1/attachments/&lt;id&gt;</c>: the copy the node keeps of an image: its status, content type and bytes (none unless 200).</summary>
+    public async Task<(System.Net.HttpStatusCode Status, string? ContentType, byte[] Bytes)> GetAttachmentAsync(string id, CancellationToken cancellationToken)
+    {
+        using var response = await _http.GetAsync(NodeWire.AttachmentRoute(id), cancellationToken).ConfigureAwait(false);
+        var bytes = response.IsSuccessStatusCode ? await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false) : [];
+        return (response.StatusCode, response.Content.Headers.ContentType?.MediaType, bytes);
+    }
+
     /// <summary><c>GET /api/v1/node</c>: which node this is.</summary>
     public async Task<NodeInfo> GetNodeAsync(CancellationToken cancellationToken)
     {
@@ -110,9 +119,27 @@ public sealed class NodeClient : IDisposable
     public Task<ResponseEnvelope<JobLog>> GetJobLogAsync(string jobId, CancellationToken cancellationToken) =>
         GetEnvelopeAsync(NodeWire.JobLogRoute(jobId), PilotJsonContext.Default.ResponseEnvelopeJobLog, cancellationToken);
 
-    /// <summary><c>GET /api/v1/settings</c>: the node's settings and its setup checklist; this machine only.</summary>
+    /// <summary><c>GET /api/v1/settings</c>: the node's settings, from its file alone; this machine only.</summary>
     public Task<ResponseEnvelope<SettingsPage>> GetSettingsAsync(CancellationToken cancellationToken) =>
         GetEnvelopeAsync(NodeWire.SettingsRoute, PilotJsonContext.Default.ResponseEnvelopeSettingsPage, cancellationToken);
+
+    /// <summary><c>GET /api/v1/settings/checks</c>: the setup checklist as the node last measured it; <paramref name="refresh"/> runs the checks again. This machine only.</summary>
+    public Task<ResponseEnvelope<SetupChecks>> GetSetupChecksAsync(CancellationToken cancellationToken, bool refresh = false) =>
+        GetEnvelopeAsync(refresh ? $"{NodeWire.SettingsChecksRoute}?refresh=true" : NodeWire.SettingsChecksRoute, PilotJsonContext.Default.ResponseEnvelopeSetupChecks, cancellationToken);
+
+    /// <summary>The settings page with the setup checklist filled in from its own route, for a host that shows both.</summary>
+    public async Task<ResponseEnvelope<SettingsPage>> GetSettingsWithChecksAsync(CancellationToken cancellationToken)
+    {
+        var page = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        if (page is not { Success: true, Response: { } settings })
+        {
+            return page;
+        }
+        var checks = await GetSetupChecksAsync(cancellationToken).ConfigureAwait(false);
+        return checks is { Success: true, Response: { } measured }
+            ? ResponseEnvelope<SettingsPage>.Ok(settings with { Checks = measured.Checks })
+            : ResponseEnvelope<SettingsPage>.Fail(checks.Error ?? "the node did not send its setup checks", 502);
+    }
 
     /// <summary><c>GET /api/v1/repos</c>: the repos a flight can be made in.</summary>
     public Task<ResponseEnvelope<RepoInfo[]>> GetReposAsync(CancellationToken cancellationToken) =>

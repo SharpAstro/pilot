@@ -80,6 +80,38 @@ public sealed class MergeHookTests : IDisposable
         Decide(command).ShouldNotBeNull().ShouldContain("pilot flight merge");
     }
 
+    private static string? DecideAs(string tool, string command) =>
+        MergeGuard.Decide(Input(command, tool), Git("flight/x"), machine: "DE1");
+
+    [Theory]
+    [InlineData("Bash", "claude --bg -n tia1241-nudge")]
+    [InlineData("Bash", "claude --bg --name tia1241-nudge 'do it'")]
+    [InlineData("Bash", "claude --bg --name=tia1241-nudge")]
+    [InlineData("Bash", "claude -n tia1241-nudge --bg")]
+    [InlineData("Bash", "cd /work/plane && nohup claude --bg -n tia1241-nudge")]
+    [InlineData("Bash", "bash -c 'claude --bg -n tia1241-nudge'")]
+    [InlineData("PowerShell", "claude --bg -n tia1241-nudge")]
+    [InlineData("PowerShell", "claude.exe --bg -n tia1241-nudge")]
+    [InlineData("PowerShell", "pwsh -Command \"claude --bg -n tia1241-nudge\"")]
+    public void AnUnprefixedBackgroundSessionIsRefusedNamingThePrefixedOne(string tool, string command)
+    {
+        DecideAs(tool, command).ShouldNotBeNull().ShouldContain("de1-tia1241-nudge");
+    }
+
+    [Theory]
+    [InlineData("Bash", "claude --bg -n de1-tia1241-nudge")]
+    [InlineData("Bash", "claude --bg -n DE1-tia1241-nudge")]
+    [InlineData("PowerShell", "claude --bg --name de1-pil283-review")]
+    [InlineData("Bash", "claude -n tia1241-nudge")]
+    [InlineData("Bash", "claude --bg 'a prompt'")]
+    [InlineData("Bash", "claude --version")]
+    [InlineData("Bash", "claude mcp list")]
+    [InlineData("Bash", "echo claude --bg -n tia1241-nudge")]
+    public void APrefixedOrUnrelatedClaudeCallPasses(string tool, string command)
+    {
+        DecideAs(tool, command).ShouldBeNull();
+    }
+
     [Theory]
     [InlineData("gh pr view 1")]
     [InlineData("gh pr create --fill")]

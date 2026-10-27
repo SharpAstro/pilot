@@ -91,7 +91,9 @@ public sealed record FlightRow
     /// DE1 2026-10-25). A third element says who waits: <c>github</c> when GitHub's own auto-merge is armed (it merges even
     /// with the node down, and the node only keeps the card's progress and disarms it on a failed check or a moved head),
     /// <c>node</c> when the node polls for a reason that needs no word (a merge queue base, or GitHub would not arm); with
-    /// none the node polls because the repo has auto-merge off, and the card says how to switch it on.
+    /// none the node polls because the repo has auto-merge off, and the card says how to switch it on (an empty third element
+    /// stands in for none when a fourth follows). A last element, <c>autopilot</c>, says the node asked for the merge itself:
+    /// its failed checks then send the leg round as changes rather than ring a card for a person who never pressed Merge.
     /// </summary>
     public string[]? MergeWhenGreen { get; init; }
 

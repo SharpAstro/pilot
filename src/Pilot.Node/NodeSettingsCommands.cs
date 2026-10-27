@@ -18,15 +18,22 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     private readonly SemaphoreSlim _checking = new(1, 1);
     private (DateTimeOffset At, SetupCheck[] Checks)? _checks;
 
-    public async Task<SettingsPage> PageAsync(CancellationToken cancellationToken)
+    /// <summary>The settings page: <c>settings.json</c> and the node's own state, no setup check (they run programs).</summary>
+    public Task<SettingsPage> PageAsync(CancellationToken cancellationToken)
     {
         var saved = NodeSettings.Read(options.SettingsFile);
-        return new SettingsPage
+        return Task.FromResult(new SettingsPage
         {
             Settings = [.. NodeSettings.Keys.Select(key => Row(key, saved))],
-            Checks = await ChecksAsync(fresh: false, cancellationToken),
             File = options.SettingsFile,
-        };
+        });
+    }
+
+    /// <summary>The setup checks as last measured, run again once they are older than the cache age or when <paramref name="refresh"/> asks.</summary>
+    public async Task<SetupChecks> SetupChecksAsync(bool refresh, CancellationToken cancellationToken)
+    {
+        var (at, checks) = await ChecksAsync(refresh, cancellationToken);
+        return new SetupChecks { Checks = checks, CheckedAt = at };
     }
 
     /// <summary><c>set node &lt;key&gt; [value…]</c>: saves it, then restarts the node to run with it.</summary>
@@ -54,25 +61,25 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         var value = updated.Get(key) is { } values ? (key == NodeSettings.ShortcutTokenKey ? "set" : string.Join(' ', values)) : "the default";
         if (options.CommandLineKeys?.Contains(key) == true)
         {
-            return state.Complete(command, null, way: $"{key} saved as {value}, but this node's command line gives it, and wins: take it off the command line (pilot-node autostart install) for the setting to count");
+            return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, but this node's command line gives it, and wins: take it off the command line (pilot-node autostart install) for the setting to count");
         }
         // A live setting is applied below whatever it read before: its running value may be read from the very file just
         // written (priority-repos was, and was taken as in force while the node still ran without it).
         if (key == NodeSettings.ShortcutTokenKey)
         {
             roles.Apply(updated);
-            return state.Complete(command, null, way: $"{key} saved as {value}, and in force now");
+            return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now");
         }
         if (!Live(key) && Running(key) == (updated.Get(key) is { } now ? Join(key, now) : Default(key)))
         {
-            return state.Complete(command, null, way: $"{key} saved as {value}; the node runs with it already");
+            return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}; the node runs with it already");
         }
         // A role's model and effort are read when a session of it starts: in force for the next one, no restart.
         if (NodeSettings.IsRoleKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey
             or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey)
         {
             roles.Apply(updated);
-            return state.Complete(command, null, way: key == NodeSettings.MergeMethodKey ? $"{key} saved as {value}; the next merge uses it"
+            return state.Complete(command, null, setting: Row(key, updated), way: key == NodeSettings.MergeMethodKey ? $"{key} saved as {value}; the next merge uses it"
                 : key is NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey ? $"{key} saved as {value}, and in force now"
                 : key is NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey ? $"{key} saved as {value}, and in force now"
                 : key is NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey ? $"{key} saved as {value}; the next start the node makes by itself weighs it"
@@ -84,10 +91,10 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             jobs.MaxRunning = updated.MaxJobs ?? options.MaxJobs;
             jobs.MinFreeMemory = (long)((updated.JobMemoryGigabytes ?? options.JobMemoryGigabytes) * (1L << 30));
             jobs.Pump();
-            return state.Complete(command, null, way: $"{key} saved as {value}, and in force now");
+            return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now");
         }
         var restart = restarter.Request($"{key} = {value}");
-        return state.Complete(command, null, way: restart.Going
+        return state.Complete(command, null, setting: Row(key, updated), way: restart.Going
             ? $"{key} saved as {value}; the node restarts to run with it{(restart.Left is { } left ? $"; {left}" : "")}"
             : restart.Why);
     }
@@ -100,12 +107,12 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         {
             return Set(command with { Args = [NodeSettings.LanKey, "on"] });
         }
-        var error = await setup.FixAsync(key, cancellationToken);
+        var error = await setup.FixAsync(key, cancellationToken, processes: (command.Args ?? []).Skip(1).Any(a => a.Trim().Equals("--processes", StringComparison.OrdinalIgnoreCase)));
         await ChecksAsync(fresh: true, cancellationToken);
         return state.Complete(command, error, way: error is null ? $"{key}: done" : null);
     }
 
-    private async Task<SetupCheck[]> ChecksAsync(bool fresh, CancellationToken cancellationToken)
+    private async Task<(DateTimeOffset At, SetupCheck[] Checks)> ChecksAsync(bool fresh, CancellationToken cancellationToken)
     {
         await _checking.WaitAsync(cancellationToken);
         try
@@ -113,11 +120,11 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             var now = time.GetUtcNow();
             if (!fresh && _checks is { } cached && now - cached.At < ChecksFor)
             {
-                return cached.Checks;
+                return cached;
             }
-            var checks = await Task.Run(() => setup.Checks().ToArray(), cancellationToken);
+            var checks = await Task.Run(() => setup.Checks().Select(check => check with { Runs = NodeSetup.RunsOf(check.Key) }).ToArray(), cancellationToken);
             _checks = (now, checks);
-            return checks;
+            return _checks.Value;
         }
         finally
         {
@@ -231,16 +238,16 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.UpdateChannelKey => ("Update channel", "stable follows the tagged releases; beta follows main's every push (a Debug build, needs the .NET runtime)", [.. UpdateChannels.Names]),
         NodeSettings.MaxJobsKey => ("Jobs at once", "How many background tasks run at once; the rest wait their turn", ["1", "2", "3", "4"]),
         NodeSettings.JobMemoryKey => ("Job memory", "The most free memory, in GB, a queued job waits for before it starts (the measured need of its kind of command, capped here); 0 to not wait", ["0", "2", "4", "8"]),
-        NodeSettings.PriorityReposKey => ("Priority repos", "Repos whose flights have runway: they go on past the start limit, up to the priority limit", []),
-        NodeSettings.RepoTrackersKey => ("Repo trackers", "Per repo, the tracker a bare number means when a flight is made (bullclip-backend=shortcut); a repo left out means GitHub issues. #N is always a GitHub issue", []),
-        NodeSettings.NoAutoMergeReposKey => ("No auto-merge repos", "Repos whose PRs the node never merges by itself, autopilot on or not: an assistant's merge raises your card, and a passed flight rings you. Your own merge still works", []),
+        NodeSettings.PriorityReposKey => ("Priority repos", "Repos whose flights keep going past the start limit, up to the priority limit", []),
+        NodeSettings.RepoTrackersKey => ("Repo trackers", "The tracker a bare number means when a flight is made in the repo; a repo not listed means GitHub issues", []),
+        NodeSettings.NoAutoMergeReposKey => ("No auto-merge repos", "Repos whose PRs the node never merges by itself, autopilot or not; only your own merge lands them", []),
         NodeSettings.PriorityStartLimitKey => ("Priority start limit", "How far into the 5-hour window a priority repo's flight still goes on by itself, in percent", ["95", "98", "100"]),
         NodeSettings.StartLimitKey => ("Start limit", "A session the node starts by itself (a leg, a planner, a reviewer, the watchtower, a compaction) goes ahead until the account's 5-hour window is this spent, in percent; then it waits for the reset", ["80", "90", "95", "100"]),
         NodeSettings.WeekLimitKey => ("Week limit", "How far into the 7-day window the node rings, once per window, as it starts sessions; it rings and does not wait, in percent", ["80", "90", "95", "100"]),
         NodeSettings.MergeMethodKey => ("Merge method", "How a flight's PR is merged: rebase keeps every commit's subject (docs may cite them), squash makes one commit", [.. NodeSettings.MergeMethods]),
-        _ when RoleOf(key) is ({ } role, false) => ($"{Title(role)} model", RoleDetail(role), ["sonnet", "opus", "haiku", RoleModels.NoneValue]),
-        _ when RoleOf(key) is (RoleModels.ReviewerDeep, true) => ("Reviewer-deep effort", "The effort a deep review starts at; unset, a step above the reviewer's (high when that is unset); none leaves it to Claude Code", [.. RoleModels.Efforts, RoleModels.NoneValue]),
-        _ when RoleOf(key) is ({ } role, true) => ($"{Title(role)} effort", $"The effort each {role} starts at; none leaves it to Claude Code", [.. RoleModels.Efforts, RoleModels.NoneValue]),
+        _ when RoleOf(key) is ({ } role, false) => ($"{Title(role)} model", RoleDetail(role) + (role == RoleModels.ReviewerDeep ? "" : "; default leaves the choice to Claude Code"), ["sonnet", "opus", "haiku", RoleModels.NoneValue]),
+        _ when RoleOf(key) is (RoleModels.ReviewerDeep, true) => ("Reviewer-deep effort", "The effort a deep review starts at; unset, a step above the reviewer's (high when that is unset); default leaves the choice to Claude Code", [.. RoleModels.Efforts, RoleModels.NoneValue]),
+        _ when RoleOf(key) is ({ } role, true) => ($"{Title(role)} effort", $"The effort each {role} starts at; default leaves the choice to Claude Code", [.. RoleModels.Efforts, RoleModels.NoneValue]),
         _ => (key, "", []),
     };
 
@@ -251,7 +258,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         RoleModels.Watchtower => "The watchtower reads cards and runs pilot for hours: the longest-lived session, so the costliest per turn",
         RoleModels.Worker => "A leg's worker, unless its plan names a model (leg plan --model), which wins",
         RoleModels.Planner => "Plans a flight's legs from its issue: short-lived, and decides everything after it",
-        RoleModels.ReviewerDeep => "A deep review's model; unset, it runs on the reviewer's; none leaves it to Claude Code",
+        RoleModels.ReviewerDeep => "A deep review's model; unset, it runs on the reviewer's; default leaves the choice to Claude Code",
         _ => "Reviews a flight's PR before its merge card",
     };
 }

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Pilot.Contracts;
 
@@ -18,6 +19,21 @@ public interface ITracker
 
     /// <summary>What a flight made with no title is refused with when <see cref="TitleAsync"/> found none; null where a title is optional.</summary>
     string? MissingTitle(WorkItem item);
+
+    /// <summary>The labels the item carries; empty when they cannot be read.</summary>
+    Task<string[]> LabelsAsync(string repoPath, int id, CancellationToken cancellationToken);
+
+    /// <summary>Puts <paramref name="label"/> on the item, creating it in the repo or workspace when missing.</summary>
+    /// <exception cref="FlightException">The tracker refused it.</exception>
+    Task AddLabelAsync(string repoPath, int id, string label, CancellationToken cancellationToken);
+
+    /// <summary>Takes <paramref name="label"/> off the item.</summary>
+    /// <exception cref="FlightException">The tracker refused it.</exception>
+    Task RemoveLabelAsync(string repoPath, int id, string label, CancellationToken cancellationToken);
+
+    /// <summary>Comments on the item.</summary>
+    /// <exception cref="FlightException">The tracker refused it.</exception>
+    Task CommentAsync(string repoPath, int id, string body, CancellationToken cancellationToken);
 }
 
 /// <summary>How a brief tells a session to read a work item in one tracker. Written once per tracker, so Briefs holds no tracker branches.</summary>
@@ -86,6 +102,14 @@ public sealed class GitHubTracker(IGitHub github) : ITracker
     public Task<string?> TitleAsync(string repoPath, int id, CancellationToken cancellationToken) => github.IssueTitleAsync(repoPath, id, cancellationToken);
 
     public string? MissingTitle(WorkItem item) => null;
+
+    public Task<string[]> LabelsAsync(string repoPath, int id, CancellationToken cancellationToken) => github.IssueLabelsAsync(repoPath, id, cancellationToken);
+
+    public Task AddLabelAsync(string repoPath, int id, string label, CancellationToken cancellationToken) => github.AddIssueLabelAsync(repoPath, id, label, cancellationToken);
+
+    public Task RemoveLabelAsync(string repoPath, int id, string label, CancellationToken cancellationToken) => github.RemoveIssueLabelAsync(repoPath, id, label, cancellationToken);
+
+    public Task CommentAsync(string repoPath, int id, string body, CancellationToken cancellationToken) => github.CommentIssueAsync(repoPath, id, body, cancellationToken);
 }
 
 /// <summary>
@@ -133,4 +157,107 @@ public sealed class ShortcutTracker(HttpClient http, Func<string?> token) : ITra
         token() is { Length: > 0 }
             ? $"Shortcut did not give a title for {item.Display}: check the story exists and the token may read it, or give a title as in create-flight repo/<path> {item.Display} <title>"
             : $"{item.Display} is a Shortcut story, and there is neither a token to read its title ({TokenVariable}, or pilot settings set shortcut-token) nor a title given: give a title as in create-flight repo/<path> {item.Display} <title>";
+
+    private static string Url(int id) => Endpoint + id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// One call to the API with the token. With <paramref name="refuse"/> (what was asked), a missing token or a refusal throws
+    /// a FlightException; without it they answer null, as a read does.
+    /// </summary>
+    private async Task<JsonDocument?> CallAsync(HttpMethod method, string url, string? body, string? refuse, CancellationToken cancellationToken)
+    {
+        if (token() is not { Length: > 0 } secret)
+        {
+            return refuse is null ? null : throw new FlightException($"{refuse}: there is no Shortcut token ({TokenVariable}, or pilot settings set shortcut-token)");
+        }
+        using var request = new HttpRequestMessage(method, url);
+        request.Headers.TryAddWithoutValidation("Shortcut-Token", secret);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        if (body is not null)
+        {
+            request.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+        }
+        try
+        {
+            using var response = await http.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return refuse is null ? null : throw new FlightException($"{refuse}: Shortcut answered {(int)response.StatusCode}");
+            }
+            return await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            return refuse is null ? null : throw new FlightException($"{refuse}: {ex.Message}");
+        }
+    }
+
+    private static string LabelsBody(IEnumerable<string> names)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteStartArray("labels");
+            foreach (var name in names)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("name", name);
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+        return System.Text.Encoding.UTF8.GetString(stream.ToArray());
+    }
+
+    private static string TextBody(string text)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("text", text);
+            writer.WriteEndObject();
+        }
+        return System.Text.Encoding.UTF8.GetString(stream.ToArray());
+    }
+
+    private async Task<string[]?> StoryLabelsAsync(int id, string? refuse, CancellationToken cancellationToken)
+    {
+        using var doc = await CallAsync(HttpMethod.Get, Url(id), null, refuse, cancellationToken);
+        if (doc is null || !doc.RootElement.TryGetProperty("labels", out var labels) || labels.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+        return [.. labels.EnumerateArray().Select(l => l.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "").Where(n => n.Length > 0)];
+    }
+
+    public async Task<string[]> LabelsAsync(string repoPath, int id, CancellationToken cancellationToken) => await StoryLabelsAsync(id, null, cancellationToken) ?? [];
+
+    public async Task AddLabelAsync(string repoPath, int id, string label, CancellationToken cancellationToken)
+    {
+        var refuse = $"Shortcut would not label sc-{id} {label}";
+        var have = await StoryLabelsAsync(id, refuse, cancellationToken) ?? [];
+        if (!have.Contains(label, StringComparer.Ordinal))
+        {
+            // A label not yet in the workspace is made by naming it in the story's update.
+            using var _ = await CallAsync(HttpMethod.Put, Url(id), LabelsBody(have.Append(label)), refuse, cancellationToken);
+        }
+    }
+
+    public async Task RemoveLabelAsync(string repoPath, int id, string label, CancellationToken cancellationToken)
+    {
+        var refuse = $"Shortcut would not take {label} off sc-{id}";
+        var have = await StoryLabelsAsync(id, refuse, cancellationToken) ?? [];
+        if (have.Contains(label, StringComparer.Ordinal))
+        {
+            using var _ = await CallAsync(HttpMethod.Put, Url(id), LabelsBody(have.Where(n => n != label)), refuse, cancellationToken);
+        }
+    }
+
+    public async Task CommentAsync(string repoPath, int id, string body, CancellationToken cancellationToken)
+    {
+        using var _ = await CallAsync(HttpMethod.Post, Url(id) + "/comments", TextBody(body), $"Shortcut would not take the comment on sc-{id}", cancellationToken);
+    }
 }

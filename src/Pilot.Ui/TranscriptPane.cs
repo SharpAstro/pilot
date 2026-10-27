@@ -118,15 +118,29 @@ internal sealed class TranscriptPane
     public Action? Changed
     {
         get => _entries.Changed;
-        set => _entries.Changed = value;
+        set
+        {
+            _entries.Changed = value;
+            _links.Changed = value;
+        }
     }
 
     /// <summary>Puts text on the clipboard: a refused command's Copy. Null where the host has no clipboard.</summary>
     public Action<string>? CopyText
     {
         get => _entries.CopyText;
-        set => _entries.CopyText = value;
+        set
+        {
+            _entries.CopyText = value;
+            _links.CopyText = value;
+        }
     }
+
+    // The right-click menu of the link that leaves the app (Answer in the browser): Copy URL.
+    private readonly LinkMenu _links = new();
+
+    /// <summary>The links' menu: its open items and its notice.</summary>
+    internal LinkMenu Links => _links;
 
     /// <summary>Opens a link in what the assistant wrote. Null leaves links as coloured text.</summary>
     public Action<string>? OpenLink
@@ -300,8 +314,8 @@ internal sealed class TranscriptPane
             if (line.AnswerUrl is { } url)
             {
                 body.Add(Layout.Builder.HStack(
-                    Layout.Builder.Text("Answer in the browser" + Followable.Away, 12f, Bright, TextAlign.Center).Pad(10f, 3f).WAuto().Bg(Button).BgHover(ButtonHover)
-                        .Follows(new HitResult.ButtonHit("transcript:answer"), _ => _entries.Follow(url)),
+                    _links.OnLink(Layout.Builder.Text("Answer in the browser" + Followable.Away, 12f, Bright, TextAlign.Center).Pad(10f, 3f).WAuto().Bg(Button).BgHover(ButtonHover)
+                        .Follows(new HitResult.ButtonHit("transcript:answer"), _ => _entries.Follow(url)), url),
                     Layout.Builder.Spacer().WStar()));
             }
             else
@@ -404,9 +418,9 @@ internal sealed class TranscriptPane
     /// is where the pane starts on the surface, for a menu opened without a pointer to hang under the chips.
     /// </summary>
     internal Layout.Node Over(Layout.Node page, float top) =>
-        IsOpen && _menu.IsOpen
+        _links.Over(IsOpen && _menu.IsOpen
             ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt ?? new RectF32(16f, top + ChipRowTop, 0f, ChipHeight), _menu, 13f, Bright, OutputShade, ButtonHover))
-            : page;
+            : page);
 
     private Layout.Node Chip(string text, string? agent, bool open)
     {

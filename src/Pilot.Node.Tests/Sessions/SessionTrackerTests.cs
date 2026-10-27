@@ -110,6 +110,29 @@ public sealed class SessionTrackerTests : IDisposable
     }
 
     [Fact]
+    public async Task ASessionThatAgesOutTakesItsKeptImageCopiesWithIt()
+    {
+        var attachments = new Attachments(Path.Combine(_profile.Folder, "data"));
+        var tracker = new SessionTracker(_state, _agents, _profile.Options(), () => false, _time, NullLogger<SessionTracker>.Instance) { Attachments = attachments };
+        _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "x", status: "busy"));
+        await tracker.PollAsync(Ct);
+        var shot = Path.Combine(_profile.Folder, "shot.png");
+        File.WriteAllBytes(shot, [0x89, 0x50, 0x4E, 0x47]);
+        var kept = attachments.Keep("a1b2c3d4", new Artifact { Title = "shot", Location = shot, At = Start }, null);
+        var copy = attachments.PathOf("a1b2c3d4", kept.Attachment!, "png");
+        File.Exists(copy).ShouldBeTrue();
+
+        _agents.Json = "[]";
+        await tracker.PollAsync(Ct);
+        File.Exists(copy).ShouldBeTrue();
+        _time.Advance(TimeSpan.FromHours(25));
+        await tracker.PollAsync(Ct);
+
+        _state.Sessions().ShouldBeEmpty();
+        Directory.Exists(Path.GetDirectoryName(copy)).ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task EndedAndFailedBackgroundRowsListWhileRecentAndNotOnceTheirTranscriptIsOlderThanTheRetention()
     {
         _agents.Json = AgentRows.List(
@@ -203,5 +226,68 @@ public sealed class SessionTrackerTests : IDisposable
         var worker = _state.Sessions().Single(s => s.Id == "b2c3d4e5");
         (worker.Role, worker.Flight, worker.Leg, worker.Budget).ShouldBe((SessionRole.Worker, "PIL5", "node", null as long?));
         _state.Sessions().Single(s => s.Id == "a1b2c3d4").Role.ShouldBe(SessionRole.Watchtower);
+    }
+
+    [Fact]
+    public async Task ARenamedSessionTheNodeStartedKeepsItsRoleFlightAndLegAndItsPrefix()
+    {
+        _agents.Json = AgentRows.List(
+            AgentRows.Background(AgentRows.SessionB, "du1-pil283-brief", "working", pid: 4343, status: "busy"),
+            AgentRows.Background(AgentRows.SessionA, "du1-watchtower", "running", pid: 4242, status: "idle"));
+        await PollAsync();
+
+        _agents.Json = AgentRows.List(
+            AgentRows.Background(AgentRows.SessionB, "pil269-stale-worktree-duplicate", "working", pid: 4343, status: "busy"),
+            AgentRows.Background(AgentRows.SessionA, "pil269-stale-worktree-duplicate-2", "running", pid: 4242, status: "idle"));
+        await PollAsync();
+
+        var worker = _state.Sessions().Single(s => s.Id == "b2c3d4e5");
+        (worker.Role, worker.Flight, worker.Leg, worker.Name).ShouldBe((SessionRole.Worker, "PIL283", "brief", "du1-pil269-stale-worktree-duplicate"));
+        var tower = _state.Sessions().Single(s => s.Id == "a1b2c3d4");
+        (tower.Role, tower.Name).ShouldBe((SessionRole.Watchtower, "du1-pil269-stale-worktree-duplicate-2"));
+    }
+
+    [Fact]
+    public async Task ARenamedSessionIsResumedUnderItsOwnNameAndKeepsItsRoleFlightAndLegAfterwards()
+    {
+        _agents.Json = AgentRows.List(
+            AgentRows.Background(AgentRows.SessionB, "du1-pil283-brief", "working", pid: 4343, status: "busy"),
+            AgentRows.Background(AgentRows.SessionA, "du1-watchtower", "running", pid: 4242, status: "idle"));
+        await PollAsync();
+        _agents.Json = AgentRows.List(
+            AgentRows.Background(AgentRows.SessionB, "pil269-stale", "working", pid: 4343, status: "busy"),
+            AgentRows.Background(AgentRows.SessionA, "pil269-stale-2", "running", pid: 4242, status: "idle"));
+        await PollAsync();
+
+        // A say to an idle one resumes it: under the name Claude Code lists it by, not the one its row shows.
+        var tower = _state.Sessions().Single(s => s.Id == "a1b2c3d4");
+        tower.Name.ShouldBe("du1-pil269-stale-2");
+        _tracker.ListedName(tower).ShouldBe("pil269-stale-2");
+        const string resumedId = "a1b2c3d4-0000-4000-8000-0000000000ff";
+        using (_tracker.BeginResume(tower))
+        {
+            _tracker.CompleteResume(tower.Id, resumedId);
+        }
+        _agents.Json = AgentRows.List(
+            AgentRows.Background(AgentRows.SessionB, "pil269-stale", "working", pid: 4343, status: "busy"),
+            AgentRows.Background(resumedId, _tracker.ListedName(tower)!, "working", pid: 4244, status: "busy"));
+        await PollAsync();
+
+        var rows = _state.Sessions();
+        rows.Count().ShouldBe(2);
+        var after = rows.Single(s => s.Id == "a1b2c3d4");
+        (after.Role, after.Name).ShouldBe((SessionRole.Watchtower, "du1-pil269-stale-2"));
+        var worker = rows.Single(s => s.Id == "b2c3d4e5");
+        (worker.Role, worker.Flight, worker.Leg).ShouldBe((SessionRole.Worker, "PIL283", "brief"));
+    }
+
+    [Fact]
+    public async Task ARenamedSessionTheNodeNeverStartedStaysAdHoc()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "someones-job", "working", pid: 4343, status: "busy"));
+        await PollAsync();
+
+        var row = _state.Sessions().Single();
+        (row.Role, row.Name).ShouldBe((SessionRole.AdHoc, "someones-job"));
     }
 }

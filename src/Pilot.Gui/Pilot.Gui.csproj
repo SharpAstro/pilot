@@ -106,9 +106,13 @@
   </PropertyGroup>
   <ItemGroup Condition="'$(UseLocalSharpAstroPng)' == 'true'">
     <ProjectReference Include="$(SharpAstroRoot)Codecs\src\SharpAstro.Png\SharpAstro.Png.csproj" />
+    <ProjectReference Include="$(SharpAstroRoot)Codecs\src\SharpAstro.Jpeg\SharpAstro.Jpeg.csproj" />
+    <ProjectReference Include="$(SharpAstroRoot)Codecs\src\SharpAstro.Webp\SharpAstro.Webp.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(UseLocalSharpAstroPng)' != 'true'">
     <PackageReference Include="SharpAstro.Png" />
+    <PackageReference Include="SharpAstro.Jpeg" />
+    <PackageReference Include="SharpAstro.Webp" />
   </ItemGroup>
 
   <ItemGroup>

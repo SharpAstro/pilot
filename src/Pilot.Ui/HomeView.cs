@@ -39,8 +39,9 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
     {
         get
         {
-            var flights = Flights.Lines.Count(l => l.Row.State == FlightState.Flying);
-            var legs = Flights.Lines.Sum(l => l.LegRows.Count(leg => leg.State == LegState.Flying));
+            // A stale flight (its node unreachable) is a last known row: it is not counted as flying.
+            var flights = Flights.Lines.Count(l => l.Stale is null && l.Row.State == FlightState.Flying);
+            var legs = Flights.Lines.Where(l => l.Stale is null).Sum(l => l.LegRows.Count(leg => leg.State == LegState.Flying));
             var workers = Sessions.Lines.Count(l => l.IsLive && l.Row.Role == SessionRole.Worker);
             var jobs = Jobs.Lines.Count(l => l.Row.State == JobState.Running);
             return flights + legs + workers + jobs == 0
@@ -61,7 +62,7 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
         {
             var rings = Cards.Open.Count(c => c.Bin == CardBin.Ring);
             var forYou = Cards.Open.Count(c => c.Bin == CardBin.ForYou);
-            var held = Flights.Lines.Count(l => l.Row.State == FlightState.Held);
+            var held = Flights.Lines.Count(l => l.Stale is null && l.Row.State == FlightState.Held);
             var cleared = Cards.Open.Count(c => c.Choices.Any(ch => ch.Status == ChoiceStatus.Passing));
             return rings + forYou + held + cleared == 0
                 ? "Nothing waits on you"
@@ -82,12 +83,15 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
     /// <summary>Flying and held flights: a landed one has nothing to open for here.</summary>
     public IReadOnlyList<HomeChip> FlightChips =>
         [.. Flights.Lines.Where(l => l.Row.State != FlightState.Landed)
-            .Select(l => new HomeChip(HomeChipKind.Flight, Mark(l.Node, $"{l.Code} · {l.State}"), l.State) { Flight = l })];
+            .Select(l => l.StaleMark is { } stale
+                // Its node is in the mark, so the node's name is not said twice; the chip is the last known row, dimmed.
+                ? new HomeChip(HomeChipKind.Flight, $"{l.Code} · {stale}", "stale") { Flight = l }
+                : new HomeChip(HomeChipKind.Flight, Mark(l.Node, $"{l.Code} · {l.State}"), l.State) { Flight = l })];
 
     /// <summary>The live sessions.</summary>
     public IReadOnlyList<HomeChip> SessionChips =>
         [.. Sessions.Lines.Where(l => l.IsLive)
-            .Select(l => new HomeChip(HomeChipKind.Session, Mark(l.Node, l.Name), "live") { Session = l })];
+            .Select(l => new HomeChip(HomeChipKind.Session, Mark(l.Node, l.ShownName), "live") { Session = l })];
 
     /// <summary>The running and queued jobs.</summary>
     public IReadOnlyList<HomeChip> JobChips =>
@@ -112,7 +116,6 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
 internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
 {
     private const float Gutter = 20f;
-    private const int PerRow = 4;
 
     private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
     private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
@@ -122,6 +125,10 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     private static readonly (RGBAColor32 Bg, RGBAColor32 Hover) Green = (new RGBAColor32(0x1f, 0x6b, 0x45, 0xff), new RGBAColor32(0x27, 0x85, 0x56, 0xff));
     private static readonly (RGBAColor32 Bg, RGBAColor32 Hover) Amber = (new RGBAColor32(0x6b, 0x52, 0x1c, 0xff), new RGBAColor32(0x85, 0x66, 0x23, 0xff));
+
+    // A stale flight's chip: grey, not the green or amber of a state, its text lighter than Dim so it stays at AA on the grey.
+    private static readonly (RGBAColor32 Bg, RGBAColor32 Hover) Stale = (new RGBAColor32(0x26, 0x28, 0x32, 0xff), new RGBAColor32(0x31, 0x34, 0x40, 0xff));
+    private static readonly RGBAColor32 StaleText = new(0xb4, 0xb7, 0xc4, 0xff);
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
 
@@ -196,10 +203,9 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             return;
         }
         var shown = chips.Take(HomeScreen.MaxChips).ToList();
-        foreach (var row in shown.Chunk(PerRow))
-        {
-            blocks.Add(Layout.Builder.HStack([.. row.Select(Chip), Layout.Builder.Spacer().WStar()]).WithGap(8f).RowH(30f));
-        }
+        // Wrapping, as the cards' buttons are: a row of fixed chips ran past the page's edge at a narrow width and cut the last
+        // one's words, which a stale flight's longer label ("ORB3 · stale (DE1 unreachable)") made certain.
+        blocks.Add(Layout.Builder.WrapH([.. shown.Select(Chip)]).WithGap(8f).WithLineGap(8f).WStar());
         if (chips.Count > shown.Count)
         {
             blocks.Add(Layout.Builder.Text($"and {chips.Count - shown.Count} more on its page", 12f, Dim).RowH(22f));
@@ -208,9 +214,13 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     private Layout.Node Chip(HomeChip chip)
     {
-        var tint = chip.Tone switch { "held" or "queued" => Amber, _ => Green };
+        var tint = chip.Tone switch { "held" or "queued" => Amber, "stale" => Stale, _ => Green };
         return chip.Kind switch
         {
+            // The chip of a stale flight still opens its page (the last known row); its words, not its tint, say why it is dim.
+            HomeChipKind.Flight when chip.Tone == "stale" =>
+                CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint, StaleText)
+                    .WithTooltip($"{chip.Flight.Code} was {chip.Flight.State} when {chip.Flight.Stale} last answered"),
             HomeChipKind.Flight => CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint),
             HomeChipKind.Session => CardsView<TSurface>.Pill(chip.Label, $"home:session:{chip.Session!.Key}", () => OnSession?.Invoke(chip.Session), tint),
             _ => CardsView<TSurface>.Pill(chip.Label, $"home:job:{chip.Job!.Key}", () => OnJob?.Invoke(chip.Job), tint),

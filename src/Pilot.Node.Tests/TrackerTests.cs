@@ -205,9 +205,14 @@ public sealed class TrackerTests : IDisposable
         var result = await Create(Commander("secret", handler), "sc-101645");
         result.Ok.ShouldBeTrue(result.Error);
         _state.Flights().Single().Title.ShouldBe("Cards on Shortcut");
-        var request = handler.Requests.ShouldHaveSingleItem();
-        request.RequestUri!.ToString().ShouldBe("https://api.app.shortcut.com/api/v3/stories/101645");
-        request.Headers.GetValues("Shortcut-Token").ShouldBe(["secret"]);
+        // Beyond the title read, create also reads and puts the story's labels (the pilot node label); all on the one story, all with the token.
+        handler.Requests.ShouldNotBeEmpty();
+        foreach (var request in handler.Requests)
+        {
+            request.RequestUri!.ToString().ShouldBe("https://api.app.shortcut.com/api/v3/stories/101645");
+            request.Headers.GetValues("Shortcut-Token").ShouldBe(["secret"]);
+        }
+        handler.Requests[0].Method.ShouldBe(HttpMethod.Get);
     }
 
     [Fact]
@@ -217,7 +222,9 @@ public sealed class TrackerTests : IDisposable
         var result = await Create(Commander("secret", handler), "sc-7", "The controller's title");
         result.Ok.ShouldBeTrue(result.Error);
         _state.Flights().Single().Title.ShouldBe("The controller's title");
-        handler.Requests.ShouldBeEmpty();
+        // No title read, only the node label's work on the story: reads and a put of its labels.
+        handler.Requests.ShouldAllBe(r => r.RequestUri!.ToString() == "https://api.app.shortcut.com/api/v3/stories/7");
+        handler.Requests.Count(r => r.Method == HttpMethod.Put).ShouldBe(1);
     }
 
     [Fact]

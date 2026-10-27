@@ -66,7 +66,7 @@ internal sealed class FakeGitHub : IGitHub
     public Dictionary<int, string> Issues { get; } = [];
 
     public Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken) =>
-        Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value })]);
+        Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value, Labels = IssueLabels.TryGetValue(i.Key, out var labels) ? [.. labels] : [] })]);
 
     /// <summary>Each repo's open PRs, by repo folder path; a repo with none listed has none.</summary>
     public Dictionary<string, PullRequestStatus[]> OpenPrs { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -85,6 +85,13 @@ internal sealed class FakeGitHub : IGitHub
             : Task.FromResult(OpenPrs.TryGetValue(repoPath, out var prs) ? prs : []);
     }
 
+    public Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken) =>
+        OpenPrsFail.Contains(repoPath)
+            ? Task.FromException<int[]>(new FlightException("gh could not list the PRs: offline"))
+            : Task.FromResult(OpenPrs.TryGetValue(repoPath, out var prs)
+                ? (int[])[.. prs.Where(p => Labels.TryGetValue(p.Number, out var set) && set.Contains(label)).Select(p => p.Number)]
+                : []);
+
     /// <summary>Every issue created, as (repo path, title, body).</summary>
     public List<(string Repo, string Title, string? Body)> IssuesCreated { get; } = [];
 
@@ -101,6 +108,22 @@ internal sealed class FakeGitHub : IGitHub
         var number = Issues.Count == 0 ? 1 : Issues.Keys.Max() + 1;
         Issues[number] = title;
         return Task.FromResult(new IssueInfo { Number = number, Title = title });
+    }
+
+    /// <summary>Each issue closed, with its comment, in order.</summary>
+    public List<(int Number, string Comment)> ClosedIssues { get; } = [];
+
+    /// <summary>When set, CloseIssueAsync fails with it.</summary>
+    public string? CloseIssueFails { get; set; }
+
+    public Task CloseIssueAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
+    {
+        if (CloseIssueFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        ClosedIssues.Add((number, comment));
+        return Task.CompletedTask;
     }
 
     public Task<string?> IssueTitleAsync(string repoPath, int number, CancellationToken cancellationToken) =>
@@ -325,6 +348,67 @@ internal sealed class FakeGitHub : IGitHub
         return Task.CompletedTask;
     }
 
+    /// <summary>Every label asked to come off, by PR number, in order.</summary>
+    public List<(int Number, string Label)> RemoveCalls { get; } = [];
+
+    public Task RemoveLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
+    {
+        RemoveCalls.Add((number, label));
+        if (Labels.TryGetValue(number, out var set))
+        {
+            set.Remove(label);
+        }
+        return Task.CompletedTask;
+    }
+
+    /// <summary>The labels each issue carries, by number.</summary>
+    public Dictionary<int, HashSet<string>> IssueLabels { get; } = [];
+
+    /// <summary>The labels made in the repo, in order.</summary>
+    public List<string> LabelsCreated { get; } = [];
+
+    /// <summary>Every comment made on an issue, by number.</summary>
+    public List<(int Number, string Body)> IssueComments { get; } = [];
+
+    public Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult(IssueLabels.TryGetValue(number, out var labels) ? labels.ToArray() : []);
+
+    /// <summary>When set, adding or removing an issue label fails with it, as GitHub refusing it.</summary>
+    public string? IssueLabelFails { get; set; }
+
+    public Task AddIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
+    {
+        if (IssueLabelFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        if (!LabelsCreated.Contains(label))
+        {
+            LabelsCreated.Add(label);
+        }
+        (IssueLabels.TryGetValue(number, out var labels) ? labels : IssueLabels[number] = []).Add(label);
+        return Task.CompletedTask;
+    }
+
+    public Task RemoveIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
+    {
+        if (IssueLabelFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        if (IssueLabels.TryGetValue(number, out var labels))
+        {
+            labels.Remove(label);
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken)
+    {
+        IssueComments.Add((number, body));
+        return Task.CompletedTask;
+    }
+
     /// <summary>The login gh says it is signed in as.</summary>
     public string? Login { get; set; } = "controller";
 
@@ -369,6 +453,8 @@ public abstract class LegCommanderTestsBase : IDisposable
         Directory.CreateDirectory(Repo);
         Git(Repo, "init", "-q", "-b", "main");
         File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
+        // A check that builds or tests needs a solution where it runs (leg plan refuses one that does not): a stub, in the plane's root.
+        File.WriteAllText(Path.Combine(Repo, "Tianwen.slnx"), "<Solution />\n");
         Git(Repo, "add", ".");
         Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
         var git = new GitCli();
@@ -381,6 +467,8 @@ public abstract class LegCommanderTestsBase : IDisposable
 
     public void Dispose()
     {
+        // A leg start that pulled a sibling has RepoWatch reading the repos in the background; let it finish before the folders go.
+        _legs.SiblingSync?.WatchRefresh.Wait(TimeSpan.FromSeconds(30));
         try
         {
             Git(Repo, "worktree", "prune");
@@ -452,12 +540,13 @@ public abstract class LegCommanderTestsBase : IDisposable
     }
 
     /// <summary>The leg commander with the node's sibling sync, as NodeApp wires it.</summary>
-    private protected void WithSiblingSync()
+    private protected RepoWatch WithSiblingSync()
     {
         var git = new GitCli();
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [_root]);
         var watch = new RepoWatch(_state, new RepoCatalog(_state, options), new Planes(git), _github, TimeProvider.System) { Parallelism = 1 };
         _legs.SiblingSync = new RepoSync(git, new Planes(git), watch);
+        return watch;
     }
 
     private protected sealed class ThrowingGit : IGit
@@ -613,7 +702,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
 
         (await Leg(Verbs.Planned, "flight/TIA1")).Error.ShouldBe("TIA1 has no leg waiting to start: plan them with plan-leg first");
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=plan", "goal=g", "done-when=d")).Error
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=plan", "goal=Do the work", "done-when=Its check passes")).Error
             .ShouldBe("plan names the flight's planner, not a leg; call the leg something else");
     }
 
@@ -628,15 +717,17 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         (parser.Budget, parser.Model, parser.Check, parser.State).ShouldBe((4_000_000L, "sonnet", "dotnet test", LegState.Planned));
 
         // Planned again: replaced in its place.
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Parse it better", "done-when=x")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Parse it better", "done-when=The parser tests pass")).Ok.ShouldBeTrue();
         (L("parser").Order, L("parser").Goal).ShouldBe((1, "Parse it better"));
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=Bad Name", "goal=g", "done-when=d")).Error.ShouldNotBeNull().ShouldContain("lower-case");
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=Bad Name", "goal=Do the work", "done-when=Its check passes")).Error.ShouldNotBeNull().ShouldContain("lower-case");
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=x")).Error.ShouldNotBeNull().ShouldContain("goal and a done-when");
+        // A placeholder is no brief (PIL337 went out with goal 'x' and done-when 'y').
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=menu", "goal=x", "done-when=y")).Error.ShouldNotBeNull().ShouldContain("not 'x' and 'y'");
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "oops")).Error.ShouldNotBeNull().ShouldContain("key=value");
         // TIA1818's check, 2026-10-25: a bare | in a test filter pipes in every shell, so it is refused when planned.
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=filter", "goal=g", "done-when=d", "check=dotnet test --filter A|B"))
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=filter", "goal=Do the work", "done-when=Its check passes", "check=dotnet test --filter A|B"))
             .Error.ShouldNotBeNull().ShouldContain("--filter 'A|B'");
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=filter", "goal=g", "done-when=d", "check=dotnet test --filter 'A|B'")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=filter", "goal=Do the work", "done-when=Its check passes", "check=dotnet test --filter 'A|B'")).Ok.ShouldBeTrue();
     }
 
     [Fact]
@@ -656,7 +747,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.PlannedKind);
 
         // A leg planned afterwards goes at the end of what is left.
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=polish", "goal=g", "done-when=d")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=polish", "goal=Do the work", "done-when=Its check passes")).Ok.ShouldBeTrue();
         L("polish").Order.ShouldBe(3);
     }
 
@@ -714,7 +805,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
             (await flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
             foreach (var name in new[] { "parser", "render", "docs" })
             {
-                (await legs.RunAsync(new CommandRequest { Verb = Verbs.PlanLeg, Target = "flight/TIA1", Args = [$"name={name}", "goal=g", "done-when=d"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+                (await legs.RunAsync(new CommandRequest { Verb = Verbs.PlanLeg, Target = "flight/TIA1", Args = [$"name={name}", "goal=Do the work", "done-when=Its check passes"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
             }
 
             (await legs.RunAsync(new CommandRequest { Verb = Verbs.RemoveLeg, Target = "flight/TIA1/render", Args = ["not needed"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
@@ -741,6 +832,55 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         card.Detail.ShouldBe($"DIR.Lib is 3 commits behind its origin: git -C {Path.Combine(_root, "DIR.Lib")} pull --ff-only");
 
         _state.Cards().Count(c => c.Kind == LegCommander.SiblingBehindKind).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ASiblingPulledByHandSinceItWasCountedBehindGivesNeitherAHandledLineNorACard()
+    {
+        SiblingDirLib(behind: 3);
+        WithSiblingSync();
+        var flight = await FlightWithTwoLegs();
+        // SiblingWatch counts it behind and caches that; then the person pulls it before the leg starts.
+        (await _legs.Siblings.BehindAsync(flight.Worktree, flight.RepoPath, Ct)).ShouldHaveSingleItem().Behind.ShouldBe(3);
+        Git(Path.Combine(_root, "DIR.Lib"), "pull", "-q", "--ff-only");
+
+        (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
+
+        _workers.Started.ShouldHaveSingleItem();
+        _state.Cards().Where(c => c.Kind is LegCommander.SiblingPulledKind or LegCommander.SiblingBehindKind).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AfterALegStartPulledASiblingRepoWatchShowsItZeroBehind()
+    {
+        SiblingDirLib(behind: 3);
+        var watch = WithSiblingSync();
+        var flight = await FlightWithTwoLegs();
+        // The fetch inside the count brings origin/main forward, so the watch's first read has the clone 3 behind.
+        await _legs.Siblings.BehindAsync(flight.Worktree, flight.RepoPath, Ct);
+        (await watch.StatusAsync(refresh: true, Ct)).Single(r => r.Name == "DIR.Lib").Behind.ShouldBe(3);
+
+        (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
+        await _legs.SiblingSync!.WatchRefresh;
+
+        (await watch.StatusAsync(refresh: false, Ct)).Single(r => r.Name == "DIR.Lib").Behind.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AStaleSiblingWhoseOriginWentUnreachableAfterTheCountIsStillPulled()
+    {
+        SiblingDirLib(behind: 3);
+        WithSiblingSync();
+        var flight = await FlightWithTwoLegs();
+        await _legs.Siblings.BehindAsync(flight.Worktree, flight.RepoPath, Ct);
+        var origin = Path.Combine(_root, "dir-lib-origin");
+        Directory.Move(origin, origin + "-gone");
+
+        (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
+
+        _state.Cards().Where(c => c.Kind == LegCommander.SiblingBehindKind).ShouldBeEmpty();
+        _state.Cards().Single(c => c.Kind == LegCommander.SiblingPulledKind).Detail.ShouldBe("main took 3 commits from origin/main");
+        Git(Path.Combine(_root, "DIR.Lib"), "rev-list", "--count", "HEAD..origin/main").Trim().ShouldBe("0");
     }
 
     [Fact]
@@ -1069,6 +1209,56 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
 
         Directory.Exists(flight.Worktree).ShouldBeFalse();
     }
+
+    [Fact]
+    public async Task LandingStopsEveryLiveSessionOfTheFlightNotOnlyItsCurrentWorkers()
+    {
+        // TIA368 landed with its planner and an earlier reviewer idle in its plane: they held the folder and could still push.
+        await FlightWithTwoLegs();
+        var flights = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System, workers: _workers);
+        Session("aa000001", "du1-tia1-plan", SessionRole.Planner, "TIA1", SessionState.Idle);
+        Session("aa000002", "du1-tia1-review", SessionRole.Reviewer, "TIA1", SessionState.Working);
+        Session("aa000003", "du1-tia1-parser", SessionRole.Worker, "TIA1", SessionState.Ended);
+        Session("aa000004", "du1-tia2-plan", SessionRole.Planner, "TIA2", SessionState.Idle);
+
+        (await flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+
+        _workers.Stopped.ShouldContain("aa000001");
+        _workers.Stopped.ShouldContain("aa000002");
+        _workers.Stopped.ShouldNotContain("aa000003");
+        _workers.Stopped.ShouldNotContain("aa000004");
+    }
+
+    [Fact]
+    public async Task WorkNotInMainLandsOnlyOnceAPassedReviewHasReadItsHead()
+    {
+        // TIA368 was landed by hand with a leg added after its pass: two pushed commits no reviewer had seen.
+        var flight = await FlightWithTwoLegs();
+        var origin = Path.Combine(_root, "origin.git");
+        Git(_root, "init", "-q", "--bare", origin);
+        Git(Repo, "remote", "add", "origin", origin);
+        Git(Repo, "push", "-q", "origin", "main");
+        File.WriteAllText(Path.Combine(flight.Worktree, "parser.cs"), "class Parser {}\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "the parser");
+        Git(flight.Worktree, "push", "-q", "origin", "HEAD:" + flight.Branch);
+        var land = new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" };
+
+        var refused = await _flights.RunAsync(land, Ct);
+        refused.Error.ShouldNotBeNull().ShouldContain("TIA1's plane holds 1 commit not in main that no passed review has read");
+        refused.Error.ShouldContain("the parser");
+        _state.Flights().Single().State.ShouldBe(FlightState.Flying);
+
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        _state.PutFlight(_state.Flights().Single() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "r", ReviewedHead = head, StartedAt = DateTimeOffset.UtcNow } });
+        (await _flights.RunAsync(land, Ct)).Ok.ShouldBeTrue();
+    }
+
+    private void Session(string id, string name, SessionRole role, string flight, SessionState state) => _state.PutSession(new SessionRow
+    {
+        Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = "/r/w", Role = role, Flight = flight,
+        ContextTokens = 0, ContextWindow = 200_000, State = state, SpendWeighted = 0, LastResponseAt = DateTimeOffset.UtcNow, StartedAt = DateTimeOffset.UtcNow,
+    });
 
     [Fact]
     public async Task APlaneWhoseGitFileWentIsPrunableAndStillLands()

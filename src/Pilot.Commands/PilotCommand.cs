@@ -175,24 +175,46 @@ public static class PilotCommand
             var snapshot = await SnapshotAsync(client, ct);
             var maintenance = false;
             bool? autopilot = null;
+            string? dataFolder = null;
             try
             {
                 var info = await client.GetNodeAsync(ct);
                 maintenance = info.Maintenance;
                 autopilot = info.Autopilot;
+                dataFolder = info.DataFolder;
             }
             catch (HttpRequestException)
             {
                 // The node's own word on itself is a line more: the flights and sessions are what status is for.
             }
             var everyFlight = parseResult.GetValue(allFlights);
-            await WriteAsync(parseResult.GetValue(outputFormat), () => Status(snapshot, maintenance: maintenance, autopilot: autopilot, all: everyFlight),
-                () => StatusMarkdown.Build(snapshot, maintenance, autopilot, everyFlight));
+            var format = parseResult.GetValue(outputFormat);
+            var copies = format is "plain" or "text" ? new Dictionary<string, string>() : await AttachmentCopies.ResolveAsync(AttachmentCopies.Of(snapshot), client, dataFolder, ct);
+            await WriteAsync(format, () => Status(snapshot, maintenance: maintenance, autopilot: autopilot, all: everyFlight),
+                () => StatusMarkdown.Build(snapshot, maintenance, autopilot, everyFlight, copies));
+            return 0;
+        });
+        var attachmentsOwner = new Argument<string?>("flight-or-session") { Description = "A flight's code or a session's name; none lists every one", Arity = ArgumentArity.ZeroOrOne };
+        var attachments = Action(new Command("attachments", "The images the node keeps copies of, with where each is") { Arguments = { attachmentsOwner } }, async (p, client, ct) =>
+        {
+            var snapshot = await SnapshotAsync(client, ct);
+            var owner = p.GetValue(attachmentsOwner);
+            string? dataFolder = null;
+            try
+            {
+                dataFolder = (await client.GetNodeAsync(ct)).DataFolder;
+            }
+            catch (HttpRequestException)
+            {
+                // The paths then fall back to the default data folder's layout; a copy not found there is shown missing.
+            }
+            var copies = AttachmentCopies.Of(snapshot, owner);
+            await output.WriteAsync(AttachmentCopies.List(copies, await AttachmentCopies.ResolveAsync(copies, client, dataFolder, ct), client, dataFolder, owner));
             return 0;
         });
         var sessions = Action(new Command("sessions", "Every Claude session on the machine"), async (_, client, ct) =>
         {
-            await output.WriteAsync(Sessions(await client.GetSessionsAsync(ct)));
+            await output.WriteAsync(Sessions(await client.GetSessionsAsync(ct), await MachineAsync(client, ct)));
             return 0;
         });
 
@@ -229,9 +251,10 @@ public static class PilotCommand
         var issue = Arg("issue", "The issue the flight flies");
         var title = Words("title", "What it is for, in a line", required: false);
         var repo = new Option<string?>("--repo") { Description = "The repo's checkout (any of its worktrees); else this folder" };
-        var create = Action(new Command("create", "A flight on an issue of this repo, and its plane") { Arguments = { issue, title }, Options = { repo } },
+        var anyway = new Option<bool>(Verbs.AnywayFlag) { Description = "Create it although the issue carries another node's pilot node: label; says so on the issue" };
+        var create = Action(new Command("create", "A flight on an issue of this repo, and its plane") { Arguments = { issue, title }, Options = { repo, anyway } },
             (p, client, ct) => Send(client, Verbs.CreateFlight, Verbs.RepoTarget(RepoPath(client, p.GetValue(repo), cwd)),
-                [p.GetValue(issue)!, .. p.GetValue(title) ?? []], who, ct));
+                [p.GetValue(issue)!, .. p.GetValue(title) ?? [], .. p.GetValue(anyway) ? new[] { Verbs.AnywayFlag } : []], who, ct));
 
         var code = Arg("code", "The flight's code, as TIA1611");
         var other = Arg("other", "The flight it waits for");
@@ -370,11 +393,25 @@ public static class PilotCommand
         var location = Arg("location", "A path or a URL");
         var artifactTitle = Words("title", "What it shows", required: false);
         var artifact = Action(new Command("artifact", "Record something to look at on the leg") { Arguments = { location, artifactTitle }, Options = { leg } },
-            (p, client, ct) =>
+            async (p, client, ct) =>
             {
                 var where = p.GetValue(location)!;
                 var full = Path.IsPathRooted(where) || where.Contains("://", StringComparison.Ordinal) ? where : Path.GetFullPath(where, cwd);
-                return OnLeg(p, client, Verbs.AddArtifact, _ => [full, .. p.GetValue(artifactTitle) ?? []], ct);
+                if (p.GetValue(leg) is null)
+                {
+                    // Outside every plane the artifact goes on the Claude session running this, which a flight's leg would not be.
+                    var snapshot = await SnapshotAsync(client, ct);
+                    var here = Path.TrimEndingDirectorySeparator(Path.GetFullPath(cwd)) + Path.DirectorySeparatorChar;
+                    var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                    var inPlane = snapshot.Flights.Any(f => f.State != FlightState.Landed
+                        && here.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(f.Worktree)) + Path.DirectorySeparatorChar, comparison));
+                    if (!inPlane && sessionId is { Length: > 0 }
+                        && snapshot.Sessions.FirstOrDefault(s => string.Equals(s.SessionId, sessionId, StringComparison.OrdinalIgnoreCase)) is { } session)
+                    {
+                        return await Send(client, Verbs.AddArtifact, Verbs.SessionTarget(session.Id), [full, .. p.GetValue(artifactTitle) ?? []], who, ct);
+                    }
+                }
+                return await OnLeg(p, client, Verbs.AddArtifact, _ => [full, .. p.GetValue(artifactTitle) ?? []], ct);
             });
 
         // review: the reviewer's verdict, from its plane (or a PR review's worktree); or the controller's "ready anyway" with --flight
@@ -417,7 +454,7 @@ public static class PilotCommand
             });
         // review pr: a fresh reviewer on any PR, pinned at its head in a worktree of the node's own
         var prRef = Arg("pr", "The PR: owner/repo#n, or its URL");
-        var reviewPr = Action(new Command("pr", "Start a reviewer on any PR, pinned at its head; its verdict comes back as a card") { Arguments = { prRef } },
+        var reviewPr = Action(new Command("pr", "Start a reviewer on any PR, pinned at its head; its verdict comes back as a card. To have pilot look at a PR again later, put the 'pilot: recheck' label on it") { Arguments = { prRef } },
             (p, client, ct) =>
             {
                 var pr = Pr(p.GetValue(prRef)!);
@@ -763,7 +800,8 @@ public static class PilotCommand
         // The Settings page's, for a terminal and an agent: this machine's node only.
         var settings = Action(new Command("settings", "This node's setup checklist and settings, and where each setting's value comes from"), async (_, client, ct) =>
         {
-            var page = await client.GetSettingsAsync(ct);
+            // The settings and the checklist are two routes: the checks run programs, so the page does not wait on them.
+            var page = await client.GetSettingsWithChecksAsync(ct);
             if (page is not { Success: true, Response: { } shown })
             {
                 await output.WriteLineAsync($"refused: {page.Error}");
@@ -793,16 +831,17 @@ public static class PilotCommand
         var settingValue = Words("value", "Its value (every folder, for repo-roots); none, or default, takes it out", required: false);
         var set = Action(new Command("set", "Save a setting; the node restarts at once to run with it; its jobs carry on") { Arguments = { settingKey, settingValue }, Options = { actingOn } },
             (p, client, ct) => Send(client, Verbs.Set, Verbs.NodeTarget, [p.GetValue(settingKey)!, .. p.GetValue(settingValue) ?? []], who, ct, p.GetValue(actingOn)));
-        var checkKey = Arg("check", "autostart, no-autostart, hooks, lan, firewall or trust");
-        var setupCommand = Action(new Command("setup", "Make a setup check's fix: the logon entry, the hooks, the LAN, the firewall rule (asks for elevation), the trust prompt") { Arguments = { checkKey }, Options = { actingOn } },
-            (p, client, ct) => Send(client, Verbs.Setup, Verbs.NodeTarget, [p.GetValue(checkKey)!], who, ct, p.GetValue(actingOn)));
+        var checkKey = Arg("check", "autostart, no-autostart, hooks, lan, firewall, defender or trust");
+        var defenderProcesses = new Option<bool>("--processes") { Description = "With defender: exclude pilot-node, dotnet, MSBuild, VBCSCompiler and testhost as processes too, not only the folders" };
+        var setupCommand = Action(new Command("setup", "Make a setup check's fix: the logon entry, the hooks, the LAN, the firewall rule and the Defender exclusions (each asks for elevation), the trust prompt") { Arguments = { checkKey }, Options = { defenderProcesses, actingOn } },
+            (p, client, ct) => Send(client, Verbs.Setup, Verbs.NodeTarget, [p.GetValue(checkKey)!, .. p.GetValue(defenderProcesses) ? new[] { "--processes" } : []], who, ct, p.GetValue(actingOn)));
         settings.Subcommands.Add(set);
         settings.Subcommands.Add(setupCommand);
 
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, archive, ring, flag, handled, nodes, connectNode, grants, settings },
+            Subcommands = { status, attachments, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, archive, ring, flag, handled, nodes, connectNode, grants, settings },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
@@ -1174,14 +1213,14 @@ public static class PilotCommand
     }
 
     /// <summary>Every session, a line each: name, role and flight, state, model, context and spend.</summary>
-    internal static string Sessions(IReadOnlyList<SessionRow> rows)
+    internal static string Sessions(IReadOnlyList<SessionRow> rows, string? machine = null)
     {
         var text = new System.Text.StringBuilder();
         foreach (var row in rows)
         {
             var flight = row.Flight is null ? "" : $" {row.Flight}{(row.Leg is { } leg ? "/" + leg : "")}";
             var budget = row.Budget is { } b ? $" of {b.ToString("N0", CultureInfo.InvariantCulture)}" : "";
-            text.AppendLine($"{row.Id}  {row.Name}  {row.Role.ToString().ToLowerInvariant()}{flight}  {row.State.ToString().ToLowerInvariant()}  {row.Model ?? "-"}  {row.ContextTokens.ToString("N0", CultureInfo.InvariantCulture)}/{row.ContextWindow.ToString("N0", CultureInfo.InvariantCulture)}  {row.SpendWeighted.ToString("N0", CultureInfo.InvariantCulture)}{budget}");
+            text.AppendLine($"{row.Id}  {MachineName.Shown(row.Name, machine)}  {row.Role.ToString().ToLowerInvariant()}{flight}  {row.State.ToString().ToLowerInvariant()}  {row.Model ?? "-"}  {row.ContextTokens.ToString("N0", CultureInfo.InvariantCulture)}/{row.ContextWindow.ToString("N0", CultureInfo.InvariantCulture)}  {row.SpendWeighted.ToString("N0", CultureInfo.InvariantCulture)}{budget}");
         }
         return text.Length == 0 ? "No sessions.\n" : text.ToString();
     }
@@ -1206,7 +1245,7 @@ public static class PilotCommand
             }
             foreach (var pr in repo.PullRequests)
             {
-                text.AppendLine($"    PR #{pr.Number} {pr.Title}  {pr.Head}{(pr.Flight is { } f ? $"  {f}" : "")}  {(pr.Draft ? "draft" : "ready")}{(pr.Checks is { } checks ? $"  checks {checks}" : "")}");
+                text.AppendLine($"    PR #{pr.Number} {pr.Title}  {pr.Head}{(pr.Flight is { } f ? $"  {f}" : "")}  {(pr.Draft ? "draft" : "ready")}{(pr.Checks is { } checks ? $"  checks {checks}" : "")}{(pr.Labels.Length > 0 ? $"  labels {string.Join(", ", pr.Labels)}" : "")}");
             }
             foreach (var problem in repo.Errors)
             {

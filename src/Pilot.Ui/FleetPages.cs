@@ -236,6 +236,9 @@ internal sealed class PlayFilter
 /// </summary>
 internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights, JobsScreen Jobs, IReadOnlyList<JobRow> JobRows, CardsScreen Cards, ReposScreen? Repos = null)
 {
+    /// <summary>Whether a feed's <see cref="NodeFeed.Reach"/> says its node cannot be reached: down since a first failed try or a drop. The one test the panel's held lines and the flights' stale marks share.</summary>
+    private static bool Unreachable((bool Connected, DateTimeOffset? DownSince) reach) => !reach.Connected && reach.DownSince is not null;
+
     /// <summary>
     /// Merges <paramref name="feeds"/> (this window's node first, then the others, each node once). This window's node's
     /// rows stay unmarked while it is the only node to choose, as they were before there was a fleet; another node's rows are
@@ -254,9 +257,20 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
         var here = feeds[0].Feed;
         var hereSessions = here.Screen(now);
         var sessions = SessionLine.Order(shown.SelectMany(f => f.Feed.Screen(now).Lines.Select(l => l with { Node = Mark(f.Mark) })));
-        var flights = FlightLine.Order(shown.SelectMany(f => f.Feed.Flights(now).Lines.Select(l => l with { Node = Mark(f.Mark) })));
+        // Read once per node, so a node that answers between two reads is not both reachable and not: the panel's held lines and
+        // the flights' stale marks below read this one answer, which is the state the Fleet page shows too.
+        var reach = shown.Select(f => (f.Mark, f.Feed, f.Feed.Reach)).ToList();
+        // A flight on a node the window cannot reach is its last known row, marked stale with that node's name: it may be long
+        // out of date and its commands cannot go anywhere (pilot #325).
+        var flights = FlightLine.Order(reach.SelectMany(f => f.Feed.Flights(now).Lines.Select(l => l with { Node = Mark(f.Mark), Stale = Unreachable(f.Reach) ? f.Mark.Name : null })));
         var jobs = JobLine.Order(shown.SelectMany(f => f.Feed.JobsPage(now).Lines.Select(l => l with { Node = Mark(f.Mark) })));
-        var cards = CardsScreen.Merge(shown.Select(f => (Mark(f.Mark), f.Feed.Cards())), feeds[0].Feed.Cards().Watchtower);
+        // A node the window cannot reach gives the panel none of its cards, which may be long answered and cannot be commanded
+        // now (DE1, 2026-10-26: its stale copy stood on the panel and in its counts for hours). One line each says how many it
+        // held, and the node's own answer fills the panel again when it is back.
+        var cards = CardsScreen.Merge(
+            reach.Where(f => f.Reach.Connected).Select(f => (Mark(f.Mark), f.Feed.Cards())),
+            feeds[0].Feed.Cards().Watchtower,
+            reach.Where(f => Unreachable(f.Reach)).Select(f => HeldNode.Of(f.Mark, f.Reach.DownSince!.Value, f.Feed.Cards(), now)));
         var repos = RepoLine.Order(shown.SelectMany(f => f.Feed.Repos(now, reposWanted).Lines.Select(l => l.Marked(Mark(f.Mark)))));
         var source = several ? $"{hereSessions.Source} · {filter.Choices.Count} nodes{(filter.All ? "" : $", showing {string.Join(", ", filter.Choices.Where(c => filter.Shows(c)).Select(c => c.Name))}")}" : hereSessions.Source;
         return new FleetPages(

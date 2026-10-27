@@ -42,6 +42,30 @@ public sealed class FormattingTests
     [InlineData(null, null, "no response yet")]
     public void ModelsReadAsTheirNames(string? model, string? effort, string expected) => SessionLine.ModelText(model, effort).ShouldBe(expected);
 
+    [Theory]
+    [InlineData("stargazer", "SE1", "se1-stargazer")]
+    [InlineData("se1-stargazer", "SE1", "se1-stargazer")]
+    [InlineData("de1-pil283-worker", "SE1", "de1-pil283-worker")]
+    [InlineData("stargazer", null, "stargazer")]
+    [InlineData("stargazer", "", "stargazer")]
+    [InlineData("s1-stargazer", "SE1", "se1-s1-stargazer")]
+    public void ANameWithoutAMachinePrefixShowsTheNodesCodeBeforeIt(string name, string? code, string expected) =>
+        MachineName.Shown(name, code).ShouldBe(expected);
+
+    [Fact]
+    public void ASessionLineShowsItsNodeCodeOnlyWhenItsNameHasNoPrefix()
+    {
+        var bare = Live.Row("aaaa0000", "stargazer", SessionState.Idle);
+        var prefixed = Live.Row("aaaa0001", "de1-pil283-worker", SessionState.Idle);
+
+        var line = SessionLine.From(bare, Live.At) with { NodeCode = "SE1" };
+        line.ShownName.ShouldBe("se1-stargazer");
+        line.Name.ShouldBe("stargazer");
+        line.ToDumpLine().ShouldContain("se1-stargazer");
+        (SessionLine.From(prefixed, Live.At) with { NodeCode = "SE1" }).ShownName.ShouldBe("de1-pil283-worker");
+        SessionLine.From(bare, Live.At).ShownName.ShouldBe("stargazer");
+    }
+
     [Fact]
     public void AWorkerNamesItsFlightAndLegAndAnAdHocSessionItsRepo()
     {

@@ -48,7 +48,7 @@ public static class Briefs
     }
 
     /// <param name="socket">The node's socket when it is not the default one: the CLI is told it, or it would ask another node.</param>
-    public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null, string? resumed = null)
+    public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null, string? resumed = null, string? machine = null)
     {
         var run = Run(cli, socket);
         var text = new StringBuilder();
@@ -95,6 +95,7 @@ public static class Briefs
         }
         text.AppendLine();
         text.AppendLine(CiRule);
+        text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         if (CiShape.Of(flight.Worktree) is { } ci)
         {
             text.AppendLine($"This repo's CI ({ci.Workflow}) builds {ci.Configuration}: run your own `dotnet build` and `dotnet test` with `-c {ci.Configuration}`, never a bare or Debug one.");
@@ -152,6 +153,7 @@ public static class Briefs
             text.AppendLine($"- Tick each step as you finish it: `{run} check <step number>`.");
         }
         text.AppendLine($"- Something to look at (a screenshot, a capture, a page): `{run} artifact <path or URL> <title>`.");
+        text.AppendLine($"  {AttachmentRule(run)}");
         text.AppendLine($"- When every step is done and the Done-when holds: `{run} leg finish done \"<one-line report>\"`. The node reruns the");
         text.AppendLine("  check itself and refuses while a step is open or the check fails; fix what it says and finish again.");
         text.AppendLine($"- When you cannot go on: `{run} leg finish failed \"<why>\"`. Fail only for what stops the Done-when; something");
@@ -193,12 +195,33 @@ public static class Briefs
         "  it holds a slot of the queue and blocks every job behind it.";
 
     /// <summary>
+    /// The line every brief carries: a background session a session starts itself is named with the node's machine code, as the
+    /// node's own are, so the fleet's sessions are told apart (the merge guard refuses a <c>claude --bg -n</c> without it).
+    /// Nothing when the node's machine is not known.
+    /// </summary>
+    internal static string NamingRule(string? machine, string scope)
+    {
+        if (machine is not { Length: > 0 })
+        {
+            return "";
+        }
+        var code = machine.ToLowerInvariant();
+        return $"A background session you start yourself (`claude --bg`) is named `{code}-<flight or card>-<what>`, with the machine's code `{code}` written out,\n" +
+            $"e.g. `{code}-{scope}-nudge`: never start one without that prefix.\n";
+    }
+
+    /// <summary>
     /// The line both the planner and the worker are told: build as CI does. A published package is built Release, so a Debug
     /// build on a worktree meets <c>#if DEBUG</c> types it never carries (SDL144) and fails for no reason of the change's.
     /// </summary>
     internal const string CiRule =
         "Checks, and your own builds and test runs, build as the repo's CI does: for a SharpAstro dotnet repo that is `-c Release`, not the Debug a bare\n" +
         "`dotnet build` gives. A check that cannot match CI says why in the Done-when, before it fails.";
+
+    /// <summary>The line the planner is told: a check runs in the plane's root, so write it as CI runs it, working-directory included.</summary>
+    internal const string CheckWhereRule =
+        "A check runs in the plane's root: write it as CI runs it, including its working-directory (`cd <dir> && dotnet build <solution> -c Release`).\n" +
+        "`leg plan` refuses a check naming a project, solution or folder that is not where it runs, and says where the file is.";
 
     /// <summary>
     /// The org's UI checklist beside the flight's clone (<c>.github/docs/ui-changes.md</c> in the folder holding its repo,
@@ -214,7 +237,7 @@ public static class Briefs
     /// names or assumes), after the legs before it, and answers GO unless one is false. It judges no route, only facts, and
     /// changes nothing. A NO-GO names each stale fact with the command that showed it.
     /// </summary>
-    public static string Validate(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string run)
+    public static string Validate(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string run, string? machine = null)
     {
         var text = new StringBuilder();
         var title = flight.Title is { Length: > 0 } t ? $": {t}" : "";
@@ -224,6 +247,7 @@ public static class Briefs
         text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`. Read only: change, commit,");
         text.AppendLine("push and delete nothing, and keep scratch output outside the plane. Do it yourself, in this session, with no subagents.");
         text.AppendLine("Your ceiling is a few minutes and about thirty tool calls; past it, answer with what you have.");
+        text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         if (Trackers.Reading(flight.Tracker).Reminder(flight.Item) is { } item)
         {
             text.AppendLine(item);
@@ -270,6 +294,7 @@ public static class Briefs
         text.AppendLine($"- Every fact holds, or you could not find one false: `{run} leg validate go \"<the facts checked, in a line>\"`.");
         text.AppendLine($"- A fact is false: `{run} leg validate no-go \"<each stale fact, with the command that showed it and what was true instead>\"`.");
         text.AppendLine("Answer GO unless a fact is false. Then end your turn with the same answer.");
+        text.AppendLine(AttachmentRule(run));
         return text.ToString();
     }
 
@@ -281,7 +306,7 @@ public static class Briefs
     /// The planner's brief: read the issue and the code, and plan the flight's legs as the node flies them (one worker each,
     /// in order, on one branch), then say <c>planned</c>. It writes no code.
     /// </summary>
-    public static string Plan(FlightRow flight, IReadOnlyList<LegRow> legs, string run)
+    public static string Plan(FlightRow flight, IReadOnlyList<LegRow> legs, string run, string? machine = null)
     {
         var text = new StringBuilder();
         var title = flight.Title is { Length: > 0 } t ? $": {t}" : "";
@@ -292,6 +317,7 @@ public static class Briefs
         text.AppendLine($"({words.Read(flight.Issue)}), the repo's CLAUDE.md, and the code it touches. Do not edit, commit or push");
         text.AppendLine("anything: you plan, and each leg's worker does the work.");
         text.AppendLine("Do it yourself, in this session: no subagents, or one at most for a single narrow question.");
+        text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         text.AppendLine();
         text.AppendLine("How legs fly: one at a time, in order, each by a fresh worker that sees only its own leg, the legs before it and");
         text.AppendLine("what the branch holds. So each leg must stand on its own: a goal a worker can do in one sitting, a Done-when");
@@ -360,6 +386,8 @@ public static class Briefs
         text.AppendLine("(`--filter 'FullyQualifiedName~A|FullyQualifiedName~B'`). A bare | is refused, since it would pipe.");
         // SDL144: a Debug check on a worktree needed what the Release package never carries, and failed for nothing of the leg's.
         text.AppendLine(CiRule);
+        // PIL319: a check naming a solution that sits in src/ could never pass from the plane's root.
+        text.AppendLine(CheckWhereRule);
         if (CiShape.Of(flight.Worktree) is { } ci)
         {
             text.AppendLine($"This repo's CI ({ci.Workflow}) builds {ci.Configuration}: give every `dotnet build` and `dotnet test` in a check `-c {ci.Configuration}`. " +
@@ -373,7 +401,7 @@ public static class Briefs
     }
 
     /// <param name="plan">The depth the node chose (#74); null reviews at standard depth, said no more than that.</param>
-    public static string Review(FlightRow flight, IReadOnlyList<LegRow> legs, PlaneState plane, string run, ReviewPlan? plan = null)
+    public static string Review(FlightRow flight, IReadOnlyList<LegRow> legs, PlaneState plane, string run, ReviewPlan? plan = null, string? machine = null)
     {
         var depth = plan?.Depth ?? ReviewDepth.Standard;
         var text = new StringBuilder();
@@ -383,6 +411,7 @@ public static class Briefs
         text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`, against `{flight.Base}`.");
         text.AppendLine("Read the whole diff (`git diff " + flight.Base + "...HEAD`), and rerun what proves each leg's Done-when. Do not edit,");
         text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a go-around makes any change.");
+        text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         if (Trackers.Reading(flight.Tracker).Reminder(flight.Item) is { } item)
         {
             text.AppendLine(item);
@@ -437,6 +466,7 @@ public static class Briefs
         text.AppendLine();
         text.AppendLine("Look for: a Done-when that does not hold, bugs and regressions, tests that do not test what they say, and");
         text.AppendLine("anything the issue asked for that is missing. Style alone is no reason for changes.");
+        text.AppendLine(AttachmentRule(run));
         text.AppendLine();
         text.AppendLine("## Your verdict");
         text.AppendLine($"- Ready: `{run} review pass \"<what you checked, in a line or two>\"`.");
@@ -451,7 +481,7 @@ public static class Briefs
     /// goes to the node, whose card carries it to the controller.
     /// </summary>
     /// <param name="login">The gh login a review goes out under, when gh said it: on that login's own PR, only a comment.</param>
-    public static string ReviewPr(PrReviewRow review, PlaneState plane, string? login, string run)
+    public static string ReviewPr(PrReviewRow review, PlaneState plane, string? login, string run, string? machine = null)
     {
         var text = new StringBuilder();
         var pr = $"{review.Repo}#{review.Number}";
@@ -466,6 +496,7 @@ public static class Briefs
         text.AppendLine("alone: open the files around a change, follow its callers, and run what proves or disproves it where you can.");
         text.AppendLine("Do not edit, commit, push or merge anything, and post nothing to GitHub (no review, no comment): the controller");
         text.AppendLine("reads your verdict and posts it.");
+        text.Append(NamingRule(machine, $"review-{review.Number}"));
         // As for a flight's review (20 Oct): one session's reading, very light on subagents; its depth follows #74 later.
         text.AppendLine("Do the review yourself, in this session: no subagents, or one at most for a single narrow question. Fanning");
         text.AppendLine("out reviewers costs many times the tokens and is not what this review is for.");
@@ -506,6 +537,7 @@ public static class Briefs
             text.AppendLine("verdict all the same: the PR's status and label say it.");
         }
         text.AppendLine("Give it once. Then end your turn with the same verdict.");
+        text.AppendLine(AttachmentRule(run));
         return text.ToString();
     }
 
@@ -561,14 +593,22 @@ public static class Briefs
     }
 
     /// <summary>
+    /// GitHub takes no image from <c>gh</c>, so a PR body or review names an artifact (its title) and points at where the node
+    /// keeps its copy, rather than trying to attach it.
+    /// </summary>
+    internal static string AttachmentRule(string run) =>
+        "GitHub takes no image from gh: a PR body or a review names the artifact (its title) and says `" + run + " attachments <code>` "
+        + "(the flight's code) for where the node keeps the copy, never an attachment of its own.";
+
+    /// <summary>
     /// What the watchtower is told when it starts: its job, what it may and may not do, the commands it does it with,
     /// and where every flight and open card stands now. Briefed from the node's state, never an earlier watchtower's
     /// conversation, so a fresh one picks up where the last left off (#36).
     /// </summary>
     /// <param name="model">The model the watchtower runs on, when the node chose one (#114): said, so a lighter model rings for a judgement rather than makes it.</param>
-    public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot, string? model = null)
+    public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot, string? model = null, string? machine = null)
     {
-        var text = new StringBuilder(WatchtowerTemplate(name, pilot, model));
+        var text = new StringBuilder(WatchtowerTemplate(name, pilot, model, machine));
         text.AppendLine("## Where things stand");
         var flying = flights.Where(f => f.State != FlightState.Landed).ToList();
         if (flying.Count == 0)
@@ -601,10 +641,10 @@ public static class Briefs
     /// keeps its brief, and only a fresh start carries a changed one, so a watchtower whose recorded fingerprint differs
     /// from this one is replaced (#22).
     /// </summary>
-    public static string WatchtowerFingerprint(string name, string pilot, string? model = null) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(WatchtowerTemplate(name, pilot, model))))[..16];
+    public static string WatchtowerFingerprint(string name, string pilot, string? model = null, string? machine = null) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(WatchtowerTemplate(name, pilot, model, machine))))[..16];
 
-    private static string WatchtowerTemplate(string name, string pilot, string? model)
+    private static string WatchtowerTemplate(string name, string pilot, string? model, string? machine)
     {
         var text = new StringBuilder();
         text.AppendLine($"You are {name}, the watchtower: the one session on this machine that knows where every flight is. Workers");
@@ -616,6 +656,11 @@ public static class Briefs
             text.AppendLine($"You run on {model}, chosen to keep a long-lived session cheap. A judgement call (whether a review's concern");
             text.AppendLine("blocks a merge, which way a design should go, whether a result is good enough) is the controller's: ring for it");
             text.AppendLine("with what you know rather than decide it.");
+            text.AppendLine();
+        }
+        if (NamingRule(machine, "<flight or card>") is { Length: > 0 } naming)
+        {
+            text.Append(naming);
             text.AppendLine();
         }
         text.AppendLine("## How you are woken");

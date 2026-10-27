@@ -54,6 +54,18 @@ public static class NodeWire
     /// <summary>The route pattern of <see cref="JobLogRoute"/>, as the node maps it.</summary>
     public const string JobLogPattern = JobsRoute + "/{id}/log";
 
+    /// <summary>
+    /// The copy the node keeps of an image artifact: <c>/api/v1/attachments/&lt;id&gt;</c>, the file itself. A grant's on the
+    /// LAN, as a transcript is: a screenshot shows what the session showed.
+    /// </summary>
+    public static string AttachmentRoute(string id) => $"{AttachmentsRoute}/{Uri.EscapeDataString(id)}";
+
+    /// <summary>The attachments' route, without an id.</summary>
+    public const string AttachmentsRoute = "/api/v1/attachments";
+
+    /// <summary>The route pattern of <see cref="AttachmentRoute"/>, as the node maps it.</summary>
+    public const string AttachmentPattern = AttachmentsRoute + "/{id}";
+
     /// <summary>The repos a flight can be made in, a <see cref="RepoInfo"/> array: the flights' repos and their sibling clones.</summary>
     public const string ReposRoute = "/api/v1/repos";
 
@@ -78,8 +90,14 @@ public static class NodeWire
     /// </summary>
     public const string GrantsRoute = "/api/v1/grants";
 
-    /// <summary><c>GET</c>: the node's <see cref="SettingsPage"/>, its settings and the setup checklist. This machine only.</summary>
+    /// <summary><c>GET</c>: the node's <see cref="SettingsPage"/>, its settings as <c>settings.json</c> says them; no setup check runs. This machine only.</summary>
     public const string SettingsRoute = "/api/v1/settings";
+
+    /// <summary>
+    /// <c>GET</c>: the setup checklist, <see cref="SetupChecks"/>, the node's cache of it with the time it was measured;
+    /// <c>?refresh=true</c> runs the checks again. This machine only.
+    /// </summary>
+    public const string SettingsChecksRoute = "/api/v1/settings/checks";
 
     /// <summary>The service name a node announces on the LAN (LAN.Lib), so a client finds nodes and nothing else.</summary>
     public const string LanService = "pilot-node";

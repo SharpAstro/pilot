@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Pilot.Contracts;
 
 namespace Pilot.Node.Flights;
@@ -11,6 +12,9 @@ namespace Pilot.Node.Flights;
 public sealed class RepoSync(IGit git, Planes planes, RepoWatch watch)
 {
     private readonly SemaphoreSlim _one = new(1, 1);
+
+    /// <summary>One lock per clone, by its full path, so no two syncs (a Sync repos, a leg's start) fetch or merge the same clone at once.</summary>
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _clones = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
     /// <summary>How long one git call may take before it is cut off.</summary>
     public TimeSpan Timeout { get; init; } = TimeSpan.FromMinutes(2);
@@ -36,19 +40,65 @@ public sealed class RepoSync(IGit git, Planes planes, RepoWatch watch)
         }
     }
 
+    /// <summary>The last <see cref="RefreshWatchInBackground"/>, so a test can wait for it; completed when none has run.</summary>
+    internal Task WatchRefresh { get; private set; } = Task.CompletedTask;
+
+    /// <summary>
+    /// Has <see cref="RepoWatch"/> read the repos afresh without the caller waiting on it, as a leg's start does after it
+    /// pulled a sibling, so the dashboard stops showing that clone behind. A failed read is logged, never thrown.
+    /// </summary>
+    internal void RefreshWatchInBackground()
+        => WatchRefresh = Task.Run(async () =>
+        {
+            try
+            {
+                await watch.RefreshAsync(CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                await Console.Error.WriteLineAsync($"repo sync: the repo watch could not be refreshed after a pull: {ex.Message}");
+            }
+        });
+
     /// <summary>
     /// Fetches one clone and fast-forwards its main checkout's default branch, under the rules above. Also what a leg's start
     /// runs on a sibling clone found behind its origin, so the person is told only about one the node could not bring up.
+    /// Takes the clone's lock, so a second sync of it waits for this one and then finds it current.
     /// </summary>
-    internal async Task<RepoSyncOutcome> SyncOneAsync(string name, string path, CancellationToken cancellationToken)
+    internal Task<RepoSyncOutcome> SyncOneAsync(string name, string path, CancellationToken cancellationToken)
+        => SyncOneAsync(name, path, fetch: true, cancellationToken);
+
+    /// <summary>
+    /// The same sync of one clone with the fetch left out when <paramref name="fetch"/> is false: it reads the default ref, the
+    /// checkout, its dirtiness and ahead/behind from what is already fetched and fast-forwards under the same
+    /// Skipped/Current/Updated/Failed rules. For a caller that has just fetched, so a leg's start does not fetch twice.
+    /// </summary>
+    internal async Task<RepoSyncOutcome> SyncOneAsync(string name, string path, bool fetch, CancellationToken cancellationToken)
+    {
+        var clone = _clones.GetOrAdd(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)), _ => new SemaphoreSlim(1, 1));
+        await clone.WaitAsync(cancellationToken);
+        try
+        {
+            return await SyncLockedAsync(name, path, fetch, cancellationToken);
+        }
+        finally
+        {
+            clone.Release();
+        }
+    }
+
+    private async Task<RepoSyncOutcome> SyncLockedAsync(string name, string path, bool fetch, CancellationToken cancellationToken)
     {
         RepoSyncOutcome Outcome(string status, string detail) => new() { Name = name, Status = status, Detail = detail };
         try
         {
-            var fetch = await RunAsync(["fetch", "-p", "--all"], path, cancellationToken);
-            if (!fetch.Ok)
+            if (fetch)
             {
-                return Outcome(RepoSyncStatus.Failed, $"git fetch failed: {fetch.Why}");
+                var fetched = await RunAsync(["fetch", "-p", "--all"], path, cancellationToken);
+                if (!fetched.Ok)
+                {
+                    return Outcome(RepoSyncStatus.Failed, $"git fetch failed: {fetched.Why}");
+                }
             }
 
             // Read with the fetch's news: the remote's default branch may have moved or been renamed.

@@ -44,7 +44,7 @@ public sealed class WatchtowerTests : IDisposable
         }
     }
 
-    private string CurrentBrief() => Briefs.WatchtowerFingerprint("du1-watchtower", "pilot", _tower.Models.Model(RoleModels.Watchtower));
+    private string CurrentBrief() => Briefs.WatchtowerFingerprint("du1-watchtower", "pilot", _tower.Models.Model(RoleModels.Watchtower), _options.Machine);
 
     /// <summary>Nothing left to watch: the flight lands, its leg done.</summary>
     private void Quiet()
@@ -104,6 +104,20 @@ public sealed class WatchtowerTests : IDisposable
         Row("job00001", SessionState.Idle);
         await _tower.LookAsync(Ct);
         _said.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ARenamedWatchtowerIsStillTheWatchtowerAndNoSecondOneStarts()
+    {
+        Row("job00001", SessionState.Idle);
+        _state.PutSession(_state.Sessions().Single() with { Name = "du1-pil269-stale-worktree-duplicate" });
+        Directory.CreateDirectory(_data);
+        File.WriteAllText(_tower.BriefFile, CurrentBrief());
+
+        await _tower.LookAsync(Ct);
+
+        _workers.Started.ShouldBeEmpty();
+        _tower.Current()!.Id.ShouldBe("job00001");
     }
 
     [Fact]
@@ -202,6 +216,27 @@ public sealed class WatchtowerTests : IDisposable
         var say = _said.ShouldHaveSingleItem();
         (say.Verb, say.Target).ShouldBe((Verbs.Say, "session/job00001"));
         say.Args[0].ShouldContain("TIA9/parser failed");
+    }
+
+    [Fact]
+    public async Task ARingCardItWasToldAndLeftOpenWakesItOnceMoreAfterHalfAnHourNotEveryLook()
+    {
+        await _tower.LookAsync(Ct);
+        Row("job00001", SessionState.Working);
+        _state.RaiseCard(CardBin.Ring, "review-changes", "flight/TIA9", "TIA9's review asks for changes");
+        await _tower.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+
+        // Its turn ended with the card still open: told once more after RetellAfter, which resumes it, and not again.
+        _time.Advance(TimeSpan.FromMinutes(5));
+        Row("job00001", SessionState.Ended, lastResponse: _time.GetUtcNow());
+        _time.Advance(TimeSpan.FromMinutes(26));
+        await _tower.LookAsync(Ct);
+        _said.Count.ShouldBe(2);
+        _said[1].Args[0].ShouldContain("TIA9's review asks for changes");
+        _time.Advance(TimeSpan.FromMinutes(31));
+        await _tower.LookAsync(Ct);
+        _said.Count.ShouldBe(2);
     }
 
     [Fact]

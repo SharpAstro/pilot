@@ -71,6 +71,40 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TheSessionsListShowsTheNodesCodeBeforeANameWithoutAMachinePrefix()
+    {
+        var code = _node.Options.Machine.ToLowerInvariant();
+        SessionRow Row(string id, string name) => new()
+        {
+            Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = _root,
+            Role = SessionRole.AdHoc, ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Idle, SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
+        };
+        _node.State.PutSession(Row("a1b2c3d4", "stargazer"));
+        _node.State.PutSession(Row("b2c3d4e5", "zz9-other-worker"));
+
+        var (exit, output, error) = await Pilot(_root, "sessions");
+
+        exit.ShouldBe(0, error);
+        output.ShouldContain($"a1b2c3d4  {code}-stargazer  ");
+        output.ShouldContain("b2c3d4e5  zz9-other-worker  ");
+        output.ShouldNotContain($"{code}-zz9");
+    }
+
+    [Fact]
+    public void TheSessionsTextLeavesAPrefixedNameAsItIsAndAnUnprefixedOneAsItIsWithoutACode()
+    {
+        SessionRow Row(string name) => new()
+        {
+            Id = "a1b2c3d4", SessionId = "a1b2c3d4-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = "/r",
+            Role = SessionRole.AdHoc, ContextTokens = 0, ContextWindow = 1, State = SessionState.Idle, SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
+        };
+
+        PilotCommand.Sessions([Row("stargazer")], "SE1").ShouldStartWith("a1b2c3d4  se1-stargazer  ");
+        PilotCommand.Sessions([Row("de1-stargazer")], "SE1").ShouldStartWith("a1b2c3d4  de1-stargazer  ");
+        PilotCommand.Sessions([Row("stargazer")]).ShouldStartWith("a1b2c3d4  stargazer  ");
+    }
+
+    [Fact]
     public async Task ADirectFlightIsFlownFromTheCliAloneUpToItsLanding()
     {
         // The controller, in the repo: a flight and its one leg.
@@ -88,6 +122,7 @@ public sealed class CliTests : IAsyncLifetime
         var plane = Path.Combine(flight.Worktree, "src");
         Directory.CreateDirectory(plane);
         File.WriteAllText(Path.Combine(plane, "shader.glsl"), "void main() {}\n");
+        File.WriteAllBytes(Path.Combine(plane, "capture.png"), [0x89, 0x50, 0x4E, 0x47]);
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "The planet shader");
         await Ok(plane, "check", "1");
@@ -172,7 +207,7 @@ public sealed class CliTests : IAsyncLifetime
         var idle = await Pilot(plane, "leg", "finish", "done");
         idle.Error.ShouldContain("TIA7 has no leg flying");
 
-        await Ok(_root, "leg", "plan", "TIA7", "one", "--goal", "g", "--done-when", "d", "--item", "a step");
+        await Ok(_root, "leg", "plan", "TIA7", "one", "--goal", "Do the work", "--done-when", "Its check passes", "--item", "a step");
         (await Pilot(_root, "check", "1", "--leg", "TIA7/one")).Exit.ShouldBe(0);
         _node.State.Legs("TIA7").Single().Checklist.Single().Done.ShouldBeTrue();
     }
@@ -383,13 +418,28 @@ public sealed class CliTests : IAsyncLifetime
         await Ok(_root, "leg", "plan", "TIA1611", "gpu", "--goal", "Draw the planets", "--done-when", "The capture shows them", "--item", "Write the shader", "--item", "Capture it");
         await Ok(_root, "leg", "start", "TIA1611", "gpu");
         await Ok(flight.Worktree, "check", "1");
+        File.WriteAllBytes(Path.Combine(flight.Worktree, "capture.png"), [0x89, 0x50, 0x4E, 0x47]);
         await Ok(flight.Worktree, "artifact", "capture.png", "The planets");
 
         var (_, markdown, _) = await Pilot(_root, "status", "--output-format", "markdown");
         markdown.ShouldContain("## Flights");
         markdown.ShouldContain("### TIA1611 · Planets on the GPU");
         markdown.ShouldContain("| 1 | gpu | flying | 1/2 |");
-        markdown.ShouldContain($"![The planets]({Path.Combine(flight.Worktree, "capture.png").Replace('\\', '/')})");
+        // The node's copy is shown, not the plane's file, so it still renders once the plane's file is gone.
+        var kept = _node.State.Flights().Single().Code;
+        var copy = Directory.GetFiles(Path.Combine(Path.GetFullPath(_node.Options.DataFolder), "attachments", kept)).Single().Replace('\\', '/');
+        markdown.ShouldContain($"![The planets]({copy})");
+        markdown.ShouldNotContain(Path.Combine(flight.Worktree, "capture.png").Replace('\\', '/'));
+        File.Delete(Path.Combine(flight.Worktree, "capture.png"));
+        (await Pilot(_root, "status", "--output-format", "markdown")).Output.ShouldContain($"![The planets]({copy})");
+
+        // pilot attachments lists the flight's copies with their paths, and every one with no argument.
+        var (_, listed, _) = await Pilot(_root, "attachments", "TIA1611");
+        listed.ShouldContain("TIA1611/gpu");
+        listed.ShouldContain("The planets");
+        listed.Replace('\\', '/').ShouldContain(copy);
+        (await Pilot(_root, "attachments")).Output.ShouldBe(listed);
+        (await Pilot(_root, "attachments", "TIA9999")).Output.ShouldBe("No attachments for TIA9999.\n");
 
         // The tests' host has no terminal, as the GUI's command bar and the MCP server have none: auto is plain, and rich the source.
         var (_, auto, _) = await Pilot(_root, "status");
@@ -485,7 +535,7 @@ public sealed class CliTests : IAsyncLifetime
                 Worktrees = [new WorktreeStatus { Path = "C:/r/pilot/.claude/worktrees/x", Branch = "flight/X1", Flight = "X1", Dirty = true, Files = 2, Added = 5, Removed = 1 }],
                 PullRequests =
                 [
-                    new PullRequestStatus { Number = 7, Title = "A|B is *ready*", Head = "flight/X1", Url = "https://example.com/pull/7", Flight = "X1", Checks = "passing" },
+                    new PullRequestStatus { Number = 7, Title = "A|B is *ready*", Head = "flight/X1", Url = "https://example.com/pull/7", Flight = "X1", Checks = "passing", Labels = ["pilot node: SE1", "bug"] },
                     new PullRequestStatus { Number = 8, Title = "wip", Head = "wip", Draft = true },
                 ],
                 Errors = ["gh offline"],
@@ -497,12 +547,13 @@ public sealed class CliTests : IAsyncLifetime
         markdown.ShouldContain("## pilot");
         markdown.ShouldContain("main, clean, ahead 1, behind 3 of main, 2 flights");
         markdown.ShouldContain("| flight/X1 | X1 | dirty | 2 | +5 -1 |");
-        markdown.ShouldContain(@"| [#7 A\|B is \*ready\*](https://example.com/pull/7) | flight/X1 | X1 | ready | passing |");
-        markdown.ShouldContain("| #8 wip | wip |  | draft |  |");
+        markdown.ShouldContain(@"| [#7 A\|B is \*ready\*](https://example.com/pull/7) | flight/X1 | X1 | ready | passing | pilot node: SE1, bug |");
+        markdown.ShouldContain("| #8 wip | wip |  | draft |  |  |");
         markdown.ShouldContain("- gh offline");
         markdown.ShouldNotContain("other");
         ReposMarkdown.Build(rows, all: true).ShouldContain("(detached), clean, 0 flights, untracked");
         ReposMarkdown.Build([], all: false).ShouldBe(PilotCommand.Repos([], all: false));
-        PilotCommand.Repos(rows, all: false).ShouldContain("PR #7 A|B is *ready*  flight/X1  X1  ready  checks passing");
+        PilotCommand.Repos(rows, all: false).ShouldContain("PR #7 A|B is *ready*  flight/X1  X1  ready  checks passing  labels pilot node: SE1, bug");
+        PilotCommand.Repos(rows, all: false).ShouldNotContain("draft  labels");
     }
 }

@@ -9,7 +9,7 @@ internal sealed record StepLine(string Text, bool Done);
 /// One artifact a leg's sessions recorded, in words, with what opening it means: a URL opens the browser, a path opens the
 /// file (its viewer) and its folder.
 /// </summary>
-internal sealed record ArtifactLine(string Title, string Location, string Leg, string When, bool IsUrl, string? Folder);
+internal sealed record ArtifactLine(string Title, string Location, string Leg, string When, bool IsUrl, string? Folder, string? Attachment = null, string? AttachmentExt = null);
 
 /// <summary>One leg as the flight's page shows it, every field already in words.</summary>
 internal sealed record LegDetail
@@ -73,7 +73,7 @@ internal sealed record LegDetail
             .Select(a =>
             {
                 var isUrl = Uri.TryCreate(a.Location, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
-                return new ArtifactLine(a.Title, a.Location, leg.Name, SessionLine.Ago(now - a.At), isUrl, isUrl ? null : FolderOf(a.Location));
+                return new ArtifactLine(a.Title, a.Location, leg.Name, SessionLine.Ago(now - a.At), isUrl, isUrl ? null : FolderOf(a.Location), a.Attachment, a.AttachmentExt);
             }),
     ];
 
@@ -96,6 +96,14 @@ internal sealed record FlightDetail
     public required FlightLine Line { get; init; }
 
     public required IReadOnlyList<LegDetail> Legs { get; init; }
+
+    /// <summary>The node's copy of every image the legs recorded, each leg's in the leg's order; empty when there is none.</summary>
+    public IReadOnlyList<AttachmentRef> Attachments =>
+    [
+        .. Legs.SelectMany(l => l.Artifacts
+            .Where(a => a.Attachment is not null && a.AttachmentExt is not null)
+            .Select(a => new AttachmentRef(a.Attachment!, Legs.Count > 1 ? $"{l.Name}: {a.Title}" : a.Title, a.AttachmentExt!, Line.Node))),
+    ];
 
     public static FlightDetail From(FlightLine line, DateTimeOffset now) => new()
     {

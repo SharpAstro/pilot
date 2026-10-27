@@ -41,9 +41,8 @@ pilot-gui --snapshot <file.json> [--capture out.png]         # a snapshot file i
 - **Node:** with no node on the default socket, the GUI starts one (`pilot-node` beside it, or the source tree's
   build of the same configuration), detached so it outlives the window; a socket named with `--node-socket` or
   `PILOT_NODE_SOCKET` is only connected to.
-- **Rail:** the left rail, as tianwen's: Home (Ctrl+1), Chat (Ctrl+8, listed after Home so the other chords keep their
-  keys), Sessions (Ctrl+2), Flights (Ctrl+3), Repos (Ctrl+7, listed after Flights for the same reason), Background tasks
-  (Ctrl+4), Fleet (Ctrl+5) and Settings (Ctrl+6).
+- **Rail:** the left rail, as tianwen's, its chords counting down it: Home (Ctrl+1), Chat (Ctrl+2), Sessions (Ctrl+3),
+  Flights (Ctrl+4), Repos (Ctrl+5), Background tasks (Ctrl+6), Fleet (Ctrl+7) and Settings (Ctrl+8).
 - **Back:** one Back and Forward for the whole window: **←** and **→** at the top of the rail (disabled when there is nothing to
   go back or forward to), Alt+Left and Alt+Right, and the mouse's back and forward buttons. Every move between places (a
   rail page, a transcript or a flight's page, a link from Home, Fleet, a card, Jobs or Repos) is recorded with the page,
@@ -379,6 +378,42 @@ A PR pilot did not make, in a repo it may not fly, is reviewed from its link (#1
 `pilot status` lists the reviews not over, and under a review whose fixer is on, `fixing, <fixer>, round <n>`; such a
 review stays listed after it closed.
 
+### The `pilot: recheck` label
+
+The node sets one `pilot:` label on a PR to say where it stands (`reviewing`, `changes`, `passed`, `conflicts`, `queued`).
+`pilot: recheck` runs the other way (#286): a person puts it on any open PR of a repo the node tracks to have pilot look
+at it again, whoever worked on it. Every minute the node asks each tracked GitHub repo for its open PRs carrying the label (`PrRecheck`, one light
+`gh pr list --label` call per repo, no checks read) and takes a labelled one when it is its own: it holds the flight on that PR, else its own review of it, else no peer node it holds a
+grant for does (a peer that does not answer holds nothing). A PR a peer holds is left to that peer, label and all.
+
+- One recheck of a PR runs at a time, keyed by repo and number, in memory. A label put back while one runs (seen gone,
+  then seen again) runs it once more after it, never beside it; one seen again after the recheck consumed it runs it again.
+- A PR pilot never touched starts a review as `pilot review pr` does, and its label becomes `pilot: reviewing`. One
+  merged or closed meanwhile loses the label; one already in the merge queue is left with `pilot: queued`; each leaves a
+  Handled line (*recheck of pilot#253: already queued*).
+- A recheck that cannot run (gh cannot read the PR or the review cannot start) keeps the label and raises a For-you
+  `pr-recheck-failed` card. It is not tried again until the label has been seen gone, so a PR that cannot be rechecked is
+  not tried at every look: take it off and put it back to try again.
+- A recheck reads the PR afresh from GitHub, does one thing, replaces `pilot: recheck` with the one `pilot:` label for where
+  the PR then stands, and leaves a Handled line saying what it did. A PR already merged or closed, or in the merge queue,
+  is handled the same for all three kinds below.
+- **A flight's PR** (the node's own flight on it): a conflict or a PR behind its base is rebased as the queue-conflict path
+  does, and its review restarts (a rebase that conflicts goes back to the last leg as changes); red checks on a passed
+  review go back as changes; a head the review never read is reviewed afresh; a passed, green, clean one goes to the merge
+  queue by the usual merge rule. The explicit ask bypasses the once-a-head sets of the timed `PrChecks` look.
+- **A PR pilot reviewed with `pilot review pr`** (no flight): a head other than the review's starts a fresh review
+  (*head ab12cd34 was not the one reviewed (0f9e8d7c), review restarted*, label `pilot: reviewing`); a conflict or a PR
+  behind its base on the controller's own branch (author is the gh login, branch in the base repo, not a fork, no fixer
+  on it) is rebased onto its base in a throwaway worktree of the clone pilot holds, pushed with `--force-with-lease`, and
+  reviewed afresh (*rebased onto main, review restarted*, label `pilot: reviewing`); anyone else's, or one whose rebase
+  conflicts or cannot be pushed, raises a For-you `pr-recheck-conflicts` card saying why, and the label becomes
+  `pilot: conflicts`; an approved or commented review at
+  its head whose checks are green goes to the merge queue through the same rule as #279 (`QueueWhenGreenAsync`, which
+  keeps a no-auto-merge repo and a base without a merge queue as a card for you), label `pilot: queued`; anything else
+  says *nothing to do* and why (checks still running, review asks for changes, review still reading it), with the label
+  for where the review stands (`passed`, `changes`, `reviewing`).
+- **A PR pilot never touched** starts a review, as `pilot review pr` does (above).
+
 ### Liveness: no flight derails silently
 
 The node watches every flying leg's worker (`LegWatch`, every 30 s) and never leaves a stalled one unnoticed:
@@ -395,7 +430,7 @@ Each nudge and resume is a Handled card. The watch's cards close by themselves o
 go-around or a finished leg closes every card about the leg. What it resumed and nudged is kept in memory, so a node
 restarted mid-flight may nudge a worker once more than it would have: a turn, never a stall.
 
-The GUI's rail opens the **Flights** page (Ctrl+3): each flight's code, title, repo and issue, state (held: waiting
+The GUI's rail opens the **Flights** page (Ctrl+4): each flight's code, title, repo and issue, state (held: waiting
 for which), legs (how many done, which flying), branch and sessions. As the window narrows it drops Sessions, then Branch.
 
 **A session's transcript** opens in place of the table: double-click its row, press Enter on it, or **Open transcript**
@@ -473,7 +508,10 @@ pilot sessions
 pilot repos [--all] [--refresh] [--output-format markdown]   # each tracked repo: branch, worktrees (flight, diff stat) and open PRs; --all adds untracked ones
 pilot repos sync                               # fetch -p --all, then fast-forward each tracked repo's default branch; prints each repo's outcome
 pilot issue create <title> [--body <text>] [--repo <path>]   # a new issue through gh; prints its number
-pilot flight create <issue> [title…] [--repo <path>]
+pilot flight create <issue> [title…] [--repo <path>] [--anyway]   # labels the issue (or story) `pilot node: <this node>`; refused when it carries another node's, unless --anyway (which comments why)
+# The node label's life: put on the item at create, added to the flight's PR when it opens (never swapped with the `pilot:` state
+# labels), taken off the item when the flight lands, lands after its merge or is folded (a failure is said on the landed card), and
+# swept off any open GitHub issue no flying or held flight of this node is on at the next repo look (Shortcut stories: landing only).
 pilot flight plan <code>                       # a planner plans the legs from the issue
 pilot flight planned <code> [summary…]         # what the planner says when it is done
 pilot flight overlap <code> <other> <why…>     # the planner: this flight looks like part of <other>; rings a Fold / Plan separately card
@@ -629,7 +667,7 @@ page needs nothing the node does not already send, and pilot-tui shows the same 
 `FlightDetail` in `Pilot.Ui`). `pilot-gui --capture out.png --page flights --flight <code>` renders one, with its text
 in `out.png.rows.txt`.
 
-The **Repos** page (Ctrl+7) is every tracked repo as a row (a repo is tracked once it has flown, or holds a worktree or an
+The **Repos** page (Ctrl+5) is every tracked repo as a row (a repo is tracked once it has flown, or holds a worktree or an
 open PR of a flight; **All repos** in the header adds the rest under the node's roots). A repo row shows its main checkout
 (branch, clean or dirty, ahead and behind `origin/<default>`) and its open PRs (number and title, draft or ready, where the
 checks stand; a click opens the PR). Right, or a click on the triangle, lists its worktrees under it as the Sessions page
@@ -655,7 +693,23 @@ The right panel is the watchtower's: its state and context, its Remote Control l
 (Merge is a card's) and what was handled, and at its foot a **Chat with the watchtower** shortcut to the Chat page (the
 panel once had a box to tell it things; that box is the chat's now).
 
-**The Chat page** (#207, Ctrl+8) is the conversation with the node's watchtower, in the window, where a command bar once was.
+A node the window cannot reach (its stream is down: the same `Connected` the Fleet page shows) leaves the panel with its
+cards, which may be long answered and cannot be commanded now (#325). In their place, at the foot of **For you**, one dim
+line per such node reads `DE1 is unreachable since 10:31 · 3 ringing, 2 for you held` (the time is today's clock, or the
+day before it; `NodeFeed` stamps `DownSince` on its first failed open or drop, and clears it when the node answers). The
+counts are those of its last-known open cards. The panel's own summary and Home's **Waiting** count the nodes that answer
+only. A long node name is cut with an ellipsis, the whole line on hover; a click opens the Fleet page with that node's row
+selected. When the node answers again its cards come back from what it reports, and the line goes.
+
+The flights of such a node are its last-known rows, and **Home** and **Flights** say so from the same state (`FleetPages.Merge`
+sets `FlightLine.Stale` from the feed's reachability, once per node per merge): the Home chip reads `ORB2 · stale (DE1
+unreachable)` on a grey chip, the list row, canvas card and grid card carry `stale (DE1 unreachable)` in their state line,
+and the flight's page has a wrapped line saying why its buttons are dead. A stale flight is not counted in Home's **Flying**
+or **Waiting**. Its action buttons, the page's **Merge**, its transcript buttons and the menu's node commands are dead
+(drawn, not live; the menu entries disabled with the reason on hover); opening the page, a PR, a folder or copying a code
+stay. The marks go when the node answers again.
+
+**The Chat page** (#207, Ctrl+2) is the conversation with the node's watchtower, in the window, where a command bar once was.
 It is a page of the rail, not a dock under the right panel: the panel is 300 units wide, a conversation with tables of
 output and Markdown replies wants the page's width, and a page keeps its own scroll and the keyboard the way Sessions' say
 bar does. It reads the chat feed (`NodeClient.GetChatAsync`, above) while it is the page shown, pinned to its end until
@@ -688,7 +742,7 @@ line says what became of it, a refusal included. Over a remote node (`--node`) i
 `autopilot on` or `autopilot off` on each row that answers (nothing for a node not reached, whose last word would read as
 now), beside the maintenance mark, and the row's dump line ends in it.
 
-The **Background tasks** page (Ctrl+4) is the node's jobs: running first, then those waiting in the order they will
+The **Background tasks** page (Ctrl+6) is the node's jobs: running first, then those waiting in the order they will
 start, then the ended, last ended first. Each row has the job's command, whom it wakes (the flight and leg, a session,
 or a terminal), its state with what it is doing, waits on or came to, when it started and how long it ran; a job that
 ended without its owner being told says so. The selected job shows its folder, log and timeout beside the end of its
@@ -898,7 +952,7 @@ sessions, flights and jobs, and never speaks for another. To bring a second mach
    would clash with another machine's prefix). It saves the LAN on (and what was given) in the node's settings file,
    installs the hooks, installs the logon entry and starts the node, and asks Windows for elevation once to let
    `pilot-node` in on private networks. It ends with the checklist: what is left is a person's.
-3. **What is left**, which the GUI's **Settings** page (Ctrl+6) also lists with a button for each the node can fix:
+3. **What is left**, which the GUI's **Settings** page (Ctrl+8) also lists with a button for each the node can fix:
    the watchtower's folder trusted once (Claude Code's own prompt, which the page opens in a titled window; a folder
    above it that is trusted already covers it), gh signed in, and usage figures (a status line that writes
    `rate-limits.json`; without it the node still says whose account it is, with no figures).
@@ -906,7 +960,7 @@ sessions, flights and jobs, and never speaks for another. To bring a second mach
    `pilot connect <host>:47731`) rings an Allow/Deny card on it, to be allowed there; its rows are then steered from the
    merged lists.
 
-**The Fleet page** (Ctrl+5 in the GUI, 5 in the TUI) is every node at once: this window's first, then every node heard
+**The Fleet page** (Ctrl+7 in the GUI, 5 in the TUI) is every node at once: this window's first, then every node heard
 on the LAN or granted to this user, each on a feed of its own (its event stream, watched without a grant as anyone on
 the LAN may). A row says the node's machine and where it is reached, whose account it runs on and its usage, its live
 sessions and how many wait on you, its flights and jobs, and its rings; a node not reached says what its connection is
@@ -932,7 +986,18 @@ otherwise; a leg's own `--model` or `--effort` still wins for its worker; `none`
 own default. The watchtower's brief says its model, so a lighter one rings for a judgement rather than makes it. The command line wins over the
 file (an autostart entry made before the file existed still pins what it names), and a key the file leaves out takes
 the default; a value it cannot read is passed over, never fatal. `pilot-node setup` writes it, and so does the
-**Settings** page (Ctrl+6 in the GUI, 6 in the TUI), or `pilot settings set <key> [value…]`.
+**Settings** page (Ctrl+8 in the GUI, 6 in the TUI), or `pilot settings set <key> [value…]`.
+
+The node answers the settings and the setup checks apart (#331). `GET /api/v1/settings` reads `settings.json` and the
+node's own state alone, so it answers at once: the settings rows, `Restart` and `File`, and no process runs. The setup
+checks run programs (`netsh`, `gh`), so they have their own route, `GET /api/v1/settings/checks`: `SetupChecks`, the
+checks as the node last measured them with `CheckedAt`, the time they were measured, and per check `Runs`, what reading it
+runs (`runs netsh`, `runs gh, which asks GitHub`) for a page's "checking…" line. They are cached for 10 seconds;
+`?refresh=true` runs them again, and `setup node <check>` refreshes them after its fix. Both routes are this machine's
+alone. `set node <key> …` answers with the changed setting's new row in `CommandResult.Setting` (a `SettingRow`, as the page
+would show it after the change, on every path that saved it, the command-line-wins one included), so a page shows the new
+value from the answer and need not read the page again. `pilot settings` reads both routes and prints the checklist and
+the settings as before.
 
 A role's model and effort, and the job limits, are in force at once (the next session of that kind starts with
 them; a waiting job starts as soon as the new limit allows). So are `maintenance` and `accept-fleet-flights` (#177),
@@ -985,9 +1050,18 @@ LAN, the firewall rule for this binary and for `pilot`, `pilot-gui` and `pilot-t
 nodes' beacons and are let in on the discovery port alone (Windows), the watchtower's folder trusted (read from Claude Code's own record,
 a folder above it counting), gh signed in, and usage figures. Each says how it stands; those the node can fix have a
 button (`setup node <check>`): the logon entry, the hooks, the LAN, the firewall rule (one elevation prompt, which
-replaces an earlier install's rule), the trust prompt (opened in a window titled for what it is). `pilot settings`
+replaces an earlier install's rule), the Windows Defender exclusions (below), the trust prompt (opened in a window titled for what it is). `pilot settings`
 prints both. The route and both verbs are this machine's only: a grant from the LAN never reaches them, and nor does
 the watchtower.
+
+The **Windows Defender exclusions** check (`setup node defender`, optional, Windows only) reads `Get-MpPreference` and lists
+the folders a build machine wants left unscanned that are not excluded yet: each repo root, the NuGet package folder
+(`NUGET_PACKAGES`, else `~/.nuget/packages`), the node's data folder, `~/.claude` and the dotnet root. A folder on a Dev
+Drive is skipped (Defender's performance mode covers it), and it is fine when Defender is not the antivirus in force. Its
+button runs one elevated script of `Add-MpPreference -ExclusionPath` lines, so one prompt; `pilot settings setup defender
+--processes` adds `-ExclusionProcess` for `pilot-node.exe`, `dotnet.exe`, `MSBuild.exe`, `VBCSCompiler.exe` and
+`testhost.exe` too. Defender shows its exclusions to an elevated process only, so from the node the check may not be able
+to tell and says so, offering the (idempotent) fix.
 
 The **Merge guard** check (`setup node merge-guard`, not optional) says whether `~/.claude/settings.json` has the merge
 guard for this binary: a user-wide `PreToolUse` hook on `Bash` and `PowerShell` (matcher `Bash|PowerShell`) running
@@ -1146,7 +1220,12 @@ A `#` that starts a word outside quotes is a comment to the end of the line (in 
 one is no code. A `PowerShell` call is read with PowerShell's own quoting (the backtick is the escape, a
 backslash is a path's, `''` and `""` are literal quotes), split on `{` and `}` too, and `Set-Location`, `iex` /
 `Invoke-Expression` and `pwsh -Command '…'` are followed as `cd`, `eval` and `bash -c` are, and a leading `$name =` assignment is skipped
-(`$out = gh pr merge 1` is a merge). Everything else, a push of a
+(`$out = gh pr merge 1` is a merge). It also refuses a background session started without the machine's prefix: a `claude`
+call with `--bg` and a name (`-n NAME`, `--name NAME`, `--name=NAME`), through wrappers and `pwsh -Command` too, whose name does not start
+with `<machine>-` (case-insensitive) is denied, the reason giving the prefixed name to use (`de1-tia1241-nudge`). The machine is
+resolved as the node does, without asking it: the `machine` it saved in `settings.json` of the default data folder, else
+`PILOT_MACHINE`, else the machine name's; a `claude` call without `--bg` or a name passes. Every brief (worker, validator, planner,
+reviewer, PR reviewer, watchtower) tells the session the same rule, with the node's machine code written out. Everything else, a push of a
 flight branch included, passes untouched. Like `pilot-node hook` it
 is fail-open (input it cannot read passes, exit 0 always) and never calls the node; the node's own merge
 (`pilot flight merge` runs `gh pr merge` itself) is not a session's tool call, so the hook never sees it.

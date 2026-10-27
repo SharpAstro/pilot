@@ -7,11 +7,25 @@ namespace Pilot.Node.Flights;
 /// makes one in the node's clone cache, pins a worktree of its own at the PR's head, and starts a fresh reviewer there as
 /// a job of the node; <c>pr-verdict</c> is the reviewer's verdict, which a ring card carries to the controller. The
 /// worktree goes once that card closes, by whatever way it closed, so a review leaves nothing behind in anyone's clone.
+/// <para>
+/// A verdict on a PR still open is posted by the node itself, whatever it is: an approve goes out under gh's login unseen,
+/// as a changes or a comment does. That is wanted (a review the controller must press Post on sat unread all night), not an
+/// oversight. The Handled <see cref="PostedKind"/> card is raised and closes at once with the review's card, in
+/// <see cref="EndAsync"/>'s <c>CloseCardsAbout</c>, on purpose: it is a record, not a request, so it shows under
+/// <c>--all</c> and in the digest rather than waiting open for anyone.
+/// </para>
+/// <para>
+/// The verdict's call is answered before the review ends: the reviewer's job is stopped and its worktree removed only after
+/// <see cref="SelfFinishGrace"/>, in the one delayed task the verdict starts.
+/// </para>
 /// </summary>
 public sealed class PrReviews(
     NodeState state, IWorkerLauncher workers, IGitHub github, IGit git, Planes planes, RepoCatalog repos, NodeOptions options, TimeProvider time) : BackgroundService
 {
     private readonly SemaphoreSlim _one = new(1, 1);
+
+    /// <summary>The PR targets of reviews the node posted whose reviewer is still in its <see cref="SelfFinishGrace"/>: a sweep leaves them, the delayed task of their verdict ends them.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _graced = new(StringComparer.Ordinal);
 
     /// <summary>The card a verdict raises: the review is ready for the controller.</summary>
     public const string ReadyKind = "pr-review-ready";
@@ -67,7 +81,6 @@ public sealed class PrReviews(
     {
         await _one.WaitAsync(cancellationToken);
         string? error = null;
-        var postedByNode = false;
         try
         {
             var pr = PrRef.Parse(command.Target) is { } parsed && command.Target.StartsWith(Verbs.PrTargetPrefix, StringComparison.Ordinal)
@@ -79,8 +92,7 @@ public sealed class PrReviews(
                     await StartAsync(pr, cancellationToken);
                     break;
                 case Verbs.PrVerdict:
-                    postedByNode = await VerdictAsync(pr, command, cancellationToken);
-                    if (postedByNode)
+                    if (await VerdictAsync(pr, command, cancellationToken))
                     {
                         await FixAfterPostAsync(pr, cancellationToken);
                     }
@@ -104,12 +116,6 @@ public sealed class PrReviews(
         finally
         {
             _one.Release();
-        }
-        // A review the node posted itself is over, its card closed by the post: its worktree and reviewer go now, as after a
-        // Post press or a dismiss, not at the next sweep. After the lock is released, which the sweep takes.
-        if (postedByNode)
-        {
-            await SweepAsync(cancellationToken);
         }
         return state.Complete(command, error);
     }
@@ -181,7 +187,7 @@ public sealed class PrReviews(
         var commits = await git.RunAsync(["log", "--oneline", $"origin/{read.Base}..HEAD"], worktree, cancellationToken);
         var stat = await git.RunAsync(["diff", "--stat", $"origin/{read.Base}...HEAD"], worktree, cancellationToken);
         var brief = Briefs.ReviewPr(row, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""),
-            await github.LoginAsync(cancellationToken), Briefs.Run(Cli, Socket));
+            await github.LoginAsync(cancellationToken), Briefs.Run(Cli, Socket), options.Machine);
         string job;
         try
         {
@@ -394,13 +400,36 @@ public sealed class PrReviews(
         await SetLabelAsync(reviewed, cancellationToken);
         var posted = await PostIfOpenAsync(pr, subject, cancellationToken);
 
-        // A reviewer that gave its verdict is done with, after a grace to end its turn, as a flight's is.
-        if (review.ReviewerJob is { } job)
+        // A reviewer that gave its verdict is done with, after a grace to end its turn, as a flight's is. A review the node posted
+        // itself is over too, its card closed by the post, but its worktree and reviewer go only after that grace, not before the
+        // verdict's call has been answered and the reviewer has ended its turn: the sweep ends it then, which stops the reviewer.
+        if (posted)
+        {
+            _graced.TryAdd(subject, 0);
+        }
+        if (review.ReviewerJob is not null || posted)
         {
             _ = Task.Run(async () =>
             {
-                await Task.Delay(SelfFinishGrace, time, CancellationToken.None);
-                await StopQuietly(job, CancellationToken.None);
+                try
+                {
+                    await Task.Delay(SelfFinishGrace, time, CancellationToken.None);
+                    if (posted)
+                    {
+                        // Outside any lock: the sweep takes _one itself.
+                        _graced.TryRemove(subject, out _);
+                        await SweepAsync(CancellationToken.None);
+                    }
+                    else if (review.ReviewerJob is { } reviewer)
+                    {
+                        await StopQuietly(reviewer, CancellationToken.None);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // The periodic sweep ends a posted review all the same.
+                    await Console.Error.WriteLineAsync($"pr reviews: ending {subject} after its grace failed: {ex.Message}");
+                }
             }, CancellationToken.None);
         }
         return posted;
@@ -411,6 +440,8 @@ public sealed class PrReviews(
     /// out: the person is asked for nothing. It rang with a Post button whatever the verdict, and #241's sat ringing all night
     /// (SE1, 2026-10-26). A PR merged or closed meanwhile, or a post GitHub refused, keeps the For-you card and its Post; a post
     /// that went out and never said back keeps the card without it, as the post is never made twice. True when the review went out.
+    /// An approve posts itself too, by design, as a changes or a comment does. The Handled posted card closes with the review in
+    /// <see cref="EndAsync"/> (<c>CloseCardsAbout</c>), on purpose: it is a record, still shown under <c>--all</c> and in the digest.
     /// </summary>
     private async Task<bool> PostIfOpenAsync(PrRef pr, string subject, CancellationToken cancellationToken)
     {
@@ -675,6 +706,10 @@ public sealed class PrReviews(
             var closed = state.Cards().Where(c => c.State == CardState.Closed).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
             foreach (var review in state.PrReviews().Where(r => r is { State: PrReviewState.Reviewed, Card: { } card } && closed.Contains(card)))
             {
+                if (_graced.ContainsKey(Verbs.PrTarget(review.Repo, review.Number)))
+                {
+                    continue;
+                }
                 await EndAsync(review, "its card closed", cancellationToken);
             }
             // Also a review whose card closed: the queue watch goes on until the review is decided.
@@ -702,7 +737,7 @@ public sealed class PrReviews(
     /// A reviewed PR whose verdict is approve or comment goes in its base's merge queue at the reviewed head once its checks
     /// are green (#279). Pending checks and a draft wait for the next sweep; anything else decides the review once and for all.
     /// </summary>
-    private async Task QueueWhenGreenAsync(PrReviewRow review, CancellationToken cancellationToken)
+    internal async Task QueueWhenGreenAsync(PrReviewRow review, CancellationToken cancellationToken)
     {
         var subject = Verbs.PrTarget(review.Repo, review.Number);
         PullRequest read;
@@ -1050,6 +1085,62 @@ public sealed class PrReviews(
         state.RaiseCard(CardBin.Handled, FixStartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {fixer} on {pr}'s branch {branch}, to make the changes the review asked for", $"in {worktree}", link: review.Url);
     }
+
+    /// <summary>
+    /// Rebases the branch of <paramref name="pr"/> onto its base in a throwaway worktree of the clone pilot holds and pushes it
+    /// with <c>--force-with-lease</c> on the head read; a recheck of the controller's own PR (#286). Null when it is pushed; else
+    /// why not, and whether the rebase conflicted (undone, nothing pushed).
+    /// </summary>
+    public async Task<(bool Conflicts, string Why)?> RebaseOwnBranchAsync(PrRef pr, PullRequest read, CancellationToken cancellationToken)
+    {
+        var clone = TrackedClone(pr);
+        if (clone is null)
+        {
+            return (false, $"{pr.Repo} is not a repo the node tracks");
+        }
+        if (read.HeadRef.Length == 0 || read.Base.Length == 0 || read.Fork)
+        {
+            return (false, read.Fork ? "its branch is on a fork" : "gh did not say its branch and base");
+        }
+        if (Of(pr) is { Fixer: not null })
+        {
+            return (false, "a fixer is working on its branch");
+        }
+        var branch = read.HeadRef;
+        var worktree = Path.Combine(clone, ".claude", "worktrees", $"rebase-{Slug(pr.Name)}-{pr.Number}");
+        try
+        {
+            var fetch = await git.RunAsync(["fetch", "--quiet", "origin", read.Base, $"+refs/heads/{branch}:refs/remotes/origin/{branch}"], clone, cancellationToken);
+            if (!fetch.Ok)
+            {
+                return (false, $"git could not fetch {branch} and {read.Base}: {fetch.Why}");
+            }
+            var tip = await git.RunAsync(["rev-parse", $"refs/remotes/origin/{branch}"], clone, cancellationToken);
+            if (!tip.Ok || !string.Equals(tip.Output.Trim(), read.Head, StringComparison.OrdinalIgnoreCase))
+            {
+                return (false, $"{branch} is not at the head read from GitHub ({Short(read.Head)}), so it is left alone");
+            }
+            worktree = await planes.PinAsync(clone, worktree, read.Head, cancellationToken);
+            var rebase = await git.RunAsync(["rebase", $"origin/{read.Base}"], worktree, cancellationToken);
+            if (!rebase.Ok)
+            {
+                await git.RunAsync(["rebase", "--abort"], worktree, cancellationToken);
+                return (true, $"rebasing {branch} onto {read.Base} conflicts ({rebase.Why})");
+            }
+            var push = await git.RunAsync(["push", $"--force-with-lease=refs/heads/{branch}:{read.Head}", "origin", $"HEAD:refs/heads/{branch}"], worktree, cancellationToken);
+            return push.Ok ? null : (false, $"git could not push {branch}: {push.Why}");
+        }
+        catch (FlightException ex)
+        {
+            return (false, ex.Message);
+        }
+        finally
+        {
+            await planes.RemoveAsync(clone, worktree, cancellationToken, force: true);
+        }
+    }
+
+    private static string Short(string sha) => sha[..Math.Min(8, sha.Length)];
 
     /// <summary>Ends a review: its reviewer stopped, its worktree removed, its open cards closed. A worktree held open is said on a card and tried again.</summary>
     private async Task EndAsync(PrReviewRow review, string why, CancellationToken cancellationToken)

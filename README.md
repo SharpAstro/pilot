@@ -43,7 +43,7 @@ to the GitHub Release. The repo is private, so sign gh in first (`gh auth login`
 2. Run `pilot-node setup` (with `--repo-root <org root>`, and `--machine <prefix>` if two machines' names start
    alike). It installs the hooks into `~/.claude/settings.json`, starts the node at logon and now, and turns the LAN
    on.
-3. Open `pilot-gui` and go to **Settings** (Ctrl+6) for what is left: trusting the watchtower's folder once, gh
+3. Open `pilot-gui` and go to **Settings** (Ctrl+8) for what is left: trusting the watchtower's folder once, gh
    signed in, and usage figures from a status line.
 
 From a source build instead, `pilot update --adopt` moves the folder onto releases.
@@ -73,12 +73,16 @@ pilot flight plan <code>                  # a planner plans the legs; then they 
 pilot flight merge <code> <head>          # once its review has passed and CI is green
 pilot nodes                               # the fleet; pilot --node <host:port> status reads another node
 pilot job <id> cancel [--force]           # stop a job; --force kills its whole process tree at once
-pilot mcp                                 # the same commands as an MCP server over stdio
+pilot mcp                                 # the same commands as an MCP server over stdio; an update hands the session to the new binary
 ```
 
 The GUI has the same with buttons: Home, Sessions, Flights (with a new-flight wizard from a repo's issues), Repos,
 Background tasks, Fleet and Settings. A flight's planner, workers, validator and reviewer report back through the same
 CLI, so the black box records who did what.
+
+Every list of sessions (`pilot sessions`, the GUI's Sessions page and Home, merged across nodes in the fleet) shows
+which node a row runs on: a name without a machine prefix (`[a-z]{2}[0-9]+-`) is drawn with its node's code before it,
+`se1-stargazer`, so an unprefixed ad hoc session on SE1 can be told from one on DE1. A prefixed name is shown as it is.
 
 ## Build and test
 

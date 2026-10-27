@@ -119,6 +119,12 @@ publish it; `pilot.py` writes it, so you never write its HTML yourself.
 - If this session has no `Artifact` tool, or a publish is refused, skip the page and log it once. The
   flight does not wait for it.
 
+## Images a leg makes
+
+The node keeps a copy of every image artifact a leg records. GitHub takes no image from `gh`, so a PR body
+or a review names the artifact (its title) and says `pilot attachments <code>` for where the copy is; it
+never tries to attach the image.
+
 ## Rules
 
 1. **You do not edit product code.** You plan, brief, start, follow, check and report.

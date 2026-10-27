@@ -17,6 +17,9 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
     /// <summary>The settings in force: whether the node is in maintenance. A test's commander takes every flight.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
 
+    /// <summary>Where the images its legs' artifacts name are kept; a landed flight's copies go. Null keeps none.</summary>
+    public Attachments? Attachments { get; set; }
+
     /// <summary>The trackers a work item's title is read from; null reads GitHub issues only, through <c>github</c>, and refuses any other tracker's item given without a title.</summary>
     public Trackers? Trackers
     {
@@ -90,6 +93,8 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             throw new FlightException($"create-flight takes a repo target, {Verbs.RepoTargetPrefix}<path to its checkout>, not {command.Target}");
         }
         var args = command.Args ?? [];
+        var anyway = args.Contains(Verbs.AnywayFlag, StringComparer.Ordinal);
+        args = [.. args.Where(a => a != Verbs.AnywayFlag)];
         if (args.Length == 0)
         {
             throw new FlightException("create-flight needs the work item first (an issue number, sc-N or a Shortcut story URL), as in create-flight repo/<path> 1611 [title]");
@@ -114,6 +119,11 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         var repoPath = await planes.MainCheckoutAsync(path, cancellationToken)
             ?? throw new FlightException($"{path} is no git checkout");
         var repo = Path.GetFileName(repoPath);
+        var otherNode = await OtherNodeOfAsync(repoPath, item, cancellationToken);
+        if (otherNode is not null && !anyway)
+        {
+            throw new FlightException($"{item.Noun} carries the label {PilotMarks.NodeLabel(otherNode)}: it is flying on {otherNode}, not on {Machine}. Fly it there, or give --anyway to create the flight here over {otherNode}'s label");
+        }
         var flights = state.Flights();
         var prefix = FlightCodes.PrefixFor(repo, flights);
         var code = FlightCodes.Next(prefix, item.Id, flights)
@@ -150,7 +160,45 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             State = FlightState.Flying,
             CreatedAt = time.GetUtcNow(),
         });
+        await LabelAsync(repoPath, item, code, otherNode, cancellationToken);
         return (code, null);
+    }
+
+    /// <summary>The node code another node's label on <paramref name="item"/> names, or null when it has none (this node's own is no other's).</summary>
+    private async Task<string?> OtherNodeOfAsync(string repoPath, WorkItem item, CancellationToken cancellationToken)
+    {
+        if (Trackers?.Of(item.Tracker) is not { } tracker)
+        {
+            return null;
+        }
+        var labels = await tracker.LabelsAsync(repoPath, item.Id, cancellationToken);
+        return labels.Select(PilotMarks.NodeOf).FirstOrDefault(n => n is not null && !string.Equals(n, Machine, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Says on the item that this node flies it, and with <paramref name="overridden"/> (a create given --anyway over another
+    /// node's label) takes that label off and comments why. The flight is made by now, so a refusal is a For-you card, not a lost flight.
+    /// </summary>
+    private async Task LabelAsync(string repoPath, WorkItem item, string code, string? overridden, CancellationToken cancellationToken)
+    {
+        if (Trackers?.Of(item.Tracker) is not { } tracker)
+        {
+            return;
+        }
+        try
+        {
+            await tracker.AddLabelAsync(repoPath, item.Id, PilotMarks.NodeLabel(Machine), cancellationToken);
+            if (overridden is not null)
+            {
+                await tracker.RemoveLabelAsync(repoPath, item.Id, PilotMarks.NodeLabel(overridden), cancellationToken);
+                await tracker.CommentAsync(repoPath, item.Id,
+                    $"The controller created flight {code} on {Machine} anyway, over the label {PilotMarks.NodeLabel(overridden)}: this item was flying on {overridden}.", cancellationToken);
+            }
+        }
+        catch (FlightException ex)
+        {
+            state.RaiseCard(CardBin.ForYou, "node-label-refused", $"flight/{code}", $"{code} is flying, but {item.Noun} has no {PilotMarks.NodeLabel(Machine)} label", ex.Message);
+        }
     }
 
     /// <summary>
@@ -301,7 +349,11 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         // open is not removed. Seen live: a flight landed a minute after its worker finished kept its plane.
         if (workers is not null)
         {
-            var jobs = state.Legs(flight.Code).Select(l => l.WorkerJob).Append(flight.Review?.ReviewerJob).OfType<string>().Distinct();
+            // Every live session of the flight's too, not only the legs' current workers and the current reviewer: its planner,
+            // an earlier reviewer, a validator or a renamed copy sat idle in TIA368's plane after it landed, holding the folder
+            // and still able to push. A session's job is its row id.
+            var sessions = state.Sessions().Where(s => s.State != SessionState.Ended && string.Equals(s.Flight, flight.Code, StringComparison.Ordinal)).Select(s => s.Id);
+            var jobs = state.Legs(flight.Code).Select(l => l.WorkerJob).Append(flight.Review?.ReviewerJob).OfType<string>().Concat(sessions).Distinct();
             foreach (var job in jobs)
             {
                 try
@@ -329,6 +381,14 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         {
             throw new FlightException($"{flight.Code}'s plane holds {loose.Count} commit{(loose.Count == 1 ? "" : "s")} on no remote and not in {mainRef}: {string.Join("; ", loose)}. Push {(loose.Count == 1 ? "it" : "them")} (flight pr) or drop {(loose.Count == 1 ? "it" : "them")}, then land");
         }
+        // Work not in main lands only once a passed review has read it, at the head the plane holds now: TIA368 was landed by
+        // hand with a leg added after its pass, whose two commits no reviewer had seen. A folded flight's work goes on in the
+        // other, and a flight with nothing of its own (a duplicate dropped) lands as before.
+        else if (foldedInto is null && await planes.NotInMainAsync(flight.Worktree, mainRef, cancellationToken) is { Head: { } head, Commits.Count: > 0 } work
+            && !(flight.Review is { State: ReviewState.Passed, ReviewedHead: { } reviewed } && string.Equals(reviewed, head, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new FlightException($"{flight.Code}'s plane holds {work.Commits.Count} commit{(work.Commits.Count == 1 ? "" : "s")} not in {mainRef} that no passed review has read: {string.Join("; ", work.Commits)}. Review {(work.Commits.Count == 1 ? "it" : "them")} (flight review) and merge, or drop {(work.Commits.Count == 1 ? "it" : "them")}, then land");
+        }
 
         // What it releases is read before its plane goes, and before anything is changed: a land that cannot say what its
         // consumers wait for is refused, never half done. A folded flight released nothing.
@@ -352,19 +412,61 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             state.RaiseCard(CardBin.ForYou, "plane-left", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed, but its plane folder is still there",
                 $"{leftover}; nothing of git's is in it, so delete it by hand once whatever holds it lets go");
         }
+        if (Attachments is not null)
+        {
+            // The copies go with the flight: its artifacts stay listed, without what they kept.
+            Attachments.Remove(flight.Code);
+            foreach (var leg in state.Legs(flight.Code).Where(l => l.Artifacts.Any(a => a.Attachment is not null)))
+            {
+                state.PutLeg(leg with { Artifacts = [.. leg.Artifacts.Select(a => a with { Attachment = null, AttachmentExt = null })] });
+            }
+        }
         state.PutFlight(flight with { State = FlightState.Landed, LandedAt = time.GetUtcNow(), FoldedInto = foldedInto ?? flight.FoldedInto });
+
+        // The item is no longer flying here: its node label goes, unless another flight of this node (a suffixed second one)
+        // is still on the same item. Landed already, so a failure is said, not a refusal.
+        string? labelNote = null;
+        var itemStillFlies = state.Flights().Any(f => f.State != FlightState.Landed && f.Code != flight.Code
+            && f.RepoPath == flight.RepoPath && f.Tracker == flight.Tracker && f.Issue == flight.Issue);
+        if (!itemStillFlies && Trackers?.Of(flight.Tracker) is { } itemTracker)
+        {
+            try
+            {
+                await itemTracker.RemoveLabelAsync(flight.RepoPath, flight.Issue, PilotMarks.NodeLabel(Machine), cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                labelNote = $"{PilotMarks.NodeLabel(Machine)} is still on {flight.Item.Noun} {flight.Item.Display}: {ex.Message}";
+            }
+        }
 
         // Its cards leave with it, and a quiet one says it is in; a folded one says where its work went.
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), foldedInto is null ? $"{flight.Code} landed" : $"{flight.Code} folded into {foldedInto}");
         if (foldedInto is null)
         {
             state.RaiseCard(CardBin.ForYou, "landed", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed",
-                $"{flight.Title ?? flight.Item.Noun}{(flight.PullRequest is { } number ? $", PR #{number}" : "")}", link: flight.PullRequestUrl);
+                $"{flight.Title ?? flight.Item.Noun}{(flight.PullRequest is { } number ? $", PR #{number}" : "")}{(labelNote is null ? "" : $"; {labelNote}")}", link: flight.PullRequestUrl);
         }
         else
         {
             state.RaiseCard(CardBin.Handled, FoldedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} folded into {foldedInto}",
-                $"{flight.Title ?? flight.Item.Noun} ({flight.Item.Display}) is now {foldedInto}'s: its PR closes it, and {foldedInto}'s planner plans its points");
+                $"{flight.Title ?? flight.Item.Noun} ({flight.Item.Display}) is now {foldedInto}'s: its PR closes it, and {foldedInto}'s planner plans its points{(labelNote is null ? "" : $"; {labelNote}")}");
+        }
+
+        // Its issue is closed with it once its PR merged: GitHub links a PR's "Closes #n" only sometimes (#302, #267 and #238
+        // merged and left #285, #254 and #207 open), and an issue open after its work landed looks like work still to do.
+        if (foldedInto is null && github is not null && flight.Item.Tracker == TrackerKind.GitHub && flight.PullRequest is { } merged
+            && await MergedAsync(flight, merged, cancellationToken))
+        {
+            try
+            {
+                await github.CloseIssueAsync(flight.RepoPath, flight.Issue, $"Landed in #{merged} ({flight.Code}).", cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                state.RaiseCard(CardBin.ForYou, "issue-left-open", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed, but issue #{flight.Issue} is still open",
+                    $"{ex.Message}. Close it by hand: its work is in PR #{merged}.", link: flight.PullRequestUrl);
+            }
         }
 
         // Flights that waited for it may leave now. A folded flight's issue is the other flight's work and has not landed, so
@@ -396,6 +498,19 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
                 waiting = waiting with { PackageWaits = [.. waiting.PackageWaits, .. uses] };
             }
             state.PutFlight(Settle(waiting));
+        }
+    }
+
+    /// <summary>Whether the flight's PR <paramref name="number"/> merged, as GitHub says now; false when it cannot say.</summary>
+    private async Task<bool> MergedAsync(FlightRow flight, int number, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return github is not null && await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken) is { State: "MERGED" } pr && pr.Number == number;
+        }
+        catch (FlightException)
+        {
+            return false;
         }
     }
 
