@@ -385,18 +385,19 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             return Link($"PR #{flight.PullRequest}", url, action);
         }
+        // Both carry the Copy URL menu: the URL is the PR's on GitHub, whichever of the two is right-clicked.
         return Layout.Builder.HStack(
-                Layout.Builder.Text($"PR #{flight.PullRequest}", 12f, Landed)
+                _links.OnLink(Layout.Builder.Text($"PR #{flight.PullRequest}", 12f, Landed)
                     .BgHover(RowHoverBg)
                     .Follows(new HitResult.ButtonHit(action), _ => open(pr.Repo, pr.Number))
                     .WithTooltip($"Show {pr} on the Pull requests page")
-                    .WAuto(),
-                Layout.Builder.Text("↗", 11f, Landed, TextAlign.Center, TextAlign.Center)
+                    .WAuto(), url),
+                _links.OnLink(Layout.Builder.Text("↗", 11f, Landed, TextAlign.Center, TextAlign.Center)
                     .Pad(6f, 0f)
                     .BgHover(RowHoverBg)
                     .Follows(new HitResult.ButtonHit($"{action}:browser"), _ => OnOpen?.Invoke(url))
                     .WithTooltip($"Open {pr} on GitHub")
-                    .WAuto())
+                    .WAuto(), url))
             .WAuto()
             .RowH(20f);
     }
