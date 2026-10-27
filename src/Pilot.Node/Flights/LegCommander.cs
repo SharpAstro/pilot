@@ -57,6 +57,7 @@ public sealed partial class LegCommander(
 
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
+        var launches = _launched.Value = [];
         await _one.WaitAsync(cancellationToken);
         string? error = null;
         string? made = null;
@@ -121,7 +122,7 @@ public sealed partial class LegCommander(
                     await ReviewAsync(command, cancellationToken);
                     break;
                 case Verbs.PlanFlight:
-                    await StartPlannerAsync(FlightOf(command.Target), cancellationToken);
+                    StartPlanner(FlightOf(command.Target));
                     break;
                 case Verbs.Planned:
                     Planned(command);
@@ -136,6 +137,11 @@ public sealed partial class LegCommander(
         {
             _one.Release();
         }
+
+        // The sessions this command began start outside the lock: it answers when they are up, or "started" once they are not yet.
+        var (started, notStarted) = await AwaitLaunchesAsync(launches);
+        made ??= started;
+        error ??= notStarted;
 
         // A leg done (or a failed one marked done anyway): the flight goes on by itself to what needs no person, its next leg or
         // its PR (which starts its review), after this lock is let go. Off, a card offers it, so a flight never just sits.
@@ -194,6 +200,19 @@ public sealed partial class LegCommander(
     /// </summary>
     public async Task<string?> RebaseOntoBaseAsync(string code, CancellationToken cancellationToken)
     {
+        var launches = _launched.Value = [];
+        try
+        {
+            return await RebaseUnderLockAsync(code, cancellationToken);
+        }
+        finally
+        {
+            await AwaitLaunchesAsync(launches);
+        }
+    }
+
+    private async Task<string?> RebaseUnderLockAsync(string code, CancellationToken cancellationToken)
+    {
         await _one.WaitAsync(cancellationToken);
         try
         {
@@ -236,7 +255,7 @@ public sealed partial class LegCommander(
             }
             await PushAsync(flight, cancellationToken);
             state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} rebased onto {flight.Base}; reviewed afresh", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
-            await StartReviewAsync(flight, cancellationToken);
+            await StartReviewAsync(flight, cancellationToken, quiet: true);
             return null;
         }
         catch (FlightException ex)
@@ -331,6 +350,11 @@ public sealed partial class LegCommander(
     {
         // Its planner's question about an overlapping flight is not answered: no leg starts until it is.
         if (current.Overlaps.Any(o => o.Answer == OverlapAnswer.Pending))
+        {
+            return null;
+        }
+        // A session of it is being started: its next step waits for it to be up, as a step asked now would be refused.
+        if (Starting(current.Code))
         {
             return null;
         }
@@ -516,6 +540,7 @@ public sealed partial class LegCommander(
     private async Task StartAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var (flight, leg) = LegOf(command.Target);
+        RefuseIfStarting(LegsKey(flight.Code), $"a session on {flight.Code}'s plane ({flight.Code}/{leg.Name} or another leg)");
         if (flight.State != FlightState.Flying)
         {
             throw new FlightException($"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}{(flight.State == FlightState.Held ? $", waiting for {FlightWaiting.For(flight)}" : "")}");
@@ -556,14 +581,14 @@ public sealed partial class LegCommander(
         }
         if (earlier && !anyway && !flown && leg.Validation != LegValidation.Go)
         {
-            await StartValidatorAsync(flight, leg, legs, cancellationToken);
+            StartValidator(flight, leg, legs);
             return;
         }
         if (leg.Validation == LegValidation.Pending && leg.ValidatorJob is { } validating)
         {
             await StopQuietly(validating, cancellationToken);
         }
-        await StartWorkerAsync(flight, leg, legs, cancellationToken);
+        StartWorker(flight, leg, legs);
     }
 
     /// <summary>The card a leg's validator start raises, saying the leg is being read against the tree.</summary>
@@ -572,36 +597,66 @@ public sealed partial class LegCommander(
     /// <summary>The ring a no-go raises on the leg, with its report and the ways on.</summary>
     public const string NoGoKind = "leg-no-go";
 
-    private async Task StartValidatorAsync(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, CancellationToken cancellationToken)
+    private void StartValidator(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs)
     {
         var validator = ValidatorName(flight, leg);
-        await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
-        var job = await workers.StartAsync(new WorkerStart(validator, flight.RepoPath, PlaneOf(flight), Briefs.Validate(flight, leg, legs, Briefs.Run(Cli, Socket), options.Machine), Models.Model(RoleModels.Worker), "low"), cancellationToken);
-        state.PutLeg(leg with { Validation = LegValidation.Pending, Validator = validator, ValidatorJob = job, ValidationReport = null });
-        state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), "validated afresh", NoGoKind);
-        state.RaiseCard(CardBin.Handled, ValidatingKind, Verbs.LegTarget(flight.Code, leg.Name),
-            $"Started {validator} to check {flight.Code}/{leg.Name} against the tree before it starts");
+        var target = Verbs.LegTarget(flight.Code, leg.Name);
+        var brief = Briefs.Validate(flight, leg, legs, Briefs.Run(Cli, Socket), options.Machine);
+        var model = Models.Model(RoleModels.Worker);
+        Launching(LegsKey(flight.Code), $"{validator}, to check {flight.Code}/{leg.Name} against the tree", target,
+            new CardChoice { Label = $"Start {leg.Name}", Verb = Verbs.StartLeg, Target = target },
+            async () =>
+            {
+                await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
+                return await workers.StartAsync(new WorkerStart(validator, flight.RepoPath, PlaneOf(flight), brief, model, "low"), CancellationToken.None);
+            },
+            job =>
+            {
+                if (Unchanged(flight.Code, leg) is not { } now)
+                {
+                    return $"{flight.Code}/{leg.Name} changed while {validator} was being started";
+                }
+                state.PutLeg(now with { Validation = LegValidation.Pending, Validator = validator, ValidatorJob = job, ValidationReport = null });
+                state.CloseCardsAbout(target, "validated afresh", NoGoKind);
+                state.RaiseCard(CardBin.Handled, ValidatingKind, target,
+                    $"Started {validator} to check {flight.Code}/{leg.Name} against the tree before it starts");
+                return null;
+            });
     }
 
-    private async Task StartWorkerAsync(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, CancellationToken cancellationToken)
+    private void StartWorker(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs)
     {
         var worker = WorkerName(flight, leg);
-        await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
-        await WarnSiblingsBehindAsync(flight, leg, cancellationToken);
+        var target = Verbs.LegTarget(flight.Code, leg.Name);
         // A leg that flew before and was held for a package is flown again from what the plane holds, as a go-around is.
         var resumed = leg.Worker is not null && leg.Report?.StartsWith("resumed:", StringComparison.Ordinal) == true ? leg.Report : null;
-        Briefs.PlaneState? plane = null;
-        if (resumed is not null)
-        {
-            var commits = await git.RunAsync(["log", "--oneline", $"{flight.Base}..HEAD"], flight.Worktree, cancellationToken);
-            var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, cancellationToken);
-            plane = new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : "");
-        }
-        var job = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed, machine: options.Machine), leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), cancellationToken);
-        state.PutLeg(leg with { State = LegState.Flying, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), Report = resumed, Wait = null });
-        state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} started", NoGoKind, ValidatingKind);
-        // A ring that this step could not be taken by itself is moot once it is.
-        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}/{leg.Name} started", NextStepKind);
+        Launching(LegsKey(flight.Code), $"{worker}, on {flight.Code}/{leg.Name}", target,
+            new CardChoice { Label = $"Start {leg.Name}", Verb = Verbs.StartLeg, Target = target },
+            async () =>
+            {
+                await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
+                await WarnSiblingsBehindAsync(flight, leg, CancellationToken.None);
+                Briefs.PlaneState? plane = null;
+                if (resumed is not null)
+                {
+                    var commits = await git.RunAsync(["log", "--oneline", $"{flight.Base}..HEAD"], flight.Worktree, CancellationToken.None);
+                    var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
+                    plane = new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : "");
+                }
+                return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed, machine: options.Machine), leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), CancellationToken.None);
+            },
+            job =>
+            {
+                if (Unchanged(flight.Code, leg) is not { } now)
+                {
+                    return $"{flight.Code}/{leg.Name} changed while {worker} was being started";
+                }
+                state.PutLeg(now with { State = LegState.Flying, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), Report = resumed, Wait = null });
+                state.CloseCardsAbout(target, $"{flight.Code}/{leg.Name} started", NoGoKind, ValidatingKind);
+                // A ring that this step could not be taken by itself is moot once it is.
+                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}/{leg.Name} started", NextStepKind);
+                return null;
+            });
     }
 
     /// <summary>
@@ -631,6 +686,8 @@ public sealed partial class LegCommander(
         {
             throw new FlightException("a no-go needs its report: each stale fact, with the command that showed it");
         }
+        // A start on the plane is out already (the leg started anyway while this validator read): its answer changes nothing.
+        RefuseIfStarting(LegsKey(flight.Code), $"a session on {flight.Code}'s plane");
 
         var target = Verbs.LegTarget(flight.Code, leg.Name);
         var done = leg with { Validation = answer == "go" ? LegValidation.Go : LegValidation.NoGo, ValidationReport = report.Length > 0 ? report : null };
@@ -643,7 +700,7 @@ public sealed partial class LegCommander(
                 && !Gate.Hold($"{Verbs.StartLeg} {target}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start {leg.Name}")
                 && state.Legs(flight.Code).All(l => l.State != LegState.Flying))
             {
-                await StartWorkerAsync(flight, done, state.Legs(flight.Code), cancellationToken);
+                StartWorker(flight, done, state.Legs(flight.Code));
             }
         }
         else
@@ -903,7 +960,7 @@ public sealed partial class LegCommander(
                 if (flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null && state.Legs(flight.Code).All(l => l.State == LegState.Done))
                 {
                     await PushAsync(flight, cancellationToken);
-                    await StartReviewAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken);
+                    await StartReviewAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken, quiet: true);
                 }
                 break;
             case "failed":
@@ -947,6 +1004,7 @@ public sealed partial class LegCommander(
     private async Task GoAroundAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var (flight, leg) = LegOf(command.Target);
+        RefuseIfStarting(LegsKey(flight.Code), $"a session on {flight.Code}'s plane");
         var why = string.Join(' ', command.Args ?? []).Trim();
         if (why.Length == 0)
         {
@@ -986,18 +1044,33 @@ public sealed partial class LegCommander(
         {
             await StopQuietly(job, cancellationToken);
         }
-        await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
-        var commits = await git.RunAsync(["log", "--oneline", $"{flight.Base}..HEAD"], flight.Worktree, cancellationToken);
-        var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, cancellationToken);
         // Counted apart when it answers the review, as that is the count the watchtower is capped by.
         var next = leg with { GoArounds = leg.GoArounds + 1, ReviewGoArounds = leg.ReviewGoArounds + (leg.State == LegState.Done ? 1 : 0) };
         var worker = WorkerName(flight, leg);
-        var brief = Briefs.For(flight, next, state.Legs(flight.Code), why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket, machine: options.Machine);
-        var started = await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), cancellationToken);
-        state.PutLeg(next with { State = LegState.Flying, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), FinishedAt = null, Report = $"go-around: {why}", Wait = null });
-        // Every card about the leg was about its last worker: failed, stopped, idle, waiting.
-        state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"went around: {why}");
-        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around for it", ReviewChanges, MergeFailed, PrReady);
+        var target = Verbs.LegTarget(flight.Code, leg.Name);
+        var legs = state.Legs(flight.Code);
+        Launching(LegsKey(flight.Code), $"{worker}, going around {flight.Code}/{leg.Name}", target,
+            new CardChoice { Label = "Go around", Verb = Verbs.GoAround, Target = target, Args = [why] },
+            async () =>
+            {
+                await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
+                var commits = await git.RunAsync(["log", "--oneline", $"{flight.Base}..HEAD"], flight.Worktree, CancellationToken.None);
+                var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
+                var brief = Briefs.For(flight, next, legs, why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket, machine: options.Machine);
+                return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), CancellationToken.None);
+            },
+            started =>
+            {
+                if (Unchanged(flight.Code, leg) is null)
+                {
+                    return $"{flight.Code}/{leg.Name} changed while {worker} was being started";
+                }
+                state.PutLeg(next with { State = LegState.Flying, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), FinishedAt = null, Report = $"go-around: {why}", Wait = null });
+                // Every card about the leg was about its last worker: failed, stopped, idle, waiting.
+                state.CloseCardsAbout(target, $"went around: {why}");
+                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around for it", ReviewChanges, MergeFailed, PrReady);
+                return null;
+            });
     }
 
     /// <summary>The last item of <see cref="FlightRow.MergeWhenGreen"/> when the node armed the merge itself, on autopilot.</summary>
@@ -1351,14 +1424,11 @@ public sealed partial class LegCommander(
         // its review, not its merge: the card says so and the controller decides.
         try
         {
-            await StartReviewAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken);
+            await StartReviewAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken, quiet: true);
         }
         catch (FlightException ex)
         {
-            var row = FlightOf(Verbs.FlightTarget(flight.Code));
-            var why = $"the reviewer did not start: {ex.Message}";
-            state.PutFlight(row with { Review = new ReviewRow { State = ReviewState.Changes, Reviewer = ReviewerName(row), Report = why, StartedAt = time.GetUtcNow(), FinishedAt = time.GetUtcNow() } });
-            RaiseReviewChanges(FlightOf(Verbs.FlightTarget(flight.Code)), why);
+            ReviewNotStarted(flight.Code, $"the reviewer did not start: {ex.Message}");
         }
     }
 
@@ -1434,18 +1504,20 @@ public sealed partial class LegCommander(
     /// no code; a flight that has legs already gets more after them.
     /// </summary>
     /// <param name="replacing">The planner on it was stopped by the caller: the one-planner refusal does not look at it.</param>
-    private async Task StartPlannerAsync(FlightRow flight, CancellationToken cancellationToken, bool replacing = false)
+    private void StartPlanner(FlightRow flight, bool replacing = false)
     {
         if (flight.State == FlightState.Landed)
         {
             throw new FlightException($"{flight.Code} has landed");
         }
         var planner = $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{PlanLeg}";
-        // One planner a flight: a second would plan the same legs over the first's. Live by its row, or started here so
-        // lately that the tracker has not listed it yet (PIL118's plan-flight, sent twice two seconds apart, 2026-10-23).
+        // One planner a flight: a second would plan the same legs over the first's. Live by its row, started here so
+        // lately that the tracker has not listed it yet (PIL118's plan-flight, sent twice two seconds apart, 2026-10-23), or
+        // still being started: its start is out and not recorded yet (PIL338).
         if (!replacing && (state.Sessions().Any(s => string.Equals(s.Name, planner, StringComparison.OrdinalIgnoreCase)
                 && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle)
-            || (_plannersStarted.TryGetValue(flight.Code, out var at) && time.GetUtcNow() - at < PlannerListedWithin)))
+            || (_plannersStarted.TryGetValue(flight.Code, out var at) && time.GetUtcNow() - at < PlannerListedWithin)
+            || _starting.ContainsKey(PlanKey(flight.Code))))
         {
             throw new FlightException($"{planner} is planning {flight.Code} already; wait for its planned card, or stop it first");
         }
@@ -1455,11 +1527,27 @@ public sealed partial class LegCommander(
             _plannersWaiting[flight.Code] = true;
             return;
         }
-        await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
+        var subject = Verbs.FlightTarget(flight.Code);
         var brief = Briefs.Plan(flight, state.Legs(flight.Code), Briefs.Run(Cli, Socket), options.Machine);
-        _plannerJobs[flight.Code] = await workers.StartAsync(new WorkerStart(planner, flight.RepoPath, PlaneOf(flight), brief, Models.Model(RoleModels.Planner), Models.Effort(RoleModels.Planner)), cancellationToken);
-        _plannersStarted[flight.Code] = time.GetUtcNow();
-        state.RaiseCard(CardBin.Handled, "planner-started", Verbs.FlightTarget(flight.Code), $"Started {planner} to plan {flight.Code}'s legs");
+        Launching(PlanKey(flight.Code), $"{planner}, to plan {flight.Code}'s legs", subject,
+            new CardChoice { Label = "Plan again", Verb = Verbs.PlanFlight, Target = subject },
+            async () =>
+            {
+                await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
+                return await workers.StartAsync(new WorkerStart(planner, flight.RepoPath, PlaneOf(flight), brief, Models.Model(RoleModels.Planner), Models.Effort(RoleModels.Planner)), CancellationToken.None);
+            },
+            job =>
+            {
+                if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is not { State: not FlightState.Landed })
+                {
+                    return $"{flight.Code} landed while {planner} was being started";
+                }
+                _plannerJobs[flight.Code] = job;
+                _plannersStarted[flight.Code] = time.GetUtcNow();
+                state.RaiseCard(CardBin.Handled, "planner-started", subject, $"Started {planner} to plan {flight.Code}'s legs");
+                return null;
+            },
+            replacing: replacing);
     }
 
     // The flights whose planner a spent window holds, until the sweep starts it; kept in memory, so a node restarted meanwhile
@@ -1493,12 +1581,15 @@ public sealed partial class LegCommander(
     }
 
     /// <summary>A fresh reviewer on the flight's branch, the last one stopped; any earlier verdict's cards close.</summary>
-    private async Task StartReviewAsync(FlightRow flight, CancellationToken cancellationToken)
+    /// <param name="quiet">The caller is no command to tell: a reviewer that cannot start turns the review to Changes, with a card, as OpenPr always did.</param>
+    private async Task StartReviewAsync(FlightRow flight, CancellationToken cancellationToken, bool quiet = false)
     {
+        string? reviewedHead = null;
         if (flight.State == FlightState.Landed)
         {
             throw new FlightException($"{flight.Code} has landed");
         }
+        RefuseIfStarting(ReviewKey(flight.Code), $"{flight.Code}'s reviewer");
         var legs = state.Legs(flight.Code);
         if (legs.Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is { Count: > 0 } open)
         {
@@ -1521,28 +1612,56 @@ public sealed partial class LegCommander(
             return;
         }
 
-        await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
-        var commits = await git.RunAsync(["log", "--oneline", $"{flight.Base}..HEAD"], flight.Worktree, cancellationToken);
-        var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, cancellationToken);
-        var numstat = await git.RunAsync(["diff", "--numstat", $"{flight.Base}...HEAD"], flight.Worktree, cancellationToken);
-        var plan = ReviewPlan.Choose(state.Usage(), Models.IsPriority(flight.Repo), numstat.Ok ? ReviewPlan.ParseNumstat(numstat.Output) : null, time.GetUtcNow());
         var reviewer = ReviewerName(flight);
-        var brief = Briefs.Review(flight, legs, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Briefs.Run(Cli, Socket), plan, options.Machine);
-        // The head the reviewer reads, from the plane it reads: the pilot/review status goes on it, whatever the branch moves to.
-        // GitHub can still report the head before a push for a moment, so it is only the fallback.
-        var plane = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken);
-        var reviewedHead = plane.Ok && plane.Output.Trim() is { Length: > 0 } sha ? sha : await _marks.HeadAsync(flight, cancellationToken);
-        var job = await workers.StartAsync(new WorkerStart(reviewer, flight.RepoPath, PlaneOf(flight), brief, Models.ReviewerModel(plan.Depth), Models.ReviewerEffort(plan.Depth)), cancellationToken);
-        state.PutFlight(flight with
-        {
-            Review = new ReviewRow
+        var subject = Verbs.FlightTarget(flight.Code);
+        var before = flight.Review?.ReviewerJob;
+        ReviewPlan? plan = null;
+        Launching(ReviewKey(flight.Code), $"{reviewer}, to review {flight.Code}", subject,
+            new CardChoice { Label = "Start review", Verb = Verbs.StartReview, Target = subject },
+            async () =>
             {
-                State = ReviewState.Reviewing, Reviewer = reviewer, ReviewerJob = job, StartedAt = time.GetUtcNow(), Depth = plan.Depth, DepthWhy = plan.Why,
-                GoAround = legs.Sum(l => l.GoArounds), ReviewedHead = reviewedHead,
+                await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
+                var commits = await git.RunAsync(["log", "--oneline", $"{flight.Base}..HEAD"], flight.Worktree, CancellationToken.None);
+                var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
+                var numstat = await git.RunAsync(["diff", "--numstat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
+                plan = ReviewPlan.Choose(state.Usage(), Models.IsPriority(flight.Repo), numstat.Ok ? ReviewPlan.ParseNumstat(numstat.Output) : null, time.GetUtcNow());
+                var brief = Briefs.Review(flight, legs, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Briefs.Run(Cli, Socket), plan, options.Machine);
+                // The head the reviewer reads, from the plane it reads: the pilot/review status goes on it, whatever the branch moves to.
+                // GitHub can still report the head before a push for a moment, so it is only the fallback.
+                var planeHead = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, CancellationToken.None);
+                reviewedHead = planeHead.Ok && planeHead.Output.Trim() is { Length: > 0 } sha ? sha : await _marks.HeadAsync(flight, CancellationToken.None);
+                return await workers.StartAsync(new WorkerStart(reviewer, flight.RepoPath, PlaneOf(flight), brief, Models.ReviewerModel(plan.Depth), Models.ReviewerEffort(plan.Depth)), CancellationToken.None);
             },
-        });
-        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "a fresh review started", ReviewChanges, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, LegWatch.ReviewStalled);
-        await _marks.ApplyAsync(flight.Code, cancellationToken);
+            job =>
+            {
+                // The flight as it is now: landed, or its review replaced meanwhile (a fresh start, a verdict), is no flight this
+                // reviewer was started for.
+                if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is not { State: not FlightState.Landed } now
+                    || now.Review?.ReviewerJob != before || state.Legs(flight.Code).Any(l => l.State != LegState.Done) || plan is null)
+                {
+                    return $"{flight.Code} changed while {reviewer} was being started";
+                }
+                state.PutFlight(now with
+                {
+                    Review = new ReviewRow
+                    {
+                        State = ReviewState.Reviewing, Reviewer = reviewer, ReviewerJob = job, StartedAt = time.GetUtcNow(), Depth = plan.Depth, DepthWhy = plan.Why,
+                        GoAround = legs.Sum(l => l.GoArounds), ReviewedHead = reviewedHead,
+                    },
+                });
+                state.CloseCardsAbout(subject, "a fresh review started", ReviewChanges, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, LegWatch.ReviewStalled);
+                return null;
+            },
+            after: () => _marks.ApplyAsync(flight.Code, CancellationToken.None),
+            quietFailure: quiet ? why => { ReviewNotStarted(flight.Code, $"the reviewer did not start: {why}"); return Task.CompletedTask; } : null);
+    }
+
+    /// <summary>A reviewer that could not start costs the flight its review, not its merge: the card says so and the controller decides.</summary>
+    private void ReviewNotStarted(string code, string why)
+    {
+        var row = FlightOf(Verbs.FlightTarget(code));
+        state.PutFlight(row with { Review = new ReviewRow { State = ReviewState.Changes, Reviewer = ReviewerName(row), Report = why, StartedAt = time.GetUtcNow(), FinishedAt = time.GetUtcNow() } });
+        RaiseReviewChanges(FlightOf(Verbs.FlightTarget(code)), why);
     }
 
     private async Task ReviewAsync(CommandRequest command, CancellationToken cancellationToken)

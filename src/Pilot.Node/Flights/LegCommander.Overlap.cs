@@ -103,7 +103,7 @@ public sealed partial class LegCommander
         // The planner that asked is waiting for its turn to end: stopped, so a fresh one is told the answer. Its start is not
         // refused for the stopped one, which the tracker may list for a poll yet.
         await StopPlannerAsync(flight, cancellationToken);
-        await StartPlannerAsync(flight, cancellationToken, replacing: true);
+        StartPlanner(flight, replacing: true);
         return $"{flight.Code} is planned separately from {known.Other}; a fresh planner is started with the answer";
     }
 
@@ -181,7 +181,7 @@ public sealed partial class LegCommander
 
         // One planner a flight: one planning the other already is stopped, and the fresh one is briefed with the folded issue.
         await StopPlannerAsync(other, cancellationToken);
-        await StartPlannerAsync(other, cancellationToken, replacing: true);
+        StartPlanner(other, replacing: true);
         return $"{flight.Code} is folded into {other.Code}: its issue #{flight.Issue} is {other.Code}'s now, and a planner is started on {other.Code} to plan its points";
     }
 
