@@ -1144,6 +1144,10 @@ public static class PilotCommand
         {
             text.AppendLine($"usage  {usage.Line(DateTimeOffset.UtcNow, TimeZoneInfo.Local)}");
         }
+        if (!newestOnly && code is null && snapshot.Machine is { } machine)
+        {
+            text.AppendLine($"machine  {machine.Line()}");
+        }
         var flights = snapshot.Flights.OrderBy(f => f.State == FlightState.Landed).ThenByDescending(f => f.CreatedAt).ToList();
         if (newestOnly)
         {

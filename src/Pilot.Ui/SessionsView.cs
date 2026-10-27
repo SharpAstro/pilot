@@ -103,7 +103,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
     private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
     private static readonly RGBAColor32 Faint = new(0x5c, 0x5f, 0x6c, 0xff);
-    private static readonly RGBAColor32 Track = new(0x2a, 0x2c, 0x38, 0xff);
+    internal static readonly RGBAColor32 Track = new(0x2a, 0x2c, 0x38, 0xff);
     private static readonly RGBAColor32 Working = new(0x4c, 0xc3, 0x8a, 0xff);
     private static readonly RGBAColor32 Waiting = new(0xf0, 0xb4, 0x3c, 0xff);
     private static readonly RGBAColor32 Idle = new(0x6f, 0x9b, 0xd8, 0xff);
@@ -833,20 +833,28 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             return Cell(label);
         }
 
-        var filled = Math.Clamp(f, 0f, 1f);
-        var bar = filled switch
+        return Cell(label, Layout.Builder.VStack(Layout.Builder.Spacer().RowH(7f), Bar(f).RowH(4f)));
+    }
+
+    /// <summary>
+    /// A bar filled to <paramref name="fraction"/> (0 to 1) over its track, in the meter colour for how full it is. Its height is the
+    /// caller's: the session rows' share, and Home's machine gauges, draw the same bar.
+    /// </summary>
+    internal static Layout.Node Bar(float fraction)
+    {
+        var filled = Math.Clamp(fraction, 0f, 1f);
+        return filled switch
         {
             <= 0f => Layout.Builder.Spacer().Bg(Track),
-            >= 1f => Layout.Builder.Spacer().Bg(MeterColor(f)),
+            >= 1f => Layout.Builder.Spacer().Bg(MeterColor(filled)),
             _ => Layout.Builder.HStack(
-                    Layout.Builder.Spacer().Bg(MeterColor(f)).WStar(filled).HStar(),
+                    Layout.Builder.Spacer().Bg(MeterColor(filled)).WStar(filled).HStar(),
                     Layout.Builder.Spacer().WStar(1f - filled).HStar())
                 .Bg(Track),
         };
-        return Cell(label, Layout.Builder.VStack(Layout.Builder.Spacer().RowH(7f), bar.RowH(4f)));
     }
 
-    private static RGBAColor32 MeterColor(float fraction) => fraction switch
+    internal static RGBAColor32 MeterColor(float fraction) => fraction switch
     {
         >= 0.9f => Failed,
         >= 0.7f => Waiting,

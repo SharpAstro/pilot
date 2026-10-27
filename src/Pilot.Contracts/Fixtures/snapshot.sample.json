@@ -184,6 +184,7 @@
   "legs": [],
   "cards": [],
   "usage": null,
+  "machine": null,
   "jobs": [
     {
       "id": "j14",

@@ -237,6 +237,24 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>Whether the job's process is held as running: what a cancel looks for.</summary>
     internal bool IsRunning(string id) => _running.ContainsKey(id);
 
+    /// <summary>The running jobs' root processes, as (job id, pid): what the machine sampler marks a job's tree by.</summary>
+    internal List<(string Id, int Pid)> RunningPids()
+    {
+        var result = new List<(string, int)>();
+        foreach (var (id, process) in _running)
+        {
+            try
+            {
+                result.Add((id, process.Id));
+            }
+            catch (InvalidOperationException)
+            {
+                // Ended and released since it was listed.
+            }
+        }
+        return result;
+    }
+
     /// <summary>Asks the dispatcher to look again: a slot or memory may have come free.</summary>
     public void Pump() => _signals.Writer.TryWrite(LookAgain.Instance);
 

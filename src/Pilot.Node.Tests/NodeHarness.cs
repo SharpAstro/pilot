@@ -69,7 +69,7 @@ internal sealed class NodeHarness : IAsyncDisposable
         folder ??= Path.Combine(Path.GetTempPath(), "p2t-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(folder);
         var options = new NodeOptions(Path.Combine(folder, NodeSocket.DefaultFileName), Path.Combine(folder, "data"), retainedDeltas, Watchtower: watchtower,
-            Lan: lanPort is not null, LanPort: lanPort ?? NodeWire.DefaultLanPort, LanAnnounce: false, LocalOnly: localOnly, LanLoopbackOnly: lanPort is not null);
+            Lan: lanPort is not null, LanPort: lanPort ?? NodeWire.DefaultLanPort, LanAnnounce: false, LocalOnly: localOnly, LanLoopbackOnly: lanPort is not null, MachineSampling: false);
         if (!NodeSocket.TryValidate(options.SocketPath, out var tooLong))
         {
             throw new InvalidOperationException(tooLong);

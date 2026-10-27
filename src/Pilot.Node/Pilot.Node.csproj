@@ -10,6 +10,8 @@
          publish to check an endpoint change, building is not enough. -->
     <PublishAot>true</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- DXGI's COM calls are made through function pointers on the vtable (MachineNative), as AOT generates no COM marshalling. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
   </PropertyGroup>
 

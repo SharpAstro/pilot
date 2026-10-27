@@ -688,10 +688,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             .Follows(new HitResult.ButtonHit(action), onClick);
 
     /// <summary>A small button: what the cards' choices are, and what the Sessions page's archive buttons borrow.</summary>
-    internal static Layout.Node Pill(string label, string action, Action onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null, RGBAColor32? textColor = null) =>
+    internal static Layout.Node Pill(string label, string action, Action onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null, RGBAColor32? textColor = null, bool fill = false) =>
         Layout.Builder.Text(label, 12f, textColor ?? Bright, TextAlign.Center)
             .Pad(10f, 4f)
-            .WAuto()
+            .W(fill ? Layout.Sizing.Star() : Layout.Sizing.Auto)
             .Bg(tint?.Bg ?? Button)
             .BgHover(tint?.Hover ?? ButtonHover)
             .Follows(new HitResult.ButtonHit(action), _ => onClick());

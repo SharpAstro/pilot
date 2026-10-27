@@ -340,6 +340,10 @@ public sealed class FileJournal : INodeJournal, IDisposable
             Flights = [.. _mirror.Flights.Values],
             Legs = [.. _mirror.Legs.Values],
             Cards = [.. _mirror.Cards.Values],
+            Usage = _mirror.Usage,
+            Machine = _mirror.Machine,
+            Jobs = [.. _mirror.Jobs.Values],
+            PrReviews = [.. _mirror.PrReviews.Values],
         };
         Backup(snapshot.Seq);
         WriteSnapshot(JsonSerializer.SerializeToUtf8Bytes<NodeEvent>(snapshot, PilotJsonContext.Default.NodeEvent));
