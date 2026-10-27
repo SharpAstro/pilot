@@ -38,6 +38,9 @@ public sealed class NodeMirror
     /// <summary>The node's machine as last sampled; null before any, and from an older node.</summary>
     public MachineRow? Machine { get; private set; }
 
+    /// <summary>Every open PR of the clones' orgs as the node last read them; null before any.</summary>
+    public PullRequestsRow? PullRequests { get; private set; }
+
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
 
     /// <summary>The jobs, by id.</summary>
@@ -85,6 +88,7 @@ public sealed class NodeMirror
             }
             Usage = snapshot.Usage;
             Machine = snapshot.Machine;
+            PullRequests = snapshot.PullRequests;
             _jobs.Clear();
             foreach (var job in snapshot.Jobs ?? [])
             {
@@ -169,6 +173,9 @@ public sealed class NodeMirror
                 break;
             case MachineChangedEvent machine:
                 Machine = machine.Machine;
+                break;
+            case PullRequestsChangedEvent pullRequests:
+                PullRequests = pullRequests.Row;
                 break;
             case CommandResultEvent:
                 // A result changes no state; the deltas the command made carry that.

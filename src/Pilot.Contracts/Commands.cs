@@ -354,6 +354,9 @@ public static class Verbs
     /// <summary><c>sync-repos node</c>: <c>git fetch -p --all</c> and a fast-forward-only pull of each tracked repo's default branch; the result's <see cref="CommandResult.Made"/> is one <see cref="RepoSyncOutcome"/> line per repo.</summary>
     public const string SyncRepos = "sync-repos";
 
+    /// <summary><c>refresh-prs node</c>: reads every open PR of the clones' orgs again now, rather than at the next minute; the result's <see cref="CommandResult.Made"/> is how many it found.</summary>
+    public const string RefreshPullRequests = "refresh-prs";
+
     /// <summary><c>create-issue repo/&lt;path&gt; &lt;title&gt; [body]</c>: a new issue through gh; the result's <see cref="CommandResult.Made"/> is its number.</summary>
     public const string CreateIssue = "create-issue";
 

@@ -1,0 +1,79 @@
+{
+ "data": {
+  "search": {
+   "issueCount": 1,
+   "pageInfo": {
+    "hasNextPage": false,
+    "endCursor": null
+   },
+   "nodes": [
+    {
+     "number": 103,
+     "title": "A check failed",
+     "url": "https://github.com/SharpAstro/demo/pull/103",
+     "repository": {
+      "nameWithOwner": "SharpAstro/demo"
+     },
+     "author": {
+      "login": "sebgod"
+     },
+     "isDraft": false,
+     "createdAt": "2026-10-27T19:56:26Z",
+     "updatedAt": "2026-10-28T06:00:00Z",
+     "headRefName": "feature-103",
+     "baseRefName": "main",
+     "mergeable": "MERGEABLE",
+     "mergeStateStatus": "UNSTABLE",
+     "reviewDecision": null,
+     "isInMergeQueue": false,
+     "mergeQueueEntry": null,
+     "autoMergeRequest": null,
+     "commits": {
+      "nodes": [
+       {
+        "commit": {
+         "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+         "statusCheckRollup": {
+          "state": "SUCCESS",
+          "contexts": {
+           "nodes": [
+            {
+             "__typename": "CheckRun",
+             "name": "build",
+             "status": "COMPLETED",
+             "conclusion": "SUCCESS",
+             "detailsUrl": "https://github.com/SharpAstro/demo/actions/runs/1/job/528"
+            },
+            {
+             "__typename": "CheckRun",
+             "name": "test (ubuntu)",
+             "status": "COMPLETED",
+             "conclusion": "FAILURE",
+             "detailsUrl": "https://github.com/SharpAstro/demo/actions/runs/1/job/1236"
+            },
+            {
+             "__typename": "CheckRun",
+             "name": "test (windows)",
+             "status": "COMPLETED",
+             "conclusion": "CANCELLED",
+             "detailsUrl": "https://github.com/SharpAstro/demo/actions/runs/1/job/1340"
+            },
+            {
+             "__typename": "CheckRun",
+             "name": "lint",
+             "status": "IN_PROGRESS",
+             "conclusion": null,
+             "detailsUrl": "https://github.com/SharpAstro/demo/actions/runs/1/job/439"
+            }
+           ]
+          }
+         }
+        }
+       }
+      ]
+     }
+    }
+   ]
+  }
+ }
+}

@@ -355,6 +355,13 @@ public interface IGitHub
     /// <exception cref="FlightException">gh could not list them.</exception>
     Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Every open PR of the org (or user) <paramref name="owner"/>, from one paged GraphQL search for the whole of it, each with its
+    /// merge state read (<see cref="PullRequestSearch"/>); the flights are not known to it.
+    /// </summary>
+    /// <exception cref="FlightException">gh could not search.</exception>
+    Task<PullRequestRow[]> OpenPullRequestsOfAsync(string owner, CancellationToken cancellationToken);
+
     /// <summary>Opens an issue in the repo at <paramref name="repoPath"/>; returns it as listed.</summary>
     /// <exception cref="FlightException">gh could not create it.</exception>
     Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken);
@@ -1001,6 +1008,37 @@ public sealed class GhCli : IGitHub
                 UpdatedAt = i.TryGetProperty("updatedAt", out var at) && at.TryGetDateTimeOffset(out var when) ? when : null,
             })
             .OrderByDescending(i => i.UpdatedAt)];
+    }
+
+    /// <summary>A search that runs to more pages than this is cut short: 40 pages are 1200 open PRs.</summary>
+    private const int MostPages = 40;
+
+    public async Task<PullRequestRow[]> OpenPullRequestsOfAsync(string owner, CancellationToken cancellationToken)
+    {
+        var prs = new List<PullRequestRow>();
+        string? after = null;
+        for (var page = 0; page < MostPages; page++)
+        {
+            List<string> args = ["api", "graphql", "-f", $"query={PullRequestSearch.Query}", "-f", $"q={PullRequestSearch.QueryFor(owner)}"];
+            if (after is not null)
+            {
+                args.AddRange(["-f", $"after={after}"]);
+            }
+            // gh api needs no repo, so it runs where the node does.
+            var (exit, output, error) = await RunAsync(args, AppContext.BaseDirectory, cancellationToken);
+            if (exit != 0)
+            {
+                throw new FlightException($"gh could not search {owner}'s PRs: {(error.Trim().Length > 0 ? error : output).Trim()}");
+            }
+            var read = PullRequestSearch.Parse(output);
+            prs.AddRange(read.PullRequests);
+            if (read.Next is not { } next)
+            {
+                break;
+            }
+            after = next;
+        }
+        return [.. prs];
     }
 
     public async Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken)
