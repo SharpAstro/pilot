@@ -967,7 +967,9 @@ public sealed partial class LegCommander(
         // MaxReviewGoArounds the watchtower sends the leg round no more, and the card is the person's. Only the go-arounds
         // the review asked for count: a leg that failed and went round again says nothing about what its review wants.
         // TIA1241 went round six times overnight on review findings, the last ones about its PR's body and milestone (SE1, 2026-10-26).
-        if (leg.State == LegState.Done && leg.ReviewGoArounds >= MaxReviewGoArounds && IsWatchtower(command.Who))
+        // The node's own go-arounds count the same: sent round on every conflict with a main that kept moving, PIL338 went round
+        // seven times, its review passing and its PR conflicting again before it could merge (SE1, 2026-10-27).
+        if (leg.State == LegState.Done && leg.ReviewGoArounds >= MaxReviewGoArounds && (IsWatchtower(command.Who) || command.Who == LegWatch.Who))
         {
             throw new FlightException(
                 $"{flight.Code}/{leg.Name} has gone around {leg.ReviewGoArounds} times on its review's findings: another is the person's call, as the review may want what no worker can do. Leave the card open for them");
