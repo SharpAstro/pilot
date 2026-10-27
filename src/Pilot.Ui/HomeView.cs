@@ -19,6 +19,9 @@ internal sealed record HomeChip(HomeChipKind Kind, string Label, string Tone)
     public SessionLine? Session { get; init; }
 
     public JobLine? Job { get; init; }
+
+    /// <summary>The chip's short brief for its hover (#258): at most <see cref="ChipBrief.MaxLines"/> lines, one per line of text.</summary>
+    public string Brief { get; init; } = "";
 }
 
 /// <summary>
@@ -86,18 +89,18 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
         [.. Flights.Lines.Where(l => l.Row.State != FlightState.Landed)
             .Select(l => l.StaleMark is { } stale
                 // Its node is in the mark, so the node's name is not said twice; the chip is the last known row, dimmed.
-                ? new HomeChip(HomeChipKind.Flight, $"{l.Code} · {stale}", "stale") { Flight = l }
-                : new HomeChip(HomeChipKind.Flight, Mark(l.Node, $"{l.Code} · {l.State}"), l.State) { Flight = l })];
+                ? new HomeChip(HomeChipKind.Flight, $"{l.Code} · {stale}", "stale") { Flight = l, Brief = ChipBrief.Text(ChipBrief.Flight(l)) }
+                : new HomeChip(HomeChipKind.Flight, Mark(l.Node, $"{l.Code} · {l.State}"), l.State) { Flight = l, Brief = ChipBrief.Text(ChipBrief.Flight(l)) })];
 
     /// <summary>The live sessions.</summary>
     public IReadOnlyList<HomeChip> SessionChips =>
         [.. Sessions.Lines.Where(l => l.IsLive)
-            .Select(l => new HomeChip(HomeChipKind.Session, Mark(l.Node, l.ShownName), "live") { Session = l })];
+            .Select(l => new HomeChip(HomeChipKind.Session, Mark(l.Node, l.ShownName), "live") { Session = l, Brief = ChipBrief.Text(ChipBrief.Session(l)) })];
 
     /// <summary>The running and queued jobs.</summary>
     public IReadOnlyList<HomeChip> JobChips =>
         [.. Jobs.Lines.Where(l => l.Live)
-            .Select(l => new HomeChip(HomeChipKind.Job, Mark(l.Node, $"{l.Id} · {l.State}"), l.State) { Job = l })];
+            .Select(l => new HomeChip(HomeChipKind.Job, Mark(l.Node, $"{l.Id} · {l.State}"), l.State) { Job = l, Brief = ChipBrief.Text(ChipBrief.Job(l)) })];
 
     /// <summary>The machine blocks to draw: a node that sends no row has none.</summary>
     public IReadOnlyList<MachineLine> MachineBlocks => Machines ?? [];
@@ -120,10 +123,10 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
             && (owner == WatchtowerOwner ? l.Row.Role == SessionRole.Watchtower : l.Row.Name == owner));
         if (session is not null)
         {
-            return new HomeChip(HomeChipKind.Session, session.ShownName, "live") { Session = session };
+            return new HomeChip(HomeChipKind.Session, session.ShownName, "live") { Session = session, Brief = ChipBrief.Text(ChipBrief.Session(session)) };
         }
         var job = Jobs.Lines.FirstOrDefault(l => l.Live && line.Is(l.Node) && l.Id == owner);
-        return job is null ? null : new HomeChip(HomeChipKind.Job, $"{job.Id} · {job.State}", job.State) { Job = job };
+        return job is null ? null : new HomeChip(HomeChipKind.Job, $"{job.Id} · {job.State}", job.State) { Job = job, Brief = ChipBrief.Text(ChipBrief.Job(job)) };
     }
 
     private string ProcessDump(MachineLine line, MachineProcess p)
