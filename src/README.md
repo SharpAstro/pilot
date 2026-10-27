@@ -1046,10 +1046,10 @@ command is refused, naming each node and why it did not qualify (`in maintenance
 `no grant`, `no checkout of <owner/name>`); with no other node known, it is refused with the maintenance reason alone.
 
 Any other setting's change restarts the node to run with it at once, whatever jobs run or wait (a job runs detached
-from the node and the next node follows it again, and the answer says how many carry on): the node starts its
-successor with its own arguments and `--after <its pid>`, and stops, as a self-update does, so flights, sessions and
-the watchtower carry on and clients resume their stream. Jobs run detached from the node and carry on too; the new node
-picks them up, and the answer says how many were left (`2 jobs left running; the new node picks them up`). A setting the command line gives is saved but says it does
+from the node and the next node follows it again, and the answer says how many carry on: ` (2 jobs carry on under the
+next node)`, as an update's says `; 2 jobs carry on`): the node starts its successor with its own arguments and
+`--after <its pid>`, and stops, as a self-update does, so flights, sessions and the watchtower carry on and clients
+resume their stream. A setting the command line gives is saved but says it does
 not count until the command line stops giving it.
 
 Above the settings, the page has the setup checklist: started at logon, Claude Code's hooks for this binary, on the
