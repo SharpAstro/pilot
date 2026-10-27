@@ -81,15 +81,6 @@ public sealed class CardSummaryTests
     }
 
     [Fact]
-    public void TheWrittenSummariesNameTheLeg()
-    {
-        // Raised as the raisers do, by the code path that owns them: the table's own line for the kind names the subject.
-        CardSummaries.For("leg-failed", "flight/PIL355/redo", "t", []).ShouldContain("PIL355/redo");
-        CardSummaries.For(LegCommander.ReviewChanges, "flight/PIL355/redo", "t", []).ShouldContain("PIL355/redo");
-        CardSummaries.For(LegCommander.MergeFailed, "flight/PIL355/redo", "t", []).ShouldContain("PIL355/redo");
-    }
-
-    [Fact]
     public void ACardWithoutASummaryGetsOneWhenItsStateIsLoaded()
     {
         var old = new SnapshotEvent

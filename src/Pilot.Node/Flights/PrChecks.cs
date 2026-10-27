@@ -647,7 +647,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 // Said armed, but the node holds no armed merge and GitHub did not say more: the card offers the merge again.
                 state.UpdateCard(card.Id, $"{flight.Code}'s PR #{number} is ready to merge", "Its merge is not armed any more: it left the merge queue unmerged, or was dropped. Merge arms it again.",
-                    [.. card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = status, Note = null } : c)], card.Link);
+                    [.. card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = status, Note = null } : c)], card.Link,
+                    summary: $"The merge of {flight.Code} is not armed any more; it left the merge queue unmerged, or was dropped. Merge arms it again.");
                 continue;
             }
             // Reviewed and passed, but its checks failed: run again once, then sent back as changes, once a head, so the leg goes around.
