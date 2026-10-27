@@ -1924,7 +1924,7 @@ public sealed partial class LegCommander(
         string.Equals(who, $"{options.Machine.ToLowerInvariant()}-watchtower", StringComparison.Ordinal);
 
     /// <summary>How many times the watchtower may send a done leg round on its review's findings before the card is the person's.</summary>
-    public const int MaxReviewGoArounds = 3;
+    public const int MaxReviewGoArounds = LegRow.MaxReviewGoArounds;
 
     private void RaiseReviewChanges(FlightRow flight, string changes)
     {
