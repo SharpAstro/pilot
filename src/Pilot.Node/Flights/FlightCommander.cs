@@ -415,9 +415,12 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         }
         state.PutFlight(flight with { State = FlightState.Landed, LandedAt = time.GetUtcNow(), FoldedInto = foldedInto ?? flight.FoldedInto });
 
-        // The item is no longer flying here: its node label goes. Landed already, so a failure is said, not a refusal.
+        // The item is no longer flying here: its node label goes, unless another flight of this node (a suffixed second one)
+        // is still on the same item. Landed already, so a failure is said, not a refusal.
         string? labelNote = null;
-        if (Trackers?.Of(flight.Tracker) is { } itemTracker)
+        var itemStillFlies = state.Flights().Any(f => f.State != FlightState.Landed && f.Code != flight.Code
+            && f.RepoPath == flight.RepoPath && f.Tracker == flight.Tracker && f.Issue == flight.Issue);
+        if (!itemStillFlies && Trackers?.Of(flight.Tracker) is { } itemTracker)
         {
             try
             {
