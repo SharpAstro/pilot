@@ -387,6 +387,47 @@ public sealed class SettingsTests : IDisposable
         (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == "merge-method").Choices.ShouldBe(["rebase", "squash", "merge"]);
     }
 
+    /// <summary>A list entry that names a folder by path must be one, and stands for the folder's name; a repo-trackers entry must be repo=tracker.</summary>
+    [Fact]
+    public async Task SetRefusesAListEntryThatIsNotAFolderAndTakesAFolderByItsName()
+    {
+        var clone = Directory.CreateDirectory(Path.Combine(_root, "my-clone")).FullName;
+        var missing = Path.Combine(_root, "missing");
+
+        foreach (var key in new[] { "priority-repos", "no-auto-merge-repos" })
+        {
+            NodeSettings.With(new NodeSettings(), key, ["tianwen", missing]).ShouldBe((null, $"{missing} is not a folder on this machine"));
+        }
+        NodeSettings.With(new NodeSettings(), "repo-trackers", [$"{missing}=shortcut"]).ShouldBe((null, $"{missing} is not a folder on this machine"));
+        NodeSettings.With(new NodeSettings(), "repo-trackers", ["tianwen=jira"]).Error.ShouldNotBeNull().ShouldContain("repo=tracker");
+        NodeSettings.With(new NodeSettings(), "repo-trackers", ["tianwen"]).Error.ShouldNotBeNull().ShouldContain("repo=tracker");
+        NodeSettings.With(new NodeSettings(), "repo-trackers", [clone]).Error.ShouldNotBeNull().ShouldContain("repo=tracker");
+
+        NodeSettings.With(new NodeSettings(), "no-auto-merge-repos", ["tianwen", clone, "TIANWEN"]).Settings!.NoAutoMergeRepos.ShouldBe(["tianwen", "my-clone"]);
+        NodeSettings.With(new NodeSettings(), "repo-trackers", [$"{clone}=Shortcut"]).Settings!.RepoTrackers.ShouldBe(["my-clone=shortcut"]);
+
+        // Through the node: the refusal's reason is the reply's, and nothing is written.
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var refused = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["no-auto-merge-repos", missing], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        refused.Ok.ShouldBeFalse();
+        refused.Error.ShouldBe($"{missing} is not a folder on this machine");
+        (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == "no-auto-merge-repos").Saved.ShouldBeNull();
+    }
+
+    /// <summary>A role's model and effort rows say "default leaves the choice to Claude Code" where the wire value is still none.</summary>
+    [Fact]
+    public async Task ARoleRowsHelpSaysDefaultLeavesTheChoiceToClaudeCode()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+
+        var rows = (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Where(s => NodeSettings.IsRoleKey(s.Key)).ToArray();
+
+        rows.ShouldNotBeEmpty();
+        rows.ShouldAllBe(r => r.Choices.Contains("none"));
+        rows.ShouldAllBe(r => r.Detail.Contains("default leaves the choice to Claude Code"));
+        rows.ShouldAllBe(r => !r.Detail.Contains("none leaves"));
+    }
+
     [Fact]
     public async Task APriorityRepoIsInForceTheMomentItIsSaved()
     {

@@ -20,6 +20,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     // The checks are read quietly this often while shown (the node re-measures once its cache is 10 s old); their age is shown meanwhile.
     private static readonly TimeSpan ChecksEvery = TimeSpan.FromSeconds(30);
 
+    // The node's repos change rarely (a clone is added): read on the first show, and again this often while shown.
+    private static readonly TimeSpan ReposEvery = TimeSpan.FromSeconds(60);
+
     // A measurement older than this is marked stale rather than shown as current.
     private static readonly TimeSpan ChecksStale = TimeSpan.FromSeconds(90);
 
@@ -53,11 +56,20 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     // it finds, and neither waits on the other.
     // Checks: what the node last measured (null until it first answers); Checking: a read the person is waiting on is out
     // (the first, a refresh, or the one after a fix), so the rows say so; Working: the ids of the controls pressed and not yet answered.
-    private sealed record Seen(SettingsPage? Page, SetupChecks? Checks, bool Checking, string? ChecksProblem, GrantInfo[] Given, string[] Held, string? Problem, System.Collections.Immutable.ImmutableHashSet<string> Working);
+    // Repos: the node's tracked repos the list pickers offer (null until read); ReposProblem: why they could not be read.
+    private sealed record Seen(SettingsPage? Page, SetupChecks? Checks, bool Checking, string? ChecksProblem, GrantInfo[] Given, string[] Held, string? Problem, System.Collections.Immutable.ImmutableHashSet<string> Working, RepoInfo[]? Repos = null, string? ReposProblem = null);
 
     private Seen _read = new(null, null, false, null, [], [], null, []);
     private CancellationTokenSource? _reading;
     private CancellationTokenSource? _readingChecks;
+    private CancellationTokenSource? _readingRepos;
+
+    // A list picker's own state, which is the person's choice and not a setting's value: the repo picked (and the tracker for
+    // repo-trackers) before Add sends it, and the list whose repo choices are open. A choice goes once the node has taken it.
+    // Swapped whole like Seen, so the render thread and a click never wait on each other.
+    private sealed record Choice(System.Collections.Immutable.ImmutableDictionary<string, string> Picked, System.Collections.Immutable.ImmutableDictionary<string, string> Tracker, string? Opened);
+
+    private Choice _choice = new(System.Collections.Immutable.ImmutableDictionary<string, string>.Empty, System.Collections.Immutable.ImmutableDictionary<string, string>.Empty, null);
     private DateTimeOffset _drawnAt;
 
     // Counts the settings a reply swapped in, so a read that began before one does not put the old row back.
@@ -73,6 +85,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     /// <summary>Reads the setup checks on their own (<c>true</c> asks the node to measure them again); null where there is no node to read.</summary>
     public Func<bool, CancellationToken, Task<SetupChecks>>? LoadChecks { get; set; }
+
+    /// <summary>Reads the node's repos (its repos route), which the lists of repos offer by name; null where there is no node to read.</summary>
+    public Func<CancellationToken, Task<RepoInfo[]>>? LoadRepos { get; set; }
 
     /// <summary>Sends one verb to the node (<c>set</c>, <c>setup</c>) with its words; returns what became of it, with the changed setting's row.</summary>
     public Func<string, string[], CancellationToken, Task<SettingsReply>>? Send { get; set; }
@@ -146,6 +161,26 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             var reading = _readingChecks = new CancellationTokenSource();
             _ = LoopAsync(token => ReadChecksAsync(refresh: false, waited: Checks is null, token), ChecksEvery, reading, () => _readingChecks = null);
         }
+        if (_readingRepos is null && LoadRepos is { } loadRepos)
+        {
+            var reading = _readingRepos = new CancellationTokenSource();
+            _ = LoopAsync(token => ReadReposAsync(loadRepos, token), ReposEvery, reading, () => _readingRepos = null);
+        }
+    }
+
+    private async Task ReadReposAsync(Func<CancellationToken, Task<RepoInfo[]>> load, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var repos = await load(cancellationToken).ConfigureAwait(false);
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { Repos = repos, ReposProblem = null });
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            // The picker keeps the repos it had, and says it could not read them again.
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { ReposProblem = ex.Message });
+        }
+        Changed?.Invoke();
     }
 
     private async Task LoopAsync(Func<CancellationToken, Task> step, TimeSpan every, CancellationTokenSource reading, Action done)
@@ -281,7 +316,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// answers; the answer's row (a <c>set</c>) replaces the shown one, and nothing is read again but what the verb touches: a setup
     /// fix reads the checks, a revoke the grants. A refusal changes no row: the node's value stays, and the line says why.
     /// </summary>
-    private void Act(string verb, string[] args, string doing, string control)
+    private void Act(string verb, string[] args, string doing, string control, Action? taken = null)
     {
         if (Send is not { } send)
         {
@@ -308,6 +343,11 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                 Page = reply.Row is { } row && read.Page is { } page ? page with { Settings = [.. page.Settings.Select(s => s.Key == row.Key ? row : s)] } : read.Page,
                 Working = read.Working.Remove(control),
             });
+            if (reply.Kind == ReplyKind.Done)
+            {
+                // What the person chose for this verb goes only once the node has taken it: a refusal leaves the choice to amend.
+                taken?.Invoke();
+            }
             Said = reply.Line.ReplaceLineEndings(" ").Trim();
             Changed?.Invoke();
             if (verb == Verbs.Setup)
@@ -538,24 +578,14 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             {
                 var chosen = string.Equals(choice, setting.Saved ?? setting.Value, StringComparison.OrdinalIgnoreCase);
                 var action = $"settings:{setting.Key}:{choice}";
-                parts.Add(Pill(choice, action, () => Act(Verbs.Set, [setting.Key, choice], $"{setting.Label}: {choice}…", action), chosen, working.Contains(action)));
+                // The wire value for "leave it to Claude Code" is none; the button says default, as the help line does.
+                var label = choice == "none" ? "default" : choice;
+                parts.Add(Pill(label, action, () => Act(Verbs.Set, [setting.Key, choice], $"{setting.Label}: {label}…", action), chosen, working.Contains(action)));
             }
         }
         else if (setting.Many)
         {
-            var roots = Roots(setting);
-            var stack = new List<Layout.Node>();
-            foreach (var root in roots)
-            {
-                stack.Add(Layout.Builder.HStack(
-                        Layout.Builder.Text(root, 12f, Body).WAuto(),
-                        // The × stays a typeset rune for want of a close glyph: SharpAstro/DIR.Lib#151.
-                        Pill("×", $"settings:{setting.Key}:remove:{root}", () => Act(Verbs.Set, [setting.Key, .. roots.Where(r => r != root).DefaultIfEmpty("default")], $"{setting.Label}: removing {root}…", $"settings:{setting.Key}:remove:{root}"), working: working.Contains($"settings:{setting.Key}:remove:{root}")),
-                        Layout.Builder.Spacer().WStar())
-                    .WithGap(8f).RowH(26f));
-            }
-            stack.Add(Field(setting, "add a folder, then Enter", text => [setting.Key, .. roots, text], working).RowH(26f));
-            return Layout.Builder.VStack([.. stack]);
+            return ListEditor(setting, working);
         }
         else
         {
@@ -564,11 +594,148 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         if (setting.Saved is not null && setting.Source != SettingSources.CommandLine)
         {
             var action = $"settings:{setting.Key}:default";
-            parts.Add(Pill("default", action, () => Act(Verbs.Set, [setting.Key, "default"], $"{setting.Label}: back to the default…", action), working: working.Contains(action)));
+            // "reset" takes the saved value out (back to what the node does unset); no choice on the row reads the same.
+            parts.Add(Pill("reset", action, () => Act(Verbs.Set, [setting.Key, "default"], $"{setting.Label}: back to the default…", action), working: working.Contains(action)));
         }
         parts.Add(Layout.Builder.Spacer().WStar());
         return Layout.Builder.HStack([.. parts]).WithGap(6f);
     }
+
+    // The lists of repos (named by folder) offer the node's repos to choose from; repo roots hold folders, which are not repos.
+    private static bool IsRepoList(string key) => key is "priority-repos" or "no-auto-merge-repos" or "repo-trackers";
+
+    // The most repos the open choice lists at once (the field above narrows them), and the longest an entry is spelt before its middle is elided.
+    private const int OfferedRows = 10;
+    private const int ChipChars = 44;
+    private const float ControlH = 26f;
+    private const float OfferedWidth = 320f;
+    private const float OfferedRowH = 24f;
+
+    /// <summary>
+    /// A list setting: each entry as a chip with a × (the list without it is what is sent), then for a list of repos a choice of
+    /// the node's repos by name with an Add (and for repo-trackers the tracker), and a free entry for a folder outside them.
+    /// </summary>
+    private Layout.Node ListEditor(SettingRow setting, System.Collections.Immutable.ImmutableHashSet<string> working)
+    {
+        var key = setting.Key;
+        var entries = Roots(setting);
+        var read = Volatile.Read(ref _read);
+        var choice = Volatile.Read(ref _choice);
+        var trackers = key == "repo-trackers";
+        var pick = choice.Picked.GetValueOrDefault(key);
+        var tracker = choice.Tracker.GetValueOrDefault(key, "github");
+        string Entry(string name) => trackers ? $"{name}={tracker}" : name;
+
+        var stack = new List<Layout.Node>
+        {
+            entries.Length == 0
+                ? Layout.Builder.Text("none yet", 12f, Dim).RowH(ControlH)
+                : Layout.Builder.WrapH([.. entries.Select(entry => Chip(setting, entry, entries, working))]).WithGap(6f).WithLineGap(6f).WStar().HAuto(),
+        };
+        var controls = new List<Layout.Node>();
+        var offering = IsRepoList(key) && LoadRepos is not null;
+        if (offering)
+        {
+            controls.Add(read.Repos is null
+                ? Idle(read.ReposProblem is null ? "reading repos…" : "repos not read", read.ReposProblem is null ? "the node's repos are being read" : $"the node did not list its repos: {read.ReposProblem}", Button)
+                : Pill(pick is null ? "Choose a repo ▾" : $"{pick} ▾", $"settings:{key}:choose", () => Toggle(key), chosen: pick is not null).HFixed(ControlH));
+            if (trackers)
+            {
+                foreach (var which in new[] { "github", "shortcut" })
+                {
+                    controls.Add(Pill(which, $"settings:{key}:tracker:{which}", () => SetTracker(key, which), chosen: tracker == which).HFixed(ControlH));
+                }
+            }
+            var add = $"settings:{key}:add";
+            controls.Add(pick is null
+                ? Idle("Add", "choose a repo to add", FieldBg)
+                : Pill("Add", add, () => Act(Verbs.Set, [key, .. entries, Entry(pick)], $"{setting.Label}: adding {pick}…", add, () => ClearPick(key)), working: working.Contains(add)).HFixed(ControlH));
+        }
+        var field = Field(setting, offering ? "or a folder's path, then Enter" : "add a folder, then Enter", text => [key, .. entries, trackers && !HasTracker(text) ? $"{text}={tracker}" : text], working);
+        if (offering)
+        {
+            controls.Add(field.WFixed(240f).HFixed(ControlH));
+            stack.Add(Layout.Builder.WrapH([.. controls]).WithGap(6f).WithLineGap(6f).WStar().HAuto());
+            if (choice.Opened == key && read.Repos is { } repos)
+            {
+                stack.Add(Offered(key, repos, entries, pick));
+            }
+        }
+        else
+        {
+            stack.Add(field.RowH(ControlH));
+        }
+        return Layout.Builder.VStack([.. stack]).WithGap(6f);
+    }
+
+    private static bool HasTracker(string text) => text.EndsWith("=github", StringComparison.OrdinalIgnoreCase) || text.EndsWith("=shortcut", StringComparison.OrdinalIgnoreCase);
+
+    // An entry as a chip: its text (a long one elided in the middle, the whole on hover) and the × that sends the list without it.
+    private Layout.Node Chip(SettingRow setting, string entry, string[] entries, System.Collections.Immutable.ImmutableHashSet<string> working)
+    {
+        var action = $"settings:{setting.Key}:remove:{entry}";
+        return Layout.Builder.HStack(
+                Layout.Builder.Text(Elide(entry), 12f, Body).WithTooltip(entry).WAuto().Pad(8f, 4f),
+                // The × stays a typeset rune for want of a close glyph: SharpAstro/DIR.Lib#151.
+                Pill("×", action, () => Act(Verbs.Set, [setting.Key, .. entries.Where(e => e != entry).DefaultIfEmpty("default")], $"{setting.Label}: removing {entry}…", action), working: working.Contains(action)))
+            .WithGap(0f).Bg(FieldBg).WAuto().HFixed(ControlH);
+    }
+
+    // The node's repos not yet in the list, by name with the folder on hover, narrowed by what the field holds; a press picks one.
+    private Layout.Node Offered(string key, RepoInfo[] repos, string[] entries, string? pick)
+    {
+        var listed = entries.Select(e => key == "repo-trackers" ? e.Split('=')[0] : e).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var narrow = _fields.TryGetValue(key, out var input) ? input.Text.Trim() : "";
+        var fits = repos
+            .Where(r => !listed.Contains(r.Name) && (narrow.Length == 0 || r.Name.Contains(narrow, StringComparison.OrdinalIgnoreCase) || r.Path.Contains(narrow, StringComparison.OrdinalIgnoreCase)))
+            .ToArray();
+        var rows = new List<Layout.Node>();
+        foreach (var repo in fits.Take(OfferedRows))
+        {
+            rows.Add(Layout.Builder.Text(Elide(repo.Name), 12f, repo.Name == pick ? Bright : Body).RowH(OfferedRowH).PadX(10f)
+                .WithTooltip(repo.Path)
+                .BgHover(ButtonHover)
+                .Follows(new HitResult.ButtonHit($"settings:{key}:pick:{repo.Name}"), _ => Pick(key, repo.Name)));
+        }
+        if (fits.Length == 0)
+        {
+            rows.Add(Layout.Builder.Text(repos.Length == 0 ? "the node lists no repos: give a folder's path below" : "no repo left to add" + (narrow.Length > 0 ? $" matching {Elide(narrow)}" : ""), 12f, Dim).RowH(OfferedRowH).PadX(10f));
+        }
+        else if (fits.Length > OfferedRows)
+        {
+            rows.Add(Layout.Builder.Text($"{fits.Length - OfferedRows} more: type in the field to narrow them", 11f, Dim).RowH(OfferedRowH).PadX(10f));
+        }
+        return Layout.Builder.VStack([.. rows]).Bg(FieldBg).WFixed(OfferedWidth).HAuto();
+    }
+
+    private void Toggle(string key)
+    {
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _choice, c => c with { Opened = c.Opened == key ? null : key });
+        Changed?.Invoke();
+    }
+
+    private void Pick(string key, string repo)
+    {
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _choice, c => c with { Picked = c.Picked.SetItem(key, repo), Opened = null });
+        Changed?.Invoke();
+    }
+
+    private void SetTracker(string key, string tracker)
+    {
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _choice, c => c with { Tracker = c.Tracker.SetItem(key, tracker) });
+        Changed?.Invoke();
+    }
+
+    private void ClearPick(string key) =>
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _choice, c => c with { Picked = c.Picked.Remove(key) });
+
+    // Long text elided in the middle (a path's ends say the most); where it is shown the whole of it is on hover.
+    private static string Elide(string text) =>
+        text.Length <= ChipChars ? text : $"{text[..(ChipChars / 3)]}…{text[^(ChipChars - ChipChars / 3 - 1)..]}";
+
+    // A control that cannot be pressed now, in the shape of a pill.
+    private static Layout.Node Idle(string label, string why, RGBAColor32 background) =>
+        Layout.Builder.Text(label, 12f, Dim, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(background).WithTooltip(why).HFixed(ControlH);
 
     // A field's working id is its own: Enter sends, and the field says "saving…" until the node answers (a second Enter is ignored meanwhile).
     private Layout.Node Field(SettingRow setting, string placeholder, Func<string, string[]> args, System.Collections.Immutable.ImmutableHashSet<string> working)
