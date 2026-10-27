@@ -1198,6 +1198,8 @@ public sealed class GhCli : IGitHub
         if (exit != 0)
         {
             throw new FlightException($"GitHub refused to take the label {label} off #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+    }
 
     public async Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
