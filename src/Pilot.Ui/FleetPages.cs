@@ -101,9 +101,19 @@ internal sealed class NodeFilter
         foreach (var choice in Choices)
         {
             var key = choice.Key;
-            yield return CardsView<RgbaImage>.HeaderPill(Label(choice), $"nodes:{key}", modifiers => Pick(key, modifiers), !all && _picked.Contains(key) ? lit : plain, night?.Bright);
+            var down = Down.ContainsKey(key);
+            yield return CardsView<RgbaImage>.HeaderPill(Label(choice, down ? Down[key] : null, down), $"nodes:{key}", modifiers => Pick(key, modifiers), !all && _picked.Contains(key) ? lit : plain, down ? night?.Dim ?? DimText : night?.Bright);
         }
     }
+
+    private static readonly RGBAColor32 DimText = new(0x86, 0x89, 0x98, 0xff);
+
+    /// <summary>The choices whose node was heard but cannot be reached now, by key, with when it went quiet (none when that is not known); set by each merge.</summary>
+    public IReadOnlyDictionary<string, DateTimeOffset?> Down { get; set; } = new Dictionary<string, DateTimeOffset?>();
+
+    /// <summary>A pill for a node that cannot be reached: its name and when it was last heard, so it reads as last known.</summary>
+    internal static string Label(NodeMark node, DateTimeOffset? downSince, bool down) =>
+        !down ? Label(node) : $"{Label(node)} · {(downSince is { } since ? $"last heard {since.ToLocalTime():HH:mm}" : "last heard earlier")}";
 
     /// <summary>
     /// A node's pill: its name, and "(this)" for the node this window runs against, which the page's lines call "this node"
@@ -113,7 +123,9 @@ internal sealed class NodeFilter
 
     /// <summary>The pills in a line, for a dump or a test: <c>[All nodes] SE1 LE1</c>, the lit ones bracketed.</summary>
     public string Line() =>
-        Choices.Count < 2 ? "" : string.Join(" ", new[] { All ? "[All nodes]" : "All nodes" }.Concat(Choices.Select(c => !All && _picked.Contains(c.Key) ? $"[{c.Name}]" : c.Name)));
+        Choices.Count < 2 ? "" : string.Join(" ", new[] { All ? "[All nodes]" : "All nodes" }.Concat(Choices.Select(c => !All && _picked.Contains(c.Key) ? $"[{PillName(c)}]" : PillName(c))));
+
+    private string PillName(NodeMark c) => Down.TryGetValue(c.Key, out var since) ? Label(c, since, true).Replace(" (this)", "") : c.Name;
 }
 
 /// <summary>
@@ -252,7 +264,11 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
     /// </summary>
     public static FleetPages Merge(IReadOnlyList<(NodeMark Mark, NodeFeed Feed)> feeds, NodeFilter filter, DateTimeOffset now, bool reposWanted = false)
     {
-        filter.Choices = [.. feeds.Where(f => f.Mark.Here || f.Feed.Connected).Select(f => f.Mark)];
+        // A node that was heard and cannot be reached keeps its pill (dimmed, labelled last heard), as its row keeps its last
+        // known state; one never heard stays out. Its rows keep their stale marks, and its commands stay refused.
+        var offered = feeds.Select(f => (f.Mark, f.Feed, Reach: f.Feed.Reach)).Where(f => f.Mark.Here || f.Reach.Connected || (Unreachable(f.Reach) && f.Feed.Node is not null)).ToList();
+        filter.Choices = [.. offered.Select(f => f.Mark)];
+        filter.Down = offered.Where(f => !f.Mark.Here && Unreachable(f.Reach)).ToDictionary(f => f.Mark.Key, f => f.Reach.DownSince);
         var several = filter.Choices.Count > 1;
         var shown = feeds.Where(f => !several || filter.Shows(f.Mark)).ToList();
         // Another node's rows keep their mark while its stream is down: its last rows are still shown, and unmarked they

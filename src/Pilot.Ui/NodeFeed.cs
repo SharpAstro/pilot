@@ -104,6 +104,7 @@ internal sealed class NodeFeed : IAsyncDisposable
         {
             Connected = view.Connected,
             DownSince = view.DownSince,
+            RetryEvery = _retry,
             Status = view.Status,
             Node = view.Node,
             Stream = view.Stream,
