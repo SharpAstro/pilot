@@ -128,7 +128,7 @@ public sealed class SettingsTests : IDisposable
             Id = "j1", Command = "dotnet test", Cwd = _root, State = JobState.Running, LogPath = Path.Combine(_root, "j1.log"),
             Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow,
         });
-        var withJob = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["update-channel", "stable"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        var withJob = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["update-channel", "beta"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
         withJob.Way.ShouldNotBeNull().ShouldStartWith("saved; it applies at the node's next start");
         withJob.Way.ShouldNotContain("once no job runs");
         (await node.Client.GetSettingsAsync(Ct)).Response!.Restart.ShouldBeNull();
