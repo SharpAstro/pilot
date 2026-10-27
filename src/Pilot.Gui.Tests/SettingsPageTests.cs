@@ -473,6 +473,46 @@ public sealed class SettingsPageTests
         chrome.Settings.Said.ShouldBe("refused: the node's command line gives lan, and wins");
     }
 
+    /// <summary>Captures of the page narrow and wide, checks loading and loaded, with long lines, into the folder named by PILOT_TEST_CAPTURE_DIR (nothing without it).</summary>
+    [Fact]
+    public async Task ThePageCapturedNarrowAndWideWhileTheChecksLoadAndOnceLoaded()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR") is not { Length: > 0 } dir)
+        {
+            return;
+        }
+        Directory.CreateDirectory(dir);
+        var now = DateTimeOffset.UtcNow;
+        var page = Sample with
+        {
+            Restart = "waiting for a job to finish before restarting the node for update-channel",
+            Settings = [.. Sample.Settings, new SettingRow { Key = "machine-long", Label = "A setting with a long label that has to wrap or end", Detail = "A long detail line that says a good deal about what this setting does, and what the node does when it changes", Value = @"C:\Users\a-very-long-user-name\source\repos\an-org-with-a-long-name\a-repo-with-a-long-name", Source = SettingSources.Default }],
+        };
+        var measured = Measured(now, TimeSpan.FromSeconds(12));
+        measured = measured with { Checks = [.. measured.Checks.Select(c => c.Key == "firewall" ? c with { Line = c.Line + ": a long explanation that goes on, and says what to do about it, and where to look when that does not help" } : c)] };
+        foreach (var width in new[] { 700, 1400 })
+        {
+            using var renderer = new RgbaImageRenderer((uint)width, 1500);
+            var chrome = Chrome(renderer);
+            var gate = new TaskCompletionSource<SetupChecks>(TaskCreationOptions.RunContinuationsAsynchronously);
+            chrome.Settings.Load = _ => Task.FromResult(page);
+            chrome.Settings.LoadChecks = (_, _) => gate.Task;
+            chrome.Settings.Send = (_, _, _) => Task.FromResult(new SettingsReply("done"));
+            chrome.Show(PilotPage.Settings);
+            void Shot(string name)
+            {
+                chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, width, 1500));
+                File.WriteAllBytes(Path.Combine(dir, $"settings-{width}-{name}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, 1500));
+            }
+            Shot("start");
+            await WaitAsync(() => chrome.Settings.Page is not null);
+            Shot("checks-loading");
+            gate.SetResult(measured);
+            await WaitAsync(() => chrome.Settings.Checks is not null);
+            Shot("checks-loaded");
+        }
+    }
+
     private static void Click(List<ClickableRegion> regions, string action) =>
         regions.First(r => r.Result is HitResult.ButtonHit b && b.Action == action).OnClick!.Invoke(InputModifier.None);
 
