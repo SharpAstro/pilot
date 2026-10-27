@@ -577,9 +577,10 @@ public sealed class PrRecheckTests : IDisposable
         PullRequestUrl = $"https://github.com/acme/widget/pull/{number}",
     };
 
+    // Up to 10 s: what a passing wait takes is unchanged, and 2 s failed on a machine busy with its flights' builds (SE1, 2026-10-27).
     private static async Task WaitFor(Func<bool> condition)
     {
-        for (var i = 0; i < 200 && !condition(); i++)
+        for (var i = 0; i < 1000 && !condition(); i++)
         {
             await Task.Delay(10, Ct);
         }
