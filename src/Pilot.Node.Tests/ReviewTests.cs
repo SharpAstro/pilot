@@ -1383,22 +1383,17 @@ public sealed class ReviewTests3 : ReviewTestsBase
         _github.AutoMergeDisarmed.ShouldBeEmpty();
         var card = Open().ShouldHaveSingleItem();
         var goAround = card.Choices.Single(c => c.Verb == Verbs.GoAround);
-        (await Run(goAround.Verb, goAround.Target, "controller", goAround.Args)).Error.ShouldBeNull();
+        var pushedBefore = Git(Repo, "ls-remote", "origin", "flight/tia35");
 
+        // The go-around takes the merge back first, and is refused while GitHub's auto-merge cannot be turned off: no leg flies under an armed PR.
+        (await Run(goAround.Verb, goAround.Target, "controller", goAround.Args)).Error.ShouldNotBeNull().ShouldContain("could not be turned off");
+        _state.Legs(code).Single().State.ShouldBe(LegState.Done);
+        _github.AutoMergeDisarmed.ShouldBeEmpty();
+
+        // Opening the PR again by hand is refused too, and nothing is pushed.
         File.WriteAllText(Path.Combine(flight.Worktree, "fix35.txt"), "fixed\n");
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix");
-        var worker = _state.Legs(code).Single().Worker!;
-        var pushedBefore = Git(Repo, "ls-remote", "origin", "flight/tia35");
-
-        // The finish refuses, with the leg still flying for its worker to finish again; nothing went up.
-        var refused = await Run(Verbs.FinishLeg, Verbs.LegTarget(code, "parser"), worker, "done", "fixed");
-        refused.Error.ShouldNotBeNull().ShouldContain("could not be turned off");
-        _state.Legs(code).Single().State.ShouldBe(LegState.Flying);
-        Git(Repo, "ls-remote", "origin", "flight/tia35").ShouldBe(pushedBefore);
-
-        // The same for opening the PR again by hand: refused, nothing pushed.
-        _state.PutLeg(_state.Legs(code).Single() with { State = LegState.Done });
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(code), "controller")).Error.ShouldNotBeNull().ShouldContain("not pushed");
         Git(Repo, "ls-remote", "origin", "flight/tia35").ShouldBe(pushedBefore);
 
