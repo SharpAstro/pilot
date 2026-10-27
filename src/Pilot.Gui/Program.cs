@@ -284,6 +284,7 @@ if (feed is not null && client is not null && clients is not null)
     // The session menu's folder and copy entries.
     view.OnOpen = folder => OpenAway(folder);
     chrome.Flights.CopyText = text => SetClipboardText(text);
+    chrome.Flights.Changed = loop.RequestRedraw;
     // The ? card: this window and the node it talks to, asked again each time it opens.
     NodeInfo? nodeInfo = null;
     chrome.About.Facts = () => AboutFacts.For("pilot-gui", nodeInfo, nodeWhere);
@@ -310,6 +311,7 @@ if (feed is not null && client is not null && clients is not null)
         chrome.Flights.Wizard.Open(repo);
     };
     view.CopyText = text => SetClipboardText(text);
+    view.Changed = loop.RequestRedraw;
     // The Sessions page's archive buttons: a verb on the node, its answer under the say bar.
     view.OnAction = action => tracker.Run(async () =>
     {
@@ -366,6 +368,8 @@ if (feed is not null && client is not null && clients is not null)
     // The watchtower, from its panel: its Remote Control link one click away, and a shortcut to the Chat page.
     chrome.Cards.CanTell = true;
     chrome.Cards.OnOpen = url => OpenAway(url);
+    chrome.Cards.CopyText = text => SetClipboardText(text);
+    chrome.Cards.Changed = loop.RequestRedraw;
     // The Chat page reads the node's chat feed while it is open; what is typed in its box and a choice button go through the
     // node's tell, a refusal said in the chat itself.
     chrome.Chat.Load = async (after, ct) => (await client.GetChatAsync(after, ct)) is { Success: true, Response: { } chat }
@@ -429,6 +433,7 @@ if (feed is not null && client is not null && clients is not null)
         return outcomes;
     };
     chrome.Repos.Changed = loop.RequestRedraw;
+    chrome.Repos.CopyText = text => SetClipboardText(text);
     chrome.Repos.OnNewFlight = line =>
     {
         chrome.Show(PilotPage.Flights);

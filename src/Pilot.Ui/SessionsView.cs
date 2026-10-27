@@ -198,8 +198,25 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// <summary>Opens the new-flight wizard with a repo chosen (by its name): the menu's New flight in it.</summary>
     public Action<string>? OnNewFlight { get; set; }
 
-    /// <summary>Puts text on the clipboard; the menu's Copy entries. Null where the host has no clipboard.</summary>
-    public Action<string>? CopyText { get; set; }
+    // The right-click menu of the links that leave the app (Answer in the browser): Copy URL.
+    private readonly LinkMenu _links = new();
+
+    /// <summary>Puts text on the clipboard; the menu's Copy entries and the links' Copy URL. Null where the host has no clipboard.</summary>
+    public Action<string>? CopyText
+    {
+        get => _links.CopyText;
+        set => _links.CopyText = value;
+    }
+
+    /// <summary>Asks the host for a frame, for the links' "Copied" notice that fades; set by the host.</summary>
+    public Action? Changed
+    {
+        get => _links.Changed;
+        set => _links.Changed = value;
+    }
+
+    /// <summary>The links' menu: its open items and its notice.</summary>
+    internal LinkMenu Links => _links;
 
     /// <summary>Whether a row's right-click menu is open.</summary>
     public bool MenuOpen => _menu.IsOpen;
@@ -429,6 +446,11 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     public override bool HandleInput(InputEvent evt)
     {
+        // A link's menu, and the keys that reach it, ahead of the list's: the transcript's links are painted in this widget too.
+        if (evt is InputEvent.KeyDown linkKey && (Transcript.IsOpen ? Transcript.Links : _links).HandleKey(linkKey, this))
+        {
+            return true;
+        }
         // Enter opens the selected session's transcript; Escape goes back to the table.
         if (evt is InputEvent.KeyDown { Key: InputKey.Enter } && !Transcript.IsOpen && Selected >= 0 && Selected < _lines.Count && Transcript.Load is not null)
         {
@@ -476,9 +498,10 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         // The open transcript's chips that did not fit on a row, as a menu over the page.
         page = Transcript.Over(page, HeaderHeight);
         page = Gallery.Over(page);
-        return _menu.IsOpen
+        page = _menu.IsOpen
             ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg))
             : page;
+        return _links.Over(page);
     }
 
     /// <summary>
@@ -730,8 +753,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     {
         var name = Layout.Builder.Text(line.ShownName, 12f, Dim);
         var answer = line.AnswerUrl is { } url && OnOpen is { } open
-            ? Layout.Builder.Text("Answer in the browser" + Followable.Away, 11f, Bright, TextAlign.Center).Pad(8f, 1f).WAuto().Bg(AnswerBg).BgHover(AnswerHoverBg)
-                .Follows(new HitResult.ButtonHit($"session:{line.Key}:answer"), _ => open(url))
+            ? _links.OnLink(Layout.Builder.Text("Answer in the browser" + Followable.Away, 11f, Bright, TextAlign.Center).Pad(8f, 1f).WAuto().Bg(AnswerBg).BgHover(AnswerHoverBg)
+                .Follows(new HitResult.ButtonHit($"session:{line.Key}:answer"), _ => open(url)), url)
             : null;
         if (line.Row.Subagents is not { Length: > 0 } subagents)
         {

@@ -219,7 +219,8 @@ public sealed class ChatTests
             await Task.Delay(50, TestContext.Current.CancellationToken);
         }
 
-        sent.ShouldBe(["pilot"]);
+        // With the question it answers, so a reply like "Leave it" is never read without it.
+        sent.ShouldBe(["pilot (my answer to: Which repo should the flight fly in?)"]);
     }
 
     [Fact]
@@ -247,7 +248,7 @@ public sealed class ChatTests
         {
             await Task.Delay(50, TestContext.Current.CancellationToken);
         }
-        sent.ShouldBe(["a"]);
+        sent.ShouldBe(["a (my answer to: Which?)"]);
     }
 
     [Fact]

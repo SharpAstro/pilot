@@ -687,6 +687,9 @@ public static class Briefs
         text.AppendLine("  - tianwen");
         text.AppendLine("  - pilot");
         text.AppendLine("  </ask>");
+        text.AppendLine("  One question per block, about one thing, and each choice says in full what it does to which flight, leg, PR or job, so it");
+        text.AppendLine("  reads right on its own: \"Leave PIL338's leg waits-are-said alone for now\", \"Redo leg waits-are-said once more\", never");
+        text.AppendLine("  \"Leave it\" or \"Yes\". After a reply that listed several open items, ask about one of them by name, not all at once.");
         text.AppendLine("- \"Let's launch a flight for X\" (or \"start a flight on X\"), said in the chat, is yours to carry out end to end, in this order:");
         text.AppendLine($"  1. `{pilot} issue create \"<title>\" --repo <the repo's checkout> --body \"<what and why, from what they said>\"` prints the issue's number");
         text.AppendLine($"     (`{pilot} repos` lists the repos and their checkouts; with more than one that could be meant, ask which). If they named an");

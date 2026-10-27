@@ -44,6 +44,15 @@ public sealed record CommandRequest
     public string? Why { get; init; }
 
     /// <summary>
+    /// Names this one attempt at the command: the CLI fills it with a fresh id per invocation, or with the one the caller
+    /// gives it (<c>PILOT_REQUEST_ID</c>) to retry a command that timed out. The node runs a command with an id it has
+    /// seen once, and answers a repeat with the first's result (waiting for it if it is still running). Null for a
+    /// client that does not retry (the GUI, a card's button): every send runs.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RequestId { get; init; }
+
+    /// <summary>
     /// Set by the node when it let an assistant's your-only command through because the autopilot is on, so the command's
     /// result and its black-box line say so. Never read from the wire: a client cannot claim it.
     /// </summary>
@@ -92,6 +101,17 @@ public sealed record CommandResult
     public string? Why { get; init; }
 
     /// <summary>
+    /// Set when the command is queued, not done: it has waited for a commander's lock past the patience, and this says what holds
+    /// it (<c>waiting for merge flight/TIA1 (since 14:03:07)</c>). The command runs once the lock frees, and its outcome comes on the stream and on a Handled card.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Waiting { get; init; }
+
+    /// <summary>The result a queued command ends with, for the node's own use (a retry by its request id is handed it); never on the wire.</summary>
+    [JsonIgnore]
+    public Task<CommandResult>? Later { get; init; }
+
+    /// <summary>
     /// The number of the <see cref="CommandResultEvent"/> that carries this result on the stream, so the client that
     /// posted the command can tell its own result from another client's.
     /// </summary>
@@ -131,6 +151,12 @@ public static class Verbs
     /// that nuget.org does not serve, or never will), and flies when nothing else holds it.
     /// </summary>
     public const string FlyAnyway = "fly-anyway";
+
+    /// <summary>
+    /// The arg a <c>create-flight</c> may carry after its item: create it although the item carries another node's
+    /// <c>pilot node:</c> label. It is no part of the title.
+    /// </summary>
+    public const string AnywayFlag = "--anyway";
 
     /// <summary>
     /// <c>land flight/&lt;code&gt;</c>: its work is in. Its worktree is removed when it is clean (never when it holds

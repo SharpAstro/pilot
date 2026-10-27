@@ -103,6 +103,25 @@ public sealed class ReposPageTests
     }
 
     [Fact]
+    public void APullRequestRowShowsItsLabelsTheNodeLabelIncluded()
+    {
+        var repo = Sample()[0];
+        var labelled = repo with { PullRequests = [.. repo.PullRequests.Select((p, i) => i == 0 ? p with { Labels = ["pilot node: SE1", "bug"] } : p)] };
+        var screen = RepoLine.Build([labelled], [], [], [], [], Live.At);
+        var line = screen[0];
+
+        line.Pulls[0].Labels.ShouldBe("pilot node: SE1, bug");
+        line.Pulls[1].Labels.ShouldBe("");
+        line.ToDumpLine().ShouldContain("ready | passing | pilot node: SE1, bug;");
+
+        using var renderer = new RgbaImageRenderer(1, 1);
+        var (_, repos) = Chrome(renderer);
+        var reposScreen = new ReposScreen(screen, "live", Live.At);
+        var arranged = Layout.Engine.Arrange(repos.Tree(reposScreen), new Rect<int>(0, 0, 1280, 600), CellMeasureContext.PixelAuthored);
+        arranged.ShouldNotBeEmpty();
+    }
+
+    [Fact]
     public void AWaitingSessionSaysWhatItWaitsOnAndTheWorkingOneWinsOverAnIdleOne()
     {
         var repo = Sample()[0];

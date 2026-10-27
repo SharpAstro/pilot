@@ -357,6 +357,8 @@ public sealed class WatchtowerChatTests : IDisposable
         // A choice that is theirs is asked as one; what is theirs alone comes back as the Allow card, never silently.
         // The tool blocks a background session, so it is asked in an ask block instead.
         brief.ShouldContain("Never use the AskUserQuestion tool");
+        // A choice names what it acts on: "Leave it" after a list of six items left nobody sure which (2026-10-27).
+        brief.ShouldContain("Leave PIL338's leg waits-are-said alone for now");
         brief.ShouldContain("<ask>");
         brief.ShouldContain("Allow card");
         brief.ShouldContain("Never go round it with gh or git directly");

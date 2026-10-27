@@ -105,6 +105,40 @@ public sealed class PrMarksTests : IDisposable
     private static string[] Pilot(HashSet<string>? labels) => [.. (labels ?? []).Where(l => l.StartsWith("pilot: ", StringComparison.Ordinal))];
 
     [Fact]
+    public async Task OpeningAFlightsPrLabelsItWithThisNodesCodeAndAStateLabelChangeLeavesItBe()
+    {
+        var flight = await Opened();
+
+        _github.IssueLabels[71].ShouldBe(["pilot node: DU1"]);
+        // The state label is the PR's one pilot: label; the node label is another kind and stays through every swap.
+        Pilot(_github.Labels[71]).ShouldBe(["pilot: reviewing"]);
+        (await Verdict(flight.Code, "pass", "every Done-when holds")).Error.ShouldBeNull();
+        Pilot(_github.Labels[71]).ShouldBe(["pilot: passed"]);
+        _github.IssueLabels[71].ShouldBe(["pilot node: DU1"]);
+    }
+
+    [Fact]
+    public async Task APilotLabelSwapLeavesANodeLabelInPlace()
+    {
+        _github.Labels[5] = ["pilot node: DU1", "pilot: reviewing", "bug"];
+
+        await _github.SetPilotLabelAsync(Repo, 5, "pilot: changes", Ct);
+
+        _github.Labels[5].OrderBy(l => l, StringComparer.Ordinal).ShouldBe(["bug", "pilot node: DU1", "pilot: changes"]);
+    }
+
+    [Fact]
+    public async Task ANodeLabelGitHubRefusesOnTheNewPrIsACardNotAFailedPr()
+    {
+        _github.IssueLabelFails = "label refused";
+
+        var flight = await Opened();
+
+        flight.PullRequest.ShouldBe(71);
+        _state.Cards(openOnly: false).Single(c => c.Kind == "node-label-refused").Detail.ShouldNotBeNull().ShouldContain("label refused");
+    }
+
+    [Fact]
     public async Task AReviewStartsPendingOnTheHeadItReadsAndTheFlightRowKeepsWhatWasSet()
     {
         var flight = await Opened();

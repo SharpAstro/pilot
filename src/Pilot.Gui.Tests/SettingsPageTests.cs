@@ -42,6 +42,28 @@ public sealed class SettingsPageTests
     };
 
     [Fact]
+    public void TheLineWaitingForTheSettingsSitsAtTheTopOfThePageNotDownItsMiddle()
+    {
+        using var renderer = new RgbaImageRenderer(755, 1180);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        // A read that never answers: the page waits on it.
+        chrome.Settings.Load = _ => new TaskCompletionSource<SettingsPage>().Task;
+        chrome.Show(PilotPage.Settings);
+
+        chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 755, 1180));
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR") is { Length: > 0 } dir)
+        {
+            File.WriteAllBytes(Path.Combine(dir, "settings-reading-755.png"), PngWriter.Encode(renderer.Surface.Pixels, 755, 1180));
+        }
+
+        var arranged = Layout.Engine.Arrange(chrome.Settings.Tree(DateTimeOffset.UtcNow), new Rect<float>(0, 0, 677, 1180),
+            new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        var line = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var text } } && text.StartsWith("reading the node's settings", StringComparison.Ordinal)).Bounds;
+        line.Y.ShouldBeLessThan(200f);
+        line.X.ShouldBeGreaterThanOrEqualTo(8f);
+    }
+
+    [Fact]
     public async Task ThePageShowsTheChecklistAndTheSettingsAndEachButtonIsAVerb()
     {
         using var renderer = new RgbaImageRenderer(1280, 900);
@@ -463,7 +485,8 @@ public sealed class SettingsPageTests
         buttons.ShouldNotContain("settings:lan:off");
         buttons.ShouldContain("settings:lan:on");
         chrome.Settings.Page!.Settings.Single(s => s.Key == "lan").Value.ShouldBe("on");
-        Volatile.Read(ref sends).ShouldBe(1);
+        // The send runs on the thread pool, so it is waited for; the second press was refused at once, before it.
+        await WaitAsync(() => Volatile.Read(ref sends) > 0);
 
         reply.SetResult(new SettingsReply("refused: the node's command line gives lan, and wins", ReplyKind.Refused));
         await WaitAsync(() => chrome.Settings.Said!.StartsWith("refused", StringComparison.Ordinal));
@@ -473,6 +496,7 @@ public sealed class SettingsPageTests
         buttons.ShouldContain("settings:lan:off");
         chrome.Settings.Page.Settings.Single(s => s.Key == "lan").Value.ShouldBe("on");
         chrome.Settings.Said.ShouldBe("refused: the node's command line gives lan, and wins");
+        Volatile.Read(ref sends).ShouldBe(1);
     }
 
     /// <summary>Captures of the page narrow and wide, checks loading and loaded, with long lines, into the folder named by PILOT_TEST_CAPTURE_DIR (nothing without it).</summary>

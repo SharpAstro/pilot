@@ -62,11 +62,19 @@ internal sealed class FakeGitHub : IGitHub
 {
     public PullRequest? Pr { get; set; }
 
+    /// <summary>
+    /// Awaited by PullRequestAsync, MergeAsync, CreateAsync, SetDraftAsync and RerunFailedChecksAsync as each begins, with the call's
+    /// name: a gh that takes as long as the test says (PIL338). Null answers at once.
+    /// </summary>
+    public Func<string, Task>? OnCall { get; set; }
+
+    private Task Called(string call) => OnCall?.Invoke(call) ?? Task.CompletedTask;
+
     /// <summary>The open issues, by number, with their titles.</summary>
     public Dictionary<int, string> Issues { get; } = [];
 
     public Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken) =>
-        Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value })]);
+        Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value, Labels = IssueLabels.TryGetValue(i.Key, out var labels) ? [.. labels] : [] })]);
 
     /// <summary>Each repo's open PRs, by repo folder path; a repo with none listed has none.</summary>
     public Dictionary<string, PullRequestStatus[]> OpenPrs { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -98,16 +106,39 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, CreateIssueAsync fails with it.</summary>
     public string? CreateIssueFails { get; set; }
 
-    public Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken)
+    /// <summary>When set, CreateIssueAsync waits for it before it does anything: a command handler held, as a node busy with a session start holds one.</summary>
+    public Task? CreateIssueHold { get; set; }
+
+    public async Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken)
     {
+        if (CreateIssueHold is { } hold)
+        {
+            await hold;
+        }
         if (CreateIssueFails is { } why)
         {
-            return Task.FromException<IssueInfo>(new FlightException(why));
+            throw new FlightException(why);
         }
         IssuesCreated.Add((repoPath, title, body));
         var number = Issues.Count == 0 ? 1 : Issues.Keys.Max() + 1;
         Issues[number] = title;
-        return Task.FromResult(new IssueInfo { Number = number, Title = title });
+        return new IssueInfo { Number = number, Title = title };
+    }
+
+    /// <summary>Each issue closed, with its comment, in order.</summary>
+    public List<(int Number, string Comment)> ClosedIssues { get; } = [];
+
+    /// <summary>When set, CloseIssueAsync fails with it.</summary>
+    public string? CloseIssueFails { get; set; }
+
+    public Task CloseIssueAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
+    {
+        if (CloseIssueFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        ClosedIssues.Add((number, comment));
+        return Task.CompletedTask;
     }
 
     public Task<string?> IssueTitleAsync(string repoPath, int number, CancellationToken cancellationToken) =>
@@ -116,16 +147,20 @@ internal sealed class FakeGitHub : IGitHub
     public List<(int Number, string Head, string Method)> Merged { get; } = [];
 
     // The labels are what the fake keeps on the PR, so a label taken off by hand is read as GitHub says it.
-    public Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken) =>
-        Task.FromResult(Pr is { } pr ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. labels] : [] } : null);
+    public async Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    {
+        await Called(nameof(PullRequestAsync));
+        return Pr is { } pr ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. labels] : [] } : null;
+    }
 
     /// <summary>Whether a merge joins a merge queue rather than merging, as on a base that has one.</summary>
     public bool Queues { get; set; }
 
-    public Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
+    public async Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
+        await Called(nameof(MergeAsync));
         Merged.Add((number, head, method));
-        return Task.FromResult(Queues);
+        return Queues;
     }
 
     /// <summary>What ChecksAsync answers for any PR.</summary>
@@ -193,10 +228,11 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>How many times the failed runs were asked to run again, each as the PR's number.</summary>
     public List<int> Reruns { get; } = [];
 
-    public Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
+    public async Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
+        await Called(nameof(RerunFailedChecksAsync));
         Reruns.Add(number);
-        return Task.FromResult(1);
+        return 1;
     }
 
     /// <summary>The workflow runs each commit has, by commit; a commit with none listed has none.</summary>
@@ -269,23 +305,24 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, SetDraftAsync fails with it, as a gh that could not reach GitHub.</summary>
     public string? DraftFails { get; set; }
 
-    public Task SetDraftAsync(string repoPath, int number, bool draft, CancellationToken cancellationToken)
+    public async Task SetDraftAsync(string repoPath, int number, bool draft, CancellationToken cancellationToken)
     {
+        await Called(nameof(SetDraftAsync));
         if (DraftFails is { } why)
         {
             throw new FlightException(why);
         }
         DraftCalls.Add((number, draft));
-        return Task.CompletedTask;
     }
 
     public List<(string Branch, string Base, string Title, string Body)> Created { get; } = [];
 
-    public Task<PullRequest> CreateAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken)
+    public async Task<PullRequest> CreateAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken)
     {
+        await Called(nameof(CreateAsync));
         Created.Add((branch, baseBranch, title, body));
         Pr = new PullRequest(70 + Created.Count, "OPEN", "cafe0000cafe0000", $"https://github.com/x/tianwen/pull/{70 + Created.Count}");
-        return Task.FromResult(Pr);
+        return Pr;
     }
 
     /// <summary>Any repo's PRs, by <c>owner/repo#n</c>, as gh pr view -R reads them.</summary>
@@ -363,6 +400,54 @@ internal sealed class FakeGitHub : IGitHub
         {
             set.Remove(label);
         }
+        return Task.CompletedTask;
+    }
+
+    /// <summary>The labels each issue carries, by number.</summary>
+    public Dictionary<int, HashSet<string>> IssueLabels { get; } = [];
+
+    /// <summary>The labels made in the repo, in order.</summary>
+    public List<string> LabelsCreated { get; } = [];
+
+    /// <summary>Every comment made on an issue, by number.</summary>
+    public List<(int Number, string Body)> IssueComments { get; } = [];
+
+    public Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult(IssueLabels.TryGetValue(number, out var labels) ? labels.ToArray() : []);
+
+    /// <summary>When set, adding or removing an issue label fails with it, as GitHub refusing it.</summary>
+    public string? IssueLabelFails { get; set; }
+
+    public Task AddIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
+    {
+        if (IssueLabelFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        if (!LabelsCreated.Contains(label))
+        {
+            LabelsCreated.Add(label);
+        }
+        (IssueLabels.TryGetValue(number, out var labels) ? labels : IssueLabels[number] = []).Add(label);
+        return Task.CompletedTask;
+    }
+
+    public Task RemoveIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
+    {
+        if (IssueLabelFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        if (IssueLabels.TryGetValue(number, out var labels))
+        {
+            labels.Remove(label);
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken)
+    {
+        IssueComments.Add((number, body));
         return Task.CompletedTask;
     }
 
@@ -1166,6 +1251,56 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
 
         Directory.Exists(flight.Worktree).ShouldBeFalse();
     }
+
+    [Fact]
+    public async Task LandingStopsEveryLiveSessionOfTheFlightNotOnlyItsCurrentWorkers()
+    {
+        // TIA368 landed with its planner and an earlier reviewer idle in its plane: they held the folder and could still push.
+        await FlightWithTwoLegs();
+        var flights = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System, workers: _workers);
+        Session("aa000001", "du1-tia1-plan", SessionRole.Planner, "TIA1", SessionState.Idle);
+        Session("aa000002", "du1-tia1-review", SessionRole.Reviewer, "TIA1", SessionState.Working);
+        Session("aa000003", "du1-tia1-parser", SessionRole.Worker, "TIA1", SessionState.Ended);
+        Session("aa000004", "du1-tia2-plan", SessionRole.Planner, "TIA2", SessionState.Idle);
+
+        (await flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+
+        _workers.Stopped.ShouldContain("aa000001");
+        _workers.Stopped.ShouldContain("aa000002");
+        _workers.Stopped.ShouldNotContain("aa000003");
+        _workers.Stopped.ShouldNotContain("aa000004");
+    }
+
+    [Fact]
+    public async Task WorkNotInMainLandsOnlyOnceAPassedReviewHasReadItsHead()
+    {
+        // TIA368 was landed by hand with a leg added after its pass: two pushed commits no reviewer had seen.
+        var flight = await FlightWithTwoLegs();
+        var origin = Path.Combine(_root, "origin.git");
+        Git(_root, "init", "-q", "--bare", origin);
+        Git(Repo, "remote", "add", "origin", origin);
+        Git(Repo, "push", "-q", "origin", "main");
+        File.WriteAllText(Path.Combine(flight.Worktree, "parser.cs"), "class Parser {}\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "the parser");
+        Git(flight.Worktree, "push", "-q", "origin", "HEAD:" + flight.Branch);
+        var land = new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" };
+
+        var refused = await _flights.RunAsync(land, Ct);
+        refused.Error.ShouldNotBeNull().ShouldContain("TIA1's plane holds 1 commit not in main that no passed review has read");
+        refused.Error.ShouldContain("the parser");
+        _state.Flights().Single().State.ShouldBe(FlightState.Flying);
+
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        _state.PutFlight(_state.Flights().Single() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "r", ReviewedHead = head, StartedAt = DateTimeOffset.UtcNow } });
+        (await _flights.RunAsync(land, Ct)).Ok.ShouldBeTrue();
+    }
+
+    private void Session(string id, string name, SessionRole role, string flight, SessionState state) => _state.PutSession(new SessionRow
+    {
+        Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = "/r/w", Role = role, Flight = flight,
+        ContextTokens = 0, ContextWindow = 200_000, State = state, SpendWeighted = 0, LastResponseAt = DateTimeOffset.UtcNow, StartedAt = DateTimeOffset.UtcNow,
+    });
 
     [Fact]
     public async Task APlaneWhoseGitFileWentIsPrunableAndStillLands()

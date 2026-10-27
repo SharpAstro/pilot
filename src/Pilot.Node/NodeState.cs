@@ -246,6 +246,31 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>
+    /// Changes the flight <paramref name="code"/> as it is now, in one step: <paramref name="change"/> is given the row as it stands and
+    /// returns the row to keep, so a writer that read the flight earlier (a command whose GitHub call was out) never puts a
+    /// stale copy over what another has written meanwhile. Nothing when the flight is gone or <paramref name="change"/> returns null.
+    /// Returns the row kept, or null.
+    /// </summary>
+    public FlightRow? UpdateFlight(string code, Func<FlightRow, FlightRow?> change)
+    {
+        lock (_gate)
+        {
+            if (!_flights.TryGetValue(code, out var known) || change(known) is not { } changed)
+            {
+                return null;
+            }
+            if (!Same(known, changed))
+            {
+                Publish(new FlightChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = changed });
+            }
+            return changed;
+        }
+    }
+
+    /// <summary>Whether two rows of a flight are the same in everything a record compares.</summary>
+    internal static bool SameFlight(FlightRow a, FlightRow b) => Same(a, b);
+
     /// <summary>The legs of <paramref name="flight"/>, in their order; every leg when it is null.</summary>
     public LegRow[] Legs(string? flight = null)
     {
@@ -627,15 +652,15 @@ public sealed class NodeState
     /// <param name="error">Why it was not done, or null when it was.</param>
     /// <param name="way">Which way it went (<see cref="CommandResult.Way"/>).</param>
     /// <param name="sessionId">The target's new session id (<see cref="CommandResult.SessionId"/>).</param>
-    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null)
+    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null, string? waiting = null)
     {
         lock (_gate)
         {
-            return CompleteLocked(command, error, way, sessionId, made, setting);
+            return CompleteLocked(command, error, way, sessionId, made, setting, waiting);
         }
     }
 
-    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null)
+    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null, string? waiting = null)
     {
         var result = new CommandResult
         {
@@ -650,6 +675,7 @@ public sealed class NodeState
             Setting = error is null ? setting : null,
             Autopilot = command.Autopilot,
             Why = command.Why is { } why && why.Trim().Length > 0 ? why.Trim() : null,
+            Waiting = error is null ? waiting : null,
             Seq = _seq + 1,
         };
         Publish(new CommandResultEvent { Seq = result.Seq, At = _time.GetUtcNow(), Result = result });

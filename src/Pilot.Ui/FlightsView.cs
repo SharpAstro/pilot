@@ -364,8 +364,26 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>The window's In play / Everything choice, whose pills sit beside the node pills; null shows everything, as a capture does.</summary>
     public PlayFilter? Play { get; set; }
 
-    /// <summary>Puts text on the clipboard; the row menu's Copy entries. Null where the host has no clipboard.</summary>
-    public Action<string>? CopyText { get; set; }
+    // The right-click menu of the page's links that leave the app (a PR, an artifact, a folder): Copy URL. Its own state, but
+    // the scrim of whichever menu is open takes the next right press, so it and the row menu are never up together.
+    private readonly LinkMenu _links = new();
+
+    /// <summary>Puts text on the clipboard; the row menu's Copy entries and the links' Copy URL. Null where the host has no clipboard.</summary>
+    public Action<string>? CopyText
+    {
+        get => _links.CopyText;
+        set => _links.CopyText = value;
+    }
+
+    /// <summary>Asks the host for a frame, for the links' "Copied" notice that fades; set by the host.</summary>
+    public Action? Changed
+    {
+        get => _links.Changed;
+        set => _links.Changed = value;
+    }
+
+    /// <summary>The links' menu: its open items and its notice.</summary>
+    internal LinkMenu Links => _links;
 
     // A row's right-click menu, hung where the press was.
     private readonly DropdownMenuState<string> _menu = new();
@@ -575,6 +593,11 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                     return false;
             }
         }
+        // A link's menu, and the keys that reach it, ahead of the page's.
+        if (evt is InputEvent.KeyDown linkKey && _links.HandleKey(linkKey, this))
+        {
+            return true;
+        }
         if (evt is InputEvent.KeyDown { Key: var viewerKey } && Gallery.HandleKey(viewerKey))
         {
             return true;
@@ -622,7 +645,8 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         var page = Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch();
         page = About?.Over(page, NightOrNull) ?? page;
         page = Gallery.Over(page);
-        return _menu.IsOpen ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg)) : page;
+        page = _menu.IsOpen ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg)) : page;
+        return _links.Over(page);
     }
 
     /// <summary>The selected flight: its legs, its review, its artifacts, and what can be done with it.</summary>
@@ -730,11 +754,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         _ => flight.Review?.StatusState switch { "success" => Flying, "failure" => Held, _ => Dim },
     };
 
+    // A link that leaves the app: a click opens it, a right-click offers Copy URL (over the row's own menu, which stays on the rest of the row).
     private Layout.Node Link(string text, string location, string action) =>
-        Layout.Builder.Text(text + Followable.Away, 12f, Landed)
+        _links.OnLink(Layout.Builder.Text(text + Followable.Away, 12f, Landed)
             .BgHover(RowHoverBg)
             .Follows(new HitResult.ButtonHit(action), _ => OnOpen?.Invoke(location))
-            .RowH(20f);
+            .RowH(20f), location);
 
     private Layout.Node Pill(string label, string action, Action onClick) =>
         Layout.Builder.Text(label, 12f, Bright, TextAlign.Center)

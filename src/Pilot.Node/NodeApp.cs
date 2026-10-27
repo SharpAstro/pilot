@@ -88,7 +88,9 @@ public static class NodeApp
             return flights;
         });
         builder.Services.AddSingleton<RepoCatalog>();
-        builder.Services.AddSingleton<RepoWatch>();
+        builder.Services.AddSingleton(services => new RepoWatch(
+            services.GetRequiredService<NodeState>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<Planes>(),
+            services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>()) { Machine = options.Machine });
         builder.Services.AddHostedService(services => services.GetRequiredService<RepoWatch>());
         builder.Services.AddSingleton<RepoSync>();
         builder.Services.AddSingleton<RepoCommander>();
@@ -192,7 +194,13 @@ public static class NodeApp
             return recheck;
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PrRecheck>());
-        builder.Services.AddSingleton<PrChecks>();
+        // A failed check is run again once before the node sends a leg round on it.
+        builder.Services.AddSingleton(services =>
+        {
+            var checks = ActivatorUtilities.CreateInstance<PrChecks>(services);
+            checks.RerunFirst = true;
+            return checks;
+        });
         builder.Services.AddHostedService(services => services.GetRequiredService<PrChecks>());
         builder.Services.AddSingleton<Digest>();
         builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());

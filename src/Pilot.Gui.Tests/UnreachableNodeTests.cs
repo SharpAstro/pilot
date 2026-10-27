@@ -144,10 +144,11 @@ public sealed class UnreachableNodeTests : IAsyncDisposable
     public async Task ADownNodeWithNothingHeldIsStillNamedAndSaysNothingAboutCounts()
     {
         var filter = new NodeFilter();
+        // DE1 never answers: its first open is refused, which is its first try failing. Set before DE1 is known, else the
+        // watch's first open could come first and succeed, and DE1 would never be unreachable (failed once on CI, #340).
+        _de1.Refuse = new HttpRequestException("no route to host");
         _here.Start();
         _watch.Know([(De1Where, "DE1 LAPTOP-3")]);
-        // DE1 never answers: its first open is refused, which is its first try failing.
-        _de1.Refuse = new HttpRequestException("no route to host");
         await Until(() => _se1.OpenCount > 0);
         _se1.Send(Live.Snapshot(1, "s-se1", Live.Row("aaaa0001", "se1-watchtower", SessionState.Working)));
         await Until(() => Pages(filter).Cards.Held.Count == 1);
