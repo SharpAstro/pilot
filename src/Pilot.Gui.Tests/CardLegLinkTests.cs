@@ -70,6 +70,53 @@ public sealed class CardLegLinkTests
     }
 
     [Fact]
+    public void CapturesOfAReviewChangesALegFailedAndAMergeFailedCardAtNarrowAndWideWindows()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var dir = Path.GetDirectoryName(capture) ?? ".";
+        var redo = new CardChoice { Label = Verbs.RedoLeg("parser"), Verb = Verbs.GoAround, Target = Verbs.LegTarget("PIL355", "parser") };
+        var cases = new (string Name, CardRow Card)[]
+        {
+            ("review-changes", new CardRow
+            {
+                Id = "c1", Bin = CardBin.Ring, Kind = "review-changes", Subject = "flight/PIL355", Title = "PIL355's PR #360 needs changes",
+                Summary = "The review asked for changes on the parser leg. Redo leg parser to fix them, or dismiss the card.",
+                Detail = "Review of 3b2b6d0: the parser drops a trailing newline; add a test for it.",
+                Choices = [redo],
+                Link = "https://github.com/SharpAstro/pilot/pull/360", At = Live.At, State = CardState.Open,
+            }),
+            ("leg-failed", new CardRow
+            {
+                Id = "c2", Bin = CardBin.Ring, Kind = "leg-failed", Subject = "flight/PIL355/parser", Title = "PIL355/parser failed",
+                Summary = "The worker for leg parser gave up before its check passed. Redo leg parser to fly it again.",
+                Detail = "the last worker gave up: dotnet test failed with 3 errors in ParserTests",
+                Choices = [redo], At = Live.At, State = CardState.Open,
+            }),
+            ("merge-failed", new CardRow
+            {
+                Id = "c3", Bin = CardBin.Ring, Kind = "merge-failed", Subject = "flight/PIL355", Title = "PIL355's PR #360: check build-and-test failed",
+                Summary = "The merge waited for the checks and one failed. Redo leg parser to fix it, re-run the checks, or merge again.",
+                Detail = "The merge waited for the checks to pass, and build-and-test failed on 3b2b6d0. Auto-merge is off.",
+                Choices = [redo, new CardChoice { Label = "Merge again", Verb = Verbs.Merge, Target = "flight/PIL355", Args = ["3b2b6d0"] }],
+                Link = "https://github.com/SharpAstro/pilot/pull/360", At = Live.At, State = CardState.Open,
+            }),
+        };
+        foreach (var (width, height) in new[] { (900, 700), (1800, 700) })
+        {
+            foreach (var (name, card) in cases)
+            {
+                using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+                var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+                chrome.Render(new SessionsScreen([], "test", Live.At), null, CardsScreen.From([card]), new RectF32(0, 0, width, height));
+                File.WriteAllBytes(Path.Combine(dir, $"card-leg-{name}-{width}.png"), SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, height));
+            }
+        }
+    }
+
+    [Fact]
     public void TheLegLinkOpensTheFlightsPageWithAFarDownLegInView()
     {
         var flight = new FlightRow
