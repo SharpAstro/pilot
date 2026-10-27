@@ -101,9 +101,15 @@ internal sealed class NodeFilter
         foreach (var choice in Choices)
         {
             var key = choice.Key;
-            yield return CardsView<RgbaImage>.HeaderPill(choice.Name, $"nodes:{key}", modifiers => Pick(key, modifiers), !all && _picked.Contains(key) ? lit : plain, night?.Bright);
+            yield return CardsView<RgbaImage>.HeaderPill(Label(choice), $"nodes:{key}", modifiers => Pick(key, modifiers), !all && _picked.Contains(key) ? lit : plain, night?.Bright);
         }
     }
+
+    /// <summary>
+    /// A node's pill: its name, and "(this)" for the node this window runs against, which the page's lines call "this node"
+    /// (in maintenance, its usage). Without it nothing on screen said which pill that was (SE1, 2026-10-27).
+    /// </summary>
+    internal static string Label(NodeMark node) => node.Here ? $"{node.Name} (this)" : node.Name;
 
     /// <summary>The pills in a line, for a dump or a test: <c>[All nodes] SE1 LE1</c>, the lit ones bracketed.</summary>
     public string Line() =>
