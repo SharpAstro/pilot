@@ -264,6 +264,12 @@ restarted node and a client resuming the stream both replay it.
 
 ### Reviews
 
+A flight's push never drops commits. Before it, the node fetches the branch: what the remote holds that the plane lacks is
+merged in (a fast-forward when it can be), and when that merge conflicts it is undone, a Ring `push-diverged` card names the
+remote head and the plane's head and says to merge by hand, and nothing is pushed. The push itself is fast-forward only. The one
+exception is a rebase the node made (a repaired base): it goes up with `--force-with-lease=refs/heads/<branch>:<sha>`, pinned
+to the remote head read before the rebase, never a bare `--force-with-lease`.
+
 `flight pr` pushes the plane (every time, so a go-around's commits reach the PR) and starts a fresh reviewer,
 `<machine>-<flight>-review`, in the plane: briefed with every leg's goal and Done-when, the commits and the files, told
 to read the diff and rerun what proves each Done-when, and to change nothing.

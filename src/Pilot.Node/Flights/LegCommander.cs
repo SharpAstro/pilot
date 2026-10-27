@@ -269,15 +269,12 @@ public sealed partial class LegCommander(
                 var repaired = await RepairBaseAsync(flight, cancellationToken);
                 // The branch as pushed from elsewhere (its conflicts resolved by the controller, or by another node) is taken
                 // first: rebasing the plane's older commits met conflicts already resolved there, and rang for them (#344).
-                var remote = $"origin/{repaired.Branch}";
-                if ((await git.RunAsync(["merge-base", "--is-ancestor", "HEAD", remote], flight.Worktree, cancellationToken)).Ok)
-                {
-                    await git.RunAsync(["merge", "--ff-only", "--quiet", remote], flight.Worktree, cancellationToken);
-                }
+                // What the remote holds that the plane lacks and is not a fast-forward is merged in as well, before any rebase: a push never drops it.
+                await TakeRemoteAsync(repaired, cancellationToken);
                 // A branch that holds its base already (merged in, as a squashing merge queue allows) has nothing to rebase.
                 if ((await git.RunAsync(["merge-base", "--is-ancestor", repaired.Base, "HEAD"], flight.Worktree, cancellationToken)).Ok)
                 {
-                    await PushAsync(repaired, cancellationToken);
+                    await PushAsync(repaired, repaired: false, cancellationToken);
                     return (repaired, null);
                 }
                 var rebase = await git.RunAsync(["rebase", repaired.Base], flight.Worktree, cancellationToken);
@@ -289,7 +286,8 @@ public sealed partial class LegCommander(
                         .Where(l => !l.StartsWith("Rebasing (", StringComparison.Ordinal)));
                     return (repaired, $"rebasing {code} onto {repaired.Base} conflicts ({stopped})");
                 }
-                await PushAsync(repaired, cancellationToken);
+                // Rebased by the node: the branch goes up with a lease on the remote head taken above.
+                await PushAsync(repaired, repaired: true, cancellationToken);
                 return (repaired, null);
             });
             if (notRebased is not null)
@@ -1018,7 +1016,7 @@ public sealed partial class LegCommander(
                 {
                     using (Calling(flight.Code, "being pushed"))
                     {
-                        await OffLockAsync(null, () => PushAsync(flight, cancellationToken));
+                        await OffLockAsync(null, () => PushAsync(flight, repaired: false, cancellationToken));
                     }
                     await StartReviewAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken, quiet: true);
                 }
@@ -1497,9 +1495,11 @@ public sealed partial class LegCommander(
         var (repaired, pr) = await OffLockAsync(flight, async () =>
         {
             // A base that is not a branch on the remote is repaired first: the rebase it takes must be what is pushed.
+            // The remote's commits are taken first (the repair rebases the branch, and a rebase must not leave them out).
+            await TakeRemoteAsync(flight, cancellationToken);
             var repaired = await RepairBaseAsync(flight, cancellationToken);
             // Pushed every time, not only for a new PR: a go-around's commits must reach the PR before it is reviewed again.
-            await PushAsync(repaired, cancellationToken);
+            await PushAsync(repaired, repaired: repaired.Base != flight.Base, cancellationToken);
             var pr = await github.PullRequestAsync(repaired.RepoPath, repaired.Branch, cancellationToken);
             if (pr is null || !string.Equals(pr.State, "OPEN", StringComparison.OrdinalIgnoreCase))
             {
@@ -1586,12 +1586,65 @@ public sealed partial class LegCommander(
         }
     }
 
-    private async Task PushAsync(FlightRow flight, CancellationToken cancellationToken)
+    /// <summary>The card a push refused because the remote branch holds commits the plane lacks and merging them conflicts.</summary>
+    public const string PushDivergedKind = "push-diverged";
+
+    /// <summary>
+    /// Fetches the flight's branch and takes in what the remote holds that the plane lacks: a fast-forward, or a merge. A merge that
+    /// conflicts is undone, a Ring card names both heads and what to do, and the push is refused. Nothing is pushed here. A branch
+    /// the remote does not have yet, or a fetch that fails, leaves the plane as it is: git itself then refuses a push that would drop commits.
+    /// </summary>
+    private async Task TakeRemoteAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        var tracking = $"refs/remotes/origin/{flight.Branch}";
+        await git.RunAsync(["fetch", "--quiet", "origin", $"+refs/heads/{flight.Branch}:{tracking}"], flight.Worktree, cancellationToken);
+        var remote = await git.RunAsync(["rev-parse", "--verify", "--quiet", tracking], flight.Worktree, cancellationToken);
+        if (!remote.Ok || (await git.RunAsync(["merge-base", "--is-ancestor", tracking, "HEAD"], flight.Worktree, cancellationToken)).Ok)
+        {
+            return;
+        }
+        var merge = await git.RunAsync(["merge", "--no-edit", tracking], flight.Worktree, cancellationToken);
+        if (merge.Ok)
+        {
+            return;
+        }
+        await git.RunAsync(["merge", "--abort"], flight.Worktree, cancellationToken);
+        var plane = (await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken)).Output.Trim();
+        var theirs = remote.Output.Trim();
+        var why = $"{flight.Branch} is not pushed: origin/{flight.Branch} ({Short(theirs)}) holds commits the plane ({Short(plane)}) lacks, and merging them conflicts";
+        state.RaiseCard(CardBin.Ring, PushDivergedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} was not pushed: the remote branch holds commits it lacks",
+            $"{why} ({merge.Why}). Nothing was overwritten. Merge origin/{flight.Branch} into the plane by hand ({flight.Worktree}), resolve the conflicts and commit, then push again.");
+        throw new FlightException($"{why}: merge origin/{flight.Branch} ({theirs}) into the plane's head ({plane}) by hand, then push again");
+    }
+
+    private static string Short(string sha) => sha[..Math.Min(8, sha.Length)];
+
+    /// <summary>
+    /// Pushes the flight's branch, never dropping commits: it goes up fast-forward only, after the remote's commits are taken in
+    /// (<see cref="TakeRemoteAsync"/>), so a push another hand made meanwhile is refused by git, not overwritten.
+    /// </summary>
+    /// <param name="repaired">
+    /// The node rewrote the branch itself (a rebase, after <see cref="TakeRemoteAsync"/> took the remote's commits in): the one push
+    /// that may replace the remote head, and only the one read before the rewrite (the tracking ref the caller fetched, not fetched
+    /// again here), as <c>--force-with-lease=refs/heads/&lt;branch&gt;:&lt;sha&gt;</c>. A bare lease would take whatever a fetch last saw.
+    /// </param>
+    internal async Task PushAsync(FlightRow flight, bool repaired, CancellationToken cancellationToken)
     {
         await EnsureNotArmedAsync(flight, cancellationToken);
-        // With a lease: the flight's branch is the node's own, and a repaired base rebases it, which a plain push refuses;
-        // the lease still refuses to overwrite a push the node did not make.
-        var push = await git.RunAsync(["push", "-u", "--force-with-lease", "origin", flight.Branch], flight.Worktree, cancellationToken);
+        string[] args = ["push", "-u", "origin", flight.Branch];
+        if (repaired)
+        {
+            var read = await git.RunAsync(["rev-parse", "--verify", "--quiet", $"refs/remotes/origin/{flight.Branch}"], flight.Worktree, cancellationToken);
+            if (read.Ok)
+            {
+                args = ["push", "-u", $"--force-with-lease=refs/heads/{flight.Branch}:{read.Output.Trim()}", "origin", flight.Branch];
+            }
+        }
+        else
+        {
+            await TakeRemoteAsync(flight, cancellationToken);
+        }
+        var push = await git.RunAsync(args, flight.Worktree, cancellationToken);
         if (!push.Ok)
         {
             throw new FlightException($"git could not push {flight.Branch}: {push.Why}");
