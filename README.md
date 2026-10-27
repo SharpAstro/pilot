@@ -72,7 +72,7 @@ pilot flight create <issue> --repo <checkout>   # the flight, its plane made
 pilot flight plan <code>                  # a planner plans the legs; then they fly
 pilot flight merge <code> <head>          # once its review has passed and CI is green
 pilot nodes                               # the fleet; pilot --node <host:port> status reads another node
-pilot mcp                                 # the same commands as an MCP server over stdio
+pilot mcp                                 # the same commands as an MCP server over stdio; an update hands the session to the new binary
 ```
 
 The GUI has the same with buttons: Home, Sessions, Flights (with a new-flight wizard from a repo's issues), Repos,
