@@ -180,6 +180,8 @@ public static class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<FlightAdvance>());
         builder.Services.AddSingleton<PrChecks>();
         builder.Services.AddHostedService(services => services.GetRequiredService<PrChecks>());
+        builder.Services.AddSingleton<ISummaryModel>(_ => new ClaudeSummaryModel(Path.Combine(options.DataFolder, "summary")));
+        builder.Services.AddSingleton<Summaries>();
         builder.Services.AddSingleton<Digest>();
         builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());
         // Releases of pilot itself: by --update-policy, for an installed release only (NodeUpdater).

@@ -263,6 +263,13 @@ public static class Verbs
     public const string Digest = "digest";
 
     /// <summary>
+    /// <c>summarise node</c> or <c>summarise flight/&lt;code&gt;</c>: one Haiku call over what the node holds of the flights in play
+    /// (or of that one flight), kept as the scope's <see cref="SummaryRow"/> with its time, tokens and cost, on the feed for every
+    /// client. Never run by itself: a client asks. The result's <see cref="CommandResult.Made"/> is the summary's markdown.
+    /// </summary>
+    public const string Summarise = "summarise";
+
+    /// <summary>
     /// <c>update node [check|install] [--adopt]</c>: whether a newer release of pilot is out (<c>check</c>), or installs it
     /// now and restarts the node; <c>--adopt</c> installs it over a build of one's own.
     /// </summary>
