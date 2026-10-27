@@ -425,7 +425,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                         Layout.Builder.Text("Setup checks", 14f, Bright).RowH(22f),
                         Layout.Builder.Text(problem is null ? "checking…" : "not read", 11f, problem is null ? Dim : Todo).RowH(18f))
                     .WFixed(TitleWidth),
-                Layout.Builder.Text(problem is null ? "checking… (runs programs such as netsh, and asks GitHub)" : $"the node did not send its setup checks: {problem}", 12f, Body).WStar(),
+                Layout.Builder.Text(problem is null ? "checking… (runs netsh and gh)" : $"the node did not send its setup checks: {problem}", 12f, Body).WStar(),
                 Layout.Builder.Spacer().WFixed(FixWidth))
             .WithGap(14f).Pad(8f, 6f).RowH(RowHeight);
         return row;
@@ -495,7 +495,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                         Layout.Builder.Text(check.Title, 14f, Bright).RowH(22f),
                         Layout.Builder.Text(status, 11f, statusColor).RowH(18f))
                     .WFixed(TitleWidth),
-                tooLong ? Layout.Builder.Spacer().WStar() : Layout.Builder.Text(line, 12f, Body).WStar(),
+                tooLong ? Layout.Builder.Spacer().WStar() : Layout.Builder.Text(line, 12f, Body).WithTooltip(line).WStar(),
                 Layout.Builder.HStack(fix, Layout.Builder.Spacer().WStar()).WFixed(FixWidth))
             .WithGap(14f).Pad(8f, 6f).RowH(RowHeight);
         if (tooLong)
@@ -520,7 +520,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                     .WFixed(TitleWidth),
                 Layout.Builder.VStack(
                         setting.Many ? Editor(setting, working).HAuto() : Editor(setting, working).RowH(26f),
-                        Layout.Builder.Text(setting.Detail, 11f, Dim).RowH(18f))
+                        Layout.Builder.Text(setting.Detail, 11f, Dim).WithTooltip(setting.Detail).RowH(18f))
                     .WStar())
             .WithGap(14f).Pad(8f, 6f);
         // Repo roots grow a line per folder: their row takes the height its lines ask for.
