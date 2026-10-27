@@ -360,8 +360,22 @@ public sealed class SessionTracker : BackgroundService
         return id;
     }
 
+    // The process of each live session, by row id, as the last listing gave it; read by the machine sampler off the poll's thread.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _pids = new(StringComparer.Ordinal);
+
+    /// <summary>The live sessions' processes, as (row id, pid): what the machine sampler marks the node's own processes by.</summary>
+    public List<(string Id, int Pid)> LivePids() => [.. _pids.Select(p => (p.Key, p.Value))];
+
     private void Track(ClaudeAgentRow agent, string id, DateTimeOffset now)
     {
+        if (agent.Pid is { } listedPid)
+        {
+            _pids[id] = listedPid;
+        }
+        else
+        {
+            _pids.TryRemove(id, out _);
+        }
         var live = agent.Pid is not null;
         var ended = !live && SessionStates.Map(agent.Status, agent.State, live) is SessionState.Ended or SessionState.Failed;
 
@@ -526,6 +540,7 @@ public sealed class SessionTracker : BackgroundService
     private void Forget(string id, string sessionId, bool keepStale = false)
     {
         _rows.Remove(id);
+        _pids.TryRemove(id, out _);
         Attachments?.Remove(id);
         _resumedAs.Remove(id);
         _endedAt.Remove(id);

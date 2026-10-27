@@ -6,26 +6,21 @@ namespace Pilot.Node.Flights;
 public static class MachineMemory
 {
     /// <summary>The memory available to a new process, in bytes; null where it cannot be read.</summary>
-    public static long? Available()
+    public static long? Available() => Read()?.Available;
+
+    /// <summary>The memory installed and the memory available to a new process, in bytes; null where it cannot be read.</summary>
+    public static (long Total, long Available)? Read()
     {
         try
         {
             if (OperatingSystem.IsWindows())
             {
                 var status = new MemoryStatusEx { Length = (uint)Marshal.SizeOf<MemoryStatusEx>() };
-                return GlobalMemoryStatusEx(ref status) ? (long)status.AvailablePhysical : null;
+                return GlobalMemoryStatusEx(ref status) ? ((long)status.TotalPhysical, (long)status.AvailablePhysical) : null;
             }
             if (OperatingSystem.IsLinux())
             {
-                // MemAvailable: what the kernel reckons a new process can have without swapping, page cache included.
-                foreach (var line in File.ReadLines("/proc/meminfo"))
-                {
-                    if (line.StartsWith("MemAvailable:", StringComparison.Ordinal)
-                        && long.TryParse(line["MemAvailable:".Length..].Trim().Split(' ')[0], out var kilobytes))
-                    {
-                        return kilobytes * 1024;
-                    }
-                }
+                return ParseMeminfo(File.ReadLines("/proc/meminfo"));
             }
         }
         catch (IOException)
@@ -33,6 +28,30 @@ public static class MachineMemory
         }
         return null;
     }
+
+    /// <summary>
+    /// The total and the available memory in the lines of <c>/proc/meminfo</c>. MemAvailable is what the kernel reckons a
+    /// new process can have without swapping, page cache included. Null when either is missing.
+    /// </summary>
+    public static (long Total, long Available)? ParseMeminfo(IEnumerable<string> lines)
+    {
+        long? total = null, available = null;
+        foreach (var line in lines)
+        {
+            if (Kilobytes(line, "MemTotal:") is { } t)
+            {
+                total = t;
+            }
+            else if (Kilobytes(line, "MemAvailable:") is { } a)
+            {
+                available = a;
+            }
+        }
+        return total is { } all && available is { } free ? (all, free) : null;
+    }
+
+    private static long? Kilobytes(string line, string key) =>
+        line.StartsWith(key, StringComparison.Ordinal) && long.TryParse(line[key.Length..].Trim().Split(' ')[0], out var kilobytes) ? kilobytes * 1024 : null;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MemoryStatusEx

@@ -27,6 +27,7 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(CardAddedEvent), "cardAdded")]
 [JsonDerivedType(typeof(CardChangedEvent), "cardChanged")]
 [JsonDerivedType(typeof(UsageChangedEvent), "usageChanged")]
+[JsonDerivedType(typeof(MachineChangedEvent), "machineChanged")]
 [JsonDerivedType(typeof(JobAddedEvent), "jobAdded")]
 [JsonDerivedType(typeof(JobChangedEvent), "jobChanged")]
 [JsonDerivedType(typeof(PrReviewAddedEvent), "prReviewAdded")]
@@ -94,6 +95,9 @@ public sealed record SnapshotEvent : NodeEvent
 
     /// <summary>The account's usage as last read; null before the node has read any.</summary>
     public UsageRow? Usage { get; init; }
+
+    /// <summary>The machine as last sampled; null before the node has sampled it, and from an older node, whose stream has none.</summary>
+    public MachineRow? Machine { get; init; }
 
     /// <summary>Every job, ended ones included. Not required, for the same reason as <see cref="Flights"/>.</summary>
     public JobRow[] Jobs

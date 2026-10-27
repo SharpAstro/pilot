@@ -47,6 +47,7 @@ public sealed class NodeState
     private readonly Dictionary<(string Flight, string Name), LegRow> _legs = [];
     private readonly Dictionary<string, CardRow> _cards = new Dictionary<string, CardRow>(StringComparer.Ordinal);
     private UsageRow? _usage;
+    private MachineRow? _machine;
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
     private readonly Dictionary<string, PrReviewRow> _prReviews = new Dictionary<string, PrReviewRow>(StringComparer.OrdinalIgnoreCase);
 
@@ -602,6 +603,31 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>The machine as last sampled; null before any.</summary>
+    public MachineRow? Machine()
+    {
+        lock (_gate)
+        {
+            return _machine;
+        }
+    }
+
+    /// <summary>
+    /// Puts the machine sampled when it changed meaningfully (<see cref="Pilot.Node.Flights.MachineSampler.Differs"/>): a sample every few
+    /// seconds would otherwise put a delta for each, and the journal would fill with CPU jitter.
+    /// </summary>
+    public void PutMachine(MachineRow sampled)
+    {
+        lock (_gate)
+        {
+            if (_machine is { } held && !Pilot.Node.Flights.MachineSampler.Differs(held, sampled))
+            {
+                return;
+            }
+            Publish(new MachineChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Machine = sampled });
+        }
+    }
+
     /// <summary>Removes a session row; nothing happens when there is none.</summary>
     public void RemoveSession(string id)
     {
@@ -784,6 +810,9 @@ public sealed class NodeState
             case UsageChangedEvent usage:
                 _usage = usage.Usage;
                 break;
+            case MachineChangedEvent machine:
+                _machine = machine.Machine;
+                break;
             case JobAddedEvent added:
                 _jobs[added.Job.Id] = added.Job;
                 break;
@@ -819,6 +848,7 @@ public sealed class NodeState
             _cards[card.Id] = card;
         }
         _usage = snapshot.Usage;
+        _machine = snapshot.Machine;
         foreach (var job in snapshot.Jobs ?? [])
         {
             _jobs[job.Id] = job;
@@ -841,6 +871,7 @@ public sealed class NodeState
         Legs = [.. _legs.Values],
         Cards = [.. _cards.Values],
         Usage = _usage,
+        Machine = _machine,
         Jobs = [.. _jobs.Values],
         PrReviews = [.. _prReviews.Values],
     };
