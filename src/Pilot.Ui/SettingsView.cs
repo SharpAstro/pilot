@@ -139,8 +139,10 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         var read = Volatile.Read(ref _read);
         var page = read.Page;
         var problem = read.Problem;
+        // The line waiting for the page sits at the top, in the gutter, where the page's first row will be: stretched on its own
+        // it was drawn two thirds down, against the rail.
         var body = page is null
-            ? Layout.Builder.Text(problem is null ? (Load is null ? "settings are the node's: open pilot on a node" : "reading the node's settings…") : $"the node did not send its settings: {problem}", 13f, Dim).RowH(28f).Pad(Gutter, 8f)
+            ? Layout.Builder.VStack(Layout.Builder.Text(problem is null ? (Load is null ? "settings are the node's: open pilot on a node" : "reading the node's settings…") : $"the node did not send its settings: {problem}", 13f, Dim).RowH(28f)).Pad(Gutter, 8f)
             : Main(page, read, now);
         var tree = Layout.Builder.VStack(Header(page, read.Checks, problem), body.Stretch()).Bg(Ground).Stretch();
         return About?.Over(tree) ?? tree;

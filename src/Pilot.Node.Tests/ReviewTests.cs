@@ -788,6 +788,8 @@ public sealed class ReviewTests2 : ReviewTestsBase
         card.Choices.Single(c => c.Verb == Verbs.GoAround).Args.ShouldNotBeNull().ShouldAllBe(a => !a.Contains("yours to decide"));
 
         (await Run(Verbs.GoAround, "flight/TIA40/parser", "du1-watchtower", "the review asked for changes")).Error.ShouldNotBeNull().ShouldContain("the person's call");
+        // Nor the node's own, as on a conflict (PIL338 went round seven times).
+        (await Run(Verbs.GoAround, "flight/TIA40/parser", LegWatch.Who, "the PR conflicts with its base")).Error.ShouldNotBeNull().ShouldContain("the person's call");
         // "Ready anyway" is the same way round the person, so the watchtower may not take it either.
         (await Run(Verbs.Review, "flight/TIA40", "du1-watchtower", "pass", "ready anyway")).Error.ShouldNotBeNull().ShouldContain("the person's call");
         F("TIA40").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);

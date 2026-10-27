@@ -381,6 +381,14 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         {
             throw new FlightException($"{flight.Code}'s plane holds {loose.Count} commit{(loose.Count == 1 ? "" : "s")} on no remote and not in {mainRef}: {string.Join("; ", loose)}. Push {(loose.Count == 1 ? "it" : "them")} (flight pr) or drop {(loose.Count == 1 ? "it" : "them")}, then land");
         }
+        // Work not in main lands only once a passed review has read it, at the head the plane holds now: TIA368 was landed by
+        // hand with a leg added after its pass, whose two commits no reviewer had seen. A folded flight's work goes on in the
+        // other, and a flight with nothing of its own (a duplicate dropped) lands as before.
+        else if (foldedInto is null && await planes.NotInMainAsync(flight.Worktree, mainRef, cancellationToken) is { Head: { } head, Commits.Count: > 0 } work
+            && !(flight.Review is { State: ReviewState.Passed, ReviewedHead: { } reviewed } && string.Equals(reviewed, head, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new FlightException($"{flight.Code}'s plane holds {work.Commits.Count} commit{(work.Commits.Count == 1 ? "" : "s")} not in {mainRef} that no passed review has read: {string.Join("; ", work.Commits)}. Review {(work.Commits.Count == 1 ? "it" : "them")} (flight review) and merge, or drop {(work.Commits.Count == 1 ? "it" : "them")}, then land");
+        }
 
         // What it releases is read before its plane goes, and before anything is changed: a land that cannot say what its
         // consumers wait for is refused, never half done. A folded flight released nothing.

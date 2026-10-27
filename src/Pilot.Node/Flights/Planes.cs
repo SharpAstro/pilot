@@ -370,6 +370,31 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         return loose;
     }
 
+    /// <summary>
+    /// The plane's head, and its commits whose change is not in <paramref name="mainRef"/> (<c>git cherry</c>, so a commit
+    /// rebased into main counts as in), as <c>&lt;short sha&gt; &lt;subject&gt;</c>; null head when the plane is gone.
+    /// </summary>
+    public async Task<(string? Head, IReadOnlyList<string> Commits)> NotInMainAsync(string worktree, string mainRef, CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(worktree))
+        {
+            return (null, []);
+        }
+        var head = await git.RunAsync(["rev-parse", "HEAD"], worktree, cancellationToken);
+        var cherry = await git.RunAsync(["cherry", mainRef, "HEAD"], worktree, cancellationToken);
+        if (!head.Ok || !cherry.Ok)
+        {
+            return (null, []);
+        }
+        var commits = new List<string>();
+        foreach (var sha in cherry.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(l => l.StartsWith('+')).Select(l => l[1..].Trim()))
+        {
+            var subject = await git.RunAsync(["log", "-1", "--format=%h %s", sha], worktree, cancellationToken);
+            commits.Add(subject.Ok ? subject.Output.Trim() : sha[..Math.Min(9, sha.Length)]);
+        }
+        return (head.Output.Trim(), commits);
+    }
+
     /// <summary>The plane's commits past <paramref name="head"/> (subjects, oldest first): what a merge at that head left out.</summary>
     public async Task<IReadOnlyList<string>> PastAsync(string worktree, string head, CancellationToken cancellationToken)
     {
