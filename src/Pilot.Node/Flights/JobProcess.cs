@@ -117,6 +117,7 @@ public sealed record JobProcess(int Pid, DateTimeOffset StartedAt, Process? Chil
     private const uint CreateNewProcessGroup = 0x00000200;
     private const uint CreateNoWindow = 0x08000000;
     private const uint CreateBreakawayFromJob = 0x01000000;
+    private const uint CreateUnicodeEnvironment = 0x00000400;
     private const uint StartfUseStdHandles = 0x00000100;
     private const int ErrorAccessDenied = 5;
 
@@ -140,29 +141,27 @@ public sealed record JobProcess(int Pid, DateTimeOffset StartedAt, Process? Chil
             }
 
             var info = new StartupInfo { Size = Marshal.SizeOf<StartupInfo>(), Flags = StartfUseStdHandles, StdInput = nul, StdOutput = log, StdError = log };
-            var flags = CreateNewProcessGroup | CreateNoWindow | CreateBreakawayFromJob;
-            var created = CreateProcess(null, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, true, flags, IntPtr.Zero, start.WorkingDirectory, ref info, out var made);
-            if (!created && Marshal.GetLastWin32Error() == ErrorAccessDenied)
-            {
-                // The job object the node is in does not allow a breakaway: the process then stays in it, as any child would.
-                created = CreateProcess(null, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, true, flags & ~CreateBreakawayFromJob, IntPtr.Zero, start.WorkingDirectory, ref info, out made);
-            }
-            if (!created)
-            {
-                throw new Win32Exception(Marshal.GetLastWin32Error(), $"`{start.FileName}` did not start");
-            }
+            var flags = CreateNewProcessGroup | CreateNoWindow | CreateBreakawayFromJob | CreateUnicodeEnvironment;
+            // The start info's environment (the build switches of BuildEnvironment among it), not the node's as it is: a null
+            // block would give the process the node's own and drop what the job was given.
+            var environment = Marshal.StringToHGlobalUni(EnvironmentBlock(start));
             try
             {
-                // Read from the handle, so a process that ended already still has its start time.
-                var startedAt = GetProcessTimes(made.Process, out var creation, out _, out _, out _)
-                    ? DateTimeOffset.FromFileTime(creation)
-                    : DateTimeOffset.UtcNow;
-                return new JobProcess(made.ProcessId, startedAt.ToUniversalTime());
+                var created = CreateProcess(null, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, true, flags, environment, start.WorkingDirectory, ref info, out var made);
+                if (!created && Marshal.GetLastWin32Error() == ErrorAccessDenied)
+                {
+                    // The job object the node is in does not allow a breakaway: the process then stays in it, as any child would.
+                    created = CreateProcess(null, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, true, flags & ~CreateBreakawayFromJob, environment, start.WorkingDirectory, ref info, out made);
+                }
+                if (!created)
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), $"`{start.FileName}` did not start");
+                }
+                return Started(made);
             }
             finally
             {
-                CloseHandle(made.Process);
-                CloseHandle(made.Thread);
+                Marshal.FreeHGlobal(environment);
             }
         }
         finally
@@ -175,6 +174,34 @@ public sealed record JobProcess(int Pid, DateTimeOffset StartedAt, Process? Chil
             {
                 CloseHandle(nul);
             }
+        }
+    }
+
+    /// <summary>The environment of <paramref name="start"/> as CreateProcess takes it: <c>NAME=value</c> each ended by a NUL, sorted by name, and a closing NUL.</summary>
+    internal static string EnvironmentBlock(ProcessStartInfo start)
+    {
+        var block = new StringBuilder();
+        foreach (var (name, value) in start.Environment.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            block.Append(name).Append('=').Append(value).Append('\0');
+        }
+        return block.Append('\0').ToString();
+    }
+
+    private static JobProcess Started(ProcessInformation made)
+    {
+        try
+        {
+            // Read from the handle, so a process that ended already still has its start time.
+            var startedAt = GetProcessTimes(made.Process, out var creation, out _, out _, out _)
+                ? DateTimeOffset.FromFileTime(creation)
+                : DateTimeOffset.UtcNow;
+            return new JobProcess(made.ProcessId, startedAt.ToUniversalTime());
+        }
+        finally
+        {
+            CloseHandle(made.Process);
+            CloseHandle(made.Thread);
         }
     }
 
