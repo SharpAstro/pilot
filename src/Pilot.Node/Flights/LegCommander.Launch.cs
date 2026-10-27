@@ -39,7 +39,7 @@ public sealed partial class LegCommander
     private static string ReviewKey(string code) => $"review:{code}";
 
     /// <summary>A leg session or a reviewer of the flight is being started: the sweep leaves its next step until it is up.</summary>
-    private bool Starting(string code) => _starting.ContainsKey(LegsKey(code)) || _starting.ContainsKey(ReviewKey(code));
+    internal bool Starting(string code) => _starting.ContainsKey(LegsKey(code)) || _starting.ContainsKey(ReviewKey(code));
 
     private void RefuseIfStarting(string key, string what)
     {

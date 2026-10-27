@@ -146,6 +146,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
 
         gate.Open();
         (await open).Ok.ShouldBeTrue();
+        await Started(legs, flight.Code);
         F(flight.Code).PullRequest.ShouldNotBeNull();
     }
 

@@ -66,10 +66,33 @@ public abstract class ReviewTestsBase : IDisposable
         return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
     }
 
-    private protected Task<CommandResult> Run(string verb, string target, string who, params string[] args) =>
-        verb is Verbs.CreateFlight or Verbs.Connect or Verbs.Land
-            ? _flights.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct)
-            : _legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct);
+    private protected async Task<CommandResult> Run(string verb, string target, string who, params string[] args)
+    {
+        if (verb is Verbs.CreateFlight or Verbs.Connect or Verbs.Land)
+        {
+            return await _flights.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct);
+        }
+        var result = await _legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct);
+        if (verb == Verbs.OpenPr && result.Ok)
+        {
+            await Started(_legs, target[(target.IndexOf('/') + 1)..]);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Waits until the flight's sessions the command began are recorded: open-pr answers "started" once its reviewer is reserved, and
+    /// the review is on the flight only after the reviewer is up, which a loaded machine does not do within the command.
+    /// </summary>
+    private protected static async Task Started(LegCommander legs, string code)
+    {
+        var clock = Stopwatch.StartNew();
+        while (legs.Starting(code))
+        {
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20), $"{code}'s reviewer was not recorded");
+            await Task.Delay(10, Ct);
+        }
+    }
 
     private protected FlightRow F(string code) => _state.Flights().Single(f => f.Code == code);
 
