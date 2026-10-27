@@ -125,6 +125,37 @@ public static class ClaudeCli
     public static async Task<ClaudeRun> RunAsync(IReadOnlyList<string> args, string? stdin, string? cwd, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var exe = FindOnPath() ?? throw new FileNotFoundException("claude is not on PATH");
+        var start = StartInfo(exe, args, cwd);
+
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("claude did not start");
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        limit.CancelAfter(timeout);
+        var output = process.StandardOutput.ReadToEndAsync(limit.Token);
+        var error = process.StandardError.ReadToEndAsync(limit.Token);
+        try
+        {
+            if (stdin is not null)
+            {
+                await process.StandardInput.WriteAsync(stdin.AsMemory(), limit.Token);
+            }
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(limit.Token);
+            return new ClaudeRun(process.ExitCode, await output, await error);
+        }
+        catch (OperationCanceledException)
+        {
+            process.Kill(entireProcessTree: true);
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException($"claude {string.Join(' ', args.Take(2))} took longer than {timeout.TotalSeconds:0} s");
+            }
+            throw;
+        }
+    }
+
+    /// <summary>What <see cref="RunAsync"/> starts: <paramref name="exe"/> with <paramref name="args"/>, windowless, with the build environment and none of the node's own session variables.</summary>
+    internal static ProcessStartInfo StartInfo(string exe, IReadOnlyList<string> args, string? cwd)
+    {
         var start = new ProcessStartInfo(exe)
         {
             UseShellExecute = false,
@@ -152,30 +183,9 @@ public static class ClaudeCli
             start.Environment.Remove(key);
         }
 
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("claude did not start");
-        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        limit.CancelAfter(timeout);
-        var output = process.StandardOutput.ReadToEndAsync(limit.Token);
-        var error = process.StandardError.ReadToEndAsync(limit.Token);
-        try
-        {
-            if (stdin is not null)
-            {
-                await process.StandardInput.WriteAsync(stdin.AsMemory(), limit.Token);
-            }
-            process.StandardInput.Close();
-            await process.WaitForExitAsync(limit.Token);
-            return new ClaudeRun(process.ExitCode, await output, await error);
-        }
-        catch (OperationCanceledException)
-        {
-            process.Kill(entireProcessTree: true);
-            if (!cancellationToken.IsCancellationRequested)
-            {
-                throw new TimeoutException($"claude {string.Join(' ', args.Take(2))} took longer than {timeout.TotalSeconds:0} s");
-            }
-            throw;
-        }
+        // The build environment, which a worker session's own builds (its Bash and PowerShell tools, and the jobs it
+        // starts) inherit, so they leave no reused nodes behind and fan out no wider than a job's.
+        return BuildEnvironment.Apply(start);
     }
 
     private static string? FindOnPath()

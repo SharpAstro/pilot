@@ -93,5 +93,7 @@ public sealed class CheckRunnerTests
         shell.Start.Environment["MSBUILDDISABLENODEREUSE"].ShouldBe("1");
         shell.Start.Environment["DOTNET_CLI_USE_MSBUILD_SERVER"].ShouldBe("0");
         shell.Start.Environment["UseSharedCompilation"].ShouldBe("false");
+        // And no wider a fan-out than the one shared build environment's (BuildEnvironmentTests holds the rest of it).
+        shell.Start.Environment["DOTNET_PROCESSOR_COUNT"].ShouldBe(BuildEnvironment.MaxNodes.ToString());
     }
 }

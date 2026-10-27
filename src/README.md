@@ -555,6 +555,13 @@ descendant lives, the log says so in `stuck` (`process exited, output still held
 stops a job the usual way; `--force` (`cancel-job` with the arg `force`) kills the wrapper and every known descendant at
 once, with no grace, ends the job Cancelled with `cancelled (forced) by <who>` and tells its owner once.
 
+Every job (sh and pwsh, the detached wrapper too) and every `claude` process the node starts, which is what a worker
+session's own builds inherit, gets one build environment (`BuildEnvironment`): `MSBUILDDISABLENODEREUSE=1`,
+`DOTNET_CLI_USE_MSBUILD_SERVER=0` and `UseSharedCompilation=false`, so a build leaves no reused node or compiler server
+behind to hold the job's output, and `DOTNET_PROCESSOR_COUNT=4`, which caps the fan-out of MSBuild's bare
+`-maxcpucount` at 4 nodes (MSBuild reads no node-count variable: `MSBUILDNODECOUNT` has no effect). It also caps what else
+in the build sizes itself by the core count, a test host's default parallelism among it.
+
 A worker that finishes its own leg is stopped after 90 s, once it has said its report. Claude Code tears down a worktree
 its `-w` session entered when that job ends by itself, keeping the branch; the node checks a plane out again from its
 branch before any worker goes in, and lands one that is already gone.
