@@ -8,7 +8,7 @@ namespace Pilot.Node.Sessions;
 /// What a session's latest hook said: the state it puts the session in, what it waits on, the API error that stopped
 /// it, and when. Null fields say nothing, and leave the row to what the agents listing and transcripts say.
 /// </summary>
-public sealed record HookState(string Event, DateTimeOffset At, SessionState? State, string? WaitingFor, string? ApiError);
+public sealed record HookState(string Event, DateTimeOffset At, SessionState? State, string? WaitingFor, string? ApiError, string? EndReason = null);
 
 /// <summary>
 /// The hooks Claude Code posts to the node (<c>POST /api/v1/hooks</c>, by <c>pilot-node hook</c>), per session. A hook
@@ -57,7 +57,7 @@ public sealed class HookBook
             "Notification" => FromNotification(hook, name, at, previous),
             "Stop" => new HookState(name, at, SessionState.Idle, null, null),
             "StopFailure" => new HookState(name, at, SessionState.Idle, null, ClaudeAgentsJson.Text(hook, "error") ?? "unknown"),
-            "SessionEnd" => new HookState(name, at, SessionState.Ended, null, null),
+            "SessionEnd" => new HookState(name, at, SessionState.Ended, null, null, ClaudeAgentsJson.Text(hook, "reason")),
             _ => null,
         };
         if (next is not null)

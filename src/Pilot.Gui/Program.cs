@@ -370,6 +370,7 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Cards.OnOpen = url => OpenAway(url);
     chrome.Cards.CopyText = text => SetClipboardText(text);
     chrome.Cards.Changed = loop.RequestRedraw;
+    chrome.Cards.OnGoTo = link => { if (link == InAppLinks.Fleet) { chrome.Show(PilotPage.Fleet); } };
     // The Chat page reads the node's chat feed while it is open; what is typed in its box and a choice button go through the
     // node's tell, a refusal said in the chat itself.
     chrome.Chat.Load = async (after, ct) => (await client.GetChatAsync(after, ct)) is { Success: true, Response: { } chat }

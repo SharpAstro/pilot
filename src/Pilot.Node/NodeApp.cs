@@ -325,7 +325,7 @@ public static class NodeApp
         var startedAt = DateTimeOffset.UtcNow;
         var version = typeof(NodeApp).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
-        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models) => Results.Json(
+        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower) => Results.Json(
             ResponseEnvelope<NodeInfo>.Ok(new NodeInfo
             {
                 WireVersion = NodeWire.Version,
@@ -341,6 +341,7 @@ public static class NodeApp
                 Autopilot = models.Autopilot,
                 AcceptsFleetFlights = models.AcceptsFleetFlights,
                 Account = state.Usage()?.Account,
+                Watchtower = watchtower.Health(),
             }),
             PilotJsonContext.Default.ResponseEnvelopeNodeInfo));
 

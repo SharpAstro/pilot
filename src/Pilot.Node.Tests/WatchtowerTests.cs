@@ -65,12 +65,12 @@ public sealed class WatchtowerTests : IDisposable
     }
 
     /// <summary>The watchtower's row, as the tracker would put it; its id is the job the fake workers handed out.</summary>
-    private void Row(string id, SessionState state, DateTimeOffset? lastResponse = null, long context = 10_000, string? apiError = null, DateTimeOffset? resetsAt = null) =>
+    private void Row(string id, SessionState state, DateTimeOffset? lastResponse = null, long context = 10_000, string? apiError = null, DateTimeOffset? resetsAt = null, string name = "du1-watchtower") =>
         _state.PutSession(new SessionRow
         {
             Id = id,
             SessionId = id + "-0000-4000-8000-000000000000",
-            Name = "du1-watchtower",
+            Name = name,
             Kind = SessionKind.Background,
             Cwd = _options.WatchtowerFolder,
             Role = SessionRole.Watchtower,
@@ -285,6 +285,21 @@ public sealed class WatchtowerTests : IDisposable
     }
 
     [Fact]
+    public async Task ARowItStartedThatTurnsUpRenamedIsNotedAsSoAndTheFreshStartSaysSo()
+    {
+        await _tower.LookAsync(Ct);
+        _workers.Started.Count.ShouldBe(1);
+
+        _time.Advance(TimeSpan.FromMinutes(3));
+        Row("job00001", SessionState.Idle, name: "my-own-name");
+        await _tower.LookAsync(Ct);
+
+        _workers.Started.Count.ShouldBe(2);
+        _state.Sessions().Single(s => s.Id == "job00001").EndedBecause.ShouldBe("renamed to my-own-name");
+        _state.Cards().First(c => c.Bin == CardBin.Handled).Title.ShouldContain("the one it started was renamed to my-own-name");
+    }
+
+    [Fact]
     public async Task AnUntrustedFolderRingsWithTheFixAndIsTriedAgainLater()
     {
         _workers.Fail = new FlightException("claude --bg did not start du1-watchtower (1): Workspace not trusted. Run `claude` in /tmp/pilot2/watchtower once");
@@ -412,6 +427,84 @@ public sealed class WatchtowerTests : IDisposable
         await updated.LookAsync(Ct);
         _workers.Stopped.ShouldBe(["job00001"]);
         _workers.Started.Count.ShouldBe(2);
+    }
+
+    /// <summary>Starts a watchtower, lets it reply, and has it end a minute later (reason given); the next look starts another.</summary>
+    private async Task ChurnOnceAsync(int n, string? because = null)
+    {
+        // An ended watchtower is replaced, not resumed, only when there is a card to say and its window is full.
+        _state.RaiseCard(CardBin.Ring, "leg-failed", $"flight/TIA{n}/parser", $"TIA{n}/parser failed");
+        await _tower.LookAsync(Ct);
+        var id = $"job{n:D5}";
+        _time.Advance(TimeSpan.FromSeconds(30));
+        Row(id, SessionState.Idle, lastResponse: _time.GetUtcNow(), context: 180_000);
+        _time.Advance(TimeSpan.FromSeconds(60));
+        _state.PutSession(_state.Sessions().Single(r => r.Id == id) with { State = SessionState.Ended, EndedBecause = because });
+    }
+
+    [Fact]
+    public async Task ManyShortLivedWatchtowersMarkItChurningAndRaiseOneCardThatIsUpdatedAndClosed()
+    {
+        for (var n = 1; n <= 5; n++)
+        {
+            await ChurnOnceAsync(n, "process gone");
+        }
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA6/parser", "TIA6/parser failed");
+        await _tower.LookAsync(Ct);
+
+        var health = _tower.Health().ShouldNotBeNull();
+        (health.StartsLastHour, health.StartsLast24h, health.Churning, health.LastEndedBecause).ShouldBe((6, 6, true, "process gone"));
+        health.TypicalLifetimeAfterReply.ShouldBe(TimeSpan.FromSeconds(60));
+        health.Summary.ShouldStartWith("6 watchtowers in the last hour");
+        var card = Open().Single(c => c.Kind == CardKinds.WatchtowerChurning);
+        (card.Bin, card.Subject, card.Link).ShouldBe((CardBin.ForYou, Verbs.WatchtowerTarget, InAppLinks.Fleet));
+        card.Detail.ShouldStartWith("6 watchtowers");
+
+        // One more start: the same card, its text moved on.
+        Row("job00006", SessionState.Ended, context: 180_000);
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA7/parser", "TIA7/parser failed");
+        await _tower.LookAsync(Ct);
+        var again = Open().Single(c => c.Kind == CardKinds.WatchtowerChurning);
+        again.Id.ShouldBe(card.Id);
+        again.Detail.ShouldStartWith("7 watchtowers");
+
+        // A quiet spell: nothing in the last hour, so the card closes.
+        _time.Advance(TimeSpan.FromHours(2));
+        Row("job00007", SessionState.Idle);
+        await _tower.LookAsync(Ct);
+        _tower.Health()!.Churning.ShouldBeFalse();
+        Open().ShouldNotContain(c => c.Kind == CardKinds.WatchtowerChurning);
+    }
+
+    [Fact]
+    public async Task ASteadyWatchtowerIsNotChurningAndGetsNoCard()
+    {
+        await _tower.LookAsync(Ct);
+        Row("job00001", SessionState.Idle);
+        await _tower.LookAsync(Ct);
+
+        _tower.Health()!.Churning.ShouldBeFalse();
+        Open().ShouldNotContain(c => c.Kind == CardKinds.WatchtowerChurning);
+    }
+
+    [Fact]
+    public void AnOldSessionsFileWithoutEndedColumnsStillLoads()
+    {
+        Directory.CreateDirectory(_data);
+        File.WriteAllLines(_tower.SessionsFile, [string.Join('\t', "job00009", "sess", "2026-10-20T08:00:00.0000000+00:00", "older why")]);
+
+        var generation = _tower.Generations().ShouldHaveSingleItem();
+        (generation.Job, generation.Why, generation.EndedAt, generation.LastReplyAt, generation.EndedBecause).ShouldBe(("job00009", "older why", null, null, null));
+    }
+
+    [Fact]
+    public async Task WhenAGenerationEndedIsKeptAndSurvivesAReload()
+    {
+        await ChurnOnceAsync(1, "SessionEnd: logout");
+        _tower.Generations();
+
+        var reloaded = new Watchtower(_state, _workers, Run, _options, _time).Generations().Single();
+        (reloaded.EndedBecause, reloaded.EndedAt is not null, reloaded.LastReplyAt is not null).ShouldBe(("SessionEnd: logout", true, true));
     }
 }
 

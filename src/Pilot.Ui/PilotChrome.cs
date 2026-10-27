@@ -106,6 +106,8 @@ internal sealed class PilotChrome<TSurface>
         Repos = new ReposView<TSurface>(renderer);
         Cards = new CardsView<TSurface>(renderer);
         Chat = new ChatView<TSurface>(renderer);
+        // A card's in-app link (the watchtower card's Fleet link) opens that page, in either host.
+        Cards.OnGoTo = link => { if (link == InAppLinks.Fleet) { Show(PilotPage.Fleet); } };
         Tooltips = new TooltipLayer<TSurface>(renderer);
         // A flight page's Merge is its card's own choice, run as the panel runs it.
         Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);

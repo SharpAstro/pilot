@@ -92,6 +92,21 @@ internal sealed record FleetLine
     /// <summary>The mark a node in maintenance wears on its row.</summary>
     public const string MaintenanceMark = "🔧 maintenance";
 
+    /// <summary>The node's watchtower in words (<see cref="Pilot.Commands.WatchtowerWords.Line"/>); <c>—</c> for a node not reached, null for one that keeps none.</summary>
+    public string? Watchtower { get; init; }
+
+    /// <summary>Whether the node's watchtower keeps ending (<see cref="WatchtowerHealth.Churning"/>); false for a node not reached.</summary>
+    public bool WatchtowerChurning { get; init; }
+
+    /// <summary>The mark a node with a churning watchtower wears on its row: the mark and its count of starts in 24 h.</summary>
+    public string? WatchtowerMark => WatchtowerChurning ? $"{Pilot.Commands.WatchtowerWords.ChurningMark} ({WatchtowerStarts} in 24 h)" : null;
+
+    /// <summary>Watchtowers started in the last 24 h, as the node says; 0 for a node not reached.</summary>
+    public int WatchtowerStarts { get; init; }
+
+    /// <summary>The sentence the node says of a churning watchtower (<see cref="WatchtowerHealth.Summary"/>), with the starts in the last hour it rests on; null while calm or not reached.</summary>
+    public string? WatchtowerSummary { get; init; }
+
     /// <summary>Whose it is; <c>account unknown</c> when it knows none.</summary>
     public required string Account { get; init; }
 
@@ -117,10 +132,13 @@ internal sealed record FleetLine
 
     public string ToDumpLine() => string.Join(" | ", Machine, Where + (Here ? " (this window)" : ""), State, Account, Usage.Length == 0 ? "-" : Usage, Sessions, Flights, Jobs,
         Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : "watch only") + (AutopilotWord is { } autopilot ? " | " + autopilot : "") + (Maintenance ? " | " + MaintenanceMark : "")
-        + (JobHolder is { } holder ? " | " + holder : "");
+        + (JobHolder is { } holder ? " | " + holder : "")
+        + (Watchtower is { } watchtower ? " | " + watchtower : "") + (WatchtowerMark is { } mark ? " | " + mark : "")
+        + (WatchtowerSummary is { } summary ? " | " + summary : "");
 
-    public static FleetLine From(string where, bool here, bool canCommand, string? announcedAs, NodeSummary summary)
+    public static FleetLine From(string where, bool here, bool canCommand, string? announcedAs, NodeSummary summary, DateTimeOffset? now = null)
     {
+        var health = summary.Connected ? summary.Node?.Watchtower : null;
         string Counted(int a, string aWord, int b, string bWord, string none) =>
             a == 0 && b == 0 ? none : b == 0 ? $"{a} {aWord}" : a == 0 ? $"{b} {bWord}" : $"{a} {aWord} · {b} {bWord}";
         return new FleetLine
@@ -135,6 +153,10 @@ internal sealed record FleetLine
             Held = canCommand && !here,
             Maintenance = summary.Connected && summary.Node is { Maintenance: true },
             Autopilot = summary.Connected && summary.Node is { Autopilot: true },
+            Watchtower = !summary.Connected ? Pilot.Commands.WatchtowerWords.NotReached : Pilot.Commands.WatchtowerWords.Line(health, now ?? DateTimeOffset.UtcNow),
+            WatchtowerChurning = health is { Churning: true },
+            WatchtowerStarts = health?.StartsLast24h ?? 0,
+            WatchtowerSummary = health is { Churning: true, Summary.Length: > 0 } ? health.Summary : null,
             Account = summary.Account ?? (summary.Connected ? "account unknown" : "—"),
             Usage = summary.Usage ?? "",
             // A node not reached says nothing it last said: its counts would read as now.
@@ -158,7 +180,12 @@ internal sealed record FleetScreen(IReadOnlyList<FleetLine> Lines, DateTimeOffse
             var live = Lines.Count(l => l.Connected);
             var rings = Lines.Sum(l => l.Rings);
             var summary = $"{Lines.Count} {(Lines.Count == 1 ? "node" : "nodes")} · {live} live";
-            return rings > 0 ? $"{summary} · {rings} ringing" : summary;
+            if (rings > 0)
+            {
+                summary += $" · {rings} ringing";
+            }
+            var churning = Lines.Count(l => l.WatchtowerChurning);
+            return churning > 0 ? $"{summary} · {churning} with a churning watchtower" : summary;
         }
     }
 }
@@ -245,7 +272,7 @@ internal sealed class FleetWatch : IAsyncDisposable
     /// </summary>
     public FleetScreen Screen(string hereWhere, NodeSummary here, Func<string, bool> canCommand, DateTimeOffset now)
     {
-        var lines = new List<FleetLine> { FleetLine.From(hereWhere, here: true, canCommand: true, null, here) };
+        var lines = new List<FleetLine> { FleetLine.From(hereWhere, here: true, canCommand: true, null, here, now) };
         var streams = new HashSet<string>(StringComparer.Ordinal);
         if (here.Stream is { } own)
         {
@@ -258,7 +285,7 @@ internal sealed class FleetWatch : IAsyncDisposable
             {
                 continue;
             }
-            lines.Add(FleetLine.From(endpoint, here: string.Equals(endpoint, hereWhere, StringComparison.OrdinalIgnoreCase), canCommand(endpoint), name, summary));
+            lines.Add(FleetLine.From(endpoint, here: string.Equals(endpoint, hereWhere, StringComparison.OrdinalIgnoreCase), canCommand(endpoint), name, summary, now));
         }
         return new FleetScreen(lines, now);
     }
@@ -284,7 +311,10 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 {
     public const string ListId = "fleet";
 
-    private const float RowHeight = 54f;
+    private const float RowHeight = 70f;
+
+    // A churning row, with the watchtower's Summary on a line of its own.
+    private const float SummaryRowHeight = 86f;
     private const float Gutter = 16f;
 
     // Column widths, as they are before a reader drags a divider.
@@ -463,12 +493,17 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 Layout.Builder.Text(line.Here ? $"{line.Where} · this window" : line.CanCommand ? line.Where : $"{line.Where} · watch only", 11f, Dim).RowH(18f)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.Account, 13f, Body).RowH(22f),
-                line.Maintenance || line.AutopilotWord is not null
+                line.Maintenance || line.AutopilotWord is not null || line.WatchtowerMark is not null
                     ? Layout.Builder.HStack([
                             .. (line.Maintenance ? [Layout.Builder.Text(FleetLine.MaintenanceMark, 11f, Ringing).WAuto()] : (Layout.Node[])[]),
+                            .. (line.WatchtowerMark is { } towerMark ? [Layout.Builder.Text(towerMark, 11f, Ringing).WAuto()] : (Layout.Node[])[]),
                             .. (line.AutopilotWord is { } autopilot ? [Layout.Builder.Text(autopilot, 11f, line.Autopilot ? Live : Dim).WAuto()] : (Layout.Node[])[]),
                             Layout.Builder.Text(line.Connected ? line.Usage : line.State, 11f, Dim).WStar()]).WithGap(8f).RowH(18f)
-                    : Layout.Builder.Text(line.Connected ? line.Usage : line.State, 11f, Dim).RowH(18f)),
+                    : Layout.Builder.Text(line.Connected ? line.Usage : line.State, 11f, Dim).RowH(18f),
+                // Its own line, so a narrow column clips this one and not the marks above.
+                Layout.Builder.Text(line.Watchtower ?? "", 11f, line.WatchtowerChurning ? Ringing : Dim).RowH(16f),
+                // A churning one says why, on a line of its own under the words.
+                Layout.Builder.Text(line.WatchtowerSummary ?? "", 11f, Ringing).RowH(line.WatchtowerSummary is null ? 0f : 16f)),
             SessionsCell(line),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.Flights, 13f, Body).RowH(22f),
@@ -477,7 +512,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f),
         };
         var row = Table.Row(Columns, Layout.Builder.Spacer().Bg(line.Connected ? Live : Away), cells)
-            .RowH(RowHeight)
+            .RowH(line.WatchtowerSummary is null ? RowHeight : SummaryRowHeight)
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index));
