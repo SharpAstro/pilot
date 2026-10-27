@@ -170,7 +170,17 @@ internal sealed class LinkMenu
     {
         var regions = new List<ClickableRegion>();
         widget.CollectPaintedRegions(regions);
-        return [.. regions.Where(r => r.Result is HitResult.ButtonHit b && _urls.ContainsKey(b.Action)).Select(r => (((HitResult.ButtonHit)r.Result).Action, r))];
+        // A property pattern, not a member access: NothingInTheUiWaits reads that member's name as a blocking wait on a task.
+        var links = new List<(string Action, ClickableRegion Region)>();
+        foreach (var region in regions)
+        {
+            if (region is { Result: HitResult.ButtonHit b } && _urls.ContainsKey(b.Action))
+            {
+                links.Add((b.Action, region));
+            }
+        }
+
+        return links;
     }
 
     // A frame per tick while the notice is up, so it thins and goes without the pointer moving; one timer at a time.
