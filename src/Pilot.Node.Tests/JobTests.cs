@@ -210,7 +210,7 @@ public sealed class JobTests : IDisposable
     {
         var pidFile = Path.Combine(_root, "child.pid");
         var command = OperatingSystem.IsWindows()
-            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 60' -PassThru -WindowStyle Hidden; Set-Content '{pidFile}' $p.Id; $p.WaitForExit()"
+            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 60' -NoNewWindow -PassThru; Set-Content '{pidFile}' $p.Id; $p.WaitForExit()"
             : $"sleep 60 & echo $! > '{pidFile}'; wait";
         var id = Run(command).Made!;
         await Until(id, j => j.State == JobState.Running);
@@ -357,7 +357,7 @@ public sealed class JobTests : IDisposable
         // A child of its own, which a kill of the wrapper alone leaves running: the timeout ends both.
         var pidFile = Path.Combine(_root, "child.pid");
         var command = OperatingSystem.IsWindows()
-            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 60' -PassThru -WindowStyle Hidden; Set-Content '{pidFile}' $p.Id; $p.WaitForExit()"
+            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 60' -NoNewWindow -PassThru; Set-Content '{pidFile}' $p.Id; $p.WaitForExit()"
             : $"sleep 60 & echo $! > '{pidFile}'; wait";
         var id = Run(command, timeoutSeconds: 5).Made!;
         var running = await Until(id, j => j.State == JobState.Running);
@@ -1093,7 +1093,7 @@ public sealed class JobTests : IDisposable
     {
         var pidFile = Path.Combine(_root, "child.pid");
         var command = OperatingSystem.IsWindows()
-            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 60' -PassThru -WindowStyle Hidden; Set-Content '{pidFile}' $p.Id; $p.WaitForExit()"
+            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 60' -NoNewWindow -PassThru; Set-Content '{pidFile}' $p.Id; $p.WaitForExit()"
             : $"sleep 60 & echo $! > '{pidFile}'; wait";
         var first = await Node.StartAsync(_root);
         var id = first.Run(_root, command).Made!;
