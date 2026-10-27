@@ -360,6 +360,14 @@ public static class Verbs
     public const string Planned = "planned";
 
     /// <summary>
+    /// <c>touches flight/&lt;code&gt; &lt;file…&gt;</c>: the planner's overlap check across nodes. Compares the files the flight's legs will
+    /// change with every other not-landed flight of the repo on this node and on each reachable peer (its pushed branch's changed files
+    /// against its base) and with every open PR, and answers a line per flight or PR: the shared files and fold, connect or parallel
+    /// (<c>unknown</c> for one whose branch is not pushed or whose node could not be reached). Reads only; changes nothing.
+    /// </summary>
+    public const string Touches = "touches";
+
+    /// <summary>
     /// <c>overlap flight/&lt;code&gt; &lt;other&gt; &lt;why…&gt;</c>: the planner found the flight to look like part of another.
     /// A pair not asked before is recorded pending and rings one card (<c>Fold</c> or <c>Plan separately</c>); the flight's
     /// <c>plan-leg</c> and <c>planned</c> are refused while it waits, and the planner is told to end its turn, as it is

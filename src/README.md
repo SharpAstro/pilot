@@ -146,6 +146,7 @@ prefix, `--machine` or `PILOT_MACHINE`, else from its name).
 | `plan-flight flight/<code>` | A planner, `<machine>-<flight>-plan`, in the plane: it reads the issue and the code and plans the legs (`plan-leg`), writing no code, then says `planned`. |
 | `planned flight/<code> [summary…]` | The planner is done: a For-you card lists the legs, with **Start** on the first. No leg may be named `plan`. |
 | `overlap flight/<code> <other> <why…>` | The planner found the flight to look like part of another. A pair not asked before is recorded pending on the flight and rings one card (**Fold into <other>**, **Plan separately**); `plan-leg` and `planned` on the flight are refused while it waits, and the planner is told to end its turn (it is started again with the answer). A pair answered already returns the answer, with no card. Refused for an unknown, landed or the same flight. |
+| `touches flight/<code> <file…>` | The planner's overlap check across nodes (a read: no lock, changes nothing). Fetches the repo, then compares the files the flight's legs will change with every other flight not landed of the repo on this node (its pushed branch's changed files against its base, `origin/<branch>`, else its local branch) and on each reachable peer (matched by the repo's GitHub remote; its pushed branch read from this clone), and with every open PR (its files through `gh api`, all pages; a PR that is a flight's branch is that flight's line). Answers a line each, folds first, then connects, unknown, parallel: `PIL294 (DE1): connect, both change DetachedShell.cs, JobRunner.cs`. The choice is `OverlapChoice.Judge`, pure: **fold** with at least 2 shared files that are at least half of the smaller side's files, **connect** with any shared file, **parallel** with none. **unknown** (never skipped) for a flight whose branch is not pushed (a peer's; this node's flights fall back to their local branch), a peer with no grant, a refused grant or no answer within 3 s, and a PR whose files gh would not list. Needs at least one file. |
 | `fold flight/<code> <other>` | The answer that the flight is part of the other: recorded, the card closed, the flight's issue added to the other (`FoldedIn`: the number and the flight it came from), the flight retired as `land` does (its planner stopped, its clean plane removed, its code and branch kept) but marked `FoldedInto` the other and with a Handled `folded` card instead of a landed one, and the other's planner started (one already planning it is stopped for it) whose brief names each folded issue and its flight and says to plan its points as legs after the ones it has. The other's PR then closes every folded issue beside its own. Refused into a landed flight, one whose PR is open (it would not close the issue) or one of another repo; a plane holding work of its own refuses and changes nothing. |
 | `separate flight/<code> <other>` | The answer to plan on its own: recorded on the flight (kept over a restart), the card closed, the waiting planner stopped and a fresh one started, whose brief lists the flight's overlap answers (so it connects to the other if it still depends on it). |
 | `connect flight/<code> <other>` | The flight holds until the other has landed (a cycle is refused). |
@@ -171,22 +172,26 @@ one on another tracker is refused; overlap works across trackers.
   remote's default branch as `origin/HEAD` says it, so a repo whose default is `develop` flies from `origin/develop`
   and its PR goes there; `main` is only the guess when `origin/HEAD` cannot be set.
 
-**The planner looks first.** Before it plans a leg, a planner's brief has it list the flights not landed (`pilot status`
-here, and `pilot nodes` then `pilot --node <host:port> status` for each node it sees), read their issues and legs'
-goals and the files their planes touch (`git -C <plane> diff --stat <base>...`), and compare them with its own issue.
-A real overlap is the same area of the issue, or legs changing the same files: one flight would redo or fight the other.
-- **Overlap with a flight on this node:** the planner runs `pilot flight overlap <code> <other> <why>` and ends its turn.
-  One card asks the controller to **Fold** or **Plan separately**, the answer is kept per pair (so it is never asked
-  twice), and the flight's leg planning waits meanwhile.
+**The planner looks first.** Before it plans a leg, a planner's brief has it read the issue and the code, list the files its
+legs will change, and run `pilot flight touches <code> <file…>` with them. That compares them with every flight not landed
+on this node and on each reachable node and with every open PR (see `touches` above), and answers a line each with the
+shared files and a choice. A real overlap is the same files or the same area of the issue: one flight would redo or fight the other.
+- **fold** (a large share of the files) on a flight of this node, when it is the same goal: the planner runs
+  `pilot flight overlap <code> <other> <why>` and ends its turn. One card asks the controller to **Fold** or
+  **Plan separately**, the answer is kept per pair (so it is never asked twice), and the flight's leg planning waits
+  meanwhile. When the goal is another, the line is a connect.
 - **Fold** puts the flight's issue into the other flight: the other's planner plans its points as more legs after its own,
   its PR closes both issues, and the asking flight is retired with nothing of its own, marked as folded into the other.
 - **Plan separately** starts a fresh planner told the answer. It connects (`pilot flight connect`, which holds the
   flight until the other has landed; its legs can still be planned and `planned` said while held) only on a real
   dependency, the two still changing the same files or this one needing the other's change, and says which and why in its
   planned summary. Otherwise it connects nothing.
-- **Overlap with a flight on another node** can be neither folded nor connected from here, so the planner plans as usual
-  and names that flight and the overlap in its planned summary.
-- **No overlap:** it plans and says `planned` as always, and no overlap card appears.
+- **connect** (some files shared) on a flight of this node: `pilot flight connect <code> <other>`, so the flight branches off
+  main after the other has landed; or, when the shared files are touched only in passing, it plans beside it and says so.
+- **A line for a flight on another node, or for an open PR** can be neither folded nor connected from here, so the planner
+  plans as usual and names that flight or PR, its node and the shared files in its planned summary. An **unknown** line is
+  said in the planned summary too: it is not "no overlap".
+- **parallel**, or no lines: it plans and says `planned` as always, and no overlap card appears.
 
 **Nothing is left behind.** A flight's work reaches main or is said, never kept where nobody looks: a leg finishes as
 done only with every change committed (its worker's brief says so, and the node refuses a dirty plane); a merge is
@@ -524,6 +529,7 @@ pilot flight create <issue> [title…] [--repo <path>] [--anyway]   # labels the
 # way, with a Ring card, when a peer flies the flight's branch. An unreachable peer (3 s to answer) or a landed flight does not block.
 pilot flight plan <code>                       # a planner plans the legs from the issue
 pilot flight planned <code> [summary…]         # what the planner says when it is done
+pilot flight touches <code> <file…>          # the planner's overlap check: the legs' files against every flight in the air on every node and every open PR; fold, connect or parallel each
 pilot flight overlap <code> <other> <why…>     # the planner: this flight looks like part of <other>; rings a Fold / Plan separately card
 pilot flight separate <code> <other>           # plan it on its own: a fresh planner is started, told the answer
 pilot flight connect <code> <other>

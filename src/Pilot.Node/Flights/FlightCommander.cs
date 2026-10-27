@@ -278,7 +278,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         }
     }
 
-    private static bool SamePath(string a, string b) =>
+    internal static bool SamePath(string a, string b) =>
         string.Equals(a.Replace('\\', '/').TrimEnd('/'), b.Replace('\\', '/').TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The node code another node's label on <paramref name="item"/> names, or null when it has none (this node's own is no other's).</summary>

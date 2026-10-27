@@ -331,10 +331,13 @@ public static class PilotCommand
         var overlapWhy = Words("why", "Why it looks like part of the other");
         var overlap = Action(new Command("overlap", "The planner found the flight to look like part of another: asks the controller to fold it in or plan it separately") { Arguments = { code, other, overlapWhy } },
             (p, client, ct) => Send(client, Verbs.Overlap, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!, .. p.GetValue(overlapWhy) ?? []], who, ct));
+        var touchedFiles = Words("file", "A file the flight's legs will change, repo-relative, as many as the legs have");
+        var touches = Action(new Command("touches", "The planner's overlap check: compares the files its legs will change with every other flight in the air on every node and every open PR, and says fold, connect or parallel for each") { Arguments = { code, touchedFiles } },
+            (p, client, ct) => Send(client, Verbs.Touches, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(touchedFiles) ?? [], who, ct));
         var separate = Action(new Command("separate", "Plan the flight on its own despite the overlap: a fresh planner is started, told the answer") { Arguments = { code, other } },
             (p, client, ct) => Send(client, Verbs.Separate, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
-        var flight = new Command("flight", "Flights: create, plan, overlap, connect, fly past a package wait, open a PR, review, merge, land")
-            { Subcommands = { create, planFlight, planned, overlap, separate, connect, fly, pr, reviewStart, merge, land } };
+        var flight = new Command("flight", "Flights: create, plan, check what they touch, overlap, connect, fly past a package wait, open a PR, review, merge, land")
+            { Subcommands = { create, planFlight, planned, touches, overlap, separate, connect, fly, pr, reviewStart, merge, land } };
 
         // leg
         var name = Arg("name", "The leg's name: lower-case letters, digits and dashes");
@@ -1170,7 +1173,7 @@ public static class PilotCommand
             {
                 await output.WriteLineAsync($"created issue #{issueNumber}");
             }
-            if (verb is Verbs.Overlap or Verbs.Separate or Verbs.WaitLeg or Verbs.Summarise && result.Made is { Length: > 0 } told)
+            if (verb is Verbs.Overlap or Verbs.Touches or Verbs.Separate or Verbs.WaitLeg or Verbs.Summarise && result.Made is { Length: > 0 } told)
             {
                 await output.WriteLineAsync(told);
             }

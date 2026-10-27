@@ -57,11 +57,26 @@ public sealed partial class LegCommander(
     public static bool Handles(string verb) =>
         verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.ValidateLeg or Verbs.Check or Verbs.FinishLeg or Verbs.WaitLeg or Verbs.GoAround or Verbs.Merge or Verbs.RerunChecks
             or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review
-            or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Fold or Verbs.Separate;
+            or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Touches or Verbs.Fold or Verbs.Separate;
 
     /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
     public Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken) =>
-        LockWait.RunAsync(_one, state, time, command, token => RunQueuedAsync(command, token), cancellationToken);
+        command.Verb == Verbs.Touches
+            ? RunTouchesAsync(command, cancellationToken)
+            : LockWait.RunAsync(_one, state, time, command, token => RunQueuedAsync(command, token), cancellationToken);
+
+    // A read of git, the peers and GitHub that changes nothing: it takes no lock, so a busy node answers it, and it holds none while it waits.
+    private async Task<CommandResult> RunTouchesAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return state.Complete(command, null, made: await TouchesAsync(command, cancellationToken));
+        }
+        catch (FlightException ex)
+        {
+            return state.Complete(command, ex.Message);
+        }
+    }
 
     private async Task<CommandResult> RunQueuedAsync(CommandRequest command, CancellationToken cancellationToken)
     {

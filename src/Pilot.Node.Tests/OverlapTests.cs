@@ -472,21 +472,22 @@ public sealed class OverlapTests2 : OverlapTestsBase
         look.ShouldBeGreaterThan(-1);
         look.ShouldBeLessThan(plan);
         var section = brief[look..plan];
-        // The flights not landed, here and on every node the LAN shows, with their issues, legs and planes.
+        // The planner lists its legs' files and runs the overlap check across nodes and PRs (#375), which answers per flight and PR.
+        section.ShouldContain("list the files your legs will change");
+        section.ShouldContain("flight touches TIA2 <file> <file>");
+        section.ShouldContain("on this node and on each reachable node");
+        section.ShouldContain("every open PR");
+        section.ShouldContain("PIL294 (DE1): connect, both change DetachedShell.cs, JobRunner.cs");
+        // An unknown answer is no "no overlap".
+        section.ShouldContain("unknown");
         section.ShouldContain(" status`");
-        section.ShouldContain(" nodes`");
-        section.ShouldContain("--node <host:port> status");
-        section.ShouldContain("gh issue view");
-        section.ShouldContain("diff --stat main...");
-        // What counts as an overlap, and what to do about one on this node.
-        section.ShouldContain("the same area of the issue, or legs changing the same files");
+        // What to do with each answer: fold asks the controller on this node, connect holds the flight, another node's flight or a PR is named.
         section.ShouldContain("flight overlap TIA2 <other> <why");
         section.ShouldContain("end your turn at once");
-        // Another node's flight is only named, and a connection follows a separate answer only on a real dependency.
+        section.ShouldContain("flight connect TIA2 <other>");
         section.ShouldContain("neither folded nor connected");
         section.ShouldContain("in your planned summary");
-        section.ShouldContain("flight connect TIA2 <other>");
-        section.ShouldContain("Connect nothing otherwise");
+        section.ShouldContain("parallel (no file in common)");
     }
 
     [Fact]
