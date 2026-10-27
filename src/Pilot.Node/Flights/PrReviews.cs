@@ -1007,7 +1007,9 @@ public sealed class PrReviews(
         }
         catch (FlightException ex)
         {
-            state.RaiseCard(CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start", ex.Message, link: review.Url);
+            // Retry is the same Fix it: once what stopped it is cleared (a branch checked out elsewhere), it starts the fixer.
+            state.RaiseCard(CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start", ex.Message,
+                [new CardChoice { Label = "Retry", Verb = Verbs.FixPr, Target = subject }], link: review.Url);
         }
     }
 

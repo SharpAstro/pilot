@@ -474,8 +474,20 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
                 return await FinishAsync(entry, pr, $"nothing queued at {head}: {note}", stands, cancellationToken);
             }
         }
+        // Changes asked for and nobody fixing them: the fixer is what the recheck asks for. tianwen #1857's could not start (its
+        // branch was checked out elsewhere); once that was cleared, the label was taken off with nothing started.
+        if (review.State != PrReviewState.Reviewing && review.Verdict == "changes" && review.Fixer is null)
+        {
+            var fixing = await reviews.RunAsync(new CommandRequest { Verb = Verbs.FixPr, Target = subject, Who = "node" }, cancellationToken);
+            if (!fixing.Ok)
+            {
+                Fail(entry, $"its review asks for changes, but the fixer did not start: {fixing.Error}", pr.Url);
+                return Outcome.Kept;
+            }
+            return await FinishAsync(entry, pr, $"its review asks for changes at {head}, fixer started", PilotMarks.Changes, cancellationToken);
+        }
         var standing = review.State == PrReviewState.Reviewing ? "its review is still reading it"
-            : review.Verdict == "changes" ? "its review asks for changes"
+            : review.Verdict == "changes" ? "its review asks for changes, and its fixer is on it"
             : "its checks are still running";
         return await FinishAsync(entry, pr, $"nothing to do at {head}: {standing}", stands, cancellationToken);
     }

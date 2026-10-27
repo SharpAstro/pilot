@@ -347,6 +347,25 @@ public sealed class PrRecheckTests : IDisposable
     }
 
     [Fact]
+    public async Task AReviewedPrWhoseChangesNobodyIsFixingStartsItsFixerAndKeepsTheChangesLabel()
+    {
+        // tianwen #1857: its fixer could not start, and once that was cleared the recheck took the label off with nothing started.
+        await ReviewedAsync("changes");
+        Review()!.Fixer.ShouldBeNull();
+        _workers.Started.Clear();
+        // The PR's branch, which the fixer works on: in the origin, and said by gh.
+        PrOrigins.Git(Path.Combine(_root, "work-widget"), "push", "-q", "origin", "HEAD:refs/heads/feature/seven");
+        _github.Prs["acme/widget#7"] = Pr("OPEN") with { HeadRef = "feature/seven" };
+
+        await LookAsync();
+
+        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-fix-widget-7");
+        Review()!.Fixer.ShouldBe("du1-fix-widget-7");
+        Handled().ShouldBe([$"recheck of widget#7: its review asks for changes at {Short(_head)}, fixer started"]);
+        _github.Labels[7].ShouldBe([PilotMarks.Changes]);
+    }
+
+    [Fact]
     public async Task AReviewedPrWithNothingToDoSaysWhereItStands()
     {
         await ReviewedAsync();
