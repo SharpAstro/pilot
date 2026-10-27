@@ -476,7 +476,9 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
         }
         // Changes asked for and nobody fixing them: the fixer is what the recheck asks for. tianwen #1857's could not start (its
         // branch was checked out elsewhere); once that was cleared, the label was taken off with nothing started.
-        if (review.State != PrReviewState.Reviewing && review.Verdict == "changes" && review.Fixer is null)
+        string? noFixer = null;
+        if (review.State != PrReviewState.Reviewing && review.Verdict == "changes" && review.Fixer is null
+            && (noFixer = await reviews.WhyNoFixerAsync(new PrRef(entry.Repo.Split('/')[0], entry.Repo.Split('/')[1], entry.Number), review, cancellationToken)) is null)
         {
             var fixing = await reviews.RunAsync(new CommandRequest { Verb = Verbs.FixPr, Target = subject, Who = "node" }, cancellationToken);
             if (!fixing.Ok)
@@ -487,7 +489,7 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
             return await FinishAsync(entry, pr, $"its review asks for changes at {head}, fixer started", PilotMarks.Changes, cancellationToken);
         }
         var standing = review.State == PrReviewState.Reviewing ? "its review is still reading it"
-            : review.Verdict == "changes" ? "its review asks for changes, and its fixer is on it"
+            : review.Verdict == "changes" ? (noFixer is null ? "its review asks for changes, and its fixer is on it" : $"its review asks for changes, and no fixer starts: {noFixer}")
             : "its checks are still running";
         return await FinishAsync(entry, pr, $"nothing to do at {head}: {standing}", stands, cancellationToken);
     }
