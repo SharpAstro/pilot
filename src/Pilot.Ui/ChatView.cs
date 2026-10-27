@@ -448,7 +448,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         if (choices.Length > 0)
         {
             // The choices stay under the text, outside its scroll, so they are always in view and reachable.
-            parts.Add(Layout.Builder.WrapH([.. choices.Select((choice, i) => CardsView<TSurface>.Pill(choice, $"chat:choice:{i + 1}", () => Choose(choice)))])
+            parts.Add(Layout.Builder.WrapH([.. choices.Select((choice, i) => CardsView<TSurface>.Pill(choice, $"chat:choice:{i + 1}", () => Choose(question, choice)))])
                 .WithGap(ChoiceGap).WithLineGap(ChoiceLineGap).WStar());
         }
         var scrolling = Layout.Builder.VStack([.. parts]).WithGap(ChoiceGap).WStar().HStar();
@@ -463,16 +463,27 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     }
 
     // A choice answers the question: said to the watchtower as the person's message, through the same send as a typed one.
-    private void Choose(string choice)
+    private void Choose(string question, string choice)
     {
+        var answer = Answer(question, choice);
         if (Track is { } track)
         {
-            track(() => SendAsync(choice), $"chat choice {choice}");
+            track(() => SendAsync(answer), $"chat choice {choice}");
         }
         else
         {
-            _ = SendAsync(choice);
+            _ = SendAsync(answer);
         }
+    }
+
+    /// <summary>
+    /// What a choice says: its words, and the question they answer. Said alone, "Leave it" left the watchtower guessing which
+    /// of the things it had listed "it" was (SE1, 2026-10-27).
+    /// </summary>
+    internal static string Answer(string question, string choice)
+    {
+        var asked = question.ReplaceLineEndings(" ").Trim();
+        return $"{choice} (my answer to: {(asked.Length > 300 ? asked[..299] + "…" : asked)})";
     }
 
     // The box: the lines typed above the one being edited, read-only, and the field under them.
