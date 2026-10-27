@@ -5,7 +5,7 @@ namespace Pilot.Node.Updates;
 /// <summary>What an installed release does when a newer one is out.</summary>
 public enum UpdatePolicy
 {
-    /// <summary>Installs it, once nothing it would cut short is running, and says so.</summary>
+    /// <summary>Installs it at once and says so; running jobs carry on under the new node.</summary>
     Auto,
 
     /// <summary>Says it is out, with a way to install it; nothing installs until someone takes it.</summary>

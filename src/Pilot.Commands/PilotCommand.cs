@@ -600,6 +600,18 @@ public static class PilotCommand
             // writer, where a plain read of the file here was refused while the job ran, and it works from the LAN too.
             if (await client.GetJobLogAsync(job.Id, ct) is { Success: true, Response: { } log })
             {
+                if (log.Pid is { } pid)
+                {
+                    await output.WriteLineAsync($"  pid {pid}");
+                }
+                foreach (var process in log.Tree ?? [])
+                {
+                    await output.WriteLineAsync($"  {new string(' ', process.Depth * 2)}{process.Name} {process.Pid}");
+                }
+                if (log.Stuck is { } stuck)
+                {
+                    await output.WriteLineAsync($"  stuck: {stuck}; pilot job {job.Id} cancel --force ends it");
+                }
                 foreach (var line in log.Lines.TakeLast(15))
                 {
                     await output.WriteLineAsync($"  | {line}");
@@ -607,8 +619,9 @@ public static class PilotCommand
             }
             return 0;
         });
-        var cancelJob = Action(new Command("cancel", "Stop a running job; its owner is told") { Arguments = { jobId } },
-            (p, client, ct) => Send(client, Verbs.CancelJob, Verbs.JobTarget(p.GetValue(jobId)!), [], who, ct));
+        var cancelForce = new Option<bool>("--force") { Description = "Kill the job's wrapper and every process under it at once, including ones that outlived the wrapper and hold its output" };
+        var cancelJob = Action(new Command("cancel", "Stop a running job; its owner is told") { Arguments = { jobId }, Options = { cancelForce } },
+            (p, client, ct) => Send(client, Verbs.CancelJob, Verbs.JobTarget(p.GetValue(jobId)!), p.GetValue(cancelForce) ? [Verbs.ForceArg] : [], who, ct));
         jobShow.Subcommands.Add(cancelJob);
 
         // say, note
@@ -857,7 +870,7 @@ public static class PilotCommand
         });
         var settingKey = Arg("setting", "lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory or lan-port");
         var settingValue = Words("value", "Its value (every folder, for repo-roots); none, or default, takes it out", required: false);
-        var set = Action(new Command("set", "Save a setting; the node restarts to run with it once no job runs") { Arguments = { settingKey, settingValue }, Options = { actingOn } },
+        var set = Action(new Command("set", "Save a setting; the node restarts to run with it at once, jobs carry on") { Arguments = { settingKey, settingValue }, Options = { actingOn } },
             (p, client, ct) => Send(client, Verbs.Set, Verbs.NodeTarget, [p.GetValue(settingKey)!, .. p.GetValue(settingValue) ?? []], who, ct, p.GetValue(actingOn)));
         var checkKey = Arg("check", "autostart, no-autostart, hooks, lan, firewall, defender or trust");
         var defenderProcesses = new Option<bool>("--processes") { Description = "With defender: exclude pilot-node, dotnet, MSBuild, VBCSCompiler and testhost as processes too, not only the folders" };

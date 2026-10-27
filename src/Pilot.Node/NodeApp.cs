@@ -245,7 +245,6 @@ public static class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<NodeUpdater>());
         // The Settings page: a saved setting restarts the node to run with it, and the setup checklist's fixes.
         builder.Services.AddSingleton<NodeRestarter>();
-        builder.Services.AddHostedService(services => services.GetRequiredService<NodeRestarter>());
         builder.Services.AddSingleton(services => new NodeSetup(options, Environment.ProcessPath ?? "pilot-node",
             services.GetRequiredService<SessionTrackerOptions>().Profile.Root)
         {
@@ -450,10 +449,11 @@ public static class NodeApp
             Results.Json(ResponseEnvelope<ChatPage>.Ok(chat.Page(after ?? -1)), PilotJsonContext.Default.ResponseEnvelopeChatPage));
 
         // A job's output, its end, for the Background tasks page; the whole is in its log, on this machine.
-        app.MapGet(NodeWire.JobLogPattern, (string id, NodeState state) =>
+        // With its pid, the process tree under it and, when its wrapper has exited while a process it started holds it, that fact.
+        app.MapGet(NodeWire.JobLogPattern, (string id, NodeState state, JobRunner jobs) =>
             state.Jobs().FirstOrDefault(j => j.Id == id) is not { } job
                 ? Results.Json(ResponseEnvelope<JobLog>.Fail($"There is no job {id}", 404), PilotJsonContext.Default.ResponseEnvelopeJobLog, statusCode: 404)
-                : Results.Json(ResponseEnvelope<JobLog>.Ok(JobLogs.Tail(job.LogPath) ?? new JobLog { Lines = [], Length = 0 }), PilotJsonContext.Default.ResponseEnvelopeJobLog));
+                : Results.Json(ResponseEnvelope<JobLog>.Ok(jobs.Describe(job, JobLogs.Tail(job.LogPath) ?? new JobLog { Lines = [], Length = 0 })), PilotJsonContext.Default.ResponseEnvelopeJobLog));
 
         // The new-flight wizard's reads: the repos a flight can be made in, and a repo's open issues (through gh).
         // This machine only: the LAN policy lets no route through it does not name.

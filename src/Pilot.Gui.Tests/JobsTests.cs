@@ -156,6 +156,167 @@ public sealed class JobsTests
         Cells(jobs, Screen()).ShouldNotContain("Cancel");
     }
 
+    private static readonly JobProcessInfo[] Tree =
+    [
+        new("pwsh", 4812, 0),
+        new("dotnet", 5120, 1),
+        new("testhost", 6044, 2),
+        new("conhost", 6100, 2),
+    ];
+
+    /// <summary>The page's screen with j14 (running) on process id 4812.</summary>
+    private static JobsScreen ScreenWithPid() => new(JobLine.Build(
+    [
+        Job("j13", JobState.Failed, Live.At.AddMinutes(-40), Live.At.AddMinutes(-35), error: "exit 1", exit: 1) with { Pid = 777 },
+        Job("j14", JobState.Running, Live.At.AddMinutes(-11), step: "Passed Parser.NestedGroups") with { Pid = 4812 },
+    ], Live.At), "live", Live.At);
+
+    /// <summary>A view that has read <paramref name="log"/> for the selected job (j14, the first row).</summary>
+    private static async Task<JobsView<RgbaImage>> Following(RgbaImageRenderer vessel, JobLog log, JobsScreen screen)
+    {
+        var (_, jobs) = Chrome(vessel);
+        jobs.CanCommand = true;
+        var changed = new SemaphoreSlim(0);
+        jobs.LoadLog = (_, _, _) => Task.FromResult(log);
+        jobs.Changed = () => changed.Release();
+        jobs.Tree(screen);
+        (await changed.WaitAsync(TimeSpan.FromSeconds(10), Ct)).ShouldBeTrue();
+        return jobs;
+    }
+
+    private static JobLog LogWith(string? stuck = null, JobProcessInfo[]? tree = null) =>
+        new() { Lines = ["j14: Restore complete"], Length = 64, Pid = 4812, Tree = tree ?? Tree, Stuck = stuck };
+
+    [Fact]
+    public async Task ARunningJobsFactsListItsPidAndTheTreeUnderItByDepthAndNothingElseDoes()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var screen = ScreenWithPid();
+        var jobs = await Following(vessel, LogWith(), screen);
+
+        var arranged = Layout.Engine.Arrange(jobs.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
+        var described = CellLayout.Describe(arranged);
+        described.ShouldContain("pid");
+        described.ShouldContain("4812");
+        // The wrapper is the pid fact; the tree is what runs under it, a child marked └ under its parent, as pstree draws it.
+        var dotnet = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "dotnet 5120" } }).Bounds;
+        var testhost = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "└ testhost 6044" } }).Bounds;
+        arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "pwsh 4812" } }).ShouldBeFalse();
+        testhost.Y.ShouldBeGreaterThan(dotnet.Y);
+        (JobsView<RgbaImage>.Branch(1), JobsView<RgbaImage>.Branch(2), JobsView<RgbaImage>.Branch(3)).ShouldBe(("", "└ ", "  └ "));
+
+        // A job that is not running shows neither, even when its log is the one followed.
+        var ended = arranged.First(a => a.Node.Hit is HitResult.ListItemHit { ListId: JobsView<RgbaImage>.ListId, Index: 1 });
+        CellLayout.HitTest(arranged, ended.Bounds.X + 1, ended.Bounds.Y);
+        var after = Cells(jobs, screen);
+        after.ShouldNotContain("testhost");
+        after.ShouldNotContain("pid");
+    }
+
+    [Fact]
+    public void ARunningJobsRowTooltipShowsItsPidAndAnEndedOneShowsNone()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var (_, jobs) = Chrome(vessel);
+        var screen = ScreenWithPid();
+
+        var arranged = Layout.Engine.Arrange(jobs.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
+
+        arranged.Select(a => a.Node.Tooltip).OfType<string>().Where(t => t.StartsWith("pid", StringComparison.Ordinal)).ShouldBe(["pid 4812"]);
+    }
+
+    [Fact]
+    public async Task AStuckJobsStateLineNamesWhatHoldsItsOutputAndOffersForceCancel()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var screen = ScreenWithPid();
+        var jobs = await Following(vessel, LogWith(stuck: "process exited, output still held by 5120", tree: [new("dotnet", 5120, 1)]), screen);
+        jobs.OnCancel = _ => { };
+        jobs.OnForceCancel = _ => { };
+
+        var described = Cells(jobs, screen);
+
+        described.ShouldContain("process exited, output still held by 5120");
+        // The state column may cut it, so its whole text is the cell's hover.
+        Layout.Engine.Arrange(jobs.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored)
+            .Select(x => x.Node.Tooltip).ShouldContain("process exited, output still held by 5120");
+        described.ShouldContain("Force cancel…");
+        // The step it was on is not said over it.
+        described.ShouldNotContain("Passed Parser.NestedGroups");
+    }
+
+    [Fact]
+    public void ForceCancelAndItsMenuItemOnlyAskUntilForceCancelJobIsPressedAndThenSendForce()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var (_, jobs) = Chrome(vessel);
+        jobs.CanCommand = true;
+        var plain = new List<string>();
+        var forced = new List<string>();
+        jobs.OnCancel = job => plain.Add(job.Id);
+        jobs.OnForceCancel = job => forced.Add(job.Id);
+        var screen = ScreenWithPid();
+        JobLine running = screen.Lines[0];
+
+        void Click(string action)
+        {
+            var arranged = Layout.Engine.Arrange(jobs.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
+            var button = arranged.First(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == action);
+            CellLayout.HitTest(arranged, button.Bounds.X + 1, button.Bounds.Y);
+        }
+
+        Click("job:j14:force");
+        forced.ShouldBeEmpty();
+        Cells(jobs, screen).ShouldContain("Force cancel j14?");
+        // The question replaces the buttons: neither a plain Cancel nor another Force cancel… is there to slip onto.
+        Cells(jobs, screen).ShouldNotContain("Cancel…");
+
+        // Keep running takes it back; asked again, Force cancel job sends force and nothing else.
+        Click("job:j14:force-no");
+        Cells(jobs, screen).ShouldNotContain("Force cancel j14?");
+        forced.ShouldBeEmpty();
+        Click("job:j14:force");
+        Click("job:j14:force-yes");
+        forced.ShouldBe(["j14"]);
+        plain.ShouldBeEmpty();
+        Cells(jobs, screen).ShouldNotContain("Force cancel j14?");
+
+        // The row's menu asks the same question, and sends nothing by itself.
+        jobs.OpenMenu(running, 0, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
+        jobs.MenuItems.Select(i => i.Label).Take(2).ShouldBe(["Cancel…", "Force cancel…"]);
+        jobs.MenuItems[1].OnChoose!();
+        forced.ShouldBe(["j14"]);
+        Cells(jobs, screen).ShouldContain("Force cancel j14?");
+
+        // A job that is only queued has no tree to force.
+        var (_, fresh) = Chrome(vessel);
+        fresh.CanCommand = true;
+        fresh.OnCancel = _ => { };
+        fresh.OnForceCancel = _ => { };
+        var queued = new JobsScreen(JobLine.Build([Job("j15", JobState.Queued, Live.At.AddMinutes(-3), queued: Live.At.AddMinutes(-3))], Live.At), "live", Live.At);
+        Cells(fresh, queued).ShouldContain("Cancel…");
+        Cells(fresh, queued).ShouldNotContain("Force cancel…");
+        fresh.OpenMenu(queued.Lines[0], 0, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
+        fresh.MenuItems.Select(i => i.Label).ShouldContain("Cancel…");
+        fresh.MenuItems.Select(i => i.Label).ShouldNotContain("Force cancel…");
+    }
+
+    [Fact]
+    public async Task ThePidTreeAndStuckFactChangingRedrawsThePageWhileTheLogLengthIsTheSame()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var (_, jobs) = Chrome(vessel);
+        var reads = 0;
+        var changed = new SemaphoreSlim(0);
+        jobs.LoadLog = (_, _, _) => Task.FromResult(Interlocked.Increment(ref reads) == 1 ? LogWith(tree: [new("pwsh", 4812, 0)]) : LogWith());
+        jobs.Changed = () => changed.Release();
+
+        jobs.Tree(ScreenWithPid());
+        (await changed.WaitAsync(TimeSpan.FromSeconds(10), Ct)).ShouldBeTrue();
+        (await changed.WaitAsync(JobsView<RgbaImage>.Every + TimeSpan.FromSeconds(10), Ct)).ShouldBeTrue();
+        Cells(jobs, ScreenWithPid()).ShouldContain("testhost 6044");
+    }
+
     [Fact]
     public async Task TheSelectedJobsOutputIsReadFromTheNodeAndFollowed()
     {
@@ -353,6 +514,60 @@ public sealed class JobsTests
                     Draw();
                 }
                 File.WriteAllBytes(Path.Combine(dir, $"job-cancel-{state}-{width}.png"),
+                    SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, height));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CapturesOfARunningJobsTreeAndTheForceCancelQuestionAtNarrowAndWideWindows()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var dir = Path.GetDirectoryName(capture) ?? ".";
+        // Many processes, long names: the tree is cut at four with a count, and a long name is the fact column's to carry.
+        JobProcessInfo[] many =
+        [
+            new("pwsh", 4812, 0), new("dotnet", 5120, 1), new("testhost", 6044, 2), new("conhost.exe --headless", 6100, 2),
+            new("node-with-a-rather-long-program-name", 6200, 3), new("msbuild", 6300, 1), new("vbcscompiler", 6400, 2),
+        ];
+        foreach (var (width, height) in new[] { (1280, 800), (2000, 900) })
+        {
+            foreach (var state in new[] { "tree", "tree-hover", "force-asked", "stuck" })
+            {
+                using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+                var (chrome, jobs) = Chrome(renderer);
+                jobs.CanCommand = true;
+                jobs.OnCancel = _ => { };
+                jobs.OnForceCancel = _ => { };
+                jobs.OnSession = _ => { };
+                var screen = ScreenWithPid();
+                var log = state == "stuck" ? LogWith(stuck: "process exited, output still held by 5120", tree: [new("dotnet", 5120, 1)]) : LogWith(tree: many);
+                var read = new SemaphoreSlim(0);
+                jobs.LoadLog = (_, _, _) => Task.FromResult(log);
+                jobs.Changed = () => read.Release();
+                chrome.Show(PilotPage.Jobs);
+                void Draw() => chrome.Render(new SessionsScreen([], "test", Live.At), null, null, screen, new RectF32(0, 0, width, height));
+                Draw();
+                (await read.WaitAsync(TimeSpan.FromSeconds(10), Ct)).ShouldBeTrue();
+                Draw();
+                if (state == "tree-hover")
+                {
+                    var page = Layout.Engine.Arrange(jobs.Tree(screen), new Rect<float>(52f, 0f, width - 52f, height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+                    var pill = page.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "job:j14:force" }).Bounds;
+                    jobs.Pointer = (pill.X + pill.Width / 2f, pill.Y + pill.Height / 2f);
+                    Draw();
+                }
+                else if (state == "force-asked")
+                {
+                    var arranged = Layout.Engine.Arrange(jobs.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
+                    var force = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "job:j14:force" });
+                    CellLayout.HitTest(arranged, force.Bounds.X + 1, force.Bounds.Y);
+                    Draw();
+                }
+                File.WriteAllBytes(Path.Combine(dir, $"job-force-{state}-{width}.png"),
                     SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, height));
             }
         }
