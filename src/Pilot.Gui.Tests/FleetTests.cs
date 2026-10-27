@@ -345,6 +345,64 @@ public sealed class FleetTests
             .Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().ShouldNotContain(b => b.Action.EndsWith(":maintenance", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// Frames of the whole fleet story (PILOT_TEST_CAPTURE_DIR names the folder; without it nothing is written): a live node, a live
+    /// node in maintenance with autopilot and usage, the same node unreachable, and a node never heard; at 900 and 1800 wide.
+    /// The Fleet page has the one palette; the node pills are also framed on Flights, in its day and its night palette.
+    /// </summary>
+    [Theory]
+    [InlineData(900)]
+    [InlineData(1800)]
+    public void TheFleetStoryIsCapturedInBothPalettes(int width)
+    {
+        var heard = new DateTimeOffset(2026, 10, 28, 5, 34, 0, TimeSpan.Zero);
+        var live = new NodeMark("node.sock", "node.sock", "SE1", Here: true);
+        var busy = new NodeMark("10.0.0.7:47731", "10.0.0.7:47731", "DE1", Here: false);
+        var gone = new NodeMark("10.0.0.9:47731", "10.0.0.9:47731", "DE2", Here: false);
+        var quiet = new NodeMark("10.0.0.5:47731", "10.0.0.5:47731", "LE1", Here: false);
+        var inMaintenance = InMaintenance("de1", connected: true) with { Usage = "5 h 42% · 7 d 18%", Flying = 1, Rings = 1 };
+        inMaintenance = inMaintenance with { Node = inMaintenance.Node! with { Autopilot = true, MachinePrefix = "DE1", MachineName = "NAS-1" } };
+        var down = InMaintenance("de2", connected: false) with { DownSince = heard, Usage = "5 h 42% · 7 d 18%", Flying = 1, Rings = 1 };
+        down = down with { Node = down.Node! with { Autopilot = true, MachinePrefix = "DE2", MachineName = "LAPTOP-3" } };
+        var never = Summary("le1", connected: false) with { Node = null, Status = "no node on 10.0.0.5:47731: refused; retrying every 2s" };
+        var screen = new FleetScreen(
+        [
+            FleetLine.From(live.Where, here: true, canCommand: true, null, Summary("se1", "ada@example.org", flying: 2) with { Node = Summary("se1").Node! with { MachinePrefix = "SE1", MachineName = "DESKTOP-7" } }),
+            FleetLine.From(busy.Where, here: false, canCommand: true, null, inMaintenance, heard.AddMinutes(30)),
+            FleetLine.From(gone.Where, here: false, canCommand: true, null, down, heard.AddMinutes(30)),
+            FleetLine.From(quiet.Where, here: false, canCommand: true, null, never, heard.AddMinutes(30)),
+        ], heard.AddMinutes(30));
+
+        FleetLine.From(gone.Where, here: false, canCommand: true, null, down).Maintenance.ShouldBeTrue();
+        var capture = Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR") is { Length: > 0 } dir ? dir : null;
+        using var renderer = new RgbaImageRenderer((uint)width, 460);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.LinkFleet();
+        chrome.Nodes.Choices = [live, busy, gone];
+        chrome.Nodes.Down = new Dictionary<string, DateTimeOffset?> { [gone.Key] = heard };
+        var sessions = new SessionsScreen([], "test", heard);
+        var flights = new FlightsScreen([], "test", heard);
+
+        chrome.Show(PilotPage.Fleet);
+        chrome.Render(sessions, flights, null, null, screen, new RectF32(0, 0, width, 460));
+        void Keep(string name)
+        {
+            if (capture is not null)
+            {
+                Directory.CreateDirectory(capture);
+                File.WriteAllBytes(Path.Combine(capture, $"{name}-{width}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, 460));
+            }
+        }
+        Keep("fleet-day");
+        foreach (var (name, mode) in new[] { ("flights-day", FlightsViewMode.Grid), ("flights-night", FlightsViewMode.Night) })
+        {
+            chrome.Flights.Mode = mode;
+            chrome.Show(PilotPage.Flights);
+            chrome.Render(sessions, flights, null, null, screen, new RectF32(0, 0, width, 460));
+            Keep(name);
+        }
+    }
+
     private static NodeSummary WithWatchtower(WatchtowerHealth? health, bool connected = true) =>
         Summary("s2", connected: connected) with { Node = Summary("s2").Node! with { Watchtower = health } };
 

@@ -127,6 +127,57 @@ public sealed class UnreachableNodeTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task ADownNodeThatWasHeardKeepsItsPillDimAndLabelledLastHeard()
+    {
+        var filter = new NodeFilter();
+        await BothUp(filter);
+        await De1GoesDown(filter);
+        Pages(filter);
+
+        filter.Choices.Select(c => c.Name).ShouldBe(["SE1", "DE1"]);
+        filter.Down.Keys.ShouldBe([De1Where]);
+        var stamp = WentDown.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture);
+        filter.Line().ShouldBe($"[All nodes] SE1 DE1 · last heard {stamp}");
+        NodeFilter.Label(filter.Choices[1], WentDown, true).ShouldBe($"DE1 · last heard {stamp}");
+        filter.Pills().Count().ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task ANodeNeverHeardIsNotOfferedAsAPill()
+    {
+        var filter = new NodeFilter();
+        _de1.Refuse = new HttpRequestException("no route to host");
+        _here.Start();
+        _watch.Know([(De1Where, "DE1 LAPTOP-3")]);
+        await Until(() => _se1.OpenCount > 0);
+        _se1.Send(Live.Snapshot(1, "s-se1", Live.Row("aaaa0001", "se1-watchtower", SessionState.Working)));
+        await Until(() => Pages(filter).Cards.Held.Count == 1);
+
+        filter.Choices.Select(c => c.Name).ShouldBe(["SE1"]);
+        filter.Down.ShouldBeEmpty();
+        filter.Pills().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ANodeBackLiveDropsTheLastHeardLabel()
+    {
+        var filter = new NodeFilter();
+        await BothUp(filter);
+        await De1GoesDown(filter);
+        Pages(filter);
+        filter.Down.Count.ShouldBe(1);
+
+        _de1.Refuse = null;
+        var opens = _de1.OpenCount;
+        await Until(() => _de1.OpenCount > opens);
+        _de1.Send(Live.Snapshot(1, "s-de1", Live.Row("bbbb0001", "de1-watchtower", SessionState.Working)));
+        await Until(() => Pages(filter).Cards.Held.Count == 0);
+
+        filter.Down.ShouldBeEmpty();
+        filter.Line().ShouldBe("[All nodes] SE1 DE1");
+    }
+
+    [Fact]
     public async Task TheSummaryAndHomesWaitingCountTheNodesThatAnswerOnly()
     {
         var filter = new NodeFilter();
