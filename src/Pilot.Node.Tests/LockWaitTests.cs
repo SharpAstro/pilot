@@ -155,7 +155,7 @@ public sealed class LockWaitTests : LegCommanderTestsBase, IDisposable
 
         var exit = await PilotCommand.RunAsync(["--node-socket", node.SocketPath, "connect", "TIA1", "TIA2"], _nodeRoot, output, error, Ct, agent: false, requestId: "cli-1");
 
-        exit.ShouldBe(PilotCommand.ExitQueued);
+        exit.ShouldBe(PilotCommand.ExitQueued, $"{output}{error}");
         exit.ShouldNotBe(0);
         output.ToString().ShouldContain($"queued: connect flight/TIA1: {Said(flights.Lock, "merge flight/TIA9")}");
         error.ToString().ShouldBeEmpty();
