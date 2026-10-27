@@ -629,7 +629,7 @@ once; a short spike never does. `--job-memory <GB>` (0 by default) is a floor: a
 the order they came, each saying what it needs (median and peak) and the memory free now. A job's log is kept in the node's data folder
 (`jobs/<id>.log`), and its end is served for the GUI (`GET /api/v1/jobs/<id>/log`, a grant's on the LAN).
 
-A job runs **detached** from the node (its own session via `setsid`, or on Windows its own hidden console outside the
+A job runs **detached** from the node (its own session via `setsid`, and under a Linux systemd unit also its own transient user scope, `systemd-run --user --scope`, outside the node unit's cgroup so the unit's default `KillMode=control-group` does not kill it when the node exits; or on Windows its own hidden console outside the
 node's job object, in a named job object of its own, inheriting only the log and NUL, so no pipe the node holds): its
 shell writes stdout and stderr straight to the log and its exit code to `jobs/<id>.log.exit` when it ends. The Running row carries `Pid`, `ProcessStartedAt` and `ExitPath`; the node
 follows the log file for the tail and step, takes the end from the process exit plus the exit file (no file: failed, no

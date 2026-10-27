@@ -7,7 +7,7 @@ using Microsoft.Win32.SafeHandles;
 namespace Pilot.Node.Flights;
 
 /// <summary>
-/// A job's command line run so that it outlives the node: in a session of its own (<c>setsid</c>) on Linux, with a console
+/// A job's command line run so that it outlives the node: in a session of its own (<c>setsid</c>) on Linux, and under systemd in a transient user scope of its own (<c>systemd-run --user --scope</c>, outside the node unit's cgroup, so the unit's <c>KillMode=control-group</c> leaves it running when the node exits), with a console
 /// of its own and outside the node's job object on Windows, and with no pipe the node holds. The shell sends stdout and
 /// stderr straight to the log file and writes its exit code to <c>exitPath</c> when it ends, so a node that was not there
 /// when the job began can still read how it ended. The line itself is run as <see cref="ShellScript"/> runs it.
@@ -38,7 +38,7 @@ public sealed class DetachedShell : IDisposable
     {
         if (!OperatingSystem.IsWindows())
         {
-            return new DetachedShell([], () => StartUnix(command, cwd, logPath, exitPath));
+            return new DetachedShell([], () => StartUnix(jobId, command, cwd, logPath, exitPath));
         }
         var inner = Path.ChangeExtension(logPath, ".ps1");
         var outer = WrapperOf(inner);
@@ -94,15 +94,17 @@ public sealed class DetachedShell : IDisposable
 
     private static string ShQuote(string text) => "'" + text.Replace("'", @"'\''", StringComparison.Ordinal) + "'";
 
-    private static Process StartUnix(string command, string cwd, string logPath, string exitPath)
+    private static Process StartUnix(string jobId, string command, string cwd, string logPath, string exitPath)
     {
         File.WriteAllBytes(logPath, []);
-        var start = UnixStart(command, cwd, logPath, exitPath);
+        var start = UnixStart(command, cwd, logPath, exitPath, jobId);
+        // systemd-run --scope execs the command in its own process, so the pid Process.Start returns is the job shell's: the
+        // pid the row records stays valid for reattach and for Kill(entireProcessTree) after the scope has been made.
         return Process.Start(start) ?? throw new InvalidOperationException($"`{command}` did not start");
     }
 
-    /// <summary>What a Linux job starts: <c>setsid /bin/sh -c</c> the wrapper, in the build environment.</summary>
-    internal static ProcessStartInfo UnixStart(string command, string cwd, string logPath, string exitPath)
+    /// <summary>What a Linux job starts: the wrapper under <c>setsid /bin/sh -c</c>, in a scope of its own under systemd, in the build environment.</summary>
+    internal static ProcessStartInfo UnixStart(string command, string cwd, string logPath, string exitPath, string jobId = "job")
     {
         // A job keeps only its log and /dev/null: every other fd the node holds without CLOEXEC is closed first. dash
         // takes only single-digit fds in a redirection, so any fd number needs bash; without bash fds 3 to 9 still go.
@@ -113,13 +115,92 @@ public sealed class DetachedShell : IDisposable
         var wrapper = $"{closeFds}exec </dev/null >/dev/null 2>&1\n( {command}\n) </dev/null >{ShQuote(logPath)} 2>&1\ncode=$?\n" +
             $"echo \"$code\" > {ShQuote(exitPath + ".tmp")} && mv -f {ShQuote(exitPath + ".tmp")} {ShQuote(exitPath)}\nexit $code\n";
         var setsid = new[] { "/usr/bin/setsid", "/bin/setsid" }.FirstOrDefault(File.Exists);
-        var shell = bash ?? "/bin/sh";
-        var start = setsid is null ? new ProcessStartInfo(shell) : new ProcessStartInfo(setsid) { ArgumentList = { shell } };
-        start.ArgumentList.Add("-c");
-        start.ArgumentList.Add(wrapper);
+        var scoped = UnderSystemd(out var systemdRun) && ScopeWorks(systemdRun);
+        var (program, args) = UnixArgv(wrapper, ScopeUnit(jobId, logPath), setsid, scoped ? systemdRun : null, bash ?? "/bin/sh");
+        var start = new ProcessStartInfo(program);
+        foreach (var arg in args)
+        {
+            start.ArgumentList.Add(arg);
+        }
         start.WorkingDirectory = cwd;
         start.UseShellExecute = false;
         return BuildEnvironment.Apply(start);
+    }
+
+    /// <summary>
+    /// The program and arguments of a Linux job. With <paramref name="systemdRun"/>: <c>systemd-run --user --scope --quiet --collect
+    /// --unit=&lt;unit&gt; setsid /bin/sh -c &lt;wrapper&gt;</c>, a transient scope outside the node unit's cgroup, so the unit's default
+    /// <c>KillMode=control-group</c> does not take the job down when the node exits. Without it, <c>setsid /bin/sh -c</c> alone.
+    /// </summary>
+    internal static (string Program, IReadOnlyList<string> Args) UnixArgv(string wrapper, string unit, string? setsid, string? systemdRun, string shell = "/bin/sh")
+    {
+        var argv = setsid is null ? new[] { shell, "-c", wrapper } : new[] { setsid, shell, "-c", wrapper };
+        if (systemdRun is null)
+        {
+            return (argv[0], argv[1..]);
+        }
+        return (systemdRun, ["--user", "--scope", "--quiet", "--collect", $"--unit={unit}", .. argv]);
+    }
+
+    /// <summary>The scope's unit name: the job's name with every character systemd does not allow in one made <c>_</c>.</summary>
+    internal static string ScopeUnit(string jobId, string logPath) =>
+        string.Concat(JobName(jobId, logPath).Select(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' or ':' ? c : '_'));
+
+    /// <summary>The node runs under systemd (<c>INVOCATION_ID</c> is set) and <c>systemd-run</c> is installed.</summary>
+    internal static bool UnderSystemd(out string? systemdRun)
+    {
+        systemdRun = null;
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("INVOCATION_ID")))
+        {
+            return false;
+        }
+        systemdRun = new[] { "/usr/bin/systemd-run", "/bin/systemd-run" }.FirstOrDefault(File.Exists);
+        return systemdRun is not null;
+    }
+
+    private static readonly Dictionary<string, bool> ScopeProbes = [];
+
+    /// <summary>
+    /// Whether <c>systemd-run --user --scope</c> can make a scope here (it needs the user's bus); asked once by running it on
+    /// <c>true</c>. When it cannot, the job starts plain, and the reason is written to stderr once rather than failing the job.
+    /// </summary>
+    private static bool ScopeWorks(string? systemdRun)
+    {
+        if (systemdRun is null)
+        {
+            return false;
+        }
+        lock (ScopeProbes)
+        {
+            if (ScopeProbes.TryGetValue(systemdRun, out var known))
+            {
+                return known;
+            }
+            var works = false;
+            try
+            {
+                using var probe = Process.Start(new ProcessStartInfo(systemdRun)
+                {
+                    ArgumentList = { "--user", "--scope", "--quiet", "--collect", "/bin/true" },
+                    UseShellExecute = false,
+                    RedirectStandardError = true,
+                });
+                if (probe is not null)
+                {
+                    var error = probe.StandardError.ReadToEndAsync();
+                    works = probe.WaitForExit(10_000) && probe.ExitCode == 0;
+                    if (!works)
+                    {
+                        Console.Error.WriteLine($"jobs start without a systemd scope: systemd-run --user --scope failed: {(error.IsCompleted ? error.Result.Trim() : "no answer")}");
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is Win32Exception or IOException or InvalidOperationException)
+            {
+                Console.Error.WriteLine($"jobs start without a systemd scope: {ex.Message}");
+            }
+            return ScopeProbes[systemdRun] = works;
+        }
     }
 
     private const uint CreateNewProcessGroup = 0x200;
