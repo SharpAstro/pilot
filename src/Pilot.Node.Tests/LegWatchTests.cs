@@ -230,7 +230,7 @@ public sealed class LegWatchTests
     }
 
     [Fact]
-    public async Task AReviewerThatStopsWithoutItsVerdictRingsForAFreshReview()
+    public async Task AReviewerThatStopsWithoutItsVerdictIsToldThenReviewedAfreshAndOnlyThenRings()
     {
         _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });
         _state.PutFlight(new FlightRow
@@ -248,9 +248,23 @@ public sealed class LegWatchTests
         _time.Advance(TimeSpan.FromMinutes(4));
         await _watch.LookAsync(Ct);
 
-        var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Subject, card.Detail).ShouldBe((LegWatch.ReviewStalled, "flight/TIA1", "it stopped 4 min ago without its verdict"));
+        // Told first, in its own session: nothing for the person yet (PIL274's stall only rang, and nobody pressed it).
+        (_said.ShouldHaveSingleItem().Verb, _said[0].Target).ShouldBe((Verbs.Say, "session/a1b2c3d4"));
+        Open().ShouldNotContain(c => c.Bin != CardBin.Handled);
+
+        // Still idle a grace later: the node starts a fresh review itself.
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        (_said[^1].Verb, _said[^1].Target).ShouldBe((Verbs.StartReview, "flight/TIA1"));
+        Open().ShouldNotContain(c => c.Bin != CardBin.Handled);
+
+        // Stalled again after that: now it rings, with a fresh review as the way on.
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        var card = Open().Where(c => c.Bin == CardBin.Ring).ShouldHaveSingleItem();
+        (card.Kind, card.Subject, card.Detail).ShouldBe((LegWatch.ReviewStalled, "flight/TIA1", "it stopped 12 min ago without its verdict"));
         card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.StartReview);
+        _said.Count.ShouldBe(2);
     }
 
     [Fact]
@@ -296,7 +310,13 @@ public sealed class LegWatchTests
         _time.Advance(TimeSpan.FromMinutes(4));
         await _watch.LookAsync(Ct);
 
-        var card = Open().ShouldHaveSingleItem();
+        // Told, then reviewed afresh by the node, then rung: as a flight's reviewer is.
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        (_said[^1].Verb, _said[^1].Target).ShouldBe((Verbs.ReviewPr, "pr/acme/widget#7"));
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        var card = Open().Where(c => c.Bin == CardBin.Ring).ShouldHaveSingleItem();
         (card.Kind, card.Subject, card.Title).ShouldBe((LegWatch.ReviewStalled, "pr/acme/widget#7", "acme/widget#7's review stalled"));
         var again = card.Choices.ShouldHaveSingleItem();
         (again.Verb, again.Target).ShouldBe((Verbs.ReviewPr, "pr/acme/widget#7"));
