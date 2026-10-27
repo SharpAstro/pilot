@@ -14,7 +14,9 @@ namespace Pilot.Node.Tests;
 /// </summary>
 public sealed class LockWaitTests : LegCommanderTestsBase, IDisposable
 {
-    private static readonly TimeSpan Answered = TimeSpan.FromSeconds(6);
+    // The lock is held until after the answer, so the answer can only be the patience's (LockWait.Patience, 5 s): this bound
+    // says only that it came rather than hung. At 6 s a loaded Windows runner missed it by 0.6 s (#379, 2026-10-28).
+    private static readonly TimeSpan Answered = TimeSpan.FromSeconds(15);
 
     private static string Said(NamedLock gate, string holds) =>
         $"waiting for {holds} (since {gate.Holder!.Since.ToLocalTime():HH:mm:ss})";
