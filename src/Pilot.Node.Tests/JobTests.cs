@@ -28,7 +28,6 @@ public sealed class JobTests : IDisposable
         _jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), TimeProvider.System)
         {
             FreeMemory = () => _free,
-            DrainGrace = TimeSpan.FromSeconds(2),
             Say = (command, _) =>
             {
                 _said.Enqueue(command);

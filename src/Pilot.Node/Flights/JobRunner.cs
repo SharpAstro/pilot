@@ -57,13 +57,6 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>How often a running job's step (its last line) is put on the stream, so a long run shows it is alive without a delta per line.</summary>
     public TimeSpan StepEvery { get; init; } = TimeSpan.FromSeconds(10);
 
-    /// <summary>
-    /// How long a job's output may stay open after its process has exited. A process it started (a test's node, a git, a
-    /// pwsh) that outlives it holds the pipe, and waiting for the pipe instead of the process kept SE1's j122 "running" for
-    /// four and a half hours after its tests had passed, with six jobs queued behind it (2026-10-26).
-    /// </summary>
-    public TimeSpan DrainGrace { get; init; } = TimeSpan.FromSeconds(15);
-
     /// <summary>How many jobs run at once; the rest wait their turn. Set live by <c>set node max-jobs</c>, then <see cref="Pump"/>.</summary>
     public int MaxRunning { get; set; } = 1;
 

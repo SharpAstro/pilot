@@ -236,7 +236,8 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>Kills a running job's whole process tree at once: the node's <c>cancel-job</c> with its <c>force</c> arg.</summary>
     public Action<JobRow>? OnForceCancel { get; set; }
 
-    /// <summary>The job whose Force cancel… was pressed and waits on its own question, as <see cref="_confirmCancel"/>.</summary>
+    /// <summary>The job whose Force cancel… was pressed and waits on its own question, as <see cref="_confirmCancel"/>. Both hold the line's
+    /// Key (node and id), not the job id: two nodes' lists share one page, and each can have a j14 (review of #357).</summary>
     private string? _confirmForce;
 
     /// <summary>Opens the session a job wakes (its transcript, on the Sessions page); null where there is none to open.</summary>
@@ -430,10 +431,10 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
         else if (CanCommand && line.Live && OnCancel is { } cancel)
         {
-            items.Add(new DropdownItem<string>("Cancel…", "cancel") { OnChoose = () => { _confirmForce = null; _confirmCancel = job.Id; } });
+            items.Add(new DropdownItem<string>("Cancel…", "cancel") { OnChoose = () => { _confirmForce = null; _confirmCancel = line.Key; } });
             if (job.State == JobState.Running && OnForceCancel is not null)
             {
-                items.Add(new DropdownItem<string>("Force cancel…", "force-cancel") { OnChoose = () => { _confirmCancel = null; _confirmForce = job.Id; } });
+                items.Add(new DropdownItem<string>("Force cancel…", "force-cancel") { OnChoose = () => { _confirmCancel = null; _confirmForce = line.Key; } });
             }
         }
         if (job.Owner is not null && OnSession is { } session)
@@ -467,11 +468,11 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     {
         var parts = new List<Layout.Node> { Header(screen), Main(screen).HStar() };
         // A question asked about one job does not follow the selection to another, nor outlive the job's run.
-        if (_confirmCancel is { } asked && (selected is not { Live: true } || selected.Row.Id != asked))
+        if (_confirmCancel is { } asked && (selected is not { Live: true } || selected.Key != asked))
         {
             _confirmCancel = null;
         }
-        if (_confirmForce is { } forceAsked && (selected is not { Row.State: JobState.Running } || selected.Row.Id != forceAsked))
+        if (_confirmForce is { } forceAsked && (selected is not { Row.State: JobState.Running } || selected.Key != forceAsked))
         {
             _confirmForce = null;
         }
@@ -620,7 +621,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
         else if (CanCommand && line.Live && OnCancel is { } cancel)
         {
-            if (_confirmCancel == job.Id)
+            if (_confirmCancel == line.Key)
             {
                 // The question replaces the row's buttons, so nothing else can be pressed by a slip while it stands.
                 buttons.Add(Question($"Cancel {job.Id}? It stops now; its output so far stays in its log."));
@@ -628,7 +629,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                 buttons.Add(Pill("Keep running", $"job:{job.Id}:cancel-no", () => _confirmCancel = null));
                 return Panel(facts, line, buttons);
             }
-            if (_confirmForce == job.Id && OnForceCancel is { } forceYes)
+            if (_confirmForce == line.Key && OnForceCancel is { } forceYes)
             {
                 // Its own question, as Cancel's: a force kills the wrapper and everything under it with no grace.
                 buttons.Add(Question($"Force cancel {job.Id}? It and every process under it are killed at once; its output so far stays in its log."));
@@ -637,10 +638,10 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                 return Panel(facts, line, buttons);
             }
             // Cancel (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            buttons.Add(Pill("Cancel…", $"job:{job.Id}:cancel", () => { _confirmForce = null; _confirmCancel = job.Id; }, Danger, DangerHover));
+            buttons.Add(Pill("Cancel…", $"job:{job.Id}:cancel", () => { _confirmForce = null; _confirmCancel = line.Key; }, Danger, DangerHover));
             if (job.State == JobState.Running && OnForceCancel is not null)
             {
-                buttons.Add(Pill("Force cancel…", $"job:{job.Id}:force", () => { _confirmCancel = null; _confirmForce = job.Id; }, Danger, DangerHover));
+                buttons.Add(Pill("Force cancel…", $"job:{job.Id}:force", () => { _confirmCancel = null; _confirmForce = line.Key; }, Danger, DangerHover));
             }
         }
         if (job.Owner is not null && OnSession is { } session)

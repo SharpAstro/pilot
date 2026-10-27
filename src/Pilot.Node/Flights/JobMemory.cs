@@ -22,6 +22,13 @@ public sealed record JobKey(string Repo, string ToolVerb, string Target, string 
 
     private static readonly string[] ProjectExtensions = [".sln", ".slnx", ".csproj", ".fsproj", ".vbproj"];
 
+    // Commands that shape or report a run's output rather than do its work: a job's key is never one of them while there is work beside it.
+    private static readonly HashSet<string> Plumbing = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "tail", "head", "grep", "egrep", "sed", "awk", "cut", "sort", "uniq", "wc", "tee", "cat", "echo", "printf", "true", "false",
+        "select-object", "select-string", "out-null", "out-file", "out-host", "tee-object", "write-output", "write-host",
+    };
+
     public override string ToString() => $"{Repo}|{ToolVerb}|{Target}|{Flags}";
 
     /// <summary>Reads a key written by <see cref="ToString"/>; null for anything else.</summary>
@@ -31,7 +38,11 @@ public sealed record JobKey(string Repo, string ToolVerb, string Target, string 
         return parts is { Length: 4 } ? new JobKey(parts[0], parts[1], parts[2], parts[3]) : null;
     }
 
-    /// <summary>The key of a command run in <paramref name="cwd"/>: of the last command in it that does work (a <c>cd</c> only moves the folder).</summary>
+    /// <summary>
+    /// The key of a command run in <paramref name="cwd"/>: of the last command in it that does work. A <c>cd</c> only moves the
+    /// folder, and what only shapes the output (<c>| tail -20</c>, <c>; echo done</c>) is not the work: keyed on it, every piped
+    /// job shared one wrong estimate (review of #357).
+    /// </summary>
     public static JobKey Of(string command, string cwd)
     {
         var folder = cwd;
@@ -51,7 +62,10 @@ public sealed record JobKey(string Repo, string ToolVerb, string Target, string 
                 }
                 continue;
             }
-            key = KeyOf(tool, words, folder);
+            if (key is null || !Plumbing.Contains(tool))
+            {
+                key = KeyOf(tool, words, folder);
+            }
         }
         return key ?? new JobKey(RepoOf(cwd), "", "", "");
     }
@@ -224,6 +238,12 @@ public sealed record JobKey(string Repo, string ToolVerb, string Target, string 
             else if (char.IsWhiteSpace(c))
             {
                 EndWord();
+            }
+            else if (c == '&' && (word.Length > 0 && word[^1] == '>' || i + 1 < command.Length && command[i + 1] == '>'))
+            {
+                // Part of a redirection (2>&1, >&2, &>file), not a separator: 2>&1 once split a job into a segment "1".
+                word.Append(c);
+                has = true;
             }
             else if (c is ';' or '|' or '&')
             {

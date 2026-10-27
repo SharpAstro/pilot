@@ -69,6 +69,20 @@ public sealed class JobMemoryTests : IDisposable
     }
 
     [Fact]
+    public void ARedirectionAndThePlumbingAfterTheWorkLeaveTheKeyTheWorks()
+    {
+        // Keyed as tail (2>&1 split at its &, the last segment kept), every piped job shared one estimate (review of #357).
+        var plain = JobKey.Of("dotnet test src/Pilot.Node.Tests -c Release", _clone);
+
+        JobKey.Of("dotnet test src/Pilot.Node.Tests -c Release 2>&1 | tail -20", _clone).ShouldBe(plain);
+        JobKey.Of("dotnet test src/Pilot.Node.Tests -c Release; echo done", _clone).ShouldBe(plain);
+        JobKey.Of("dotnet test src/Pilot.Node.Tests -c Release >&2", _clone).ShouldBe(plain);
+        JobKey.Of("dotnet test src/Pilot.Node.Tests -c Release &> out.log", _clone).ShouldBe(plain);
+        // A plumbing tool alone is still its own key.
+        JobKey.Of("tail -20 out.log", _clone).ShouldNotBe(plain);
+    }
+
+    [Fact]
     public void TheTargetIsTheProjectOrSolutionResolvedRelativeToTheRepoHoweverItIsNamed()
     {
         var byFile = JobKey.Of("dotnet test src/Pilot.Node.Tests/Pilot.Node.Tests.csproj", _clone);
