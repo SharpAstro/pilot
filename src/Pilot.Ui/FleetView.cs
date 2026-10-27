@@ -500,6 +500,12 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     private static float LastKnownUsageHeight(FleetLine line) => !line.Connected && line.Usage.Length > 0 ? 16f : 0f;
 
+    private static float RowHeightOf(FleetLine line) =>
+        (line.WatchtowerSummary is null ? RowHeight : SummaryRowHeight)
+        + (line.Connected ? 0f : 16f)
+        + (line.StateLines.Length > 1 ? 16f : 0f)
+        + LastKnownUsageHeight(line);
+
     private Layout.Node Row(FleetLine line, int index)
     {
         var buttons = new List<Layout.Node>();
@@ -555,7 +561,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f),
         };
         var row = Table.Row(Columns, Layout.Builder.Spacer().Bg(line.Connected ? Live : Away), cells)
-            .RowH((line.WatchtowerSummary is null ? RowHeight : SummaryRowHeight) + (line.Connected ? 0f : 16f) + (line.StateLines.Length > 1 ? 16f : 0f) + LastKnownUsageHeight(line))
+            .RowH(RowHeightOf(line))
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index));
