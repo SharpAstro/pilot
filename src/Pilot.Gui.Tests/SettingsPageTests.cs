@@ -42,6 +42,28 @@ public sealed class SettingsPageTests
     };
 
     [Fact]
+    public void TheLineWaitingForTheSettingsSitsAtTheTopOfThePageNotDownItsMiddle()
+    {
+        using var renderer = new RgbaImageRenderer(755, 1180);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        // A read that never answers: the page waits on it.
+        chrome.Settings.Load = _ => new TaskCompletionSource<SettingsPage>().Task;
+        chrome.Show(PilotPage.Settings);
+
+        chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 755, 1180));
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR") is { Length: > 0 } dir)
+        {
+            File.WriteAllBytes(Path.Combine(dir, "settings-reading-755.png"), PngWriter.Encode(renderer.Surface.Pixels, 755, 1180));
+        }
+
+        var arranged = Layout.Engine.Arrange(chrome.Settings.Tree(DateTimeOffset.UtcNow), new Rect<float>(0, 0, 677, 1180),
+            new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        var line = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var text } } && text.StartsWith("reading the node's settings", StringComparison.Ordinal)).Bounds;
+        line.Y.ShouldBeLessThan(200f);
+        line.X.ShouldBeGreaterThanOrEqualTo(8f);
+    }
+
+    [Fact]
     public async Task ThePageShowsTheChecklistAndTheSettingsAndEachButtonIsAVerb()
     {
         using var renderer = new RgbaImageRenderer(1280, 900);
