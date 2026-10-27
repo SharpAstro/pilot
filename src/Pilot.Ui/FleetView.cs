@@ -312,6 +312,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     public const string ListId = "fleet";
 
     private const float RowHeight = 70f;
+
+    // A churning row, with the watchtower's Summary on a line of its own.
+    private const float SummaryRowHeight = 86f;
     private const float Gutter = 16f;
 
     // Column widths, as they are before a reader drags a divider.
@@ -509,7 +512,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f),
         };
         var row = Table.Row(Columns, Layout.Builder.Spacer().Bg(line.Connected ? Live : Away), cells)
-            .RowH(line.WatchtowerSummary is null ? RowHeight : RowHeight + 16f)
+            .RowH(line.WatchtowerSummary is null ? RowHeight : SummaryRowHeight)
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index));
