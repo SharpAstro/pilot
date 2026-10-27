@@ -544,8 +544,14 @@ A full test suite, a build or a training run is a job, not a worker's turn: `pil
 the node, which runs it in the folder it was handed from, and the worker ends its turn instead of sitting in a poll
 loop. When it ends (by itself, on its timeout, 2 h by default and 8 h at most, or cancelled) the node wakes the session
 that handed it over with how it ended, its last lines and the path of its whole log. Jobs from every flight share the
-machine: `pilot-node --max-jobs <n>` run at once (1 by default) and only with `--job-memory <GB>` free (2 by default);
-the rest wait in the order they came, each saying what it waits on. A job's log is kept in the node's data folder
+machine: `pilot-node --max-jobs <n>` run at once (1 by default). The head of the queue with nothing running starts
+whatever the free memory (so the queue never deadlocks on it); a second or later job starts only when the machine has
+free what its kind of command needs: the node samples a job's process tree every 2 s, a run's value is the median of
+its samples (its peak is only shown), and the estimate is the median of the last 5 runs of the same key (repo, tool
+and verb, project or solution, and `--no-build`, `-c` and whether a `--filter` is given), falling back to the same
+target with other flags, the same verb in the repo, then 1 GB. A run whose median is above the estimate raises it at
+once; a short spike never does. `--job-memory <GB>` (2 by default) caps what a job is ever held for. The rest wait in
+the order they came, each saying what it needs (median and peak) and the memory free now. A job's log is kept in the node's data folder
 (`jobs/<id>.log`), and its end is served for the GUI (`GET /api/v1/jobs/<id>/log`, a grant's on the LAN).
 
 While a job runs, its log (the GET above, which the Background tasks page polls) also carries the wrapper's `pid` and

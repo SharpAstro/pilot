@@ -58,7 +58,7 @@ public static class NodeCommandLine
         var maxJobs = new Option<int>("--max-jobs") { Description = "How many jobs (pilot run) run at once, from every flight; the rest wait their turn. 1 by default", DefaultValueFactory = _ => 1 };
         var jobMemory = new Option<double>("--job-memory")
         {
-            Description = "The free memory, in GB, a job waits for before it starts; 2 by default, 0 to not wait",
+            Description = "The most free memory, in GB, a queued job waits for before it starts (its kind's measured need, capped here); 2 by default, 0 to not wait",
             DefaultValueFactory = _ => 2,
         };
         var lanPort = new Option<int>("--lan-port") { Description = $"The TCP port for the LAN; {NodeWire.DefaultLanPort} by default", DefaultValueFactory = _ => NodeWire.DefaultLanPort };

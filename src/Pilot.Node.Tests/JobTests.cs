@@ -382,7 +382,7 @@ public sealed class JobTests : IDisposable
         var second = Run(Echo("second ran")).Made!;
 
         var waiting = await Until(second, j => j.Step is not null);
-        (waiting.State, waiting.Step).ShouldBe((JobState.Queued, "next in line: another job is running"));
+        (waiting.State, waiting.Step).ShouldBe((JobState.Queued, "next in line: another job is running; needs 1.0 GB (a guess, it has not run before)"));
         waiting.QueuedAt.ShouldNotBeNull();
 
         (await Ended(first)).State.ShouldBe(JobState.Succeeded);
@@ -395,32 +395,154 @@ public sealed class JobTests : IDisposable
     [Fact]
     public async Task AJobWaitsForFreeMemoryAndStartsOnceThereIsEnough()
     {
-        _free = 1L << 30;
+        // Two may run at once, so it is memory that holds the second back, not the slot.
+        _jobs.MaxRunning = 2;
+        var holder = Run(Sleep(30)).Made!;
+        await Until(holder, j => j.State == JobState.Running);
+        _free = 512L << 20;
 
         var id = Run(Echo("ran")).Made!;
 
-        (await Until(id, j => j.Step is not null)).Step.ShouldBe("next in line: waiting for 2.0 GB of free memory (1.0 GB now)");
+        // Nothing is known of it: the guess of 1 GB, which job-memory (2 GB) does not cap.
+        (await Until(id, j => j.Step is not null)).Step.ShouldBe("next in line: waiting for 1.0 GB of free memory (a guess, it has not run before; 0.5 GB now)");
         _free = 4L << 30;
         _jobs.Pump();
+        (await Ended(id)).State.ShouldBe(JobState.Succeeded);
+        Cancel(holder);
+    }
+
+    private void Cancel(string id) =>
+        _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
+
+    [Fact]
+    public async Task TheHeadOfTheQueueWithNothingRunningStartsWhateverTheFreeMemory()
+    {
+        _free = 0;
+
+        var id = Run(Echo("ran")).Made!;
+
         (await Ended(id)).State.ShouldBe(JobState.Succeeded);
     }
 
     [Fact]
-    public async Task AJobBehindAnotherSaysHowManyAreAhead()
+    public async Task ASecondJobIsHeldForTheMedianOfItsKindsPastRunsAndNotForJobMemory()
     {
+        // The node ran this kind of command before: three runs, medians of 3, 5 and 4 GB (the estimate is 4), peaks higher.
+        SeedRun("j1", Echo("x"), median: 3L << 30, peak: 6L << 30, ended: 3);
+        SeedRun("j2", Echo("x"), median: 5L << 30, peak: 9L << 30, ended: 2);
+        SeedRun("j3", Echo("x"), median: 4L << 30, peak: 5L << 30, ended: 1);
+        // The cap is above the estimate here, so the estimate is what the job is held for.
+        _jobs.MinFreeMemory = 16L << 30;
+        _jobs.MaxRunning = 2;
+        var holder = Run(Sleep(30)).Made!;
+        await Until(holder, j => j.State == JobState.Running);
+        _free = 3L << 30;
+
+        var id = Run(Echo("x")).Made!;
+
+        (await Until(id, j => j.Step is not null)).Step.ShouldBe("next in line: waiting for 4.0 GB of free memory (median of its last 3 runs, peak 9.0 GB; 3.0 GB now)");
+        _free = 4L << 30;
+        _jobs.Pump();
+        (await Ended(id)).State.ShouldBe(JobState.Succeeded);
+        Cancel(holder);
+    }
+
+    [Fact]
+    public async Task JobMemoryStaysACapOnWhatAJobIsHeldFor()
+    {
+        SeedRun("j1", Echo("x"), median: 8L << 30, peak: 9L << 30, ended: 1);
+        _jobs.MinFreeMemory = 2L << 30;
+        _jobs.MaxRunning = 2;
+        var holder = Run(Sleep(30)).Made!;
+        await Until(holder, j => j.State == JobState.Running);
+        _free = 1L << 30;
+
+        var id = Run(Echo("x")).Made!;
+
+        (await Until(id, j => j.Step is not null)).Step.ShouldBe("next in line: waiting for 2.0 GB of free memory (median of its last run, peak 9.0 GB, held to the job-memory cap; 1.0 GB now)");
+        _free = 2L << 30;
+        _jobs.Pump();
+        (await Ended(id)).State.ShouldBe(JobState.Succeeded);
+        Cancel(holder);
+    }
+
+    [Fact]
+    public async Task ARunsSpikeDoesNotRaiseTheEstimateButARunWhoseMedianIsHigherDoesAtOnce()
+    {
+        // A median of 1 GB with a peak of 7 GB: the spike is shown, never gated on.
+        var calls = 0;
+        var spiky = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n3.sock"), Path.Combine(_root, "data3")), TimeProvider.System)
+        {
+            FreeMemory = () => null,
+            TreeEvery = TimeSpan.FromMilliseconds(10),
+            FollowEvery = TimeSpan.FromMilliseconds(20),
+            // One spike among the samples of a run that otherwise holds 1 GB.
+            MemorySample = _ => Interlocked.Increment(ref calls) == 4 ? 7L << 30 : 1L << 30,
+            Say = (command, _) => Task.FromResult(_state.Complete(command, null)),
+        };
+        await spiky.StartAsync(Ct);
+        await spiky.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        try
+        {
+            var made = spiky.Run(new CommandRequest { Verb = Verbs.Run, Target = Verbs.NodeTarget, Args = [_root, "0", "sleep 1; echo slept"], Who = "t" }).Made!;
+            var ran = await Until(made, j => j.EndedAt is not null);
+
+            (ran.MemoryMedian, ran.MemoryPeak).ShouldBe((1L << 30, 7L << 30));
+            // The spike did not move the estimate: its median did not, and the estimate is made of medians.
+            JobMemory.Estimate(_state.Jobs(), JobKey.Parse(ran.MemoryKey)!).Bytes.ShouldBe(1L << 30);
+        }
+        finally
+        {
+            await spiky.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public void ARunWhoseMedianIsAboveTheEstimateRaisesItAtOnceAndAnOldHighRunStaysInTheMedian()
+    {
+        var key = JobKey.Of(Echo("x"), _root);
+        SeedRun("j1", Echo("x"), median: 1L << 30, peak: 1L << 30, ended: 5);
+        SeedRun("j2", Echo("x"), median: 1L << 30, peak: 1L << 30, ended: 4);
+        SeedRun("j3", Echo("x"), median: 1L << 30, peak: 1L << 30, ended: 3);
+        JobMemory.Estimate(_state.Jobs(), key).Bytes.ShouldBe(1L << 30);
+
+        // One run at 6 GB: the median of five is still 1 GB, but the run's median is above it, so it counts at once.
+        SeedRun("j4", Echo("x"), median: 6L << 30, peak: 6L << 30, ended: 2);
+        JobMemory.Estimate(_state.Jobs(), key).Bytes.ShouldBe(6L << 30);
+    }
+
+    [Fact]
+    public async Task AQueuedJobBehindAnotherSaysWhatItNeedsAndTheMemoryFreeNow()
+    {
+        _free = 1L << 30;
+        var holder = Run(Sleep(30)).Made!;
+        await Until(holder, j => j.State == JobState.Running);
+        Run(Echo("b"));
         _free = 0;
 
-        Run(Echo("a"));
-        var behind = Run(Echo("b")).Made!;
+        var behind = Run(Echo("c")).Made!;
 
-        (await Until(behind, j => j.Step is not null)).Step.ShouldBe("queued, 1 ahead of it");
+        (await Until(behind, j => j.Step is not null)).Step.ShouldBe("queued, 1 ahead of it; needs 1.0 GB (a guess, it has not run before), 0.0 GB free now");
+        Cancel(holder);
     }
+
+    /// <summary>A job that ended by itself some hours ago, which the node measured.</summary>
+    private void SeedRun(string id, string command, long median, long peak, int ended) =>
+        _state.PutJob(new JobRow
+        {
+            Id = id, Command = command, Cwd = _root, State = JobState.Succeeded, ExitCode = 0, LogPath = Path.Combine(_root, id + ".log"),
+            Timeout = JobRunner.DefaultTimeout, StartedAt = DateTimeOffset.UtcNow.AddHours(-ended - 1), EndedAt = DateTimeOffset.UtcNow.AddHours(-ended), Told = true,
+            MemoryKey = JobKey.Of(command, _root).ToString(), MemoryMedian = median, MemoryPeak = peak,
+        });
 
     [Fact]
     public async Task AQueuedJobCancelledNeverRunsAndItsOwnerIsTold()
     {
         _free = 0;
+        var holder = Run(Sleep(30)).Made!;
+        await Until(holder, j => j.State == JobState.Running);
         var id = Run(Echo("never")).Made!;
+        await Until(id, j => j.Step is not null);
 
         _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" }).Ok.ShouldBeTrue();
         var job = await Ended(id);
@@ -428,6 +550,7 @@ public sealed class JobTests : IDisposable
         (job.State, job.Error).ShouldBe((JobState.Cancelled, "cancelled by controller before its turn"));
         File.Exists(job.LogPath).ShouldBeFalse();
         _said.Single().Args[0].ShouldContain("cancelled by controller before its turn");
+        Cancel(holder);
     }
 
     [Fact]
@@ -900,33 +1023,35 @@ public sealed class JobTests : IDisposable
     [Fact]
     public async Task QueuedJobsSurviveARestartAndRunInTheOrderTheyCame()
     {
-        long? free = 0;
-        var first = await Node.StartAsync(_root, () => free);
+        // A job runs while the three wait behind it: with nothing running the head would start at once, whatever the memory.
+        var first = await Node.StartAsync(_root, () => 0);
+        var blocker = first.Run(_root, Sleep(30)).Made!;
+        await first.UntilAsync(blocker, j => j.State == JobState.Running, Ct);
         var one = first.Run(_root, Echo("one ran")).Made!;
         var two = first.Run(_root, Echo("two ran")).Made!;
         var three = first.Run(_root, Echo("three ran")).Made!;
         await first.UntilAsync(three, j => j.Step is not null, Ct);
         await first.StopAsync();
 
-        using var second = await Node.StartAsync(_root, () => free);
-        // Still waiting, nothing failed, and the node said nothing.
+        using var second = await Node.StartAsync(_root, () => 0);
+        // Still waiting, nothing failed, and the node said nothing; the job that ran on is followed again.
         foreach (var id in new[] { one, two, three })
         {
             second.Job(id).State.ShouldBe(JobState.Queued);
         }
-        await second.UntilAsync(three, j => j.Step == "queued, 2 ahead of it", Ct);
+        second.Job(blocker).State.ShouldBe(JobState.Running);
+        await second.UntilAsync(three, j => j.Step is { } step && step.StartsWith("queued, 2 ahead of it", StringComparison.Ordinal), Ct);
         second.Said.ShouldBeEmpty();
         second.Job(one).Step.ShouldNotBeNull().ShouldStartWith("next in line");
 
-        free = null;
-        second.Jobs.Pump();
+        second.Jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(blocker), Who = "controller" }).Ok.ShouldBeTrue();
         var ended = new[] { await second.EndedAsync(one, Ct), await second.EndedAsync(two, Ct), await second.EndedAsync(three, Ct) };
 
         ended.Select(j => j.State).ShouldAllBe(state => state == JobState.Succeeded);
         ended.Select(j => j.Step).ShouldBe(["one ran", "two ran", "three ran"]);
         ended[0].StartedAt.ShouldBeLessThanOrEqualTo(ended[1].StartedAt);
         ended[1].StartedAt.ShouldBeLessThanOrEqualTo(ended[2].StartedAt);
-        second.Said.Count.ShouldBe(3);
+        second.Said.Count.ShouldBe(4);
     }
 
     [Fact]

@@ -15,10 +15,14 @@ namespace Pilot.Node.Flights;
 /// </summary>
 /// <remarks>
 /// <para><b>The machine is shared.</b> Several flights hand jobs to one node, and a full test suite can take gigabytes, so
-/// jobs do not all start at once: at most <see cref="MaxRunning"/> run together, and one starts only while the machine
-/// has <see cref="MinFreeMemory"/> free. The rest wait in the order they came, from every flight alike, each saying where
-/// it stands in its step; their owners end their turns as for any job and are woken when it ends, so a wait costs them
-/// nothing.</para>
+/// jobs do not all start at once: at most <see cref="MaxRunning"/> run together, and a second or later one starts only while
+/// the machine has free what the same kind of command used before (<see cref="JobMemory"/>). The head of the queue with
+/// nothing running starts whatever the memory, so the queue never waits for memory only its own jobs could free. The rest wait
+/// in the order they came, from every flight alike, each saying where it stands and what it needs in its step; their owners
+/// end their turns as for any job and are woken when it ends, so a wait costs them nothing.</para>
+/// <para><b>What a job needs is measured.</b> The job's process tree is sampled every <see cref="TreeEvery"/>; the run's value is
+/// the median of the samples (its peak is only shown), and the estimate for a kind of command (<see cref="JobKey"/>) is the median
+/// of its last runs' values, falling back to the same target with other flags, the same verb in the repo, then 1 GB.</para>
 /// <para><b>A job outlives the node.</b> Its process is detached and the node follows it by its files, so a restarted node
 /// finds a job its predecessor left again: on start it checks each running row's pid and start time (a reused pid is not
 /// the job). One still alive is followed again (log, step, exit file) with its timeout counted from its start; one that
@@ -63,8 +67,14 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>How many jobs run at once; the rest wait their turn. Set live by <c>set node max-jobs</c>, then <see cref="Pump"/>.</summary>
     public int MaxRunning { get; set; } = 1;
 
-    /// <summary>The free memory a job needs before it starts: a suite started on a machine already short of it takes the machine down with it. Set live by <c>set node job-memory</c>.</summary>
+    /// <summary>
+    /// The most free memory a job is ever held for: what a job needs is its kind's measured estimate (<see cref="JobMemory"/>), and
+    /// this caps it (0 holds nothing back). Set live by <c>set node job-memory</c>.
+    /// </summary>
     public long MinFreeMemory { get; set; } = 2L << 30;
+
+    /// <summary>The memory, in bytes, the processes of a job's tree hold now; null when it cannot be read. Null reads each from <see cref="ProcessTable"/>; a test puts its own.</summary>
+    public Func<JobProcessInfo[], long?>? MemorySample { get; init; }
 
     /// <summary>The machine's free memory in bytes, or null when it cannot be read (then memory holds nothing back).</summary>
     public Func<long?> FreeMemory { get; init; } = MachineMemory.Available;
@@ -301,6 +311,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             ExitPath = ExitPathOf(logPath),
             Timeout = timeout,
             StartedAt = time.GetUtcNow(),
+            MemoryKey = JobKey.Of(line, cwd).ToString(),
         };
         job = job with { QueuedAt = job.StartedAt };
 
@@ -347,7 +358,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 break;
         }
 
-        while (_queue.Count > 0 && WhyWait() is null)
+        while (_queue.Count > 0 && WhyWait(_queue[0]) is null)
         {
             var next = _queue[0];
             _queue.RemoveAt(0);
@@ -360,10 +371,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
 
         // Each waiting job says where it stands.
-        var why = _queue.Count > 0 ? WhyWait() : null;
         for (var i = 0; i < _queue.Count; i++)
         {
-            _queue[i] = _queue[i] with { Step = i == 0 ? $"next in line: {why}" : $"queued, {i} ahead of it" };
+            _queue[i] = _queue[i] with { Step = i == 0 ? $"next in line: {WhyWait(_queue[0])}" : $"queued, {i} ahead of it; {Needs(_queue[i])}" };
             state.PutJob(_queue[i]);
         }
 
@@ -437,16 +447,42 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         _ = TellAsync(cancelled, _stopping);
     }
 
-    /// <summary>Why a job may not start now, or null when it may.</summary>
-    private string? WhyWait()
+    /// <summary>
+    /// Why a job may not start now, or null when it may. With nothing running it always may (when a slot is allowed at all):
+    /// the only memory it could wait for is what its own queue's jobs hold, and a head that waits for memory nothing will
+    /// free is a queue that never moves. Otherwise it starts when the machine has free what its kind of command needs.
+    /// </summary>
+    private string? WhyWait(JobRow job)
     {
         if (_running.Count >= MaxRunning)
         {
-            return MaxRunning == 1 ? "another job is running" : $"{_running.Count} jobs are running, {MaxRunning} at a time";
+            var slots = MaxRunning == 1 ? "another job is running" : $"{_running.Count} jobs are running, {MaxRunning} at a time";
+            return $"{slots}; {Needs(job)}";
         }
-        return FreeMemory() is { } free && free < MinFreeMemory
-            ? $"waiting for {Gigabytes(MinFreeMemory)} of free memory ({Gigabytes(free)} now)"
+        if (_running.IsEmpty)
+        {
+            return null;
+        }
+        var estimate = EstimateOf(job);
+        var need = Math.Min(estimate.Bytes, MinFreeMemory);
+        return FreeMemory() is { } free && free < need
+            ? $"waiting for {MemoryEstimate.Gigabytes(need)} of free memory ({Basis(estimate, need)}; {MemoryEstimate.Gigabytes(free)} now)"
             : null;
+    }
+
+    private MemoryEstimate EstimateOf(JobRow job) => JobMemory.Estimate(state.Jobs(), JobKey.Parse(job.MemoryKey) ?? JobKey.Of(job.Command, job.Cwd));
+
+    /// <summary>What the estimate rests on; when job-memory holds it down, that too.</summary>
+    private static string Basis(MemoryEstimate estimate, long need) =>
+        need < estimate.Bytes ? $"{estimate.Describe()}, held to the job-memory cap" : estimate.Describe();
+
+    /// <summary>What a waiting job needs, as its step says it: the estimate with its median and peak, and the memory free now.</summary>
+    private string Needs(JobRow job)
+    {
+        var estimate = EstimateOf(job);
+        var need = Math.Min(estimate.Bytes, MinFreeMemory);
+        var now = FreeMemory() is { } free ? $", {MemoryEstimate.Gigabytes(free)} free now" : "";
+        return $"needs {MemoryEstimate.Gigabytes(need)} ({Basis(estimate, need)}){now}";
     }
 
     /// <summary>Starts a job; null when it started, else why not.</summary>
@@ -477,8 +513,6 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         _watches[job.Id] = Task.Run(() => WatchAsync(job, process, fromEnd: false), CancellationToken.None);
         return null;
     }
-
-    private static string Gigabytes(long bytes) => $"{bytes / (double)(1L << 30):0.0} GB";
 
     /// <summary>
     /// <c>cancel-job job/&lt;id&gt; [force]</c>: stops it, or takes it out of the queue; its owner is told, as of any job's end.
@@ -571,6 +605,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         var lastStep = time.GetUtcNow();
         var timedOut = false;
         int? exitCode = null;
+        // What the job's process tree held at each look at it: the run's median is its value in the estimate, its peak only shown.
+        var memory = new List<long>();
 
         void Follow(bool final)
         {
@@ -602,7 +638,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     if (time.GetUtcNow() >= nextTree)
                     {
                         nextTree = time.GetUtcNow() + TreeEvery;
-                        Tree.Read(job.Id, process);
+                        var reading = Tree.Read(job.Id, process);
+                        // Nothing readable is not a sample of zero.
+                        if (HeldBy(reading.Tree) is > 0 and var held)
+                        {
+                            memory.Add(held);
+                        }
                     }
                     // Sampled before the exit file is looked at: a process that was gone by now has left its exit file, if it was going to.
                     var alive = process.IsAlive();
@@ -677,9 +718,33 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             ended = latest with { State = JobState.Failed, Error = "its process ended without leaving an exit code" };
         }
         ended = ended with { Step = last.LastOrDefault(l => l.Trim().Length > 0) is { } l ? Clip(l) : null, EndedAt = time.GetUtcNow() };
+        if (memory.Count > 0)
+        {
+            ended = ended with { MemoryMedian = JobMemory.Median(memory), MemoryPeak = memory.Max() };
+        }
         state.PutJob(ended);
+        // Looked at again now this run is in the history: the look its slot gave may have been before it, with the older estimate.
+        Pump();
         await TellAsync(ended, CancellationToken.None, last);
         process.Child?.Dispose();
+    }
+
+    /// <summary>The memory the processes of a job's tree hold in all, in bytes; null when none of it could be read.</summary>
+    private long? HeldBy(JobProcessInfo[] tree)
+    {
+        if (MemorySample is { } sample)
+        {
+            return sample(tree);
+        }
+        long? total = null;
+        foreach (var process in tree)
+        {
+            if (ProcessTable.MemoryOf(process.Pid) is { } bytes)
+            {
+                total = (total ?? 0) + bytes;
+            }
+        }
+        return total;
     }
 
     /// <summary>The exit code its wrapper left in <paramref name="path"/>; null while there is none (or it is not a number yet).</summary>

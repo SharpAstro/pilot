@@ -230,7 +230,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.UpdatePolicyKey => ("Updates", "auto installs a newer pilot at once, its jobs carry on; ask raises a card; off does not look", [.. UpdatePolicies.Names]),
         NodeSettings.UpdateChannelKey => ("Update channel", "stable follows the tagged releases; beta follows main's every push (a Debug build, needs the .NET runtime)", [.. UpdateChannels.Names]),
         NodeSettings.MaxJobsKey => ("Jobs at once", "How many background tasks run at once; the rest wait their turn", ["1", "2", "3", "4"]),
-        NodeSettings.JobMemoryKey => ("Job memory", "The free memory, in GB, a job waits for before it starts; 0 to not wait", ["0", "2", "4", "8"]),
+        NodeSettings.JobMemoryKey => ("Job memory", "The most free memory, in GB, a queued job waits for before it starts (the measured need of its kind of command, capped here); 0 to not wait", ["0", "2", "4", "8"]),
         NodeSettings.PriorityReposKey => ("Priority repos", "Repos whose flights have runway: they go on past the start limit, up to the priority limit", []),
         NodeSettings.RepoTrackersKey => ("Repo trackers", "Per repo, the tracker a bare number means when a flight is made (bullclip-backend=shortcut); a repo left out means GitHub issues. #N is always a GitHub issue", []),
         NodeSettings.NoAutoMergeReposKey => ("No auto-merge repos", "Repos whose PRs the node never merges by itself, autopilot on or not: an assistant's merge raises your card, and a passed flight rings you. Your own merge still works", []),

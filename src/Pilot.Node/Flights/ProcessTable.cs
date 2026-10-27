@@ -22,6 +22,9 @@ public interface IProcessTable
 
     /// <summary>Kills that one process, with no grace; a process that is gone already is nothing.</summary>
     void Kill(int pid);
+
+    /// <summary>The physical memory the process <paramref name="pid"/> holds now, in bytes; null when it is gone or cannot be read (a table that has no memory to read says nothing).</summary>
+    long? MemoryOf(int pid) => null;
 }
 
 /// <summary>The real table: toolhelp's snapshot on Windows, <c>/proc</c> elsewhere.</summary>
@@ -37,6 +40,19 @@ public sealed class OsProcessTable : IProcessTable
         {
             using var process = Process.GetProcessById(pid);
             return new DateTimeOffset(process.StartTime.ToUniversalTime(), TimeSpan.Zero);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or Win32Exception or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    public long? MemoryOf(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return process.WorkingSet64;
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or Win32Exception or NotSupportedException)
         {

@@ -59,6 +59,18 @@ public sealed record JobRow
     /// <summary>The script file the job runs, on Windows (the node deletes it once the job has ended); null on Linux, where the wrapper is a command line.</summary>
     public string? ScriptPath { get; init; }
 
+    /// <summary>
+    /// What kind of command it is, for what it costs in memory (<c>repo|tool verb|target|flags</c>): set when it is handed over, and
+    /// what a later run of the same kind is estimated from. Null on a row from before the node measured memory.
+    /// </summary>
+    public string? MemoryKey { get; init; }
+
+    /// <summary>The median, in bytes, of the samples taken every 2 s of the job's process tree: the run's value in the estimate, which a short spike does not move. Null until it has ended, or when none could be taken.</summary>
+    public long? MemoryMedian { get; init; }
+
+    /// <summary>The highest of those samples, in bytes: shown, never gated on.</summary>
+    public long? MemoryPeak { get; init; }
+
     /// <summary>How long it may run before the node stops it.</summary>
     public required TimeSpan Timeout { get; init; }
 

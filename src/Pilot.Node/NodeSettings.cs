@@ -293,7 +293,7 @@ public sealed record NodeSettings
                 }
                 return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var memory) && memory is >= 0 and <= 1024
                     ? (settings with { JobMemoryGigabytes = memory }, null)
-                    : (null, "job-memory takes the free memory in GB a job waits for, 0 to not wait");
+                    : (null, "job-memory takes the most free memory in GB a queued job waits for (a cap on its measured need), 0 to not wait");
             case PriorityStartLimitKey:
                 if (clear)
                 {
