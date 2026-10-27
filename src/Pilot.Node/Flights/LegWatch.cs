@@ -32,6 +32,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>The kind of ring for a leg's validator that stopped without its answer.</summary>
     public const string ValidationStalled = "validation-stalled";
 
+    /// <summary>A flight in the air with no legs whose planner stopped, or never started.</summary>
+    public const string PlanStalled = "plan-stalled";
+
     /// <summary>Who the watch's commands are from, in the command log and on the cards it closes.</summary>
     public const string Who = "node";
 
@@ -46,6 +49,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
 
     /// <summary>How long a started worker has to show up in the session listing.</summary>
     public TimeSpan ShowUpGrace { get; init; } = TimeSpan.FromMinutes(3);
+
+    /// <summary>How long a flight may be in the air with no legs and no planner before the watch starts one: whoever created it plans it first.</summary>
+    public TimeSpan PlanGrace { get; init; } = TimeSpan.FromMinutes(10);
 
     /// <summary>How long a background session waits on its person before it rings rather than being a card for you.</summary>
     public TimeSpan RingAfter { get; init; } = TimeSpan.FromMinutes(15);
@@ -104,6 +110,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         LookAtValidators(sessions, now);
         LookAtWaiting(sessions, now);
         await LookAtLegWaitsAsync(now, cancellationToken);
+        await LookAtPlannersAsync(sessions, now, cancellationToken);
         foreach (var leg in state.Legs().Where(l => l.State == LegState.Flying && l.WorkerJob is not null))
         {
             var subject = Verbs.LegTarget(leg.Flight, leg.Name);
@@ -436,6 +443,89 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         }
         state.RaiseCard(CardBin.Ring, ReviewStalled, subject, $"{name}'s review stalled", why,
             [new CardChoice { Label = "Review again", Verb = again, Target = subject }]);
+    }
+
+    // Each flight's planner stalls the node has acted on, as _reviewStalls: an idle planner told once, a gone one replaced once, then rung.
+    private readonly Dictionary<string, (int Tries, DateTimeOffset At)> _planStalls = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// A flight in the air with no legs is its planner's: one working or waiting is left alone; one idle past the grace
+    /// without its legs is told to hand them in; one ended, failed or never started gets a fresh planner, once; then the
+    /// flight rings. Unwatched, PIL221 sat flying with no legs and no planner for days, and nothing woke a watchtower (SE1,
+    /// 2026-10-28). A flight with anything else open about it (an overlap to answer, a start held for the usage window)
+    /// is left to that card.
+    /// </summary>
+    private async Task LookAtPlannersAsync(SessionRow[] sessions, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var planned = state.Legs().Select(l => l.Flight).ToHashSet(StringComparer.Ordinal);
+        var cards = state.Cards();
+        var unplanned = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, FoldedInto: null } && !planned.Contains(f.Code)))
+        {
+            var subject = Verbs.FlightTarget(flight.Code);
+            unplanned.Add(subject);
+            var planner = sessions.Where(s => s.Role == SessionRole.Planner && s.Flight == flight.Code).MaxBy(s => s.StartedAt);
+            if (planner is { State: SessionState.Working })
+            {
+                state.CloseCardsAbout(subject, "planning again", PlanStalled);
+            }
+            if (cards.Any(c => c.State == CardState.Open && c.Subject == subject && c.Kind != PlanStalled))
+            {
+                continue;
+            }
+            string? why = planner switch
+            {
+                null when now - flight.CreatedAt > PlanGrace => $"it has had no legs and no planner for {Ago(now, flight.CreatedAt)}",
+                null => null,
+                { State: SessionState.Working or SessionState.Waiting } => null,
+                { State: SessionState.Failed } => "its planner failed before planning any legs",
+                { State: SessionState.Ended } => "its planner ended without planning any legs",
+                _ when now - (planner.LastResponseAt ?? planner.StartedAt) >= IdleGrace => $"its planner stopped {Ago(now, planner.LastResponseAt ?? planner.StartedAt)} ago without planning any legs",
+                _ => null,
+            };
+            if (why is null)
+            {
+                continue;
+            }
+            var (tries, at) = _planStalls.TryGetValue(subject, out var acted) ? acted : (0, DateTimeOffset.MinValue);
+            if (now - at < IdleGrace)
+            {
+                continue;
+            }
+            var idle = planner is { State: SessionState.Idle };
+            if (tries == 0 && idle)
+            {
+                _planStalls[subject] = (1, now);
+                var told = await SayAsync(planner!.Id, $"You stopped before {flight.Code} has any legs. Finish the plan now: plan each leg and hand them in with the planned command your brief names; if the flight looks like part of another, say so with the overlap command.", cancellationToken);
+                if (told.Ok)
+                {
+                    state.RaiseCard(CardBin.Handled, PlanStalled, subject, $"{flight.Code}'s planner was told to hand in its legs", why);
+                    continue;
+                }
+                tries = 1;
+            }
+            // An idle planner holds the flight's one planner place, so a fresh one would be refused: only a gone one is replaced.
+            if (tries <= 1 && !idle)
+            {
+                _planStalls[subject] = (2, now);
+                var restarted = await run(new CommandRequest { Verb = Verbs.PlanFlight, Target = subject, Who = Who }, cancellationToken);
+                if (restarted.Ok)
+                {
+                    state.RaiseCard(CardBin.Handled, PlanStalled, subject, $"{flight.Code}'s planner started afresh", why);
+                    continue;
+                }
+            }
+            state.RaiseCard(CardBin.Ring, PlanStalled, subject, $"{flight.Code} has no legs and its planning stalled", why,
+                idle
+                    ? [new CardChoice { Label = $"Tell {flight.Code}'s planner to finish", Verb = Verbs.Say, Target = Verbs.SessionTarget(planner!.Id), Args = [$"Finish {flight.Code}'s plan now: plan its legs and hand them in."] }]
+                    : [new CardChoice { Label = $"Plan {flight.Code} again", Verb = Verbs.PlanFlight, Target = subject }]);
+        }
+        // A flight with legs now (or landed, or held) starts its next stall's ladder from the start.
+        foreach (var subject in _planStalls.Keys.Where(k => !unplanned.Contains(k)).ToArray())
+        {
+            _planStalls.Remove(subject);
+            state.CloseCardsAbout(subject, "it has legs now", PlanStalled);
+        }
     }
 
     /// <summary>What an idle worker is told: its leg is not finished, and the two ways to finish it.</summary>
