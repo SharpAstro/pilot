@@ -74,7 +74,17 @@ public sealed class ChipBriefTests
         brief.Length.ShouldBe(3);
         brief[0].ShouldBe("Hover a chip for a brief");
         brief[1].ShouldBe("PIL258 · flying");
-        brief[2].ShouldBe("leg chip-briefs flying (go-around 1) · 2 legs · 1 done · chip-briefs flying (go-around 1)");
+        // LegsText already ends with the flying leg, so the brief does not say it a second time.
+        brief[2].ShouldBe("2 legs · 1 done · chip-briefs flying (go-around 1)");
+        brief[2].Split("chip-briefs").Length.ShouldBe(2);
+    }
+
+    [Fact]
+    public void A_stale_flight_says_it_was_last_known_and_which_node_stopped_answering()
+    {
+        var line = FlightLine.From(Flight(), [], At) with { Stale = "DE1" };
+
+        ChipBrief.Flight(line)[1].ShouldBe("PIL258 was flying when DE1 last answered");
     }
 
     [Fact]
@@ -169,8 +179,9 @@ public sealed class ChipBriefTests
         brief.ShouldBe([
             "worker · PIL258 / chip-briefs · waiting on you",
             "asks to run Bash: git push origin main",
-            "waiting on you: approve Bash",
+            "approve Bash",
         ]);
+        brief.Count(l => l.Contains("waiting on you")).ShouldBe(1);
     }
 
     [Fact]
@@ -180,7 +191,8 @@ public sealed class ChipBriefTests
 
         var brief = ChipBrief.Session(SessionLine.From(row, At));
 
-        brief.ShouldContain("waiting on you: Which repo should it fly in?");
+        brief.ShouldContain("Which repo should it fly in?");
+        brief.Count(l => l.Contains("waiting on you")).ShouldBe(1);
     }
 
     [Fact]
@@ -221,6 +233,14 @@ public sealed class ChipBriefTests
             "running for 2m 5s, started 2m ago",
             "step: restoring",
         ]);
+    }
+
+    [Fact]
+    public void A_running_job_with_a_pid_names_it_on_its_running_line()
+    {
+        var brief = ChipBrief.Job(JobLine.From(Job(JobState.Running) with { Pid = 4812 }, At));
+
+        brief[2].ShouldBe("running for 2m 5s, started 2m ago · pid 4812");
     }
 
     [Fact]
