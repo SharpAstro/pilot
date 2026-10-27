@@ -352,6 +352,12 @@ public interface IGitHub
     /// <exception cref="FlightException">gh could not create it.</exception>
     Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Closes issue <paramref name="number"/> as completed with <paramref name="comment"/>; one closed already is left as it is.
+    /// </summary>
+    /// <exception cref="FlightException">gh could not close it.</exception>
+    Task CloseIssueAsync(string repoPath, int number, string comment, CancellationToken cancellationToken);
+
     /// <summary>Issue <paramref name="number"/>'s title, or null when gh cannot say.</summary>
     Task<string?> IssueTitleAsync(string repoPath, int number, CancellationToken cancellationToken);
 
@@ -1006,6 +1012,16 @@ public sealed class GhCli : IGitHub
             }
         }
         return failing ? ChoiceStatus.Failing : pending ? ChoiceStatus.Pending : passing ? ChoiceStatus.Passing : null;
+    }
+
+    public async Task CloseIssueAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["issue", "close", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--reason", "completed", "--comment", comment], repoPath, cancellationToken);
+        // gh says so, and exits 0, for an issue closed already; anything else that failed is said.
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not close issue #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
     }
 
     public async Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken)

@@ -110,6 +110,22 @@ internal sealed class FakeGitHub : IGitHub
         return Task.FromResult(new IssueInfo { Number = number, Title = title });
     }
 
+    /// <summary>Each issue closed, with its comment, in order.</summary>
+    public List<(int Number, string Comment)> ClosedIssues { get; } = [];
+
+    /// <summary>When set, CloseIssueAsync fails with it.</summary>
+    public string? CloseIssueFails { get; set; }
+
+    public Task CloseIssueAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
+    {
+        if (CloseIssueFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        ClosedIssues.Add((number, comment));
+        return Task.CompletedTask;
+    }
+
     public Task<string?> IssueTitleAsync(string repoPath, int number, CancellationToken cancellationToken) =>
         Task.FromResult(Issues.TryGetValue(number, out var title) ? title : null);
 

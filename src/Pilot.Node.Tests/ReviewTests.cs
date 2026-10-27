@@ -26,7 +26,7 @@ public abstract class ReviewTestsBase : IDisposable
         // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
         SeedRepo.Make(_root);
         var git = new GitCli();
-        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers);
+        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers, _github);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
         _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, git, new Planes(git), _flights, options, TimeProvider.System)
         {
@@ -306,6 +306,8 @@ public sealed class ReviewTests1 : ReviewTestsBase
         _state.Cards().Single(c => c.Id == card.Id).Outcome.ShouldBe("merged on GitHub as #71");
         F("TIA3").State.ShouldBe(FlightState.Landed);
         _github.Merged.ShouldBeEmpty();
+        // Its issue is closed with it, whatever GitHub made of the PR's Closes line.
+        _github.ClosedIssues.ShouldBe([(3, "Landed in #71 (TIA3).")]);
     }
 
     [Fact]
@@ -654,11 +656,13 @@ public sealed class ReviewTests2 : ReviewTestsBase
         // Its card dismissed after a rebase by hand moved its head, then merged on GitHub.
         (await Run(Verbs.Dismiss, $"card/{Open().ShouldHaveSingleItem().Id}", "controller", "rebased by hand")).Ok.ShouldBeTrue();
         _github.Pr = _github.Pr! with { State = "MERGED" };
+        _github.CloseIssueFails = "HTTP 403";
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights).LookAsync(Ct);
 
         F("TIA5").State.ShouldBe(FlightState.Landed);
-        Open().ShouldHaveSingleItem().Title.ShouldBe("TIA5 landed");
+        // An issue gh would not close is the person's, said once; the flight lands all the same.
+        Open().Select(c => c.Title).ShouldBe(["TIA5 landed, but issue #5 is still open", "TIA5 landed"], ignoreOrder: true);
     }
 
     [Fact]
