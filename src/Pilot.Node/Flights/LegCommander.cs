@@ -1474,8 +1474,20 @@ public sealed partial class LegCommander(
         {
             choices.Add(new CardChoice { Label = "Merge again", Verb = Verbs.Merge, Target = target, Args = [head, method] });
         }
-        var redo = state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is { } redoLeg ? $"{code}/{redoLeg.Name}" : code;
-        var summary = $"The merge of {code} did not go through. Redo leg sends a fresh worker to fix {redo}{(mergeAgain ? "; Merge again tries once more as it is" : "")}.";
+        var offers = new List<string>();
+        if (choices.FirstOrDefault(c => c.Verb == Verbs.GoAround) is { } redoChoice)
+        {
+            offers.Add($"{redoChoice.Label} sends a fresh worker to fix it");
+        }
+        if (rerun)
+        {
+            offers.Add("Re-run checks runs them again");
+        }
+        if (mergeAgain)
+        {
+            offers.Add("Merge again tries once more as it is");
+        }
+        var summary = $"The merge of {code} did not go through.{(offers.Count == 0 ? "" : " " + string.Join("; ", offers) + ".")}";
         state.UpdateCard(card.Id, title, detail, choices, link ?? card.Link, kind, summary);
         return true;
     }

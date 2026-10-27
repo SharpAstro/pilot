@@ -145,4 +145,16 @@ public sealed class CardSummaryTests
         var plain = PilotCommand.Cards(snapshot);
         plain.IndexOf("The worker gave up.", StringComparison.Ordinal).ShouldBeInRange(1, plain.IndexOf("raw words", StringComparison.Ordinal) - 1);
     }
+
+    [Theory]
+    [InlineData("pr-checks-failed")]
+    [InlineData("pr-conflicts")]
+    public void ACardWithNoChoiceNamesNoRedoLegAndPromisesNoRebaseOrGoAround(string kind)
+    {
+        var summary = CardSummaries.For(kind, "flight/PIL355", "its PR", []);
+
+        summary.ShouldNotContain("Redo leg");
+        summary.ShouldNotContain("rebases it by itself");
+        summary.ShouldContain("could not");
+    }
 }

@@ -45,7 +45,25 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         var card = Open().Single(c => c.Kind == LegCommander.MergeFailed);
-        card.Summary.ShouldNotBeNull().ShouldContain($"{flight.Code}/parser");
-        card.Summary.ShouldContain("Redo leg");
+        card.Summary.ShouldNotBeNull().ShouldContain("Redo leg parser");
+        card.Summary.ShouldContain("Re-run checks");
+    }
+
+    [Fact]
+    public async Task AChecksFailedRingForASendBackTheNodeRefusedDoesNotSayTheLegGoesAround()
+    {
+        var (flight, _, checks) = await ArmedPassedFlight("44");
+        // Its review no longer passes, so the send-back is refused.
+        _state.PutFlight(F(flight.Code) with { Review = F(flight.Code).Review! with { State = ReviewState.Changes }, MergeWhenGreen = null });
+        _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3, "build (linux)", "https://github.com/x/tianwen/actions/runs/1/job/2");
+
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == "pr-checks-failed");
+        card.Choices.ShouldBeEmpty();
+        var summary = card.Summary.ShouldNotBeNull();
+        summary.ShouldContain("could not send the last leg back");
+        summary.ShouldNotContain("goes around");
     }
 }

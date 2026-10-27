@@ -285,7 +285,7 @@ The brief says the depth and why (`Depth: light (usage at 88%).`), the review ro
 carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
 
 - `pilot review pass <report>` from the plane offers the merge: the PR-ready card, with the review's words.
-- `pilot review changes <changes>` rings with **Redo leg** (the last leg, told the changes; a done leg may go around
+- `pilot review changes <changes>` rings with **Redo leg** (redo the leg, a go-around: the last leg, told the changes; a done leg may go around
   for a review) and **Ready anyway**. The go-around's finish pushes and starts a fresh review by itself.
 - GitHub is told the verdict (`gh pr ready`) before the node keeps it: **changes** mark the PR a draft (`--undo`), so it
   cannot be merged on GitHub with the fixes pending, and a pass (the reviewer's, or "ready anyway") marks it ready
