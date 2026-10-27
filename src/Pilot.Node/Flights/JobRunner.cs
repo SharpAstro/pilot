@@ -680,9 +680,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     }
 
     /// <summary>Ends the job's whole tree; on Windows by its named job object, which holds a descendant whose parent already exited.</summary>
-    private static void Kill(string id, Process process)
+    private void Kill(string id, Process process)
     {
-        DetachedShell.TerminateJob(id);
+        if (state.Jobs().FirstOrDefault(j => j.Id == id) is { } row)
+        {
+            DetachedShell.TerminateJob(id, row.LogPath);
+        }
         try
         {
             process.Kill(entireProcessTree: true);

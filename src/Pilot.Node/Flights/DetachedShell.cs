@@ -38,7 +38,7 @@ public sealed class DetachedShell : IDisposable
         var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
         File.WriteAllText(inner, ShellScript.Body(command), utf8);
         File.WriteAllText(outer, WindowsWrapper(inner, outer, exitPath), utf8);
-        return new DetachedShell([inner, outer], () => StartWindows(jobId, outer, cwd, logPath));
+        return new DetachedShell([inner, outer], () => StartWindows(JobName(jobId, logPath), outer, cwd, logPath));
     }
 
     /// <summary>Starts the job; the process is the shell's, left running if the node ends.</summary>
@@ -171,22 +171,31 @@ public sealed class DetachedShell : IDisposable
     private static extern bool TerminateJobObject(nint job, uint exitCode);
 
     [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DuplicateHandle(nint sourceProcess, nint source, nint targetProcess, out nint target, uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint options);
+
+    [DllImport("kernel32.dll")]
+    private static extern nint GetCurrentProcess();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern int ResumeThread(nint thread);
 
-    private static string JobName(string jobId) => "pilot-job-" + jobId;
+    /// <summary>The job object's name: the job's id and a hash of its log path, so two nodes on one machine that both have a <c>j1</c> never share one.</summary>
+    private static string JobName(string jobId, string logPath) =>
+        $"pilot-job-{jobId}-{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(logPath)))[..12]}";
 
     /// <summary>
-    /// Ends every process of a Windows job's named job object (<c>pilot-job-&lt;id&gt;</c>), found by name so a restarted node
+    /// Ends every process of a Windows job's named job object (<c>pilot-job-&lt;id&gt;-&lt;hash of the log path&gt;</c>), found by name so a restarted node
     /// reaches a job it did not start; walking parent pids misses a descendant whose parent already exited. No-op elsewhere
     /// or when the object is gone (every process in it has ended).
     /// </summary>
-    internal static void TerminateJob(string jobId)
+    internal static void TerminateJob(string jobId, string logPath)
     {
         if (!OperatingSystem.IsWindows())
         {
             return;
         }
-        var job = OpenJobObjectW(JobObjectAllAccess, false, JobName(jobId));
+        var job = OpenJobObjectW(JobObjectAllAccess, false, JobName(jobId, logPath));
         if (job == 0)
         {
             return;
@@ -195,7 +204,7 @@ public sealed class DetachedShell : IDisposable
         CloseHandle(job);
     }
 
-    private static Process StartWindows(string jobId, string outer, string cwd, string logPath)
+    private static Process StartWindows(string jobName, string outer, string cwd, string logPath)
     {
         // The log is opened for writing here and handed to the child as its stdout and stderr (one handle, so one file
         // position: the two never overwrite each other); the node's own copy is closed once the child has it.
@@ -257,8 +266,17 @@ public sealed class DetachedShell : IDisposable
             try
             {
                 // Kept by name for as long as a process is in it, so a restarted node can open it and end the tree.
-                job = CreateJobObjectW(0, JobName(jobId));
+                job = CreateJobObjectW(0, jobName);
                 if (job == 0 || !AssignProcessToJobObject(job, info.Process))
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    using var stray = Process.GetProcessById((int)info.ProcessId);
+                    stray.Kill(entireProcessTree: true);
+                    throw new Win32Exception(error);
+                }
+                // A named object lives only while a handle to it is open: one is put into the wrapper itself (its value is of no
+                // use to it), so the name survives this node and a restarted one opens the job by it until the wrapper ends.
+                if (!DuplicateHandle(GetCurrentProcess(), job, info.Process, out _, 0, false, 2))
                 {
                     var error = Marshal.GetLastWin32Error();
                     using var stray = Process.GetProcessById((int)info.ProcessId);

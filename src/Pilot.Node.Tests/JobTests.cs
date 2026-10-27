@@ -273,7 +273,8 @@ public sealed class JobTests : IDisposable
         (waiting.State, waiting.Step).ShouldBe((JobState.Queued, "next in line: another job is running"));
         waiting.QueuedAt.ShouldNotBeNull();
 
-        (await Ended(first)).State.ShouldBe(JobState.Succeeded);
+        var firstEnded = await Ended(first);
+        firstEnded.State.ShouldBe(JobState.Succeeded, $"{firstEnded.Error} / {firstEnded.Step} / exit {firstEnded.ExitCode}");
         var ran = await Ended(second);
         (ran.State, ran.Step).ShouldBe((JobState.Succeeded, "second ran"));
         ran.StartedAt.ShouldBeGreaterThanOrEqualTo(ran.QueuedAt!.Value);
