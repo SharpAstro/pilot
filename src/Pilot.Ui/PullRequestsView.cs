@@ -208,6 +208,80 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         }
     }
 
+    // The PR a jump asked to show, until the list has it: the node's first read may not be in yet.
+    private (string Repo, int Number)? _reveal;
+
+    // The span of the selected row in the list's content, in surface units, to bring into view once the list has been laid out.
+    private (float Start, float End)? _scrollTo;
+
+    /// <summary>
+    /// Shows <paramref name="repo"/>'s PR <paramref name="number"/> on its row, as a card's link or a flight's chip asks: the pills
+    /// and the search stand aside when they hide it, its group is unfolded, the row is selected (its flight's cards light in the panel)
+    /// and scrolled into view. It happens when the page next builds, with the rows it then has; a PR the node does not list is left alone.
+    /// </summary>
+    public void Reveal(string repo, int number) => _reveal = (repo, number);
+
+    /// <summary>Shows only <paramref name="repo"/>'s PRs (<c>owner/name</c>): All, the repo in the search box, its group unfolded.</summary>
+    public void ShowRepo(string repo)
+    {
+        _reveal = null;
+        Filter = PullRequestFilter.All;
+        Search.Text = repo;
+        Search.CursorPos = repo.Length;
+        _folded.Remove(repo);
+    }
+
+    private void ApplyReveal(PullRequestsRow row, (string Repo, int Number) want)
+    {
+        if (row.PullRequests.FirstOrDefault(p => p.Number == want.Number && string.Equals(p.Repo, want.Repo, StringComparison.OrdinalIgnoreCase)) is not { } pr)
+        {
+            return;
+        }
+        var query = Search.Text.Trim();
+        if (!Passes(Filter, row, pr) || (query.Length > 0 && !pr.Repo.Contains(query, StringComparison.OrdinalIgnoreCase)))
+        {
+            Filter = PullRequestFilter.All;
+            Search.Text = "";
+            Search.CursorPos = 0;
+        }
+        _folded.Remove(pr.Repo);
+        SelectedUrl = pr.Url;
+        _scrollTo = (0f, 0f);
+    }
+
+    // Where the selected row is in the list's content: every group's header above it, and the rows of the groups open above it.
+    private (float Start, float End) SpanOfSelected(IReadOnlyList<PullRequestGroup> groups)
+    {
+        var top = 0f;
+        foreach (var group in groups)
+        {
+            top += GroupHeight;
+            if (IsFolded(group.Repo))
+            {
+                continue;
+            }
+            foreach (var pr in group.PullRequests)
+            {
+                if (pr.Url == SelectedUrl)
+                {
+                    return (Scale.ToSurface(top), Scale.ToSurface(top + RowHeight));
+                }
+                top += RowHeight;
+            }
+        }
+        return (0f, 0f);
+    }
+
+    // Brings the row a jump selected into view, once the list has been laid out at least once (it knows its viewport then). False while it waits.
+    private void Scrolled()
+    {
+        if (_scrollTo is { } span && _scroll.TotalAtoms > 0)
+        {
+            _scroll.RevealExtent(span.Start, span.End);
+            _scrollTo = null;
+        }
+    }
+
     /// <summary>Opens the PR's flight on the Flights page when it is one's, else the PR in the browser: what a double-click and Enter do.</summary>
     public void OpenRow(PullRequestRow pr)
     {
@@ -316,6 +390,11 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     {
         BeginFrame();
         RenderLayout(Tree(screen, bounds.Width / Scale.X), bounds);
+        // A jump to a row on a page never laid out waits for this first layout, which tells the list its viewport: the next frame scrolls.
+        if (_scrollTo is not null)
+        {
+            Changed?.Invoke();
+        }
     }
 
     /// <summary>
@@ -326,12 +405,18 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     {
         _now = screen.AsOf;
         _cards = screen.OpenCards;
+        if (_reveal is { } want && screen.Row is { } read)
+        {
+            _reveal = null;
+            ApplyReveal(read, want);
+        }
         var groups = Visible(screen.Row);
         _rows = [.. groups.Where(g => !IsFolded(g.Repo)).SelectMany(g => g.PullRequests)];
         if (_rows.Count == 0)
         {
             ListCursor.Close();
             SelectedUrl = null;
+            _scrollTo = null;
         }
         else
         {
@@ -349,6 +434,11 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
                 ListCursor.MoveTo(index);
             }
             SelectedUrl = _rows[Selected].Url;
+            if (_scrollTo is not null)
+            {
+                _scrollTo = SpanOfSelected(groups);
+                Scrolled();
+            }
         }
         var page = Layout.Builder.VStack(Header(screen), Main(screen, groups, width).HStar()).Bg(P.Ground).Stretch();
         return About?.Over(page, NightOrNull) ?? page;
@@ -675,8 +765,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     // check's chip opens its run.
     private Layout.Node StateCell(PullRequestRow pr)
     {
-        var chip = ChipColors(P, pr.Kind);
-        var node = Layout.Builder.Text(pr.Label, ChipSize, chip.Fg, TextAlign.Center, TextAlign.Center).Pad(8f, 0f).WStar().Bg(chip.Bg);
+        var node = Chip(P, pr).WStar();
         if (pr.Kind == PullRequestKind.ChecksFailed && pr.FailedUrl is { } run)
         {
             node = node.Follows(new HitResult.ButtonHit($"pr:{pr.Url}:run"), _ => OnOpen?.Invoke(run)).WithTooltip($"{pr.Label} (opens the run ↗)");
@@ -748,6 +837,16 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
 
     // The screen's moment, which a row's age counts from: a capture of a file reads the same each time.
     private DateTimeOffset _now = DateTimeOffset.UtcNow;
+
+    /// <summary>
+    /// A PR's state chip: the Contracts label on the kind's colours, one look wherever it is drawn (this page, a flight's card and its
+    /// page), its width left to the caller. Cut with an ellipsis to the room it is given.
+    /// </summary>
+    internal static Layout.Node Chip(FlightsPalette palette, PullRequestRow pr)
+    {
+        var colors = ChipColors(palette, pr.Kind);
+        return Layout.Builder.Text(pr.Label, ChipSize, colors.Fg, TextAlign.Center, TextAlign.Center).Pad(8f, 0f).Bg(colors.Bg);
+    }
 
     /// <summary>The chip's background and the text on it, for a PR of <paramref name="kind"/> in <paramref name="palette"/>.</summary>
     internal static (RGBAColor32 Bg, RGBAColor32 Fg) ChipColors(FlightsPalette palette, PullRequestKind kind)

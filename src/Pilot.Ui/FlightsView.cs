@@ -349,6 +349,58 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>The node of <paramref name="line"/> when it is watched and not commanded, else null.</summary>
     private NodeMark? WatchOnly(FlightLine line) => line.Node is { Here: false } node && CanSteer?.Invoke(node) == false ? node : null;
 
+    /// <summary>The open PRs the node read, from which a flight with a PR takes its state chip; set by the host each frame. Null before the first read.</summary>
+    public PullRequestsRow? PullRequests { get; set; }
+
+    /// <summary>Opens the Pull requests page on a PR's row (<c>owner/name</c>, number): a flight's PR link and its chip. Null where the host has no such page.</summary>
+    public Action<string, int>? OnPullRequest { get; set; }
+
+    // The PR chip of a flight, the one the Pull requests page draws, the width given; a click opens that row there. Null for a flight with no PR
+    // the node lists (none opened, not read yet, or closed), or where the host cannot open the page.
+    private Layout.Node? PullRequestChip(FlightLine line, float width, float height)
+    {
+        if (OnPullRequest is not { } open || PullRequestLinks.RowOf(PullRequests, line.Row) is not { } pr)
+        {
+            return null;
+        }
+        var chip = PullRequestsView<TSurface>.Chip(P, pr)
+            .Follows(new HitResult.ButtonHit($"flight:{line.Code}:pr-chip"), _ => open(pr.Repo, pr.Number))
+            .WithTooltip($"{pr.Label}: show #{pr.Number} on the Pull requests page")
+            .HFixed(height);
+        // In the middle of the row it sits in, whatever that row's height.
+        return Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), chip, Layout.Builder.Spacer().HStar()).WFixed(width);
+    }
+
+    // The chip's size on a flight's page and in the list (a line's worth), and on a canvas card, where the code leaves it less.
+    private const float PullRequestChipWidth = 170f;
+    private const float PullRequestChipHeight = 20f;
+    private const float CardChipWidth = 130f;
+
+    // A flight's PR as a link: "PR #n" opens its row on the Pull requests page, a small ↗ beside it the browser. Where the host has no
+    // such page, "PR #n ↗" is the browser link it always was.
+    private Layout.Node PullRequestLink(FlightLine line, string url, string action)
+    {
+        var flight = line.Row;
+        if (OnPullRequest is not { } open || PullRequestLinks.Of(flight) is not { } pr)
+        {
+            return Link($"PR #{flight.PullRequest}", url, action);
+        }
+        return Layout.Builder.HStack(
+                Layout.Builder.Text($"PR #{flight.PullRequest}", 12f, Landed)
+                    .BgHover(RowHoverBg)
+                    .Follows(new HitResult.ButtonHit(action), _ => open(pr.Repo, pr.Number))
+                    .WithTooltip($"Show {pr} on the Pull requests page")
+                    .WAuto(),
+                Layout.Builder.Text("↗", 11f, Landed, TextAlign.Center, TextAlign.Center)
+                    .Pad(6f, 0f)
+                    .BgHover(RowHoverBg)
+                    .Follows(new HitResult.ButtonHit($"{action}:browser"), _ => OnOpen?.Invoke(url))
+                    .WithTooltip($"Open {pr} on GitHub")
+                    .WAuto())
+            .WAuto()
+            .RowH(20f);
+    }
+
     /// <summary>Opens an artifact: a file on the machine, or a URL.</summary>
     public Action<string>? OnOpen { get; set; }
 
@@ -702,7 +754,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         var all = line.LegRows.SelectMany(l => l.Artifacts.Select(a => (Leg: l.Name, Artifact: a))).OrderByDescending(x => x.Artifact.At).Take(5).ToList();
         if (flight.PullRequestUrl is { } url)
         {
-            artifacts.Add(Link($"PR #{flight.PullRequest}", url, $"pr:{line.Code}"));
+            artifacts.Add(PullRequestLink(line, url, $"pr:{line.Code}"));
         }
         if (marks.ReviewUrl is { } reviewUrl)
         {
@@ -883,6 +935,14 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private RGBAColor32 StateColor(FlightLine line) =>
         line.Stale is not null ? Dim : line.Row.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
 
+    // The legs, and under them the flight's PR chip when it has one: the list's row has room for the line, and the chip is the same as everywhere.
+    private Layout.Node LegsCell(FlightLine line, bool landed)
+    {
+        return PullRequestChip(line, PullRequestChipWidth, PullRequestChipHeight) is { } chip
+            ? Layout.Builder.VStack(Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body).RowH(22f), chip.HFixed(26f))
+            : ListTable.Top(Whole(Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body), line.Legs, LegsFits));
+    }
+
     private Layout.Node Row(FlightLine line, int index, bool marked, IReadOnlyList<ListColumn> columns)
     {
         // A stale row is drawn as a landed one is, dim: its state is the last the node told, not what it is now.
@@ -902,7 +962,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.State, 14f, color).RowH(22f),
                 Whole(Layout.Builder.Text(line.StateDetail ?? "", 11f, line.Row.State == FlightState.Held && line.Stale is null ? Body : Dim).RowH(18f), line.StateDetail ?? "", StateDetailFits)),
-            ListTable.Top(Whole(Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body), line.Legs, LegsFits)),
+            LegsCell(line, landed),
             ListTable.Top(Layout.Builder.Text(line.Branch, 12f, Dim)),
             ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body)),
         };

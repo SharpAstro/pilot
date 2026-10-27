@@ -115,9 +115,15 @@ internal sealed partial class FlightsView<TSurface>
     {
         var landed = line.Row.State == FlightState.Landed || line.Stale is not null;
         var color = StateColor(line);
+        // A flight with a PR says where it stands at the right of its code, in the chip the Pull requests page has.
+        var code = Layout.Builder.Text(line.Code, 15f, landed ? Dim : Bright).RowH(22f);
+        if (PullRequestChip(line, CardChipWidth, PullRequestChipHeight) is { } chip)
+        {
+            code = Layout.Builder.HStack(code.WStar(), chip).WithGap(6f).RowH(22f);
+        }
         var rows = new List<Layout.Node>
         {
-            Layout.Builder.Text(line.Code, 15f, landed ? Dim : Bright).RowH(22f),
+            code,
             Whole(Layout.Builder.Text(line.Title, 13f, landed ? Dim : Body).RowH(20f), line.Title, CardTitleFits),
             Layout.Builder.Text(line.Where, 12f, Dim).RowH(18f),
         };

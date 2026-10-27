@@ -120,6 +120,10 @@ internal sealed class PilotChrome<TSurface>
         // So is a PR row's Merge or Go around: the same card button, so the node is told what the card's button tells it.
         PullRequests.OnAnswer = (card, number) => Cards.OnAnswer?.Invoke(card, number);
         PullRequests.RefusedOf = Cards.RefusedOn;
+        // One route to a PR's row: a card's title, a flight's PR link and chip, and the Repos page's open-PRs line all take it.
+        Cards.OnPullRequest = (_, pr) => OpenPullRequest(pr.Repo, pr.Number);
+        Flights.OnPullRequest = OpenPullRequest;
+        Repos.OnPullRequests = OpenRepoPullRequests;
         Home = new HomeView<TSurface>(renderer);
         sessions.ShareWith(Flights, Repos, PullRequests, Jobs, Fleet, Settings, Cards, Chat);
         // The panel's watchtower foot is the way into the chat.
@@ -292,6 +296,40 @@ internal sealed class PilotChrome<TSurface>
         {
             Chat.Close();
         }
+    }
+
+    /// <summary>
+    /// Opens the Pull requests page on <paramref name="repo"/>'s PR <paramref name="number"/> (<c>owner/name</c>): the row selected, scrolled
+    /// into view and its group unfolded (<see cref="PullRequestsView{TSurface}.Reveal"/>). A move like any other, so <see cref="Back"/> returns to
+    /// where the jump came from.
+    /// </summary>
+    public void OpenPullRequest(string repo, int number) => Navigate(() =>
+    {
+        Switch(PilotPage.PullRequests, _show);
+        PullRequests.Reveal(repo, number);
+    });
+
+    /// <summary>Opens the Pull requests page listing only <paramref name="repo"/>'s PRs (<c>owner/name</c>): what the Repos page's open-PRs line does.</summary>
+    public void OpenRepoPullRequests(string repo) => Navigate(() =>
+    {
+        Switch(PilotPage.PullRequests, _show);
+        PullRequests.ShowRepo(repo);
+    });
+
+    /// <summary>
+    /// Opens what <paramref name="card"/> is about, the way the card's own title does: a card about an open PR (<see cref="PullRequestLinks"/>)
+    /// opens the Pull requests page on its row. The one entry for anything that brings a card to the person from outside the panel, a
+    /// desktop notification's click among them (v2 raises none yet: the node's rings reach the person through the watchtower's push). False
+    /// for a card that is about no PR, which the caller opens by its own link.
+    /// </summary>
+    public bool OpenCard(CardRow card)
+    {
+        if (PullRequestLinks.Of(card) is not { } pr)
+        {
+            return false;
+        }
+        OpenPullRequest(pr.Repo, pr.Number);
+        return true;
     }
 
     /// <summary>Whether <see cref="Back"/> has a place to return to.</summary>
@@ -749,6 +787,8 @@ internal sealed class PilotChrome<TSurface>
         ShowsCards = cards is { HasAny: true } || (cards is not null && Cards.CanTell && !Cards.OnChatPage);
         // The page's flight lights its cards in the panel, and the flight's own page offers the merge its card does.
         Flights.Cards = cards;
+        // A flight with a PR says where it stands in the chip the Pull requests page has, and a click on it opens that row.
+        Flights.PullRequests = pullRequests?.Row;
         Cards.Focus = Page switch
         {
             PilotPage.Flights => Flights.FocusCode,

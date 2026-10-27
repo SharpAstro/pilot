@@ -142,7 +142,11 @@ internal sealed partial class FlightsView<TSurface>
         };
         if (flight.PullRequestUrl is { } url)
         {
-            facts.Add(Link($"PR #{flight.PullRequest}", url, $"pr:{line.Code}").WAuto());
+            facts.Add(PullRequestLink(line, url, $"pr:{line.Code}").WAuto());
+            if (PullRequestChip(line, PullRequestChipWidth, PullRequestChipHeight) is { } chip)
+            {
+                facts.Add(chip);
+            }
         }
         if (flight.Review is { } review)
         {
