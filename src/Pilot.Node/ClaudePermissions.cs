@@ -15,7 +15,7 @@ public static class ClaudePermissions
     /// <summary>The <c>pilot</c> verbs a session runs; one rule per verb and shell tool.</summary>
     public static readonly IReadOnlyList<string> Verbs =
     [
-        "update", "answer", "dismiss", "settings", "job", "jobs", "cancel", "leg", "flight", "review", "tell", "say", "cards", "status", "sessions",
+        "update", "node", "answer", "dismiss", "settings", "job", "jobs", "cancel", "leg", "flight", "review", "tell", "say", "cards", "status", "sessions",
     ];
 
     /// <summary>The shell tools Claude Code runs commands through; each rule is written for both.</summary>

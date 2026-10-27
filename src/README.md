@@ -114,6 +114,11 @@ A prerelease is never GitHub's latest release, so a stable node never sees the b
 the Actions artifacts earlier runs left (the zips that matter are release assets, which Actions storage does not count).
 
 It looks a minute after it starts and every 6 hours (15 minutes on beta), through `gh` (the repo is private, and gh's login reads it).
+`pilot node restart [why…]` restarts the node without an install, as a setting does: it starts the same binary as its
+successor (`--after <its pid>`) and stops, with the restart's caller and the jobs left (`1 job carries on under the next
+node`) on a Handled card and in the answer. It is your-only like an update (a flight's session is refused, an assistant is
+sorted by the autopilot rule), and refused, with nothing stopped, when the node's binary is not `pilot-node` or the
+successor does not start.
 `pilot update` installs the latest now, whatever the policy; `pilot update --check` only says. An install downloads the
 runtime's zip into `update/` beside the binaries, checks it against the SHA-256 GitHub lists, runs the staged
 `pilot-node --version`, then renames each file it replaces (and each of the old release's the new one lacks) to
@@ -554,6 +559,7 @@ pilot note <text…>
 pilot summary [<code>] [--fresh] [--fleet]     # the kept summary (Needs you, Where it is) with its age, tokens and cost; made when none or --fresh (see The summary)
 pilot summarise [<code>]                       # one Haiku call now over the flights in play (or one flight); keeps and prints the answer
 pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
+pilot node restart [why…]                      # the node restarts in place: its successor starts, jobs carry on and are counted in the answer
 pilot archive <session> | --ended [--undo]      # put ended sessions away, out of the lists (or back)
 pilot run [--timeout 90m] -- <command…>        # a long run handed to the node as a job (see Jobs)
 pilot jobs                                     # the node's jobs, running first
@@ -1207,7 +1213,7 @@ sorted by the `autopilot` setting (`Autopilot` on the node):
   person, a human-run CLI and a grant are not in the rule at all.
 
 The message is the optional `Why` of a command (`CommandRequest.Why`), filled by `--why "<message>"` on `pilot flight merge`,
-`pilot flight land`, `pilot settings set`, `pilot settings setup` and `pilot update` (and the matching MCP tool inputs); it is
+`pilot flight land`, `pilot settings set`, `pilot settings setup`, `pilot update` and `pilot node restart` (and the matching MCP tool inputs); it is
 empty when none is given.
 
 ## Cards

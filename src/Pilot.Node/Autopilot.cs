@@ -128,6 +128,7 @@ public sealed class Autopilot(NodeState state, IServiceProvider services)
             Verbs.Set => ($"set {words}", $"set {words}"),
             Verbs.Setup => ($"run setup {words}", $"ran setup {words}"),
             Verbs.Update => ($"update pilot{(words.Length > 0 ? " " + words : "")}", $"updated pilot{(words.Length > 0 ? " " + words : "")}"),
+            Verbs.RestartNode => ($"restart the node{(words.Length > 0 ? " " + words : "")}", $"restarted the node{(words.Length > 0 ? " " + words : "")}"),
             Verbs.RestartWatchtower => ("restart the watchtower", "restarted the watchtower"),
             Verbs.AnswerGrant => ($"answer a LAN ask ({words})", $"answered a LAN ask ({words})"),
             Verbs.RevokeGrant => ($"revoke the LAN grant {words}", $"revoked the LAN grant {words}"),

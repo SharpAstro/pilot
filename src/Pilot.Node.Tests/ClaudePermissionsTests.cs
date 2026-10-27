@@ -44,7 +44,7 @@ public sealed class ClaudePermissionsTests : IDisposable
     {
         Rules.ShouldContain("Bash(pilot update:*)");
         Rules.ShouldContain("PowerShell(pilot update:*)");
-        foreach (var verb in new[] { "update", "answer", "dismiss", "settings", "job", "jobs", "cancel", "leg", "flight", "review", "tell", "say", "cards", "status", "sessions" })
+        foreach (var verb in new[] { "update", "node", "answer", "dismiss", "settings", "job", "jobs", "cancel", "leg", "flight", "review", "tell", "say", "cards", "status", "sessions" })
         {
             Rules.ShouldContain($"Bash(pilot {verb}:*)");
             Rules.ShouldContain($"PowerShell(pilot {verb}:*)");
@@ -54,13 +54,13 @@ public sealed class ClaudePermissionsTests : IDisposable
         var cli = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(NodePath))!, "pilot");
         Rules.ShouldContain($"Bash({cli}:*)");
         Rules.ShouldContain($"PowerShell({cli}:*)");
-        Rules.Count.ShouldBe((15 + 2) * 2);
+        Rules.Count.ShouldBe((16 + 2) * 2);
         Rules.Distinct().Count().ShouldBe(Rules.Count);
     }
 
     [Fact]
     public void ABinaryNamedPilotIsNotRuledTwice() =>
-        ClaudePermissions.Rules("/bin/pilot").Count.ShouldBe((15 + 1) * 2);
+        ClaudePermissions.Rules("/bin/pilot").Count.ShouldBe((16 + 1) * 2);
 
     [Theory]
     [InlineData("")]

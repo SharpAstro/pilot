@@ -802,6 +802,12 @@ public static class PilotCommand
             { Options = { updateCheck, updateAdopt, actingOn } },
             (p, client, ct) => Send(client, Verbs.Update, Verbs.NodeTarget,
                 [p.GetValue(updateCheck) ? "check" : "install", .. p.GetValue(updateAdopt) ? new[] { "--adopt" } : []], who, ct, p.GetValue(actingOn)));
+        // node restart: the node starts its successor and stops, as for a setting or an update, so a session never kills the process.
+        var nodeRestartWhy = Words("why", "Why, for its Handled line", required: false);
+        var nodeRestart = Action(new Command("restart", "Restart the node in place: its flights, sessions and jobs carry on (jobs are not waited for; the answer says how many)")
+            { Arguments = { nodeRestartWhy }, Options = { actingOn } },
+            (p, client, ct) => Send(client, Verbs.RestartNode, Verbs.NodeTarget, p.GetValue(nodeRestartWhy) ?? [], who, ct, p.GetValue(actingOn)));
+        var nodeCommand = new Command("node", "This machine's pilot node") { Subcommands = { nodeRestart } };
 
         var subject = Arg("subject", "What it is about: flight/<code>, flight/<code>/<leg>, session/<id> or node");
         var cardTitle = Arg("title", "The card in a line");
@@ -951,7 +957,7 @@ public static class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, attachments, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, summary, summarise, update, archive, ring, flag, handled, nodes, connectNode, grants, settings },
+            Subcommands = { status, attachments, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, summary, summarise, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
