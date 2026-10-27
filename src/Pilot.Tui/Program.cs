@@ -201,19 +201,22 @@ jobs.LoadLog = async (node, id, ct) => (await (clients.For(node, command: false)
     : throw new InvalidOperationException($"the node did not send {id}'s log");
 jobs.Changed = Redraw;
 // Cancel is the selected job's, whose log is followed: its node's.
-jobs.OnCancel = job => _ = Task.Run(async () =>
+Action<JobRow> CancelJob(bool force) => job => _ = Task.Run(async () =>
 {
+    var what = force ? "force cancel" : "cancel";
     if (clients.For(jobs.FollowingNode) is not { } to)
     {
-        flights.Say($"cancel {job.Id}: {FleetClients.WatchOnly(jobs.FollowingNode)}");
+        flights.Say($"{what} {job.Id}: {FleetClients.WatchOnly(jobs.FollowingNode)}");
         Redraw();
         return;
     }
-    var envelope = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = [], Who = Who }, stop.Token);
+    var envelope = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = force ? [Verbs.ForceArg] : [], Who = Who }, stop.Token);
     clients.NoteRefusal(jobs.FollowingNode, envelope);
-    flights.Say(envelope.Success && envelope.Response is { Ok: true } ? $"cancelled {job.Id}" : $"cancel {job.Id}: {envelope.Response?.Error ?? envelope.Error}");
+    flights.Say(envelope.Success && envelope.Response is { Ok: true } ? $"{(force ? "force cancelled" : "cancelled")} {job.Id}" : $"{what} {job.Id}: {envelope.Response?.Error ?? envelope.Error}");
     Redraw();
 });
+jobs.OnCancel = CancelJob(force: false);
+jobs.OnForceCancel = CancelJob(force: true);
 jobs.OnOpen = location => DashboardCommands.Open(location);
 // The Fleet page: Connect asks a node for a grant; the merged lists then steer it.
 void Connect(string where, string machine) => _ = Task.Run(async () =>

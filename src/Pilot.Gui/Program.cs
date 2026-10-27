@@ -432,18 +432,21 @@ if (feed is not null && client is not null && clients is not null)
         : throw new InvalidOperationException($"the node did not send {id}'s log");
     chrome.Jobs.Changed = loop.RequestRedraw;
     // Cancel is the selected job's, whose log is followed: its node's.
-    chrome.Jobs.OnCancel = job => tracker.Run(async () =>
+    Action<JobRow> CancelJob(bool force) => job => tracker.Run(async () =>
     {
+        var what = force ? "force cancel" : "cancel";
         if (clients.For(chrome.Jobs.FollowingNode) is not { } to)
         {
-            Console.WriteLine($"pilot-gui: cancel {job.Id}: {FleetClients.WatchOnly(chrome.Jobs.FollowingNode)}");
+            Console.WriteLine($"pilot-gui: {what} {job.Id}: {FleetClients.WatchOnly(chrome.Jobs.FollowingNode)}");
             return;
         }
-        var result = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = [], Who = GuiSay.Who }, cts.Token);
+        var result = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = force ? [Verbs.ForceArg] : [], Who = GuiSay.Who }, cts.Token);
         clients.NoteRefusal(chrome.Jobs.FollowingNode, result);
-        Console.WriteLine($"pilot-gui: cancel {job.Id}: {(result.Success && result.Response is { Ok: true } ? "done" : result.Response?.Error ?? result.Error)}");
+        Console.WriteLine($"pilot-gui: {what} {job.Id}: {(result.Success && result.Response is { Ok: true } ? "done" : result.Response?.Error ?? result.Error)}");
         loop.RequestRedraw();
-    }, $"cancel {job.Id}");
+    }, $"{(force ? "force cancel" : "cancel")} {job.Id}");
+    chrome.Jobs.OnCancel = CancelJob(force: false);
+    chrome.Jobs.OnForceCancel = CancelJob(force: true);
     chrome.Jobs.OnOpen = location => OpenAway(location);
     chrome.Jobs.CopyText = text => SetClipboardText(text);
     // Rows on a node this user cannot steer are watch-only: their actions say "Connect to <node> to steer", and a Connect
