@@ -412,6 +412,12 @@ public sealed partial class LegCommander(
         {
             throw new FlightException("a leg needs a goal and a done-when (goal=… done-when=…)");
         }
+        // A letter or two is a placeholder, not a brief: PIL337's leg went out with goal 'x' and done-when 'y', and its worker
+        // could only fail it, with nothing to do (2026-10-27).
+        if (goal.Trim().Length < 3 || doneWhen.Trim().Length < 3)
+        {
+            throw new FlightException($"a leg's goal and done-when say what it does and how it is known done, not '{goal.Trim()}' and '{doneWhen.Trim()}'");
+        }
         // The node runs a check in a shell of its own (pwsh on Windows, sh elsewhere): one wrapped in another shell has its
         // quoting read twice, and TIA1827's check, double-quoted around a $LASTEXITCODE, failed every run for it.
         if (check is not null && ShellScript.WrappingShell(check) is { } shell)

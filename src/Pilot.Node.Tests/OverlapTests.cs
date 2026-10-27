@@ -135,7 +135,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
         await Ask();
         var card = Cards().Single();
 
-        var plan = await Leg(Verbs.PlanLeg, "flight/TIA2", "name=parser", "goal=g", "done-when=d");
+        var plan = await Leg(Verbs.PlanLeg, "flight/TIA2", "name=parser", "goal=Do the work", "done-when=Its check passes");
         var planned = await Leg(Verbs.Planned, "flight/TIA2", "done");
 
         foreach (var refused in new[] { plan, planned })
@@ -146,7 +146,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
         }
         _state.Legs("TIA2").ShouldBeEmpty();
         // The other flight is not held by it.
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=g", "done-when=d")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Do the work", "done-when=Its check passes")).Ok.ShouldBeTrue();
     }
 
     [Fact]
@@ -190,7 +190,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
         fresh.Brief.ShouldContain("flight connect TIA2 TIA1");
 
         // Its legs can be planned now.
-        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=parser", "goal=g", "done-when=d")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=parser", "goal=Do the work", "done-when=Its check passes")).Ok.ShouldBeTrue();
     }
 
     [Fact]
@@ -216,7 +216,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     public async Task FoldRecordsItOnThePairClosesTheCardAndAddsTheIssueToTheOtherFlightWhosePlannerIsToldToPlanLegsAfterItsOwn()
     {
         await TwoFlights();
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Rework the parser", "done-when=d")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Rework the parser", "done-when=Its check passes")).Ok.ShouldBeTrue();
         (await Leg(Verbs.PlanFlight, "flight/TIA2")).Ok.ShouldBeTrue();
         (await Leg(Verbs.PlanFlight, "flight/TIA1")).Ok.ShouldBeTrue();
         _workers.Started.Select(w => w.Name).ShouldBe(["du1-tia2-plan", "du1-tia1-plan"]);
@@ -504,8 +504,8 @@ public sealed class OverlapTests2 : OverlapTestsBase
         var held = F("TIA2");
         held.State.ShouldBe(FlightState.Held);
         held.Connections.ShouldBe(["TIA1"]);
-        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=parser", "goal=Rework the parser", "done-when=d")).Ok.ShouldBeTrue();
-        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=render", "goal=Render it", "done-when=d")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=parser", "goal=Rework the parser", "done-when=Its check passes")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=render", "goal=Render it", "done-when=Its check passes")).Ok.ShouldBeTrue();
         var planned = await Leg(Verbs.Planned, "flight/TIA2", "connected to TIA1: both edit src/Parser.cs");
         planned.Ok.ShouldBeTrue();
         var card = _state.Cards().Single(c => c.Kind == LegCommander.PlannedKind && c.Subject == "flight/TIA2");
@@ -521,7 +521,7 @@ public sealed class OverlapTests2 : OverlapTestsBase
         await TwoFlights();
         (await Leg(Verbs.PlanFlight, "flight/TIA2")).Ok.ShouldBeTrue();
 
-        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=docs", "goal=Write the docs", "done-when=d")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA2", "name=docs", "goal=Write the docs", "done-when=Its check passes")).Ok.ShouldBeTrue();
         var planned = await Leg(Verbs.Planned, "flight/TIA2", "one leg");
 
         planned.Ok.ShouldBeTrue();

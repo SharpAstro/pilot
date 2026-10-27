@@ -57,7 +57,7 @@ public sealed class CheckPathsTests : IDisposable
         _legs.RunAsync(new CommandRequest
         {
             Verb = Verbs.PlanLeg, Target = "flight/PIL1", Who = "tests",
-            Args = ["name=check", "goal=g", "done-when=d", $"check={check}", .. ciDiffers is null ? [] : new[] { $"ci-differs={ciDiffers}" }],
+            Args = ["name=check", "goal=Do the work", "done-when=Its check passes", $"check={check}", .. ciDiffers is null ? [] : new[] { $"ci-differs={ciDiffers}" }],
         }, Ct);
 
     [Fact]
