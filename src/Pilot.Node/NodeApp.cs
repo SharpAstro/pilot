@@ -194,7 +194,13 @@ public static class NodeApp
             return recheck;
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PrRecheck>());
-        builder.Services.AddSingleton<PrChecks>();
+        // A failed check is run again once before the node sends a leg round on it.
+        builder.Services.AddSingleton(services =>
+        {
+            var checks = ActivatorUtilities.CreateInstance<PrChecks>(services);
+            checks.RerunFirst = true;
+            return checks;
+        });
         builder.Services.AddHostedService(services => services.GetRequiredService<PrChecks>());
         builder.Services.AddSingleton<Digest>();
         builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());

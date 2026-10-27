@@ -18,6 +18,24 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
     /// <summary>GitHub keeps a status description to 140 characters.</summary>
     private const int DescriptionLength = 140;
 
+    // Marks are written outside the commander's lock (PIL338), so a flight's are serialised here instead: two looks at one flight
+    // must not both post its review comment, which is never posted twice. Each write to the flight's row is one atomic step.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _gates = new(StringComparer.Ordinal);
+
+    private async Task<T> OneAtATimeAsync<T>(string code, Func<Task<T>> run)
+    {
+        var gate = _gates.GetOrAdd(code, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(CancellationToken.None);
+        try
+        {
+            return await run();
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
     /// <summary>The PR's head as GitHub has it now: what a review is about to read. Null when there is no PR or GitHub would not say.</summary>
     public async Task<string?> HeadAsync(FlightRow flight, CancellationToken cancellationToken)
     {
@@ -40,7 +58,14 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
     /// Makes the PR say what the flight's review says, writing only what is not written yet: the review comment once its
     /// verdict is in, the status on the reviewed head, the label. A write GitHub refuses is kept on the row and carded once.
     /// </summary>
-    public async Task ApplyAsync(string code, CancellationToken cancellationToken)
+    public Task ApplyAsync(string code, CancellationToken cancellationToken) =>
+        OneAtATimeAsync(code, async () =>
+        {
+            await ApplyOneAsync(code, cancellationToken);
+            return 0;
+        });
+
+    private async Task ApplyOneAsync(string code, CancellationToken cancellationToken)
     {
         if (Of(code) is not { PullRequest: { } number, Review: { } started } flight)
         {
@@ -127,7 +152,14 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
     /// so a refusal is a card and a retry like any other mark; and the PR's head and <c>pilot:</c> label as GitHub has them,
     /// kept on the flight with where they disagree with what the node set or read.
     /// </summary>
-    public async Task NoteAsync(string code, PullRequest pr, bool queued, CancellationToken cancellationToken)
+    public Task NoteAsync(string code, PullRequest pr, bool queued, CancellationToken cancellationToken) =>
+        OneAtATimeAsync(code, async () =>
+        {
+            await NoteOneAsync(code, pr, queued, cancellationToken);
+            return 0;
+        });
+
+    private async Task NoteOneAsync(string code, PullRequest pr, bool queued, CancellationToken cancellationToken)
     {
         if (Of(code) is not { PullRequest: { } number, Review: { } review } || number != pr.Number || pr.State != "OPEN")
         {
@@ -144,7 +176,7 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
             // A write still refused is set by the retry at the next look, with this label in it.
             if (review.MarksWhy is null)
             {
-                await ApplyAsync(code, cancellationToken);
+                await ApplyOneAsync(code, cancellationToken);
             }
             // What GitHub said is older than what was just written: it is read again at the next look.
             return;
@@ -170,7 +202,7 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
         var seen = pr.Labels is null ? flight.GitHubLabel : label;
         if (flight.GitHubHead != head || flight.GitHubLabel != seen || flight.GitHubDisagrees != why)
         {
-            state.PutFlight(flight with { GitHubHead = head, GitHubLabel = seen, GitHubDisagrees = why });
+            state.UpdateFlight(code, f => f with { GitHubHead = head, GitHubLabel = seen, GitHubDisagrees = why });
         }
     }
 
@@ -272,10 +304,7 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
 
     private void Update(string code, Func<ReviewRow, ReviewRow> change)
     {
-        if (Of(code) is { Review: { } review } flight)
-        {
-            state.PutFlight(flight with { Review = change(review) });
-        }
+        state.UpdateFlight(code, flight => flight.Review is { } review ? flight with { Review = change(review) } : null);
     }
 
     // A write that failed is the flight's card, never its failure; only the node stopping is let through.

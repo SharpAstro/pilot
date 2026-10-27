@@ -62,6 +62,14 @@ internal sealed class FakeGitHub : IGitHub
 {
     public PullRequest? Pr { get; set; }
 
+    /// <summary>
+    /// Awaited by PullRequestAsync, MergeAsync, CreateAsync, SetDraftAsync and RerunFailedChecksAsync as each begins, with the call's
+    /// name: a gh that takes as long as the test says (PIL338). Null answers at once.
+    /// </summary>
+    public Func<string, Task>? OnCall { get; set; }
+
+    private Task Called(string call) => OnCall?.Invoke(call) ?? Task.CompletedTask;
+
     /// <summary>The open issues, by number, with their titles.</summary>
     public Dictionary<int, string> Issues { get; } = [];
 
@@ -98,16 +106,23 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, CreateIssueAsync fails with it.</summary>
     public string? CreateIssueFails { get; set; }
 
-    public Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken)
+    /// <summary>When set, CreateIssueAsync waits for it before it does anything: a command handler held, as a node busy with a session start holds one.</summary>
+    public Task? CreateIssueHold { get; set; }
+
+    public async Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken)
     {
+        if (CreateIssueHold is { } hold)
+        {
+            await hold;
+        }
         if (CreateIssueFails is { } why)
         {
-            return Task.FromException<IssueInfo>(new FlightException(why));
+            throw new FlightException(why);
         }
         IssuesCreated.Add((repoPath, title, body));
         var number = Issues.Count == 0 ? 1 : Issues.Keys.Max() + 1;
         Issues[number] = title;
-        return Task.FromResult(new IssueInfo { Number = number, Title = title });
+        return new IssueInfo { Number = number, Title = title };
     }
 
     /// <summary>Each issue closed, with its comment, in order.</summary>
@@ -132,16 +147,20 @@ internal sealed class FakeGitHub : IGitHub
     public List<(int Number, string Head, string Method)> Merged { get; } = [];
 
     // The labels are what the fake keeps on the PR, so a label taken off by hand is read as GitHub says it.
-    public Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken) =>
-        Task.FromResult(Pr is { } pr ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. labels] : [] } : null);
+    public async Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    {
+        await Called(nameof(PullRequestAsync));
+        return Pr is { } pr ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. labels] : [] } : null;
+    }
 
     /// <summary>Whether a merge joins a merge queue rather than merging, as on a base that has one.</summary>
     public bool Queues { get; set; }
 
-    public Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
+    public async Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
+        await Called(nameof(MergeAsync));
         Merged.Add((number, head, method));
-        return Task.FromResult(Queues);
+        return Queues;
     }
 
     /// <summary>What ChecksAsync answers for any PR.</summary>
@@ -209,10 +228,11 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>How many times the failed runs were asked to run again, each as the PR's number.</summary>
     public List<int> Reruns { get; } = [];
 
-    public Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
+    public async Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
+        await Called(nameof(RerunFailedChecksAsync));
         Reruns.Add(number);
-        return Task.FromResult(1);
+        return 1;
     }
 
     /// <summary>The workflow runs each commit has, by commit; a commit with none listed has none.</summary>
@@ -264,23 +284,24 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, SetDraftAsync fails with it, as a gh that could not reach GitHub.</summary>
     public string? DraftFails { get; set; }
 
-    public Task SetDraftAsync(string repoPath, int number, bool draft, CancellationToken cancellationToken)
+    public async Task SetDraftAsync(string repoPath, int number, bool draft, CancellationToken cancellationToken)
     {
+        await Called(nameof(SetDraftAsync));
         if (DraftFails is { } why)
         {
             throw new FlightException(why);
         }
         DraftCalls.Add((number, draft));
-        return Task.CompletedTask;
     }
 
     public List<(string Branch, string Base, string Title, string Body)> Created { get; } = [];
 
-    public Task<PullRequest> CreateAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken)
+    public async Task<PullRequest> CreateAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken)
     {
+        await Called(nameof(CreateAsync));
         Created.Add((branch, baseBranch, title, body));
         Pr = new PullRequest(70 + Created.Count, "OPEN", "cafe0000cafe0000", $"https://github.com/x/tianwen/pull/{70 + Created.Count}");
-        return Task.FromResult(Pr);
+        return Pr;
     }
 
     /// <summary>Any repo's PRs, by <c>owner/repo#n</c>, as gh pr view -R reads them.</summary>
