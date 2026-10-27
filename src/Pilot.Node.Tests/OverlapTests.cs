@@ -176,7 +176,8 @@ public sealed class OverlapTests1 : OverlapTestsBase
         // Still all three choices: the title says what the planner leans to, the controller answers.
         card.Choices.Select(c => c.Label).ShouldBe(["Fold into TIA1", "Connect to TIA1", "Plan in parallel"]);
         var recorded = F("TIA2").Overlaps.ShouldHaveSingleItem();
-        (recorded.Pick, recorded.Why, recorded.Files).ShouldBe((Verbs.OverlapPickFold, "same goal", ["src/DetachedShell.cs", "src/Parser.cs"]));
+        (recorded.Pick, recorded.Why).ShouldBe((Verbs.OverlapPickFold, "same goal"));
+        recorded.Files.ShouldBe(["src/DetachedShell.cs", "src/Parser.cs"]);
     }
 
     [Fact]
@@ -621,7 +622,7 @@ public sealed class OverlapTests2 : OverlapTestsBase
         section.ShouldContain("unknown");
         section.ShouldContain(" status`");
         // What to do with each answer: overlap asks the controller (with the shared files), connect holds the flight (on another node too), a peer's flight is never folded into, a PR is named.
-        section.ShouldContain("flight overlap TIA2 <other> file=<shared file>");
+        section.ShouldContain("flight overlap TIA2 <other> pick=fold file=<shared file>");
         section.ShouldContain("end your turn at once");
         section.ShouldContain("connect it to the other or plan in parallel");
         section.ShouldContain("flight connect TIA2 <other>");
