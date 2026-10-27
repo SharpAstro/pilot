@@ -1012,8 +1012,7 @@ public sealed class GhCli : IGitHub
         {
             throw new FlightException($"gh could not list the files of PR #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
-        return [.. output.Split('
-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+        return [.. output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
     }
 
     public async Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken)
