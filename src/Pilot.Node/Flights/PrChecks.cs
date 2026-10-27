@@ -16,6 +16,19 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     // A PR head whose failed checks were sent back as changes: once, not every look.
     private readonly HashSet<string> _failed = new(StringComparer.Ordinal);
 
+    // When each head's failed runs were run again, so the leg is sent round only if they fail once more.
+    private readonly Dictionary<string, DateTimeOffset> _rerunAt = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Whether a reviewed PR's failed checks are run again once a head before its leg is sent round. A test that fails on one
+    /// run by chance (McpTests, UnreachableNodeTests, SettingsPageTests on 2026-10-27) was taken as the review asking for
+    /// changes, and each cost a worker and a fresh review. The node turns it on; off, a failure sends the leg round at once.
+    /// </summary>
+    public bool RerunFirst { get; set; }
+
+    /// <summary>How long the runs started again are given to finish before a head still failing sends the leg round.</summary>
+    public TimeSpan RerunGrace { get; init; } = TimeSpan.FromMinutes(15);
+
     // A flight and head the autopilot has asked to merge: once, not every look.
     private readonly HashSet<string> _autoMerged = new(StringComparer.Ordinal);
 
@@ -231,6 +244,41 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         }
     }
 
+    /// <summary>
+    /// Whether the head's failed checks are being run again, so its leg is not sent round yet: started now, once a head, or
+    /// started less than <see cref="RerunGrace"/> ago. False when <see cref="RerunFirst"/> is off, GitHub ran none again, or
+    /// the grace has passed and they still fail.
+    /// </summary>
+    private async Task<bool> RerunningAsync(FlightRow flight, int number, string head, CancellationToken cancellationToken)
+    {
+        if (!RerunFirst)
+        {
+            return false;
+        }
+        var key = $"{flight.Code} {head}";
+        var now = time.GetUtcNow();
+        if (_rerunAt.TryGetValue(key, out var at))
+        {
+            return now - at < RerunGrace;
+        }
+        _rerunAt[key] = now;
+        try
+        {
+            var runs = await github.RerunFailedChecksAsync(flight.RepoPath, number, cancellationToken);
+            if (runs == 0)
+            {
+                return false;
+            }
+            state.RaiseCard(CardBin.Handled, "checks-rerun", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number}: {runs} failed {(runs == 1 ? "run" : "runs")} running again",
+                $"once at {head[..Math.Min(8, head.Length)]}, before its leg is sent round: a test that fails by chance is not a go-around");
+            return true;
+        }
+        catch (FlightException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>The card of a flight whose merge waited for its checks and was dropped: why, and Merge to ask again. Raised only when no card was showing the armed merge.</summary>
     public const string MergeDropped = "merge-dropped";
 
@@ -320,6 +368,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 {
                     autoMergeNote = $" GitHub's auto-merge could not be turned off ({ex.Message}): switch it off on the PR page, or it merges once the checks pass.";
                 }
+            }
+            if (checksFailed && byAutopilot && legs is not null && await RerunningAsync(flight, number, head, cancellationToken))
+            {
+                // Its failed runs run again; the merge stays armed for them.
+                continue;
             }
             if (checksFailed && byAutopilot && legs is not null)
             {
@@ -549,7 +602,12 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     [.. card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = status, Note = null } : c)], card.Link);
                 continue;
             }
-            // Reviewed and passed, but its checks failed: sent back as changes, once a head, so the leg goes around.
+            // Reviewed and passed, but its checks failed: run again once, then sent back as changes, once a head, so the leg goes around.
+            if (legs is not null && status == ChoiceStatus.Failing && pr is { Number: var rerunNumber, Head: var rerunHead } && rerunNumber == number
+                && await RerunningAsync(flight, number, rerunHead, cancellationToken))
+            {
+                continue;
+            }
             if (legs is not null && status == ChoiceStatus.Failing && pr is { } failed && failed.Number == number && _failed.Add($"{flight.Code} {failed.Head}"))
             {
                 if (await legs.ChecksFailedAsync(flight.Code, failed.Head, cancellationToken) is { } why)

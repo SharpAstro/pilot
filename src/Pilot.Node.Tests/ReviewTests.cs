@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
+using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
 
@@ -396,6 +397,35 @@ public sealed class ReviewTests1 : ReviewTestsBase
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
 
         _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task OnAutopilotFailedChecksRunAgainOnceAHeadBeforeTheLegIsSentRound()
+    {
+        // A test that fails by chance is not a go-around: the node runs the failed runs again first (2026-10-27).
+        var (flight, pr) = await Passed("33");
+        _github.Checks = ChoiceStatus.Pending;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        var time = new ManualTime(DateTimeOffset.UtcNow);
+        var checks = new PrChecks(_state, _github, time, _flights, _legs) { RerunFirst = true };
+        await checks.LookAsync(Ct);
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
+
+        _github.Checks = ChoiceStatus.Failing;
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        // Run again once, the merge still armed, the review still passed, a Handled line saying so.
+        _github.Reruns.ShouldBe([pr]);
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        _state.Cards().ShouldContain(c => c.Kind == "checks-rerun" && c.Bin == CardBin.Handled);
+
+        // Still failing once the runs had their time: now the leg is sent round, and nothing is run again.
+        time.Advance(checks.RerunGrace + TimeSpan.FromMinutes(1));
+        await checks.LookAsync(Ct);
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+        _github.Reruns.ShouldBe([pr]);
     }
 
     [Fact]
