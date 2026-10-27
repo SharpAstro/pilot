@@ -11,6 +11,9 @@
 #   dotnet publish src/Pilot.Node -c Release -r linux-x64 --self-contained -p:PublishAot=false -o <dir>/node
 #   dotnet publish src/Pilot.Cli  -c Release -r linux-x64 --self-contained -p:PublishAot=false -o <dir>/cli
 #   dotnet publish src/Pilot.Node -c Release -r linux-x64 --self-contained -p:PublishAot=false -p:Version=2.0.1 -o <dir>/node-2.0.1
+# The three share one obj folder, and an incremental build keeps the assembly version of the publish before it (the
+# node then says 2.0.1 where 2.0.0 is wanted, or cannot load Pilot.Contracts 2.0.1.0), so delete
+# src/Pilot.Contracts/{obj,bin}/Release and src/Pilot.Node/{obj,bin}/Release/net10.0/linux-x64 before each publish.
 # When dotnet is on this Linux's PATH and no publish is there, it publishes the same itself.
 #
 # What it touches: a scratch folder under /tmp for the node's data, socket, install and release feed, never the real
