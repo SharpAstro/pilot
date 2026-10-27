@@ -15,10 +15,34 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
 {
     private static readonly TimeSpan Quick = TimeSpan.FromSeconds(1);
 
+    // A command of another flight, while a launcher is held: it is not behind the hold if it answers long before the hold is let go
+    // (the test lets it go only at its end). Its own git work (readying a plane) is real and slower on a loaded machine, so the bound
+    // is far above the 1 s a start's answer is given, and far below a launcher that takes half a minute.
+    private static readonly TimeSpan NotHeld = TimeSpan.FromSeconds(10);
+
     private async Task<(CommandResult Result, TimeSpan Took)> Timed(Func<Task<CommandResult>> run)
     {
         var clock = Stopwatch.StartNew();
         var result = await run();
+        return (result, clock.Elapsed);
+    }
+
+    /// <summary>
+    /// A command that starts a session, timed from the moment the launcher is asked: the plane's readying before it is real git, work
+    /// the command waits for (<see cref="LegCommander.StartReadyWithin"/>) and as slow as the machine is busy, so it is not what is
+    /// measured; the answer given while the launcher is held is.
+    /// </summary>
+    private async Task<(CommandResult Result, TimeSpan Took)> TimedFromLauncher(Func<Task<CommandResult>> run)
+    {
+        var waited = Stopwatch.StartNew();
+        var command = run();
+        while (_workers.Hold is not null && !command.IsCompleted)
+        {
+            waited.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(30), "the launcher was not asked");
+            await Task.Delay(5, Ct);
+        }
+        var clock = Stopwatch.StartNew();
+        var result = await command;
         return (result, clock.Elapsed);
     }
 
@@ -55,7 +79,7 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
         await SecondFlightWithALeg();
         var gate = Hold();
 
-        var (start, startTook) = await Timed(() => Leg(Verbs.StartLeg, "flight/TIA1/parser"));
+        var (start, startTook) = await TimedFromLauncher(() => Leg(Verbs.StartLeg, "flight/TIA1/parser"));
         start.Ok.ShouldBeTrue(start.Error);
         startTook.ShouldBeLessThan(Quick);
         start.Made.ShouldNotBeNull().ShouldStartWith("started");
@@ -68,12 +92,12 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
         // The launcher took the hold; every command after it is another flight's, and answers at once.
         await Until(() => _workers.Hold is null);
         var (plan, planTook) = await Timed(() => Leg(Verbs.PlanLeg, "flight/TIA2", "name=sun", "goal=Draw the sun", "done-when=It shows"));
-        (plan.Ok, planTook < Quick).ShouldBe((true, true), plan.Error);
+        (plan.Ok, planTook < NotHeld).ShouldBe((true, true), plan.Error);
         var (other, otherTook) = await Timed(() => Leg(Verbs.StartLeg, "flight/TIA2/moons"));
-        (other.Ok, otherTook < Quick).ShouldBe((true, true), other.Error);
+        (other.Ok, otherTook < NotHeld).ShouldBe((true, true), other.Error);
         L2("moons").State.ShouldBe(LegState.Flying);
         var (check, checkTook) = await Timed(() => Leg(Verbs.Check, "flight/TIA2/moons", "1"));
-        (check.Ok, checkTook < Quick).ShouldBe((true, true), check.Error);
+        (check.Ok, checkTook < NotHeld).ShouldBe((true, true), check.Error);
 
         // Up at last: the leg flies, recorded after the start.
         gate.SetResult();
@@ -89,7 +113,7 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
         var gate = Hold();
 
-        var (plan, took) = await Timed(() => Flight(Verbs.PlanFlight, "TIA1"));
+        var (plan, took) = await TimedFromLauncher(() => Flight(Verbs.PlanFlight, "TIA1"));
 
         plan.Ok.ShouldBeTrue(plan.Error);
         took.ShouldBeLessThan(Quick);
