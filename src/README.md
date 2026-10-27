@@ -541,8 +541,8 @@ pilot update [--check] [--adopt]               # the latest release, installed w
 pilot archive <session> | --ended [--undo]      # put ended sessions away, out of the lists (or back)
 pilot run [--timeout 90m] -- <command…>        # a long run handed to the node as a job (see Jobs)
 pilot jobs                                     # the node's jobs, running first
-pilot job <id>                                 # one job, and where its whole output is
-pilot job cancel <id>                          # stops it, running or waiting; its owner is told
+pilot job <id>                                 # one job: its output's path, and while it runs its pid and process tree
+pilot job <id> cancel [--force]                # stops it, running or waiting; its owner is told. --force kills the whole tree at once (see Jobs)
 pilot mcp                                      # these commands as an MCP server over stdio (see The MCP server)
 ```
 
@@ -582,15 +582,37 @@ A full test suite, a build or a training run is a job, not a worker's turn: `pil
 the node, which runs it in the folder it was handed from, and the worker ends its turn instead of sitting in a poll
 loop. When it ends (by itself, on its timeout, 2 h by default and 8 h at most, or cancelled) the node wakes the session
 that handed it over with how it ended, its last lines and the path of its whole log. Jobs from every flight share the
-machine: `pilot-node --max-jobs <n>` run at once (1 by default) and only with `--job-memory <GB>` free (2 by default);
-the rest wait in the order they came, each saying what it waits on. A job's log is kept in the node's data folder
+machine: `pilot-node --max-jobs <n>` run at once (1 by default). The head of the queue with nothing running starts
+whatever the free memory (so the queue never deadlocks on it); a second or later job starts only when the machine has
+free what its kind of command needs: the node samples a job's process tree every 2 s, a run's value is the median of
+its samples (its peak is only shown), and the estimate is the median of the last 5 runs of the same key (repo, tool
+and verb, project or solution, and `--no-build`, `-c` and whether a `--filter` is given), falling back to the same
+target with other flags, the same verb in the repo, then 1 GB. A run whose median is above the estimate raises it at
+once; a short spike never does. `--job-memory <GB>` (0 by default) is a floor: a second job waits for its kind's measured need, or this when that is less. The rest wait in
+the order they came, each saying what it needs (median and peak) and the memory free now. A job's log is kept in the node's data folder
 (`jobs/<id>.log`), and its end is served for the GUI (`GET /api/v1/jobs/<id>/log`, a grant's on the LAN).
 
 A job runs **detached** from the node (its own session via `setsid`, or on Windows its own hidden console outside the
-node's job object, with no pipe the node holds): its shell writes stdout and stderr straight to the log and its exit
-code to `jobs/<id>.log.exit` when it ends. The Running row carries `Pid`, `ProcessStartedAt` and `ExitPath`; the node
+node's job object, in a named job object of its own, inheriting only the log and NUL, so no pipe the node holds): its
+shell writes stdout and stderr straight to the log and its exit code to `jobs/<id>.log.exit` when it ends. The Running row carries `Pid`, `ProcessStartedAt` and `ExitPath`; the node
 follows the log file for the tail and step, takes the end from the process exit plus the exit file (no file: failed, no
 exit recorded), and stopping the node leaves running jobs alone. Cancel and timeout kill by pid, process tree included.
+
+While a job runs, its log (the GET above, which the Background tasks page polls) also carries the wrapper's `pid` and
+the process `tree` under it (name, pid, depth), read from the OS every 2 s; the node remembers the descendants it has
+seen, so a child that outlived its wrapper is still found. When the wrapper is gone, the row still reads running and a
+descendant lives, the log says so in `stuck` (`process exited, output still held by <pid>`). `pilot job <id> cancel`
+stops a job the usual way; `--force` (`cancel-job` with the arg `force`) kills the wrapper and every known descendant at
+once, with no grace, ends the job Cancelled with `cancelled (forced) by <who>` and tells its owner once.
+
+Every job (sh and pwsh, the detached wrapper too) and every `claude` process the node starts, which is what a worker
+session's own builds inherit, gets one build environment (`BuildEnvironment`): `MSBUILDDISABLENODEREUSE=1`,
+`DOTNET_CLI_USE_MSBUILD_SERVER=0` and `UseSharedCompilation=false`, so a build leaves no reused node or compiler server
+behind to hold the job's output, and `DOTNET_PROCESSOR_COUNT=4`, which caps what in the build sizes itself by the .NET
+runtime's processor count, a test host's default parallelism among it. It does not cap MSBuild's node count on Windows
+(MSBuild asks the OS for the core count; a Release build of Pilot.slnx peaked at 11 worker nodes on 12 cores with it, with
+`MSBUILDNODECOUNT`, `MSBUILDCORELIMIT` and `MSBUILDNODELIMITOFFSET`, and with none): no environment variable does, only
+`-maxcpucount:4` or a `Directory.Build.rsp`, which edit the build.
 
 A worker that finishes its own leg is stopped after 90 s, once it has said its report. Claude Code tears down a worktree
 its `-w` session entered when that job ends by itself, keeping the branch; the node checks a plane out again from its
@@ -1026,7 +1048,8 @@ command is refused, naming each node and why it did not qualify (`in maintenance
 Any other setting's change restarts the node to run with it at once, whatever jobs run or wait (a job runs detached
 from the node and the next node follows it again, and the answer says how many carry on): the node starts its
 successor with its own arguments and `--after <its pid>`, and stops, as a self-update does, so flights, sessions and
-the watchtower carry on and clients resume their stream. A setting the command line gives is saved but says it does
+the watchtower carry on and clients resume their stream. Jobs run detached from the node and carry on too; the new node
+picks them up, and the answer says how many were left (`2 jobs left running; the new node picks them up`). A setting the command line gives is saved but says it does
 not count until the command line stops giving it.
 
 Above the settings, the page has the setup checklist: started at logon, Claude Code's hooks for this binary, on the

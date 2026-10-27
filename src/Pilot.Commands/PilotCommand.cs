@@ -591,6 +591,18 @@ public static class PilotCommand
             // writer, where a plain read of the file here was refused while the job ran, and it works from the LAN too.
             if (await client.GetJobLogAsync(job.Id, ct) is { Success: true, Response: { } log })
             {
+                if (log.Pid is { } pid)
+                {
+                    await output.WriteLineAsync($"  pid {pid}");
+                }
+                foreach (var process in log.Tree ?? [])
+                {
+                    await output.WriteLineAsync($"  {new string(' ', process.Depth * 2)}{process.Name} {process.Pid}");
+                }
+                if (log.Stuck is { } stuck)
+                {
+                    await output.WriteLineAsync($"  stuck: {stuck}; pilot job {job.Id} cancel --force ends it");
+                }
                 foreach (var line in log.Lines.TakeLast(15))
                 {
                     await output.WriteLineAsync($"  | {line}");
@@ -598,8 +610,9 @@ public static class PilotCommand
             }
             return 0;
         });
-        var cancelJob = Action(new Command("cancel", "Stop a running job; its owner is told") { Arguments = { jobId } },
-            (p, client, ct) => Send(client, Verbs.CancelJob, Verbs.JobTarget(p.GetValue(jobId)!), [], who, ct));
+        var cancelForce = new Option<bool>("--force") { Description = "Kill the job's wrapper and every process under it at once, including ones that outlived the wrapper and hold its output" };
+        var cancelJob = Action(new Command("cancel", "Stop a running job; its owner is told") { Arguments = { jobId }, Options = { cancelForce } },
+            (p, client, ct) => Send(client, Verbs.CancelJob, Verbs.JobTarget(p.GetValue(jobId)!), p.GetValue(cancelForce) ? [Verbs.ForceArg] : [], who, ct));
         jobShow.Subcommands.Add(cancelJob);
 
         // say, note

@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 
 namespace Pilot.Node.Flights;
 
@@ -26,17 +25,17 @@ public static class ProcessTreeCpu
         public TimeSpan Total => _seen.Values.Aggregate(TimeSpan.Zero, (sum, t) => sum + t);
     }
 
-    public static TimeSpan? Of(Process root, Tally tally)
+    public static TimeSpan? Of(int rootPid, Tally tally, IProcessTable? table = null)
     {
         try
         {
-            var parents = Parents();
-            var tree = new HashSet<int> { root.Id };
+            var parents = (table ?? OsProcessTable.Instance).Snapshot();
+            var tree = new HashSet<int> { rootPid };
             // A parent id can be reused, so only descendants found by walking from the root are counted; repeat to a fixpoint.
             for (var grew = true; grew;)
             {
                 grew = false;
-                foreach (var (pid, parent) in parents)
+                foreach (var (pid, parent, _) in parents)
                 {
                     grew |= tree.Contains(parent) && tree.Add(pid);
                 }
@@ -59,87 +58,5 @@ public static class ProcessTreeCpu
         {
             return null;
         }
-    }
-
-    /// <summary>Every process's parent, as (pid, parent pid); empty where it cannot be read.</summary>
-    internal static List<(int Pid, int Parent)> Parents() =>OperatingSystem.IsWindows() ? WindowsParents() : LinuxParents();
-
-    private static List<(int, int)> LinuxParents()
-    {
-        var result = new List<(int, int)>();
-        foreach (var dir in Directory.EnumerateDirectories("/proc"))
-        {
-            if (!int.TryParse(Path.GetFileName(dir), out var pid))
-            {
-                continue;
-            }
-            try
-            {
-                // pid (comm) state ppid ...: comm may hold spaces and parentheses, so read after the last one.
-                var stat = File.ReadAllText(Path.Combine(dir, "stat"));
-                var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
-                result.Add((pid, int.Parse(fields[1], System.Globalization.CultureInfo.InvariantCulture)));
-            }
-            catch (Exception ex) when (ex is IOException or FormatException or ArgumentOutOfRangeException or IndexOutOfRangeException)
-            {
-            }
-        }
-        return result;
-    }
-
-    private const uint SnapProcess = 0x2;
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct ProcessEntry
-    {
-        public uint Size;
-        public uint Usage;
-        public uint ProcessId;
-        public nuint DefaultHeapId;
-        public uint ModuleId;
-        public uint Threads;
-        public uint ParentProcessId;
-        public int PriorityClassBase;
-        public uint Flags;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
-        public string ExeFile;
-    }
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern nint CreateToolhelp32Snapshot(uint flags, uint processId);
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool Process32FirstW(nint snapshot, ref ProcessEntry entry);
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool Process32NextW(nint snapshot, ref ProcessEntry entry);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CloseHandle(nint handle);
-
-    private static List<(int, int)> WindowsParents()
-    {
-        var result = new List<(int, int)>();
-        var snapshot = CreateToolhelp32Snapshot(SnapProcess, 0);
-        if (snapshot == -1)
-        {
-            return result;
-        }
-        try
-        {
-            var entry = new ProcessEntry { Size = (uint)Marshal.SizeOf<ProcessEntry>(), ExeFile = "" };
-            for (var more = Process32FirstW(snapshot, ref entry); more; more = Process32NextW(snapshot, ref entry))
-            {
-                result.Add(((int)entry.ProcessId, (int)entry.ParentProcessId));
-            }
-        }
-        finally
-        {
-            CloseHandle(snapshot);
-        }
-        return result;
     }
 }

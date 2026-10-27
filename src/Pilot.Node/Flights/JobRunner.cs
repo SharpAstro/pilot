@@ -10,17 +10,25 @@ namespace Pilot.Node.Flights;
 /// <summary>
 /// The node's jobs (<c>pilot run</c>): a long run handed over by a session, which then ends its turn and is woken with the
 /// result, so no worker sits polling a test suite (v2's phase 2). A job is the node's own, as tianwen's are: it runs on the
-/// node's lifetime, never a request's; it is on the stream like a flight; and only <c>cancel-job</c>, its timeout or the
-/// node stopping end it early. Its owner is told how it ended, a real turn for an idle worker, and a wake that fails rings.
+/// node's lifetime, never a request's; it is on the stream like a flight; and only <c>cancel-job</c> or its timeout end it
+/// early (the node stopping does not). Its owner is told how it ended, a real turn for an idle worker, and a wake that fails rings.
 /// </summary>
 /// <remarks>
 /// <para><b>The machine is shared.</b> Several flights hand jobs to one node, and a full test suite can take gigabytes, so
-/// jobs do not all start at once: at most <see cref="MaxRunning"/> run together, and one starts only while the machine
-/// has <see cref="MinFreeMemory"/> free. The rest wait in the order they came, from every flight alike, each saying where
-/// it stands in its step; their owners end their turns as for any job and are woken when it ends, so a wait costs them
-/// nothing.</para>
-/// <para>Jobs outlive the node: they run detached and write their own exit file. A restarted node follows the ones still
-/// running again, ends the ones that finished meanwhile from their exit file, and keeps the queued ones queued.</para>
+/// jobs do not all start at once: at most <see cref="MaxRunning"/> run together, and a second or later one starts only while
+/// the machine has free what the same kind of command used before (<see cref="JobMemory"/>). The head of the queue with
+/// nothing running starts whatever the memory, so the queue never waits for memory only its own jobs could free. The rest wait
+/// in the order they came, from every flight alike, each saying where it stands and what it needs in its step; their owners
+/// end their turns as for any job and are woken when it ends, so a wait costs them nothing.</para>
+/// <para><b>What a job needs is measured.</b> The job's process tree is sampled every <see cref="TreeEvery"/>; the run's value is
+/// the median of the samples (its peak is only shown), and the estimate for a kind of command (<see cref="JobKey"/>) is the median
+/// of its last runs' values, falling back to the same target with other flags, the same verb in the repo, then 1 GB.</para>
+/// <para><b>A job outlives the node.</b> Its process is detached and the node follows it by its files, so a restarted node
+/// finds a job its predecessor left again: on start it checks each running row's pid and start time (a reused pid is not
+/// the job). One still alive is followed again (log, step, exit file) with its timeout counted from its start; one that
+/// ended while the node was down is ended from its exit file, and its owner told as for any job; one gone without an exit
+/// file fails, saying so, rather than leave a worker waiting for a result that will never come. Waiting jobs stay waiting,
+/// in their order.</para>
 /// </remarks>
 public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider time) : BackgroundService
 {
@@ -37,24 +45,30 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     private const int TailLines = 20;
 
+    /// <summary>How often a running job's log and exit file are looked at.</summary>
+    public TimeSpan FollowEvery { get; set; } = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>Where a job's exit code is written when it ends: its log's path plus <c>.exit</c>.</summary>
+    public static string ExitPathOf(string logPath) => logPath + ".exit";
+
     /// <summary>Says a job's end to its owner: <see cref="NodeCommands.RunAsync"/> with a <c>say</c>.</summary>
     public Func<CommandRequest, CancellationToken, Task<CommandResult>>? Say { get; set; }
 
     /// <summary>How often a running job's step (its last line) is put on the stream, so a long run shows it is alive without a delta per line.</summary>
     public TimeSpan StepEvery { get; init; } = TimeSpan.FromSeconds(10);
 
-    /// <summary>
-    /// How long to wait for a job's exit file once its process has exited. The end is the process's, never its output's: a
-    /// process the job started (a test's node, a git, a pwsh) that outlives it keeps the log open, and waiting on that
-    /// kept SE1's j122 "running" for four and a half hours after its tests had passed (2026-10-26).
-    /// </summary>
-    public TimeSpan DrainGrace { get; init; } = TimeSpan.FromSeconds(15);
-
     /// <summary>How many jobs run at once; the rest wait their turn. Set live by <c>set node max-jobs</c>, then <see cref="Pump"/>.</summary>
     public int MaxRunning { get; set; } = 1;
 
-    /// <summary>The free memory a job needs before it starts: a suite started on a machine already short of it takes the machine down with it. Set live by <c>set node job-memory</c>.</summary>
-    public long MinFreeMemory { get; set; } = 2L << 30;
+    /// <summary>
+    /// The least free memory a second job waits for: what it needs is its kind's measured estimate (<see cref="JobMemory"/>), or this
+    /// when that is less. A floor, never a cap: as a cap, a kind measured at 8 GB started beside another with 2 GB free, the overload
+    /// the gate is for (review of #357). Set live by <c>set node job-memory</c>; 0 leaves the estimate alone.
+    /// </summary>
+    public long MinFreeMemory { get; set; }
+
+    /// <summary>The memory, in bytes, the processes of a job's tree hold now; null when it cannot be read. Null reads each from <see cref="ProcessTable"/>; a test puts its own.</summary>
+    public Func<JobProcessInfo[], long?>? MemorySample { get; init; }
 
     /// <summary>The machine's free memory in bytes, or null when it cannot be read (then memory holds nothing back).</summary>
     public Func<long?> FreeMemory { get; init; } = MachineMemory.Available;
@@ -71,12 +85,26 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>The CPU time a running job's process tree has used in all, or null when it cannot be read.</summary>
     public Func<string, TimeSpan?>? JobCpu { get; init; }
 
-    private readonly ConcurrentDictionary<string, Process> _running = new(StringComparer.Ordinal);
+    /// <summary>The OS's process table, as the node reads a job's tree and kills it: a test puts a fake one.</summary>
+    public IProcessTable ProcessTable { get; init; } = OsProcessTable.Instance;
+
+    /// <summary>How often a running job's process tree is looked at, so a process it starts is remembered and is found again if it outlives the wrapper.</summary>
+    public TimeSpan TreeEvery { get; set; } = TimeSpan.FromSeconds(2);
+
+    // The running jobs' processes, by pid and start time: the node follows a job by its files, and holds no pipe of it.
+    private readonly ConcurrentDictionary<string, JobProcess> _running = new(StringComparer.Ordinal);
     // Where each running job's idle window began and the CPU it had used then. The dispatcher's alone.
     private readonly Dictionary<string, (DateTimeOffset At, TimeSpan Cpu, TimeSpan Last)> _cpuMarks = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ProcessTreeCpu.Tally> _cpuTallies = new(StringComparer.Ordinal);
+    // What each running job's tree has held; made once, from the process table the runner was given.
+    private JobTree? _tree;
+    private JobTree Tree => LazyInitializer.EnsureInitialized(ref _tree, () => new JobTree(ProcessTable));
+    // Wakes a watch that is between two looks, so a cancel is seen at once and not a look later.
+    private readonly ConcurrentDictionary<string, TaskCompletionSource> _nudges = new(StringComparer.Ordinal);
     // Every job this node handed over, so a recovery knows which ones a previous node left behind.
     private readonly ConcurrentDictionary<string, byte> _mine = new(StringComparer.Ordinal);
+    // The watches of the running jobs, so the node's stop waits for each to let go of its job without touching its row.
+    private readonly ConcurrentDictionary<string, Task> _watches = new(StringComparer.Ordinal);
     // What the dispatcher acts on, one at a time: a job handed over, a cancel of a waiting one, and "look again" (a job
     // ended, the timer for memory). No lock anywhere: everything that decides who runs happens on the dispatcher alone.
     private readonly Channel<Signal> _signals = Channel.CreateUnbounded<Signal>(new UnboundedChannelOptions { SingleReader = true });
@@ -145,87 +173,71 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     }
 
     /// <summary>
-    /// Picks up the jobs a previous node left. A Running row whose pid is alive with the recorded start time is followed
-    /// again (a reused pid is another process, not the job); one that is gone is ended from its exit file, or failed when
-    /// it wrote none. Queued rows go back in the queue in their old order, and start as slots free.
+    /// Takes up the jobs a previous node left: a running one still alive is followed again, one that ended while no node was
+    /// up is ended from its exit file (failed when it left none), and a waiting one goes back on the queue in its order.
     /// </summary>
     public async Task RecoverAsync(CancellationToken cancellationToken)
     {
         var left = state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && !_mine.ContainsKey(j.Id)).ToList();
-        foreach (var job in left.Where(j => j.State == JobState.Running))
-        {
-            _mine[job.Id] = 0;
-            if (Reattach(job) is { } process)
-            {
-                _running[job.Id] = process;
-                _ = Task.Run(() => WatchAsync(job, process, null), CancellationToken.None);
-                continue;
-            }
-            JobRow ended;
-            if (job.ExitPath is { } exitPath && await ReadExitAsync(exitPath, wait: false) is { } code)
-            {
-                ended = code == 0
-                    ? job with { State = JobState.Succeeded, ExitCode = 0 }
-                    : job with { State = JobState.Failed, ExitCode = code, Error = $"exit {code}" };
-            }
-            else
-            {
-                ended = job with { State = JobState.Failed, Error = "ended while the node was down, no exit recorded" };
-            }
-            ended = ended with { Step = LastLine(job.LogPath), EndedAt = time.GetUtcNow() };
-            state.PutJob(ended);
-            if (!job.Told)
-            {
-                await TellAsync(ended, cancellationToken);
-            }
-        }
+        // Back on the queue through the dispatcher, which owns it, in the order they were handed over.
         foreach (var job in left.Where(j => j.State == JobState.Queued).OrderBy(j => j.QueuedAt ?? j.StartedAt).ThenBy(j => j.Id, StringComparer.Ordinal))
         {
             _mine[job.Id] = 0;
-            _queue.Add(job);
+            _signals.Writer.TryWrite(new HandedOver(job));
         }
-        if (_queue.Count > 0)
+        foreach (var job in left.Where(j => j.State == JobState.Running))
         {
-            Pump();
+            _mine[job.Id] = 0;
+            await RecoverRunningAsync(job, cancellationToken);
         }
     }
 
-    /// <summary>The job's process when it is still alive and is the one that was started (pid and start time agree), else null.</summary>
-    private static Process? Reattach(JobRow job)
+    private async Task RecoverRunningAsync(JobRow job, CancellationToken cancellationToken)
     {
-        if (job.Pid is not { } pid || job.ProcessStartedAt is not { } started)
+        var exitPath = job.ExitPath ?? ExitPathOf(job.LogPath);
+        // A pid alone proves nothing: a process that took it since has another start time.
+        var process = job is { Pid: { } pid, ProcessStartedAt: { } startedAt } ? new JobProcess(pid, startedAt) : null;
+        if (process is not null && process.IsAlive())
         {
-            return null;
+            _running[job.Id] = process;
+            _watches[job.Id] = Task.Run(() => WatchAsync(job, process, fromEnd: true), CancellationToken.None);
+            return;
         }
-        Process? process = null;
+
+        // Gone: how it ended is what its wrapper wrote.
+        var follower = new LogFollower(job.LogPath, fromEnd: true);
+        string[] last = [.. follower.Read(final: true)];
+        var ended = ReadExit(exitPath) switch
+        {
+            0 => job with { State = JobState.Succeeded, ExitCode = 0 },
+            { } code => job with { State = JobState.Failed, ExitCode = code, Error = $"exit {code}" },
+            null => job with { State = JobState.Failed, Error = "ended while the node was down, no exit recorded" },
+        };
+        ended = ended with
+        {
+            Step = last.LastOrDefault(l => l.Trim().Length > 0) is { } l ? Clip(l) : null,
+            EndedAt = EndOf(job, exitPath),
+        };
+        state.PutJob(ended);
+        DetachedShell.DeleteScripts(job.ScriptPath);
+        await TellAsync(ended, cancellationToken, last);
+    }
+
+    /// <summary>When a job that ended while the node was down ended: when its exit file was written, else now.</summary>
+    private DateTimeOffset EndOf(JobRow job, string exitPath)
+    {
         try
         {
-            process = Process.GetProcessById(pid);
-            if (!process.HasExited && Math.Abs((new DateTimeOffset(process.StartTime) - started).TotalSeconds) <= 2)
+            if (File.Exists(exitPath) && new DateTimeOffset(File.GetLastWriteTimeUtc(exitPath), TimeSpan.Zero) is var written && written >= job.StartedAt)
             {
-                return process;
+                return written;
             }
-        }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-            // Gone, or not ours to read: not the job.
-        }
-        process?.Dispose();
-        return null;
-    }
-
-    private static string? LastLine(string logPath)
-    {
-        try
-        {
-            using var reader = new StreamReader(new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete));
-            var last = reader.ReadToEnd().Split('\n').LastOrDefault(l => l.Trim().Length > 0);
-            return last is null ? null : Clip(last);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return null;
+            // Not readable: now will do.
         }
+        return time.GetUtcNow();
     }
 
     /// <summary><c>run session/&lt;id&gt;|node &lt;cwd&gt; &lt;timeout seconds&gt; &lt;command…&gt;</c>: starts the job; its id is the result's <c>Made</c>.</summary>
@@ -278,6 +290,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         var jobId = state.NextJobId();
         var folder = Path.Combine(options.DataFolder, "jobs");
         Directory.CreateDirectory(folder);
+        var logPath = Path.Combine(folder, $"{jobId}.log");
         var job = new JobRow
         {
             Id = jobId,
@@ -288,9 +301,11 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             Flight = owner?.Flight,
             Leg = owner?.Leg,
             State = JobState.Queued,
-            LogPath = Path.Combine(folder, $"{jobId}.log"),
+            LogPath = logPath,
+            ExitPath = ExitPathOf(logPath),
             Timeout = timeout,
             StartedAt = time.GetUtcNow(),
+            MemoryKey = JobKey.Of(line, cwd).ToString(),
         };
         job = job with { QueuedAt = job.StartedAt };
 
@@ -305,22 +320,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     internal bool IsRunning(string id) => _running.ContainsKey(id);
 
     /// <summary>The running jobs' root processes, as (job id, pid): what the machine sampler marks a job's tree by.</summary>
-    internal List<(string Id, int Pid)> RunningPids()
-    {
-        var result = new List<(string, int)>();
-        foreach (var (id, process) in _running)
-        {
-            try
-            {
-                result.Add((id, process.Id));
-            }
-            catch (InvalidOperationException)
-            {
-                // Ended and released since it was listed.
-            }
-        }
-        return result;
-    }
+    internal List<(string Id, int Pid)> RunningPids() => [.. _running.Select(pair => (pair.Key, pair.Value.Pid))];
 
     /// <summary>Asks the dispatcher to look again: a slot or memory may have come free.</summary>
     public void Pump() => _signals.Writer.TryWrite(LookAgain.Instance);
@@ -355,7 +355,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 break;
         }
 
-        while (_queue.Count > 0 && WhyWait() is null)
+        while (_queue.Count > 0 && WhyWait(_queue[0]) is null)
         {
             var next = _queue[0];
             _queue.RemoveAt(0);
@@ -368,10 +368,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
 
         // Each waiting job says where it stands.
-        var why = _queue.Count > 0 ? WhyWait() : null;
         for (var i = 0; i < _queue.Count; i++)
         {
-            _queue[i] = _queue[i] with { Step = i == 0 ? $"next in line: {why}" : $"queued, {i} ahead of it" };
+            _queue[i] = _queue[i] with { Step = i == 0 ? $"next in line: {WhyWait(_queue[0])}" : $"queued, {i} ahead of it; {Needs(_queue[i])}" };
             state.PutJob(_queue[i]);
         }
 
@@ -405,7 +404,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 {
                     _cpuTallies[jobId] = tally = new ProcessTreeCpu.Tally();
                 }
-                return ProcessTreeCpu.Of(p, tally);
+                return ProcessTreeCpu.Of(p.Pid, tally);
             });
             if (read(id) is not { } cpu)
             {
@@ -445,62 +444,129 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         _ = TellAsync(cancelled, _stopping);
     }
 
-    /// <summary>Why a job may not start now, or null when it may.</summary>
-    private string? WhyWait()
+    /// <summary>
+    /// Why a job may not start now, or null when it may. With nothing running it always may (when a slot is allowed at all):
+    /// the only memory it could wait for is what its own queue's jobs hold, and a head that waits for memory nothing will
+    /// free is a queue that never moves. Otherwise it starts when the machine has free what its kind of command needs.
+    /// </summary>
+    private string? WhyWait(JobRow job)
     {
         if (_running.Count >= MaxRunning)
         {
-            return MaxRunning == 1 ? "another job is running" : $"{_running.Count} jobs are running, {MaxRunning} at a time";
+            var slots = MaxRunning == 1 ? "another job is running" : $"{_running.Count} jobs are running, {MaxRunning} at a time";
+            return $"{slots}; {Needs(job)}";
         }
-        return FreeMemory() is { } free && free < MinFreeMemory
-            ? $"waiting for {Gigabytes(MinFreeMemory)} of free memory ({Gigabytes(free)} now)"
+        if (_running.IsEmpty)
+        {
+            return null;
+        }
+        var estimate = EstimateOf(job);
+        var need = Math.Max(estimate.Bytes, MinFreeMemory);
+        return FreeMemory() is { } free && free < need
+            ? $"waiting for {MemoryEstimate.Gigabytes(need)} of free memory ({Basis(estimate, need)}; {MemoryEstimate.Gigabytes(free)} now)"
             : null;
     }
 
-    /// <summary>Starts a job, detached from the node; null when it started, else why not.</summary>
+    private MemoryEstimate EstimateOf(JobRow job) => JobMemory.Estimate(state.Jobs(), JobKey.Parse(job.MemoryKey) ?? JobKey.Of(job.Command, job.Cwd));
+
+    /// <summary>What the estimate rests on; when job-memory raises it, that too.</summary>
+    private static string Basis(MemoryEstimate estimate, long need) =>
+        need > estimate.Bytes ? $"{estimate.Describe()}, raised to the job-memory floor" : estimate.Describe();
+
+    /// <summary>What a waiting job needs, as its step says it: the estimate with its median and peak, and the memory free now.</summary>
+    private string Needs(JobRow job)
+    {
+        var estimate = EstimateOf(job);
+        var need = Math.Max(estimate.Bytes, MinFreeMemory);
+        var now = FreeMemory() is { } free ? $", {MemoryEstimate.Gigabytes(free)} free now" : "";
+        return $"needs {MemoryEstimate.Gigabytes(need)} ({Basis(estimate, need)}){now}";
+    }
+
+    /// <summary>
+    /// Starts a job detached from the node (<see cref="DetachedShell"/>: on Windows in a named job object of its own, inheriting
+    /// only its log and NUL); null when it started, else why not.
+    /// </summary>
     private string? Start(JobRow job)
     {
         DetachedShell? shell = null;
-        Process process;
-        var exitPath = job.LogPath + ".exit";
+        JobProcess process;
+        var exitPath = job.ExitPath ?? ExitPathOf(job.LogPath);
         try
         {
+            // An exit file of an earlier run of this id would end the job at once: there is none.
             File.Delete(exitPath);
             shell = DetachedShell.For(job.Id, job.Command, job.Cwd, job.LogPath, exitPath);
-            process = shell.Start();
+            var started = shell.Start();
+            process = new JobProcess(started.Id, StartOf(started), started);
         }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException)
         {
             shell?.Dispose();
             return ex.Message;
         }
-        DateTimeOffset? began = null;
-        try
-        {
-            began = process.StartTime;
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-            // Gone already: the watch finds it ended.
-        }
-        var running = job with { Pid = process.Id, ProcessStartedAt = began, ExitPath = exitPath };
+        // What a later node needs to find it again, on the row before it is put. The scripts stay until the job has ended.
+        job = job with { ExitPath = exitPath, Pid = process.Pid, ProcessStartedAt = process.StartedAt, ScriptPath = shell.Script };
         // In _running before the Running row is put: a cancel that sees the row must find the process.
         _running[job.Id] = process;
-        state.PutJob(running);
-        _ = Task.Run(() => WatchAsync(running, process, shell), CancellationToken.None);
+        state.PutJob(job);
+        _watches[job.Id] = Task.Run(() => WatchAsync(job, process, fromEnd: false), CancellationToken.None);
         return null;
     }
 
-    private static string Gigabytes(long bytes) => $"{bytes / (double)(1L << 30):0.0} GB";
+    /// <summary>When <paramref name="process"/> started, in UTC; now when it cannot be read (it ended already, and the watch finds it so).</summary>
+    private DateTimeOffset StartOf(Process process)
+    {
+        try
+        {
+            return new DateTimeOffset(process.StartTime.ToUniversalTime(), TimeSpan.Zero);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return time.GetUtcNow();
+        }
+    }
 
-    /// <summary><c>cancel-job job/&lt;id&gt;</c>: stops it, or takes it out of the queue; its owner is told, as of any job's end.</summary>
+    /// <summary>
+    /// Ends a job's whole tree: on Windows by its named job object first, which holds a descendant whose parent already exited
+    /// and is found by name by a node that did not start the job; then the wrapper's tree by parent pids, which is all Linux has.
+    /// </summary>
+    private void Kill(string id, JobProcess process)
+    {
+        if (state.Jobs().FirstOrDefault(j => j.Id == id) is { } row)
+        {
+            DetachedShell.TerminateJob(id, row.LogPath);
+        }
+        process.Kill();
+    }
+
+    /// <summary>
+    /// <c>cancel-job job/&lt;id&gt; [force]</c>: stops it, or takes it out of the queue; its owner is told, as of any job's end.
+    /// With <c>force</c> the wrapper and every process the node has seen under it are killed at once, so one that outlived the
+    /// wrapper and holds the job's output dies too, and the job ends <c>cancelled (forced) by &lt;who&gt;</c>.
+    /// </summary>
     public CommandResult Cancel(CommandRequest command)
     {
         var id = command.Target.StartsWith(Verbs.JobTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.JobTargetPrefix.Length..] : command.Target;
+        var args = command.Args ?? [];
+        if (args.Any(a => !string.Equals(a, Verbs.ForceArg, StringComparison.OrdinalIgnoreCase)))
+        {
+            return state.Complete(command, $"cancel-job takes only `{Verbs.ForceArg}`, not {string.Join(' ', args)}");
+        }
+        var force = args.Length > 0;
         if (_running.TryGetValue(id, out var process))
         {
             _cancelled[id] = command.Who;
-            Kill(id, process);
+            if (force)
+            {
+                _forced[id] = 0;
+                Kill(id, process);
+                Tree.KillAll(id, process);
+            }
+            else
+            {
+                Kill(id, process);
+            }
+            Nudge(id);
             return state.Complete(command, null);
         }
         if (state.Jobs().FirstOrDefault(j => j.Id == id) is { State: JobState.Queued })
@@ -512,26 +578,66 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         return state.Complete(command, state.Jobs().Any(j => j.Id == id) ? $"job {id} is not running" : $"There is no job {id}");
     }
 
+    private void Nudge(string id)
+    {
+        if (_nudges.TryGetValue(id, out var nudge))
+        {
+            nudge.TrySetResult();
+        }
+    }
+
+    /// <summary>
+    /// What the job log read adds to the log's end: the wrapper's pid, the process tree under it as the OS has it (and what the
+    /// node saw earlier that lives still), and, when the row reads running while the wrapper has exited and a process it
+    /// started lives on, the fact that the job is held by it. A job that is not running has only its pid.
+    /// </summary>
+    public JobLog Describe(JobRow job, JobLog log)
+    {
+        JobProcess? process = null;
+        if (job.State == JobState.Running)
+        {
+            process = _running.TryGetValue(job.Id, out var held) ? held : job is { Pid: { } pid, ProcessStartedAt: { } startedAt } ? new JobProcess(pid, startedAt) : null;
+        }
+        if (process is null)
+        {
+            return log with { Pid = job.Pid };
+        }
+        var reading = Tree.Read(job.Id, process);
+        var outlived = reading.Held.ToList();
+        // The ones nearest the wrapper hold it, whatever they started in turn.
+        var stuck = outlived.Count > 0
+            ? $"process exited, output still held by {string.Join(", ", outlived.Where(h => h.Depth == outlived.Min(x => x.Depth)).Select(h => h.Pid))}"
+            : null;
+        return log with { Pid = process.Pid, Tree = reading.Tree, Stuck = stuck };
+    }
+
     private readonly ConcurrentDictionary<string, string> _cancelled = new(StringComparer.Ordinal);
 
-    /// <summary>How often a running job's log is read and its process looked at.</summary>
-    private static readonly TimeSpan PollEvery = TimeSpan.FromMilliseconds(100);
+    // The jobs whose cancel was forced, so their row says so.
+    private readonly ConcurrentDictionary<string, byte> _forced = new(StringComparer.Ordinal);
 
-    private async Task WatchAsync(JobRow job, Process process, DetachedShell? shell)
+    /// <summary>
+    /// Follows a job by its files, not by pipes it holds: the log is read for new lines (they are the step, put on the stream
+    /// now and then, and the last lines its owner is told), until the exit file appears or the process is gone. The exit code
+    /// is the one in the exit file; the process is killed by pid, with its tree, on a cancel or when its timeout runs out.
+    /// The node stopping only ends the watch: the job runs on and its row stays running, for the next node to follow again
+    /// (<paramref name="fromEnd"/>: a job found again, whose log is followed from its end).
+    /// </summary>
+    private async Task WatchAsync(JobRow job, JobProcess process, bool fromEnd)
     {
-        // The job writes its own log; the node follows the file for the last lines and the step. Nothing is held open
-        // between them, so the node ending leaves the job running and its end to be read from the exit file.
+        var exitPath = job.ExitPath ?? ExitPathOf(job.LogPath);
         var tail = new CircularBuffer<string>(TailLines);
-        using var follower = new LogFollower(job.LogPath);
+        var follower = new LogFollower(job.LogPath, fromEnd);
         var lastStep = time.GetUtcNow();
-        void Take(IEnumerable<string?> lines)
+        var timedOut = false;
+        int? exitCode = null;
+        // What the job's process tree held at each look at it: the run's median is its value in the estimate, its peak only shown.
+        var memory = new List<long>();
+
+        void Follow(bool final)
         {
-            foreach (var line in lines)
+            foreach (var line in follower.Read(final))
             {
-                if (line is null)
-                {
-                    continue;
-                }
                 tail.Add(line);
                 // The step, put on the stream now and then: a long run shows it is alive, without a delta per line.
                 var now = time.GetUtcNow();
@@ -543,43 +649,77 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             }
         }
 
-        var timedOut = false;
-        using var limit = CancellationTokenSource.CreateLinkedTokenSource(_stopping);
-        // Measured from the row's StartedAt, so a reattached job has only what is left of its timeout.
-        var left = job.StartedAt + job.Timeout - time.GetUtcNow();
-        limit.CancelAfter(left < TimeSpan.Zero ? TimeSpan.Zero : left);
-        while (true)
+        using (var limit = CancellationTokenSource.CreateLinkedTokenSource(_stopping))
         {
-            Take(follower.ReadNew());
-            if (HasExited(process))
-            {
-                break;
-            }
+            // Counted from its start, as a node that found it again does: a restart does not give a job its time anew.
+            var left = job.StartedAt + job.Timeout - time.GetUtcNow();
+            limit.CancelAfter(left > TimeSpan.Zero ? left : TimeSpan.Zero);
+            var nudge = _nudges[job.Id] = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var nextTree = time.GetUtcNow();
             try
             {
-                await Task.Delay(PollEvery, limit.Token);
+                while (true)
+                {
+                    // The processes under it are looked at now and then, so one that outlives the wrapper is still known.
+                    if (time.GetUtcNow() >= nextTree)
+                    {
+                        nextTree = time.GetUtcNow() + TreeEvery;
+                        var reading = Tree.Read(job.Id, process);
+                        // Nothing readable is not a sample of zero.
+                        if (HeldBy(reading.Tree) is > 0 and var held)
+                        {
+                            memory.Add(held);
+                        }
+                    }
+                    // Sampled before the exit file is looked at: a process that was gone by now has left its exit file, if it was going to.
+                    var alive = process.IsAlive();
+                    Follow(final: false);
+                    if (ReadExit(exitPath) is { } code)
+                    {
+                        exitCode = code;
+                        break;
+                    }
+                    if (!alive)
+                    {
+                        break;
+                    }
+                    // Between two looks, or sooner when a cancel says so.
+                    using var pause = CancellationTokenSource.CreateLinkedTokenSource(limit.Token);
+                    var tick = Task.Delay(FollowEvery, time, pause.Token);
+                    if (await Task.WhenAny(tick, nudge.Task) == tick)
+                    {
+                        await tick;
+                    }
+                    else
+                    {
+                        pause.Cancel();
+                        nudge = _nudges[job.Id] = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
+            {
+                // The node is stopping: the job is not, and its row stays as it is for the next node.
+                process.Child?.Dispose();
+                return;
             }
             catch (OperationCanceledException)
             {
-                if (_stopping.IsCancellationRequested)
-                {
-                    // The node is stopping: the job is not its to end. It runs on and writes its exit file.
-                    process.Dispose();
-                    return;
-                }
                 timedOut = true;
                 Kill(job.Id, process);
-                for (var i = 0; i < 100 && !HasExited(process); i++)
-                {
-                    await Task.Delay(PollEvery, CancellationToken.None);
-                }
-                break;
+                await GoneAsync(process);
+                exitCode = ReadExit(exitPath);
             }
         }
-        Take(follower.ReadNew());
-        Take([follower.Flush()]);
+        // What the job wrote last, after the process has gone, and the whole of a last line it left without a newline.
+        Follow(final: true);
+        // Ended: the scripts it ran are of no use now.
+        DetachedShell.DeleteScripts(job.ScriptPath);
 
         _running.TryRemove(job.Id, out _);
+        _watches.TryRemove(job.Id, out _);
+        _nudges.TryRemove(job.Id, out _);
+        Tree.Forget(job.Id);
         // Its slot is free: the next in line may start.
         Pump();
         string[] last = [.. tail.Snapshot];
@@ -587,74 +727,79 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         JobRow ended;
         if (_cancelled.TryRemove(job.Id, out var by))
         {
-            ended = latest with { State = JobState.Cancelled, Error = $"cancelled by {by}" };
+            ended = latest with { State = JobState.Cancelled, Error = _forced.TryRemove(job.Id, out _) ? $"cancelled (forced) by {by}" : $"cancelled by {by}" };
         }
         else if (timedOut)
         {
             ended = latest with { State = JobState.Failed, Error = $"stopped after its timeout of {Took(job.Timeout)}" };
         }
-        else if (await ReadExitAsync(job.ExitPath!) is not { } code)
-        {
-            ended = latest with { State = JobState.Failed, Error = "the job's process ended and recorded no exit code" };
-        }
-        else
+        else if (exitCode is { } code)
         {
             ended = code == 0
                 ? latest with { State = JobState.Succeeded, ExitCode = 0 }
                 : latest with { State = JobState.Failed, ExitCode = code, Error = $"exit {code}" };
         }
+        else
+        {
+            ended = latest with { State = JobState.Failed, Error = "its process ended without leaving an exit code" };
+        }
         ended = ended with { Step = last.LastOrDefault(l => l.Trim().Length > 0) is { } l ? Clip(l) : null, EndedAt = time.GetUtcNow() };
+        if (memory.Count > 0)
+        {
+            ended = ended with { MemoryMedian = JobMemory.Median(memory), MemoryPeak = memory.Max() };
+        }
         state.PutJob(ended);
-        shell?.Dispose();
+        // Looked at again now this run is in the history: the look its slot gave may have been before it, with the older estimate.
+        Pump();
         await TellAsync(ended, CancellationToken.None, last);
-        process.Dispose();
+        process.Child?.Dispose();
     }
 
-    private static bool HasExited(Process process)
+    /// <summary>The memory the processes of a job's tree hold in all, in bytes; null when none of it could be read.</summary>
+    private long? HeldBy(JobProcessInfo[] tree)
+    {
+        if (MemorySample is { } sample)
+        {
+            return sample(tree);
+        }
+        long? total = null;
+        foreach (var process in tree)
+        {
+            if (ProcessTable.MemoryOf(process.Pid) is { } bytes)
+            {
+                total = (total ?? 0) + bytes;
+            }
+        }
+        return total;
+    }
+
+    /// <summary>The exit code its wrapper left in <paramref name="path"/>; null while there is none (or it is not a number yet).</summary>
+    private static int? ReadExit(string path)
     {
         try
         {
-            return process.HasExited;
+            return int.TryParse(File.ReadAllText(path).Trim(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var code) ? code : null;
         }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return true;
+            return null;
         }
     }
 
-    /// <summary>
-    /// The exit code the job's wrapper wrote, or null when it wrote none. The file is written before the wrapper's process
-    /// ends, so it is there when the process is gone; <see cref="DrainGrace"/> only allows for a file system slow to show it.
-    /// </summary>
-    private async Task<int?> ReadExitAsync(string exitPath, bool wait = true)
+    /// <summary>Waits for a killed process to be gone, so its files can be read to the end and its script deleted.</summary>
+    private static async Task GoneAsync(JobProcess process)
     {
-        var waited = Stopwatch.StartNew();
-        do
+        for (var i = 0; i < 200 && process.IsAlive(); i++)
         {
-            try
-            {
-                if (int.TryParse((await File.ReadAllTextAsync(exitPath)).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var code))
-                {
-                    return code;
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // Not there yet.
-            }
-            if (wait)
-            {
-                await Task.Delay(PollEvery, CancellationToken.None);
-            }
+            await Task.Delay(50, CancellationToken.None);
         }
-        while (wait && waited.Elapsed < DrainGrace);
-        return null;
     }
 
     /// <summary>Says how the job ended to its owner, a real turn for an idle worker; a wake that fails rings, so the result is never lost in silence.</summary>
     private async Task TellAsync(JobRow job, CancellationToken cancellationToken, string[]? last = null)
     {
-        if (job.Owner is null || Say is null)
+        // Once only: a row already told (by this node, or one before it) is never told again.
+        if (job.Owner is null || Say is null || job.Told || state.Jobs().FirstOrDefault(j => j.Id == job.Id) is { Told: true })
         {
             return;
         }
@@ -679,30 +824,24 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
     }
 
-    /// <summary>Ends the job's whole tree; on Windows by its named job object, which holds a descendant whose parent already exited.</summary>
-    private void Kill(string id, Process process)
-    {
-        if (state.Jobs().FirstOrDefault(j => j.Id == id) is { } row)
-        {
-            DetachedShell.TerminateJob(id, row.LogPath);
-        }
-        try
-        {
-            process.Kill(entireProcessTree: true);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-            // Gone already.
-        }
-    }
-
     private static string Took(TimeSpan span) =>
         span.TotalHours >= 1 ? $"{(int)span.TotalHours}h {span.Minutes}m" : span.TotalMinutes >= 1 ? $"{(int)span.TotalMinutes}m {span.Seconds}s" : $"{Math.Max(0, (int)span.TotalSeconds)}s";
 
     private static string Clip(string line) => line.Trim() is { Length: > 200 } long_ ? long_[..200] + "…" : line.Trim();
 
-    // StopAsync is the base one: stopping the node does not stop its jobs. They are detached, and the row of each carries the
-    // pid and exit file a later node follows them by.
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        // The jobs are left running, and their rows Running: the next node finds them again. Each watch lets go of its job
+        // (the stopping token ends it) and is waited for, so none acts on a row after the node is gone.
+        await base.StopAsync(cancellationToken);
+        try
+        {
+            await Task.WhenAll(_watches.Values).WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
 
     /// <summary>
     /// The row to wake with a job's end: its owner's, or, once that has ended, the newest live session of the owner's name.

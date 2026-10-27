@@ -205,7 +205,9 @@ public sealed class RestartTests
     public async Task AQueuedJobSurvivesARestartInOrderAndRuns()
     {
         var first = await StartAsync();
-        var a = Run(first, Sleeping(2, 0));
+        // Held by a gate, not a sleep: under load a short sleep can end on the first node, and b and c then never wait across the restart.
+        var gate = Path.Combine(first.Folder, "gate");
+        var a = Run(first, WaitingFor(gate, 0));
         await Until(first, a, j => j.State == JobState.Running);
         var b = Run(first, "echo 'b ran'; exit 0");
         var c = Run(first, "echo 'c ran'; exit 0");
@@ -213,6 +215,9 @@ public sealed class RestartTests
         await first.StopKeepingFolderAsync();
 
         await using var second = await StartAsync(first.Folder);
+        second.State.Jobs().Single(j => j.Id == b).State.ShouldBe(JobState.Queued);
+        second.State.Jobs().Single(j => j.Id == c).State.ShouldBe(JobState.Queued);
+        await File.WriteAllTextAsync(gate, "go", Ct);
         var endedA = await Until(second, a, j => j.EndedAt is not null && j.Told);
         var endedB = await Until(second, b, j => j.EndedAt is not null && j.Told);
         var endedC = await Until(second, c, j => j.EndedAt is not null && j.Told);

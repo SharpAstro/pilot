@@ -248,8 +248,14 @@ public static class Verbs
     /// </summary>
     public const string Run = "run";
 
-    /// <summary><c>cancel-job job/&lt;id&gt;</c>: stops a running job; its owner is told, as of any job's end.</summary>
+    /// <summary>
+    /// <c>cancel-job job/&lt;id&gt;</c>: stops a running job; its owner is told, as of any job's end. With <see cref="ForceArg"/> it
+    /// kills the job's wrapper and every process the node has seen under it at once, with no grace.
+    /// </summary>
     public const string CancelJob = "cancel-job";
+
+    /// <summary>The arg of <see cref="CancelJob"/> that kills the whole process tree, descendants that outlived the wrapper too.</summary>
+    public const string ForceArg = "force";
 
     /// <summary>What a job target starts with: <c>job/&lt;id&gt;</c>.</summary>
     public const string JobTargetPrefix = "job/";

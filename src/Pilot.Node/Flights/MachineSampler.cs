@@ -118,7 +118,7 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
                 roots[pid] = owner;
             }
             var parents = new Dictionary<int, int>();
-            foreach (var (pid, parent) in ProcessTreeCpu.Parents())
+            foreach (var (pid, parent, _) in OsProcessTable.Instance.Snapshot())
             {
                 parents[pid] = parent;
             }

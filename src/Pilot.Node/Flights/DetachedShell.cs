@@ -26,19 +26,38 @@ public sealed class DetachedShell : IDisposable
     /// <summary>The script files a Windows job runs from: deleted on <see cref="Dispose"/>, and by the wrapper when it ends.</summary>
     public IReadOnlyList<string> Scripts => _files;
 
+    /// <summary>The line's own script, which the row keeps (<see cref="Pilot.Contracts.JobRow.ScriptPath"/>) so a later node can delete it with its wrapper; null on Linux.</summary>
+    public string? Script => _files.FirstOrDefault();
+
+    /// <summary>
+    /// The job's shell. The line is <see cref="ShellScript.Unwrap"/>ped, as a check's is: a job written as
+    /// <c>pwsh -Command "...; exit $LASTEXITCODE"</c> is otherwise read twice, and the outer pwsh expands the inner's
+    /// <c>$LASTEXITCODE</c> to nothing, so the job ends 0 whatever the line did (TIA1827, 2026-10-25).
+    /// </summary>
     public static DetachedShell For(string jobId, string command, string cwd, string logPath, string exitPath)
     {
         if (!OperatingSystem.IsWindows())
         {
             return new DetachedShell([], () => StartUnix(command, cwd, logPath, exitPath));
         }
-        var id = Guid.NewGuid().ToString("N");
-        var inner = Path.Combine(Path.GetTempPath(), $"pilot-{id}.ps1");
-        var outer = Path.Combine(Path.GetTempPath(), $"pilot-{id}-run.ps1");
+        var inner = Path.ChangeExtension(logPath, ".ps1");
+        var outer = WrapperOf(inner);
         var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
-        File.WriteAllText(inner, ShellScript.Body(command), utf8);
+        File.WriteAllText(inner, ShellScript.Body(ShellScript.Unwrap(command)), utf8);
         File.WriteAllText(outer, WindowsWrapper(inner, outer, exitPath), utf8);
         return new DetachedShell([inner, outer], () => StartWindows(JobName(jobId, logPath), outer, cwd, logPath));
+    }
+
+    /// <summary>The wrapper script beside a job's own <paramref name="script"/>.</summary>
+    private static string WrapperOf(string script) => Path.ChangeExtension(script, ".run.ps1");
+
+    /// <summary>Deletes a job's script and its wrapper, once the job has ended; a path of null, or files already gone, is nothing.</summary>
+    public static void DeleteScripts(string? script)
+    {
+        if (script is not null)
+        {
+            Delete([script, WrapperOf(script)]);
+        }
     }
 
     /// <summary>Starts the job; the process is the shell's, left running if the node ends.</summary>
@@ -50,10 +69,7 @@ public sealed class DetachedShell : IDisposable
     /// </summary>
     internal static string WindowsWrapper(string inner, string outer, string exitPath) =>
         $$"""
-        $env:MSBUILDDISABLENODEREUSE = '1'
-        $env:DOTNET_CLI_USE_MSBUILD_SERVER = '0'
-        $env:UseSharedCompilation = 'false'
-        & pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{Quote(inner)}}
+        {{EnvironmentLines()}}& pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{Quote(inner)}}
         $code = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 1 }
         [System.IO.File]::WriteAllText({{Quote(exitPath + ".tmp")}}, "$code")
         Move-Item -LiteralPath {{Quote(exitPath + ".tmp")}} -Destination {{Quote(exitPath)}} -Force
@@ -62,25 +78,33 @@ public sealed class DetachedShell : IDisposable
 
         """;
 
+    /// <summary>The build environment (<see cref="BuildEnvironment"/>) as the wrapper sets it, one <c>$env:</c> line each.</summary>
+    private static string EnvironmentLines() =>
+        string.Concat(BuildEnvironment.Variables.Select(v => $"$env:{v.Key} = {Quote(v.Value)}{Environment.NewLine}"));
+
     private static string Quote(string text) => "'" + text.Replace("'", "''", StringComparison.Ordinal) + "'";
 
     private static string ShQuote(string text) => "'" + text.Replace("'", @"'\''", StringComparison.Ordinal) + "'";
 
     private static Process StartUnix(string command, string cwd, string logPath, string exitPath)
     {
+        File.WriteAllBytes(logPath, []);
+        var start = UnixStart(command, cwd, logPath, exitPath);
+        return Process.Start(start) ?? throw new InvalidOperationException($"`{command}` did not start");
+    }
+
+    /// <summary>What a Linux job starts: <c>setsid /bin/sh -c</c> the wrapper, in the build environment.</summary>
+    internal static ProcessStartInfo UnixStart(string command, string cwd, string logPath, string exitPath)
+    {
         var wrapper = $"exec </dev/null >/dev/null 2>&1\n( {command}\n) </dev/null >{ShQuote(logPath)} 2>&1\ncode=$?\n" +
             $"echo \"$code\" > {ShQuote(exitPath + ".tmp")} && mv -f {ShQuote(exitPath + ".tmp")} {ShQuote(exitPath)}\nexit $code\n";
-        File.WriteAllBytes(logPath, []);
         var setsid = new[] { "/usr/bin/setsid", "/bin/setsid" }.FirstOrDefault(File.Exists);
         var start = setsid is null ? new ProcessStartInfo("/bin/sh") : new ProcessStartInfo(setsid) { ArgumentList = { "/bin/sh" } };
         start.ArgumentList.Add("-c");
         start.ArgumentList.Add(wrapper);
         start.WorkingDirectory = cwd;
         start.UseShellExecute = false;
-        start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
-        start.Environment["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0";
-        start.Environment["UseSharedCompilation"] = "false";
-        return Process.Start(start) ?? throw new InvalidOperationException($"`{command}` did not start");
+        return BuildEnvironment.Apply(start);
     }
 
     private const uint CreateNewProcessGroup = 0x200;
@@ -283,8 +307,10 @@ public sealed class DetachedShell : IDisposable
                     stray.Kill(entireProcessTree: true);
                     throw new Win32Exception(error);
                 }
+                // Taken while it is still suspended: once resumed, a job that ends at once is gone and GetProcessById throws.
+                var process = Process.GetProcessById((int)info.ProcessId);
                 ResumeThread(info.Thread);
-                return Process.GetProcessById((int)info.ProcessId);
+                return process;
             }
             finally
             {
@@ -307,17 +333,19 @@ public sealed class DetachedShell : IDisposable
         }
     }
 
-    public void Dispose()
+    public void Dispose() => Delete(_files);
+
+    private static void Delete(IEnumerable<string> files)
     {
-        foreach (var script in _files)
+        foreach (var file in files)
         {
             try
             {
-                File.Delete(script);
+                File.Delete(file);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                // A temp file left behind: the OS's temp cleanup takes it.
+                // A file left behind: the job's folder is the node's, and a later run of the id writes it anew.
             }
         }
     }

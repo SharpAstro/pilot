@@ -44,14 +44,32 @@ public sealed record JobRow
     /// <summary>The whole of its output, on the node's machine.</summary>
     public required string LogPath { get; init; }
 
-    /// <summary>The process id of the job's shell while it runs, which is detached from the node; null for a job that has not started, and for rows written before jobs were detached.</summary>
+    /// <summary>
+    /// Where its exit code is written when it ends: <see cref="LogPath"/> plus <c>.exit</c>. The job's own wrapper writes it, so
+    /// a node that was away while the job ended still finds how it ended. Set when it is handed over, present once it has ended.
+    /// </summary>
+    public string? ExitPath { get; init; }
+
+    /// <summary>The process id of the job's wrapper, once it has started: what a cancel, a timeout or a later node finds it by. Null while it waits.</summary>
     public int? Pid { get; init; }
 
-    /// <summary>When that process started: with <see cref="Pid"/> it names the process, since a pid is reused.</summary>
+    /// <summary>When that process started: a pid alone can be another process's after a reboot, so it only counts while this matches.</summary>
     public DateTimeOffset? ProcessStartedAt { get; init; }
 
-    /// <summary>The file the job's wrapper writes its exit code to when it ends (<c>&lt;log&gt;.exit</c>), so a node that did not start it can still learn how it ended.</summary>
-    public string? ExitPath { get; init; }
+    /// <summary>The script file the job runs, on Windows (the node deletes it once the job has ended); null on Linux, where the wrapper is a command line.</summary>
+    public string? ScriptPath { get; init; }
+
+    /// <summary>
+    /// What kind of command it is, for what it costs in memory (<c>repo|tool verb|target|flags</c>): set when it is handed over, and
+    /// what a later run of the same kind is estimated from. Null on a row from before the node measured memory.
+    /// </summary>
+    public string? MemoryKey { get; init; }
+
+    /// <summary>The median, in bytes, of the samples taken every 2 s of the job's process tree: the run's value in the estimate, which a short spike does not move. Null until it has ended, or when none could be taken.</summary>
+    public long? MemoryMedian { get; init; }
+
+    /// <summary>The highest of those samples, in bytes: shown, never gated on.</summary>
+    public long? MemoryPeak { get; init; }
 
     /// <summary>How long it may run before the node stops it.</summary>
     public required TimeSpan Timeout { get; init; }
@@ -86,7 +104,25 @@ public sealed record JobLog
 
     /// <summary>Whether there is more before <see cref="Lines"/>.</summary>
     public bool Clipped { get; init; }
+
+    /// <summary>The process id of the job's wrapper, as <see cref="JobRow.Pid"/>; null while it waits.</summary>
+    public int? Pid { get; init; }
+
+    /// <summary>
+    /// The processes under the job now, the wrapper first (depth 0) and each below it with its depth, as the node reads them from
+    /// the OS; once the wrapper is gone, the ones the node saw earlier that still live. Null for a job that is not running.
+    /// </summary>
+    public JobProcessInfo[]? Tree { get; init; }
+
+    /// <summary>
+    /// Set when the job reads running but its wrapper has exited while a process it started lives, which holds its output:
+    /// <c>process exited, output still held by 4812</c>. <c>pilot job &lt;id&gt; cancel --force</c> ends it.
+    /// </summary>
+    public string? Stuck { get; init; }
 }
+
+/// <summary>A process under a running job: its program, its id, and how far below the job's wrapper it is (the wrapper is 0).</summary>
+public sealed record JobProcessInfo(string Name, int Pid, int Depth);
 
 /// <summary>Where a job stands.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<JobState>))]
