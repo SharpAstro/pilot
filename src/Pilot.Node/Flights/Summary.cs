@@ -251,8 +251,21 @@ public static class SummaryPrompt
     /// <summary>What an answer with nothing for the person says under <see cref="Needs"/>.</summary>
     public const string Nothing = "Nothing.";
 
-    /// <summary>The prompt about <paramref name="what"/> (<c>all 3 flights in play</c>, <c>the flight TIA1611</c>), the second section at most <paramref name="words"/> words, then the records.</summary>
-    public static string Build(string what, int words, string records) => $$"""
+    /// <summary>
+    /// The heading of the section of open cards the call thinks are resolved: ids only, never shown as prose. The node takes them
+    /// out of the answer (<see cref="StaleCardProposal"/>) and checks each fact itself before it closes a card (<see cref="StaleCards"/>).
+    /// </summary>
+    public const string Resolved = "## Resolved";
+
+    /// <summary>What the <see cref="Resolved"/> section says when no card is.</summary>
+    public const string NoneResolved = "None";
+
+    /// <summary>
+    /// The prompt about <paramref name="what"/> (<c>all 3 flights in play</c>, <c>the flight TIA1611</c>), the second section at most
+    /// <paramref name="words"/> words, then the records. <paramref name="resolved"/> adds the third section; the records of several
+    /// nodes leave it out, as a card's id is only one node's.
+    /// </summary>
+    public static string Build(string what, int words, string records, bool resolved = true) => $$"""
         You summarise flights of background coding workers for the person who runs them. Below are records
         about {{what}}, exactly as the node holds them. Answer in exactly this format and nothing else:
 
@@ -265,16 +278,26 @@ public static class SummaryPrompt
         At most {{words.ToString(CultureInfo.InvariantCulture)}} words of plain prose: what has been done, what is happening now, what is left. Quote
         commit hashes, test names and results only from the records; never invent them.
 
-        Records:
+        {{(resolved ? ResolvedSection : "")}}Records:
 
         {{records}}
+        """;
+
+    private static readonly string ResolvedSection = $"""
+        {Resolved}
+        - One line per open card in the records whose cause is gone (its PR merged or closed, its checks green
+          again, its conflict gone, its review given, its flight landed), written as its id alone, such as c12,
+          never a card that waits for the person's decision. The node checks each against what it holds before it
+          closes anything. If there is none, write the single word: {NoneResolved}
+
+
         """;
 
     /// <summary>The prompt over the fleet's records.</summary>
     public static string Fleet(int flights, string records) => Build($"{flights.ToString(CultureInfo.InvariantCulture)} flight{(flights == 1 ? "" : "s")} in play and what else waits on the person", FleetWords, records);
 
     /// <summary>The prompt over the records of several nodes, each under its own heading: the second section names the node where it matters.</summary>
-    public static string Nodes(int nodes, string records) => Build($"the flights in play on {nodes.ToString(CultureInfo.InvariantCulture)} nodes of a fleet and what else waits on the person, each node's records under its own heading; name the node where it matters", FleetWords, records);
+    public static string Nodes(int nodes, string records) => Build($"the flights in play on {nodes.ToString(CultureInfo.InvariantCulture)} nodes of a fleet and what else waits on the person, each node's records under its own heading; name the node where it matters", FleetWords, records, resolved: false);
 
     /// <summary>The prompt over one flight's records.</summary>
     public static string Flight(string code, string records) => Build($"the flight {code}", FlightWords, records);
@@ -384,6 +407,12 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
 
     /// <summary>This node's name in a fleet's records: its machine prefix.</summary>
     public string Machine { get; set; } = "this node";
+
+    /// <summary>
+    /// What the cards the call proposes as resolved are checked against (<see cref="StaleCards"/>); none when unset, and then no card
+    /// is dismissed, as no cause can be read.
+    /// </summary>
+    public IGitHub? GitHub { get; set; }
 
     /// <summary>What a fleet with nothing in play says, with no call: there is nothing to summarise.</summary>
     public const string EmptyFleet = $"{SummaryPrompt.Needs}\n{SummaryPrompt.Nothing}\n\n{SummaryPrompt.Where}\nNo flights in play.";
@@ -542,7 +571,14 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
             {
                 return (null, $"The summary could not be made: {e.Message}");
             }
-            return (Keep(scope, answer.Text, answer.Tokens, answer.Cost), null);
+            // The ids of resolved cards are never part of what is shown: the node takes them out, kept or not.
+            var (prose, resolved) = StaleCardProposal.Split(answer.Text);
+            var row = Keep(scope, prose, answer.Tokens, answer.Cost);
+            if (GitHub is { } github && scope != SummaryRow.AllNodesScope && resolved.Count > 0)
+            {
+                await new StaleCards(state, github).DismissAsync(resolved, scope == SummaryRow.FleetScope ? null : Verbs.FlightTarget(scope), cancellationToken);
+            }
+            return (row, null);
         }
         finally
         {

@@ -184,6 +184,8 @@ public static class NodeApp
         builder.Services.AddSingleton(services => new Summaries(services.GetRequiredService<NodeState>(), services.GetRequiredService<ISummaryModel>(), services.GetRequiredService<TimeProvider>())
         {
             Machine = options.Machine,
+            // What a card the call proposes as resolved is checked against.
+            GitHub = services.GetRequiredService<IGitHub>(),
             // The nodes this user's grants reach, the same a create-flight in maintenance may route to.
             Fleet = services.GetRequiredService<FlightCommander>().Fleet,
         });
