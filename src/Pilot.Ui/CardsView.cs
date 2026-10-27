@@ -332,13 +332,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>The watchtower's block: who it is, how it is, and its Remote Control link.</summary>
     private List<Layout.Node> Watchtower(SessionRow row)
     {
-        var live = row.State is SessionState.Working or SessionState.Waiting or SessionState.Idle;
+        var (said, colour) = WatchtowerState(row);
         var blocks = new List<Layout.Node>
         {
             Layout.Builder.HStack(
                     Layout.Builder.Text("Watchtower", 18f, Bright).WAuto(),
                     Layout.Builder.Spacer().WStar(),
-                    Layout.Builder.Text(row.State.ToString().ToLowerInvariant(), 12f, live ? Live : Ring, TextAlign.Far).WAuto())
+                    Layout.Builder.Text(said, 12f, colour, TextAlign.Far).WAuto())
                 .RowH(30f),
             Layout.Builder.Text($"{row.Name}{(row.ContextWindow > 0 ? $" · context {100.0 * row.ContextTokens / row.ContextWindow:0}%" : "")}", 11f, Dim).RowH(18f),
         };
@@ -351,6 +351,23 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             : Layout.Builder.Spacer().RowH(20f));
         blocks.Add(Layout.Builder.Spacer().RowH(10f));
         return blocks;
+    }
+
+    /// <summary>
+    /// How the watchtower is, said beside its name, and the colour that says it. A watchtower ends after each turn and the node
+    /// wakes it for the next card: that is resting, not down. Said in the Ring colour as "ended", it read as dead (SE1,
+    /// 2026-10-27); only an API error or a failure is trouble.
+    /// </summary>
+    private static (string Said, RGBAColor32 Colour) WatchtowerState(SessionRow row)
+    {
+        var state = row.State.ToString().ToLowerInvariant();
+        return row switch
+        {
+            { State: SessionState.Working or SessionState.Waiting or SessionState.Idle } => (state, Live),
+            { ApiError: { } error } => ($"{state}: {error}", Ring),
+            { State: SessionState.Ended } => ("resting", Dim),
+            _ => (state, Ring),
+        };
     }
 
     /// <summary>The watchtower's block while none runs: as tall as a running one's, so the cards stay where they are.</summary>
