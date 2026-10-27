@@ -907,7 +907,8 @@ public sealed class JobTests : IDisposable
     public async Task AJobThatEndedWhileNoNodeWasUpIsEndedFromItsExitFile()
     {
         var first = await Node.StartAsync(_root);
-        var id = first.Run(_root, "echo 'ended in the dark'; exit 4").Made!;
+        // The sleep keeps the job running until the first node is stopped: a command that ends at once can be ended by that node itself before the test sees it running.
+        var id = first.Run(_root, "sleep 2; echo 'ended in the dark'; exit 4").Made!;
         var running = await first.UntilAsync(id, j => j.State == JobState.Running, Ct);
         await first.StopAsync();
         for (var i = 0; i < 300 && !(File.Exists(running.ExitPath) && !IsAlive(running.Pid!.Value)); i++)
@@ -933,10 +934,10 @@ public sealed class JobTests : IDisposable
     public async Task AJobThatEndedWhileNoNodeWasUpWithExitCodeZeroSucceeded()
     {
         var first = await Node.StartAsync(_root);
-        var id = first.Run(_root, Echo("all passed")).Made!;
+        var id = first.Run(_root, "sleep 2; " + Echo("all passed")).Made!;
         var running = await first.UntilAsync(id, j => j.State == JobState.Running, Ct);
         await first.StopAsync();
-        for (var i = 0; i < 300 && !(File.Exists(running.ExitPath) && !IsAlive(running.Pid!.Value)); i++)
+        for (var i = 0; i < 300&& !(File.Exists(running.ExitPath) && !IsAlive(running.Pid!.Value)); i++)
         {
             await Task.Delay(50, Ct);
         }
