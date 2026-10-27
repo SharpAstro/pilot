@@ -1323,6 +1323,63 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AMergeOnAPrAlreadyInTheQueueIsNotUpdatedWhenMainMovedOn()
+    {
+        _github.UpdateWay = UpdateWay.Merge;
+        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        var (flight, _) = await Passed("37");
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        _github.Merge = new MergeState(MergeKinds.Queued, Position: 1);
+        MainMoves();
+
+        var result = await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8]);
+
+        // Still queued, and not pushed: an update would drop it from the queue.
+        result.Error.ShouldBeNull();
+        _github.Merged.ShouldBeEmpty();
+        Git(flight.Worktree, "rev-parse", "HEAD").ShouldBe(head);
+        Git(flight.Worktree, "ls-remote", "origin", $"flight/{flight.Code.ToLowerInvariant()}").ShouldStartWith(head);
+    }
+
+    [Fact]
+    public async Task AMergeWayPushOfRewrittenPushedHistoryIsRefusedWhileTheLegStillFlies()
+    {
+        _github.UpdateWay = UpdateWay.Merge;
+        var flight = await NewFlight("38", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA38"), "controller");
+        (await Run(Verbs.Review, "flight/TIA38", Reviewer("TIA38"), "changes", "naming")).Ok.ShouldBeTrue();
+        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges).Choices[0];
+        (await Run(card.Verb, card.Target, "controller", card.Args)).Error.ShouldBeNull();
+        var worker = _state.Legs("TIA38").Single().Worker!;
+
+        // The worker amends a commit that is already pushed: the plain push would be refused after the leg is done.
+        File.WriteAllText(Path.Combine(flight.Worktree, "amended.txt"), "amended\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--amend", "-m", "amended");
+
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget("TIA38", "parser"), worker, "done", "fixed")).Error.ShouldNotBeNull().ShouldContain("not an ancestor");
+        _state.Legs("TIA38").Single().State.ShouldBe(LegState.Flying);
+    }
+
+    [Fact]
+    public async Task APushStillBehindItsBaseAfterTheUpdateIsRefused()
+    {
+        _github.UpdateWay = UpdateWay.Merge;
+        var flight = await NewFlight("39", "parser");
+        await Fly(flight, "parser");
+        MainMoves();
+        // A post-merge hook that undoes the merge: the update claims to have run and the branch is still behind.
+        var hooks = Path.Combine(Git(flight.Worktree, "rev-parse", "--git-common-dir").Trim(), "hooks");
+        Directory.CreateDirectory(hooks);
+        File.WriteAllText(Path.Combine(hooks, "post-merge"), "#!/bin/sh\ngit reset -q --hard ORIG_HEAD\n");
+
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA39"), "controller")).Error.ShouldNotBeNull().ShouldContain("still behind");
+
+        Git(flight.Worktree, "ls-remote", "origin", "flight/tia39").ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task TheAutopilotsMergeOfAPrBehindMainUpdatesItAndLeavesNoRefusalCard()
     {
         var (flight, _) = await Passed("35");

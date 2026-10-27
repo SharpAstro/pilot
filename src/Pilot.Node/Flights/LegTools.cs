@@ -326,7 +326,7 @@ public interface IGitHub
     /// branch's merge queue method (its ruleset's <c>merge_queue</c> rule), else by the repo's allowed merge methods. Kept for a
     /// while per repo. <see cref="UpdateWay.Rebase"/> when GitHub would not say, as the node always did.
     /// </summary>
-    Task<UpdateWay> UpdateWayAsync(string repoPath, CancellationToken cancellationToken);
+    Task<UpdateWay> UpdateWayAsync(string repoPath, string mergeMethod, CancellationToken cancellationToken);
 
     /// <summary>
     /// Arms GitHub's auto-merge on PR <paramref name="number"/>: it merges by <paramref name="method"/> once its required checks
@@ -776,9 +776,10 @@ public sealed class GhCli : IGitHub
 
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (UpdateWay Way, DateTimeOffset At)> _updateWay = new(StringComparer.OrdinalIgnoreCase);
 
-    public async Task<UpdateWay> UpdateWayAsync(string repoPath, CancellationToken cancellationToken)
+    public async Task<UpdateWay> UpdateWayAsync(string repoPath, string mergeMethod, CancellationToken cancellationToken)
     {
-        if (_updateWay.TryGetValue(repoPath, out var known) && DateTimeOffset.UtcNow - known.At < UpdateWayFor)
+        var key = $"{repoPath}|{mergeMethod}";
+        if (_updateWay.TryGetValue(key, out var known) && DateTimeOffset.UtcNow - known.At < UpdateWayFor)
         {
             return known.Way;
         }
@@ -798,8 +799,8 @@ public sealed class GhCli : IGitHub
             }
             rules = rulesOutput;
         }
-        var way = ParseUpdateWay(rules, repoJson);
-        _updateWay[repoPath] = (way, DateTimeOffset.UtcNow);
+        var way = ParseUpdateWay(rules, repoJson, mergeMethod);
+        _updateWay[key] = (way, DateTimeOffset.UtcNow);
         return way;
     }
 
@@ -820,9 +821,11 @@ public sealed class GhCli : IGitHub
     /// <summary>
     /// How a branch is brought up to date from <c>gh api repos/{o}/{r}/rules/branches/{branch}</c> and the repo's own JSON: a
     /// <c>merge_queue</c> rule's <c>merge_method</c> (REBASE rebases, SQUASH and MERGE merge the base in); with no queue, the
-    /// repo's allowed methods (only rebase allowed rebases). Rebase when either is unreadable.
+    /// repo's allowed methods (only rebase allowed rebases), where the method the node merges with (<paramref name="mergeMethod"/>)
+    /// decides when the repo allows it: GitHub rebase-merges a PR with a merge commit in it and loses a conflict resolution, so a
+    /// repo that squashes only takes the base merged in where the node squashes. Rebase when either is unreadable.
     /// </summary>
-    internal static UpdateWay ParseUpdateWay(string rulesJson, string repoJson)
+    internal static UpdateWay ParseUpdateWay(string rulesJson, string repoJson, string? mergeMethod = null)
     {
         try
         {
@@ -840,6 +843,15 @@ public sealed class GhCli : IGitHub
             }
             using var repo = JsonDocument.Parse(repoJson);
             bool Allows(string name) => repo.RootElement.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+            if (string.Equals(mergeMethod, "rebase", StringComparison.OrdinalIgnoreCase) && Allows("allow_rebase_merge"))
+            {
+                return UpdateWay.Rebase;
+            }
+            if (string.Equals(mergeMethod, "squash", StringComparison.OrdinalIgnoreCase) && Allows("allow_squash_merge")
+                || string.Equals(mergeMethod, "merge", StringComparison.OrdinalIgnoreCase) && Allows("allow_merge_commit"))
+            {
+                return UpdateWay.Merge;
+            }
             return Allows("allow_squash_merge") || Allows("allow_merge_commit") ? UpdateWay.Merge : UpdateWay.Rebase;
         }
         catch (JsonException)

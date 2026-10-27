@@ -314,9 +314,14 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   The node's own merge (autopilot, the merge armed at green, a recheck) is not refused for it: `RunAsync` answers Ok with way `updated`
   (`MergeWays.Updated`), the update closed the old head's cards, and the callers leave no Ring `AutopilotMergeRefused`, no `MergeDropped`
   and no failed recheck: a Handled line at most. Only a person's Merge gets the *behind its base* error.
-- `PushAsync`'s "base is not an ancestor" guard has no test of its own: `BringUpToDateAsync` runs first and either leaves the base an
-  ancestor (a merge or rebase that succeeded) or throws on the conflict (covered), so the guard is reachable only by a git that reports
-  success and leaves the base out, which a test cannot stage. It stays as the backstop the leg asks for.
+- `PushAsync`'s "base is not an ancestor" guard is tested with a `post-merge` hook in the test repo that resets the merge away
+  (`APushStillBehindItsBaseAfterTheUpdateIsRefused`): the update claims success, the push is still refused.
+- **A merge-way push refuses rewritten pushed history** while the leg still flies: `BringUpToDateAsync` requires `origin/<branch>` to be an
+  ancestor of HEAD (an amend or a rebase from an older brief is refused, saying to restore the pushed commits and merge the base in), so a
+  plain push is not refused after the leg is recorded done.
+- **With no queue the update way follows the node's merge method** (`RoleModels.MergeMethod`): rebase where the node rebase-merges and the
+  repo allows it, merge where it squashes or merges (GitHub rebase-merging a PR with a merge commit loses a conflict resolution). A queue's
+  own method still wins. A PR GitHub has queued is never updated by a Merge (a push would drop it from the queue).
 - A flight whose legs are all done and whose PR merged on GitHub lands on the next look even with no merge card open
   (dismissed after a rebase by hand moved its head), as one merged through its card does.
 - Only the reviewer gives the verdict; the controller may pass one that asked for changes ("ready anyway"); the

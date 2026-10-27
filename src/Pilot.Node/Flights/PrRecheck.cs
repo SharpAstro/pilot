@@ -331,7 +331,7 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
             {
                 var onto = (Now(code)?.Base ?? flight.Base).Replace("origin/", "", StringComparison.Ordinal);
                 var restarted = Now(code)?.Review?.ReviewedHead is { Length: > 0 } read ? $"review restarted at {Short8(read)}" : "its review has not started yet";
-                return await FinishAsync(entry, pr, $"{(await github.UpdateWayAsync(flight.RepoPath, cancellationToken) == UpdateWay.Merge ? "brought up to date with" : "rebased onto")} {onto}, {restarted}", LabelOf(code), cancellationToken);
+                return await FinishAsync(entry, pr, $"{(await github.UpdateWayAsync(flight.RepoPath, legs.Models.MergeMethod, cancellationToken) == UpdateWay.Merge ? "brought up to date with" : "rebased onto")} {onto}, {restarted}", LabelOf(code), cancellationToken);
             }
             // A rebase that conflicts rings as PrChecks rings it, and the Handled line says so too.
             var notSent = await legs.ConflictsAsync(code, why, cancellationToken);

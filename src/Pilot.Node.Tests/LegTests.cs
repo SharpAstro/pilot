@@ -194,7 +194,7 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>How the repo's base is merged up to date, as UpdateWayAsync answers: a rebase-queue repo by default.</summary>
     public UpdateWay UpdateWay { get; set; } = UpdateWay.Rebase;
 
-    public Task<UpdateWay> UpdateWayAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(UpdateWay);
+    public Task<UpdateWay> UpdateWayAsync(string repoPath, string mergeMethod, CancellationToken cancellationToken) => Task.FromResult(UpdateWay);
 
     /// <summary>
     /// The mergeStateStatus GitHub gives the PR when auto-merge is armed on it: BLOCKED (a required check pending) by default;

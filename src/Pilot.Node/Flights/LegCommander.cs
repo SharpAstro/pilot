@@ -298,7 +298,7 @@ public sealed partial class LegCommander(
                     await git.RunAsync(["merge", "--ff-only", "--quiet", remote], flight.Worktree, cancellationToken);
                 }
                 // Where the queue squashes or merges the base is merged in and pushed plain; only a rebase-queue repo is rebased.
-                var way = await github.UpdateWayAsync(repaired.RepoPath, cancellationToken);
+                var way = await github.UpdateWayAsync(repaired.RepoPath, Models.MergeMethod, cancellationToken);
                 // A branch that holds its base already (merged in, as a squashing merge queue allows) has nothing to update.
                 if ((await git.RunAsync(["merge-base", "--is-ancestor", repaired.Base, "HEAD"], flight.Worktree, cancellationToken)).Ok)
                 {
@@ -1407,6 +1407,11 @@ public sealed partial class LegCommander(
             var tip = (await git.RunAsync(["cat-file", "-e", $"{pr.Head}^{{commit}}"], flight.Worktree, cancellationToken)).Ok ? pr.Head : "HEAD";
             if (!(await git.RunAsync(["merge-base", "--is-ancestor", flight.Base, tip], flight.Worktree, cancellationToken)).Ok)
             {
+                // A PR GitHub has queued is left as it is (the caller says it is queued): a push would drop it from the queue.
+                if ((await github.MergeStateAsync(flight.RepoPath, pr.Number, cancellationToken))?.Kind == MergeKinds.Queued)
+                {
+                    return pr;
+                }
                 throw new FlightException(BehindText(pr.Number));
             }
         }
@@ -1652,8 +1657,17 @@ public sealed partial class LegCommander(
     /// </summary>
     private async Task<UpdateWay> BringUpToDateAsync(FlightRow flight, CancellationToken cancellationToken)
     {
-        var way = await github.UpdateWayAsync(flight.RepoPath, cancellationToken);
+        var way = await github.UpdateWayAsync(flight.RepoPath, Models.MergeMethod, cancellationToken);
         await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
+        // A merge-way push is plain: history already pushed and since rewritten (an amend, a rebase from an older brief) would be
+        // refused by the remote after the leg is recorded done. Said now, while the leg still flies for its worker to put right.
+        var remote = $"origin/{flight.Branch}";
+        if (way == UpdateWay.Merge
+            && (await git.RunAsync(["rev-parse", "--verify", "--quiet", $"{remote}^{{commit}}"], flight.Worktree, cancellationToken)).Ok
+            && !(await git.RunAsync(["merge-base", "--is-ancestor", remote, "HEAD"], flight.Worktree, cancellationToken)).Ok)
+        {
+            throw new FlightException($"{flight.Branch} is not pushed: {remote} is not an ancestor of its head, so its pushed history was rewritten and a plain push is refused; restore the pushed commits (git reset --hard {remote} and redo the new work on top of it) and merge the base in, never rebase or amend");
+        }
         if ((await git.RunAsync(["merge-base", "--is-ancestor", flight.Base, "HEAD"], flight.Worktree, cancellationToken)).Ok)
         {
             return way;
@@ -1968,7 +1982,7 @@ public sealed partial class LegCommander(
     /// <summary>What a worker does to bring the plane up to date with its base, in the repo's way: merge it in, or rebase onto it.</summary>
     public async Task<string> UpdateInstructionAsync(string code, CancellationToken cancellationToken)
     {
-        var way = state.Flights().FirstOrDefault(f => f.Code == code) is { } flight ? await github.UpdateWayAsync(flight.RepoPath, cancellationToken) : UpdateWay.Rebase;
+        var way = state.Flights().FirstOrDefault(f => f.Code == code) is { } flight ? await github.UpdateWayAsync(flight.RepoPath, Models.MergeMethod, cancellationToken) : UpdateWay.Rebase;
         return way == UpdateWay.Merge
             ? "merge the base into the plane (git merge --no-edit, never a rebase), resolving every conflict so both sides' work stays, rerun the check, and push without force"
             : "rebase the plane onto its base, resolving every conflict so both sides' work stays, rerun the check, and push";
