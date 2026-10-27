@@ -6,13 +6,22 @@ namespace Pilot.Ui;
 /// <summary>
 /// The Settings page: the setup checklist (what it takes for this machine's node to be part of the fleet, each item with
 /// the fix the node can make) above the node's settings (on the LAN, its prefix, repo roots, the update channel and
-/// policy, jobs). Read from the node's settings route while the page is shown; a button or a field's Enter is one verb on
-/// the node (<c>setup node</c>, <c>set node</c>), after which the page reads again. This machine's node only: a node on
-/// the LAN does not show its settings to another machine. Generic over the surface, as the other pages are.
+/// policy, jobs). The settings are read from the node's settings route while the page is shown and are drawn as soon as they
+/// come; the setup checks run programs, so they are read on their own task from their own route and each row says
+/// "checking…" until they answer, then how old they are. A button or a field's Enter is one verb on the node
+/// (<c>setup node</c>, <c>set node</c>); the control shows it is working until the node answers, and a changed setting is
+/// shown from the answer's row, never from the click and with no second read. This machine's node only: a node on the LAN
+/// does not show its settings to another machine. Generic over the surface, as the other pages are.
 /// </summary>
 internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
 {
     private static readonly TimeSpan Every = TimeSpan.FromSeconds(5);
+
+    // The checks are read quietly this often while shown (the node re-measures once its cache is 10 s old); their age is shown meanwhile.
+    private static readonly TimeSpan ChecksEvery = TimeSpan.FromSeconds(30);
+
+    // A measurement older than this is marked stale rather than shown as current.
+    private static readonly TimeSpan ChecksStale = TimeSpan.FromSeconds(90);
 
     // The page stops reading once it has not been drawn for this long: it is not shown.
     private static readonly TimeSpan Unseen = TimeSpan.FromSeconds(3);
@@ -42,17 +51,31 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private readonly Dictionary<string, TextInputState> _fields = new(StringComparer.Ordinal);
     // What the page has read, as one immutable record swapped whole: reads land on the pool, the render thread draws what
     // it finds, and neither waits on the other.
-    private sealed record Seen(SettingsPage? Page, GrantInfo[] Given, string[] Held, string? Problem);
+    // Checks: what the node last measured (null until it first answers); Checking: a read the person is waiting on is out
+    // (the first, a refresh, or the one after a fix), so the rows say so; Working: the ids of the controls pressed and not yet answered.
+    private sealed record Seen(SettingsPage? Page, SetupChecks? Checks, bool Checking, string? ChecksProblem, GrantInfo[] Given, string[] Held, string? Problem, System.Collections.Immutable.ImmutableHashSet<string> Working);
 
-    private Seen _read = new(null, [], [], null);
+    private Seen _read = new(null, null, false, null, [], [], null, []);
     private CancellationTokenSource? _reading;
+    private CancellationTokenSource? _readingChecks;
     private DateTimeOffset _drawnAt;
 
-    /// <summary>Reads the node's settings page; null where there is no node to read (a snapshot file).</summary>
+    // Counts the settings a reply swapped in, so a read that began before one does not put the old row back.
+    private long _swaps;
+    // Orders the checks reads: an answer older than one already shown is dropped; _waited counts the reads someone waits on.
+    private readonly Lock _checkTickets = new();
+    private long _ticket;
+    private long _shown;
+    private int _waited;
+
+    /// <summary>Reads the node's settings page (its settings alone, which the node answers at once); null where there is no node to read (a snapshot file).</summary>
     public Func<CancellationToken, Task<SettingsPage>>? Load { get; set; }
 
-    /// <summary>Sends one verb to the node (<c>set</c>, <c>setup</c>) with its words; returns what became of it.</summary>
-    public Func<string, string[], CancellationToken, Task<string>>? Send { get; set; }
+    /// <summary>Reads the setup checks on their own (<c>true</c> asks the node to measure them again); null where there is no node to read.</summary>
+    public Func<bool, CancellationToken, Task<SetupChecks>>? LoadChecks { get; set; }
+
+    /// <summary>Sends one verb to the node (<c>set</c>, <c>setup</c>) with its words; returns what became of it, with the changed setting's row.</summary>
+    public Func<string, string[], CancellationToken, Task<SettingsReply>>? Send { get; set; }
 
     /// <summary>Reads the grants this node has given (its grants route); null where there is no node to read.</summary>
     public Func<CancellationToken, Task<GrantInfo[]>>? LoadGrants { get; set; }
@@ -84,6 +107,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// <summary>The page as last read, or null before the first read.</summary>
     public SettingsPage? Page => Volatile.Read(ref _read).Page;
 
+    /// <summary>The setup checks as last measured, or null before the node first answers.</summary>
+    public SetupChecks? Checks => Volatile.Read(ref _read).Checks;
+
     public void Render(DateTimeOffset now, RectF32 bounds)
     {
         BeginFrame();
@@ -100,32 +126,36 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         var problem = read.Problem;
         var body = page is null
             ? Layout.Builder.Text(problem is null ? (Load is null ? "settings are the node's: open pilot on a node" : "reading the node's settings…") : $"the node did not send its settings: {problem}", 13f, Dim).RowH(28f).Pad(Gutter, 8f)
-            : Main(page);
-        var tree = Layout.Builder.VStack(Header(page, problem), body.Stretch()).Bg(Ground).Stretch();
+            : Main(page, read, now);
+        var tree = Layout.Builder.VStack(Header(page, read.Checks, problem), body.Stretch()).Bg(Ground).Stretch();
         return About?.Over(tree) ?? tree;
     }
 
     public override bool HandleInput(InputEvent evt) => false;
 
-    /// <summary>Reads the page now, and again every few seconds while it is drawn.</summary>
+    /// <summary>Reads the settings now, and again every few seconds while it is drawn; the checks are read beside them, on their own task.</summary>
     private void Read()
     {
-        if (_reading is not null || Load is not { } load)
+        if (_reading is null && Load is { } load)
         {
-            return;
+            var reading = _reading = new CancellationTokenSource();
+            _ = LoopAsync(token => RefreshAsync(load, token), Every, reading, () => _reading = null);
         }
-        var reading = _reading = new CancellationTokenSource();
-        _ = ReadAsync(load, reading);
+        if (_readingChecks is null && LoadChecks is not null)
+        {
+            var reading = _readingChecks = new CancellationTokenSource();
+            _ = LoopAsync(token => ReadChecksAsync(refresh: false, waited: Checks is null, token), ChecksEvery, reading, () => _readingChecks = null);
+        }
     }
 
-    private async Task ReadAsync(Func<CancellationToken, Task<SettingsPage>> load, CancellationTokenSource reading)
+    private async Task LoopAsync(Func<CancellationToken, Task> step, TimeSpan every, CancellationTokenSource reading, Action done)
     {
         try
         {
             while (!reading.IsCancellationRequested && DateTimeOffset.UtcNow - _drawnAt < Unseen)
             {
-                await RefreshAsync(load, reading.Token).ConfigureAwait(false);
-                await Task.Delay(Every, reading.Token).ConfigureAwait(false);
+                await step(reading.Token).ConfigureAwait(false);
+                await Task.Delay(every, reading.Token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
@@ -134,24 +164,80 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         finally
         {
             // Unseen: the next draw reads again from the start.
-            _reading = null;
+            done();
             reading.Dispose();
         }
     }
 
     private async Task RefreshAsync(Func<CancellationToken, Task<SettingsPage>> load, CancellationToken cancellationToken)
     {
+        var swaps = Volatile.Read(ref _swaps);
         try
         {
             var page = await load(cancellationToken).ConfigureAwait(false);
-            System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { Page = page, Problem = null });
+            // A reply put a newer row in while this read was out: this read may carry the old one, so the next read shows the page.
+            if (swaps == Volatile.Read(ref _swaps))
+            {
+                System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { Page = page, Problem = null });
+            }
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
         {
             System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { Problem = ex.Message });
         }
+        // The settings are drawn now; the grants below them come after.
+        Changed?.Invoke();
         await RefreshGrantsAsync(cancellationToken).ConfigureAwait(false);
         Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Reads the setup checks. <paramref name="waited"/> says someone waits on this read (the first, a refresh, the one after a fix):
+    /// the rows then say "checking…" until it answers; the quiet read the page makes now and then does not blank them.
+    /// </summary>
+    private async Task ReadChecksAsync(bool refresh, bool waited, CancellationToken cancellationToken)
+    {
+        if (LoadChecks is not { } load)
+        {
+            return;
+        }
+        long ticket;
+        lock (_checkTickets)
+        {
+            ticket = ++_ticket;
+        }
+        if (waited)
+        {
+            Interlocked.Increment(ref _waited);
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { Checking = true });
+            Changed?.Invoke();
+        }
+        try
+        {
+            var measured = await load(refresh, cancellationToken).ConfigureAwait(false);
+            lock (_checkTickets)
+            {
+                // An answer older than the one already shown (a slow read passed by a refresh) is not shown.
+                if (ticket > _shown)
+                {
+                    _shown = ticket;
+                    System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { Checks = measured, ChecksProblem = null });
+                }
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            // The rows keep what was measured, with its age; the Setup heading says the read failed.
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { ChecksProblem = ex.Message });
+        }
+        finally
+        {
+            if (waited && Interlocked.Decrement(ref _waited) == 0)
+            {
+                System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { Checking = false });
+            }
+            Changed?.Invoke();
+        }
     }
 
     private async Task RefreshGrantsAsync(CancellationToken cancellationToken)
@@ -190,10 +276,20 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         });
     }
 
-    /// <summary>Sends <paramref name="verb"/> and says what became of it, then reads the page again.</summary>
-    private void Act(string verb, string[] args, string doing)
+    /// <summary>
+    /// Sends <paramref name="verb"/> and says what became of it. <paramref name="control"/> shows it is working until the node
+    /// answers; the answer's row (a <c>set</c>) replaces the shown one, and nothing is read again but what the verb touches: a setup
+    /// fix reads the checks, a revoke the grants. A refusal changes no row: the node's value stays, and the line says why.
+    /// </summary>
+    private void Act(string verb, string[] args, string doing, string control)
     {
         if (Send is not { } send)
+        {
+            return;
+        }
+        var added = false;
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => (added = !read.Working.Contains(control)) ? read with { Working = read.Working.Add(control) } : read);
+        if (!added)
         {
             return;
         }
@@ -201,46 +297,84 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         Changed?.Invoke();
         _ = Task.Run(async () =>
         {
-            Said = (await send(verb, args, CancellationToken.None).ConfigureAwait(false)).ReplaceLineEndings(" ").Trim();
-            if (Load is { } load)
+            var reply = await send(verb, args, CancellationToken.None).ConfigureAwait(false);
+            // The row goes in and the control stops working in one swap, so no draw shows the old row with the control idle.
+            if (reply.Row is not null)
             {
+                Interlocked.Increment(ref _swaps);
+            }
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with
+            {
+                Page = reply.Row is { } row && read.Page is { } page ? page with { Settings = [.. page.Settings.Select(s => s.Key == row.Key ? row : s)] } : read.Page,
+                Working = read.Working.Remove(control),
+            });
+            Said = reply.Line.ReplaceLineEndings(" ").Trim();
+            Changed?.Invoke();
+            if (verb == Verbs.Setup)
+            {
+                await ReadChecksAsync(refresh: false, waited: true, CancellationToken.None).ConfigureAwait(false);
+            }
+            else if (verb == Verbs.RevokeGrant)
+            {
+                await RefreshGrantsAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            else if (verb == Verbs.Set && reply.Row is null && reply.Kind == ReplyKind.NoAnswer && Load is { } load)
+            {
+                // No row came (the node may be restarting for the change): read the settings, as the only way to know.
                 await RefreshAsync(load, CancellationToken.None).ConfigureAwait(false);
             }
             Changed?.Invoke();
         });
     }
 
-    private Layout.Node Header(SettingsPage? page, string? problem) =>
+    private Layout.Node Header(SettingsPage? page, SetupChecks? checks, string? problem) =>
         TopBar.Build(new PageHeader("settings")
         {
-            Counts = page is null ? "" : Summary(page),
+            Counts = page is null ? "" : Summary(page, checks),
             Source = Said ?? page?.Restart ?? (page is null ? (problem ?? "") : $"saved in {page.File} · the command line wins over it"),
         }, new TopBarParts(Nodes, null, Autopilot, About));
 
-    internal static string Summary(SettingsPage page)
+    /// <summary>The header's counts: the setup steps left only once the checks are known, then what is saved for the next start.</summary>
+    internal static string Summary(SettingsPage page, SetupChecks? checks)
     {
-        var needed = page.Checks.Where(c => !c.Optional).ToArray();
-        var left = needed.Count(c => !c.Ok);
         var pending = page.Settings.Count(s => s.Pending);
+        var pendingText = pending == 0 ? "" : $"{pending} saved for the next start";
+        if (checks is null)
+        {
+            return pendingText;
+        }
+        var needed = checks.Checks.Where(c => !c.Optional).ToArray();
+        var left = needed.Count(c => !c.Ok);
         var text = left == 0 ? "set up" : $"{left} of {needed.Length} setup steps left";
-        return pending == 0 ? text : $"{text} · {pending} saved for the next start";
+        return pending == 0 ? text : $"{text} · {pendingText}";
     }
 
-    private Layout.Node Main(SettingsPage page)
+    private Layout.Node Main(SettingsPage page, Seen read, DateTimeOffset now)
     {
-        var rows = new List<Layout.Node> { Section("Setup", "what it takes for this machine's node to be part of the fleet") };
-        for (var i = 0; i < page.Checks.Length; i++)
+        var rows = new List<Layout.Node>();
+        if (LoadChecks is not null)
         {
-            rows.Add(CheckRow(page.Checks[i], i));
+            rows.Add(SetupSection(read));
+            if (read.Checks is not { } measured)
+            {
+                // Before the node's first answer the page does not know the rows: one stands for them.
+                rows.Add(PendingChecksRow(read.ChecksProblem));
+            }
+            else
+            {
+                for (var i = 0; i < measured.Checks.Length; i++)
+                {
+                    rows.Add(CheckRow(measured.Checks[i], i, measured.CheckedAt, now, read.Checking));
+                }
+            }
         }
         rows.Add(Section("Settings", "the node restarts to run with a change once no job runs; its sessions and flights carry on"));
         for (var i = 0; i < page.Settings.Length; i++)
         {
-            rows.Add(SettingRowNode(page.Settings[i], i));
+            rows.Add(SettingRowNode(page.Settings[i], i, read.Working));
         }
-        var grants = Volatile.Read(ref _read);
-        var given = grants.Given;
-        var held = grants.Held;
+        var given = read.Given;
+        var held = read.Held;
         if (LoadGrants is not null || LoadHeld is not null)
         {
             rows.Add(Section("Grants", "who may command this node, and which nodes you may command"));
@@ -272,6 +406,31 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                 Layout.Builder.Text(hint, 12f, Faint).WStar())
             .WithGap(12f).Pad(8f, 10f).RowH(38f);
 
+    // Setup's heading carries the refresh: it measures the checks again, and shows it is working until the node answers.
+    private Layout.Node SetupSection(Seen read)
+    {
+        var hint = read.ChecksProblem is { } problem ? $"could not read the checks again: {problem}" : "what it takes for this machine's node to be part of the fleet";
+        return Layout.Builder.HStack(
+                Layout.Builder.Text("Setup", 15f, Bright).WAuto(),
+                Layout.Builder.Text(hint, 12f, read.ChecksProblem is null ? Faint : Todo).WStar(),
+                Pill("refresh", "settings:checks:refresh", () => _ = ReadChecksAsync(refresh: true, waited: true, CancellationToken.None), working: read.Checking))
+            .WithGap(12f).Pad(8f, 10f).RowH(38f);
+    }
+
+    private static Layout.Node PendingChecksRow(string? problem)
+    {
+        var row = Layout.Builder.HStack(
+                Layout.Builder.Spacer().Bg(problem is null ? Faint : Todo).WFixed(StripeWidth).HStar(),
+                Layout.Builder.VStack(
+                        Layout.Builder.Text("Setup checks", 14f, Bright).RowH(22f),
+                        Layout.Builder.Text(problem is null ? "checking…" : "not read", 11f, problem is null ? Dim : Todo).RowH(18f))
+                    .WFixed(TitleWidth),
+                Layout.Builder.Text(problem is null ? "checking… (runs programs such as netsh, and asks GitHub)" : $"the node did not send its setup checks: {problem}", 12f, Body).WStar(),
+                Layout.Builder.Spacer().WFixed(FixWidth))
+            .WithGap(14f).Pad(8f, 6f).RowH(RowHeight);
+        return row;
+    }
+
     private static Layout.Node Subhead(string text) =>
         Layout.Builder.Text(text, 12f, Dim).RowH(24f).Pad(Gutter, 2f);
 
@@ -285,7 +444,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                     .WFixed(TitleWidth),
                 Layout.Builder.Text("may command this node; Revoke cuts it back to watching at once", 12f, Body).WStar(),
                 Layout.Builder.HStack(
-                        Send is null ? Layout.Builder.Spacer().WStar() : Pill("Revoke", $"settings:revoke:{grant.Id}", () => Act(Verbs.RevokeGrant, [grant.Id], $"revoking {grant.Label}…")),
+                        Send is null ? Layout.Builder.Spacer().WStar() : Pill("Revoke", $"settings:revoke:{grant.Id}", () => Act(Verbs.RevokeGrant, [grant.Id], $"revoking {grant.Label}…", $"settings:revoke:{grant.Id}"), working: Volatile.Read(ref _read).Working.Contains($"settings:revoke:{grant.Id}")),
                         Layout.Builder.Spacer().WStar())
                     .WFixed(FixWidth))
             .WithGap(14f).Pad(8f, 6f).RowH(RowHeight);
@@ -316,31 +475,39 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     // Under the title's column: the row's padding (8), the stripe (StripeWidth, 4) and the gap (14) in.
     private const float CheckLineIndent = 26f;
 
-    private Layout.Node CheckRow(SetupCheck check, int index)
+    // A check row: the measured line with how old it is; while the node measures again, what that runs instead. The old line is
+    // not shown then, as it would read as current. A measurement past ChecksStale is marked, so it never passes for current.
+    private Layout.Node CheckRow(SetupCheck check, int index, DateTimeOffset checkedAt, DateTimeOffset now, bool checking)
     {
-        var tooLong = check.Line.Length > CheckLineFits;
-        var fix = check.Fix is { } label && Send is not null
-            ? Pill(label, $"settings:fix:{check.Key}", () => Act(Verbs.Setup, [check.Key], $"{check.Title}: {label}…"))
+        var line = checking ? $"checking… ({check.Runs ?? "reads files"})" : check.Line;
+        var tooLong = line.Length > CheckLineFits;
+        var age = now - checkedAt;
+        var stale = age > ChecksStale;
+        var action = $"settings:fix:{check.Key}";
+        var fix = !checking && check.Fix is { } label && Send is not null
+            ? Pill(label, action, () => Act(Verbs.Setup, [check.Key], $"{check.Title}: {label}…", action), working: Volatile.Read(ref _read).Working.Contains(action))
             : Layout.Builder.Spacer().WStar();
+        var status = checking ? "checking…" : $"{(check.Ok ? "done" : check.Optional ? "optional" : "to do")} · checked {SessionLine.Ago(age)}{(stale ? " (stale)" : "")}";
+        var statusColor = checking ? Dim : stale ? Todo : check.Ok ? Ok : check.Optional ? Dim : Todo;
         var row = Layout.Builder.HStack(
-                Layout.Builder.Spacer().Bg(check.Ok ? Ok : check.Optional ? Optional : Todo).WFixed(StripeWidth).HStar(),
+                Layout.Builder.Spacer().Bg(checking ? Faint : check.Ok ? Ok : check.Optional ? Optional : Todo).WFixed(StripeWidth).HStar(),
                 Layout.Builder.VStack(
                         Layout.Builder.Text(check.Title, 14f, Bright).RowH(22f),
-                        Layout.Builder.Text(check.Ok ? "done" : check.Optional ? "optional" : "to do", 11f, check.Ok ? Ok : check.Optional ? Dim : Todo).RowH(18f))
+                        Layout.Builder.Text(status, 11f, statusColor).RowH(18f))
                     .WFixed(TitleWidth),
-                tooLong ? Layout.Builder.Spacer().WStar() : Layout.Builder.Text(check.Line, 12f, Body).WStar(),
+                tooLong ? Layout.Builder.Spacer().WStar() : Layout.Builder.Text(line, 12f, Body).WStar(),
                 Layout.Builder.HStack(fix, Layout.Builder.Spacer().WStar()).WFixed(FixWidth))
             .WithGap(14f).Pad(8f, 6f).RowH(RowHeight);
         if (tooLong)
         {
-            var whole = Layout.Builder.VStack(row, WrappedProse.Paragraphs(check.Line, 12f, Body, 40).Pad(CheckLineIndent, 2f))
+            var whole = Layout.Builder.VStack(row, WrappedProse.Paragraphs(line, 12f, Body, 40).Pad(CheckLineIndent, 2f))
                 .WStar().HAuto();
             return (index & 1) == 1 ? whole.Bg(RowAltBg) : whole;
         }
         return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }
 
-    private Layout.Node SettingRowNode(SettingRow setting, int index)
+    private Layout.Node SettingRowNode(SettingRow setting, int index, System.Collections.Immutable.ImmutableHashSet<string> working)
     {
         var state = setting.Source == SettingSources.CommandLine ? "from the node's command line, which wins"
             : setting.Pending ? $"saved as {(setting.Saved ?? "the default")}: applies at the next start"
@@ -352,7 +519,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                         Layout.Builder.Text(state, 11f, setting.Pending ? Todo : Dim).RowH(18f))
                     .WFixed(TitleWidth),
                 Layout.Builder.VStack(
-                        setting.Many ? Editor(setting).HAuto() : Editor(setting).RowH(26f),
+                        setting.Many ? Editor(setting, working).HAuto() : Editor(setting, working).RowH(26f),
                         Layout.Builder.Text(setting.Detail, 11f, Dim).RowH(18f))
                     .WStar())
             .WithGap(14f).Pad(8f, 6f);
@@ -362,7 +529,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     }
 
     // How a setting is changed: a pill per choice, a field (Enter saves), or for repo roots each folder with an x and a field to add one.
-    private Layout.Node Editor(SettingRow setting)
+    private Layout.Node Editor(SettingRow setting, System.Collections.Immutable.ImmutableHashSet<string> working)
     {
         var parts = new List<Layout.Node>();
         if (setting.Choices.Length > 0)
@@ -370,7 +537,8 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             foreach (var choice in setting.Choices)
             {
                 var chosen = string.Equals(choice, setting.Saved ?? setting.Value, StringComparison.OrdinalIgnoreCase);
-                parts.Add(Pill(choice, $"settings:{setting.Key}:{choice}", () => Act(Verbs.Set, [setting.Key, choice], $"{setting.Label}: {choice}…"), chosen));
+                var action = $"settings:{setting.Key}:{choice}";
+                parts.Add(Pill(choice, action, () => Act(Verbs.Set, [setting.Key, choice], $"{setting.Label}: {choice}…", action), chosen, working.Contains(action)));
             }
         }
         else if (setting.Many)
@@ -382,38 +550,41 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                 stack.Add(Layout.Builder.HStack(
                         Layout.Builder.Text(root, 12f, Body).WAuto(),
                         // The × stays a typeset rune for want of a close glyph: SharpAstro/DIR.Lib#151.
-                        Pill("×", $"settings:{setting.Key}:remove:{root}", () => Act(Verbs.Set, [setting.Key, .. roots.Where(r => r != root).DefaultIfEmpty("default")], $"{setting.Label}: removing {root}…")),
+                        Pill("×", $"settings:{setting.Key}:remove:{root}", () => Act(Verbs.Set, [setting.Key, .. roots.Where(r => r != root).DefaultIfEmpty("default")], $"{setting.Label}: removing {root}…", $"settings:{setting.Key}:remove:{root}"), working: working.Contains($"settings:{setting.Key}:remove:{root}")),
                         Layout.Builder.Spacer().WStar())
                     .WithGap(8f).RowH(26f));
             }
-            stack.Add(Field(setting, "add a folder, then Enter", text => [setting.Key, .. roots, text]).RowH(26f));
+            stack.Add(Field(setting, "add a folder, then Enter", text => [setting.Key, .. roots, text], working).RowH(26f));
             return Layout.Builder.VStack([.. stack]);
         }
         else
         {
-            parts.Add(Field(setting, setting.Value, text => [setting.Key, text]).WFixed(220f));
+            parts.Add(Field(setting, setting.Value, text => [setting.Key, text], working).WFixed(220f));
         }
         if (setting.Saved is not null && setting.Source != SettingSources.CommandLine)
         {
-            parts.Add(Pill("default", $"settings:{setting.Key}:default", () => Act(Verbs.Set, [setting.Key, "default"], $"{setting.Label}: back to the default…")));
+            var action = $"settings:{setting.Key}:default";
+            parts.Add(Pill("default", action, () => Act(Verbs.Set, [setting.Key, "default"], $"{setting.Label}: back to the default…", action), working: working.Contains(action)));
         }
         parts.Add(Layout.Builder.Spacer().WStar());
         return Layout.Builder.HStack([.. parts]).WithGap(6f);
     }
 
-    private Layout.Node Field(SettingRow setting, string placeholder, Func<string, string[]> args)
+    // A field's working id is its own: Enter sends, and the field says "saving…" until the node answers (a second Enter is ignored meanwhile).
+    private Layout.Node Field(SettingRow setting, string placeholder, Func<string, string[]> args, System.Collections.Immutable.ImmutableHashSet<string> working)
     {
+        var control = $"settings:{setting.Key}:field";
         if (!_fields.TryGetValue(setting.Key, out var input))
         {
             input = new TextInputState();
             _fields[setting.Key] = input;
         }
-        input.Placeholder = placeholder;
+        input.Placeholder = working.Contains(control) ? "saving…" : placeholder;
         input.OnCommit = text =>
         {
-            if (text.Trim().Length > 0)
+            if (text.Trim().Length > 0 && !Volatile.Read(ref _read).Working.Contains(control))
             {
-                Act(Verbs.Set, args(text.Trim()), $"{setting.Label}: {text.Trim()}…");
+                Act(Verbs.Set, args(text.Trim()), $"{setting.Label}: {text.Trim()}…", control);
                 input.Clear();
             }
             return Task.CompletedTask;
@@ -424,31 +595,45 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private static string[] Roots(SettingRow setting) =>
         (setting.Saved ?? setting.Value).Split('\n', StringSplitOptions.RemoveEmptyEntries);
 
-    private static Layout.Node Pill(string label, string action, Action onClick, bool chosen = false) =>
-        Layout.Builder.Text(label, 12f, Bright, TextAlign.Center)
+    // A pill whose verb is out shows "…" after its label and does not click again until the node answers.
+    private static Layout.Node Pill(string label, string action, Action onClick, bool chosen = false, bool working = false)
+    {
+        var pill = Layout.Builder.Text(working ? $"{label}…" : label, 12f, working && !chosen ? Body : Bright, TextAlign.Center)
             .Pad(10f, 4f)
             .WAuto()
-            .Bg(chosen ? Chosen : Button)
-            .BgHover(chosen ? Chosen : ButtonHover)
-            .Follows(new HitResult.ButtonHit(action), _ => onClick());
+            .Bg(chosen ? Chosen : Button);
+        return working ? pill : pill.BgHover(chosen ? Chosen : ButtonHover).Follows(new HitResult.ButtonHit(action), _ => onClick());
+    }
 }
 
-/// <summary>The Settings page's verbs on the node, for either host: what became of each, in a line.</summary>
+/// <summary>How the node took a verb.</summary>
+internal enum ReplyKind
+{
+    Done,
+    Refused,
+    /// <summary>The connection closed before the answer was read (a restart for the change can do that).</summary>
+    NoAnswer,
+}
+
+/// <summary>What became of a verb, in a line; for a <c>set</c> that saved, the setting's row as the node says it stands now.</summary>
+internal sealed record SettingsReply(string Line, ReplyKind Kind = ReplyKind.Done, SettingRow? Row = null);
+
+/// <summary>The Settings page's verbs on the node, for either host: what became of each, in a line, with the changed row.</summary>
 internal static class SettingsCommands
 {
-    public static async Task<string> SendAsync(NodeClient client, string verb, string[] args, string who, CancellationToken cancellationToken)
+    public static async Task<SettingsReply> SendAsync(NodeClient client, string verb, string[] args, string who, CancellationToken cancellationToken)
     {
         try
         {
             var envelope = await client.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.NodeTarget, Args = args, Who = who }, cancellationToken);
             return envelope.Success && envelope.Response is { Ok: true } result
-                ? result.Way ?? "done"
-                : $"refused: {envelope.Response?.Error ?? envelope.Error}";
+                ? new SettingsReply(result.Way ?? "done", ReplyKind.Done, result.Setting)
+                : new SettingsReply($"refused: {envelope.Response?.Error ?? envelope.Error}", ReplyKind.Refused);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or System.Text.Json.JsonException)
         {
-            // A restart for the change can close the connection before the answer is read: the page reads again either way.
-            return $"no answer ({ex.Message}); the node may be restarting";
+            // A restart for the change can close the connection before the answer is read: the page reads again.
+            return new SettingsReply($"no answer ({ex.Message}); the node may be restarting", ReplyKind.NoAnswer);
         }
     }
 }
