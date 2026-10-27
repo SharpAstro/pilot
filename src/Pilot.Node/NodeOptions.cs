@@ -23,7 +23,7 @@ namespace Pilot.Node;
 /// <param name="LanLoopbackOnly">For tests: the LAN port binds on loopback only, which stands in for the LAN, and a loopback listener never asks the firewall.</param>
 public sealed record NodeOptions(
     string SocketPath, string DataFolder, int RetainedDeltas = NodeState.DefaultRetainedDeltas, string? MachinePrefix = null, bool Watchtower = true, string? WatchtowerFolderGiven = null,
-    bool Lan = false, int LanPort = NodeWire.DefaultLanPort, bool LanAnnounce = true, int MaxJobs = 1, double JobMemoryGigabytes = 2,
+    bool Lan = false, int LanPort = NodeWire.DefaultLanPort, bool LanAnnounce = true, int MaxJobs = 1, double JobMemoryGigabytes = 0,
     UpdatePolicy UpdatePolicy = UpdatePolicy.Off, string? ReleaseFeed = null, IReadOnlyList<string>? RepoRootsGiven = null,
     UpdateChannel UpdateChannel = UpdateChannel.Stable, NodeSettings? Saved = null, IReadOnlySet<string>? CommandLineKeys = null, bool LocalOnly = false, bool LanLoopbackOnly = false)
 {

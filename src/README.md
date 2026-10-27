@@ -588,7 +588,7 @@ free what its kind of command needs: the node samples a job's process tree every
 its samples (its peak is only shown), and the estimate is the median of the last 5 runs of the same key (repo, tool
 and verb, project or solution, and `--no-build`, `-c` and whether a `--filter` is given), falling back to the same
 target with other flags, the same verb in the repo, then 1 GB. A run whose median is above the estimate raises it at
-once; a short spike never does. `--job-memory <GB>` (2 by default) caps what a job is ever held for. The rest wait in
+once; a short spike never does. `--job-memory <GB>` (0 by default) is a floor: a second job waits for its kind's measured need, or this when that is less. The rest wait in
 the order they came, each saying what it needs (median and peak) and the memory free now. A job's log is kept in the node's data folder
 (`jobs/<id>.log`), and its end is served for the GUI (`GET /api/v1/jobs/<id>/log`, a grant's on the LAN).
 

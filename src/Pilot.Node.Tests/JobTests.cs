@@ -403,7 +403,7 @@ public sealed class JobTests : IDisposable
 
         var id = Run(Echo("ran")).Made!;
 
-        // Nothing is known of it: the guess of 1 GB, which job-memory (2 GB) does not cap.
+        // Nothing is known of it: the guess of 1 GB, with no job-memory floor set.
         (await Until(id, j => j.Step is not null)).Step.ShouldBe("next in line: waiting for 1.0 GB of free memory (a guess, it has not run before; 0.5 GB now)");
         _free = 4L << 30;
         _jobs.Pump();
@@ -431,8 +431,8 @@ public sealed class JobTests : IDisposable
         SeedRun("j1", Echo("x"), median: 3L << 30, peak: 6L << 30, ended: 3);
         SeedRun("j2", Echo("x"), median: 5L << 30, peak: 9L << 30, ended: 2);
         SeedRun("j3", Echo("x"), median: 4L << 30, peak: 5L << 30, ended: 1);
-        // The cap is above the estimate here, so the estimate is what the job is held for.
-        _jobs.MinFreeMemory = 16L << 30;
+        // The floor is below the estimate here, so the estimate is what the job is held for.
+        _jobs.MinFreeMemory = 1L << 30;
         _jobs.MaxRunning = 2;
         var holder = Run(Sleep(30)).Made!;
         await Until(holder, j => j.State == JobState.Running);
@@ -448,19 +448,22 @@ public sealed class JobTests : IDisposable
     }
 
     [Fact]
-    public async Task JobMemoryStaysACapOnWhatAJobIsHeldFor()
+    public async Task JobMemoryIsAFloorSoAKindMeasuredAboveItWaitsForAllItNeeds()
     {
+        // Review of #357: as a cap, a kind measured at 8 GB started beside another with 2 GB free.
         SeedRun("j1", Echo("x"), median: 8L << 30, peak: 9L << 30, ended: 1);
         _jobs.MinFreeMemory = 2L << 30;
         _jobs.MaxRunning = 2;
         var holder = Run(Sleep(30)).Made!;
         await Until(holder, j => j.State == JobState.Running);
-        _free = 1L << 30;
+        _free = 2L << 30;
 
         var id = Run(Echo("x")).Made!;
 
-        (await Until(id, j => j.Step is not null)).Step.ShouldBe("next in line: waiting for 2.0 GB of free memory (median of its last run, peak 9.0 GB, held to the job-memory cap; 1.0 GB now)");
-        _free = 2L << 30;
+        (await Until(id, j => j.Step is not null)).Step.ShouldBe("next in line: waiting for 8.0 GB of free memory (median of its last run, peak 9.0 GB; 2.0 GB now)");
+        _jobs.Pump();
+        (await Until(id, j => j.Step is not null)).State.ShouldBe(JobState.Queued);
+        _free = 8L << 30;
         _jobs.Pump();
         (await Ended(id)).State.ShouldBe(JobState.Succeeded);
         Cancel(holder);

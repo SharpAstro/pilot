@@ -68,10 +68,11 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     public int MaxRunning { get; set; } = 1;
 
     /// <summary>
-    /// The most free memory a job is ever held for: what a job needs is its kind's measured estimate (<see cref="JobMemory"/>), and
-    /// this caps it (0 holds nothing back). Set live by <c>set node job-memory</c>.
+    /// The least free memory a second job waits for: what it needs is its kind's measured estimate (<see cref="JobMemory"/>), or this
+    /// when that is less. A floor, never a cap: as a cap, a kind measured at 8 GB started beside another with 2 GB free, the overload
+    /// the gate is for (review of #357). Set live by <c>set node job-memory</c>; 0 leaves the estimate alone.
     /// </summary>
-    public long MinFreeMemory { get; set; } = 2L << 30;
+    public long MinFreeMemory { get; set; }
 
     /// <summary>The memory, in bytes, the processes of a job's tree hold now; null when it cannot be read. Null reads each from <see cref="ProcessTable"/>; a test puts its own.</summary>
     public Func<JobProcessInfo[], long?>? MemorySample { get; init; }
@@ -464,7 +465,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             return null;
         }
         var estimate = EstimateOf(job);
-        var need = Math.Min(estimate.Bytes, MinFreeMemory);
+        var need = Math.Max(estimate.Bytes, MinFreeMemory);
         return FreeMemory() is { } free && free < need
             ? $"waiting for {MemoryEstimate.Gigabytes(need)} of free memory ({Basis(estimate, need)}; {MemoryEstimate.Gigabytes(free)} now)"
             : null;
@@ -472,15 +473,15 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     private MemoryEstimate EstimateOf(JobRow job) => JobMemory.Estimate(state.Jobs(), JobKey.Parse(job.MemoryKey) ?? JobKey.Of(job.Command, job.Cwd));
 
-    /// <summary>What the estimate rests on; when job-memory holds it down, that too.</summary>
+    /// <summary>What the estimate rests on; when job-memory raises it, that too.</summary>
     private static string Basis(MemoryEstimate estimate, long need) =>
-        need < estimate.Bytes ? $"{estimate.Describe()}, held to the job-memory cap" : estimate.Describe();
+        need > estimate.Bytes ? $"{estimate.Describe()}, raised to the job-memory floor" : estimate.Describe();
 
     /// <summary>What a waiting job needs, as its step says it: the estimate with its median and peak, and the memory free now.</summary>
     private string Needs(JobRow job)
     {
         var estimate = EstimateOf(job);
-        var need = Math.Min(estimate.Bytes, MinFreeMemory);
+        var need = Math.Max(estimate.Bytes, MinFreeMemory);
         var now = FreeMemory() is { } free ? $", {MemoryEstimate.Gigabytes(free)} free now" : "";
         return $"needs {MemoryEstimate.Gigabytes(need)} ({Basis(estimate, need)}){now}";
     }
