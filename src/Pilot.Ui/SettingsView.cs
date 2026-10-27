@@ -626,12 +626,16 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         var tracker = choice.Tracker.GetValueOrDefault(key, "github");
         string Entry(string name) => trackers ? $"{name}={tracker}" : name;
 
-        var stack = new List<Layout.Node>
+        // A row a chip, left-aligned: the height is what the rows add up to, whatever the width.
+        var stack = new List<Layout.Node>();
+        if (entries.Length == 0)
         {
-            entries.Length == 0
-                ? Layout.Builder.Text("none yet", 12f, Dim).RowH(ControlH)
-                : Layout.Builder.WrapH([.. entries.Select(entry => Chip(setting, entry, entries, working))]).WithGap(6f).WithLineGap(6f).WStar().HAuto(),
-        };
+            stack.Add(Layout.Builder.Text("none yet", 12f, Dim).RowH(ControlH));
+        }
+        foreach (var entry in entries)
+        {
+            stack.Add(Layout.Builder.HStack(Chip(setting, entry, entries, working), Layout.Builder.Spacer().WStar()).RowH(ControlH));
+        }
         var controls = new List<Layout.Node>();
         var offering = IsRepoList(key) && LoadRepos is not null;
         if (offering)
@@ -654,12 +658,13 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         var field = Field(setting, offering ? "or a folder's path, then Enter" : "add a folder, then Enter", text => [key, .. entries, trackers && !HasTracker(text) ? $"{text}={tracker}" : text], working);
         if (offering)
         {
-            controls.Add(field.WFixed(240f).HFixed(ControlH));
-            stack.Add(Layout.Builder.WrapH([.. controls]).WithGap(6f).WithLineGap(6f).WStar().HAuto());
+            controls.Add(Layout.Builder.Spacer().WStar());
+            stack.Add(Layout.Builder.HStack([.. controls]).WithGap(6f).RowH(ControlH));
             if (choice.Opened == key && read.Repos is { } repos)
             {
-                stack.Add(Offered(key, repos, entries, pick));
+                stack.Add(Layout.Builder.HStack(Offered(key, repos, entries, pick), Layout.Builder.Spacer().WStar()).HAuto());
             }
+            stack.Add(Layout.Builder.HStack(field.WFixed(280f), Layout.Builder.Spacer().WStar()).RowH(ControlH));
         }
         else
         {
@@ -675,7 +680,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     {
         var action = $"settings:{setting.Key}:remove:{entry}";
         return Layout.Builder.HStack(
-                Layout.Builder.Text(Elide(entry), 12f, Body).WithTooltip(entry).WAuto().Pad(8f, 4f),
+                Layout.Builder.Text(Elide(entry), 12f, Body, TextAlign.Center).WithTooltip(entry).Pad(8f, 4f).WAuto(),
                 // The × stays a typeset rune for want of a close glyph: SharpAstro/DIR.Lib#151.
                 Pill("×", action, () => Act(Verbs.Set, [setting.Key, .. entries.Where(e => e != entry).DefaultIfEmpty("default")], $"{setting.Label}: removing {entry}…", action), working: working.Contains(action)))
             .WithGap(0f).Bg(FieldBg).WAuto().HFixed(ControlH);
@@ -692,21 +697,25 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         var rows = new List<Layout.Node>();
         foreach (var repo in fits.Take(OfferedRows))
         {
-            rows.Add(Layout.Builder.Text(Elide(repo.Name), 12f, repo.Name == pick ? Bright : Body).RowH(OfferedRowH).PadX(10f)
+            rows.Add(Indented(Layout.Builder.Text(Elide(repo.Name), 12f, repo.Name == pick ? Bright : Body))
                 .WithTooltip(repo.Path)
                 .BgHover(ButtonHover)
                 .Follows(new HitResult.ButtonHit($"settings:{key}:pick:{repo.Name}"), _ => Pick(key, repo.Name)));
         }
         if (fits.Length == 0)
         {
-            rows.Add(Layout.Builder.Text(repos.Length == 0 ? "the node lists no repos: give a folder's path below" : "no repo left to add" + (narrow.Length > 0 ? $" matching {Elide(narrow)}" : ""), 12f, Dim).RowH(OfferedRowH).PadX(10f));
+            rows.Add(Indented(Layout.Builder.Text(repos.Length == 0 ? "the node lists no repos: give a folder's path below" : "no repo left to add" + (narrow.Length > 0 ? $" matching {Elide(narrow)}" : ""), 12f, Dim)));
         }
         else if (fits.Length > OfferedRows)
         {
-            rows.Add(Layout.Builder.Text($"{fits.Length - OfferedRows} more: type in the field to narrow them", 11f, Dim).RowH(OfferedRowH).PadX(10f));
+            rows.Add(Indented(Layout.Builder.Text($"{fits.Length - OfferedRows} more: type in the field to narrow them", 11f, Dim)));
         }
-        return Layout.Builder.VStack([.. rows]).Bg(FieldBg).WFixed(OfferedWidth).HAuto();
+        return Layout.Builder.VStack([.. rows]).Bg(Button).WFixed(OfferedWidth).HAuto();
     }
+
+    // A menu row's text, set in from the row's edge.
+    private static Layout.Node Indented(Layout.Node text) =>
+        Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(10f), text.WStar()).RowH(OfferedRowH);
 
     private void Toggle(string key)
     {
