@@ -444,6 +444,12 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                         state.NoteOutcome(id, $"merged as #{number}, {flight.Code} landed", flight.PullRequestUrl);
                     }
                 }
+                else if (result.Ok && result.Way == MergeWays.Updated)
+                {
+                    // Behind its base: brought up to date and reviewed afresh, which offers the merge again; nothing was dropped.
+                    state.RaiseCard(CardBin.Handled, CardKinds.AutopilotRan, subject, $"{flight.Code}'s PR #{number} was brought up to date and is reviewed afresh", result.Made);
+                    continue;
+                }
                 else if (result.Ok)
                 {
                     // Joined the merge queue instead: the flight keeps flying, and its card says so (LegCommander.RunAsync).
@@ -704,6 +710,13 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             return;
         }
         var result = await legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = merge.Target, Args = merge.Args ?? [], Who = "node" }, cancellationToken);
+        if (result.Ok && result.Way == MergeWays.Updated)
+        {
+            // Behind its base: brought up to date and reviewed afresh, which closed the card and offers the merge again. Handled, not refused.
+            state.RaiseCard(CardBin.Handled, CardKinds.AutopilotRan, Verbs.FlightTarget(flight.Code),
+                $"{flight.Code}'s PR #{flight.PullRequest} was brought up to date on autopilot and is reviewed afresh", result.Made);
+            return;
+        }
         if (result.Ok)
         {
             state.CloseCard(card.Id, result.Made is { Length: > 0 } made ? $"on autopilot: {made}" : "merged on autopilot", "node");

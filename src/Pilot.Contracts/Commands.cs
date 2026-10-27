@@ -436,6 +436,12 @@ public static class MergeWays
 
     /// <summary>The PR joined its base's merge queue: the flight lands once the queue merges it.</summary>
     public const string Queued = "queued";
+
+    /// <summary>
+    /// The node's own merge found the PR behind its base: it brought it up to date, pushed it and began a fresh review, which offers the
+    /// merge again. Handled, not refused: the PR was not merged and nothing is left to answer.
+    /// </summary>
+    public const string Updated = "updated";
 }
 
 /// <summary>The ways a <c>say</c> reaches a session (<see cref="CommandResult.Way"/>).</summary>

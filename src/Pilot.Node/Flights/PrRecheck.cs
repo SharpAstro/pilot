@@ -377,6 +377,10 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
                 Fail(entry, $"passed and green, but the merge was refused: {merged.Error}", pr.Url);
                 return Outcome.Kept;
             }
+            if (merged.Way == MergeWays.Updated)
+            {
+                return await FinishAsync(entry, pr, $"passed and green, but behind its base: brought up to date and reviewed afresh", null, cancellationToken);
+            }
             return merged.Way is null
                 ? await FinishAsync(entry, pr, $"passed and green, merged at {head}", null, cancellationToken)
                 : await FinishAsync(entry, pr, $"passed and green, queued for merge at {head}", PilotMarks.Queued, cancellationToken);

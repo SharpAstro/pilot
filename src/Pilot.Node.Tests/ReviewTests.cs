@@ -1303,19 +1303,62 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
-    public async Task AnUpdatedHeadWithPendingChecksIsNotQueuedByTheMergeThatUpdatedIt()
+    public async Task AnUpdatedHeadWithPendingChecksIsNotQueuedByTheMergeOfferedAgain()
     {
         _github.UpdateWay = UpdateWay.Merge;
         _github.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
         var (flight, _) = await Passed("16");
+        MainMoves();
+        (await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8])).Error.ShouldNotBeNull().ShouldContain("is behind its base");
+
+        // The update is pushed and reviewed afresh; the review passes on the new head, and the merge is offered again.
+        var newHead = Git(flight.Worktree, "rev-parse", "HEAD");
+        _github.Pr = _github.Pr! with { Head = newHead };
+        (await Run(Verbs.Review, $"flight/{flight.Code}", Reviewer(flight.Code), "pass", "fine")).Ok.ShouldBeTrue();
+        (await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", newHead[..8])).Error.ShouldBeNull();
+
+        // Its checks still run on the new head: armed to merge when they pass, not sent to the queue.
+        _github.Merged.ShouldBeEmpty();
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull().ShouldContain(newHead);
+    }
+
+    [Fact]
+    public async Task TheAutopilotsMergeOfAPrBehindMainUpdatesItAndLeavesNoRefusalCard()
+    {
+        var (flight, _) = await Passed("35");
+        _github.Checks = ChoiceStatus.Passing;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
         var head = Git(flight.Worktree, "rev-parse", "HEAD");
         MainMoves();
 
-        (await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8])).Error.ShouldNotBeNull().ShouldContain("is behind its base");
+        await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
 
         _github.Merged.ShouldBeEmpty();
-        _github.AutoMergeArmed.ShouldBeEmpty();
+        Git(flight.Worktree, "rev-parse", "HEAD").ShouldNotBe(head);
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrChecks.AutopilotMergeRefused || c.Kind == PrChecks.MergeDropped);
+    }
+
+    [Fact]
+    public async Task AnArmedMergeAtGreenOnAPrBehindMainUpdatesItAndDropsNoMerge()
+    {
+        var (flight, _) = await Passed("36");
+        _github.Checks = ChoiceStatus.Pending;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+        await checks.LookAsync(Ct);
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        MainMoves();
+
+        _github.Checks = ChoiceStatus.Passing;
+        await checks.LookAsync(Ct);
+
+        _github.Merged.ShouldBeEmpty();
+        Git(flight.Worktree, "rev-parse", "HEAD").ShouldNotBe(head);
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
         F(flight.Code).MergeWhenGreen.ShouldBeNull();
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrChecks.AutopilotMergeRefused || c.Kind == PrChecks.MergeDropped);
     }
 
     [Fact]

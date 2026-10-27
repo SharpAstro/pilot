@@ -311,6 +311,12 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   to date" rule), and GitHub's Behind state is refused the same way. A PR behind is brought up to date by `RebaseOntoBaseAsync` (pushed,
   reviewed afresh), `MergeAsync` is never called, and the command says it is *behind its base* and the merge is offered again once the
   review passes; a conflict goes round as in the update above. The checks guards (pending arms, failing refuses) then apply to the new head.
+  The node's own merge (autopilot, the merge armed at green, a recheck) is not refused for it: `RunAsync` answers Ok with way `updated`
+  (`MergeWays.Updated`), the update closed the old head's cards, and the callers leave no Ring `AutopilotMergeRefused`, no `MergeDropped`
+  and no failed recheck: a Handled line at most. Only a person's Merge gets the *behind its base* error.
+- `PushAsync`'s "base is not an ancestor" guard has no test of its own: `BringUpToDateAsync` runs first and either leaves the base an
+  ancestor (a merge or rebase that succeeded) or throws on the conflict (covered), so the guard is reachable only by a git that reports
+  success and leaves the base out, which a test cannot stage. It stays as the backstop the leg asks for.
 - A flight whose legs are all done and whose PR merged on GitHub lands on the next look even with no merge card open
   (dismissed after a rebase by hand moved its head), as one merged through its card does.
 - Only the reviewer gives the verdict; the controller may pass one that asked for changes ("ready anyway"); the

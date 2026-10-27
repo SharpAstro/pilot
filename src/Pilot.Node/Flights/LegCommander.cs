@@ -182,9 +182,22 @@ public sealed partial class LegCommander(
         if (error is not null && command.Verb is Verbs.Merge or Verbs.RerunChecks && Behind(error))
         {
             var code = FlightOf(command.Target).Code;
-            error = await RebaseOntoBaseAsync(code, cancellationToken) is { } why
-                ? $"{error}; {why}{(await ConflictsAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : ": its last leg goes around to resolve it")}"
-                : $"{error}, so the node brought it up to date with its base and it is reviewed afresh; the merge is offered again once that passes";
+            var updated = $"{error}, so the node brought it up to date with its base and it is reviewed afresh; the merge is offered again once that passes";
+            if (await RebaseOntoBaseAsync(code, cancellationToken) is { } why)
+            {
+                error = $"{error}; {why}{(await ConflictsAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : ": its last leg goes around to resolve it")}";
+            }
+            else if (command.Who == "node" && command.Verb == Verbs.Merge)
+            {
+                // The node's own merge (autopilot, an armed merge at green, a recheck) is not refused for it: the update is what it did.
+                made = updated;
+                error = null;
+                way = MergeWays.Updated;
+            }
+            else
+            {
+                error = updated;
+            }
         }
 
         // A merge lands its flight through the flight verbs' own lock, after this one's is let go. One that only joined a
@@ -204,7 +217,7 @@ public sealed partial class LegCommander(
         }
         // A merge armed or queued is no merge yet: any card of the flight offering it says where it stands, the one an answer
         // runs it from included: NodeCommands.AnswerAsync keeps that card open while the command runs.
-        if (error is null && way is not null)
+        if (error is null && way is (MergeWays.Armed or MergeWays.Queued))
         {
             ShowMerge(command.Target, made, way);
         }
