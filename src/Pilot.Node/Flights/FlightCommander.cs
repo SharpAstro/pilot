@@ -304,7 +304,11 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         // open is not removed. Seen live: a flight landed a minute after its worker finished kept its plane.
         if (workers is not null)
         {
-            var jobs = state.Legs(flight.Code).Select(l => l.WorkerJob).Append(flight.Review?.ReviewerJob).OfType<string>().Distinct();
+            // Every live session of the flight's too, not only the legs' current workers and the current reviewer: its planner,
+            // an earlier reviewer, a validator or a renamed copy sat idle in TIA368's plane after it landed, holding the folder
+            // and still able to push. A session's job is its row id.
+            var sessions = state.Sessions().Where(s => s.State != SessionState.Ended && string.Equals(s.Flight, flight.Code, StringComparison.Ordinal)).Select(s => s.Id);
+            var jobs = state.Legs(flight.Code).Select(l => l.WorkerJob).Append(flight.Review?.ReviewerJob).OfType<string>().Concat(sessions).Distinct();
             foreach (var job in jobs)
             {
                 try

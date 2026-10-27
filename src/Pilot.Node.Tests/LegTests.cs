@@ -1147,6 +1147,31 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    public async Task LandingStopsEveryLiveSessionOfTheFlightNotOnlyItsCurrentWorkers()
+    {
+        // TIA368 landed with its planner and an earlier reviewer idle in its plane: they held the folder and could still push.
+        await FlightWithTwoLegs();
+        var flights = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System, workers: _workers);
+        Session("aa000001", "du1-tia1-plan", SessionRole.Planner, "TIA1", SessionState.Idle);
+        Session("aa000002", "du1-tia1-review", SessionRole.Reviewer, "TIA1", SessionState.Working);
+        Session("aa000003", "du1-tia1-parser", SessionRole.Worker, "TIA1", SessionState.Ended);
+        Session("aa000004", "du1-tia2-plan", SessionRole.Planner, "TIA2", SessionState.Idle);
+
+        (await flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+
+        _workers.Stopped.ShouldContain("aa000001");
+        _workers.Stopped.ShouldContain("aa000002");
+        _workers.Stopped.ShouldNotContain("aa000003");
+        _workers.Stopped.ShouldNotContain("aa000004");
+    }
+
+    private void Session(string id, string name, SessionRole role, string flight, SessionState state) => _state.PutSession(new SessionRow
+    {
+        Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = "/r/w", Role = role, Flight = flight,
+        ContextTokens = 0, ContextWindow = 200_000, State = state, SpendWeighted = 0, LastResponseAt = DateTimeOffset.UtcNow, StartedAt = DateTimeOffset.UtcNow,
+    });
+
+    [Fact]
     public async Task APlaneWhoseGitFileWentIsPrunableAndStillLands()
     {
         var flight = await FlightWithTwoLegs();
