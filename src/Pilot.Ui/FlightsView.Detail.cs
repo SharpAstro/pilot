@@ -369,8 +369,8 @@ internal sealed partial class FlightsView<TSurface>
             .WStar()
             .HAuto();
 
-    // As the node's LegCommander.MaxReviewGoArounds: past it, redoing the leg on the review's findings is the person's call.
-    private const int ReviewRedoCap = 3;
+    // The node's own cap (LegRow.MaxReviewGoArounds, which LegCommander reads): past it, redoing the leg on the review's findings is the person's call.
+    private const int ReviewRedoCap = LegRow.MaxReviewGoArounds;
 
     /// <summary>
     /// What the review asks, in full, where the flight is read: the page showed only a "review changes" chip while the findings,
