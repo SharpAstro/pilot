@@ -215,24 +215,62 @@ public sealed class McpTests : IAsyncLifetime
         server.Who.ShouldBe("mcp");
     }
 
-    [Fact]
-    public async Task WhenTheInstalledVersionChangesTheReplyInHandIsFinishedAndRunAsyncEnds()
+    /// <summary>A stand-in for the new binary's <c>pilot mcp</c>: a real server on in-memory pipes, with what it was started with and what it was sent.</summary>
+    private sealed class FakeChild(string folder, string socket)
     {
-        var installed = McpServer.Running;
+        public string[]? Args { get; private set; }
+
+        public List<string> Heard { get; } = [];
+
+        public Task Running { get; private set; } = Task.CompletedTask;
+
+        public McpChild Start(string[] args)
+        {
+            Args = args;
+            var toChild = new FedReader();
+            var fromChild = new FedReader();
+            var server = new McpServer(folder, node: null, socket: socket);
+            Running = server.RunAsync(new TappedReader(toChild, Heard), new FeedWriter(fromChild), Ct);
+            return new McpChild(new FeedWriter(toChild), fromChild, () => toChild.Dispose());
+        }
+    }
+
+    [Fact]
+    public async Task WhenTheInstalledVersionChangesTheSessionIsHandedOverToTheNewServerAndRunAsyncOutlivesIt()
+    {
         var log = new StringWriter();
-        var output = new StringWriter();
-        var input = new StringReader(string.Join('\n', Initialize, """{"jsonrpc":"2.0","id":2,"method":"ping"}""", """{"jsonrpc":"2.0","id":3,"method":"ping"}""") + "\n");
+        var input = new FedReader();
+        var output = new LineWriter();
+        var child = new FakeChild(_node.Folder, _node.SocketPath);
 
-        // Nothing changed after the first message; it changes as the second is answered, so the third is never read.
-        var looks = 0;
+        // Nothing changed for the first message; the update lands before the second is answered.
+        var updated = false;
         var server = new McpServer(_node.Folder, node: null, socket: _node.SocketPath,
-            installed: _ => Task.FromResult<string?>(++looks < 2 ? installed : "99.0.0+abc"), log: log);
-        await server.RunAsync(input, output, Ct);
+            installed: _ => Task.FromResult<string?>(updated ? "99.0.0+abc" : McpServer.Running), log: log, startChild: child.Start);
+        var running = server.RunAsync(input, output, Ct);
 
-        var replies = output.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => JsonDocument.Parse(l).RootElement.GetProperty("id").GetInt32()).ToArray();
-        replies.ShouldBe([1, 2]);
+        input.Feed(Initialize);
+        (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(1);
+        updated = true;
+        input.Feed("""{"jsonrpc":"2.0","id":2,"method":"ping"}""");
+        (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(2);
+
+        // Once, and after the reply in hand: the tools may differ on the new binary.
+        (await output.NextAsync()).GetProperty("method").GetString().ShouldBe("notifications/tools/list_changed");
+        child.Args.ShouldBe(["--node-socket", _node.SocketPath, "mcp"]);
+        child.Heard.Count.ShouldBe(2);
+        JsonDocument.Parse(child.Heard[0]).RootElement.GetProperty("method").GetString().ShouldBe("initialize");
+        JsonDocument.Parse(child.Heard[1]).RootElement.GetProperty("method").GetString().ShouldBe("notifications/initialized");
+
+        // From here the new server answers, and the client's later lines reach it; its initialize reply was not passed on.
+        input.Feed("""{"jsonrpc":"2.0","id":3,"method":"ping"}""");
+        (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(3);
+        running.IsCompleted.ShouldBeFalse();
         log.ToString().ShouldContain("pilot 99.0.0 is installed");
-        input.ReadLine().ShouldNotBeNull().ShouldContain("\"id\":3");
+
+        input.Dispose();
+        await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await child.Running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
     }
 
     [Fact]
@@ -249,17 +287,36 @@ public sealed class McpTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AQuietServerNoticesAnUpdateWithoutAMessage()
+    public async Task AQuietServerHandsOverOnAnUpdateWithoutAMessage()
+    {
+        var input = new FedReader();
+        var output = new LineWriter();
+        var child = new FakeChild(_node.Folder, _node.SocketPath);
+        var server = new McpServer(_node.Folder, node: null, socket: _node.SocketPath,
+            installed: _ => Task.FromResult<string?>("99.0.0"), watch: TimeSpan.FromMilliseconds(20), log: new StringWriter(), startChild: child.Start);
+        var running = server.RunAsync(input, output, Ct);
+
+        (await output.NextAsync()).GetProperty("method").GetString().ShouldBe("notifications/tools/list_changed");
+        // A client that never initialized has nothing to replay; its first line goes to the new server.
+        input.Feed("""{"jsonrpc":"2.0","id":7,"method":"ping"}""");
+        (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(7);
+
+        input.Dispose();
+        await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+    }
+
+    [Fact]
+    public async Task WhenTheNewServerCannotStartTheOldOneKeepsServingAndSaysWhyOnce()
     {
         var log = new StringWriter();
         var server = new McpServer(_node.Folder, node: null, socket: _node.SocketPath,
-            installed: _ => Task.FromResult<string?>("99.0.0"), watch: TimeSpan.FromMilliseconds(20), log: log);
-        // An input that never says anything and never ends, as a host's stdin between calls.
-        using var quiet = new BlockedReader();
+            installed: _ => Task.FromResult<string?>("99.0.0"), log: log, startChild: _ => throw new IOException("no pilot beside me"));
 
-        await server.RunAsync(quiet, new StringWriter(), Ct).WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        var replies = await Serve(server, Initialize, """{"jsonrpc":"2.0","id":2,"method":"ping"}""", """{"jsonrpc":"2.0","id":3,"method":"ping"}""");
 
-        log.ToString().ShouldContain("pilot 99.0.0 is installed");
+        replies.Select(r => r.GetProperty("id").GetInt32()).ShouldBe([1, 2, 3]);
+        log.ToString().ShouldContain("no pilot beside me");
+        log.ToString().Split("cannot start").Length.ShouldBe(2);
     }
 
     private const string Restarting = "the node is restarting (or not running): try again in a moment";
@@ -405,14 +462,28 @@ public sealed class McpTests : IAsyncLifetime
             JsonDocument.Parse(await _lines.Reader.ReadAsync(Ct).AsTask().WaitAsync(TimeSpan.FromSeconds(30), Ct)).RootElement.Clone();
     }
 
-    /// <summary>A reader whose lines never come, until it is disposed.</summary>
-    private sealed class BlockedReader : TextReader
+    /// <summary>A writer that feeds each line written to a <see cref="FedReader"/>: one end of an in-memory pipe.</summary>
+    private sealed class FeedWriter(FedReader to) : StringWriter
     {
-        private readonly TaskCompletionSource<string?> _never = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override Task WriteLineAsync(string? value)
+        {
+            to.Feed(value ?? "");
+            return Task.CompletedTask;
+        }
+    }
 
-        public override ValueTask<string?> ReadLineAsync(CancellationToken cancellationToken) => new(_never.Task.WaitAsync(cancellationToken));
-
-        protected override void Dispose(bool disposing) => _never.TrySetResult(null);
+    /// <summary>A reader that keeps what it handed on.</summary>
+    private sealed class TappedReader(FedReader inner, List<string> heard) : TextReader
+    {
+        public override async ValueTask<string?> ReadLineAsync(CancellationToken cancellationToken)
+        {
+            var line = await inner.ReadLineAsync(cancellationToken);
+            if (line is not null)
+            {
+                heard.Add(line);
+            }
+            return line;
+        }
     }
 
     private static Dictionary<string, JsonElement> Arguments(string json) =>
