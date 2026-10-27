@@ -1934,7 +1934,8 @@ public sealed partial class LegCommander(
         var detail = changes;
         if (last is { ReviewGoArounds: >= MaxReviewGoArounds })
         {
-            detail = $"{last.Name} has gone around {last.ReviewGoArounds} times on review findings: this is yours to decide (redo the leg once more, mark it ready, or change what the review asks).\n{changes}";
+            // The findings first: a card shows its first lines, and this note there hid the problem it was about (PIL294's #357, 2026-10-27).
+            detail = $"{changes}\n{last.Name} has been redone {last.ReviewGoArounds} times on review findings: this is yours to decide (redo the leg once more, mark it ready, or change what the review asks).";
         }
         var choices = new List<CardChoice>();
         if (last is not null)

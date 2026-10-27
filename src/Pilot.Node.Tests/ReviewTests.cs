@@ -857,6 +857,8 @@ public sealed class ReviewTests2 : ReviewTestsBase
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
         card.Detail.ShouldNotBeNull().ShouldContain("this is yours to decide");
+        // What the review asks comes first, where a card cut to its first lines still shows it (PIL294's #357).
+        card.Detail.ShouldStartWith("the PR's body closes the round's issue");
 
         // The note is for the person: the go-around's args become the next worker's brief, which is told what the review asked.
         card.Choices.Single(c => c.Verb == Verbs.GoAround).Args.ShouldNotBeNull().ShouldAllBe(a => !a.Contains("yours to decide"));
