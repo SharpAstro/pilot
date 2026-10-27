@@ -113,6 +113,7 @@ public sealed partial class LegCommander
         flight with
         {
             GitHubHead = null,
+            GitHubDraft = null,
             GitHubLabel = null,
             GitHubDisagrees = null,
             Review = flight.Review is { } review

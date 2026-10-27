@@ -680,6 +680,22 @@ public sealed class ReviewTests1 : ReviewTestsBase
         var again = F(flight.Code);
         (again.GitHubHead, again.GitHubLabel, again.GitHubDisagrees).ShouldBe((reviewed, "pilot: passed", null));
     }
+
+    [Fact]
+    public async Task TheLookKeepsWhetherGitHubHasThePrAsADraftOnTheFlight()
+    {
+        var (flight, _) = await Passed("35");
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        _github.Pr = _github.Pr! with { Draft = true };
+        await checks.LookAsync(Ct);
+        F(flight.Code).GitHubDraft.ShouldBe(true);
+
+        // Made ready for review (by the node on a pass, or by hand): the next look says so.
+        _github.Pr = _github.Pr! with { Draft = false };
+        await checks.LookAsync(Ct);
+        F(flight.Code).GitHubDraft.ShouldBe(false);
+    }
 }
 
 /// <summary>Part 2 of ReviewTests: the class is split so its tests run side by side, not one after another.</summary>
