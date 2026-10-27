@@ -429,6 +429,27 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AFailedCheckUnderGitHubsAutoMergeRunsAgainWithTheAutoMergeLeftArmed()
+    {
+        // Armed through GitHub's own auto-merge: the rerun leaves it armed, so a check green on its second run merges.
+        var (flight, pr) = await Passed("34");
+        _github.AutoMergeAllowed = true;
+        _github.Checks = ChoiceStatus.Pending;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        var checks = new PrChecks(_state, _github, new ManualTime(DateTimeOffset.UtcNow), _flights, _legs) { RerunFirst = true };
+        await checks.LookAsync(Ct);
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
+
+        _github.Checks = ChoiceStatus.Failing;
+        await checks.LookAsync(Ct);
+
+        _github.Reruns.ShouldBe([pr]);
+        _github.AutoMergeDisarmed.ShouldBeEmpty();
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+    }
+
+    [Fact]
     public async Task OnAutopilotAMergeThatWaitedForChecksWhichThenFailSendsTheLegBackAsChangesNotOntoAForYouCard()
     {
         // With the autopilot off a failing PR is sent back from its PR-ready card; the merge the node armed itself must go round the same way.

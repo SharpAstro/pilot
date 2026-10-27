@@ -355,6 +355,12 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     : LegCommander.ArmedLine(checks, how)), MergeWays.Armed);
                 continue;
             }
+            // The node's own rerun of a failed check comes before anything is let go: the merge stays armed for it, GitHub's
+            // auto-merge included, so a check that goes green on its second run merges as armed.
+            if (checksFailed && byAutopilot && legs is not null && await RerunningAsync(flight, number, head, cancellationToken))
+            {
+                continue;
+            }
             // GitHub's auto-merge would merge a head that moved, or one whose check was re-run green, on its own: off first.
             var autoMergeNote = "";
             if (native && pr is { State: "OPEN" })
@@ -368,11 +374,6 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 {
                     autoMergeNote = $" GitHub's auto-merge could not be turned off ({ex.Message}): switch it off on the PR page, or it merges once the checks pass.";
                 }
-            }
-            if (checksFailed && byAutopilot && legs is not null && await RerunningAsync(flight, number, head, cancellationToken))
-            {
-                // Its failed runs run again; the merge stays armed for them.
-                continue;
             }
             if (checksFailed && byAutopilot && legs is not null)
             {
