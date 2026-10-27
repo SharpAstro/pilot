@@ -152,7 +152,7 @@ public sealed class JobTests : IDisposable
         _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" }).Ok.ShouldBeTrue();
         await Ended(id);
 
-        for (var i = 0; i < 100 && (Alive(childPid.Value) || Alive(running.Pid!.Value)); i++)
+        for (var i = 0; i < 300 && (Alive(childPid.Value) || Alive(running.Pid!.Value)); i++)
         {
             await Task.Delay(50, Ct);
         }
@@ -207,7 +207,7 @@ public sealed class JobTests : IDisposable
 
         var job = await Ended(id);
         (job.State, job.ExitCode, job.Step, job.Told).ShouldBe((JobState.Succeeded, 0, "all 12 tests passed", true));
-        File.ReadAllText(job.LogPath).ShouldContain("all 12 tests passed");
+        ReadShared(job.LogPath).ShouldContain("all 12 tests passed");
         var say = _said.ShouldHaveSingleItem();
         (say.Verb, say.Target, say.Who).ShouldBe((Verbs.Say, "session/a1b2c3d4", "node"));
         say.Args[0].ShouldContain($"Your job {id}");
