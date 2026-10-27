@@ -67,9 +67,9 @@ public sealed class NodeRestartTests
         var (commands, state, lifetime, _) = Build();
         foreach (var id in new[] { "j1", "j2" })
         {
-            state.PutJob(new JobRow { Id = id, State = JobState.Running, Cwd = "/tmp", Command = "sleep 60", LogPath = "/tmp/j.log", StartedAt = DateTimeOffset.UtcNow });
+            state.PutJob(new JobRow { Id = id, State = JobState.Running, Cwd = "/tmp", Command = "sleep 60", LogPath = "/tmp/j.log", Timeout = TimeSpan.Zero, StartedAt = DateTimeOffset.UtcNow });
         }
-        state.PutJob(new JobRow { Id = "j3", State = JobState.Succeeded, Cwd = "/tmp", Command = "true", LogPath = "/tmp/j.log", StartedAt = DateTimeOffset.UtcNow });
+        state.PutJob(new JobRow { Id = "j3", State = JobState.Succeeded, Cwd = "/tmp", Command = "true", LogPath = "/tmp/j.log", Timeout = TimeSpan.Zero, StartedAt = DateTimeOffset.UtcNow });
 
         var result = commands.RestartNode(Restart("cli"));
 
