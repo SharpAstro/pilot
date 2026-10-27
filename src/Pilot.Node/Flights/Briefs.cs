@@ -708,13 +708,18 @@ public static class Briefs
         text.AppendLine("## Getting reviewed work in");
         text.AppendLine("- A conflict with the base (a review or a dropped queue entry says the PR conflicts): resolve it yourself in the flight's plane.");
         text.AppendLine("  `git fetch origin`, `git merge origin/<base>`, resolve every file so both sides' work stays, build and run the tests the");
-        text.AppendLine($"  leg's check names through `{pilot} run`, commit the merge, `git push` (a plain push: never force, never rebase a pushed branch),");
+        text.AppendLine($"  leg's check names through `{pilot} run`, commit the merge, `git push` (a plain push needs no one's leave; a force needs the rule below),");
         text.AppendLine($"  then `{pilot} flight review <code>`. A conflict is a merge, not a reason to redo a leg: never send a leg round for one.");
         text.AppendLine("- A review that asks for small changes (a wording, a test flag, a missing line, a doc comment): make them yourself in the");
         text.AppendLine($"  plane, test, commit, push, and `{pilot} flight review <code>`. Send the leg round (Redo leg) only for work a worker should");
         text.AppendLine("  do: new code, a design change, more than a few lines. A fresh worker costs a whole leg's tokens; a fix of yours costs a turn.");
         text.AppendLine("- A review that passed, with the autopilot on: the node merges it. Asked in the chat to merge, run the merge yourself.");
         text.AppendLine("- Work in the plane only, on its branch; never in the repo's main checkout, never on main.");
+        text.AppendLine("- A force push (a reworded commit, a rebase) of a flight's branch, yours or a worker's asking: you allow it only when nobody");
+        text.AppendLine($"  else works on that branch. All three must hold: the PR's `pilot node:` label is this node; `{pilot} sessions` shows no other");
+        text.AppendLine("  live session in that flight's plane but the one pushing; and the push is `git push --force-with-lease=<branch>:<the sha last");
+        text.AppendLine("  fetched>`, never a bare --force. If any fails, merge instead of rebasing. Another node's flight is never force-pushed from here");
+        text.AppendLine("  (SE1's PIL294 work was lost to a push from DE1, 2026-10-27).");
         text.AppendLine();
         text.AppendLine("## What you may do");
         text.AppendLine("- Answer a card, ring cards included, whose choice is a go-around, a resume or a nudge, when the card's detail shows it is the right one.");
@@ -732,7 +737,7 @@ public static class Briefs
         text.AppendLine("  yourself) on your own say-so, or silently. When they ask for one in the chat, run its command: the node answers with an");
         text.AppendLine("  Allow card for them to press (or runs it at once on autopilot and records it), and you say in the chat which it was. When it only");
         text.AppendLine("  seems a good idea to you, ask them in the chat first, with an ask block. Never go round it with gh or git directly.");
-        text.AppendLine("- Force-push, rebase a pushed branch, delete branches or worktrees, or touch main.");
+        text.AppendLine("- Force-push outside the rule above, delete branches or worktrees, or touch main.");
         text.AppendLine("- Ring for what you can handle, or leave a card open because it is \"theirs\": a card the node says to you is yours to act on.");
         text.AppendLine("  Ring only for a real fork in the work. Most of what happens is state, not an event: say nothing about it.");
         text.AppendLine();
