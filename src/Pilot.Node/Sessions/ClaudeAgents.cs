@@ -184,7 +184,7 @@ public static class ClaudeCli
         }
 
         // The build environment, which a worker session's own builds (its Bash and PowerShell tools, and the jobs it
-        // starts) inherit, so they leave no reused nodes behind and fan out no wider than a job's.
+        // starts) inherit, so they leave no reused nodes behind and size themselves as a job's builds do.
         return BuildEnvironment.Apply(start);
     }
 

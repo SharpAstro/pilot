@@ -16,13 +16,17 @@ public static class BuildEnvironment
     /// nodes and the compiler server outlive the build, inherit its output, and kept a job's pipe open after its tests had
     /// finished, so the job read as running and the node's one slot stayed taken (DE1's j302 and SE1's j122, 2026-10-26); idle
     /// ones had also held worktree folders and gigabytes. A full-width build (12 cores, several projects at once) is what filled
-    /// the machine (#326), so the fan-out is capped too.
+    /// the machine (#326); capping that fan-out from the environment is not possible on Windows, see below.
     /// <para>
-    /// The cap is <c>DOTNET_PROCESSOR_COUNT</c>, not <c>MSBUILDNODECOUNT</c>: MSBuild reads no such variable (nor any other for
-    /// its node count; <c>MSBUILDNODECOUNT=4</c> left a Release build of Pilot.slnx at 33 worker nodes, the same as with none).
-    /// <c>dotnet build</c> and <c>msbuild</c> run with a bare <c>-maxcpucount</c>, which is the process count of the .NET
-    /// runtime, and that variable is what the runtime reads it from, so it needs no edit of the project being built. It also
-    /// caps what else sizes itself by the core count in the build's processes (a test host's default parallelism, the GC's heaps).
+    /// <c>DOTNET_PROCESSOR_COUNT</c> caps what sizes itself by the .NET runtime's processor count in the build's processes (a test
+    /// host's default parallelism, the GC's heaps). It does <b>not</b> cap MSBuild's node count on Windows: <c>dotnet build</c>
+    /// runs with a bare <c>-maxcpucount</c>, and MSBuild takes that from the OS (<c>GetLogicalProcessorInformationEx</c> in its
+    /// <c>GetLogicalCoreCountOnWindows</c>), not from the runtime. Measured on this 12-core machine, SDK 10.0.401, as the peak
+    /// count of <c>/nodemode</c> worker processes under a Release build of Pilot.slnx (descendants of that build only):
+    /// 11 with none, 11 with <c>DOTNET_PROCESSOR_COUNT=4</c>, 11 with <c>MSBUILDNODECOUNT=4</c> (MSBuild reads no such
+    /// variable), 11 with <c>MSBUILDCORELIMIT=4</c>, 11 with <c>MSBUILDNODELIMITOFFSET=-8</c>. No environment variable of
+    /// MSBuild's or the CLI's limits the node count; <c>-maxcpucount:4</c> or a <c>Directory.Build.rsp</c> would, and both edit
+    /// the build, which this class does not.
     /// </para>
     /// </summary>
     public static IReadOnlyDictionary<string, string> Variables { get; } = new Dictionary<string, string>(StringComparer.Ordinal)

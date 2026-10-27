@@ -558,9 +558,11 @@ once, with no grace, ends the job Cancelled with `cancelled (forced) by <who>` a
 Every job (sh and pwsh, the detached wrapper too) and every `claude` process the node starts, which is what a worker
 session's own builds inherit, gets one build environment (`BuildEnvironment`): `MSBUILDDISABLENODEREUSE=1`,
 `DOTNET_CLI_USE_MSBUILD_SERVER=0` and `UseSharedCompilation=false`, so a build leaves no reused node or compiler server
-behind to hold the job's output, and `DOTNET_PROCESSOR_COUNT=4`, which caps the fan-out of MSBuild's bare
-`-maxcpucount` at 4 nodes (MSBuild reads no node-count variable: `MSBUILDNODECOUNT` has no effect). It also caps what else
-in the build sizes itself by the core count, a test host's default parallelism among it.
+behind to hold the job's output, and `DOTNET_PROCESSOR_COUNT=4`, which caps what in the build sizes itself by the .NET
+runtime's processor count, a test host's default parallelism among it. It does not cap MSBuild's node count on Windows
+(MSBuild asks the OS for the core count; a Release build of Pilot.slnx peaked at 11 worker nodes on 12 cores with it, with
+`MSBUILDNODECOUNT`, `MSBUILDCORELIMIT` and `MSBUILDNODELIMITOFFSET`, and with none): no environment variable does, only
+`-maxcpucount:4` or a `Directory.Build.rsp`, which edit the build.
 
 A worker that finishes its own leg is stopped after 90 s, once it has said its report. Claude Code tears down a worktree
 its `-w` session entered when that job ends by itself, keeping the branch; the node checks a plane out again from its
