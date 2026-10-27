@@ -314,6 +314,36 @@ public sealed class FlightDetailTests
     /// text really gets. Laid out as a stack, the text was measured with the label's room too, came out a line short, and
     /// its last line ran over the row under it (PIL189's page, SE1 2026-10-24).
     /// </summary>
+    [Theory]
+    [InlineData(900f, 1f)]
+    [InlineData(1900f, 1f)]
+    [InlineData(1900f, 1.25f)]
+    [InlineData(1900f, 1.5f)]
+    [InlineData(1300f, 1.5f)]
+    public void ScrolledToItsEndThePageShowsTheLastLegsReportToItsLastWord(float width, float dpi)
+    {
+        // PIL294's page at its end cut the last leg's report off at the window's bottom.
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Flights;
+        string Long(string tail) => string.Join(" ", Enumerable.Repeat("words that wrap over several lines", 12)) + " " + tail;
+        var legs = Enumerable.Range(1, 4).Select(i => Legs()[1] with
+        {
+            Name = $"leg{i}", Order = i, Goal = Long("G"), DoneWhen = Long("D"), Report = Long(i == 4 ? "LASTWORD" : "R"),
+            Checklist = [.. Enumerable.Range(1, 5).Select(s => new CheckItem { Text = Long("S"), Done = true })],
+        }).ToArray();
+        var screen = new FlightsScreen([FlightLine.Build([Flight()], [], Now, legs).Single()], "live", Now);
+        flights.OpenDetail("TIA1611");
+        var window = new Rect<float>(0, 0, width, 700);
+        var pixels = new PixelMeasureContext<RgbaImage>(vessel, SessionsCapture.FontPath, dpi);
+
+        Layout.Engine.Arrange(flights.Tree(screen), window, pixels);
+        flights.HandleInput(new InputEvent.KeyDown(InputKey.End, InputModifier.None)).ShouldBeTrue();
+        var arranged = Layout.Engine.Arrange(flights.Tree(screen), window, pixels);
+
+        var last = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v.StartsWith("LASTWORD", StringComparison.Ordinal)).Bounds;
+        (last.Y + last.Height).ShouldBeLessThanOrEqualTo(window.Height, "the last word is inside the window at the scroll's end");
+    }
+
     [Fact]
     public void AWrappedGoalPushesItsDoneWhenDownRatherThanRunningOverIt()
     {
