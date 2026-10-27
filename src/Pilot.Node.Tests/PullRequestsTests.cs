@@ -90,7 +90,8 @@ public sealed class PullRequestsTests : IDisposable
         var second = PullRequestSearch.Parse(Recorded("page-2"));
 
         (first.PullRequests.Single().Number, first.Next).ShouldBe((110, "Y3Vyc29yOjE="));
-        (second.PullRequests.Single().Number, second.Next).ShouldBeNull();
+        second.PullRequests.Single().Number.ShouldBe(111);
+        second.Next.ShouldBeNull();
     }
 
     [Fact]
