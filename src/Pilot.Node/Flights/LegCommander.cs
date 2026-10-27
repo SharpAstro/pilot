@@ -863,6 +863,13 @@ public sealed partial class LegCommander(
                 }
                 if (leg.Check is { Length: > 0 } check)
                 {
+                    // A check planned before plan refused wrong paths is written to find them now, and kept so: else no go-around passes it.
+                    if (CheckPaths.Corrected(check, flight.Worktree) is { } corrected)
+                    {
+                        leg = leg with { Check = corrected };
+                        state.PutLeg(leg);
+                        check = corrected;
+                    }
                     // The Done-when, rerun: v1's rule, the one that kept a leg from being called done on a worker's word.
                     var run = await checks.RunAsync(check, flight.Worktree, cancellationToken);
                     if (!run.Passed)
