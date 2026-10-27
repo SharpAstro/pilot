@@ -153,7 +153,7 @@ public sealed class LockWaitTests : LegCommanderTestsBase, IDisposable
         var output = new StringWriter();
         var error = new StringWriter();
 
-        var exit = await PilotCommand.RunAsync(["--node-socket", node.SocketPath, "connect", "TIA1", "TIA2"], _nodeRoot, output, error, Ct, agent: false, requestId: "cli-1");
+        var exit = await PilotCommand.RunAsync(["--node-socket", node.SocketPath, "flight", "connect", "TIA1", "TIA2"], _nodeRoot, output, error, Ct, agent: false, requestId: "cli-1");
 
         exit.ShouldBe(PilotCommand.ExitQueued, $"{output}{error}");
         exit.ShouldNotBe(0);
@@ -163,7 +163,7 @@ public sealed class LockWaitTests : LegCommanderTestsBase, IDisposable
         // Queued runs once: the retry the node dedupes by that id waits for the command and says it is done.
         flights.Lock.Release();
         var retryOutput = new StringWriter();
-        var retry = await PilotCommand.RunAsync(["--node-socket", node.SocketPath, "connect", "TIA1", "TIA2"], _nodeRoot, retryOutput, new StringWriter(), Ct, agent: false, requestId: "cli-1");
+        var retry = await PilotCommand.RunAsync(["--node-socket", node.SocketPath, "flight", "connect", "TIA1", "TIA2"], _nodeRoot, retryOutput, new StringWriter(), Ct, agent: false, requestId: "cli-1");
 
         retry.ShouldBe(0, retryOutput.ToString());
         retryOutput.ToString().ShouldContain("ok: connect flight/TIA1");
