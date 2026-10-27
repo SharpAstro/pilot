@@ -12,8 +12,129 @@ namespace Pilot.Node;
 /// </summary>
 public sealed class NodeCommands(IServiceProvider services, NodeState state)
 {
-    /// <summary>Runs <paramref name="command"/>; its result is on the stream too. Long work (a say, git, a merge) runs off the state's lock.</summary>
+    /// <summary>How long a command's request id is remembered after it ran: a client that timed out retries within minutes.</summary>
+    internal static readonly TimeSpan RequestIdRetention = TimeSpan.FromMinutes(15);
+
+    private const int MaxRemembered = 2000;
+
+    private readonly Lock _seenGate = new Lock();
+    private readonly Dictionary<string, Seen> _seen = [];
+
+    private sealed record Seen(string Verb, string Target, TaskCompletionSource<CommandResult> Result, DateTimeOffset? DoneAt);
+
+    /// <summary>
+    /// Runs <paramref name="command"/>; its result is on the stream too. Long work (a say, git, a merge) runs off the state's lock.
+    /// A command with a <see cref="CommandRequest.RequestId"/> the node has seen runs once: the repeat waits for the first's
+    /// result, or is handed it, so a client that gave up and retried cannot do the work twice.
+    /// </summary>
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        if (command.RequestId is not { Length: > 0 } id)
+        {
+            return await RunOnceAsync(command, cancellationToken);
+        }
+
+        var now = Get<TimeProvider>().GetUtcNow();
+        TaskCompletionSource<CommandResult>? mine = null;
+        Seen? earlier;
+        lock (_seenGate)
+        {
+            Forget(now);
+            if (!_seen.TryGetValue(id, out earlier))
+            {
+                mine = new TaskCompletionSource<CommandResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _seen[id] = new Seen(command.Verb, command.Target, mine, null);
+            }
+        }
+        if (mine is null)
+        {
+            // The id names another command: that is a client's mistake, not a retry, and must not return the other's result.
+            return earlier!.Verb != command.Verb || earlier.Target != command.Target
+                ? state.Complete(command, $"request id {id} was used for {earlier.Verb} {earlier.Target}; a retry sends the same command")
+                : await earlier.Result.Task.WaitAsync(cancellationToken);
+        }
+
+        try
+        {
+            var result = await RunOnceAsync(command, cancellationToken);
+            if (result.Later is { } later)
+            {
+                // Queued behind a lock: the command is still to run, once. A retry by this id waits for what it ends with, and is handed that.
+                _ = SettleLaterAsync(id, command, mine, later);
+                return result;
+            }
+            lock (_seenGate)
+            {
+                if (result.Ok)
+                {
+                    _seen[id] = new Seen(command.Verb, command.Target, mine, now);
+                }
+                else
+                {
+                    // Refused, so nothing was done: a retry runs again rather than being told the same no.
+                    _seen.Remove(id);
+                }
+            }
+            mine.SetResult(result);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            lock (_seenGate)
+            {
+                _seen.Remove(id);
+            }
+            mine.SetException(ex);
+            throw;
+        }
+    }
+
+    // A queued command's request id is settled as a command's is, by what the command ends with, once it has run.
+    private async Task SettleLaterAsync(string id, CommandRequest command, TaskCompletionSource<CommandResult> mine, Task<CommandResult> later)
+    {
+        try
+        {
+            var result = await later;
+            lock (_seenGate)
+            {
+                if (result.Ok)
+                {
+                    _seen[id] = new Seen(command.Verb, command.Target, mine, Get<TimeProvider>().GetUtcNow());
+                }
+                else
+                {
+                    _seen.Remove(id);
+                }
+            }
+            mine.SetResult(result);
+        }
+        catch (Exception ex)
+        {
+            lock (_seenGate)
+            {
+                _seen.Remove(id);
+            }
+            mine.SetException(ex);
+        }
+    }
+
+    // Under _seenGate: ids of commands that finished long ago go, and the oldest finished ones if the node has been sent very many.
+    private void Forget(DateTimeOffset now)
+    {
+        foreach (var id in _seen.Where(p => p.Value.DoneAt is { } at && now - at > RequestIdRetention).Select(p => p.Key).ToList())
+        {
+            _seen.Remove(id);
+        }
+        if (_seen.Count >= MaxRemembered)
+        {
+            foreach (var id in _seen.Where(p => p.Value.DoneAt is not null).OrderBy(p => p.Value.DoneAt).Take(_seen.Count - MaxRemembered + 1).Select(p => p.Key).ToList())
+            {
+                _seen.Remove(id);
+            }
+        }
+    }
+
+    private async Task<CommandResult> RunOnceAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         // Who sends it decides what it may do (Standing): the lookout and a flight's session are fenced from what is the
         // person's alone (a merge or a landing by any route, a card's included; the node's settings and setup; a review posted to
@@ -46,9 +167,32 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         var result = await RouteAsync(command, cancellationToken);
         if (onAutopilot && result.Ok)
         {
-            Get<Autopilot>().Handled(command);
+            // A command queued behind a lock is no done command yet: its Handled line follows once it has run.
+            if (result.Later is { } later)
+            {
+                _ = HandledWhenDoneAsync(command, later);
+            }
+            else
+            {
+                Get<Autopilot>().Handled(command);
+            }
         }
         return result;
+    }
+
+    private async Task HandledWhenDoneAsync(CommandRequest command, Task<CommandResult> later)
+    {
+        try
+        {
+            if ((await later).Ok)
+            {
+                Get<Autopilot>().Handled(command);
+            }
+        }
+        catch (Exception)
+        {
+            // Its failure is on a Handled card already (LockWait): no line for a command that did not run.
+        }
     }
 
     // Whether a merge's flight or PR is in a repo whose PRs the node never merges by itself (no-auto-merge-repos).
@@ -243,7 +387,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         CommandResult result;
         try
         {
-            result = await RunAsync(command with { Verb = choice.Verb, Target = choice.Target, Args = choice.Args }, cancellationToken);
+            result = await RunAsync(command with { Verb = choice.Verb, Target = choice.Target, Args = choice.Args, RequestId = null }, cancellationToken);
         }
         catch
         {

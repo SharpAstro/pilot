@@ -11,7 +11,7 @@ namespace Pilot.Commands;
 /// command needs no leg named: the flight is the one whose worktree holds the folder, and the leg its one flying,
 /// which is how a worker ticks its own checklist.
 /// </summary>
-/// <remarks>Exit codes: 0 done, 1 refused by the node (it says why), 2 usage, 3 no node.</remarks>
+/// <remarks>Exit codes: 0 done, 1 refused by the node (it says why), 2 usage, 3 no node, 4 the node did not answer in time (the command may still run), 5 the node queued it behind a lock (it runs there, not done yet).</remarks>
 public static class PilotCommand
 {
     /// <param name="who">Who the commands are from: <c>cli</c> for a terminal (a Claude session running it is named by its
@@ -19,8 +19,30 @@ public static class PilotCommand
     /// <param name="console">The console host, pilot itself: only it has standard streams of its own for <c>pilot mcp</c> to serve on.</param>
     /// <param name="agent">Whether the commands are a Claude session's, where the caller knows; null reads it from the environment (<see cref="IsAgent(bool, bool?)"/>).</param>
     /// <param name="sessionId">The Claude session running the commands, where the caller knows; null reads <c>CLAUDE_CODE_SESSION_ID</c> from the environment.</param>
-    public static Task<int> RunAsync(string[] args, string cwd, TextWriter output, TextWriter error, CancellationToken cancellationToken, string who = "cli", bool console = false, bool? agent = null, string? sessionId = null, RichOutput? rich = null) =>
-        InvokeAsync(args, cwd, output, error, who, bySession: who == "cli", console, cancellationToken, agent, sessionId, rich);
+    /// <param name="requestId">The id the node dedupes the command by (<see cref="CommandRequest.RequestId"/>), to retry one that timed out; null for the CLI reads <c>PILOT_REQUEST_ID</c>, else each command gets a fresh one.</param>
+    /// <param name="commandTimeout">How long a command waits for the node's answer before it says so and exits 4; null is <see cref="DefaultCommandTimeout"/>.</param>
+    public static Task<int> RunAsync(string[] args, string cwd, TextWriter output, TextWriter error, CancellationToken cancellationToken, string who = "cli", bool console = false, bool? agent = null, string? sessionId = null, RichOutput? rich = null, string? requestId = null, TimeSpan? commandTimeout = null) =>
+        InvokeAsync(args, cwd, output, error, who, bySession: who == "cli", console, cancellationToken, agent, sessionId, rich,
+            requestId ?? (who == "cli" && Environment.GetEnvironmentVariable(RequestIdVariable) is { Length: > 0 } given ? given : null), commandTimeout);
+
+    /// <summary>The environment variable a caller retrying a command sets to the id of the attempt that timed out.</summary>
+    public const string RequestIdVariable = "PILOT_REQUEST_ID";
+
+    /// <summary>
+    /// How long a command waits for the node's answer: below the 120 s a Claude Code Bash call is allowed, so the CLI says the
+    /// node has not answered while its caller can still read it, rather than being killed with no output.
+    /// </summary>
+    public static readonly TimeSpan DefaultCommandTimeout = TimeSpan.FromSeconds(100);
+
+    /// <summary>The command's exit code when the node did not answer in time.</summary>
+    public const int ExitTimedOut = 4;
+
+    /// <summary>The command's exit code when the node queued it behind a lock held for longer than it would wait: it runs there, and is not done yet.</summary>
+    public const int ExitQueued = 5;
+
+    /// <summary>The node held a command past the deadline; it may still be running there.</summary>
+    internal sealed class CommandTimeoutException(TimeSpan deadline) : Exception(
+        $"the node has not answered in {deadline.TotalSeconds.ToString("0.##", CultureInfo.InvariantCulture)} s; the command may still run: check pilot status before sending it again");
 
     /// <summary>
     /// Whether a command sent from here is a Claude session's (<see cref="CommandRequest.Agent"/>): Claude Code puts
@@ -39,9 +61,9 @@ public static class PilotCommand
     /// the MCP server's are), before <paramref name="who"/>.</param>
     /// <param name="agent">Whether the commands are a Claude session's, where the host knows; null reads it from the environment (<see cref="IsAgent"/>).</param>
     /// <param name="sessionId">The Claude session running the commands, where the caller knows; null reads <c>CLAUDE_CODE_SESSION_ID</c> from the environment.</param>
-    internal static async Task<int> InvokeAsync(string[] args, string cwd, TextWriter output, TextWriter error, string who, bool bySession, bool console, CancellationToken cancellationToken, bool? agent = null, string? sessionId = null, RichOutput? rich = null)
+    internal static async Task<int> InvokeAsync(string[] args, string cwd, TextWriter output, TextWriter error, string who, bool bySession, bool console, CancellationToken cancellationToken, bool? agent = null, string? sessionId = null, RichOutput? rich = null, string? requestId = null, TimeSpan? commandTimeout = null)
     {
-        var root = Build(cwd, output, error, who, bySession, console, agent, sessionId, rich);
+        var root = Build(cwd, output, error, who, bySession, console, agent, sessionId, rich, requestId, commandTimeout);
         var parsed = root.Parse(args);
         if (args.Length == 0)
         {
@@ -62,8 +84,11 @@ public static class PilotCommand
     }
 
     /// <summary>The command tree; actions write to <paramref name="output"/> and <paramref name="error"/>, and resolve folders against <paramref name="cwd"/>.</summary>
-    internal static RootCommand Build(string cwd, TextWriter output, TextWriter error, string who = "cli", bool bySession = true, bool console = false, bool? agent = null, string? sessionId = null, RichOutput? rich = null)
+    internal static RootCommand Build(string cwd, TextWriter output, TextWriter error, string who = "cli", bool bySession = true, bool console = false, bool? agent = null, string? sessionId = null, RichOutput? rich = null, string? requestId = null, TimeSpan? commandTimeout = null)
     {
+        var deadline = commandTimeout ?? DefaultCommandTimeout;
+        // One id per invocation, so the timeout message can name it for a retry (PILOT_REQUEST_ID) that the node dedupes.
+        requestId ??= NewRequestId();
         var byAgent = IsAgent(bySession, agent);
         sessionId ??= Environment.GetEnvironmentVariable("CLAUDE_CODE_SESSION_ID");
         var socket = new Option<string?>("--node-socket")
@@ -109,6 +134,11 @@ public static class PilotCommand
                     await error.WriteLineAsync($"pilot: {ex.Message}");
                     return 2;
                 }
+                catch (CommandTimeoutException ex)
+                {
+                    await error.WriteLineAsync($"pilot: {ex.Message} (to retry it safely, set {RequestIdVariable}={requestId})");
+                    return ExitTimedOut;
+                }
                 catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException or IOException or System.Net.WebSockets.WebSocketException)
                 {
                     await error.WriteLineAsync($"pilot: no node answers on {client.SocketPath} ({ex.Message}); start it with pilot-gui or pilot-node");
@@ -121,7 +151,7 @@ public static class PilotCommand
         // Who a command is from: the Claude session running this host when it may be one, else the host; a leg's worker
         // or a flight's reviewer when the plane says so, as they are named already.
         Task<int> Send(NodeClient client, string verb, string target, string[] args, string sender, CancellationToken ct, string? why = null) =>
-            SendAsync(client, verb, target, args, sender, bySession && sender == who, byAgent, why, cwd, sessionId, output, ct);
+            SendAsync(client, verb, target, args, sender, bySession && sender == who, byAgent, why, cwd, sessionId, output, requestId, deadline, ct);
 
         // What an assistant says it acted on, for the commands that are the person's alone (merge, land, a setting, setup, an
         // update): the node keeps it in the black box and on the card it raises (autopilot off) or the Handled line it leaves (on).
@@ -507,14 +537,15 @@ public static class PilotCommand
                     ? (await SnapshotAsync(client, ct)).Sessions.FirstOrDefault(s => string.Equals(s.SessionId, sessionId, StringComparison.OrdinalIgnoreCase))
                     : null;
                 var target = owner is null ? Verbs.NodeTarget : Verbs.SessionTarget(owner.Id);
-                var sent = await client.SendAsync(new CommandRequest
+                var sent = await SendCommandAsync(client, new CommandRequest
                 {
                     Verb = Verbs.Run,
                     Target = target,
                     Args = [cwd, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
                     Who = owner?.Name ?? who,
                     Agent = byAgent,
-                }, ct);
+                    RequestId = requestId,
+                }, deadline, ct);
                 if (sent is not { Success: true, Response: { Ok: true, Made: { } job } })
                 {
                     await output.WriteLineAsync($"refused: run: {sent.Response?.Error ?? sent.Error}");
@@ -627,7 +658,7 @@ public static class PilotCommand
                     }
                     else
                     {
-                        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Say, Target = target, Args = [words], Who = sender, Agent = byAgent }, ct);
+                        var envelope = await SendCommandAsync(client, new CommandRequest { Verb = Verbs.Say, Target = target, Args = [words], Who = sender, Agent = byAgent, RequestId = $"{requestId}:{row.Id}" }, deadline, ct);
                         if (envelope.Success && envelope.Response is { Ok: true } result)
                         {
                             await output.WriteLineAsync($"ok {target}{(result.Way is { } way ? $" ({way})" : "")}  {label}");
@@ -1009,10 +1040,36 @@ public static class PilotCommand
         }
     }
 
-    private static async Task<int> SendAsync(NodeClient client, string verb, string target, string[] args, string who, bool bySession, bool agent, string? why, string cwd, string? sessionId, TextWriter output, CancellationToken cancellationToken)
+    private static string NewRequestId() => Guid.NewGuid().ToString("N");
+
+    /// <summary>
+    /// The node's answer to a command, or <see cref="CommandTimeoutException"/> once it has not answered in <paramref name="deadline"/>:
+    /// the client itself waits without limit, as a command may run for minutes, so the CLI sets its own, and says so.
+    /// </summary>
+    private static async Task<ResponseEnvelope<CommandResult>> SendCommandAsync(NodeClient client, CommandRequest request, TimeSpan deadline, CancellationToken cancellationToken)
+    {
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(deadline);
+        try
+        {
+            return await client.SendAsync(request, budget.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && budget.IsCancellationRequested)
+        {
+            throw new CommandTimeoutException(deadline);
+        }
+    }
+
+    private static async Task<int> SendAsync(NodeClient client, string verb, string target, string[] args, string who, bool bySession, bool agent, string? why, string cwd, string? sessionId, TextWriter output, string requestId, TimeSpan deadline, CancellationToken cancellationToken)
     {
         who = await SenderAsync(client, who, bySession, agent, cwd, sessionId, cancellationToken);
-        var envelope = await client.SendAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who, Agent = agent, Why = why }, cancellationToken);
+        var envelope = await SendCommandAsync(client, new CommandRequest { Verb = verb, Target = target, Args = args, Who = who, Agent = agent, Why = why, RequestId = requestId }, deadline, cancellationToken);
+        if (envelope.Success && envelope.Response is { Ok: true, Waiting: { Length: > 0 } waiting })
+        {
+            // Queued behind a lock the node's other work holds: not done, and not to be sent again, as it runs once the lock frees.
+            await output.WriteLineAsync($"queued: {verb} {target}: {waiting}; it runs when that is done, and its outcome comes on the event stream and a Handled card (pilot status)");
+            return ExitQueued;
+        }
         if (envelope.Success && envelope.Response is { Ok: true } result)
         {
             await output.WriteLineAsync($"ok: {verb} {target}{(result.Way is { } way ? $" ({way})" : "")}");
