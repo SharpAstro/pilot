@@ -34,6 +34,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     public const string MergeGuardKey = "merge-guard";
     public const string GuardHooksKey = "guard-hooks";
     public const string BuildRspKey = "build-rsp";
+    public const string ClaudePermissionsKey = "claude-permissions";
     public const string ShortcutKey = "shortcut";
 
     /// <summary>The response file that turns MSBuild node reuse off, as runaway-agent's <c>machine/</c> folder and install.sh name it.</summary>
@@ -104,6 +105,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             Fix = hooks ? null : "Install hooks",
         });
         checks.Add(MergeGuardCheck());
+        checks.Add(ClaudePermissionsCheck());
         checks.Add(GuardHooksCheck());
         checks.Add(BuildRspCheck());
 
@@ -194,6 +196,8 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             }
             case MergeGuardKey:
                 return InstallMergeGuard();
+            case ClaudePermissionsKey:
+                return InstallClaudePermissions();
             case GuardHooksKey:
                 return InstallGuardHooks();
             case BuildRspKey:
@@ -233,7 +237,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                     ? null
                     : $"no window opened: run claude in {options.WatchtowerFolder} and accept its trust prompt";
             default:
-                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, HooksKey, MergeGuardKey, GuardHooksKey, BuildRspKey, LanKey, FirewallKey, DefenderKey, TrustKey })}, not {key}";
+                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, HooksKey, MergeGuardKey, ClaudePermissionsKey, GuardHooksKey, BuildRspKey, LanKey, FirewallKey, DefenderKey, TrustKey })}, not {key}";
         }
     }
 
@@ -294,6 +298,72 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
             return $"{SettingsFile}: {ex.Message}";
+        }
+    }
+
+    /// <summary>The allow rules pilot wants in Claude Code's settings: its verbs, and this node's binaries by full path.</summary>
+    private IReadOnlyList<string> PermissionRules() => ClaudePermissions.Rules(nodePath);
+
+    /// <summary>
+    /// Whether <c>permissions.allow</c> in Claude Code's user settings lets a session run pilot's commands
+    /// (<see cref="ClaudePermissions"/>), so none stops at a permission prompt nobody answers. Not optional: an unattended
+    /// worker that cannot run <c>pilot leg finish</c> never reports. The line names what is missing, and says that this is
+    /// only Claude Code's prompt: the node still refuses a caller without the role, and guards merges and a person's cards.
+    /// </summary>
+    private SetupCheck ClaudePermissionsCheck()
+    {
+        const string Title = "Claude Code allows pilot's commands";
+        try
+        {
+            var text = File.Exists(SettingsFile) ? File.ReadAllText(SettingsFile) : "";
+            var rules = PermissionRules();
+            var missing = ClaudePermissions.Missing(text, rules);
+            return missing.Count == 0
+                ? new SetupCheck { Key = ClaudePermissionsKey, Title = Title, Ok = true, Line = $"all {rules.Count} rules are in permissions.allow of {SettingsFile}" }
+                : new SetupCheck
+                {
+                    Key = ClaudePermissionsKey,
+                    Title = Title,
+                    Ok = false,
+                    Line = $"{missing.Count} of {rules.Count} allow rules are not in permissions.allow of {SettingsFile}, so a session may stop at a permission prompt for: {ClaudePermissions.Describe(missing)}. "
+                        + "Allowing a command only lets Claude Code run it: the node still refuses a caller without the role, and merges and a person's cards stay guarded by the node and the merge guard.",
+                    Fix = "Allow pilot's commands",
+                };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return new SetupCheck { Key = ClaudePermissionsKey, Title = Title, Ok = false, Line = $"{SettingsFile}: {ex.Message}" };
+        }
+    }
+
+    /// <summary>
+    /// Adds the missing allow rules to Claude Code's settings; null when done, else why not. The file as it was is kept as
+    /// <c>settings.json.pilot-bak</c> beside it before anything is written, and a file that is not valid JSON is left as it
+    /// is. A second run changes nothing and makes no backup.
+    /// </summary>
+    private string? InstallClaudePermissions()
+    {
+        try
+        {
+            var exists = File.Exists(SettingsFile);
+            var text = exists ? File.ReadAllText(SettingsFile) : "";
+            var updated = ClaudePermissions.Install(text, PermissionRules());
+            if (updated != text)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(SettingsFile))!);
+                if (exists)
+                {
+                    File.Copy(SettingsFile, SettingsFile + ".pilot-bak", overwrite: true);
+                }
+                var temp = SettingsFile + ".pilot.tmp";
+                File.WriteAllText(temp, updated, new System.Text.UTF8Encoding(false));
+                File.Move(temp, SettingsFile, overwrite: true);
+            }
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return $"{SettingsFile} left as it was: {ex.Message}";
         }
     }
 
