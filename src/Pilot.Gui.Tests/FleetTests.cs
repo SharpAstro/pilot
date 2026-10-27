@@ -594,8 +594,10 @@ public sealed class FleetTests
         if (lastKnown)
         {
             // The status keeps a line of its own under the marks, so it is not squeezed out by them.
-            var status = leaves.Where(a => TextOf(a) == line.State).ShouldHaveSingleItem();
-            status.Bounds.Y.ShouldBeGreaterThan(icon.Bounds.Y);
+            foreach (var part in line.StateLines)
+            {
+                leaves.Where(a => TextOf(a) == part).ShouldHaveSingleItem().Bounds.Y.ShouldBeGreaterThan(icon.Bounds.Y);
+            }
         }
         icon.Bounds.Width.ShouldBeGreaterThanOrEqualTo(FleetView<RgbaImage>.MarkIconWidth);
         marks.Sort((a, b) => a.Left.CompareTo(b.Left));
