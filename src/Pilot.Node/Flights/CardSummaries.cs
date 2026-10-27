@@ -10,7 +10,9 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public static partial class CardSummaries
 {
-    private const int MaxLength = 240;
+    // Well above the longest sentence a raiser writes (the pr-conflicts one, about 200 with a long code), so none is thrown away;
+    // text taken from a detail is far longer than a sentence and still fails.
+    private const int MaxLength = 600;
 
     /// <summary>Whether <paramref name="text"/> can stand as a summary: short, at most two lines, and nothing like a log.</summary>
     public static bool Usable(string? text)

@@ -75,7 +75,7 @@ public sealed class CardSummaryTests
     public void ALongSummaryOrTheDetailItselfIsNotKept()
     {
         var state = NewState();
-        var longText = new string('x', 300);
+        var longText = new string('x', 700);
         state.RaiseCard(CardBin.Ring, "a", "flight/A", "T", null, summary: longText).Summary.ShouldNotBe(longText);
         state.RaiseCard(CardBin.Ring, "b", "flight/B", "T", "same words", summary: "same words").Summary.ShouldNotBe("same words");
     }

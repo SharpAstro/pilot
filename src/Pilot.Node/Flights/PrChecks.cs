@@ -286,7 +286,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         if (refused is not null)
         {
             state.RaiseCard(CardBin.Ring, "pr-conflicts", Verbs.FlightTarget(code), $"{code}'s PR #{number} conflicts with its base", $"{why} ({refused})", link: url,
-                summary: $"The PR #{number} of {code} conflicts with its base and could not be rebased by the node. The node could not send the last leg back to resolve it (the detail says why). Redo the last leg from the flight page or with pilot leg go-around, or resolve it by hand, then dismiss this.");
+                summary: $"The PR #{number} of {code} conflicts with its base and could not be rebased by the node, nor sent back. Redo the last leg from the flight page or with pilot leg go-around, or resolve it by hand.");
         }
     }
 
