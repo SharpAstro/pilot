@@ -68,7 +68,7 @@ public sealed class StaleCardTests
         line.Subject.ShouldBe(card.Subject);
         line.Title.ShouldStartWith("PIL342's ");
         line.Title.ShouldContain(fact);
-        line.Detail.ShouldContain(card.Id);
+        line.Detail.ShouldNotBeNull().ShouldContain(card.Id);
     }
 
     private void Left(CardRow card, StaleVerdict verdict, string note)
