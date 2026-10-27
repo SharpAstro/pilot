@@ -135,7 +135,7 @@ public sealed class MergeMirrorTests
         var arranged = Arrange(CardsScreen.From([card]), 340, out var renderer);
         using var _ = renderer;
 
-        Actions(arranged).ShouldBe(["card:c1:title", "card:c1:1", "card:c1:dismiss"], ignoreOrder: true);
+        Actions(arranged).ShouldBe(["card:c1:title", "card:c1:leg", "card:c1:1", "card:c1:dismiss"], ignoreOrder: true);
         Words(arranged).ShouldContain("Redo leg armed-in-gui");
         Words(arranged).ShouldNotContain("Merge");
     }
