@@ -1170,6 +1170,41 @@ public sealed class JobTests : IDisposable
     }
 
     [Fact]
+    public async Task APausedJobStaysFrozenAndPausedAcrossANodeRestartAndResumesAndCancelsByPid()
+    {
+        var flag = Path.Combine(_root, "go");
+        var first = await Node.StartAsync(_root);
+        var id = first.Run(_root, Busy(flag)).Made!;
+        await first.UntilAsync(id, j => j.State == JobState.Running, Ct);
+        first.Jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
+        var pid = first.Job(id).Pid!.Value;
+        var tree = TreeOf(pid);
+        await first.StopAsync();
+        await Task.Delay(700, Ct);
+        var cpu = Cpu(tree);
+        await Task.Delay(1000, Ct);
+        (Cpu(tree) - cpu).ShouldBeLessThan(TimeSpan.FromMilliseconds(100));
+
+        using var second = await Node.StartAsync(_root);
+        var found = second.Job(id);
+        (found.State, found.PausedAt is not null).ShouldBe((JobState.Running, true));
+        second.Jobs.Pause(Verb(Verbs.PauseJob, id)).Error.ShouldBe($"job {id} is already paused");
+        second.Jobs.Resume(Verb(Verbs.ResumeJob, id)).Ok.ShouldBeTrue();
+        (second.Job(id).PausedAt, second.Job(id).PausedFor > TimeSpan.Zero).ShouldBe((null, true));
+        await Task.Delay(1000, Ct);
+        (Cpu(tree) - cpu).ShouldBeGreaterThan(TimeSpan.FromMilliseconds(100));
+
+        second.Jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
+        second.Cancel(id).Ok.ShouldBeTrue();
+        (await second.EndedAsync(id, Ct)).State.ShouldBe(JobState.Cancelled);
+        for (var i = 0; i < 100 && tree.Any(IsAlive); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        tree.Where(IsAlive).ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task StoppingTheNodeLeavesItsRunningJobRunningAndItsRowRunning()
     {
         var first = await Node.StartAsync(_root);
@@ -1254,6 +1289,195 @@ public sealed class JobTests : IDisposable
         PilotCommand.TryDuration(text, out var span).ShouldBeTrue();
         span.ShouldBe(TimeSpan.FromSeconds(seconds));
         PilotCommand.TryDuration("2d", out _).ShouldBeFalse();
+    }
+    // A busy tree: the job's shell runs a child that burns CPU and prints a counter until the flag file exists, then exits 7.
+    private string Busy(string flag)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var ps1 = Path.Combine(_root, "busy.ps1");
+            File.WriteAllText(ps1, "param($flag)\n$i = 0\nwhile (-not (Test-Path $flag)) { $i++; if ($i % 200 -eq 0) { Write-Output $i } }\nexit 7\n");
+            return $"pwsh -NoProfile -File '{ps1}' '{flag}'; exit $LASTEXITCODE";
+        }
+        var sh = Path.Combine(_root, "busy.sh");
+        // The loop runs in a background subshell the script waits for: dash runs `sh -c 'sh script'` as the script itself, so
+        // without a child the job's tree would be one process on Ubuntu.
+        File.WriteAllText(sh, "(i=0\nwhile [ ! -f \"$1\" ]; do i=$((i+1)); if [ $((i % 200)) -eq 0 ]; then echo $i; fi; done) &\nwait $!\nexit 7\n");
+        return $"sh '{sh}' '{flag}'";
+    }
+
+    // The pid and every descendant of it now, read the way the node reads them.
+    private static HashSet<int> TreeOf(int root)
+    {
+        var entries = OsProcessTable.Instance.Snapshot();
+        var tree = new HashSet<int> { root };
+        for (var grew = true; grew;)
+        {
+            grew = false;
+            foreach (var e in entries)
+            {
+                grew |= tree.Contains(e.ParentPid) && tree.Add(e.Pid);
+            }
+        }
+        return tree;
+    }
+
+    private static CommandRequest Verb(string verb, string id, string who = "controller") => new() { Verb = verb, Target = Verbs.JobTarget(id), Who = who };
+
+    private static TimeSpan Cpu(IEnumerable<int> pids)
+    {
+        var total = TimeSpan.Zero;
+        foreach (var pid in pids)
+        {
+            try
+            {
+                using var p = System.Diagnostics.Process.GetProcessById(pid);
+                total += p.TotalProcessorTime;
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+            }
+        }
+        return total;
+    }
+
+    private static bool Alive(int pid)
+    {
+        try
+        {
+            using var p = System.Diagnostics.Process.GetProcessById(pid);
+            return !p.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private async Task<string> Running(string id)
+    {
+        var job = await Until(id, j => j.State == JobState.Running);
+        for (var i = 0; i < 300 && (!File.Exists(job.LogPath) || new FileInfo(job.LogPath).Length == 0); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        return job.LogPath;
+    }
+
+    private static long LogLength(string path) => new FileInfo(path).Length;
+
+    [Fact]
+    public async Task APausedJobsTreeStopsWorkingAndWritingAndResumesToItsRealExitCode()
+    {
+        var flag = Path.Combine(_root, "go");
+        var id = Run(Busy(flag)).Made!;
+        var log = await Running(id);
+
+        _jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
+        var paused = _state.Jobs().Single(j => j.Id == id);
+        (paused.State, paused.PausedAt is not null).ShouldBe((JobState.Running, true));
+        var tree = TreeOf(_jobs.PidOf(id)!.Value);
+        await Task.Delay(700, Ct);
+        var (cpu, length) = (Cpu(tree), LogLength(log));
+        await Task.Delay(1500, Ct);
+        (Cpu(tree) - cpu).ShouldBeLessThan(TimeSpan.FromMilliseconds(100));
+        LogLength(log).ShouldBe(length);
+
+        _jobs.Resume(Verb(Verbs.ResumeJob, id)).Ok.ShouldBeTrue();
+        var resumed = _state.Jobs().Single(j => j.Id == id);
+        (resumed.PausedAt, resumed.PausedFor > TimeSpan.Zero).ShouldBe((null, true));
+        await Task.Delay(1000, Ct);
+        (Cpu(tree) - cpu).ShouldBeGreaterThan(TimeSpan.FromMilliseconds(100));
+        LogLength(log).ShouldBeGreaterThan(length);
+
+        File.WriteAllText(flag, "");
+        var job = await Ended(id);
+        (job.State, job.ExitCode).ShouldBe((JobState.Failed, 7));
+    }
+
+    [Fact]
+    public async Task ThePausedSpanIsNotCountedAgainstTheTimeout()
+    {
+        var flag = Path.Combine(_root, "go");
+        var id = Run(Busy(flag), timeoutSeconds: 8).Made!;
+        await Running(id);
+
+        _jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
+        // Past the deadline it would have had without the pause.
+        while (DateTimeOffset.UtcNow - _state.Jobs().Single(j => j.Id == id).StartedAt < TimeSpan.FromSeconds(9))
+        {
+            await Task.Delay(100, Ct);
+        }
+        var held = _state.Jobs().Single(j => j.Id == id);
+        (held.State, held.EndedAt).ShouldBe((JobState.Running, null));
+
+        _jobs.Resume(Verb(Verbs.ResumeJob, id)).Ok.ShouldBeTrue();
+        File.WriteAllText(flag, "");
+        var job = await Ended(id);
+        (job.State, job.ExitCode, job.Error).ShouldBe((JobState.Failed, 7, "exit 7"));
+        job.PausedFor.ShouldBeGreaterThan(TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task AResumedJobStillTimesOutOnceItHasRunItsTimeout()
+    {
+        var id = Run(Busy(Path.Combine(_root, "never")), timeoutSeconds: 5).Made!;
+        await Running(id);
+        _jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
+        await Task.Delay(500, Ct);
+        _jobs.Resume(Verb(Verbs.ResumeJob, id)).Ok.ShouldBeTrue();
+
+        var job = await Ended(id);
+
+        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 5s"));
+    }
+
+    [Fact]
+    public async Task CancellingAPausedJobLeavesNoProcessOfItsTreeAliveOrFrozen()
+    {
+        var id = Run(Busy(Path.Combine(_root, "never"))).Made!;
+        await Running(id);
+        _jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
+        var tree = TreeOf(_jobs.PidOf(id)!.Value);
+        tree.Count.ShouldBeGreaterThan(1);
+
+        _jobs.Cancel(Verb(Verbs.CancelJob, id)).Ok.ShouldBeTrue();
+        var job = await Ended(id);
+
+        (job.State, job.Error, job.PausedAt).ShouldBe((JobState.Cancelled, "cancelled by controller", null));
+        for (var i = 0; i < 100 && tree.Any(Alive); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        tree.Where(Alive).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task PausingOrResumingAQueuedOrEndedOrUnpausedJobIsRefusedWithAReason()
+    {
+        var flag = Path.Combine(_root, "go");
+        var first = Run(Busy(flag)).Made!;
+        var queued = Run(Echo("later")).Made!;
+        await Running(first);
+        await Until(queued, j => j.Step is not null);
+
+        _jobs.Pause(Verb(Verbs.PauseJob, queued)).Error.ShouldNotBeNull().ShouldContain("queued, not running");
+        _jobs.Resume(Verb(Verbs.ResumeJob, queued)).Error.ShouldNotBeNull().ShouldContain("queued, not running");
+        _jobs.Resume(Verb(Verbs.ResumeJob, first)).Error.ShouldBe($"job {first} is not paused");
+        _jobs.Pause(Verb(Verbs.PauseJob, first)).Ok.ShouldBeTrue();
+        _jobs.Pause(Verb(Verbs.PauseJob, first)).Error.ShouldBe($"job {first} is already paused");
+        _jobs.Pause(Verb(Verbs.PauseJob, "j999")).Error.ShouldBe("There is no job j999");
+
+        // A paused job keeps its slot: the queued one waits behind it.
+        await Task.Delay(300, Ct);
+        _state.Jobs().Single(j => j.Id == queued).State.ShouldBe(JobState.Queued);
+
+        _jobs.Resume(Verb(Verbs.ResumeJob, first)).Ok.ShouldBeTrue();
+        File.WriteAllText(flag, "");
+        await Ended(first);
+        await Ended(queued);
+        _jobs.Pause(Verb(Verbs.PauseJob, queued)).Error.ShouldBe($"job {queued} is not running");
+        _jobs.Resume(Verb(Verbs.ResumeJob, first)).Error.ShouldBe($"job {first} is not running");
     }
 }
 

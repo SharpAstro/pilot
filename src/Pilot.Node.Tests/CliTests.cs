@@ -302,6 +302,23 @@ public sealed class CliTests : IAsyncLifetime
         ended.Error.ShouldStartWith("cancelled by ");
     }
 
+    [Fact]
+    public async Task APausedJobReadsPausedWithItsTimeInJobsAndJob()
+    {
+        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        _node.State.PutJob(new JobRow
+        {
+            Id = "j1", Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = JobState.Running,
+            LogPath = Path.Combine(_root, "j1.log"), Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            PausedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+        });
+
+        var jobs = await Pilot(_root, "jobs");
+        jobs.Output.ShouldContain("j1  paused since ");
+        jobs.Output.ShouldNotContain("running");
+        (await Pilot(_root, "job", "j1")).Output.ShouldContain("j1  paused since ");
+    }
+
     /// <summary>A flight whose first leg is done and whose second, render, has started: its validator is flying.</summary>
     private async Task<string> FlightWithAValidatorFlying(string number)
     {

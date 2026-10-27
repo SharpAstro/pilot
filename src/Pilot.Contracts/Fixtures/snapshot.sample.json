@@ -210,6 +210,8 @@
       "startedAt": "2026-10-18T09:29:40+00:00",
       "queuedAt": null,
       "endedAt": null,
+      "pausedAt": null,
+      "pausedFor": "00:00:00",
       "told": false
     },
     {
@@ -236,6 +238,8 @@
       "startedAt": "2026-10-18T09:38:02+00:00",
       "queuedAt": "2026-10-18T09:38:02+00:00",
       "endedAt": null,
+      "pausedAt": null,
+      "pausedFor": "00:00:00",
       "told": false
     },
     {
@@ -262,6 +266,8 @@
       "startedAt": "2026-10-18T09:02:11+00:00",
       "queuedAt": null,
       "endedAt": "2026-10-18T09:06:48+00:00",
+      "pausedAt": null,
+      "pausedFor": "00:00:00",
       "told": false
     },
     {
@@ -288,6 +294,8 @@
       "startedAt": "2026-10-18T08:40:00+00:00",
       "queuedAt": null,
       "endedAt": "2026-10-18T08:40:44+00:00",
+      "pausedAt": null,
+      "pausedFor": "00:00:00",
       "told": true
     }
   ],

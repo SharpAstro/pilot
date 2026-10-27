@@ -274,9 +274,18 @@ public sealed class StandingTests
         }
 
         // A job it does not own is not its to cancel.
-        (await Error(node, Command(Verbs.CancelJob, "job/j2", worker, true))).ShouldBe("job/j2 is not TIA1's job: a flight's session cancels its own flight's only");
+        (await Error(node, Command(Verbs.CancelJob, "job/j2", worker, true))).ShouldBe("job/j2 is not TIA1's job: a flight's session cancels, pauses and resumes its own flight's only");
         (await Error(node, Command(Verbs.CancelJob, "job/j3", worker, true))).ShouldNotBeNull().ShouldContain("not TIA1's job");
         ((await Error(node, Command(Verbs.CancelJob, "job/j1", worker, true))) ?? "").ShouldNotContain("not TIA1's job");
+
+        // Pausing and resuming a job are fenced like cancelling it.
+        foreach (var verb in new[] { Verbs.PauseJob, Verbs.ResumeJob })
+        {
+            (await Error(node, Command(verb, "job/j2", worker, true))).ShouldBe("job/j2 is not TIA1's job: a flight's session cancels, pauses and resumes its own flight's only");
+            (await Error(node, Command(verb, "job/j3", worker, true))).ShouldNotBeNull().ShouldContain("not TIA1's job");
+            ((await Error(node, Command(verb, "job/j1", worker, true))) ?? "").ShouldNotContain("not TIA1's job");
+            ((await Error(node, Command(verb, "job/j2", "gui"))) ?? "").ShouldNotContain("not TIA1's job");
+        }
 
         // Nothing that reaches outside the flight, whatever it targets.
         foreach (var (verb, target) in new[] { (Verbs.CreateIssue, "repo/tianwen"), (Verbs.CreateFlight, Verbs.NodeTarget), (Verbs.SyncRepos, Verbs.NodeTarget) })

@@ -559,6 +559,8 @@ pilot run [--timeout 90m] -- <command…>        # a long run handed to the node
 pilot jobs                                     # the node's jobs, running first
 pilot job <id>                                 # one job: its output's path, and while it runs its pid and process tree
 pilot job <id> cancel [--force]                # stops it, running or waiting; its owner is told. --force kills the whole tree at once (see Jobs)
+pilot job <id> pause                           # freezes a running job's processes; it keeps its slot and its timeout stops
+pilot job <id> resume                          # lets a paused job run on
 pilot mcp                                      # these commands as an MCP server over stdio (see The MCP server)
 ```
 
@@ -648,6 +650,8 @@ runtime's processor count, a test host's default parallelism among it. It does n
 (MSBuild asks the OS for the core count; a Release build of Pilot.slnx peaked at 11 worker nodes on 12 cores with it, with
 `MSBUILDNODECOUNT`, `MSBUILDCORELIMIT` and `MSBUILDNODELIMITOFFSET`, and with none): no environment variable does, only
 `-maxcpucount:4` or a `Directory.Build.rsp`, which edit the build.
+
+`pause-job job/<id>` freezes a running job's whole process tree (every process the node reads under it, and on Linux the job's process group too; `pilot job <id> pause`, the `job_pause` MCP tool, **Pause** in the GUI) and `resume-job` thaws it (`pilot job <id> resume`, `job_resume`). A paused job stays Running, so it keeps its slot. Its row records `PausedAt` and `PausedFor` and is the truth: a restarted node finds a paused job still frozen and reading paused, and resume, cancel and the timeout reach it by pid as for any job. Its timeout does not count the time it is paused, and cancel or a timeout thaw the tree before they kill it, so nothing is left frozen behind.
 
 A worker that finishes its own leg is stopped after 90 s, once it has said its report. Claude Code tears down a worktree
 its `-w` session entered when that job ends by itself, keeping the branch; the node checks a plane out again from its
@@ -787,7 +791,8 @@ The **Background tasks** page (Ctrl+6) is the node's jobs: running first, then t
 start, then the ended, last ended first. Each row has the job's command, whom it wakes (the flight and leg, a session,
 or a terminal), its state with what it is doing, waits on or came to, when it started and how long it ran; a job that
 ended without its owner being told says so. The selected job shows its folder, log and timeout beside the end of its
-output (its last 200 lines, read from the node every 2 s while selected), with **Cancel** while it runs or waits,
+output (its last 200 lines, read from the node every 2 s while selected), with **Pause** while it runs and **Resume**
+while it is paused (a paused job reads *paused*, since when, here, in `pilot jobs` and on its flight's page), **Cancel** while it runs or waits,
 **Its session** (the transcript of the session it wakes, from when it was handed over) and **Open log**; its
 right-click menu adds its folder and Copy entries.
 

@@ -11,7 +11,7 @@ namespace Pilot.Node.Flights;
 /// The node's jobs (<c>pilot run</c>): a long run handed over by a session, which then ends its turn and is woken with the
 /// result, so no worker sits polling a test suite (v2's phase 2). A job is the node's own, as tianwen's are: it runs on the
 /// node's lifetime, never a request's; it is on the stream like a flight; and only <c>cancel-job</c> or its timeout end it
-/// early (the node stopping does not). Its owner is told how it ended, a real turn for an idle worker, and a wake that fails rings.
+/// early (the node stopping does not; <c>pause-job</c> freezes it without ending it). Its owner is told how it ended, a real turn for an idle worker, and a wake that fails rings.
 /// </summary>
 /// <remarks>
 /// <para><b>The machine is shared.</b> Several flights hand jobs to one node, and a full test suite can take gigabytes, so
@@ -29,6 +29,12 @@ namespace Pilot.Node.Flights;
 /// ended while the node was down is ended from its exit file, and its owner told as for any job; one gone without an exit
 /// file fails, saying so, rather than leave a worker waiting for a result that will never come. Waiting jobs stay waiting,
 /// in their order.</para>
+/// <para><b>Pause.</b> <c>pause-job</c> freezes the job's whole process tree (every process the node reads under it, and on Linux
+/// the job's process group too, since a job is its own session) and the row records <see cref="JobRow.PausedAt"/>. The state
+/// stays <see cref="JobState.Running"/>, so the job keeps its slot. The row is the truth, not anything in memory: a node
+/// that finds a paused job again leaves it frozen and reads it paused, and resume, cancel and a timeout reach it by pid as for
+/// any job. Its timeout does not run while it is paused (<see cref="JobRow.PausedFor"/> and the open span are added back), and
+/// the idle check skips it. Cancel and a timeout thaw the tree before they kill it, so nothing is left frozen behind.</para>
 /// </remarks>
 public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider time) : BackgroundService
 {
@@ -113,6 +119,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     // Cancels that reached the dispatcher before their job did (Run puts the row, then hands the job over, and a cancel
     // can land between the two): the job is cancelled before its turn when it arrives. The dispatcher's alone.
     private readonly Dictionary<string, string> _withdrawnEarly = new(StringComparer.Ordinal);
+    // Read-modify-write of a running job's row (pause, resume, the step): one at a time, so none loses another's change.
+    private readonly object _rowLock = new();
     private CancellationToken _stopping;
     // Completes once the startup recovery has run. ExecuteAsync runs in the background, so without it a caller sharing the
     // state cannot tell whether a Queued row it puts will be seen by that recovery and failed as orphaned.
@@ -207,6 +215,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         // Gone: how it ended is what its wrapper wrote.
         var follower = new LogFollower(job.LogPath, fromEnd: true);
         string[] last = [.. follower.Read(final: true)];
+        job = Unpaused(job, EndOf(job, exitPath));
         var ended = ReadExit(exitPath) switch
         {
             0 => job with { State = JobState.Succeeded, ExitCode = 0 },
@@ -391,8 +400,15 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             _cpuTallies.Remove(gone);
             state.CloseCardsAbout(Verbs.JobTarget(gone), "the job ended", IdleKind);
         }
+        var paused = state.Jobs().Where(j => j.PausedAt is not null).Select(j => j.Id).ToHashSet(StringComparer.Ordinal);
         foreach (var id in _running.Keys)
         {
+            if (paused.Contains(id))
+            {
+                // Frozen is not idle: its window starts again when it is resumed.
+                _cpuMarks.Remove(id);
+                continue;
+            }
             var subject = Verbs.JobTarget(id);
             var read = JobCpu ?? (jobId =>
             {
@@ -532,11 +548,90 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     private void Kill(string id, JobProcess process)
     {
-        if (state.Jobs().FirstOrDefault(j => j.Id == id) is { } row)
+        lock (_rowLock)
         {
-            DetachedShell.TerminateJob(id, row.LogPath);
+            if (state.Jobs().FirstOrDefault(j => j.Id == id) is { } row)
+            {
+                if (row.PausedAt is not null)
+                {
+                    // Thawed first, by pid through the same table: nothing is left frozen, and a frozen tree is never killed unseen.
+                    SignalTree(id, process, stop: false);
+                }
+                DetachedShell.TerminateJob(id, row.LogPath);
+            }
         }
         process.Kill();
+    }
+
+    /// <summary>Freezes or thaws the job's tree: every process read under it, and on Linux its process group; returns how many it reached.</summary>
+    private int SignalTree(string id, JobProcess process, bool stop)
+    {
+        var reached = 0;
+        foreach (var info in Tree.Read(id, process).Tree)
+        {
+            if (stop ? ProcessTable.Suspend(info.Pid) : ProcessTable.Resume(info.Pid))
+            {
+                reached++;
+            }
+        }
+        // setsid made the wrapper its own group leader: its group is the job's, children that left the tree by parent pid included.
+        if (ProcessTable.SignalGroup(process.Pid, stop))
+        {
+            reached++;
+        }
+        return reached;
+    }
+
+    /// <summary>The pid of a running job's wrapper, or null.</summary>
+    internal int? PidOf(string id) => _running.TryGetValue(id, out var p) ? p.Pid : null;
+
+    /// <summary><c>pause-job job/&lt;id&gt;</c>: freezes a running job's whole process tree; it keeps its slot and its timeout stops counting.</summary>
+    public CommandResult Pause(CommandRequest command) => Freeze(command, pause: true);
+
+    /// <summary><c>resume-job job/&lt;id&gt;</c>: thaws a paused job; the span it was paused is added to <see cref="JobRow.PausedFor"/>.</summary>
+    public CommandResult Resume(CommandRequest command) => Freeze(command, pause: false);
+
+    private CommandResult Freeze(CommandRequest command, bool pause)
+    {
+        var id = command.Target.StartsWith(Verbs.JobTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.JobTargetPrefix.Length..] : command.Target;
+        lock (_rowLock)
+        {
+            var row = state.Jobs().FirstOrDefault(j => j.Id == id);
+            if (row is null)
+            {
+                return state.Complete(command, $"There is no job {id}");
+            }
+            if (!_running.TryGetValue(id, out var process) || row.State != JobState.Running || _cancelled.ContainsKey(id))
+            {
+                return state.Complete(command, row.State == JobState.Queued ? $"job {id} is queued, not running: only a running job can be {(pause ? "paused" : "resumed")}" : $"job {id} is not running");
+            }
+            if (pause == (row.PausedAt is not null))
+            {
+                return state.Complete(command, pause ? $"job {id} is already paused" : $"job {id} is not paused");
+            }
+            var now = time.GetUtcNow();
+            if (SignalTree(id, process, stop: pause) == 0)
+            {
+                return state.Complete(command, pause ? $"job {id}'s process could not be paused" : $"job {id}'s process could not be resumed");
+            }
+            state.PutJob(pause
+                ? row with { PausedAt = now, Step = "paused" }
+                : row with { PausedAt = null, PausedFor = row.PausedFor + (now - row.PausedAt!.Value), Step = "resumed" });
+            return state.Complete(command, null);
+        }
+    }
+
+    /// <summary>The row with the span it was paused folded into <see cref="JobRow.PausedFor"/> and no longer paused, as of <paramref name="at"/>.</summary>
+    private static JobRow Unpaused(JobRow row, DateTimeOffset at) =>
+        row.PausedAt is { } since ? row with { PausedAt = null, PausedFor = row.PausedFor + (at - since) } : row;
+
+    /// <summary>How long a job has left of its timeout: the deadline is pushed out by every paused span, the open one included, so a paused job never runs out.</summary>
+    private TimeSpan TimeLeft(JobRow job)
+    {
+        var now = time.GetUtcNow();
+        var row = state.Jobs().FirstOrDefault(j => j.Id == job.Id) ?? job;
+        var paused = row.PausedFor + (row.PausedAt is { } since ? now - since : TimeSpan.Zero);
+        return job.StartedAt + job.Timeout + paused - now;
     }
 
     /// <summary>
@@ -644,16 +739,22 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 if (now - lastStep >= StepEvery && line.Trim().Length > 0)
                 {
                     lastStep = now;
-                    state.PutJob(job with { Step = Clip(line) });
+                    lock (_rowLock)
+                    {
+                        // The row as it is now (a pause may have marked it), and a paused job's step stays "paused".
+                        if (state.Jobs().FirstOrDefault(j => j.Id == job.Id) is { PausedAt: null, State: JobState.Running } current)
+                        {
+                            state.PutJob(current with { Step = Clip(line) });
+                        }
+                    }
                 }
             }
         }
 
         using (var limit = CancellationTokenSource.CreateLinkedTokenSource(_stopping))
         {
-            // Counted from its start, as a node that found it again does: a restart does not give a job its time anew.
-            var left = job.StartedAt + job.Timeout - time.GetUtcNow();
-            limit.CancelAfter(left > TimeSpan.Zero ? left : TimeSpan.Zero);
+            // Counted from its start, as a node that found it again does: a restart does not give a job its time anew. Looked at
+            // at every turn of the loop, as the row says how long it was paused, which moves the deadline.
             var nudge = _nudges[job.Id] = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var nextTree = time.GetUtcNow();
             try
@@ -683,9 +784,18 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     {
                         break;
                     }
-                    // Between two looks, or sooner when a cancel says so.
+                    var left = TimeLeft(job);
+                    if (left <= TimeSpan.Zero)
+                    {
+                        timedOut = true;
+                        Kill(job.Id, process);
+                        await GoneAsync(process);
+                        exitCode = ReadExit(exitPath);
+                        break;
+                    }
+                    // Between two looks, or sooner when a cancel says so, or the timeout is due.
                     using var pause = CancellationTokenSource.CreateLinkedTokenSource(limit.Token);
-                    var tick = Task.Delay(FollowEvery, time, pause.Token);
+                    var tick = Task.Delay(left < FollowEvery ? left : FollowEvery, time, pause.Token);
                     if (await Task.WhenAny(tick, nudge.Task) == tick)
                     {
                         await tick;
@@ -703,13 +813,6 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 process.Child?.Dispose();
                 return;
             }
-            catch (OperationCanceledException)
-            {
-                timedOut = true;
-                Kill(job.Id, process);
-                await GoneAsync(process);
-                exitCode = ReadExit(exitPath);
-            }
         }
         // What the job wrote last, after the process has gone, and the whole of a last line it left without a newline.
         Follow(final: true);
@@ -723,7 +826,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         // Its slot is free: the next in line may start.
         Pump();
         string[] last = [.. tail.Snapshot];
-        var latest = state.Jobs().FirstOrDefault(j => j.Id == job.Id) ?? job;
+        // Ended while frozen (a cancel or timeout thaws it to kill it): the span counts, and it is no longer paused.
+        var latest = Unpaused(state.Jobs().FirstOrDefault(j => j.Id == job.Id) ?? job, time.GetUtcNow());
         JobRow ended;
         if (_cancelled.TryRemove(job.Id, out var by))
         {

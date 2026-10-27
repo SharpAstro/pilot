@@ -172,8 +172,8 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
                     : $"{command.Target} is not the PR this review is of ({Pr}): a review acts on its own PR only";
             case StandingKind.FlightSession when command.Verb is Verbs.Stop or Verbs.Compact && !OwnsSession(command, state):
                 return $"{command.Target} is not {OwnerName()} session: a flight's session stops and compacts its own flight's only";
-            case StandingKind.FlightSession when command.Verb == Verbs.CancelJob && !OwnsJob(command, state):
-                return $"{command.Target} is not {OwnerName()} job: a flight's session cancels its own flight's only";
+            case StandingKind.FlightSession when command.Verb is Verbs.CancelJob or Verbs.PauseJob or Verbs.ResumeJob && !OwnsJob(command, state):
+                return $"{command.Target} is not {OwnerName()} job: a flight's session cancels, pauses and resumes its own flight's only";
             case StandingKind.Assistant when IsAsk(command, state):
                 return "answering an assistant's ask is the person's: Allow and Deny are theirs to press, on the card";
             default:

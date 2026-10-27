@@ -374,6 +374,40 @@ public sealed class JobsTests
     }
 
     [Fact]
+    public void ARunningJobOffersPauseAndAPausedOneResumeAndCancelSendingTheirVerbs()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var (_, jobs) = Chrome(vessel);
+        jobs.CanCommand = true;
+        var sent = new List<string>();
+        jobs.OnPause = job => sent.Add("pause-job " + job.Id);
+        jobs.OnResume = job => sent.Add("resume-job " + job.Id);
+        jobs.OnCancel = job => sent.Add("cancel-job " + job.Id);
+        var running = JobLine.Build([Job("j14", JobState.Running, Live.At.AddMinutes(-11))], Live.At).Single();
+        var paused = JobLine.Build([Job("j16", JobState.Running, Live.At.AddMinutes(-11)) with { PausedAt = Live.At.AddMinutes(-2) }], Live.At).Single();
+
+        paused.State.ShouldBe("paused");
+        paused.StateDetail.ShouldBe("since " + SessionLine.Ago(TimeSpan.FromMinutes(2)));
+        running.State.ShouldBe("running");
+
+        jobs.OpenMenu(running, 0, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
+        var labels = jobs.MenuItems.Select(i => i.Label).ToList();
+        labels.ShouldContain("Pause");
+        labels.ShouldNotContain("Resume");
+        jobs.MenuItems.First(i => i.Label == "Pause").OnChoose!();
+
+        jobs.OpenMenu(paused, 0, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
+        labels = jobs.MenuItems.Select(i => i.Label).ToList();
+        labels.ShouldContain("Resume");
+        labels.ShouldContain("Cancel…");
+        labels.ShouldNotContain("Pause");
+        jobs.MenuItems.First(i => i.Label == "Resume").OnChoose!();
+
+        sent.ShouldBe(["pause-job j14", "resume-job j16"]);
+        new JobsScreen([running, paused], "live", Live.At).Counts.ShouldBe("2 jobs · 1 running · 1 paused");
+    }
+
+    [Fact]
     public void AJobOnAnotherNodeOffersNoOpenLogWhileThisNodesJobsKeepIt()
     {
         using var vessel = new RgbaImageRenderer(1, 1);

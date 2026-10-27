@@ -83,6 +83,15 @@ public sealed record JobRow
     /// <summary>Null while it runs.</summary>
     public DateTimeOffset? EndedAt { get; init; }
 
+    /// <summary>
+    /// When its process tree was frozen (<c>pause-job</c>); null unless it is paused now. A paused job's <see cref="State"/> stays
+    /// <see cref="JobState.Running"/>, so every "Running or Queued" check still counts it as live and it keeps its max-jobs slot.
+    /// </summary>
+    public DateTimeOffset? PausedAt { get; init; }
+
+    /// <summary>The time it has spent paused so far, not counting the span that is running now (<see cref="PausedAt"/>); its timeout is pushed out by this much.</summary>
+    public TimeSpan PausedFor { get; init; }
+
     /// <summary>Whether its owner was told how it ended: false until the node said it, so a wake that failed shows.</summary>
     public bool Told { get; init; }
 }
