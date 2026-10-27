@@ -329,7 +329,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         CommandResult result;
         try
         {
-            result = await RunAsync(command with { Verb = choice.Verb, Target = choice.Target, Args = choice.Args }, cancellationToken);
+            result = await RunAsync(command with { Verb = choice.Verb, Target = choice.Target, Args = choice.Args, RequestId = null }, cancellationToken);
         }
         catch
         {
