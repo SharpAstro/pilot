@@ -240,7 +240,7 @@ internal sealed class PlayFilter
 /// Every page's screen for the nodes a window shows: each node's rows merged, marked with their node when there is more
 /// than one, and filtered by the window's <see cref="NodeFilter"/>.
 /// </summary>
-internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights, JobsScreen Jobs, IReadOnlyList<JobRow> JobRows, CardsScreen Cards, ReposScreen? Repos = null, IReadOnlyList<MachineLine>? Machines = null)
+internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights, JobsScreen Jobs, IReadOnlyList<JobRow> JobRows, CardsScreen Cards, ReposScreen? Repos = null, SummaryShelf? Summaries = null, IReadOnlyList<MachineLine>? Machines = null)
 {
     /// <summary>Whether a feed's <see cref="NodeFeed.Reach"/> says its node cannot be reached: down since a first failed try or a drop. The one test the panel's held lines and the flights' stale marks share.</summary>
     private static bool Unreachable((bool Connected, DateTimeOffset? DownSince) reach) => !reach.Connected && reach.DownSince is not null;
@@ -289,6 +289,9 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
             [.. shown.SelectMany(f => f.Feed.Jobs())],
             cards,
             new ReposScreen(repos, several ? source : hereSessions.Source, now),
+            // Every node's summaries, shown or not: the card picks the node it asks about, from the window's node selection.
+            new SummaryShelf(filter.Choices, feeds.SelectMany(f => f.Feed.Summaries().Select(s => (Key: (f.Mark.Key, s.Scope), Row: s)))
+                .ToDictionary(x => x.Key, x => x.Row)),
             machines);
     }
 }

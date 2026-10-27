@@ -363,6 +363,7 @@ public static class Briefs
         text.AppendLine("Before you plan any leg, look for a flight already doing this. List the flights not landed:");
         text.AppendLine($"- `{run} status`: this node's flights, each with its issue, its legs and its plane (a folder and a branch).");
         text.AppendLine($"- `{run} nodes` lists the other pilot nodes on the LAN; for each, `{run} --node <host:port> status` lists its flights.");
+        text.AppendLine($"- `{run} summary --fleet` is the node's kept summary of the flights in play on every node it holds a grant for (what needs the controller, where it is), with its age; it is made from the nodes' own records, not guessed.");
         text.AppendLine($"For each flight not landed other than {flight.Code}: read its {words.Noun} ({words.ReadOther}), its legs' goals, and the");
         text.AppendLine($"files its plane touches (`git -C <its plane> diff --stat {flight.Base}...`). Compare them with your own issue.");
         text.AppendLine("A real overlap is the same area of the issue, or legs changing the same files, so that one of the two flights would");
@@ -729,6 +730,8 @@ public static class Briefs
         text.AppendLine();
         text.AppendLine("## Commands");
         text.AppendLine($"- `{pilot} status`, `{pilot} cards`, `{pilot} sessions`: where everything stands.");
+        text.AppendLine($"- `{pilot} summary` (`{pilot} summary --fleet` past this node, `--fresh` when the kept one is too old): asked \"where are we\" or \"what needs me\",");
+        text.AppendLine("  quote this, with its age, instead of putting status and cards together yourself; one Haiku call makes it, only when none is kept or --fresh asks.");
         text.AppendLine($"- `{pilot} answer <card> <choice>`, `{pilot} dismiss <card> <why>`.");
         text.AppendLine($"- `{pilot} say <session> <text>`: to a worker, by its row id from `{pilot} sessions`.");
         text.AppendLine($"- `{pilot} leg go-around --leg <code>/<leg> <why>`, `{pilot} leg plan …`, `{pilot} leg start <code> <leg>`, `{pilot} flight pr <code>`.");

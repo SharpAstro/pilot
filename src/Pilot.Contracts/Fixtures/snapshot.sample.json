@@ -331,5 +331,14 @@
       "finishedAt": "2026-10-18T09:31:55+00:00",
       "closedAt": null
     }
+  ],
+  "summaries": [
+    {
+      "scope": "*",
+      "markdown": "## Needs you\n- c41: the PR review of bullclip-backend#2479 asks for changes.\n\n## Where it is\nTIA1611 is flying its second leg, parser, with 2 of 4 steps ticked.",
+      "madeAt": "2026-10-18T09:40:00+00:00",
+      "tokens": 9412,
+      "cost": 0.0123
+    }
   ]
 }

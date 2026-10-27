@@ -51,6 +51,9 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <summary>Leg checks: what they say is the test's.</summary>
     public FakeChecks Checks { get; private init; } = new();
 
+    /// <summary>The summary's Haiku call: what it answers is the test's; never run.</summary>
+    public FakeSummaryModel Summary { get; private init; } = new();
+
     /// <summary>GitHub: what it says is the test's.</summary>
     public FakeGitHub GitHub { get; private init; } = new();
 
@@ -86,6 +89,7 @@ internal sealed class NodeHarness : IAsyncDisposable
         var checks = new FakeChecks();
         var github = new FakeGitHub();
         var nuget = new FakeNuGetFeed();
+        var summary = new FakeSummaryModel();
         try
         {
             var app = NodeApp.Build(options, held, builder =>
@@ -100,6 +104,7 @@ internal sealed class NodeHarness : IAsyncDisposable
                 builder.Services.AddSingleton<Pilot.Node.Flights.ICheckRunner>(checks);
                 builder.Services.AddSingleton<Pilot.Node.Flights.IGitHub>(github);
                 builder.Services.AddSingleton<Pilot.Node.Flights.INuGetFeed>(nuget);
+                builder.Services.AddSingleton<Pilot.Node.Flights.ISummaryModel>(summary);
                 builder.Services.AddSingleton(new SessionTrackerOptions(
                     new ClaudeProfile(Path.Combine(folder, "claude")),
                     TimeSpan.FromMilliseconds(100),
@@ -107,7 +112,7 @@ internal sealed class NodeHarness : IAsyncDisposable
                     SessionTrackerOptions.DefaultEndedRetention));
             });
             await app.StartAsync(cancellationToken);
-            return new NodeHarness(app, held, folder, options, agents, delivery) { Workers = workers, Checks = checks, GitHub = github, NuGet = nuget };
+            return new NodeHarness(app, held, folder, options, agents, delivery) { Workers = workers, Checks = checks, GitHub = github, NuGet = nuget, Summary = summary };
         }
         catch
         {

@@ -146,10 +146,17 @@ internal sealed class FakeGitHub : IGitHub
 
     public List<(int Number, string Head, string Method)> Merged { get; } = [];
 
+    /// <summary>When set, reading the PR of a branch fails with it, as a gh that could not reach GitHub.</summary>
+    public string? PrFails { get; set; }
+
     // The labels are what the fake keeps on the PR, so a label taken off by hand is read as GitHub says it.
     public async Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
         await Called(nameof(PullRequestAsync));
+        if (PrFails is { } why)
+        {
+            throw new FlightException(why);
+        }
         return Pr is { } pr ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. labels] : [] } : null;
     }
 

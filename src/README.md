@@ -537,6 +537,8 @@ pilot say-all <text…> [--all] [--role worker|planner|reviewer|pilot|adHoc|watc
                                                # the same say to each session the filters pick (see Say to all)
 pilot compact <session> [focus…]               # an idle background session's /compact, as its next turn (see Compaction)
 pilot note <text…>
+pilot summary [<code>] [--fresh] [--fleet]     # the kept summary (Needs you, Where it is) with its age, tokens and cost; made when none or --fresh (see The summary)
+pilot summarise [<code>]                       # one Haiku call now over the flights in play (or one flight); keeps and prints the answer
 pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
 pilot archive <session> | --ended [--undo]      # put ended sessions away, out of the lists (or back)
 pilot run [--timeout 90m] -- <command…>        # a long run handed to the node as a job (see Jobs)
@@ -551,9 +553,28 @@ flying, and the command is sent as that leg's worker, so the black box says whic
 gives it these commands by the CLI's full path (beside the node, else the source tree's build), with `--node-socket`
 when its node is not on the default socket. Exit codes: 0 done, 1 refused by the node (it says why), 2 usage, 3 no node.
 
+### The summary
+
+`pilot summary` answers "where are we" in two sections: `## Needs you` (what stays stuck unless the person acts, or the
+word *Nothing*) and `## Where it is`. The node makes it from what it holds, as plain records of each flight (legs with
+state, checklist and go-arounds, its PR and review, its open cards, the sessions on it), with one Haiku call (no tools,
+no MCP, no saved session; never run by itself), and keeps the latest per scope with when it was made, its tokens and its
+cost, on the feed for every client. So `pilot summary` costs nothing when a summary is kept: it prints that one and
+says its age (`made 5 min ago (2026-10-28 09:00 UTC) · 1,234 tokens · $0.0021`), and it makes one, as `pilot summarise`
+does, when there is none yet or `--fresh` asks. `pilot summary <code>` is the same for one flight.
+
+`--fleet` covers every node this machine holds a grant for (`pilot connect`) as well as this one: the node asks each of
+them for its records (`records node`, a read that makes no call and keeps nothing), puts each node's under its own
+heading, and makes one call over all of them. A node that cannot be reached or refuses is a line in the records saying
+so, never a guess. It is kept as its own scope, beside this node's.
+
+**A session asked "where are we", "what's the state" or "what needs me" should run `pilot summary` (`pilot summary
+--fleet` when the question reaches past this node; the MCP tool is `summary`) and quote it, rather than read `pilot
+status` and `pilot cards` and put it together itself.** Add `--fresh` only when the kept one is too old for the question.
+
 ### Output formats
 
-`--output-format auto|rich|markdown|plain` is taken on any command, and `status`, `cards` and `repos` read it. `plain` is the text above.
+`--output-format auto|rich|markdown|plain` is taken on any command, and `status`, `cards`, `repos` and `summary` read it. `plain` is the text above.
 `markdown` is the Markdown source: the issue and PR as links, each flight's legs in a table, and a leg's screenshot as an
 image; for `cards` a heading per card, for `repos` a heading per repo with its worktrees and open PRs as tables. `rich` is that Markdown rendered for the terminal by Console.Lib's `MarkdownOutput`, as `mdcat` renders it: colour,
 clickable links, and the screenshot itself on a terminal that can show it. `auto`, the default, is rich only when
