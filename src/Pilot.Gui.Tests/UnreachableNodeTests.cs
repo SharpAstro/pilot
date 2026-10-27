@@ -140,6 +140,21 @@ public sealed class UnreachableNodeTests : IAsyncDisposable
         filter.Line().ShouldBe($"[All nodes] SE1 DE1 · last heard {stamp}");
         NodeFilter.Label(filter.Choices[1], WentDown, true).ShouldBe($"DE1 · last heard {stamp}");
         filter.Pills().Count().ShouldBe(3);
+
+        // Drawn dim: the down pill's text is the dim colour, the live ones' is not.
+        foreach (var night in new FlightsPalette?[] { null, FlightsPalette.Night })
+        {
+            var pills = filter.Pills(night).Select(p => ((Layout.Content.Text)((Layout.Node.Leaf)p).Content)).ToArray();
+            var dim = pills[2].Color;
+            pills[2].Value.ShouldContain("last heard");
+            if (night is not null)
+            {
+                dim.ShouldBe(night.Dim);
+            }
+            pills[0].Color.ShouldNotBe(dim);
+            pills[1].Color.ShouldNotBe(dim);
+            pills[1].Value.ShouldNotContain("last heard");
+        }
     }
 
     [Fact]

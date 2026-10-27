@@ -260,7 +260,7 @@ public sealed class FleetTests
         line.Connected.ShouldBeFalse();
         line.Maintenance.ShouldBeTrue();
         line.AsOf.ShouldBe($"as of {hhmm}");
-        line.State.ShouldBe($"last heard {hhmm} (restarting or unreachable; retrying every 2 s)");
+        line.State.ShouldBe($"last heard {hhmm} · unreachable, retrying");
         (line.Account, line.Sessions, line.Flights, line.Rings).ShouldBe(("bo@example.org", "3 live · 1 waiting on you", "2 flying", 1));
         line.WaitingOnYou.ShouldBe(0);
         line.CanSetMaintenance.ShouldBeFalse();
@@ -511,6 +511,29 @@ public sealed class FleetTests
         Described(Summary("laptop", "ada@example.org")).ShouldNotContain("holds the queue");
     }
 
+    /// <summary>An unreachable node's status line (last heard, retrying) reads in full: its leaf is as wide as the text, at a narrow and a wide window.</summary>
+    [Theory]
+    [InlineData(900)]
+    [InlineData(1800)]
+    public void ALastKnownRowsStatusLineIsNotClipped(int width)
+    {
+        var down = InMaintenance("de2", connected: false) with { DownSince = new DateTimeOffset(2026, 10, 28, 5, 34, 0, TimeSpan.Zero), Usage = "5 h 42% · 7 d 18%" };
+        var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, down, Live.At);
+        var never = FleetLine.From("10.0.0.5:47731", here: false, canCommand: true, null,
+            Summary("le1", connected: false) with { Node = null, Status = "no node on 10.0.0.5:47731: refused; retrying every 2s" }, Live.At);
+        using var renderer = new RgbaImageRenderer((uint)width, 400);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Show(PilotPage.Fleet);
+
+        var arranged = Layout.Engine.Arrange(chrome.Fleet.Tree(new FleetScreen([line, never], Live.At)), new Rect<float>(0, 0, width, 400), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        foreach (var text in new[] { line.State, line.Usage, never.State })
+        {
+            var leaf = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == text).ShouldHaveSingleItem();
+            var measured = renderer.MeasureText(text.AsSpan(), SessionsCapture.FontPath, 11f).Width;
+            leaf.Bounds.Width.ShouldBeGreaterThanOrEqualTo(measured - 0.5f, text);
+        }
+    }
+
     /// <summary>The marks under a row's account (maintenance, churning watchtower, autopilot, usage) each end a gap before the next starts, live and last known, narrow and wide.</summary>
     [Theory]
     [InlineData(false, 1280)]
@@ -537,16 +560,35 @@ public sealed class FleetTests
         var icon = leaves.Where(a => TextOf(a) == FleetLine.MaintenanceIcon).ShouldHaveSingleItem();
         var word = leaves.Where(a => TextOf(a).StartsWith(FleetLine.MaintenanceWord, StringComparison.Ordinal)).ShouldHaveSingleItem();
         var marks = new List<(string Name, float Left, float Right)> { ("maintenance", icon.Bounds.X, word.Bounds.X + word.Bounds.Width) };
-        foreach (var (name, text) in new[] { ("watchtower", line.WatchtowerMark), ("autopilot", line.AutopilotWord), ("usage", line.Connected ? line.Usage : line.State) })
+        foreach (var (name, text) in new[] { ("watchtower", line.WatchtowerMark), ("autopilot", line.AutopilotWord), ("usage", line.Usage) })
         {
-            if (text is not null)
+            if (!string.IsNullOrEmpty(text))
             {
                 var leaf = leaves.Where(a => TextOf(a) == text).ShouldHaveSingleItem();
-                marks.Add((name, leaf.Bounds.X, leaf.Bounds.X + leaf.Bounds.Width));
+                // A last known row's usage has a line of its own under the marks, so it is not in the gap row.
+                if (name != "usage" || !lastKnown)
+                {
+                    marks.Add((name, leaf.Bounds.X, leaf.Bounds.X + leaf.Bounds.Width));
+                }
+                else
+                {
+                    leaf.Bounds.Y.ShouldBeGreaterThan(icon.Bounds.Y);
+                    leaf.Bounds.Width.ShouldBeGreaterThanOrEqualTo(renderer.MeasureText(text.AsSpan(), SessionsCapture.FontPath, 11f).Width - 0.5f);
+                }
             }
         }
 
-        marks.Count.ShouldBeGreaterThanOrEqualTo(3);
+        marks.Count.ShouldBeGreaterThanOrEqualTo(lastKnown ? 2 : 3);
+        if (!lastKnown)
+        {
+            marks.ShouldContain(m => m.Name == "usage");
+        }
+        if (lastKnown)
+        {
+            // The status keeps a line of its own under the marks, so it is not squeezed out by them.
+            var status = leaves.Where(a => TextOf(a) == line.State).ShouldHaveSingleItem();
+            status.Bounds.Y.ShouldBeGreaterThan(icon.Bounds.Y);
+        }
         icon.Bounds.Width.ShouldBeGreaterThanOrEqualTo(FleetView<RgbaImage>.MarkIconWidth);
         marks.Sort((a, b) => a.Left.CompareTo(b.Left));
         for (var i = 1; i < marks.Count; i++)

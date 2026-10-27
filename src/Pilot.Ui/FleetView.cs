@@ -164,8 +164,8 @@ internal sealed record FleetLine
             CanCommand = canCommand,
             Machine = summary.Node is { } node ? (node.MachinePrefix.Length > 0 ? $"{node.MachinePrefix} · {node.MachineName}" : node.MachineName) : announcedAs ?? where,
             State = summary.Connected ? "live"
-                : lastKnown ? (summary.DownSince is { } since ? $"last heard {since.ToLocalTime():HH:mm} (restarting or unreachable; retrying every 2 s)" : "last heard earlier (restarting or unreachable; retrying every 2 s)")
-                : summary.Status.StartsWith("waiting", StringComparison.Ordinal) ? "no answer yet: " + summary.Status : summary.Status,
+                : lastKnown ? (summary.DownSince is { } since ? $"last heard {since.ToLocalTime():HH:mm} · unreachable, retrying" : "last heard earlier · unreachable, retrying")
+                : summary.Status.StartsWith("waiting", StringComparison.Ordinal) ? "no answer yet: " + summary.Status : summary.Status.Replace($"no node on {where}: ", ""),
             LastKnown = lastKnown,
             LastHeard = lastKnown ? summary.DownSince : null,
             Connected = summary.Connected,
@@ -492,6 +492,8 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         ListColumn.Fixed("", ButtonsWidth),
     ];
 
+    private static float LastKnownUsageHeight(FleetLine line) => !line.Connected && line.Usage.Length > 0 ? 16f : 0f;
+
     private Layout.Node Row(FleetLine line, int index)
     {
         var buttons = new List<Layout.Node>();
@@ -529,8 +531,11 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                                 Layout.Builder.Text(FleetLine.MaintenanceWord + (line.AsOf is { } asOf ? " " + asOf : ""), 11f, Ringing).WAuto()).WAuto()] : (Layout.Node[])[]),
                             .. (line.WatchtowerMark is { } towerMark ? [Layout.Builder.Text(towerMark, 11f, Ringing).WAuto()] : (Layout.Node[])[]),
                             .. (line.AutopilotWord is { } autopilot ? [Layout.Builder.Text(autopilot, 11f, line.Autopilot && !line.LastKnown ? Live : Dim).WAuto()] : (Layout.Node[])[]),
-                            Layout.Builder.Text(line.Connected ? line.Usage : line.State, 11f, Dim).WStar()]).WithGap(MarkGap).RowH(18f)
-                    : Layout.Builder.Text(line.Connected ? line.Usage : line.State, 11f, Dim).RowH(18f),
+                            Layout.Builder.Text(line.Connected ? line.Usage : "", 11f, Dim).WStar()]).WithGap(MarkGap).RowH(18f)
+                    : Layout.Builder.Text(line.Connected ? line.Usage : "", 11f, Dim).RowH(18f),
+                // An unreachable node's last known usage and its status (when last heard, why) each have a line of their own, so they read in full.
+                Layout.Builder.Text(line.Connected ? "" : line.Usage, 11f, Dim).RowH(LastKnownUsageHeight(line)),
+                Layout.Builder.Text(line.Connected ? "" : line.State, 11f, Dim).RowH(line.Connected ? 0f : 16f),
                 // Its own line, so a narrow column clips this one and not the marks above.
                 Layout.Builder.Text(line.Watchtower ?? "", 11f, line.WatchtowerChurning ? Ringing : Dim).RowH(16f),
                 // A churning one says why, on a line of its own under the words.
@@ -543,7 +548,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f),
         };
         var row = Table.Row(Columns, Layout.Builder.Spacer().Bg(line.Connected ? Live : Away), cells)
-            .RowH(line.WatchtowerSummary is null ? RowHeight : SummaryRowHeight)
+            .RowH((line.WatchtowerSummary is null ? RowHeight : SummaryRowHeight) + (line.Connected ? 0f : 16f) + LastKnownUsageHeight(line))
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index));
