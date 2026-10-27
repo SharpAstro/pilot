@@ -270,6 +270,13 @@ public static class Verbs
     public const string Summarise = "summarise";
 
     /// <summary>
+    /// <c>records node</c> or <c>records flight/&lt;code&gt;</c>: what the node holds of its flights in play (or of that one flight) as
+    /// the plain records a summary is made from, in the result's <see cref="CommandResult.Made"/>; nothing when it holds none. A read,
+    /// with no call and nothing kept: it is what a node answers when another gathers the fleet's records for <see cref="Summarise"/>.
+    /// </summary>
+    public const string Records = "records";
+
+    /// <summary>
     /// <c>update node [check|install] [--adopt]</c>: whether a newer release of pilot is out (<c>check</c>), or installs it
     /// now and restarts the node; <c>--adopt</c> installs it over a build of one's own.
     /// </summary>

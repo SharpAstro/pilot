@@ -273,6 +273,9 @@ public static class SummaryPrompt
     /// <summary>The prompt over the fleet's records.</summary>
     public static string Fleet(int flights, string records) => Build($"{flights.ToString(CultureInfo.InvariantCulture)} flight{(flights == 1 ? "" : "s")} in play and what else waits on the person", FleetWords, records);
 
+    /// <summary>The prompt over the records of several nodes, each under its own heading: the second section names the node where it matters.</summary>
+    public static string Nodes(int nodes, string records) => Build($"the flights in play on {nodes.ToString(CultureInfo.InvariantCulture)} nodes of a fleet and what else waits on the person, each node's records under its own heading; name the node where it matters", FleetWords, records);
+
     /// <summary>The prompt over one flight's records.</summary>
     public static string Flight(string code, string records) => Build($"the flight {code}", FlightWords, records);
 }
@@ -376,6 +379,12 @@ public sealed class ClaudeSummaryModel(string folder) : ISummaryModel
 /// </summary>
 public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider time)
 {
+    /// <summary>The nodes this one holds a grant for, whose records <see cref="SummaryRow.FleetArgument"/> gathers; none when unset.</summary>
+    public IFleet? Fleet { get; set; }
+
+    /// <summary>This node's name in a fleet's records: its machine prefix.</summary>
+    public string Machine { get; set; } = "this node";
+
     /// <summary>What a fleet with nothing in play says, with no call: there is nothing to summarise.</summary>
     public const string EmptyFleet = $"{SummaryPrompt.Needs}\n{SummaryPrompt.Nothing}\n\n{SummaryPrompt.Where}\nNo flights in play.";
 
@@ -388,7 +397,7 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
         string scope;
         if (command.Target == Verbs.NodeTarget)
         {
-            scope = SummaryRow.FleetScope;
+            scope = (command.Args ?? []).Contains(SummaryRow.FleetArgument, StringComparer.OrdinalIgnoreCase) ? SummaryRow.AllNodesScope : SummaryRow.FleetScope;
         }
         else if (command.Target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) && command.Target[Verbs.FlightTargetPrefix.Length..] is { Length: > 0 } code && !code.Contains('/'))
         {
@@ -408,7 +417,78 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
     }
 
     /// <summary>
-    /// Makes the summary of <paramref name="scope"/> (<see cref="SummaryRow.FleetScope"/> or a flight's code) and keeps it. A fleet
+    /// Runs <c>records</c>: what the node holds of its flights in play (target <c>node</c>) or of one flight, as the plain records a
+    /// summary is made from, in the result's <c>Made</c>; nothing when it holds none. No call, nothing kept.
+    /// </summary>
+    public CommandResult Records(CommandRequest command)
+    {
+        var now = time.GetUtcNow();
+        if (command.Target == Verbs.NodeTarget)
+        {
+            return state.Complete(command, null, made: SummaryRecords.Fleet(state, now));
+        }
+        if (command.Target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) && command.Target[Verbs.FlightTargetPrefix.Length..] is { Length: > 0 } code && !code.Contains('/'))
+        {
+            return SummaryRecords.Flight(state, code, now) is { } records
+                ? state.Complete(command, null, made: records)
+                : state.Complete(command, $"There is no flight {code}");
+        }
+        return state.Complete(command, $"records takes the target {Verbs.NodeTarget} or {Verbs.FlightTargetPrefix}<code>, not {command.Target}");
+    }
+
+    /// <summary>
+    /// The records of this node and of each node it holds a grant for, each under its own heading, fetched with <c>records node</c>
+    /// from the node itself; a node that cannot be reached, or refuses, is a line saying so, never a guess. Null when no node has
+    /// anything in play and none was missed.
+    /// </summary>
+    private async Task<(string? Records, int Nodes)> GatherAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var peers = (Fleet?.Peers() ?? []).Where(p => p.HasGrant).ToList();
+        var fetched = await Task.WhenAll(peers.Select(p => FetchAsync(p, cancellationToken)));
+        var text = new StringBuilder();
+        var nodes = 0;
+        var missed = false;
+        if (SummaryRecords.Fleet(state, now) is { } own)
+        {
+            nodes++;
+            text.AppendLine(CultureInfo.InvariantCulture, $"=== Node {Machine} (this node) ===").AppendLine(own).AppendLine();
+        }
+        foreach (var (name, records, why) in fetched.OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            if (why is not null)
+            {
+                missed = true;
+                text.AppendLine(CultureInfo.InvariantCulture, $"=== Node {name} ===").AppendLine(why).AppendLine();
+            }
+            else if (records is { Length: > 0 })
+            {
+                nodes++;
+                text.AppendLine(CultureInfo.InvariantCulture, $"=== Node {name} ===").AppendLine(records).AppendLine();
+            }
+        }
+        return nodes == 0 && !missed ? (null, 0) : (text.ToString().TrimEnd(), Math.Max(nodes, 1));
+    }
+
+    private static async Task<(string Name, string? Records, string? Why)> FetchAsync(IFleetPeer peer, CancellationToken cancellationToken)
+    {
+        var name = peer.Endpoint;
+        try
+        {
+            var info = await peer.NodeAsync(cancellationToken);
+            name = info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Endpoint;
+            var result = await peer.SendAsync(new CommandRequest { Verb = Verbs.Records, Target = Verbs.NodeTarget, Who = "summary" }, cancellationToken);
+            return result.Ok
+                ? (name, result.Made, null)
+                : (name, null, $"This node's records could not be had: it refused ({result.Error ?? "no reason given"}).");
+        }
+        catch (Exception e) when (e is HttpRequestException or IOException or TimeoutException or System.Net.WebSockets.WebSocketException)
+        {
+            return (name, null, $"This node's records could not be had: it could not be reached ({e.Message}).");
+        }
+    }
+
+    /// <summary>
+    /// Makes the summary of <paramref name="scope"/> (<see cref="SummaryRow.FleetScope"/>, <see cref="SummaryRow.AllNodesScope"/> or a flight's code) and keeps it. A fleet
     /// with nothing in play is answered without a call, at no cost. The row, or why there is none.
     /// </summary>
     public async Task<(SummaryRow? Row, string? Error)> MakeAsync(string scope, CancellationToken cancellationToken)
@@ -417,7 +497,7 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
         {
             if (!_making.Add(scope))
             {
-                return (null, scope == SummaryRow.FleetScope ? "The fleet is being summarised already" : $"{scope} is being summarised already");
+                return (null, scope is SummaryRow.FleetScope or SummaryRow.AllNodesScope ? "The fleet is being summarised already" : $"{scope} is being summarised already");
             }
         }
 
@@ -433,6 +513,15 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
                     return (Keep(scope, EmptyFleet, tokens: 0, cost: null), null);
                 }
                 prompt = SummaryPrompt.Fleet(state.Flights().Count(f => f.State != FlightState.Landed), records);
+            }
+            else if (scope == SummaryRow.AllNodesScope)
+            {
+                var (records, nodes) = await GatherAsync(now, cancellationToken);
+                if (records is null)
+                {
+                    return (Keep(scope, EmptyFleet, tokens: 0, cost: null), null);
+                }
+                prompt = SummaryPrompt.Nodes(nodes, records);
             }
             else
             {

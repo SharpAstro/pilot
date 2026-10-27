@@ -2,7 +2,7 @@ namespace Pilot.Contracts;
 
 /// <summary>
 /// The summary the node last made of one scope, kept in its state and sent on the feed so every client shows the same one:
-/// the fleet's (<see cref="FleetScope"/>) or one flight's (its code). One Haiku call makes it, only when someone asks
+/// this node's flights (<see cref="FleetScope"/>), every node's (<see cref="AllNodesScope"/>) or one flight's (its code). One Haiku call makes it, only when someone asks
 /// (<see cref="Verbs.Summarise"/>); a newer one replaces the older of its scope, whole.
 /// </summary>
 public sealed record SummaryRow
@@ -10,7 +10,13 @@ public sealed record SummaryRow
     /// <summary>The scope of <see cref="Verbs.Summarise"/> <c>node</c>: every flight in play.</summary>
     public const string FleetScope = "*";
 
-    /// <summary><see cref="FleetScope"/>, or the code of the flight it is about (<c>TIA1611</c>).</summary>
+    /// <summary>The scope of <see cref="Verbs.Summarise"/> <c>node fleet</c>: every flight in play on this node and on each node it holds a grant for.</summary>
+    public const string AllNodesScope = "**";
+
+    /// <summary>The argument of <see cref="Verbs.Summarise"/> <c>node</c> that makes <see cref="AllNodesScope"/> of it.</summary>
+    public const string FleetArgument = "fleet";
+
+    /// <summary><see cref="FleetScope"/>, <see cref="AllNodesScope"/>, or the code of the flight it is about (<c>TIA1611</c>).</summary>
     public required string Scope { get; init; }
 
     /// <summary>The answer, as markdown: <c>## Needs you</c> (bullets, or the word Nothing), then <c>## Where it is</c>.</summary>

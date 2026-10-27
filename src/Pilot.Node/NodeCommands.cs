@@ -109,6 +109,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return await Get<Summaries>().RunAsync(command, cancellationToken);
         }
+        if (command.Verb == Verbs.Records)
+        {
+            return Get<Summaries>().Records(command);
+        }
         if (command.Verb == Verbs.Stop)
         {
             return await Get<SessionMessenger>().StopAsync(command, cancellationToken);

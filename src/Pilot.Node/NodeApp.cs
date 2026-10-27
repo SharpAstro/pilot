@@ -181,7 +181,12 @@ public static class NodeApp
         builder.Services.AddSingleton<PrChecks>();
         builder.Services.AddHostedService(services => services.GetRequiredService<PrChecks>());
         builder.Services.AddSingleton<ISummaryModel>(_ => new ClaudeSummaryModel(Path.Combine(options.DataFolder, "summary")));
-        builder.Services.AddSingleton<Summaries>();
+        builder.Services.AddSingleton(services => new Summaries(services.GetRequiredService<NodeState>(), services.GetRequiredService<ISummaryModel>(), services.GetRequiredService<TimeProvider>())
+        {
+            Machine = options.Machine,
+            // The nodes this user's grants reach, the same a create-flight in maintenance may route to.
+            Fleet = services.GetRequiredService<FlightCommander>().Fleet,
+        });
         builder.Services.AddSingleton<Digest>();
         builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());
         // Releases of pilot itself: by --update-policy, for an installed release only (NodeUpdater).

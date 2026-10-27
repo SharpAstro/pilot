@@ -78,7 +78,7 @@ public static class PilotCommand
         };
         var outputFormat = new Option<string>("--output-format")
         {
-            Description = "auto (rich on a terminal that shows Sixel, else plain), rich, markdown or plain; status, cards and repos take it",
+            Description = "auto (rich on a terminal that shows Sixel, else plain), rich, markdown or plain; status, cards, repos and summary take it",
             Recursive = true,
             DefaultValueFactory = _ => "auto",
         };
@@ -595,6 +595,65 @@ public static class PilotCommand
         var summariseFlight = new Argument<string?>("flight") { Description = "The flight's code; leave it out for every flight in play", Arity = ArgumentArity.ZeroOrOne };
         var summarise = Action(new Command("summarise", "Summarise the flights in play (or one flight) with one Haiku call: what needs you, where it is") { Arguments = { summariseFlight } },
             (p, client, ct) => Send(client, Verbs.Summarise, p.GetValue(summariseFlight) is { Length: > 0 } code ? Verbs.FlightTarget(code) : Verbs.NodeTarget, [], who, ct));
+        // summary: the kept summary, or one made when there is none or --fresh asks; the fleet's records are the node's to gather.
+        var summaryOf = new Argument<string?>("flight") { Description = "The flight's code; leave it out for every flight in play on this node", Arity = ArgumentArity.ZeroOrOne };
+        var summaryFresh = new Option<bool>("--fresh") { Description = "Make a new one now (one Haiku call) instead of showing the kept one" };
+        var summaryFleet = new Option<bool>("--fleet") { Description = "Every node this machine holds a grant for, not only this node: their records are fetched from each node" };
+        var summary = Action(new Command("summary", "The kept summary (needs you, where it is) with its age, tokens and cost; made now when there is none or with --fresh. Use it to answer 'where are we'")
+            { Arguments = { summaryOf }, Options = { summaryFresh, summaryFleet } },
+            async (p, client, ct) =>
+            {
+                var snapshot = await SnapshotAsync(client, ct);
+                string scope;
+                string target;
+                string[] args = [];
+                if (p.GetValue(summaryOf) is { Length: > 0 } named)
+                {
+                    if (p.GetValue(summaryFleet))
+                    {
+                        throw new UsageException("--fleet is about every node's flights; leave the flight out, or leave --fleet out");
+                    }
+                    if (snapshot.Flights.FirstOrDefault(f => string.Equals(f.Code, named, StringComparison.OrdinalIgnoreCase)) is not { } flight)
+                    {
+                        await output.WriteLineAsync($"refused: summary {named}: there is no flight {named}");
+                        return 1;
+                    }
+                    (scope, target) = (flight.Code, Verbs.FlightTarget(flight.Code));
+                }
+                else if (p.GetValue(summaryFleet))
+                {
+                    (scope, target, args) = (SummaryRow.AllNodesScope, Verbs.NodeTarget, [SummaryRow.FleetArgument]);
+                }
+                else
+                {
+                    (scope, target) = (SummaryRow.FleetScope, Verbs.NodeTarget);
+                }
+
+                var kept = snapshot.Summaries.FirstOrDefault(s => s.Scope == scope);
+                string? made = null;
+                if (kept is null || p.GetValue(summaryFresh))
+                {
+                    var sender = await SenderAsync(client, who, bySession, byAgent, cwd, sessionId, ct);
+                    var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Summarise, Target = target, Args = args, Who = sender, Agent = byAgent }, ct);
+                    if (envelope is not { Success: true, Response: { Ok: true } result })
+                    {
+                        await output.WriteLineAsync($"refused: summarise {target}: {envelope.Response?.Error ?? envelope.Error}");
+                        return 1;
+                    }
+                    made = result.Made;
+                    kept = (await SnapshotAsync(client, ct)).Summaries.FirstOrDefault(s => s.Scope == scope);
+                }
+
+                if (kept is null)
+                {
+                    // The node kept none to read back (it was restarted between the two reads): the answer it gave is still the answer.
+                    await output.WriteLineAsync(made is { Length: > 0 } ? made : $"pilot: the node holds no summary of {SummaryMarkdown.About(scope)}");
+                    return made is { Length: > 0 } ? 0 : 1;
+                }
+                var now = DateTimeOffset.UtcNow;
+                await WriteAsync(p.GetValue(outputFormat), () => SummaryMarkdown.Plain(kept, now), () => SummaryMarkdown.Build(kept, now));
+                return 0;
+            });
         // archive: ended sessions put away, out of the lists (or back, with --undo).
         var archiveSession = new Argument<string?>("session") { Description = "The session's row id; leave it out with --ended", Arity = ArgumentArity.ZeroOrOne };
         var archiveEnded = new Option<bool>("--ended") { Description = "Every ended session" };
@@ -759,7 +818,7 @@ public static class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, summarise, update, archive, ring, flag, handled, nodes, connectNode, grants, settings },
+            Subcommands = { status, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, summary, summarise, update, archive, ring, flag, handled, nodes, connectNode, grants, settings },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
