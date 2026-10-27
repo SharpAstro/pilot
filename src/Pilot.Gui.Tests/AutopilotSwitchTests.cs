@@ -160,8 +160,9 @@ public sealed class AutopilotSwitchTests
         on.AutopilotWord.ShouldBe("autopilot on");
         off.Autopilot.ShouldBeFalse();
         off.AutopilotWord.ShouldBe("autopilot off");
-        gone.Autopilot.ShouldBeFalse();
-        gone.AutopilotWord.ShouldBeNull();
+        gone.Autopilot.ShouldBeTrue();
+        gone.LastKnown.ShouldBeTrue();
+        gone.AutopilotWord.ShouldBe("autopilot on");
         on.ToDumpLine().ShouldEndWith(" | can command | autopilot on");
 
         using var renderer = new RgbaImageRenderer(1, 1);

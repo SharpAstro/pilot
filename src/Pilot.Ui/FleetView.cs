@@ -71,23 +71,32 @@ internal sealed record FleetLine
     /// <summary>Whether it never said hello: not connected and no <see cref="NodeInfo"/> ever received.</summary>
     public bool NeverReached { get; init; }
 
+    /// <summary>Whether the node was heard and cannot be reached now: its counts, account, usage, autopilot and maintenance are its last words, drawn dimmed and dated by <see cref="LastHeard"/>.</summary>
+    public bool LastKnown { get; init; }
+
+    /// <summary>When a <see cref="LastKnown"/> node went quiet (its last word, in this machine's time); null for any other row.</summary>
+    public DateTimeOffset? LastHeard { get; init; }
+
+    /// <summary><c>as of 14:05</c>, in local time, for the marks of a <see cref="LastKnown"/> row; null for any other.</summary>
+    public string? AsOf => LastKnown && LastHeard is { } heard ? $"as of {heard.ToLocalTime():HH:mm}" : null;
+
     /// <summary>Whether a grant for it is held (client-grants.json): a node other than this window's that this user may command.</summary>
     public bool Held { get; init; }
 
     /// <summary>Whether the row offers Forget: a node held in the grants and never reached, which may be let go.</summary>
     public bool CanForget => NeverReached && Held;
 
-    /// <summary>Whether the node says it is in maintenance (its <see cref="NodeInfo.Maintenance"/>): it takes no new flights. False for a node not reached, whose last word would read as now.</summary>
+    /// <summary>Whether the node says it is in maintenance (its <see cref="NodeInfo.Maintenance"/>): it takes no new flights. For a <see cref="LastKnown"/> node it is the last word, marked <see cref="AsOf"/>; false for one never reached.</summary>
     public bool Maintenance { get; init; }
 
     /// <summary>Whether the row offers Maintenance on / off: a node this user may command (this window's, or a granted one) and that answers now.</summary>
     public bool CanSetMaintenance => CanCommand && Connected;
 
-    /// <summary>Whether the node says its autopilot is on (its <see cref="NodeInfo.Autopilot"/>). False for a node not reached, whose last word would read as now.</summary>
+    /// <summary>Whether the node says its autopilot is on (its <see cref="NodeInfo.Autopilot"/>). For a <see cref="LastKnown"/> node it is the last word; false for one never reached.</summary>
     public bool Autopilot { get; init; }
 
-    /// <summary>What the row says of the autopilot, <c>autopilot on</c> or <c>autopilot off</c>; null for a node not reached.</summary>
-    public string? AutopilotWord => Connected ? (Autopilot ? "autopilot on" : "autopilot off") : null;
+    /// <summary>What the row says of the autopilot, <c>autopilot on</c> or <c>autopilot off</c>; for a <see cref="LastKnown"/> node its last word; null for one never reached.</summary>
+    public string? AutopilotWord => Connected || LastKnown ? (Autopilot ? "autopilot on" : "autopilot off") : null;
 
     /// <summary>The mark a node in maintenance wears on its row.</summary>
     public const string MaintenanceMark = "🔧 maintenance";
@@ -116,7 +125,7 @@ internal sealed record FleetLine
     /// <summary><c>3 live · 1 waiting on you</c>.</summary>
     public required string Sessions { get; init; }
 
-    /// <summary>How many of its sessions wait on you, as <see cref="Sessions"/> says in words; 0 for a node not reached.</summary>
+    /// <summary>How many of its sessions wait on you, as <see cref="Sessions"/> says in words; 0 for a node not reached, a last word being nothing to act on.</summary>
     public int WaitingOnYou { get; init; }
 
     /// <summary><c>2 flying · 1 held</c>, or <c>none in the air</c>.</summary>
@@ -131,13 +140,14 @@ internal sealed record FleetLine
     public required int Rings { get; init; }
 
     public string ToDumpLine() => string.Join(" | ", Machine, Where + (Here ? " (this window)" : ""), State, Account, Usage.Length == 0 ? "-" : Usage, Sessions, Flights, Jobs,
-        Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : "watch only") + (AutopilotWord is { } autopilot ? " | " + autopilot : "") + (Maintenance ? " | " + MaintenanceMark : "")
+        Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : "watch only") + (AutopilotWord is { } autopilot ? " | " + autopilot : "") + (Maintenance ? " | " + MaintenanceMark + (AsOf is { } asOf ? " " + asOf : "") : "")
         + (JobHolder is { } holder ? " | " + holder : "")
         + (Watchtower is { } watchtower ? " | " + watchtower : "") + (WatchtowerMark is { } mark ? " | " + mark : "")
         + (WatchtowerSummary is { } summary ? " | " + summary : "");
 
     public static FleetLine From(string where, bool here, bool canCommand, string? announcedAs, NodeSummary summary, DateTimeOffset? now = null)
     {
+        var lastKnown = !summary.Connected && summary.Node is not null;
         var health = summary.Connected ? summary.Node?.Watchtower : null;
         string Counted(int a, string aWord, int b, string bWord, string none) =>
             a == 0 && b == 0 ? none : b == 0 ? $"{a} {aWord}" : a == 0 ? $"{b} {bWord}" : $"{a} {aWord} · {b} {bWord}";
@@ -147,25 +157,29 @@ internal sealed record FleetLine
             Here = here,
             CanCommand = canCommand,
             Machine = summary.Node is { } node ? (node.MachinePrefix.Length > 0 ? $"{node.MachinePrefix} · {node.MachineName}" : node.MachineName) : announcedAs ?? where,
-            State = summary.Connected ? "live" : summary.Status,
+            State = summary.Connected ? "live"
+                : lastKnown ? (summary.DownSince is { } since ? $"last heard {since.ToLocalTime():HH:mm} (restarting or unreachable; retrying every 2 s)" : "last heard earlier (restarting or unreachable; retrying every 2 s)")
+                : summary.Status.StartsWith("waiting", StringComparison.Ordinal) ? "no answer yet: " + summary.Status : summary.Status,
+            LastKnown = lastKnown,
+            LastHeard = lastKnown ? summary.DownSince : null,
             Connected = summary.Connected,
             NeverReached = !summary.Connected && summary.Node is null,
             Held = canCommand && !here,
-            Maintenance = summary.Connected && summary.Node is { Maintenance: true },
-            Autopilot = summary.Connected && summary.Node is { Autopilot: true },
+            Maintenance = (summary.Connected || lastKnown) && summary.Node is { Maintenance: true },
+            Autopilot = (summary.Connected || lastKnown) && summary.Node is { Autopilot: true },
             Watchtower = !summary.Connected ? Pilot.Commands.WatchtowerWords.NotReached : Pilot.Commands.WatchtowerWords.Line(health, now ?? DateTimeOffset.UtcNow),
             WatchtowerChurning = health is { Churning: true },
             WatchtowerStarts = health?.StartsLast24h ?? 0,
             WatchtowerSummary = health is { Churning: true, Summary.Length: > 0 } ? health.Summary : null,
-            Account = summary.Account ?? (summary.Connected ? "account unknown" : "—"),
+            Account = summary.Account ?? (summary.Connected || lastKnown ? "account unknown" : "—"),
             Usage = summary.Usage ?? "",
-            // A node not reached says nothing it last said: its counts would read as now.
-            Sessions = !summary.Connected ? "—" : summary.WaitingOnYou > 0 ? $"{summary.LiveSessions} live · {summary.WaitingOnYou} waiting on you" : $"{summary.LiveSessions} live",
+            // A node heard and quiet keeps its last words (dimmed, dated); one never heard has none, and its dashes say so.
+            Sessions = !summary.Connected && !lastKnown ? "—" : summary.WaitingOnYou > 0 ? $"{summary.LiveSessions} live · {summary.WaitingOnYou} waiting on you" : $"{summary.LiveSessions} live",
             WaitingOnYou = summary.Connected ? summary.WaitingOnYou : 0,
-            Flights = !summary.Connected ? "—" : Counted(summary.Flying, "flying", summary.Held, "held", "none in the air") + (summary.LegWait is { } wait ? $" · {wait}" : ""),
-            Jobs = !summary.Connected ? "—" : Counted(summary.JobsRunning, "running", summary.JobsQueued, "queued", "none"),
-            JobHolder = summary.Connected ? summary.JobHolder : null,
-            Rings = summary.Connected ? summary.Rings : 0,
+            Flights = !summary.Connected && !lastKnown ? "—" : Counted(summary.Flying, "flying", summary.Held, "held", "none in the air") + (summary.LegWait is { } wait ? $" · {wait}" : ""),
+            Jobs = !summary.Connected && !lastKnown ? "—" : Counted(summary.JobsRunning, "running", summary.JobsQueued, "queued", "none"),
+            JobHolder = summary.Connected || lastKnown ? summary.JobHolder : null,
+            Rings = summary.Connected || lastKnown ? summary.Rings : 0,
         };
     }
 }
@@ -492,12 +506,12 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 Layout.Builder.Text(line.Machine, 15f, line.Connected ? Bright : Dim).RowH(22f),
                 Layout.Builder.Text(line.Here ? $"{line.Where} · this window" : line.CanCommand ? line.Where : $"{line.Where} · watch only", 11f, Dim).RowH(18f)),
             Layout.Builder.VStack(
-                Layout.Builder.Text(line.Account, 13f, Body).RowH(22f),
+                Layout.Builder.Text(line.Account, 13f, line.LastKnown ? Dim : Body).RowH(22f),
                 line.Maintenance || line.AutopilotWord is not null || line.WatchtowerMark is not null
                     ? Layout.Builder.HStack([
-                            .. (line.Maintenance ? [Layout.Builder.Text(FleetLine.MaintenanceMark, 11f, Ringing).WAuto()] : (Layout.Node[])[]),
+                            .. (line.Maintenance ? [Layout.Builder.Text(FleetLine.MaintenanceMark + (line.AsOf is { } asOf ? " " + asOf : ""), 11f, Ringing).WAuto()] : (Layout.Node[])[]),
                             .. (line.WatchtowerMark is { } towerMark ? [Layout.Builder.Text(towerMark, 11f, Ringing).WAuto()] : (Layout.Node[])[]),
-                            .. (line.AutopilotWord is { } autopilot ? [Layout.Builder.Text(autopilot, 11f, line.Autopilot ? Live : Dim).WAuto()] : (Layout.Node[])[]),
+                            .. (line.AutopilotWord is { } autopilot ? [Layout.Builder.Text(autopilot, 11f, line.Autopilot && !line.LastKnown ? Live : Dim).WAuto()] : (Layout.Node[])[]),
                             Layout.Builder.Text(line.Connected ? line.Usage : line.State, 11f, Dim).WStar()]).WithGap(8f).RowH(18f)
                     : Layout.Builder.Text(line.Connected ? line.Usage : line.State, 11f, Dim).RowH(18f),
                 // Its own line, so a narrow column clips this one and not the marks above.
@@ -506,9 +520,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 Layout.Builder.Text(line.WatchtowerSummary ?? "", 11f, Ringing).RowH(line.WatchtowerSummary is null ? 0f : 16f)),
             SessionsCell(line),
             Layout.Builder.VStack(
-                Layout.Builder.Text(line.Flights, 13f, Body).RowH(22f),
-                Layout.Builder.Text(line.JobHolder ?? line.Jobs switch { "—" => "", "none" => "no jobs", var jobs => $"jobs: {jobs}" }, 11f, line.JobHolder is null ? Dim : Ringing).RowH(18f)),
-            ListTable.Top(Layout.Builder.Text(line.Rings == 0 ? "—" : $"{line.Rings} ringing", 13f, line.Rings == 0 ? Dim : Ringing)),
+                Layout.Builder.Text(line.Flights, 13f, line.LastKnown ? Dim : Body).RowH(22f),
+                Layout.Builder.Text(line.JobHolder ?? line.Jobs switch { "—" => "", "none" => "no jobs", var jobs => $"jobs: {jobs}" }, 11f, line.JobHolder is null || line.LastKnown ? Dim : Ringing).RowH(18f)),
+            ListTable.Top(Layout.Builder.Text(line.Rings == 0 ? "—" : $"{line.Rings} ringing", 13f, line.Rings == 0 || line.LastKnown ? Dim : Ringing)),
             Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f),
         };
         var row = Table.Row(Columns, Layout.Builder.Spacer().Bg(line.Connected ? Live : Away), cells)
@@ -526,7 +540,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         var split = line.Sessions.IndexOf(" · ", StringComparison.Ordinal);
         if (line.WaitingOnYou <= 0 || OnWaiting is not { } onWaiting || split < 0)
         {
-            return ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, waiting ? Ringing : Body));
+            return ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, line.LastKnown ? Dim : waiting ? Ringing : Body));
         }
         return ListTable.Top(Layout.Builder.HStack(
                 Layout.Builder.Text(line.Sessions[..split] + " ·", 13f, Body).WAuto(),

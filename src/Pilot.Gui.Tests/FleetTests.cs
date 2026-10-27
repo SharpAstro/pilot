@@ -237,7 +237,7 @@ public sealed class FleetTests
         marked.Maintenance.ShouldBeTrue();
         marked.ToDumpLine().ShouldEndWith(" | 🔧 maintenance");
         FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, Summary("s2")).Maintenance.ShouldBeFalse();
-        FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, InMaintenance("s2", connected: false)).Maintenance.ShouldBeFalse();
+        FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, InMaintenance("s2", connected: false) with { Node = null }).Maintenance.ShouldBeFalse();
 
         using var vessel = new RgbaImageRenderer(1, 1);
         var fleet = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)).Fleet;
@@ -245,6 +245,51 @@ public sealed class FleetTests
         var described = CellLayout.Describe(Layout.Engine.Arrange(fleet.Tree(screen), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored));
 
         described.Split('\n').Count(l => l.Contains("🔧 maintenance", StringComparison.Ordinal)).ShouldBe(1);
+    }
+
+    /// <summary>A node in maintenance that goes unreachable keeps its mark, dated, its values dimmed and its status line says when it was last heard.</summary>
+    [Fact]
+    public void AnUnreachableNodeKeepsItsLastKnownRowDimmedAndDated()
+    {
+        var heard = new DateTimeOffset(2026, 10, 28, 12, 5, 0, TimeSpan.Zero);
+        var hhmm = heard.ToLocalTime().ToString("HH:mm");
+        var gone = InMaintenance("s2", connected: false) with { DownSince = heard, LiveSessions = 3, WaitingOnYou = 1, Flying = 2, Rings = 1 };
+        var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, gone);
+
+        line.LastKnown.ShouldBeTrue();
+        line.Connected.ShouldBeFalse();
+        line.Maintenance.ShouldBeTrue();
+        line.AsOf.ShouldBe($"as of {hhmm}");
+        line.State.ShouldBe($"last heard {hhmm} (restarting or unreachable; retrying every 2 s)");
+        (line.Account, line.Sessions, line.Flights, line.Rings).ShouldBe(("bo@example.org", "3 live · 1 waiting on you", "2 flying", 1));
+        line.WaitingOnYou.ShouldBe(0);
+        line.CanSetMaintenance.ShouldBeFalse();
+        line.ToDumpLine().ShouldContain($" | {FleetLine.MaintenanceMark} as of {hhmm}");
+
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Show(PilotPage.Fleet);
+        var arranged = Layout.Engine.Arrange(chrome.Fleet.Tree(new FleetScreen([line], Live.At)), new Rect<int>(0, 0, 1280, 400), CellMeasureContext.PixelAuthored);
+        bool Has(string text) => arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == text);
+        Has($"{FleetLine.MaintenanceMark} as of {hhmm}").ShouldBeTrue();
+        Has(line.State).ShouldBeTrue();
+        Has("2 flying").ShouldBeTrue();
+        arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().ShouldNotContain(b => b.Action.EndsWith(":maintenance", StringComparison.Ordinal));
+    }
+
+    /// <summary>A node never heard has nothing last said: dashes, and a status that says why.</summary>
+    [Fact]
+    public void ANodeNeverHeardShowsDashesAndWhy()
+    {
+        var never = Summary("quiet", connected: false) with { Node = null };
+        var waiting = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, never);
+        var refused = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, never with { Status = "no node on 10.0.0.9:47731: refused; retrying every 2s" });
+
+        waiting.LastKnown.ShouldBeFalse();
+        (waiting.Account, waiting.Sessions, waiting.Flights, waiting.Jobs, waiting.Rings).ShouldBe(("—", "—", "—", "—", 0));
+        waiting.State.ShouldStartWith("no answer yet");
+        refused.State.ShouldContain("refused");
+        waiting.Maintenance.ShouldBeFalse();
     }
 
     /// <summary>
