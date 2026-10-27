@@ -1,0 +1,395 @@
+using System.Collections.Immutable;
+using Console.Lib;
+using DIR.Lib;
+using Layout = DIR.Lib.Layout;
+using Pilot.Contracts;
+using Shouldly;
+using Xunit;
+
+namespace Pilot.Gui.Tests;
+
+/// <summary>
+/// A PR row's right-hand actions: only those that fit its state (Merge on a flight's ready PR, Review on one pilot has not reviewed,
+/// Go around on a flight's conflicting one, Open on every row), in slots that keep the row's height and the columns where they are;
+/// each press sends the node what the flight's card's button sends; a refusal is said in the node's words and the row is changed
+/// by nothing but the node's next answer.
+/// </summary>
+public sealed class PullRequestActionsTests
+{
+    private static readonly DateTimeOffset Now = new(2026, 10, 28, 12, 0, 0, TimeSpan.Zero);
+
+    private const string Head = "3021bcecd64a831400e54f191a11274ab26597a6";
+
+    private static PullRequestRow Pr(string repo, int number, PullRequestKind kind, string label, string? flight = null, string? review = null, string title = "A change") => new()
+    {
+        Repo = repo, Number = number, Title = title, Url = $"https://github.com/{repo}/pull/{number}", Author = "sebgod", Kind = kind, Label = label,
+        Flight = flight, Review = review, ReviewUrl = review is null ? null : $"https://github.com/{repo}/pull/{number}#pullrequestreview-1",
+        UpdatedAt = Now - TimeSpan.FromHours(3), CreatedAt = Now - TimeSpan.FromDays(2), Head = flight is null ? "feature/x" : $"flight/{flight.ToLowerInvariant()}", Base = "main",
+    };
+
+    private static CardRow MergeCard(string flight, string id = "c1", string? status = null) => new()
+    {
+        Id = id, Bin = CardBin.Ring, Kind = "pr-ready", Subject = Verbs.FlightTarget(flight), Title = $"{flight}'s PR is ready to merge", At = Now, State = CardState.Open,
+        Choices = [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight), Args = [Head], Status = status }],
+    };
+
+    private static CardRow AroundCard(string flight, string id = "c2") => new()
+    {
+        Id = id, Bin = CardBin.Ring, Kind = "review-changes", Subject = Verbs.FlightTarget(flight), Title = $"{flight}'s PR conflicts with main", At = Now, State = CardState.Open,
+        Choices =
+        [
+            new CardChoice { Label = "Go around parser", Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight, "parser"), Args = ["resolve the conflicts"] },
+            new CardChoice { Label = "Ready anyway", Verb = Verbs.Review, Target = Verbs.FlightTarget(flight), Args = ["pass", "ready anyway"] },
+        ],
+    };
+
+    private static PullRequestKind[] AllKinds => [.. Enum.GetValues<PullRequestKind>()];
+
+    private static PullRequestActionKind[] Kinds(PullRequestRow pr, params CardRow[] cards) => [.. PullRequestActions.Offered(pr, cards).Select(a => a.Kind)];
+
+    [Fact]
+    public void MergeIsOfferedOnAFlightsReadyPRAndOnOneWhoseChecksRunButOnNothingElse()
+    {
+        var cards = new[] { MergeCard("PIL252") };
+        Kinds(Pr("SharpAstro/pilot", 252, PullRequestKind.Ready, "Ready", "PIL252", PullRequestReview.Passed), cards).ShouldBe([PullRequestActionKind.Merge, PullRequestActionKind.Open]);
+
+        // Checks running: the card's Merge arms it, and says so.
+        var running = PullRequestActions.Offered(Pr("SharpAstro/pilot", 252, PullRequestKind.ChecksRunning, "Checks running 4/7", "PIL252", PullRequestReview.Passed), [MergeCard("PIL252", status: ChoiceStatus.Pending)]);
+        running.Select(a => a.Kind).ShouldBe([PullRequestActionKind.Merge, PullRequestActionKind.Open]);
+        running[0].Status.ShouldBe(ChoiceStatus.Pending);
+        running[0].Tooltip.ShouldContain("arms the merge");
+
+        // Not on any other state of a flight's PR, card or no card.
+        foreach (var kind in AllKinds.Where(k => k is not (PullRequestKind.Ready or PullRequestKind.ChecksRunning)))
+        {
+            Kinds(Pr("SharpAstro/pilot", 252, kind, kind.ToString(), "PIL252", PullRequestReview.Passed), cards).ShouldNotContain(PullRequestActionKind.Merge, kind.ToString());
+        }
+
+        // Not on a PR that is no flight's, nor a flight's whose card the node has not raised (it is not reviewed yet), nor another flight's card.
+        Kinds(Pr("SharpAstro/pilot", 7, PullRequestKind.Ready, "Ready", review: PullRequestReview.Passed), cards).ShouldBe([PullRequestActionKind.Open]);
+        Kinds(Pr("SharpAstro/pilot", 252, PullRequestKind.Ready, "Ready", "PIL252", PullRequestReview.Passed)).ShouldBe([PullRequestActionKind.Open]);
+        Kinds(Pr("SharpAstro/pilot", 253, PullRequestKind.Ready, "Ready", "PIL253", PullRequestReview.Passed), cards).ShouldBe([PullRequestActionKind.Open]);
+        // A closed card is no button.
+        Kinds(Pr("SharpAstro/pilot", 252, PullRequestKind.Ready, "Ready", "PIL252", PullRequestReview.Passed), MergeCard("PIL252") with { State = CardState.Closed }).ShouldBe([PullRequestActionKind.Open]);
+    }
+
+    [Fact]
+    public void GoAroundIsOfferedOnAFlightsConflictingPRWhoseCardAsksForItAndOnNothingElse()
+    {
+        var cards = new[] { AroundCard("TIA1799") };
+        var conflicts = Pr("SharpAstro/tianwen", 1799, PullRequestKind.Conflicts, "Conflicts", "TIA1799", PullRequestReview.Changes);
+        var offered = PullRequestActions.Offered(conflicts, cards);
+        offered.Select(a => a.Kind).ShouldBe([PullRequestActionKind.GoAround, PullRequestActionKind.Open]);
+        // The first choice of the card whose verb is go-around, as its own button numbers it.
+        (offered[0].Card?.Id, offered[0].Choice).ShouldBe(("c2", 1));
+
+        foreach (var kind in AllKinds.Where(k => k != PullRequestKind.Conflicts))
+        {
+            Kinds(conflicts with { Kind = kind, Label = kind.ToString() }, cards).ShouldNotContain(PullRequestActionKind.GoAround, kind.ToString());
+        }
+        Kinds(conflicts with { Flight = null }, cards).ShouldBe([PullRequestActionKind.Open]);
+        Kinds(conflicts).ShouldBe([PullRequestActionKind.Open]);
+    }
+
+    [Fact]
+    public void ReviewIsOfferedWherePilotsReviewIsNoneAndNowhereElseAndOpenIsOnEveryRow()
+    {
+        foreach (var kind in AllKinds)
+        {
+            var unreviewed = Pr("SharpAstro/pilot", 9, kind, kind.ToString());
+            Kinds(unreviewed).ShouldBe([PullRequestActionKind.Review, PullRequestActionKind.Open], kind.ToString());
+            foreach (var review in new[] { PullRequestReview.Passed, PullRequestReview.Changes, PullRequestReview.Reviewing })
+            {
+                Kinds(unreviewed with { Review = review }).ShouldBe([PullRequestActionKind.Open], $"{kind} {review}");
+            }
+        }
+    }
+
+    [Fact]
+    public void AHostWithNoReviewCommandHidesReviewAndTheOthersStay()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        var page = chrome.PullRequests;
+        var pr = Pr("SharpAstro/pilot", 9, PullRequestKind.Behind, "Behind");
+        page.ActionsOf(pr).Select(a => a.Kind).ShouldBe([PullRequestActionKind.Open]);
+        page.OnReview = (_, _) => Task.CompletedTask;
+        page.ActionsOf(pr).Select(a => a.Kind).ShouldBe([PullRequestActionKind.Review, PullRequestActionKind.Open]);
+    }
+
+    // A window on the page with the rows below: a ready flight PR (Merge), a conflicting one (Go around), a plain PR no one has reviewed (Review), one reviewed (Open only).
+    private static PullRequestsRow Row() => new()
+    {
+        Orgs = ["SharpAstro"],
+        ReadAt = Now - TimeSpan.FromSeconds(40),
+        Viewer = "sebgod",
+        PullRequests =
+        [
+            Pr("SharpAstro/pilot", 252, PullRequestKind.Ready, "Ready", "PIL252", PullRequestReview.Passed, "Pull requests page: every open PR across the orgs"),
+            Pr("SharpAstro/pilot", 261, PullRequestKind.ChecksRunning, "Checks running 4/7", "PIL261", PullRequestReview.Passed, "Checks while the next leg flies"),
+            Pr("SharpAstro/pilot", 258, PullRequestKind.InMergeQueue, "In merge queue #2", review: PullRequestReview.Passed, title: "Bump the lexer"),
+            Pr("SharpAstro/tianwen", 1799, PullRequestKind.Conflicts, "Conflicts", "TIA1799", PullRequestReview.Changes, "Plate solving: a fallback when the catalogue is missing"),
+            Pr("SharpAstro/tianwen", 1820, PullRequestKind.ChecksFailed, "Checks failed: build-and-test (ubuntu-latest, net10.0)", title: "Rework the whole of the plate solver's catalogue loader so that a very long title still gets its ellipsis"),
+            Pr("SharpAstro/DIR.Lib", 301, PullRequestKind.Behind, "Behind", title: "A text input that scrolls"),
+            Pr("sebgod/notes", 12, PullRequestKind.Draft, "Draft", title: "Draft: notes on the dome"),
+        ],
+    };
+
+    private static CardRow[] Cards => [MergeCard("PIL252", "c1", ChoiceStatus.Passing), MergeCard("PIL261", "c3", ChoiceStatus.Pending), AroundCard("TIA1799")];
+
+    private static PullRequestsScreen Screen(PullRequestsRow? row = null, IReadOnlyList<CardRow>? cards = null) =>
+        new(row ?? Row(), "live from the node on node.sock", Now) { OpenCards = cards ?? Cards };
+
+    private static (PilotChrome<RgbaImage> Chrome, PullRequestsView<RgbaImage> Page) Window(RgbaImageRenderer renderer)
+    {
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.PullRequests.OnRefresh = _ => Task.CompletedTask;
+        chrome.PullRequests.OnReview = (_, _) => Task.CompletedTask;
+        chrome.Autopilot.OnToggle = _ => { };
+        return (chrome, chrome.PullRequests);
+    }
+
+    private static ImmutableArray<Layout.ArrangedNode<float>> Arrange(RgbaImageRenderer renderer, PullRequestsView<RgbaImage> page, PullRequestsScreen screen, float width = 1280f, float height = 900f) =>
+        Layout.Engine.Arrange(page.Tree(screen, width), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+
+    private static Rect<float>? ButtonOrNull(ImmutableArray<Layout.ArrangedNode<float>> arranged, string action) =>
+        arranged.Where(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == action).Select(a => (Rect<float>?)a.Bounds).SingleOrDefault();
+
+    private static Rect<float> Button(ImmutableArray<Layout.ArrangedNode<float>> arranged, string action) => ButtonOrNull(arranged, action).ShouldNotBeNull(action);
+
+    private static Rect<float> RowOf(ImmutableArray<Layout.ArrangedNode<float>> arranged, PullRequestsView<RgbaImage> page, PullRequestRow pr) =>
+        arranged.First(a => a.Node.Hit is HitResult.ListItemHit h && h.Index == page.Rows.ToList().FindIndex(r => r.Url == pr.Url)).Bounds;
+
+    private static void Click(ImmutableArray<Layout.ArrangedNode<float>> arranged, string action) =>
+        arranged.Single(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == action).Node.OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+
+    private static string Id(PullRequestRow pr, string action) => $"pr:{pr.Url}:{action}";
+
+    [Theory]
+    [InlineData(1280f)]
+    [InlineData(2000f)]
+    public void EachRowShowsTheButtonsItsStateOffersInFixedSlotsSoRowsAndColumnsHoldWithAndWithoutThem(float width)
+    {
+        using var renderer = new RgbaImageRenderer((uint)width, 1100);
+        var (_, page) = Window(renderer);
+        var screen = Screen();
+        var arranged = Arrange(renderer, page, screen, width, 1100f);
+        var prs = screen.Row!.PullRequests;
+        PullRequestRow P(int number) => prs.Single(p => p.Number == number);
+
+        // Which buttons each row has, by state.
+        string[] Has(PullRequestRow pr) => [.. new[] { "merge", "go-around", "start-review", "open" }.Where(a => ButtonOrNull(arranged, Id(pr, a)) is not null)];
+        Has(P(252)).ShouldBe(["merge", "open"]);
+        Has(P(261)).ShouldBe(["merge", "open"]);
+        Has(P(1799)).ShouldBe(["go-around", "open"]);
+        Has(P(258)).ShouldBe(["open"]);
+        Has(P(1820)).ShouldBe(["start-review", "open"]);
+        Has(P(301)).ShouldBe(["start-review", "open"]);
+        Has(P(12)).ShouldBe(["start-review", "open"]);
+
+        // Every row is one height, with the buttons and without.
+        var rows = arranged.Where(a => a.Node.Hit is HitResult.ListItemHit).Select(a => a.Bounds).ToList();
+        rows.Count.ShouldBe(prs.Length);
+        rows.Select(r => r.Height).Distinct().ShouldBe([PullRequestsView<RgbaImage>.RowHeight]);
+
+        // One slot, one x and one width, on every row that has it: the card's button, Review and Open.
+        (float X, float Width)[] Slot(params string[] actions) =>
+            [.. prs.SelectMany(pr => actions.Select(a => ButtonOrNull(arranged, Id(pr, a)))).OfType<Rect<float>>().Select(b => (b.X, b.Width)).Distinct()];
+        Slot("merge", "go-around").Length.ShouldBe(1, "the card's slot");
+        Slot("start-review").Length.ShouldBe(1, "the review slot");
+        Slot("open").Length.ShouldBe(1, "the open slot");
+
+        // Every button is a chip tall, in the row's middle, inside the row and inside the actions column; Open ends at the row's right edge less its padding.
+        foreach (var pr in prs)
+        {
+            var row = RowOf(arranged, page, pr);
+            foreach (var action in new[] { "merge", "go-around", "start-review", "open" })
+            {
+                if (ButtonOrNull(arranged, Id(pr, action)) is not { } button)
+                {
+                    continue;
+                }
+                button.Height.ShouldBe(PullRequestsView<RgbaImage>.ChipHeight, $"{pr.Number} {action}");
+                (button.Y + button.Height / 2f).ShouldBe(row.Y + row.Height / 2f, 1.5f, $"{pr.Number} {action}");
+                button.X.ShouldBeGreaterThanOrEqualTo(row.X + row.Width - PullRequestsView<RgbaImage>.ActionsWidth - ListTable.EndPad - 1f);
+                (button.X + button.Width).ShouldBeLessThanOrEqualTo(row.X + row.Width + 0.5f);
+            }
+            // The title stops before the actions column, so a long one is cut there, never under the buttons.
+            var title = Button(arranged, $"pr:{pr.Url}");
+            (title.X + title.Width).ShouldBeLessThanOrEqualTo(Button(arranged, Id(pr, "open")).X);
+        }
+
+        // The slots do not overlap one another.
+        foreach (var pr in prs)
+        {
+            var placed = new[] { "merge", "go-around", "start-review", "open" }.Select(a => ButtonOrNull(arranged, Id(pr, a))).OfType<Rect<float>>().OrderBy(b => b.X).ToList();
+            for (var i = 1; i < placed.Count; i++)
+            {
+                (placed[i - 1].X + placed[i - 1].Width).ShouldBeLessThan(placed[i].X);
+            }
+        }
+
+        // The columns before the actions are where they are without any button: the same page with no cards and no review command.
+        page.OnReview = null;
+        var bare = Arrange(renderer, page, Screen(cards: []), width, 1100f);
+        foreach (var pr in prs)
+        {
+            Button(bare, $"pr:{pr.Url}").ShouldBe(Button(arranged, $"pr:{pr.Url}"));
+            Button(bare, Id(pr, "open")).ShouldBe(Button(arranged, Id(pr, "open")));
+            RowOf(bare, page, pr).ShouldBe(RowOf(arranged, page, pr));
+        }
+    }
+
+    [Fact]
+    public void TheButtonsWordsAreOnesTheirTooltipsExplainAndNothingIsCut()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (_, page) = Window(renderer);
+        var screen = Screen();
+        var arranged = Arrange(renderer, page, screen);
+        string Tooltip(PullRequestRow pr, string action) => arranged.Single(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == Id(pr, action)).Node.Tooltip.ShouldNotBeNull();
+        Tooltip(screen.Row!.PullRequests[0], "merge").ShouldContain("SharpAstro/pilot#252");
+        Tooltip(screen.Row.PullRequests[1], "merge").ShouldContain("checks are still running");
+        Tooltip(screen.Row.PullRequests[3], "go-around").ShouldContain("TIA1799");
+        Tooltip(screen.Row.PullRequests[4], "start-review").ShouldContain("pilot review pr");
+        Tooltip(screen.Row.PullRequests[4], "open").ShouldContain("SharpAstro/tianwen#1820");
+
+        // Each word fits its slot at the size it is drawn at, so none is cut.
+        foreach (var (word, slot) in new[] { ("Merge", 80f), ("Go around", 80f), ("Review", 64f), ("Open ↗", 64f) })
+        {
+            renderer.MeasureText(word, SessionsCapture.FontPath, 12f).Width.ShouldBeLessThan(slot - 8f, word);
+        }
+    }
+
+    [Fact]
+    public void AMergeAndAGoAroundPressSendTheNodeWhatTheFlightsCardsOwnButtonSends()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, page) = Window(renderer);
+        var answered = new List<(string Id, int Number)>();
+        chrome.Cards.OnAnswer = (card, number) => answered.Add((card.Id, number));
+        var screen = Screen();
+        var cards = CardsScreen.From(screen.OpenCards);
+
+        // The card's own buttons, in the panel: what they say to the node is what a click on them sends.
+        var panel = Layout.Engine.Arrange(chrome.Cards.Build(cards), new Rect<float>(0, 0, CardsView<RgbaImage>.Width, 1400f), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        Click(panel, "card:c1:1");
+        Click(panel, "card:c3:1");
+        Click(panel, "card:c2:1");
+        var fromCards = answered.ToList();
+        fromCards.ShouldBe([("c1", 1), ("c3", 1), ("c2", 1)]);
+        answered.Clear();
+
+        // The rows' buttons: through the same hook, so the same card and the same choice.
+        var arranged = Arrange(renderer, page, screen);
+        var prs = screen.Row!.PullRequests;
+        Click(arranged, Id(prs[0], "merge"));
+        Click(arranged, Id(prs[1], "merge"));
+        Click(arranged, Id(prs[3], "go-around"));
+        answered.ShouldBe(fromCards);
+
+        // And what the host sends for that is one builder's: the card's target with the choice's number, from the host.
+        var request = DashboardCommands.AnswerRequest(cards.Open.First(c => c.Id == "c3"), 1, "gui");
+        (request.Verb, request.Target, request.Who).ShouldBe((Verbs.Answer, "card/c3", "gui"));
+        request.Args.ShouldBe(["1"]);
+    }
+
+    [Fact]
+    public void AReviewPressSendsWhatPilotReviewPrSendsAndAnOpenPressOpensThePR()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (_, page) = Window(renderer);
+        var reviewed = new List<string>();
+        page.OnReview = (pr, _) =>
+        {
+            var request = DashboardCommands.ReviewPrRequest(pr, "gui");
+            reviewed.Add($"{request.Verb} {request.Target} [{string.Join(',', request.Args ?? [])}] {request.Who}");
+            return Task.CompletedTask;
+        };
+        var opened = new List<string>();
+        page.OnOpen = opened.Add;
+        var screen = Screen();
+        var arranged = Arrange(renderer, page, screen);
+        var prs = screen.Row!.PullRequests;
+
+        Click(arranged, Id(prs[4], "start-review"));
+        reviewed.ShouldBe(["review-pr pr/SharpAstro/tianwen#1820 [] gui"]);
+        Verbs.ReviewPr.ShouldBe("review-pr");
+        // The CLI's `pilot review pr SharpAstro/tianwen#1820` builds the target with the same Verbs.PrTarget.
+        Verbs.PrTarget("SharpAstro/tianwen", 1820).ShouldBe("pr/SharpAstro/tianwen#1820");
+
+        Click(arranged, Id(prs[4], "open"));
+        Click(arranged, Id(prs[0], "open"));
+        opened.ShouldBe([prs[4].Url, prs[0].Url]);
+    }
+
+    [Fact]
+    public async Task AReviewTheNodeRefusesIsSaidInItsWordsAndNoPressChangesTheRowsState()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (_, page) = Window(renderer);
+        page.OnReview = (_, _) => throw new InvalidOperationException("SharpAstro/tianwen#1820 is merged, not open");
+        var screen = Screen();
+        _ = page.Tree(screen);
+        var rowsBefore = page.Rows.ToList();
+        var prs = screen.Row!.PullRequests;
+
+        await page.ReviewAsync(prs[4]);
+        page.ReviewRefused.ShouldBe("review SharpAstro/tianwen#1820 refused: SharpAstro/tianwen#1820 is merged, not open");
+        var arranged = Arrange(renderer, page, screen);
+        var said = arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value).ToList();
+        said.ShouldContain(t => t.Contains("is merged, not open", StringComparison.Ordinal));
+
+        // The row says what it said: the node's next answer, not the click, is what changes it.
+        page.Rows.ShouldBe(rowsBefore);
+        page.ActionsOf(prs[4]).Select(a => a.Kind).ShouldBe([PullRequestActionKind.Review, PullRequestActionKind.Open]);
+        page.ActionsOf(prs[4]).Select(a => a.Kind).ShouldContain(PullRequestActionKind.Review);
+
+        // The next press clears it once it starts; a Merge or Go around clears it too.
+        page.OnReview = (_, _) => Task.CompletedTask;
+        await page.ReviewAsync(prs[4]);
+        page.ReviewRefused.ShouldBeNull();
+    }
+
+    [Fact]
+    public void ACardRefusalIsSaidOnThePageInTheNodesWordsToo()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, page) = Window(renderer);
+        chrome.Cards.NoteRefused("c1", "Merge was refused: head moved past what was reviewed");
+        var screen = Screen();
+        page.Refusal().ShouldBeNull("not before a frame has told the page its cards");
+        var arranged = Arrange(renderer, page, screen);
+        page.Refusal().ShouldNotBeNull().ShouldContain("head moved past what was reviewed");
+        arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>()
+            .Select(t => t.Value).ShouldContain(t => t.Contains("head moved past what was reviewed", StringComparison.Ordinal));
+
+        chrome.Cards.NoteRefused("c1", null);
+        page.Refusal().ShouldBeNull();
+    }
+
+    [Fact]
+    public void ACaptureRendersRowsInEachStateAtBothWidthsInBothPalettes()
+    {
+        // PILOT_TEST_CAPTURE_DIR keeps the frames as PNGs, for looking at; without it the frames are only painted.
+        var dir = Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR");
+        foreach (var (width, height) in new[] { (1280, 720), (2000, 720) })
+        {
+            foreach (var night in new[] { false, true })
+            {
+                using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+                var (chrome, page) = Window(renderer);
+                chrome.Show(PilotPage.PullRequests);
+                chrome.Flights.Mode = night ? FlightsViewMode.Night : FlightsViewMode.Canvas;
+                var sessions = new SessionsScreen([], "live from the node on node.sock", Now);
+                var screen = Screen();
+                chrome.Render(sessions, null, CardsScreen.From(screen.OpenCards), null, null, null, screen, new RectF32(0, 0, width, height));
+                if (dir is { Length: > 0 })
+                {
+                    Directory.CreateDirectory(dir);
+                    File.WriteAllBytes(Path.Combine(dir, $"pull-request-actions-{width}-{(night ? "night" : "day")}.png"), SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, height));
+                }
+            }
+        }
+    }
+}

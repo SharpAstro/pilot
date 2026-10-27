@@ -24,6 +24,9 @@ internal enum PullRequestFilter
 /// </summary>
 internal sealed record PullRequestsScreen(PullRequestsRow? Row, string Source, DateTimeOffset AsOf)
 {
+    /// <summary>The cards open now, whose choices a row's Merge and Go around press; the window's panel's, set when the page is drawn.</summary>
+    public IReadOnlyList<CardRow> OpenCards { get; init; } = [];
+
     /// <summary>How old the read may be before the source line says so, in amber.</summary>
     public static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(5);
 
@@ -86,8 +89,15 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     private const float ReviewWidth = 84f;
     private const float UpdatedWidth = 104f;
 
-    /// <summary>The empty column on the right, kept for the row's actions.</summary>
-    public const float ActionsWidth = 84f;
+    // The row's actions sit in three slots of fixed widths, so a row with fewer buttons leaves its gaps and nothing moves: the card's
+    // button (Merge or Go around), Review, and Open, which is always at the right.
+    private const float CardSlot = 80f;
+    private const float ReviewSlot = 64f;
+    private const float OpenSlot = 64f;
+    private const float SlotGap = 6f;
+
+    /// <summary>The column on the right the row's actions are in: three slots, each of one width whether or not the row fills it.</summary>
+    public const float ActionsWidth = CardSlot + ReviewSlot + OpenSlot + 2 * SlotGap;
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
     private readonly HashSet<string> _folded = new(StringComparer.OrdinalIgnoreCase);
@@ -115,6 +125,18 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     /// </summary>
     public Func<CancellationToken, Task>? OnRefresh { get; set; }
 
+    /// <summary>
+    /// Presses choice <c>number</c> of a card (a flight's Merge, a conflicting flight's Go around): the host's own card button, so
+    /// the node is told what the card's button tells it. The card shows a refusal itself, and <see cref="RefusedOf"/> reads it here.
+    /// </summary>
+    public Action<CardRow, int>? OnAnswer { get; set; }
+
+    /// <summary>Starts a review of a PR (<c>review-pr</c>); throws <see cref="InvalidOperationException"/> with the node's words when it refuses. Null hides Review.</summary>
+    public Func<PullRequestRow, CancellationToken, Task>? OnReview { get; set; }
+
+    /// <summary>What the node said to the last press on a card, by card id (the panel keeps it); null when it did not refuse.</summary>
+    public Func<string, string?>? RefusedOf { get; set; }
+
     /// <summary>Called when a refresh starts or ends, from whichever thread: the host redraws.</summary>
     public Action? Changed { get; set; }
 
@@ -132,6 +154,15 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
 
     /// <summary>Why the last refresh was refused (the node's words); null when it was not.</summary>
     public string? RefreshError { get; private set; }
+
+    /// <summary>What the node said to the last Review pressed, when it refused: its words, with the PR; null when it did not.</summary>
+    public string? ReviewRefused { get; private set; }
+
+    // The PRs a Review is running for: pressed again meanwhile does nothing.
+    private readonly HashSet<string> _reviewing = new(StringComparer.Ordinal);
+
+    // The cards the last frame offered a Merge or a Go around from.
+    private IReadOnlyList<CardRow> _cards = [];
 
     /// <summary>Which PRs the list shows.</summary>
     public PullRequestFilter Filter
@@ -215,6 +246,62 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         Changed?.Invoke();
     }
 
+    /// <summary>The actions <paramref name="pr"/> offers now: what <see cref="PullRequestActions.Offered"/> says, less Review where the host has none.</summary>
+    internal IReadOnlyList<PullRequestAction> ActionsOf(PullRequestRow pr) =>
+        [.. PullRequestActions.Offered(pr, _cards).Where(a => a.Kind != PullRequestActionKind.Review || OnReview is not null)];
+
+    /// <summary>Presses <paramref name="action"/> of <paramref name="pr"/>. The row is not changed by it: the node's next answer is what shows.</summary>
+    public void Press(PullRequestRow pr, PullRequestAction action)
+    {
+        switch (action.Kind)
+        {
+            case PullRequestActionKind.Open:
+                OnOpen?.Invoke(pr.Url);
+                break;
+            case PullRequestActionKind.Review:
+                _ = ReviewAsync(pr);
+                break;
+            default:
+                ReviewRefused = null;
+                if (action.Card is { } card)
+                {
+                    OnAnswer?.Invoke(card, action.Choice);
+                }
+                break;
+        }
+    }
+
+    /// <summary>Asks the node to review <paramref name="pr"/> through <see cref="OnReview"/>; a refusal is said in the node's words in the bar above the list.</summary>
+    public async Task ReviewAsync(PullRequestRow pr)
+    {
+        if (OnReview is not { } review || !_reviewing.Add(pr.Url))
+        {
+            return;
+        }
+        ReviewRefused = null;
+        try
+        {
+            await review(pr, CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            ReviewRefused = $"review {pr.Repo}#{pr.Number} refused: {ex.Message}";
+        }
+        finally
+        {
+            _reviewing.Remove(pr.Url);
+        }
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// What the node refused of the last action pressed on the list, in its words: a Review's, or a card's (the one a row's Merge or
+    /// Go around pressed, which the panel shows too). Null when nothing was refused.
+    /// </summary>
+    internal string? Refusal() =>
+        ReviewRefused ?? _cards.Where(c => c.Choices.Any(ch => ch.Verb is Verbs.Merge or Verbs.GoAround))
+            .Select(c => RefusedOf?.Invoke(c.Id) is { } why ? $"{c.Title}: {why}" : null).FirstOrDefault(r => r is not null);
+
     // The colours come from the palette handed to the page, so night repaints the same builders.
     private FlightsPalette P => Palette;
     private FlightsPalette? NightOrNull => ReferenceEquals(P, FlightsPalette.Night) ? P : null;
@@ -238,6 +325,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     internal Layout.Node Tree(PullRequestsScreen screen, float width = WideEnough)
     {
         _now = screen.AsOf;
+        _cards = screen.OpenCards;
         var groups = Visible(screen.Row);
         _rows = [.. groups.Where(g => !IsFolded(g.Repo)).SelectMany(g => g.PullRequests)];
         if (_rows.Count == 0)
@@ -384,8 +472,17 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             items.Add(CardsView<TSurface>.HeaderPill(FilterName(filter), FilterAction(filter), () => Filter = chosen, Filter == filter ? lit : plain, NightOrNull?.Bright));
         }
         items.Add(Layout.Builder.TextInput(Search, TextSize, NightOrNull is { } n ? FlightsView<TSurface>.NightInput(n) : null).WFixed(SearchWidth).HFixed(AboutCard.HeaderButton));
-        items.Add(Layout.Builder.Spacer().WStar());
-        items.Add(Layout.Builder.Text(shown == total ? "" : $"showing {shown} of {total}", 12f, BodyText, TextAlign.Far).WAuto());
+        // What the node refused of the last button pressed on a row, in its words, where the count of the list is: a place that is
+        // always there, so a refusal moves nothing. Cut to the room it has with an ellipsis, whole on hover.
+        if (Refusal() is { } refused)
+        {
+            items.Add(Layout.Builder.Text(refused, 12f, P.Held, TextAlign.Far).WithTooltip(refused).WStar());
+        }
+        else
+        {
+            items.Add(Layout.Builder.Spacer().WStar());
+            items.Add(Layout.Builder.Text(shown == total ? "" : $"showing {shown} of {total}", 12f, BodyText, TextAlign.Far).WAuto());
+        }
         return Layout.Builder.HStack([.. items]).WithGap(8f).RowH(ToolbarHeight);
     }
 
@@ -472,10 +569,55 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
                 columns.Add((ListColumn.Fixed(header, columnWidth), cell));
             }
         }
-        // The row's actions go here; empty until the PR's actions land, and untitled.
-        columns.Add((ListColumn.Fixed("", ActionsWidth), _ => Layout.Builder.Spacer()));
+        // The row's actions go here, untitled: the buttons its state offers, in slots that hold their width when it offers fewer.
+        columns.Add((ListColumn.Fixed("", ActionsWidth), ActionsCell));
         return columns;
     }
+
+    // The row's buttons in three slots (the card's Merge or Go around, Review, Open) of fixed widths, each as tall as a chip and in
+    // the row's middle; a slot the state does not offer stays empty, so the buttons left do not shift and the columns line up.
+    private Layout.Node ActionsCell(PullRequestRow pr)
+    {
+        var actions = ActionsOf(pr);
+        Layout.Node Slot(float width, params PullRequestActionKind[] kinds) =>
+            actions.FirstOrDefault(a => kinds.Contains(a.Kind)) is { } action ? ActionButton(pr, action, width) : Layout.Builder.Spacer().WFixed(width);
+        var slots = Layout.Builder.HStack(
+                Slot(CardSlot, PullRequestActionKind.Merge, PullRequestActionKind.GoAround),
+                Slot(ReviewSlot, PullRequestActionKind.Review),
+                Slot(OpenSlot, PullRequestActionKind.Open))
+            .WithGap(SlotGap);
+        return Middle(slots);
+    }
+
+    // A button of a row: a word on a pill the slot's width and a chip's height; Merge is green (amber while its checks run, as the
+    // card's is) and Go around red, but the word says it first. Night is its dim red on black with the words only.
+    private Layout.Node ActionButton(PullRequestRow pr, PullRequestAction action, float width)
+    {
+        var night = NightOrNull;
+        var tint = night is null ? action.Kind switch
+        {
+            PullRequestActionKind.Merge => CardsView<TSurface>.StatusTint(action.Status ?? ChoiceStatus.Passing),
+            PullRequestActionKind.GoAround => CardsView<TSurface>.StatusTint(ChoiceStatus.Failing),
+            _ => null,
+        } : null;
+        var bg = tint?.Bg ?? P.Button;
+        var hover = tint?.Hover ?? P.ButtonHover;
+        return Layout.Builder.Text(action.Label, ChipSize, P.Bright, TextAlign.Center, TextAlign.Center)
+            .Bg(bg)
+            .BgHover(hover)
+            .Follows(new HitResult.ButtonHit($"pr:{pr.Url}:{ActionId(action.Kind)}"), _ => Press(pr, action))
+            .WithTooltip(action.Tooltip)
+            .WFixed(width)
+            .HStar();
+    }
+
+    private static string ActionId(PullRequestActionKind kind) => kind switch
+    {
+        PullRequestActionKind.Merge => "merge",
+        PullRequestActionKind.GoAround => "go-around",
+        PullRequestActionKind.Review => "start-review",
+        _ => "open",
+    };
 
     // A repo's header: its fold mark, its name as a link to the repo, and how many PRs it lists. A click anywhere on it folds it.
     private Layout.Node GroupRow(PullRequestGroup group)

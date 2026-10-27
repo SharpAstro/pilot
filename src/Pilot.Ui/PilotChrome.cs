@@ -117,6 +117,9 @@ internal sealed class PilotChrome<TSurface>
         // A flight page's Merge is its card's own choice, run as the panel runs it.
         Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
         Flights.CardWorking = Cards.WorkingOn;
+        // So is a PR row's Merge or Go around: the same card button, so the node is told what the card's button tells it.
+        PullRequests.OnAnswer = (card, number) => Cards.OnAnswer?.Invoke(card, number);
+        PullRequests.RefusedOf = Cards.RefusedOn;
         Home = new HomeView<TSurface>(renderer);
         sessions.ShareWith(Flights, Repos, PullRequests, Jobs, Fleet, Settings, Cards, Chat);
         // The panel's watchtower foot is the way into the chat.
@@ -795,7 +798,8 @@ internal sealed class PilotChrome<TSurface>
                     Repos.Render(repos ?? new ReposScreen([], screen.Source, screen.AsOf), rect);
                     break;
                 case PageKey when Page == PilotPage.PullRequests:
-                    PullRequests.Render(pullRequests ?? new PullRequestsScreen(null, screen.Source, screen.AsOf), rect);
+                    // The open cards go with it: a row's Merge and Go around are its flight's card's own choices.
+                    PullRequests.Render((pullRequests ?? new PullRequestsScreen(null, screen.Source, screen.AsOf)) with { OpenCards = cards?.Open ?? [] }, rect);
                     break;
                 case PageKey when Page == PilotPage.Flights:
                     Flights.Render(flights ?? new FlightsScreen([], screen.Source, screen.AsOf), rect);

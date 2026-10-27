@@ -179,7 +179,7 @@ async Task CardAsync(string verb, CardRow card, string[] cardArgs)
         Redraw();
         return;
     }
-    var envelope = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.CardTarget(card.Id), Args = cardArgs, Who = Who }, stop.Token);
+    var envelope = await to.SendAsync(DashboardCommands.CardRequest(verb, card, cardArgs, Who), stop.Token);
     clients.NoteRefusal(cards.NodeOf(card), envelope);
     flights.Say(envelope.Success ? $"{verb} {card.Id}: done" : $"{verb} {card.Id}: {envelope.Response?.Error ?? envelope.Error}");
     Redraw();

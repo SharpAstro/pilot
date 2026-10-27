@@ -90,11 +90,11 @@ public sealed class PullRequestsPageTests
         ClickAt(arranged, bounds.X + bounds.Width / 2f, bounds.Y + bounds.Height / 2f);
     }
 
-    // The point in a PR's row clear of every link and chip: in the actions column at the right.
+    // The point in a PR's row clear of every link, chip and button: at its left edge, on the stripe.
     private static (float X, float Y) RowPoint(ImmutableArray<Layout.ArrangedNode<float>> arranged, int index)
     {
         var row = arranged.First(a => a.Node.Hit is HitResult.ListItemHit h && h.Index == index).Bounds;
-        return (row.X + row.Width - 24f, row.Y + row.Height / 2f);
+        return (row.X + 2f, row.Y + row.Height / 2f);
     }
 
     private static string Dump(ImmutableArray<Layout.ArrangedNode<float>> arranged) =>
@@ -394,9 +394,9 @@ public sealed class PullRequestsPageTests
     [Fact]
     public void ANarrowWindowDropsTheOptionalColumnsAndKeepsTheChipTheTitleAndTheActionsColumn()
     {
-        using var renderer = new RgbaImageRenderer(800, 900);
+        using var renderer = new RgbaImageRenderer(900, 900);
         var (_, page) = Chrome(renderer);
-        var arranged = Arrange(renderer, page, Screen(), 800f);
+        var arranged = Arrange(renderer, page, Screen(), 900f);
         var text = Dump(arranged);
 
         text.ShouldContain("Ready");
@@ -415,7 +415,7 @@ public sealed class PullRequestsPageTests
         Dump(wide).ShouldContain("dependabot[bot]");
         foreach (var node in arranged.Where(a => a.Bounds.Width > 0f))
         {
-            (node.Bounds.X + node.Bounds.Width).ShouldBeLessThanOrEqualTo(800.5f);
+            (node.Bounds.X + node.Bounds.Width).ShouldBeLessThanOrEqualTo(900.5f);
         }
     }
 

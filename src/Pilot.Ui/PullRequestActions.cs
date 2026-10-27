@@ -1,0 +1,79 @@
+using Pilot.Contracts;
+
+namespace Pilot.Ui;
+
+/// <summary>The buttons a PR's row can offer, in the order of its slots.</summary>
+internal enum PullRequestActionKind
+{
+    /// <summary>The flight's own PR-ready card's Merge: arms on pending checks, enqueues on a queue repo.</summary>
+    Merge,
+
+    /// <summary>The flight's card's Go around, offered when its PR conflicts and the node has asked the person.</summary>
+    GoAround,
+
+    /// <summary><c>pilot review pr</c>: a fresh reviewer on a PR pilot has not reviewed.</summary>
+    Review,
+
+    /// <summary>The PR in the browser; on every row.</summary>
+    Open,
+}
+
+/// <summary>One button of a row: what it says, why, and the card choice it presses when it is a card's.</summary>
+/// <param name="Card">The flight's open card whose choice <see cref="Choice"/> this presses (Merge, Go around); null for Review and Open.</param>
+/// <param name="Choice">The 1-based number of that choice on the card, as the card's own button sends it.</param>
+/// <param name="Status">The choice's <see cref="ChoiceStatus"/>: what a Merge's checks say.</param>
+internal sealed record PullRequestAction(PullRequestActionKind Kind, string Label, string Tooltip, CardRow? Card = null, int Choice = 0, string? Status = null);
+
+/// <summary>
+/// Which buttons a PR's row offers, by its state. Merge and Go around are the flight's card's own choices (the node raises the
+/// card when the PR is ready, or when it conflicts and the node has no rebase that resolves it), so they go through the
+/// card's own path and do what its button does; a PR with no such card has no such button. Review is
+/// <c>pilot review pr</c>; Open is on every row.
+/// </summary>
+internal static class PullRequestActions
+{
+    /// <summary>The actions <paramref name="pr"/> offers given the open <paramref name="cards"/>, in the order of their slots.</summary>
+    public static IReadOnlyList<PullRequestAction> Offered(PullRequestRow pr, IReadOnlyList<CardRow> cards)
+    {
+        var offered = new List<PullRequestAction>();
+        var name = $"{pr.Repo}#{pr.Number}";
+        if (pr.Flight is { } code)
+        {
+            if (pr.Kind is PullRequestKind.Ready or PullRequestKind.ChecksRunning && Choice(cards, code, Verbs.Merge) is { } merge)
+            {
+                var choice = merge.Card.Choices[merge.Number - 1];
+                var pending = pr.Kind == PullRequestKind.ChecksRunning;
+                offered.Add(new(PullRequestActionKind.Merge, "Merge",
+                    pending
+                        ? $"Merge {name} as {code}'s card does: its checks are still running, so the node arms the merge and lands it when they pass"
+                        : $"Merge {name} as {code}'s card does: the node merges it, or enqueues it on a repo with a merge queue",
+                    merge.Card, merge.Number, pending ? ChoiceStatus.Pending : choice.Status));
+            }
+            if (pr.Kind == PullRequestKind.Conflicts && Choice(cards, code, Verbs.GoAround) is { } around)
+            {
+                offered.Add(new(PullRequestActionKind.GoAround, "Go around",
+                    $"Go around as {code}'s card does: a fresh worker flies the leg again to resolve {name}'s conflicts", around.Card, around.Number));
+            }
+        }
+        if (pr.Review is null)
+        {
+            offered.Add(new(PullRequestActionKind.Review, "Review", $"Start pilot's reviewer on {name} (pilot review pr): its verdict comes back as a card"));
+        }
+        offered.Add(new(PullRequestActionKind.Open, "Open" + Followable.Away, $"Open {name} on GitHub"));
+        return offered;
+    }
+
+    // The flight's open card with a choice of this verb, and the choice's number as the card's own button sends it.
+    private static (CardRow Card, int Number)? Choice(IReadOnlyList<CardRow> cards, string code, string verb)
+    {
+        foreach (var card in cards)
+        {
+            if (card.State == CardState.Open && (card.Subject == Verbs.FlightTarget(code) || card.Subject.StartsWith(Verbs.FlightTarget(code) + "/", StringComparison.Ordinal))
+                && Array.FindIndex(card.Choices, c => c.Verb == verb) is >= 0 and var index)
+            {
+                return (card, index + 1);
+            }
+        }
+        return null;
+    }
+}

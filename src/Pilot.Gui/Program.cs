@@ -357,7 +357,7 @@ if (feed is not null && client is not null && clients is not null)
             loop.RequestRedraw();
             return;
         }
-        var result = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.CardTarget(card.Id), Args = args, Who = GuiSay.Who }, cts.Token);
+        var result = await to.SendAsync(DashboardCommands.CardRequest(verb, card, args, GuiSay.Who), cts.Token);
         clients.NoteRefusal(chrome.Cards.NodeOf(card), result);
         // A refusal is said on the card the button is on, never only here: a Merge pressed again and again on a PR GitHub
         // would not merge showed nothing (SE1, 2026-10-24).
@@ -452,6 +452,17 @@ if (feed is not null && client is not null && clients is not null)
         }
     };
     chrome.PullRequests.Changed = loop.RequestRedraw;
+    // A row's Review is `pilot review pr` on this window's node; Merge and Go around are the flight's card's own buttons (chrome wires them).
+    chrome.PullRequests.OnReview = async (pr, ct) =>
+    {
+        var envelope = await client.SendAsync(DashboardCommands.ReviewPrRequest(pr, GuiSay.Who), ct);
+        var refused = !envelope.Success ? envelope.Error : envelope.Response is { Ok: false } answer ? answer.Error : null;
+        Console.WriteLine($"pilot-gui: review {pr.Repo}#{pr.Number}: {refused ?? "started"}");
+        if (refused is not null)
+        {
+            throw new InvalidOperationException(refused);
+        }
+    };
     chrome.Repos.OnNewFlight = line =>
     {
         chrome.Show(PilotPage.Flights);
