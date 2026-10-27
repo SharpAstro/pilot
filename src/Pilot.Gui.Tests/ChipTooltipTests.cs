@@ -121,6 +121,8 @@ public sealed class ChipTooltipTests
         // The whole brief is drawn, the long title wrapped inside the window rather than cut at its edge.
         var tree = TooltipLayer<RgbaImage>.Tree(request);
         tree.ShouldNotBeNull();
-        TooltipLayer<RgbaImage>.Lines(request.Text).ShouldAllBe(l => l.Length <= TooltipLayer<RgbaImage>.LineChars);
+        // Measured by characters, as a test without a font has it: 58 fill a line.
+        float ByChars(string text) => text.Length * (TooltipLayer<RgbaImage>.MaxWidth / 58f);
+        TooltipLayer<RgbaImage>.Lines(request.Text, ByChars).ShouldAllBe(l => ByChars(l) <= TooltipLayer<RgbaImage>.MaxWidth);
     }
 }
