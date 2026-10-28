@@ -466,6 +466,10 @@ internal sealed class PilotChrome<TSurface>
             Switch(PilotPage.Flights, show);
             Flights.OpenDetail(flight.Code);
         });
+        // A failed move's Retry move is the Flights page's action, run by the same handler and said in the same line, whichever page it is pressed on.
+        Home.OnAction = action => Flights.OnAction?.Invoke(action);
+        Home.CanSteer = node => Flights.CanCommand && (Flights.CanSteer?.Invoke(node) ?? true);
+        Home.Said = () => Flights.Said;
         Home.OnSession = line => Navigate(() =>
         {
             Switch(PilotPage.Sessions, show);

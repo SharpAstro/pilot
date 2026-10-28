@@ -34,7 +34,13 @@ internal sealed record FlightsPalette(
     RGBAColor32 Failed,
     RGBAColor32 MenuBg,
     RGBAColor32 GhostBg,
-    RGBAColor32 LinkedBg)
+    RGBAColor32 LinkedBg,
+    RGBAColor32 FailedBg,
+    RGBAColor32 FailedFocusBg,
+    RGBAColor32 FailedText,
+    RGBAColor32 RetryBg,
+    RGBAColor32 RetryHover,
+    RGBAColor32 RetryText)
 {
     public static FlightsPalette Standard { get; } = new(
         Ground: new(0x12, 0x12, 0x18, 0xff),
@@ -55,7 +61,16 @@ internal sealed record FlightsPalette(
         Failed: new(0xe0, 0x5a, 0x5a, 0xff),
         MenuBg: new(0x1f, 0x21, 0x2b, 0xff),
         GhostBg: new(0x14, 0x15, 0x1c, 0xff),
-        LinkedBg: new(0x20, 0x27, 0x36, 0xff));
+        LinkedBg: new(0x20, 0x27, 0x36, 0xff),
+        // A flight whose move failed: a red ground for its row and band, words on it (Bright, Body and FailedText are 6:1 or
+        // more on it), and a light Retry button that stands out from the red (its edge is 11:1 against it, its words 13:1).
+        FailedBg: new(0x4a, 0x1a, 0x1e, 0xff),
+        // The same red with the row selected: FailedText is 4.9:1 on it, Body 6:1.
+        FailedFocusBg: new(0x66, 0x24, 0x2a, 0xff),
+        FailedText: new(0xff, 0x8a, 0x8a, 0xff),
+        RetryBg: new(0xf3, 0xd9, 0xd9, 0xff),
+        RetryHover: new(0xff, 0xff, 0xff, 0xff),
+        RetryText: new(0x12, 0x12, 0x18, 0xff));
 
     /// <summary>Dim reds on black and nothing else: no green or blue in any channel, so the eye stays dark-adapted.</summary>
     public static FlightsPalette Night { get; } = new(
@@ -77,5 +92,11 @@ internal sealed record FlightsPalette(
         Failed: new(0xf0, 0x00, 0x00, 0xff),
         MenuBg: new(0x18, 0x00, 0x00, 0xff),
         GhostBg: new(0x08, 0x00, 0x00, 0xff),
-        LinkedBg: new(0x1e, 0x00, 0x00, 0xff));
+        LinkedBg: new(0x1e, 0x00, 0x00, 0xff),
+        FailedBg: new(0x20, 0x00, 0x00, 0xff),
+        FailedFocusBg: new(0x30, 0x00, 0x00, 0xff),
+        FailedText: new(0xff, 0x00, 0x00, 0xff),
+        RetryBg: new(0xf0, 0x00, 0x00, 0xff),
+        RetryHover: new(0xff, 0x00, 0x00, 0xff),
+        RetryText: new(0x00, 0x00, 0x00, 0xff));
 }

@@ -65,13 +65,16 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
             var forYou = Cards.Open.Count(c => c.Bin == CardBin.ForYou);
             var held = Flights.Lines.Count(l => l.Stale is null && l.Row.State == FlightState.Held);
             var cleared = Cards.Open.Count(c => c.Choices.Any(ch => ch.Status == ChoiceStatus.Passing));
-            return rings + forYou + held + cleared == 0
+            // A move that failed leaves the flight here until the person retries it (or the node does): it waits on them.
+            var moves = Flights.Lines.Count(l => l.MoveMark is not null);
+            return rings + forYou + held + cleared + moves == 0
                 ? "Nothing waits on you"
                 : Join([
                     rings > 0 ? $"{rings} ringing" : null,
                     forYou > 0 ? $"{forYou} for you" : null,
                     held > 0 ? Count(held, "flight held", "flights held") : null,
                     cleared > 0 ? Count(cleared, "PR cleared to land", "PRs cleared to land") : null,
+                    moves > 0 ? Count(moves, "move failed", "moves failed") : null,
                 ]);
         }
     }
@@ -87,7 +90,10 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
             .Select(l => l.StaleMark is { } stale
                 // Its node is in the mark, so the node's name is not said twice; the chip is the last known row, dimmed.
                 ? new HomeChip(HomeChipKind.Flight, $"{l.Code} · {stale}", "stale") { Flight = l }
-                : new HomeChip(HomeChipKind.Flight, Mark(l.Node, $"{l.Code} · {l.State}"), l.State) { Flight = l })];
+                // A failed move's chip says so in its words, and is red; its reason and Retry move are in the band under the chips.
+                : l.MoveMark is { } failed
+                    ? new HomeChip(HomeChipKind.Flight, Mark(l.Node, $"{l.Code} · {failed}"), "failed") { Flight = l }
+                    : new HomeChip(HomeChipKind.Flight, Mark(l.Node, $"{l.Code} · {l.State}"), l.State) { Flight = l })];
 
     /// <summary>The live sessions.</summary>
     public IReadOnlyList<HomeChip> SessionChips =>
@@ -135,14 +141,16 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
     /// <summary>The page as a dump writes it, for a capture and a test: a line for each shown node's machine, and one under it for each process.</summary>
     public string ToDump() =>
         string.Join("\n",
-            new[]
-            {
+            ((IEnumerable<string>)
+            [
                 $"flying: {Flying}",
                 $"waiting: {Waiting}",
                 $"flights: {string.Join(" | ", FlightChips.Select(c => c.Label))}",
+                .. Flights.Lines.Where(l => l.MoveFailure is not null).Select(l => $"move failed: {l.Code} | {l.MoveFailure}"),
+                .. Flights.Lines.Where(l => l.Provenance is not null).Select(l => $"{l.Code}: {l.Provenance}"),
                 $"sessions: {string.Join(" | ", SessionChips.Select(c => c.Label))}",
                 $"jobs: {string.Join(" | ", JobChips.Select(c => c.Label))}",
-            }.Concat(MachineBlocks.SelectMany(line => line.Row.Processes
+            ]).Concat(MachineBlocks.SelectMany(line => line.Row.Processes
                 .Select(p => ProcessDump(line, p))
                 .Prepend($"machine{(line.Node is { } node ? $" {node.Name}" : "")}: {line.Row.Line()}"))));
 }
@@ -169,6 +177,9 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private static readonly (RGBAColor32 Bg, RGBAColor32 Hover) Stale = (new RGBAColor32(0x26, 0x28, 0x32, 0xff), new RGBAColor32(0x31, 0x34, 0x40, 0xff));
     private static readonly RGBAColor32 StaleText = new(0xb4, 0xb7, 0xc4, 0xff);
 
+    // A failed move's chip: the red of a failed check on a card's button, the one red fill the pilot's buttons use.
+    private static readonly (RGBAColor32 Bg, RGBAColor32 Hover) FailedChip = CardsView<TSurface>.StatusTint(ChoiceStatus.Failing)!.Value;
+
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
 
     /// <summary>Whether this window's node is in maintenance: the page says so, under the two verdicts. Set by the host from the node's <see cref="NodeInfo.Maintenance"/>.</summary>
@@ -185,6 +196,15 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     /// <summary>Opens a flight's page on Flights.</summary>
     public Action<FlightLine>? OnFlight { get; set; }
+
+    /// <summary>Runs a flight's verb on its node: the failed move's Retry move. Null (a snapshot has no node) draws no button.</summary>
+    public Action<FlightAction>? OnAction { get; set; }
+
+    /// <summary>Whether this user may command a node's flights (its own, or one it holds a grant for); null: every row. The Flights page's, set by the chrome.</summary>
+    public Func<NodeMark?, bool>? CanSteer { get; set; }
+
+    /// <summary>What the last action said, which the failed move's band shows under it (the Flights page keeps it); null while there is none.</summary>
+    public Func<string?>? Said { get; set; }
 
     /// <summary>Opens a session's transcript on Sessions.</summary>
     public Action<SessionLine>? OnSession { get; set; }
@@ -219,6 +239,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             Layout.Builder.Text(screen.Waiting, 16f, screen.Waiting == "Nothing waits on you" ? Dim : Ring).RowH(28f),
         };
         Section(blocks, "Flights", screen.FlightChips, "no flight is flying or held");
+        MoveFailures(blocks, screen);
         Section(blocks, "Sessions", screen.SessionChips, "no live session");
         Section(blocks, "Background tasks", screen.JobChips, "no job running or queued");
         Machines(blocks, screen);
@@ -250,6 +271,28 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         if (chips.Count > shown.Count)
         {
             blocks.Add(Layout.Builder.Text($"and {chips.Count - shown.Count} more on its page", 12f, Dim).RowH(22f));
+        }
+    }
+
+    // The flights whose move failed, each as the red band the Flights page shows (one component): its reason wrapped, and Retry move.
+    private void MoveFailures(List<Layout.Node> blocks, HomeScreen screen)
+    {
+        var bands = MoveFailureBand.All<TSurface>(screen.Flights.Lines, FlightsPalette.Standard,
+            line => OnAction is { } act && CanSteer?.Invoke(line.Node) != false ? act : null, "home:").ToList();
+        if (bands.Count == 0)
+        {
+            return;
+        }
+        blocks.Add(Layout.Builder.Spacer().RowH(8f));
+        foreach (var band in bands)
+        {
+            blocks.Add(band);
+            blocks.Add(Layout.Builder.Spacer().RowH(8f));
+        }
+        // Wrapped, never cut: a refused retry's reason is what the person came to read.
+        if (Said?.Invoke() is { Length: > 0 } said)
+        {
+            blocks.Add(WrappedProse.Of(said, 12f, Dim));
         }
     }
 
@@ -356,9 +399,16 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     private Layout.Node Chip(HomeChip chip)
     {
-        var tint = chip.Tone switch { "held" or "queued" => Amber, "stale" => Stale, _ => Green };
+        var tint = chip.Tone switch { "held" or "queued" => Amber, "stale" => Stale, "failed" => FailedChip, _ => Green };
         return chip.Kind switch
         {
+            // A failed move's chip is red, its words on it Bright (8:1); its reason is the band under the chips, and its tooltip.
+            HomeChipKind.Flight when chip.Tone == "failed" =>
+                CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint)
+                    .WithTooltip(chip.Flight.MoveFailure ?? chip.Label),
+            HomeChipKind.Flight when chip.Flight!.Provenance is { } provenance =>
+                CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight.Code}", () => OnFlight?.Invoke(chip.Flight), tint)
+                    .WithTooltip(provenance),
             // The chip of a stale flight still opens its page (the last known row); its words, not its tint, say why it is dim.
             HomeChipKind.Flight when chip.Tone == "stale" =>
                 CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint, StaleText)
