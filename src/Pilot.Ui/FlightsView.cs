@@ -299,6 +299,11 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     // The panel without its buttons: what it was (168) less their row, and a row more while a why is asked under them.
     private const float DetailColumnsHeight = 124f;
+    // The panel's least height: its columns, its padding and three lines of buttons, which is as many as a narrow window wraps them
+    // to. Below it the panel is not shown.
+    private const float DetailHeight = DetailColumnsHeight + 16f + 3 * 28f + 2 * 6f;
+    // What the table keeps before the panel has any: the header row and a few flights.
+    private const float BodyMinHeight = 140f;
     private const float DetailColumn = 380f;
     // Branch and Sessions are the columns a narrow window drops, each as it can no longer have its whole width (Optional);
     // the engine decides, from the room it has.
@@ -530,9 +535,18 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>The selected flight's index, or -1.</summary>
     public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
+    /// <summary>
+    /// The width, in design units, the page has to draw in: <see cref="Render"/> sets it from its bounds, and a test that arranges the
+    /// tree itself sets it from the room it gives it. Null (not known) draws the cards at their own width, as pilot-tui does. The
+    /// canvas is wider than a narrow page and cannot scroll across, so a page narrower than it shows the grid, and a card is never
+    /// wider than the page.
+    /// </summary>
+    internal float? PageWidth { get; set; }
+
     public void Render(FlightsScreen screen, RectF32 bounds)
     {
         BeginFrame();
+        PageWidth = Scale.ToDesignX(bounds.Width);
         RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
         {
             DrawCanvas(fill, rect);
@@ -709,10 +723,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         var open = OpenLine(whole ?? screen);
         // The wizard, or an open flight's page, takes the flights' place; the header stays.
         var body = Wizard.IsOpen ? Wizard.Tree() : open is not null ? DetailPage(FlightDetail.From(open, screen.AsOf)) : Main(screen);
-        var parts = new List<Layout.Node> { Header(screen), body.HStar() };
+        var parts = new List<Layout.Node> { Header(screen), body.HStar(1f, BodyMinHeight) };
         if (selected is not null && !Wizard.IsOpen && open is null)
         {
-            parts.Add(Details(selected));
+            // Its height is its content's, and no less than it needs: a window with less to give it (a header that wrapped onto many
+            // lines) shows the table alone, which is what the page is for, rather than a panel past the window's foot.
+            parts.Add(Details(selected).CollapseBelow(DetailHeight));
         }
         if (CanCommand && Said is { Length: > 0 } said)
         {
@@ -830,7 +846,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                 .. why])
             .Pad(Gutter, 8f)
             .Bg(PanelBg)
-            .WStar().HAuto();
+            .WStar().HStarUpToContent();
     }
 
     // The marks' colour: amber for changes, a disagreement or a write still to do, green for a pass, dim otherwise.
@@ -906,11 +922,11 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             return Layout.Builder.Text(screen.Hidden is null ? "No flights yet: New flight, above, makes one" : "No flight in play: Everything, above, shows the landed", 16f, Dim, TextAlign.Center).Stretch();
         }
-        if (CanvasShown)
+        if (CanvasShown && !CanvasTooWide(screen))
         {
             return CanvasBody(screen);
         }
-        if (GridShown)
+        if (GridShown || CanvasShown)
         {
             return GridBody(screen);
         }

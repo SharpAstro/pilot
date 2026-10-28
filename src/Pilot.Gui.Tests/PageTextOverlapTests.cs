@@ -129,6 +129,8 @@ public sealed class PageTextOverlapTests
         var panel = cards.HasAny ? CardsView<RgbaImage>.WidthIn(width / dpi) * dpi : 0f;
         var pageWidth = width - RailWidth * dpi - panel;
         Rect<float> PageRect() => new(0, 0, pageWidth, Height);
+        // What Render hands the Flights page from its bounds: the room it has, in design units.
+        chrome.Flights.PageWidth = pageWidth / dpi;
 
         Layout.Node tree;
         Rect<float> rect = PageRect();
@@ -204,7 +206,7 @@ public sealed class PageTextOverlapTests
         {
             foreach (var page in Pages.Where(p => p != "cards panel"))
             {
-                using var prepared = await Prepare(page, "long", width, dpi);
+                using var prepared = await Prepare(page, Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_STATE") is { Length: > 0 } state ? state : "long", width, dpi);
                 var chrome = prepared.Chrome;
                 var data = prepared.Data;
                 chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, width, Height), data.Machines);

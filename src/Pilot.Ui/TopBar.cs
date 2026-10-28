@@ -67,9 +67,6 @@ internal static class TopBar
     /// <summary>The bar with its source line and no extra lines: what the transcript's overlay starts under.</summary>
     public const float Height = RowHeight + SourceHeight + 2 * PadY;
 
-    // One item of the bar, in a cell at least as tall as the bar's row: a counts line that wraps makes its own cell taller.
-    private static Layout.Node Cell(Layout.Node item) => Layout.Builder.HStack(item).WAuto().HAuto().HClamp(RowHeight);
-
     /// <summary>The bar as one tree, <paramref name="page"/> laid out among <paramref name="parts"/>.</summary>
     public static Layout.Node Build(PageHeader page, TopBarParts parts)
     {
@@ -98,7 +95,7 @@ internal static class TopBar
         // The bar flows: what does not fit beside the rest starts a line under it, each item in a cell of the bar's row height so
         // buttons and words of any size share one middle. A row of one HStack ran past a narrow page, drawing Autopilot and ? out
         // of it (PIL380).
-        var rows = new List<Layout.Node> { Layout.Builder.WrapH([.. items.Select(Cell)]).WithGap(12f).WStar().HAuto() };
+        var rows = new List<Layout.Node> { FlowRow.Of(RowHeight, 12f, items) };
         if (page.Source is { } source)
         {
             rows.Add(Layout.Builder.Text(source, 12f, palette.Dim).RowH(SourceHeight));
