@@ -171,6 +171,78 @@ public sealed record FlightRow
     }
 
     private readonly PackageWait[]? _packageWaits;
+
+    /// <summary>
+    /// Where the flight came from when another node handed it over (<c>receive-flight</c>, #376): which node, after which leg,
+    /// when. Null for a flight made on this node.
+    /// </summary>
+    public FlightMoved? MovedFrom { get; init; }
+
+    /// <summary>
+    /// Where the flight went when this node handed it to another (<c>move-flight</c>, #376): the node flies it now, and this one
+    /// does not. Such a flight is <see cref="FlightState.Landed"/> here, as a folded one is, with its plane gone and its code and
+    /// branch kept; every client says <see cref="FlightMovedTo.Text"/> in place of "landed". Null for a flight that stayed.
+    /// </summary>
+    public FlightMovedTo? MovedTo { get; init; }
+
+    /// <summary>
+    /// Why the last attempt to move the flight failed, as a person reads it (what happened, what to do); null when none failed or
+    /// the flight moved since. The flight stays here and no new leg starts while the node is in maintenance, until it is moved
+    /// again (the card's Retry move, <c>pilot flight move</c>).
+    /// </summary>
+    public string? MoveFailure { get; init; }
+
+    /// <summary>
+    /// Set while it is not known whether the other node took the flight: the hand-over was sent and its answer was slow, lost or only
+    /// "still running". The flight stays here but is flown by nobody (no leg, PR or review starts) until the node has asked that node and
+    /// it says it holds the flight (then it moved) or, past the settling time, says it does not (then <see cref="MoveFailure"/>). Null otherwise.
+    /// </summary>
+    public FlightMoveUnknown? MoveUnknown { get; init; }
+}
+
+/// <summary>A move whose outcome is not known yet (<see cref="FlightRow.MoveUnknown"/>).</summary>
+public sealed record FlightMoveUnknown
+{
+    /// <summary>The node the flight was sent to, by its machine prefix.</summary>
+    public required string To { get; init; }
+
+    /// <summary>The node's endpoint, which names it where its prefix is not known and tells which peer to ask.</summary>
+    public required string Endpoint { get; init; }
+
+    /// <summary>When the hand-over was sent; the node does not call the flight not taken before the settling time has passed since.</summary>
+    public required DateTimeOffset Since { get; init; }
+}
+
+/// <summary>Where a flight this node handed over went (<see cref="FlightRow.MovedTo"/>).</summary>
+public sealed record FlightMovedTo
+{
+    /// <summary>The node that took it, by its machine prefix (<c>DE1</c>).</summary>
+    public required string To { get; init; }
+
+    /// <summary>The last leg done on this node's plane, in the flight's order; null when none was done yet.</summary>
+    public string? AfterLeg { get; init; }
+
+    /// <summary>When the other node confirmed it had taken the flight.</summary>
+    public required DateTimeOffset At { get; init; }
+
+    /// <summary>How a client says it, in one place: <c>moved to DE1 after leg parser</c>.</summary>
+    public string Text => AfterLeg is { Length: > 0 } ? $"moved to {To} after leg {AfterLeg}" : $"moved to {To}";
+}
+
+/// <summary>Where a flight that moved between nodes came from (<see cref="FlightRow.MovedFrom"/>).</summary>
+public sealed record FlightMoved
+{
+    /// <summary>The node that handed it over, by its machine prefix (<c>SE1</c>).</summary>
+    public required string From { get; init; }
+
+    /// <summary>The last leg done on that node's plane, in the flight's order; null when none was done yet.</summary>
+    public string? AfterLeg { get; init; }
+
+    /// <summary>When this node took the flight over.</summary>
+    public required DateTimeOffset At { get; init; }
+
+    /// <summary>How a client says it, in one place: <c>moved from SE1 after leg parser</c>.</summary>
+    public string Text => AfterLeg is { Length: > 0 } ? $"moved from {From} after leg {AfterLeg}" : $"moved from {From}";
 }
 
 /// <summary>

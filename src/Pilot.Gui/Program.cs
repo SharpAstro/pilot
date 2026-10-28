@@ -24,6 +24,13 @@ void LogLine(string line)
         Console.Error.WriteLine(line);
     }
 }
+// What the window says (a press and its answer, a restart, its start and close): kept in gui.log, and on stdout too when it
+// was started from a terminal, so whoever started it sees it.
+void Note(string line)
+{
+    LogLine(line);
+    Console.WriteLine(line);
+}
 
 AppDomain.CurrentDomain.UnhandledException += (_, e) => LogLine($"pilot-gui: unhandled exception: {e.ExceptionObject}");
 
@@ -174,11 +181,11 @@ if (gate is null)
 {
     if (InstanceGate.TryHandOff(gateChannel, string.Empty, TimeSpan.FromSeconds(5)))
     {
-        Console.WriteLine("pilot-gui: pilot v2's window is already open; raised it instead of opening another.");
+        Note("pilot-gui: pilot v2's window is already open; raised it instead of opening another.");
         return 0;
     }
 
-    Console.WriteLine("pilot-gui: another pilot v2 window holds the gate but did not answer; opening one anyway.");
+    Note("pilot-gui: another pilot v2 window holds the gate but did not answer; opening one anyway.");
 }
 
 var Title = remoteEndpoint is null ? "pilot v2 · sessions" : $"pilot v2 · {remoteEndpoint}";
@@ -295,7 +302,7 @@ if (feed is not null && client is not null && clients is not null)
         loop.RequestRedraw();
         var result = await GuiSay.SendAsync(to, line.Row.Id, text, cts.Token, envelope => clients.NoteRefusal(line.Node, envelope));
         view.SayStatus = result;
-        Console.WriteLine($"pilot-gui: say to {line.Name}: {result}");
+        Note($"pilot-gui: say to {line.Name}: {result}");
         loop.RequestRedraw();
     };
     // "Say to all shown": each picked row through its own node's say, one line per session in the console.
@@ -306,7 +313,7 @@ if (feed is not null && client is not null && clients is not null)
             return false;
         }
         var (delivered, result) = await GuiSay.SayAsync(to, line.Row.Id, text, cts.Token, envelope => clients.NoteRefusal(line.Node, envelope));
-        Console.WriteLine($"pilot-gui: say to {line.Name}: {result}");
+        Note($"pilot-gui: say to {line.Name}: {result}");
         loop.RequestRedraw();
         return delivered;
     };
@@ -341,12 +348,36 @@ if (feed is not null && client is not null && clients is not null)
         loop.RequestRedraw();
     }, "the ? card's node");
     // The update light: this machine's node runs a newer pilot than this window, which it installed beside it. A window on
-    // another node (--node) is told nothing: that node's install is not this machine's.
+    // another node (--node) is told nothing: that node's install is not this machine's. Nor is a window run from anywhere but
+    // the node's own folder (a build in a plane): its restart starts that same build again, which offers the light again.
     if (remoteEndpoint is null)
     {
-        chrome.About.Newer = () => feed.NewerInstalled;
+        (int Pid, bool Beside) nodeFolder = (0, false);
+        string? lightSaid = null;
+        chrome.About.Newer = () =>
+        {
+            if (feed.Node is not { } node)
+            {
+                return null;
+            }
+            if (nodeFolder.Pid != node.ProcessId)
+            {
+                nodeFolder = (node.ProcessId, InstallFolder.RunsBeside(node.ProcessId));
+            }
+            var newer = feed.NewerInstalled;
+            // Said once for each release the node runs that is newer than this window, shown or not, in gui.log.
+            if (newer is not null && newer != lightSaid)
+            {
+                lightSaid = newer;
+                Note(nodeFolder.Beside
+                    ? $"pilot-gui: update light on: the node (pid {node.ProcessId}) runs pilot {newer}, this window {NodeFeed.ClientVersion} from {AppContext.BaseDirectory}"
+                    : $"pilot-gui: no update light: the node (pid {node.ProcessId}) runs pilot {newer}, but this window ({NodeFeed.ClientVersion}) runs from {AppContext.BaseDirectory}, not the node's folder, so a restart would not pick it up");
+            }
+            return nodeFolder.Beside ? newer : null;
+        };
         chrome.About.Restart = () =>
         {
+            Note($"pilot-gui: update light pressed: closing this window ({NodeFeed.ClientVersion}) to start {Environment.ProcessPath} again on pilot {feed.NewerInstalled}");
             restarting = true;
             // Cancelling runs the loop's own wind-down, off this thread: the window closes as it would, then starts again below.
             _ = cts.CancelAsync();
@@ -363,7 +394,7 @@ if (feed is not null && client is not null && clients is not null)
     view.OnAction = action => tracker.Run(async () =>
     {
         view.SayStatus = clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, GuiSay.Who, cts.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node);
-        Console.WriteLine($"pilot-gui: {view.SayStatus}");
+        Note($"pilot-gui: {view.SayStatus}");
         loop.RequestRedraw();
     }, "a Sessions action");
     // A card's button is a command on the node, as a click anywhere else is; the stream closes the card.
@@ -393,7 +424,7 @@ if (feed is not null && client is not null && clients is not null)
         if (clients.For(chrome.Cards.NodeOf(card)) is not { } to)
         {
             chrome.Cards.NoteRefused(card.Id, FleetClients.WatchOnly(chrome.Cards.NodeOf(card)));
-            Console.WriteLine($"pilot-gui: {verb} {card.Id}: {FleetClients.WatchOnly(chrome.Cards.NodeOf(card))}");
+            Note($"pilot-gui: {verb} {card.Id}: {FleetClients.WatchOnly(chrome.Cards.NodeOf(card))}");
             loop.RequestRedraw();
             return;
         }
@@ -403,7 +434,7 @@ if (feed is not null && client is not null && clients is not null)
         // would not merge showed nothing (SE1, 2026-10-24).
         var refused = !result.Success ? result.Error : result.Response is { Ok: false } answer ? answer.Error : null;
         chrome.Cards.NoteRefused(card.Id, refused);
-        Console.WriteLine($"pilot-gui: {verb} {card.Id} ({card.Title}): {refused ?? "done"}");
+        Note($"pilot-gui: {verb} {card.Id} ({card.Title}): {refused ?? "done"}");
         loop.RequestRedraw();
     }
     // Every task a click starts goes through the tracker, never `_ =`: it is drained at shutdown and a fault it did not
@@ -435,7 +466,7 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Chat.OnSend = async text =>
     {
         var refused = await ChatCommands.TellAsync(client, text, GuiSay.Who, cts.Token);
-        Console.WriteLine($"pilot-gui: tell watchtower: {refused ?? "told"}");
+        Note($"pilot-gui: tell watchtower: {refused ?? "told"}");
         return refused;
     };
     // The chat with another node's watchtower (a card raised there was chatted about): its feed is read through its own
@@ -450,7 +481,7 @@ if (feed is not null && client is not null && clients is not null)
             return FleetClients.WatchOnly(node);
         }
         var refused = await ChatCommands.TellAsync(to, text, GuiSay.Who, cts.Token);
-        Console.WriteLine($"pilot-gui: tell {node.Name}'s watchtower: {refused ?? "told"}");
+        Note($"pilot-gui: tell {node.Name}'s watchtower: {refused ?? "told"}");
         return refused;
     };
     // A card's Chat about this: the words go to the node the card was raised on, as its tell card/<id>.
@@ -461,13 +492,13 @@ if (feed is not null && client is not null && clients is not null)
             return FleetClients.WatchOnly(node);
         }
         var refused = await ChatCommands.TellAboutCardAsync(to, card.Id, words, GuiSay.Who, cts.Token);
-        Console.WriteLine($"pilot-gui: tell card {card.Id}: {refused ?? "told"}");
+        Note($"pilot-gui: tell card {card.Id}: {refused ?? "told"}");
         return refused;
     };
     chrome.Chat.OnRestart = async () =>
     {
         var refused = await ChatCommands.RestartWatchtowerAsync(client, GuiSay.Who, cts.Token);
-        Console.WriteLine($"pilot-gui: restart watchtower: {refused ?? "restarted"}");
+        Note($"pilot-gui: restart watchtower: {refused ?? "restarted"}");
         return refused;
     };
     chrome.Chat.Track = (run, what) => tracker.Run(run, what);
@@ -503,7 +534,7 @@ if (feed is not null && client is not null && clients is not null)
     {
         var said = await NewFlights.CreateAsync(client, picks, GuiSay.Who, cts.Token);
         chrome.Flights.Say(said);
-        Console.WriteLine($"pilot-gui: new flight: {said}");
+        Note($"pilot-gui: new flight: {said}");
         return said;
     };
     wizard.CreateIssue = (path, title, body) => RepoActions.CreateIssueAsync(client, path, title, body, GuiSay.Who, cts.Token);
@@ -532,7 +563,7 @@ if (feed is not null && client is not null && clients is not null)
     {
         var envelope = await client.SendAsync(DashboardCommands.ReviewPrRequest(pr, GuiSay.Who), ct);
         var refused = !envelope.Success ? envelope.Error : envelope.Response is { Ok: false } answer ? answer.Error : null;
-        Console.WriteLine($"pilot-gui: review {pr.Repo}#{pr.Number}: {refused ?? "started"}");
+        Note($"pilot-gui: review {pr.Repo}#{pr.Number}: {refused ?? "started"}");
         if (refused is not null)
         {
             throw new InvalidOperationException(refused);
@@ -547,7 +578,7 @@ if (feed is not null && client is not null && clients is not null)
     {
         var said = clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, GuiSay.Who, cts.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node);
         chrome.Flights.Say(said);
-        Console.WriteLine($"pilot-gui: {said}");
+        Note($"pilot-gui: {said}");
         loop.RequestRedraw();
     }, "a Flights action");
     chrome.Flights.OnOpen = location => OpenAway(location, () => chrome.Flights.Say($"could not open {location}"));
@@ -567,7 +598,7 @@ if (feed is not null && client is not null && clients is not null)
             var envelope = await to.SendAsync(ask.Request(GuiSay.Who), cts.Token);
             clients.NoteRefusal(ask.Node, envelope);
             var refused = !envelope.Success ? envelope.Error : envelope.Response is { Ok: false } answer ? answer.Error : null;
-            Console.WriteLine($"pilot-gui: summarise {ask.Scope} on {ask.Node.Name}: {refused ?? "done"}");
+            Note($"pilot-gui: summarise {ask.Scope} on {ask.Node.Name}: {refused ?? "done"}");
             return refused;
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or System.Text.Json.JsonException)
@@ -592,12 +623,12 @@ if (feed is not null && client is not null && clients is not null)
         var what = force ? "force cancel" : "cancel";
         if (clients.For(chrome.Jobs.FollowingNode) is not { } to)
         {
-            Console.WriteLine($"pilot-gui: {what} {job.Id}: {FleetClients.WatchOnly(chrome.Jobs.FollowingNode)}");
+            Note($"pilot-gui: {what} {job.Id}: {FleetClients.WatchOnly(chrome.Jobs.FollowingNode)}");
             return;
         }
         var result = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = force ? [Verbs.ForceArg] : [], Who = GuiSay.Who }, cts.Token);
         clients.NoteRefusal(chrome.Jobs.FollowingNode, result);
-        Console.WriteLine($"pilot-gui: {what} {job.Id}: {(result.Success && result.Response is { Ok: true } ? "done" : result.Response?.Error ?? result.Error)}");
+        Note($"pilot-gui: {what} {job.Id}: {(result.Success && result.Response is { Ok: true } ? "done" : result.Response?.Error ?? result.Error)}");
         loop.RequestRedraw();
     }, $"{(force ? "force cancel" : "cancel")} {job.Id}");
     chrome.Jobs.OnCancel = CancelJob(force: false);
@@ -608,12 +639,12 @@ if (feed is not null && client is not null && clients is not null)
     {
         if (clients.For(chrome.Jobs.FollowingNode) is not { } to)
         {
-            Console.WriteLine($"pilot-gui: {word} {job.Id}: {FleetClients.WatchOnly(chrome.Jobs.FollowingNode)}");
+            Note($"pilot-gui: {word} {job.Id}: {FleetClients.WatchOnly(chrome.Jobs.FollowingNode)}");
             return;
         }
         var result = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.JobTarget(job.Id), Args = [], Who = GuiSay.Who }, cts.Token);
         clients.NoteRefusal(chrome.Jobs.FollowingNode, result);
-        Console.WriteLine($"pilot-gui: {word} {job.Id}: {(result.Success && result.Response is { Ok: true } ? "done" : result.Response?.Error ?? result.Error)}");
+        Note($"pilot-gui: {word} {job.Id}: {(result.Success && result.Response is { Ok: true } ? "done" : result.Response?.Error ?? result.Error)}");
         loop.RequestRedraw();
     }, $"{word} {job.Id}");
     chrome.Jobs.OnOpen = location => OpenAway(location);
@@ -636,7 +667,7 @@ if (feed is not null && client is not null && clients is not null)
         chrome.Flights.Lan?.Answered(where);
         chrome.Fleet.Said = said.ReplaceLineEndings(" ").Trim();
         view.SayStatus = chrome.Fleet.Said;
-        Console.WriteLine($"pilot-gui: connect {where}: {chrome.Fleet.Said}");
+        Note($"pilot-gui: connect {where}: {chrome.Fleet.Said}");
         loop.RequestRedraw();
     }, $"connect {where}");
     chrome.Fleet.OnConnect = line => Connect(line.Where, line.Machine);
@@ -655,7 +686,7 @@ if (feed is not null && client is not null && clients is not null)
         fleetKnownAt = DateTimeOffset.MinValue;
         chrome.Fleet.Said = $"forgot {endpoint}";
         view.SayStatus = chrome.Fleet.Said;
-        Console.WriteLine($"pilot-gui: forgot {endpoint}");
+        Note($"pilot-gui: forgot {endpoint}");
         loop.RequestRedraw();
     }), $"forget {endpoint}");
     chrome.Fleet.OnForget = line => Forget(line.Where);
@@ -664,7 +695,7 @@ if (feed is not null && client is not null && clients is not null)
     {
         chrome.Fleet.Said = (await FleetCommands.SetMaintenanceAsync(clients, line, on, GuiSay.Who, cts.Token)).ReplaceLineEndings(" ").Trim();
         view.SayStatus = chrome.Fleet.Said;
-        Console.WriteLine($"pilot-gui: maintenance {(on ? "on" : "off")} on {line.Where}: {chrome.Fleet.Said}");
+        Note($"pilot-gui: maintenance {(on ? "on" : "off")} on {line.Where}: {chrome.Fleet.Said}");
         loop.RequestRedraw();
     }, $"maintenance {(on ? "on" : "off")} on {line.Where}");
     // The header's Autopilot switch: this window's node, set as the person (only the person may; the node refuses anyone else).
@@ -675,7 +706,7 @@ if (feed is not null && client is not null && clients is not null)
         chrome.Autopilot.OnToggle = on => tracker.Run(async () =>
         {
             view.SayStatus = await AutopilotCommands.SetAsync(client, on, GuiSay.Who, cts.Token);
-            Console.WriteLine($"pilot-gui: {view.SayStatus}");
+            Note($"pilot-gui: {view.SayStatus}");
             loop.RequestRedraw();
         }, $"autopilot {(on ? "on" : "off")}");
     }
@@ -733,7 +764,7 @@ _ = Task.Run(async () =>
 {
     await foreach (var line in console.Reader.ReadAllAsync())
     {
-        Console.WriteLine(line);
+        Note(line);
     }
 });
 void Say(string line) => console.Writer.TryWrite(line);
@@ -934,16 +965,16 @@ loop.OnPointerInput = evt =>
     return handled;
 };
 
-Console.WriteLine($"pilot-gui: window \"{Title}\" open (pid {Environment.ProcessId}), {width}x{height} px at scale {window.DisplayScale:0.##}");
-Console.WriteLine(snapshot is null
+Note($"pilot-gui {NodeFeed.ClientVersion}: window \"{Title}\" open (pid {Environment.ProcessId}, from {AppContext.BaseDirectory}), {width}x{height} px at scale {window.DisplayScale:0.##}");
+Note(snapshot is null
     ? $"pilot-gui: live from the node on {nodeWhere}"
     : $"pilot-gui: showing {screen.Summary} from {screen.Source}, as of {snapshot.At.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC");
-Console.WriteLine(snapshot is null
+Note(snapshot is null
     ? "pilot-gui: Up/Down or a click select a session; type in the bar at the foot and Enter says it; close the window to quit."
     : "pilot-gui: Up/Down select a row; close the window to quit.");
 if (options.ExitAfter is { } after)
 {
-    Console.WriteLine($"pilot-gui: closing by itself after {after.TotalSeconds:0.##}s (--exit-after)");
+    Note($"pilot-gui: closing by itself after {after.TotalSeconds:0.##}s (--exit-after)");
     cts.CancelAfter(after);
 }
 
@@ -955,10 +986,10 @@ if (restarting && Environment.ProcessPath is { } self)
     // the node's update having moved the running one aside.
     gate?.Dispose();
     System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(self, args) { UseShellExecute = false });
-    Console.WriteLine($"pilot-gui: window closed; started again on {self}.");
+    Note($"pilot-gui: window closed; started again on {self}.");
     return 0;
 }
-Console.WriteLine(cts.IsCancellationRequested ? "pilot-gui: --exit-after reached; window closed." : "pilot-gui: window closed.");
+Note(cts.IsCancellationRequested ? "pilot-gui: --exit-after reached; window closed." : "pilot-gui: window closed.");
 return 0;
 
 // Shutdown, with the loop pumping (ShutdownDrain): the tracked work first, so nothing is still starting what is about to

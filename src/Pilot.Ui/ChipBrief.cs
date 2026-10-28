@@ -41,6 +41,15 @@ internal static class ChipBrief
                 : line.StateDetail is { Length: > 0 } detail ? $"{line.Code} · {line.State}: {detail}" : $"{line.Code} · {line.State}",
             LegLine(line),
         };
+        // A failed move's reason and where a moved flight came from: what the chip's hover said before it had a brief.
+        if (line.MoveFailure is { Length: > 0 } moveFailure)
+        {
+            lines.Add(moveFailure);
+        }
+        if (line.Provenance is { Length: > 0 } provenance)
+        {
+            lines.Add(provenance);
+        }
         if (flight.PullRequest is { } pr)
         {
             var review = FlightMarks.From(flight).Line ?? (flight.Review is { } r ? $"review {r.State.ToString().ToLowerInvariant()}" : "no review yet");

@@ -136,7 +136,8 @@ internal sealed partial class FlightsView<TSurface>
         {
             code,
             Whole(Layout.Builder.Text(line.Title, 13f, landed ? Dim : Body).RowH(20f), line.Title, CardTitleFits),
-            Layout.Builder.Text(line.Where, 12f, Dim).RowH(18f),
+            // Body, not Dim, on a failed move's red card: Dim is 4.1:1 on it.
+            Layout.Builder.Text(line.Where, 12f, line.MoveMark is not null ? Body : Dim).RowH(18f),
         };
         if (grid && line.Row.State == FlightState.Held)
         {
@@ -152,10 +153,10 @@ internal sealed partial class FlightsView<TSurface>
         var body = Layout.Builder.VStack([.. rows])
             .Pad(10f, 8f)
             .Stretch();
-        return Layout.Builder.HStack(Layout.Builder.Spacer().Bg(color).WFixed(ListTable.StripeWidth).HStar(), body)
-            .Bg(index == Selected ? RowFocusBg : !grid && _chain.Contains(line.Code) ? P.LinkedBg : PanelBg)
+        return Layout.Builder.HStack(Layout.Builder.Spacer().Bg(StripeColor(line)).WFixed(ListTable.StripeWidth).HStar(), body)
+            .Bg(index == Selected ? (line.MoveMark is not null ? P.FailedFocusBg : RowFocusBg) : line.MoveMark is not null ? P.FailedBg : !grid && _chain.Contains(line.Code) ? P.LinkedBg : PanelBg)
             .BgHover(RowHoverBg)
-            .BgFocus(RowFocusBg)
+            .BgFocus(line.MoveMark is not null ? P.FailedFocusBg : RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index))
             .WithContextMenu(at => OpenMenu(line, index, at))
             // The same brief as the Home chip (#258); a cut line keeps its own whole-text tooltip, the innermost.

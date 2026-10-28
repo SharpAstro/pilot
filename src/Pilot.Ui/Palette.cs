@@ -90,7 +90,13 @@ internal sealed record Palette(
     RGBAColor32 RailActiveText,
     RGBAColor32 RailInactiveText,
     RGBAColor32 RailClose,
-    RGBAColor32 RailDisabled)
+    RGBAColor32 RailDisabled,
+    RGBAColor32 FailedBg,
+    RGBAColor32 FailedFocusBg,
+    RGBAColor32 FailedText,
+    RGBAColor32 RetryBg,
+    RGBAColor32 RetryHover,
+    RGBAColor32 RetryText)
 {
     // Ambient per async flow, as DIR.Lib keeps its own: a test that sets it changes nothing for tests running beside it or after it.
     private static readonly AsyncLocal<Palette?> _current = new();
@@ -202,7 +208,16 @@ internal sealed record Palette(
         RailActiveText: new(0xf0, 0xf0, 0xf0, 0xff),
         RailInactiveText: new(0x9a, 0x9a, 0xa6, 0xff),
         RailClose: new(0xc0, 0xc0, 0xc8, 0xff),
-        RailDisabled: new(0x4a, 0x4a, 0x58, 0xff));
+        RailDisabled: new(0x4a, 0x4a, 0x58, 0xff),
+        // A flight whose move failed: a red ground for its row and band, words on it (Bright, Body and FailedText are 6:1 or
+        // more on it), and a light Retry button that stands out from the red (its edge is 11:1 against it, its words 13:1).
+        FailedBg: new(0x4a, 0x1a, 0x1e, 0xff),
+        // The same red with the row selected: FailedText is 4.9:1 on it, Body 6:1.
+        FailedFocusBg: new(0x66, 0x24, 0x2a, 0xff),
+        FailedText: new(0xff, 0x8a, 0x8a, 0xff),
+        RetryBg: new(0xf3, 0xd9, 0xd9, 0xff),
+        RetryHover: new(0xff, 0xff, 0xff, 0xff),
+        RetryText: new(0x12, 0x12, 0x18, 0xff));
 
     /// <summary>Dim reds on black and nothing else: no green or blue in any channel, so the eye stays dark-adapted.</summary>
     public static Palette Night { get; } = new(
@@ -283,5 +298,11 @@ internal sealed record Palette(
         RailActiveText: new(0xcc, 0x00, 0x00, 0xff),
         RailInactiveText: new(0x84, 0x00, 0x00, 0xff),
         RailClose: new(0xa3, 0x00, 0x00, 0xff),
-        RailDisabled: new(0x40, 0x00, 0x00, 0xff));
+        RailDisabled: new(0x40, 0x00, 0x00, 0xff),
+        FailedBg: new(0x20, 0x00, 0x00, 0xff),
+        FailedFocusBg: new(0x30, 0x00, 0x00, 0xff),
+        FailedText: new(0xff, 0x00, 0x00, 0xff),
+        RetryBg: new(0xf0, 0x00, 0x00, 0xff),
+        RetryHover: new(0xff, 0x00, 0x00, 0xff),
+        RetryText: new(0x00, 0x00, 0x00, 0xff));
 }

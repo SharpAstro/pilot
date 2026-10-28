@@ -32,6 +32,35 @@ public interface IFleetPeer
     Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken);
 }
 
+/// <summary>What a node does to hand a flight to a peer (<see cref="Verbs.ReceiveFlight"/>, #376): the record it sends, and the send.</summary>
+public static class FlightMoves
+{
+    /// <summary>
+    /// The whole record of the flight <paramref name="code"/> as <paramref name="state"/> holds it: the flight, every leg, and the
+    /// cards about it still open, from <paramref name="from"/>. The plane is not in it: the flight's branch is pushed first.
+    /// Throws <see cref="FlightException"/> when there is no such flight.
+    /// </summary>
+    public static FlightMove Gather(NodeState state, string code, string from)
+    {
+        var flight = state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase))
+            ?? throw new FlightException($"there is no flight {code} to hand over");
+        var legs = state.Legs(flight.Code);
+        return new FlightMove
+        {
+            From = from,
+            AfterLeg = legs.Where(l => l.State == LegState.Done).OrderByDescending(l => l.Order).FirstOrDefault()?.Name,
+            GitHub = RepoCatalog.GitHubOf(Path.Combine(flight.RepoPath, ".git")),
+            Flight = flight,
+            Legs = legs,
+            Cards = [.. state.Cards(openOnly: true).Where(c => c.Bin != CardBin.Handled && FlightMove.IsAbout(c, flight.Code))],
+        };
+    }
+
+    /// <summary>Hands <paramref name="move"/> to <paramref name="peer"/>, as <paramref name="who"/>: its result, or why it was refused.</summary>
+    public static Task<CommandResult> SendAsync(this IFleetPeer peer, FlightMove move, string who, CancellationToken cancellationToken) =>
+        peer.SendAsync(move.Command(who), cancellationToken);
+}
+
 /// <summary>How loaded a peer is: its 5-hour window and its flights.</summary>
 /// <param name="Usage">The account's usage as the peer last read it; null before it has read any.</param>
 /// <param name="Flights">Every flight the peer has, landed ones included.</param>
@@ -97,6 +126,12 @@ public sealed class HeldTokenFleet(string tokenFile) : IFleet
     /// <summary>How long a peer has to answer a read before it counts as unreachable.</summary>
     public static readonly TimeSpan ReadBudget = TimeSpan.FromSeconds(8);
 
+    /// <summary>
+    /// How long a peer has to answer a receive-flight: the node's own reply deadline (<c>NodeCommands.ReplyDeadline</c>, 90 s) and a margin, so a
+    /// receiver that is slow answers "still running" rather than being given up on at <see cref="ReadBudget"/> while it goes on taking the flight.
+    /// </summary>
+    public static readonly TimeSpan HandOverBudget = TimeSpan.FromSeconds(100);
+
     public IReadOnlyList<IFleetPeer> Peers()
     {
         var held = new LanHeldTokenFile(tokenFile);
@@ -132,14 +167,16 @@ public sealed class HeldTokenFleet(string tokenFile) : IFleet
 
         public async Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken)
         {
-            var envelope = await WithClientAsync((client, ct) => client.SendAsync(command, ct), cancellationToken).ConfigureAwait(false);
+            var limit = command.Verb == Verbs.ReceiveFlight ? HandOverBudget : ReadBudget;
+            var envelope = await WithClientAsync((client, ct) => client.SendAsync(command, ct), cancellationToken, limit).ConfigureAwait(false);
             return envelope.Response ?? throw new HttpRequestException($"{Endpoint} refused {command.Verb}: {envelope.Error}");
         }
 
-        private async Task<T> WithClientAsync<T>(Func<NodeClient, CancellationToken, Task<T>> read, CancellationToken cancellationToken)
+        private async Task<T> WithClientAsync<T>(Func<NodeClient, CancellationToken, Task<T>> read, CancellationToken cancellationToken, TimeSpan? limit = null)
         {
+            var allowed = limit ?? ReadBudget;
             using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            budget.CancelAfter(ReadBudget);
+            budget.CancelAfter(allowed);
             using var client = NodeClient.Remote(Endpoint, token);
             try
             {
@@ -147,7 +184,7 @@ public sealed class HeldTokenFleet(string tokenFile) : IFleet
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                throw new TimeoutException($"{Endpoint} did not answer within {ReadBudget.TotalSeconds:0} s");
+                throw new TimeoutException($"{Endpoint} did not answer within {allowed.TotalSeconds:0} s");
             }
         }
     }
