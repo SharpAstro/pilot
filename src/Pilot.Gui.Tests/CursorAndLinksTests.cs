@@ -19,6 +19,21 @@ public sealed class CursorAndLinksTests
         PullRequest = 7, PullRequestUrl = "https://github.com/x/tianwen/pull/7",
     };
 
+    // The node lists the flight's PR among its open ones: its link opens the Pull requests page's row, with the ↗ beside it for the browser.
+    private static PullRequestsScreen ListedPullRequest() => new(new PullRequestsRow
+    {
+        Orgs = ["x"], ReadAt = Now, Viewer = "sebgod",
+        PullRequests =
+        [
+            new PullRequestRow
+            {
+                Repo = "x/tianwen", Number = 7, Title = "Planets on the GPU", Url = "https://github.com/x/tianwen/pull/7", Author = "sebgod",
+                Kind = PullRequestKind.ChecksRunning, Label = "Checks running", Flight = "TIA1611", UpdatedAt = Now, CreatedAt = Live.At,
+                Head = "flight/tia1611", Base = "main",
+            },
+        ],
+    }, "test", Now);
+
     private static LegRow[] Legs() =>
     [
         new()
@@ -64,7 +79,8 @@ public sealed class CursorAndLinksTests
         var flights = chrome.Flights;
         var screen = new FlightsScreen([FlightLine.Build([Flight()], [], Now, Legs()).Single()], "test", Now);
         chrome.Show(PilotPage.Flights);
-        chrome.Render(new SessionsScreen([], "test", Now), screen, new RectF32(0, 0, 1280, 800));
+        var listed = ListedPullRequest();
+        chrome.Render(new SessionsScreen([], "test", Now), screen, null, null, null, null, listed, new RectF32(0, 0, 1280, 800));
 
         // The selected flight's panel, under the list.
         var regions = new List<ClickableRegion>();
@@ -76,7 +92,7 @@ public sealed class CursorAndLinksTests
         TextOf(Buttons(flights.Tree(screen), 200), "pr:TIA1611:browser").ShouldBe("↗");
 
         flights.HandleInput(new InputEvent.KeyDown(InputKey.Enter, InputModifier.None)).ShouldBeTrue();
-        chrome.Render(new SessionsScreen([], "test", Now), screen, new RectF32(0, 0, 1280, 800));
+        chrome.Render(new SessionsScreen([], "test", Now), screen, null, null, null, null, listed, new RectF32(0, 0, 1280, 800));
         regions.Clear();
         flights.CollectPaintedRegions(regions);
         ShouldPointAtButtonsOnly(regions);

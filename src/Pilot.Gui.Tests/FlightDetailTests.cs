@@ -121,6 +121,20 @@ public sealed class FlightDetailTests
         using var vessel = new RgbaImageRenderer((uint)width, 800);
         var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Flights;
         flights.OnOpen = onOpen;
+        // The node lists the flight's PR among its open ones: its link opens the Pull requests page's row, with the ↗ beside it for the browser.
+        flights.PullRequests = new PullRequestsRow
+        {
+            Orgs = ["x"], ReadAt = Now, Viewer = "sebgod",
+            PullRequests =
+            [
+                new PullRequestRow
+                {
+                    Repo = "x/tianwen", Number = 7, Title = flight.Title, Url = "https://github.com/x/tianwen/pull/7", Author = "sebgod",
+                    Kind = PullRequestKind.ChecksRunning, Label = "Checks running", Flight = flight.Code, UpdatedAt = Now, CreatedAt = Live.At,
+                    Head = "flight/tia1611", Base = "main",
+                },
+            ],
+        };
         var screen = new FlightsScreen([FlightLine.Build([flight], [], Now, Legs()).Single()], "test", Now);
         flights.Render(screen, new RectF32(0, 0, width, 800));
         flights.OpenDetail("TIA1611");
