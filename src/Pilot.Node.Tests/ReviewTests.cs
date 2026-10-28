@@ -1426,6 +1426,24 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AMergeOnABehindPrWhosePlaneHoldsAnUncommittedFileIsRefusedWithThatSaidAndNoLegGoesRound()
+    {
+        _github.UpdateWay = UpdateWay.Merge;
+        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        var (flight, _) = await Passed("38");
+        File.WriteAllText(Path.Combine(flight.Worktree, "scratch.txt"), "not committed");
+        MainMoves();
+
+        var result = await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8]);
+
+        result.Error.ShouldNotBeNull().ShouldContain("not committed");
+        result.Error.ShouldNotContain("goes around");
+        _github.Merged.ShouldBeEmpty();
+        _state.Legs(flight.Code).ShouldAllBe(l => l.State == LegState.Done);
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+    }
+
+    [Fact]
     public async Task AMergeOnAPrAlreadyInTheQueueIsNotUpdatedWhenMainMovedOn()
     {
         _github.UpdateWay = UpdateWay.Merge;
