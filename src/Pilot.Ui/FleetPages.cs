@@ -29,7 +29,7 @@ internal sealed record NodeMark(string Key, string Where, string Name, bool Here
 /// </summary>
 internal sealed class NodeFilter
 {
-    internal static readonly (RGBAColor32 Bg, RGBAColor32 Hover) Lit = (new RGBAColor32(0x2f, 0x5a, 0x8c, 0xff), new RGBAColor32(0x3a, 0x6c, 0xa6, 0xff));
+    internal static (RGBAColor32 Bg, RGBAColor32 Hover) Lit => (Palette.Current.PillLit, Palette.Current.PillLitHover);
 
     // Swapped whole, never changed in place: the render thread picks, and the pages are merged off it (pilot-gui builds
     // them on a background task), so a reader always sees one whole set.
@@ -88,7 +88,7 @@ internal sealed class NodeFilter
     }
 
     /// <summary>The header's pills: All nodes, then each node, the shown ones lit; nothing while there is one node.</summary>
-    public IEnumerable<Layout.Node> Pills(FlightsPalette? night = null)
+    public IEnumerable<Layout.Node> Pills(Palette? night = null)
     {
         if (Choices.Count < 2)
         {
@@ -106,7 +106,7 @@ internal sealed class NodeFilter
         }
     }
 
-    private static readonly RGBAColor32 DimText = new(0x86, 0x89, 0x98, 0xff);
+    private static RGBAColor32 DimText => Palette.Current.Dim;
 
     /// <summary>The choices whose node was heard but cannot be reached now, by key, with when it went quiet (none when that is not known); set by each merge.</summary>
     public IReadOnlyDictionary<string, DateTimeOffset?> Down { get; set; } = new Dictionary<string, DateTimeOffset?>();
@@ -137,7 +137,7 @@ internal sealed class NodeFilter
 /// </summary>
 internal sealed class PlayFilter
 {
-    private static readonly RGBAColor32 ClauseColor = new(0x8a, 0xb4, 0xf8, 0xff);
+    private static RGBAColor32 ClauseColor => Palette.Current.Link;
 
     /// <summary>How long a finished job stays in play, counted back from the screen's moment.</summary>
     public static readonly TimeSpan JobsFinished = TimeSpan.FromMinutes(10);
@@ -218,7 +218,7 @@ internal sealed class PlayFilter
     }
 
     /// <summary>The header's pills, beside the node pills: In play, Everything, the shown one lit.</summary>
-    public IEnumerable<Layout.Node> Pills(FlightsPalette? night = null)
+    public IEnumerable<Layout.Node> Pills(Palette? night = null)
     {
         var lit = night is null ? NodeFilter.Lit : (night.RowFocusBg, night.ButtonHover);
         (RGBAColor32, RGBAColor32)? plain = night is null ? null : (night.Button, night.ButtonHover);
@@ -233,7 +233,7 @@ internal sealed class PlayFilter
     /// A page's count in the header: <paramref name="counts"/>, then <paramref name="hidden"/> (<c>29 landed hidden</c>) as a
     /// click that switches to Everything, so what is out of view is named and one click away.
     /// </summary>
-    public static IEnumerable<Layout.Node> Summary(PlayFilter? play, string counts, string? hidden, string action, RGBAColor32 body, RGBAColor32 hover, FlightsPalette? night = null)
+    public static IEnumerable<Layout.Node> Summary(PlayFilter? play, string counts, string? hidden, string action, RGBAColor32 body, RGBAColor32 hover, Palette? night = null)
     {
         // Bottom-aligned as the page's title is: its 20 and these 15 design units then share a baseline, where centred
         // boxes of two sizes do not.

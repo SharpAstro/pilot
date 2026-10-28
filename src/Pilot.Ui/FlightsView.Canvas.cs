@@ -26,7 +26,7 @@ internal sealed partial class FlightsView<TSurface>
     public FlightsViewMode Mode { get; set; } = FlightsViewMode.Canvas;
 
     /// <summary>Whether the page is showing the canvas now, in either palette.</summary>
-    public bool CanvasShown => CanvasAvailable && Mode is FlightsViewMode.Canvas or FlightsViewMode.Night;
+    public bool CanvasShown => CanvasAvailable && Mode == FlightsViewMode.Canvas;
 
     /// <summary>Whether the page is showing the cards in a wrapping grid, without arrows.</summary>
     public bool GridShown => CanvasAvailable && Mode == FlightsViewMode.Grid;
@@ -34,7 +34,7 @@ internal sealed partial class FlightsView<TSurface>
     /// <summary>The geometry the last tree was built from.</summary>
     internal FlightCanvas Canvas => _canvas;
 
-    // Grid and List say it better as the marks DIR.Lib draws, each with the word as its tooltip; Canvas and Night stay words
+    // Grid and List say it better as the marks DIR.Lib draws, each with the word as its tooltip; Canvas stays a word
     // until DIR.Lib has a mark for them (SharpAstro/DIR.Lib#151). Every segment keeps the flights:view:* id a pill had, and the hand cursor.
     private Layout.Node ViewSwitch()
     {
@@ -43,7 +43,6 @@ internal sealed partial class FlightsView<TSurface>
             new(FlightsViewMode.Canvas, "Canvas") { Hit = new HitResult.ButtonHit("flights:view:canvas") },
             new(FlightsViewMode.Grid, Icon: Layout.IconKind.Grid) { Hit = new HitResult.ButtonHit("flights:view:grid"), Tooltip = "Grid" },
             new(FlightsViewMode.List, Icon: Layout.IconKind.List) { Hit = new HitResult.ButtonHit("flights:view:list"), Tooltip = "List" },
-            new(FlightsViewMode.Night, "Night") { Hit = new HitResult.ButtonHit("flights:view:night") },
         ];
         var style = new Layout.ButtonGroupStyle(RowFocusBg, Button, Bright, Dim, ButtonHover)
         {
@@ -61,7 +60,7 @@ internal sealed partial class FlightsView<TSurface>
     }
 
     private const float ViewSwitchSegment = 60f;
-    private const float ViewSwitchWidth = 4 * ViewSwitchSegment + 3 * 2f;
+    private const float ViewSwitchWidth = 3 * ViewSwitchSegment + 2 * 2f;
 
     // The cards as a wrapping grid, in the list's order: the engine wraps them by the width it is given.
     private Layout.Node GridBody(FlightsScreen screen)

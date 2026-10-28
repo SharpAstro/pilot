@@ -360,19 +360,19 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private const float RingsWidth = 80f;
     private const float ButtonsWidth = 180f;
 
-    private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
-    private static readonly RGBAColor32 HeaderBg = new(0x1b, 0x1c, 0x24, 0xff);
-    private static readonly RGBAColor32 RowAltBg = new(0x16, 0x17, 0x1e, 0xff);
-    private static readonly RGBAColor32 RowHoverBg = new(0x22, 0x24, 0x2e, 0xff);
-    private static readonly RGBAColor32 RowFocusBg = new(0x26, 0x33, 0x4a, 0xff);
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
-    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
-    private static readonly RGBAColor32 Live = new(0x4c, 0xc3, 0x8a, 0xff);
-    private static readonly RGBAColor32 Away = new(0x6a, 0x6d, 0x7a, 0xff);
-    private static readonly RGBAColor32 Ringing = new(0xf0, 0xb4, 0x3c, 0xff);
-    private static readonly RGBAColor32 Button = new(0x2a, 0x3a, 0x58, 0xff);
-    private static readonly RGBAColor32 ButtonHover = new(0x35, 0x4a, 0x70, 0xff);
+    private static RGBAColor32 Ground => Palette.Current.Ground;
+    private static RGBAColor32 HeaderBg => Palette.Current.HeaderBg;
+    private static RGBAColor32 RowAltBg => Palette.Current.RowAltBg;
+    private static RGBAColor32 RowHoverBg => Palette.Current.RowHoverBg;
+    private static RGBAColor32 RowFocusBg => Palette.Current.RowFocusBg;
+    private static RGBAColor32 Bright => Palette.Current.Bright;
+    private static RGBAColor32 Body => Palette.Current.Body;
+    private static RGBAColor32 Dim => Palette.Current.Dim;
+    private static RGBAColor32 Live => Palette.Current.Flying;
+    private static RGBAColor32 Away => Palette.Current.Away;
+    private static RGBAColor32 Ringing => Palette.Current.Held;
+    private static RGBAColor32 Button => Palette.Current.Button;
+    private static RGBAColor32 ButtonHover => Palette.Current.ButtonHover;
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
     private int _count;
@@ -412,6 +412,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+    
+    /// <summary>The header's Night switch, the same on every page.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>The window's node selection: its pills in the header, and the nodes picked are the rows shown.</summary>
     public NodeFilter? Nodes { get; set; }
@@ -421,6 +424,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     public void Render(FleetScreen screen, RectF32 bounds)
     {
+        Palette.Use(Night);
         BeginFrame();
         RenderLayout(Tree(screen), bounds);
     }
@@ -428,6 +432,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
     internal Layout.Node Tree(FleetScreen screen)
     {
+        Palette.Use(Night);
         // The node selection holds here as on every page; the pills above bring the others back.
         if (Nodes is { All: false } nodes)
         {
@@ -468,7 +473,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         {
             Counts = screen.Summary,
             Source = Said ?? "every node heard on the LAN or granted to you, each on its own account · watching needs no grant, commanding one does",
-        }, new TopBarParts(Nodes, null, Autopilot, About));
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
 
     private Layout.Node Main(FleetScreen screen)
     {
@@ -539,7 +544,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 line.Maintenance || line.AutopilotWord is not null || line.WatchtowerMark is not null
                     ? Layout.Builder.HStack([
                             .. (line.Maintenance ? [Layout.Builder.HStack(
-                                Layout.Builder.Text(FleetLine.MaintenanceIcon, 11f, Ringing).WFixed(MarkIconWidth),
+                                Layout.Builder.Text(Palette.Glyph(FleetLine.MaintenanceIcon, "!"), 11f, Ringing).WFixed(MarkIconWidth),
                                 Layout.Builder.Text(FleetLine.MaintenanceWord + (line.AsOf is { } asOf ? " " + asOf : ""), 11f, Ringing).WAuto()).WAuto()] : (Layout.Node[])[]),
                             .. (line.WatchtowerMark is { } towerMark ? [Layout.Builder.Text(towerMark, 11f, Ringing).WAuto()] : (Layout.Node[])[]),
                             .. (line.AutopilotWord is { } autopilot ? [Layout.Builder.Text(autopilot, 11f, line.Autopilot && !line.LastKnown ? Live : Dim).WAuto()] : (Layout.Node[])[]),
@@ -596,6 +601,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 /// <summary>What the Home and Flights pages say when this window's node is in maintenance.</summary>
 internal static class MaintenanceNotice
 {
+    /// <summary>The notice with its spanner swapped for a mark the UI face draws while Night is on.</summary>
+    public static string LineFor(Palette palette) => ReferenceEquals(palette, Palette.Night) ? "! " + Line[3..] : Line;
+
     public const string Line = "🔧 This node is in maintenance: it takes no new flights (a new flight goes to a willing node of the fleet); flights in the air carry on";
 }
 

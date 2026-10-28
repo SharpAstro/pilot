@@ -415,9 +415,10 @@ public sealed class FleetTests
             }
         }
         Keep("fleet-day");
-        foreach (var (name, mode) in new[] { ("flights-day", FlightsViewMode.Grid), ("flights-night", FlightsViewMode.Night) })
+        foreach (var (name, night) in new[] { ("flights-day", false), ("flights-night", true) })
         {
-            chrome.Flights.Mode = mode;
+            chrome.Flights.Mode = FlightsViewMode.Grid;
+            chrome.Night.On = night;
             chrome.Show(PilotPage.Flights);
             chrome.Render(sessions, flights, null, null, screen, new RectF32(0, 0, width, 760));
             Keep(name);

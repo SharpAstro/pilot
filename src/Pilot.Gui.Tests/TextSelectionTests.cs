@@ -58,7 +58,7 @@ public sealed class TextSelectionTests
             Chrome.Flights.OnOpen = Opened.Add;
             if (night)
             {
-                Chrome.Flights.Mode = FlightsViewMode.Night;
+                Chrome.Night.On = true;
             }
             _router = new InputRouter(Chrome.Flights.Ui, new BackgroundTaskTracker(), () => { }) { Widgets = () => Chrome.Widgets };
             _screen = new FlightsScreen([FlightLine.Build([Flight(report)], [], Now, Legs()).Single()], "test", Now);
@@ -269,7 +269,7 @@ public sealed class TextSelectionTests
     [InlineData(true)]
     public void TheHighlightAndItsTextAreReadableInBothPalettes(bool night)
     {
-        var palette = night ? FlightsPalette.Night : FlightsPalette.Standard;
+        var palette = night ? Palette.Night : Palette.Standard;
 
         Contrast(palette.SelectionText, palette.SelectionBg).ShouldBeGreaterThanOrEqualTo(4.5);
         // And the bar is told from the panel it lies on, so the selection is seen at all.
@@ -285,7 +285,7 @@ public sealed class TextSelectionTests
 
         window.Drag(Start(word), End(word));
 
-        var bar = FlightsPalette.Standard.SelectionBg;
+        var bar = Palette.Standard.SelectionBg;
         var surface = window.Renderer.Surface;
         var (x, y) = ((int)(word.X + 1f), (int)(word.Y + 1f));
         // The bar's colour is in the pixels under the word where there were none before, the glyphs drawn over it in the selection's ink.
