@@ -133,7 +133,7 @@ if (options.Capture is { } capturePath)
     }
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
         jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)],
-        hover: options.Hover, flightsView: options.View);
+        hover: options.Hover, flightsView: options.View, select: options.Select);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;

@@ -43,6 +43,7 @@ internal sealed partial class FlightsView<TSurface>
     public void OpenDetail(string code)
     {
         Opening?.Invoke();
+        ClearSelection();
         _openCode = code;
         // Its row is shown whatever In play says while its page is open, and selected once the page is shut.
         _pinned = code;
@@ -53,6 +54,7 @@ internal sealed partial class FlightsView<TSurface>
     {
         _selectPinned = _pinned is not null && _pinned == _openCode;
         _openCode = null;
+        ClearSelection();
     }
 
     // The flight a jump opened: its row stays on the page whatever In play says, until the selection moves off it.
@@ -125,11 +127,21 @@ internal sealed partial class FlightsView<TSurface>
         var head = new List<Layout.Node>
         {
             Pill("← Back", "flight:back", GoBack),
-            Layout.Builder.Text(line.Code, 16f, Bright).WAuto(),
-            Whole(Layout.Builder.Text(line.Title, 14f, Body).WStar(), line.Title, TitleFits),
-            // The stale mark is a line of its own below: here it overlapped the title and cut the buttons at a narrow width.
-            Layout.Builder.Text(line.StateDetail is null ? line.State : $"{line.State} ({line.StateDetail})", 13f, color, TextAlign.Far).WAuto(),
+            Layout.Builder.Text(line.Code, 16f, Bright).WAuto().Selectable(),
+            Whole(Layout.Builder.Text(line.Title, 14f, Body).WStar().Selectable(), line.Title, TitleFits),
         };
+        // The PR is in the header, beside the title, with where it stands: it sat in the facts line below, past a long review chip.
+        if (flight.PullRequestUrl is { } url)
+        {
+            head.Add(Link($"PR #{flight.PullRequest}", url, $"pr:{line.Code}").WAuto());
+        }
+        if (FlightMarks.PrState(flight) is { } prState)
+        {
+            // The link's own height (20), so the two share one middle.
+            head.Add(Layout.Builder.Text(prState, 12f, PrStateColor(prState)).WAuto().RowH(20f).Selectable());
+        }
+        // The stale mark is a line of its own below: here it overlapped the title and cut the buttons at a narrow width.
+        head.Add(Layout.Builder.Text(line.StateDetail is null ? line.State : $"{line.State} ({line.StateDetail})", 13f, color, TextAlign.Far).WAuto().Selectable());
         // The buttons wrap onto lines of their own under the title, as Home's chips do: in the head row they took the title's room and
         // the last (a stale flight's dead "Remove render") ran past the page's edge at a narrow width.
         var buttons = CanCommand
@@ -138,21 +150,17 @@ internal sealed partial class FlightsView<TSurface>
 
         var facts = new List<Layout.Node>
         {
-            Layout.Builder.Text($"{line.Where} · {line.Branch} · {line.Legs}", 12f, Dim).WAuto(),
+            Layout.Builder.Text($"{line.Where} · {line.Branch} · {line.Legs}", 12f, Dim).WAuto().Selectable(),
         };
-        if (flight.PullRequestUrl is { } url)
-        {
-            facts.Add(Link($"PR #{flight.PullRequest}", url, $"pr:{line.Code}").WAuto());
-        }
         if (flight.Review is { } review)
         {
             facts.Add(Layout.Builder.Text($"review {review.State.ToString().ToLowerInvariant()}", 12f,
-                review.State == ReviewState.Passed ? Flying : review.State == ReviewState.Changes ? Held : Dim).WAuto());
+                review.State == ReviewState.Passed ? Flying : review.State == ReviewState.Changes ? Held : Dim).WAuto().Selectable());
         }
         var marks = FlightMarks.From(flight);
         if (marks.Line is { } markLine)
         {
-            facts.Add(Layout.Builder.Text(markLine, 12f, MarksColor(flight)).WAuto());
+            facts.Add(Layout.Builder.Text(markLine, 12f, MarksColor(flight)).WAuto().Selectable());
         }
         if (marks.ReviewUrl is { } reviewUrl)
         {
@@ -160,11 +168,11 @@ internal sealed partial class FlightsView<TSurface>
         }
         if (marks.Warning is { } warning)
         {
-            facts.Add(Layout.Builder.Text($"⚠ GitHub: {warning}", 12f, Held).WAuto());
+            facts.Add(Layout.Builder.Text($"⚠ GitHub: {warning}", 12f, Held).WAuto().Selectable());
         }
         if (marks.Pending is { } pending)
         {
-            facts.Add(Layout.Builder.Text(pending, 12f, Held).WAuto());
+            facts.Add(Layout.Builder.Text(pending, 12f, Held).WAuto().Selectable());
         }
         facts.Add(Layout.Builder.Spacer().WStar());
 
@@ -207,6 +215,9 @@ internal sealed partial class FlightsView<TSurface>
             .Pad(Gutter, 8f)
             .Stretch();
     }
+
+    // The PR's state in the palette's own colours, the word always beside it: green while it is open for review, amber in the queue, blue once merged, dim as a draft.
+    private RGBAColor32 PrStateColor(string state) => state switch { "open" => Flying, "queued" => Held, "merged" => Landed, _ => Dim };
 
     /// <summary>
     /// <paramref name="action"/>'s button, or for a stale flight (its node unreachable) the same words as a dead one: a verb goes
@@ -274,7 +285,7 @@ internal sealed partial class FlightsView<TSurface>
                     _ => (session.Leg is { } leg ? $"flying {leg}" : "working", "Worker"),
                 };
                 var color = session.State == SessionState.Waiting ? Held : Flying;
-                yield return Layout.Builder.Text($"{doing} · {session.Name} · {session.State.ToString().ToLowerInvariant()}", 12f, color).WAuto();
+                yield return Layout.Builder.Text($"{doing} · {session.Name} · {session.State.ToString().ToLowerInvariant()}", 12f, color).WAuto().Selectable();
                 if (OnSession is { } open)
                 {
                     // Named for whose it is: beside two sessions, two "Its transcript" said nothing of which was which.
@@ -311,16 +322,16 @@ internal sealed partial class FlightsView<TSurface>
         var color = leg.Row.Hold is not null || (leg.Row.Wait is not null && leg.Row.State == LegState.Flying) ? Held : leg.Row.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
         var head = new List<Layout.Node>
         {
-            Layout.Builder.Text($"{leg.Order}. {leg.Name}", 15f, Bright).WAuto(),
-            Layout.Builder.Text(leg.State, 13f, color).WAuto(),
+            Layout.Builder.Text($"{leg.Order}. {leg.Name}", 15f, Bright).WAuto().Selectable(),
+            Layout.Builder.Text(leg.State, 13f, color).WAuto().Selectable(),
         };
         if (leg.StepsText is { } steps)
         {
-            head.Add(Layout.Builder.Text(steps, 12f, Dim).WAuto());
+            head.Add(Layout.Builder.Text(steps, 12f, Dim).WAuto().Selectable());
         }
         if (leg.GoArounds is { } goArounds)
         {
-            head.Add(Layout.Builder.Text(goArounds, 12f, Held).WAuto());
+            head.Add(Layout.Builder.Text(goArounds, 12f, Held).WAuto().Selectable());
         }
         head.Add(Layout.Builder.Spacer().WStar());
 
@@ -333,7 +344,7 @@ internal sealed partial class FlightsView<TSurface>
         }
         foreach (var step in leg.Steps)
         {
-            rows.Add(Labelled(Layout.Builder.Text(step.Done ? "[x]" : "[ ]", 12f, step.Done ? Flying : Dim), 28f, 8f, Prose(step.Text, 12f, step.Done ? Dim : Body)));
+            rows.Add(Labelled(Layout.Builder.Text(step.Done ? "[x]" : "[ ]", 12f, step.Done ? Flying : Dim).Selectable(), 28f, 8f, Prose(step.Text, 12f, step.Done ? Dim : Body)));
         }
         if (leg.Report is { } report)
         {
@@ -350,7 +361,7 @@ internal sealed partial class FlightsView<TSurface>
             {
                 links.Add(Link("folder", folder, $"artifact-folder:{code}:{leg.Name}:{artifact.Title}").WAuto());
             }
-            links.Add(Layout.Builder.Text($"{artifact.When} · {artifact.Location}", 11f, Faint, trim: TextTrim.Start).WStar());
+            links.Add(Layout.Builder.Text($"{artifact.When} · {artifact.Location}", 11f, Faint, trim: TextTrim.Start).WStar().Selectable());
             rows.Add(Layout.Builder.HStack([.. links]).WithGap(10f).RowH(20f));
         }
         return Layout.Builder.VStack([.. rows])
@@ -388,12 +399,38 @@ internal sealed partial class FlightsView<TSurface>
     /// </summary>
     internal IEnumerable<Layout.Node> ReviewAsks(FlightDetail detail)
     {
-        if (detail.Line.Row.Review is not { State: ReviewState.Changes, Report: { Length: > 0 } report })
+        if (detail.Line.Row.Review is not { State: ReviewState.Changes, Report: { Length: > 0 } report } review)
         {
             yield break;
         }
-        yield return Layout.Builder.Text("The review asks for changes:", 13f, Held).RowH(22f);
-        yield return Prose(report, 13f, Body);
+        // Which head and round the report is from, and when the PR has moved on since: that report no longer speaks for the PR, so it is dimmed.
+        var current = detail.Line.Row.GitHubHead;
+        var older = review.ReviewedHead is { Length: > 0 } reviewed && current is { Length: > 0 } now
+            && !string.Equals(reviewed, now, StringComparison.OrdinalIgnoreCase);
+        var from = review.ReviewedHead is { Length: > 0 } read ? $"review of {FlightMarks.Short(read)}, round {review.GoAround + 1}" : $"review round {review.GoAround + 1}";
+        yield return Layout.Builder.Text("The review asks for changes:", 13f, Held).RowH(22f).Selectable();
+        yield return Prose(older ? $"{from}; the head is now {FlightMarks.Short(current!)}" : from, 12f, older ? Held : Dim);
+        // The report is Markdown, as the transcript's words are (a finding a list item, a name in backticks as code), folded to
+        // each finding's first lines until Show all opens it; a report that fits shows no pill.
+        var code = detail.Line.Row.Code;
+        var open = _reportOpen.Contains(code);
+        var (cut, folded) = ReviewReport.Fold(report);
+        yield return ReportMarkdown(open ? report : cut, open, older);
+        if (folded)
+        {
+            // Clear of the last finding's line: the pill sat on its marker.
+            yield return Layout.Builder.Spacer().HFixed(4f);
+            yield return Layout.Builder.HStack(
+                    Pill(open ? "Show less" : "Show all", $"flight:{code}:review-fold", () =>
+                    {
+                        if (!_reportOpen.Remove(code))
+                        {
+                            _reportOpen.Add(code);
+                        }
+                    }),
+                    Layout.Builder.Spacer().WStar())
+                .RowH(28f);
+        }
         // Only the flight's last leg, as the node (LegCommander) decides it: an earlier capped leg with a later one planned is not the person's yet.
         if (detail.Legs.LastOrDefault() is { } capped && capped.Row.ReviewGoArounds >= ReviewRedoCap)
         {
@@ -402,5 +439,48 @@ internal sealed partial class FlightsView<TSurface>
         }
     }
 
-    private static Layout.Node Prose(string text, float size, RGBAColor32 color) => WrappedProse.Of(text, size, color);
+    // The flights whose review report is opened past each finding's first lines, by code: per flight, as the transcript holds its opened entries.
+    private readonly HashSet<string> _reportOpen = [];
+
+    // Each report's tree, parsed once per text, whether it is opened, older than the PR's head and in the night palette: the page builds its rows every frame, and a node is immutable.
+    private readonly Dictionary<(string Text, bool Open, bool Older, bool Night), Layout.Node> _reports = [];
+    private const int ReportsKept = 16;
+
+    private Layout.Node ReportMarkdown(string text, bool open, bool older)
+    {
+        var key = (text, open, older, NightOrNull is not null);
+        if (!_reports.TryGetValue(key, out var document))
+        {
+            if (_reports.Count >= ReportsKept)
+            {
+                _reports.Clear();
+            }
+            _reports[key] = document = SelectableTree.Of(Layout.Builder.Markdown(text, ReportStyle(older) with { OnLink = Follow }), breakLongWords: true);
+        }
+        return document;
+    }
+
+    // Links open through the page's own opener, and only web pages, as the transcript's do.
+    private void Follow(string url)
+    {
+        if (TranscriptEntryView.WebLink(url) is { } web)
+        {
+            OnOpen?.Invoke(web);
+        }
+    }
+
+    /// <summary>
+    /// The transcript's style for the report (<see cref="TranscriptEntryView.Prose"/> itself on the standard palette, its colours
+    /// from the palette in the night view, which has no blue or white to spend), and a dimmed one for a report of an older head:
+    /// the same renderer with the text a step down, code and strong text kept readable.
+    /// </summary>
+    private Layout.MarkdownStyle ReportStyle(bool older)
+    {
+        var style = NightOrNull is { } n
+            ? new Layout.MarkdownStyle { Text = n.Bright, Strong = n.Held, Emphasis = n.Body, Code = n.Held, CodeBackground = n.GhostBg, Link = n.Held, Muted = n.Dim }
+            : TranscriptEntryView.Prose;
+        return older ? style with { Text = Dim, Strong = Body, Emphasis = Dim, Code = Body, Link = Dim, Muted = Dim } : style;
+    }
+
+    private static Layout.Node Prose(string text, float size, RGBAColor32 color) => WrappedProse.Of(text, size, color, selectable: true);
 }

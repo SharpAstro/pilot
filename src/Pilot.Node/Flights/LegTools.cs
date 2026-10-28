@@ -478,7 +478,7 @@ public sealed class GhCli : IGitHub
 
     public async Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(["pr", "view", branch, "--json", "number,state,headRefOid,url,mergeable,labels,mergeCommit,mergedAt"], repoPath, cancellationToken);
+        var (exit, output, error) = await RunAsync(["pr", "view", branch, "--json", "number,state,headRefOid,url,mergeable,labels,mergeCommit,mergedAt,isDraft"], repoPath, cancellationToken);
         if (exit != 0)
         {
             return error.Contains("no pull requests found", StringComparison.OrdinalIgnoreCase)
@@ -494,7 +494,8 @@ public sealed class GhCli : IGitHub
                 ? [.. labels.EnumerateArray().Select(l => TextOf(l, "name")).OfType<string>()]
                 : null,
             MergeCommit: root.TryGetProperty("mergeCommit", out var merge) ? TextOf(merge, "oid") ?? "" : "",
-            MergedAt: TextOf(root, "mergedAt") is { } mergedAt && DateTimeOffset.TryParse(mergedAt, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var merged) ? merged : null);
+            MergedAt: TextOf(root, "mergedAt") is { } mergedAt && DateTimeOffset.TryParse(mergedAt, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var merged) ? merged : null,
+            Draft: root.TryGetProperty("isDraft", out var draft) && draft.ValueKind == JsonValueKind.True);
     }
 
     public async Task<WorkflowRun[]> WorkflowRunsAsync(string repoPath, string commit, CancellationToken cancellationToken)
