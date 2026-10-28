@@ -10,8 +10,8 @@ namespace Pilot.Gui.Tests;
 /// <summary>
 /// Every page's arranged tree, with sample data, at the widths and DPIs the issue names: no text is drawn over other text,
 /// and none reaches past the scroll or the page that holds it (<see cref="TextOverlap"/>, the one check the live GUI reads too).
-/// A case that fails only for DIR.Lib's stack measure (#169, fixed in the sibling source, not yet in the pinned package) is
-/// skipped with its fault line (<see cref="PageTextOverlapSkips"/>); any other fault is the page's own layout and is fixed.
+/// Every case runs: a fault is the page's own layout and is fixed, never skipped. (DIR.Lib's stack measure, #169, is in the
+/// pinned package from 11.39.)
 /// </summary>
 public sealed class PageTextOverlapTests
 {
@@ -28,9 +28,6 @@ public sealed class PageTextOverlapTests
         "cards panel", "transcript", "wizard repos", "wizard issues",
     ];
 
-    // Set PILOT_TEXT_OVERLAP_NOSKIP=1 to run the skipped cases too (with PILOT_TEXT_OVERLAP_DUMP=<file> to list every fault).
-    private static readonly bool IgnoreSkips = Environment.GetEnvironmentVariable("PILOT_TEXT_OVERLAP_NOSKIP") is { Length: > 0 };
-
     internal static readonly string[] States = ["sample", "long", "many", "empty"];
 
     public static IEnumerable<TheoryDataRow<string, string, int, float>> Cases()
@@ -45,7 +42,6 @@ public sealed class PageTextOverlapTests
                     {
                         yield return new TheoryDataRow<string, string, int, float>(page, state, width, dpi)
                         {
-                            Skip = IgnoreSkips ? null : PageTextOverlapSkips.Reasons.GetValueOrDefault(Key(page, state, width, dpi)),
                             TestDisplayName = Key(page, state, width, dpi),
                         };
                     }

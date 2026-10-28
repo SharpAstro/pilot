@@ -51,13 +51,12 @@ public sealed class ChatRowTests
     // At DPI 1.25 and 1.5 as well, as the flight page's padded panels are held (DIR.Lib#163): a measure off by a few
     // pixels shows at one scale and not another.
     [Theory]
-    // The skipped cases fail on the pinned DIR.Lib (11.37.*) and pass with #169's stack measure; skip each until the pin has it.
-    [InlineData(700, 900, 1f, Skip = "DIR.Lib#169: overlap: 'editor's' (137.6,260.7 52.7x16.9) is drawn over 'Tests:' (137.6,261.4 43.1x16.9) (+21 more)")]
-    [InlineData(900, 700, 1f, Skip = "DIR.Lib#169: overlap: 'allowed.' (122,101.5 58.3x16.9) is drawn over 'Bash' (48.1,110.9 84x15.6) (+72 more)")]
+    [InlineData(700, 900, 1f)]
+    [InlineData(900, 700, 1f)]
     [InlineData(1640, 1260, 1f)]
     [InlineData(1640, 1260, 1.25f)]
-    [InlineData(1640, 1260, 1.5f, Skip = "DIR.Lib#169: overlap: 'when' (183,458.3 60.4x25.4) is drawn over 'Bash' (72.1,472.4 126x23.4) (+5 more)")]
-    [InlineData(1100, 900, 1.5f, Skip = "DIR.Lib#169: overlap: 'for' (183,516.6 33.9x25.4) is drawn over 'Bash' (72.1,530.7 126x23.4) (+13 more)")]
+    [InlineData(1640, 1260, 1.5f)]
+    [InlineData(1100, 900, 1.5f)]
     public async Task NoRowsTextIsDrawnOverAnotherRowAndALongMessageWraps(int width, int height, float dpi)
     {
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
