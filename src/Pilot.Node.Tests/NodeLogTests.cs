@@ -4,7 +4,17 @@ using Xunit;
 
 namespace Pilot.Node.Tests;
 
-/// <summary>The node writes to <c>logs/node.log</c> under its data folder and nowhere else (pilot #416).</summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class NodeLogCollection
+{
+    public const string Name = "NodeLog";
+}
+
+/// <summary>
+/// The node writes to <c>logs/node.log</c> under its data folder and nowhere else (pilot #416). These swap <c>Console.Error</c> for
+/// the whole process, so they run apart from the tests that start nodes of their own.
+/// </summary>
+[Collection(NodeLogCollection.Name)]
 public sealed class NodeLogTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;

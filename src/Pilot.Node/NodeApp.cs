@@ -113,7 +113,12 @@ public static class NodeApp
             services.GetRequiredService<NodeState>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<Planes>(),
             services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>()) { Machine = options.Machine, Error = logWriter });
         builder.Services.AddHostedService(services => services.GetRequiredService<RepoWatch>());
-        builder.Services.AddSingleton<PullRequestWatch>();
+        builder.Services.AddSingleton(services =>
+        {
+            var watch = ActivatorUtilities.CreateInstance<PullRequestWatch>(services);
+            watch.Error = logWriter;
+            return watch;
+        });
         builder.Services.AddHostedService(services => services.GetRequiredService<PullRequestWatch>());
         builder.Services.AddSingleton(services =>
         {
