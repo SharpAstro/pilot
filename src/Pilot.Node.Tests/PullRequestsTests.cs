@@ -285,6 +285,81 @@ public sealed class PullRequestsTests : IDisposable
     }
 
     [Fact]
+    public void RepoGroupsAreGroupedOnceMoreByOrgTheOrgWithThePullRequestThatMostNeedsThePersonFirstAndEachWithItsCounts()
+    {
+        var row = new PullRequestsRow
+        {
+            Orgs = ["sharpastro", "sebgod", "acme"], ReadAt = Noon,
+            PullRequests =
+            [
+                Row("sebgod/a", 1, PullRequestKind.Conflicts, 2),
+                Row("SharpAstro/draft", 2, PullRequestKind.Draft, 1),
+                Row("SharpAstro/ready", 3, PullRequestKind.Ready, 8),
+                Row("sharpastro/READY", 4, PullRequestKind.ChecksRunning, 1),
+                Row("sebgod/b", 5, PullRequestKind.Conflicts, 1),
+                Row("acme/x", 6, PullRequestKind.Ready, 20),
+            ],
+        };
+
+        var orgs = row.OrgGroups();
+
+        // Ready in acme (older) and SharpAstro (newer) tie on rank: the more recently updated first, then the conflicts.
+        orgs.Select(o => o.Org).ShouldBe(["SharpAstro", "acme", "sebgod"]);
+        // Each org's repos are Groups' order, the repos of an org as Groups has them.
+        orgs[0].Repos.Select(g => g.Repo).ShouldBe(["SharpAstro/ready", "SharpAstro/draft"]);
+        orgs[2].Repos.Select(g => g.Repo).ShouldBe(["sebgod/b", "sebgod/a"]);
+        orgs.SelectMany(o => o.Repos).Select(g => g.Repo).ShouldBe(row.Groups().Select(g => g.Repo), ignoreOrder: true);
+        // The words of the summary, over the org's PRs, so header and summary read alike.
+        orgs[0].Counts.ShouldBe("3 open · 1 ready · 1 checks running");
+        orgs[2].Counts.ShouldBe("2 open · 2 conflicts");
+        row.Summary().ShouldBe(PullRequestsRow.Counts(row.PullRequests));
+        orgs.All(o => o.Error is null).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AnOrgWithNoPullRequestOrWhoseReadFailedIsStillListedAfterTheOnesWithPullRequestsAndAFailedOneKeepsItsLastReadPullRequests()
+    {
+        var row = new PullRequestsRow
+        {
+            Orgs = ["zeta", "SharpAstro", "alpha", "sebgod"], ReadAt = Noon,
+            PullRequests = [Row("SharpAstro/a", 1, PullRequestKind.Draft), Row("sebgod/m", 2, PullRequestKind.Ready)],
+            Errors = [new PullRequestsError { Org = "sebgod", Message = "gh offline\nretry" }, new PullRequestsError { Org = "Sebgod", Message = "rate limited" }, new PullRequestsError { Org = "elsewhere", Message = "no access" }],
+        };
+
+        var orgs = row.OrgGroups();
+
+        orgs.Select(o => o.Org).ShouldBe(["sebgod", "SharpAstro", "alpha", "elsewhere", "zeta"]);
+        // A failed org keeps what was read of it, and says why (once however it is cased, on one line).
+        orgs[0].ShouldSatisfyAllConditions(o => o.Error.ShouldBe("gh offline retry rate limited"), o => o.Repos.Single().PullRequests.Single().Number.ShouldBe(2), o => o.Counts.ShouldBe("1 open · 1 ready"));
+        orgs[1].Error.ShouldBeNull();
+        // No PR: nothing to show under it, and it counts none.
+        orgs[2].ShouldSatisfyAllConditions(o => o.Repos.ShouldBeEmpty(), o => o.Counts.ShouldBe("0 open"), o => o.Error.ShouldBeNull());
+        // An error naming an org that is not among Orgs is one too.
+        orgs[3].Error.ShouldBe("no access");
+    }
+
+    [Fact]
+    public void TheNeedsMeOrgGroupsKeepOnlyTheOrgsWithAPullRequestThatNeedsThePersonOrWhoseReadFailed()
+    {
+        var row = new PullRequestsRow
+        {
+            Orgs = ["SharpAstro", "sebgod", "quiet", "down"], ReadAt = Noon,
+            PullRequests = [Row("SharpAstro/a", 1, PullRequestKind.Ready), Row("SharpAstro/a", 2, PullRequestKind.ChecksRunning), Row("sebgod/m", 3, PullRequestKind.Draft)],
+            Errors = [new PullRequestsError { Org = "down", Message = "offline" }],
+        };
+
+        var orgs = row.OrgGroups(needsMeOnly: true);
+
+        orgs.Select(o => o.Org).ShouldBe(["SharpAstro", "down"]);
+        // The shown repos are the ones that need the person; the counts are still of everything the org has open.
+        orgs[0].Repos.Single().PullRequests.Select(p => p.Number).ShouldBe([1]);
+        orgs[0].Counts.ShouldBe("2 open · 1 ready · 1 checks running");
+        orgs[1].Repos.ShouldBeEmpty();
+        RowOf().OrgGroups().Single().ShouldSatisfyAllConditions(o => o.Org.ShouldBe("SharpAstro"), o => o.Counts.ShouldBe("0 open"), o => o.Repos.ShouldBeEmpty());
+        RowOf().OrgGroups(needsMeOnly: true).ShouldBeEmpty();
+    }
+
+    [Fact]
     public void RowsOfSeveralNodesMergeIntoOneWithTheNewestReadOfEachPullRequestAndTheFlightEitherKnew()
     {
         var mine = new PullRequestsRow
@@ -307,6 +382,11 @@ public sealed class PullRequestsTests : IDisposable
         // The orgs as the newest read spelled them, once however they are cased.
         merged.Orgs.ShouldBe(["sharpastro", "sebgod"]);
         merged.Errors.Single().Message.ShouldBe("offline");
+        // The per-org errors and the rate-limit note of every node stand, an error once however its org is cased.
+        var limited = PullRequestsRow.Merge([mine with { Note = "Rate-limited by GitHub until 14:05; reading again then" }, theirs with { Errors = [.. theirs.Errors, new PullRequestsError { Org = "SEBGOD", Message = "offline" }, new PullRequestsError { Org = "acme", Message = "no access" }] }])!;
+        limited.Errors.Select(e => e.Message).ShouldBe(["offline", "no access"]);
+        limited.Note.ShouldBe("Rate-limited by GitHub until 14:05; reading again then");
+        limited.OrgGroups().Single(o => o.Org == "sebgod").Error.ShouldBe("offline");
         // As old as the oldest read, so a node that stopped reading shows as stale.
         merged.ReadAt.ShouldBe(Noon - TimeSpan.FromMinutes(1));
         PullRequestsRow.Merge([null, null]).ShouldBeNull();

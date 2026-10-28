@@ -753,22 +753,34 @@ public sealed class CliTests : IAsyncLifetime
 
         var plain = PullRequestsMarkdown.Plain(row, needsMe: false, now).ReplaceLineEndings("\n");
         plain.ShouldContain("3 open · 1 ready · 1 checks running · 1 conflicts · read 2m ago");
-        plain.ShouldContain("SharpAstro/pilot  1\n    #7 Ready one  Ready  PIL7  sebgod  review passed  updated 3h ago");
-        plain.ShouldContain("    #3 A|B is *wip*  Checks running 4/7  sebgod  updated 1d ago");
+        // An org line with its counts, its repos indented under it, their PRs under those.
+        plain.ShouldContain("SharpAstro  2 open · 1 ready · 1 checks running\n  SharpAstro/pilot  1\n      #7 Ready one  Ready  PIL7  sebgod  review passed  updated 3h ago");
+        plain.ShouldContain("      #3 A|B is *wip*  Checks running 4/7  sebgod  updated 1d ago");
         plain.ShouldContain("updated 400d ago");
-        plain.ShouldContain("! sebgod: gh offline");
-        // The repo with the PR that most needs the person first: ready, then the conflict, then the running checks.
-        new[] { "SharpAstro/pilot  1", "sebgod/mercury  1", "SharpAstro/tianwen  1" }.Select(l => plain.IndexOf(l, StringComparison.Ordinal)).ShouldBeInOrder();
+        // The org that could not be read says so under its own line, with its PRs of the last read.
+        plain.ShouldContain("sebgod  1 open · 1 conflicts\n  ! gh offline\n  sebgod/mercury  1\n");
+        // The org (then repo) with the PR that most needs the person first: SharpAstro has the ready one.
+        new[] { "SharpAstro  2 open", "SharpAstro/pilot  1", "SharpAstro/tianwen  1", "sebgod  1 open", "sebgod/mercury  1" }.Select(l => plain.IndexOf(l, StringComparison.Ordinal)).ShouldBeInOrder();
 
         var needsMe = PullRequestsMarkdown.Plain(row, needsMe: true, now);
         needsMe.ShouldNotContain("tianwen");
         needsMe.ShouldContain("#9 Old");
+        // The counts stay the whole org's, as the summary line's are the whole row's.
+        needsMe.ShouldContain("SharpAstro  2 open · 1 ready · 1 checks running\n  SharpAstro/pilot  1\n");
 
         var markdown = PullRequestsMarkdown.Build(row, needsMe: false, now);
-        markdown.ShouldContain("## [SharpAstro/pilot](https://github.com/SharpAstro/pilot) (1)");
+        markdown.ShouldContain("## [SharpAstro](https://github.com/SharpAstro) · 2 open · 1 ready · 1 checks running\n\n### [SharpAstro/pilot](https://github.com/SharpAstro/pilot) (1)");
+        markdown.ShouldContain("## [sebgod](https://github.com/sebgod) · 1 open · 1 conflicts\n\n- gh offline\n\n### [sebgod/mercury]");
         markdown.ShouldContain("| Ready | [#7 Ready one](https://github.com/SharpAstro/pilot/pull/7) | PIL7 | sebgod | [passed](https://github.com/SharpAstro/pilot/pull/7#issuecomment-1) | 3h ago |");
         markdown.ShouldContain(@"[#3 A\|B is \*wip\*]");
-        markdown.ShouldContain("- sebgod: gh offline");
+
+        // The row's rate-limit note stays at the foot, on its own; an org with nothing to show still prints when its read failed.
+        var limited = row with { Note = "Rate-limited by GitHub until 14:05; reading again then", Orgs = ["SharpAstro", "sebgod", "quiet"] };
+        PullRequestsMarkdown.Plain(limited, needsMe: false, now).ShouldEndWith("quiet  0 open\n! Rate-limited by GitHub until 14:05; reading again then\n");
+        PullRequestsMarkdown.Build(limited, needsMe: false, now).ShouldEndWith("## [quiet](https://github.com/quiet) · 0 open\n\n- Rate-limited by GitHub until 14:05; reading again then\n");
+        // Nothing needs the person in an org that failed: its error is still said, and an org with nothing and no error is not.
+        var failed = new PullRequestsRow { Orgs = ["SharpAstro", "sebgod"], ReadAt = now, PullRequests = [row.PullRequests[0]], Errors = row.Errors };
+        PullRequestsMarkdown.Plain(failed, needsMe: true, now).ShouldBe("No pull requests need you in SharpAstro, sebgod.\n! sebgod: gh offline\n");
 
         PullRequestsMarkdown.Plain(null, needsMe: false, now).ShouldContain("pilot prs --refresh");
         PullRequestsMarkdown.Plain(new PullRequestsRow { Orgs = ["SharpAstro", "sebgod"], ReadAt = now }, needsMe: false, now).ShouldBe("No open pull requests in SharpAstro, sebgod.\n");
