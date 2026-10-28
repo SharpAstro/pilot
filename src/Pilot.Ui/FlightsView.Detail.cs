@@ -157,8 +157,9 @@ internal sealed partial class FlightsView<TSurface>
         head.Add(Layout.Builder.Text(line.StateDetail is null ? line.State : $"{line.State} ({line.StateDetail})", 13f, color, TextAlign.Far).WAuto().Selectable());
         // The buttons wrap onto lines of their own under the title, as Home's chips do: in the head row they took the title's room and
         // the last (a stale flight's dead "Remove render") ran past the page's edge at a narrow width.
+        // Retry move is in the red band under the head, not said twice.
         var buttons = CanCommand
-            ? FlightAction.For(line).Select(action => ActionButton(line, action, $"flight:{line.Code}:{action.Verb}")).ToList()
+            ? FlightAction.For(line).Where(a => a.Verb != Verbs.MoveFlight).Select(action => ActionButton(line, action, $"flight:{line.Code}:{action.Verb}")).ToList()
             : [];
 
         var facts = new List<Layout.Node>
@@ -203,6 +204,14 @@ internal sealed partial class FlightsView<TSurface>
         [
             Layout.Builder.HStack([.. head]).WithGap(10f).RowH(32f),
         ];
+        if (MoveFailureBand.Build<TSurface>(line, P, RetryOf(line)) is { } band)
+        {
+            page.Add(band);
+        }
+        if (line.Provenance is { } provenance)
+        {
+            page.Add(Prose(provenance, 12f, Dim));
+        }
         if (buttons.Count > 0)
         {
             page.Add(Layout.Builder.WrapH([.. buttons]).WithGap(10f).WithLineGap(6f).WStar());
