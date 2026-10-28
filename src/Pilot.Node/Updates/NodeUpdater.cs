@@ -48,6 +48,9 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
     /// <summary>Starts the installed node to take over from this one; false if it did not start. A test replaces it.</summary>
     public Func<string, bool> StartSuccessor { get; init; } = NodeRestarter.Start;
 
+    /// <summary>Whether the node's systemd unit restarts it, so no successor is started. A test replaces it.</summary>
+    public Func<string, bool> RestartedBySystemd { get; init; } = NodeRestarter.UnderSystemdUnit;
+
     /// <summary>Runs the staged <c>pilot-node --version</c> before it goes in: a release that does not start here is not
     /// installed. A test replaces it.</summary>
     public Func<string, string, CancellationToken, Task<string?>> Smoke { get; init; } = SmokeAsync;
@@ -169,7 +172,7 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
             }
             var node = Path.Combine(InstallFolder, Executable("pilot-node"));
             var line = $"pilot {Version} -> {release.Version}, installed by {who}; the node restarts{Carrying()}";
-            if (!StartSuccessor(node))
+            if (!RestartedBySystemd(node) && !StartSuccessor(node))
             {
                 // Installed but not running: the next start of the node (the GUI starts one) is the new one.
                 state.RaiseCard(CardBin.Ring, Kind, Verbs.NodeTarget, $"pilot {release.Version} is installed but the node did not restart",
