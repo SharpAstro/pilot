@@ -1,4 +1,5 @@
 using DIR.Lib;
+using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Pilot.Ui;
 using Shouldly;
@@ -60,6 +61,25 @@ public sealed class CardLegLinkTests
     }
 
     [Fact]
+    public void ACardWhoseSentenceNamesTheLegBareStillShowsItsFlightsCodeSlashLeg()
+    {
+        var card = new CardRow
+        {
+            Id = "c3", Bin = CardBin.Ring, Kind = "merge-failed", Subject = "flight/PIL355", Title = "PIL355's PR #360: check build-and-test failed",
+            Summary = "The merge of PIL355 did not go through. Redo leg parser sends a fresh worker to fix it; Merge again tries once more as it is.",
+            Choices = [new CardChoice { Label = Verbs.RedoLeg("parser"), Verb = Verbs.GoAround, Target = Verbs.LegTarget("PIL355", "parser") }],
+            At = Now, State = CardState.Open,
+        };
+        using var renderer = new RgbaImageRenderer(400, 1200);
+        var view = new CardsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+
+        var arranged = Layout.Engine.Arrange(view.Tree(CardsScreen.From([card])), new Rect<float>(0, 0, 400, 1200), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        var texts = arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value).ToArray();
+
+        texts.ShouldContain(t => t.Contains("PIL355/parser"));
+    }
+
+    [Fact]
     public void ACardAboutNoLegHasNoLegLink()
     {
         using var renderer = new RgbaImageRenderer(400, 1200);
@@ -82,25 +102,25 @@ public sealed class CardLegLinkTests
         {
             ("review-changes", new CardRow
             {
-                Id = "c1", Bin = CardBin.Ring, Kind = "review-changes", Subject = "flight/PIL355", Title = "PIL355's PR #360 needs changes",
-                Summary = "The review asked for changes on the parser leg. Redo leg parser to fix them, or dismiss the card.",
+                Id = "c1", Bin = CardBin.Ring, Kind = "review-changes", Subject = "flight/PIL355", Title = "PIL355's review asks for changes",
+                Summary = "The review of PIL355/parser asked for changes. Redo leg sends a fresh worker to make them; Ready anyway lands it as it is.",
                 Detail = "Review of 3b2b6d0: the parser drops a trailing newline; add a test for it.",
-                Choices = [redo],
+                Choices = [redo, new CardChoice { Label = "Ready anyway", Verb = Verbs.Review, Target = "flight/PIL355", Args = ["pass", "ready anyway"] }],
                 Link = "https://github.com/SharpAstro/pilot/pull/360", At = Live.At, State = CardState.Open,
             }),
             ("leg-failed", new CardRow
             {
                 Id = "c2", Bin = CardBin.Ring, Kind = "leg-failed", Subject = "flight/PIL355/parser", Title = "PIL355/parser failed",
-                Summary = "The worker for leg parser gave up before its check passed. Redo leg parser to fly it again.",
+                Summary = "The worker of PIL355/parser gave up. Redo leg sends a fresh worker; Mark done anyway accepts the leg as it is.",
                 Detail = "the last worker gave up: dotnet test failed with 3 errors in ParserTests",
-                Choices = [redo], At = Live.At, State = CardState.Open,
+                Choices = [redo, new CardChoice { Label = "Mark done anyway", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget("PIL355", "parser"), Args = ["accepted"] }], At = Live.At, State = CardState.Open,
             }),
             ("merge-failed", new CardRow
             {
                 Id = "c3", Bin = CardBin.Ring, Kind = "merge-failed", Subject = "flight/PIL355", Title = "PIL355's PR #360: check build-and-test failed",
-                Summary = "The merge waited for the checks and one failed. Redo leg parser to fix it, re-run the checks, or merge again.",
+                Summary = "The merge of PIL355 did not go through. Redo leg parser sends a fresh worker to fix it; Re-run checks runs them again; Merge again tries once more as it is.",
                 Detail = "The merge waited for the checks to pass, and build-and-test failed on 3b2b6d0. Auto-merge is off.",
-                Choices = [redo, new CardChoice { Label = "Merge again", Verb = Verbs.Merge, Target = "flight/PIL355", Args = ["3b2b6d0"] }],
+                Choices = [redo, new CardChoice { Label = "Re-run checks", Verb = Verbs.RerunChecks, Target = "flight/PIL355", Args = ["3b2b6d0", "squash"] }, new CardChoice { Label = "Merge again", Verb = Verbs.Merge, Target = "flight/PIL355", Args = ["3b2b6d0"] }],
                 Link = "https://github.com/SharpAstro/pilot/pull/360", At = Live.At, State = CardState.Open,
             }),
         };

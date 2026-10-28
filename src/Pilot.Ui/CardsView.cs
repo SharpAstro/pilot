@@ -611,7 +611,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 return null;
             }
             linked = true;
-            return LegLink(card, about, word.TrimEnd() + " ", size).WAuto();
+            // Always read as code/leg: a bare leg name in the node's sentence ("Redo leg parser ...") is shown with its flight, as the TUI has no hover to say which.
+            var shown = word.TrimEnd();
+            var bare = shown.Trim('\'', '"', '`', '(', ')', ',', '.', ':', ';', '!', '?');
+            var at = shown.IndexOf(bare, StringComparison.Ordinal);
+            return LegLink(card, about, shown[..at] + about + shown[(at + bare.Length)..] + " ", size).WAuto();
         };
         var lines = new List<Layout.Node>
         {
@@ -634,9 +638,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             lines.Add(Whole(WrappedProse.Of(summary, 12f, Body, SummaryLines, linker(12f)), summary, summary.Length > SummaryFits));
         }
         // The leg's name was not in the words above: a small link row of its own, so the leg is one click away all the same.
-        if (leg is { } about && !linked)
+        if (leg is { } ofLeg && !linked)
         {
-            lines.Add(LegLink(card, about, about.ToString(), 12f).RowH(20f));
+            lines.Add(LegLink(card, ofLeg, ofLeg.ToString(), 12f).RowH(20f));
         }
         if (card.Detail is { Length: > 0 } detail && detail != summary)
         {
