@@ -100,7 +100,7 @@ internal sealed class PilotChrome<TSurface>
     private Action<PilotPage>? _select;
 
     // The window's moves, and how deep in one the chrome is (its own restore and its links open things without a record each).
-    private readonly NavHistory<NavPlace> _history = new();
+    private readonly NavigationHistory<NavPlace> _history = new();
     private int _moving;
 
     // The host's own page switch, as the links were given it: where Back puts the page when the host keeps it.
@@ -436,20 +436,22 @@ internal sealed class PilotChrome<TSurface>
     /// </summary>
     public bool HandleInput(InputEvent evt)
     {
-        switch (evt)
+        // Shift+Enter in the chat's box is a new line: ahead of the router, which would take the Enter as a send.
+        if (evt is InputEvent.KeyDown { Key: InputKey.Enter } && Chat.HandleNewLine(evt))
         {
-            // Shift+Enter in the chat's box is a new line: ahead of the router, which would take the Enter as a send.
-            case InputEvent.KeyDown { Key: InputKey.Enter } when Chat.HandleNewLine(evt):
-                return true;
-            case InputEvent.KeyDown { Key: InputKey.Left, Modifiers: var mods } when mods == InputModifier.Alt:
-            case InputEvent.MouseDown { Button: MouseButton.Back }:
+            return true;
+        }
+
+        // Back and Forward are DIR.Lib's one rule: Alt+Left/Right, the mouse buttons, and the release a button's press already answered.
+        switch (NavigationInput.Classify(evt))
+        {
+            case NavigationCommand.Back:
                 Back();
                 return true;
-            case InputEvent.KeyDown { Key: InputKey.Right, Modifiers: var mods } when mods == InputModifier.Alt:
-            case InputEvent.MouseDown { Button: MouseButton.Forward }:
+            case NavigationCommand.Forward:
                 Forward();
                 return true;
-            case InputEvent.MouseUp { Button: MouseButton.Back or MouseButton.Forward }:
+            case NavigationCommand.Swallow:
                 return true;
             default:
                 // The open flight page's text selection (a drag over its text, Ctrl+C, a right-click on it), ahead of the router.

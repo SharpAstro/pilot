@@ -197,8 +197,31 @@ public sealed partial class LegCommander(
             var code = FlightOf(command.Target).Code;
             MarkMerge(command.Target, ChoiceStatus.Conflicting);
             error = await RebaseOntoBaseAsync(code, cancellationToken) is { } why
-                ? $"{error}; {why}{(await ConflictsAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : ": its last leg is redone to resolve it")}"
-                : $"{error}: it is being rebased onto its base and reviewed afresh, and the merge is offered again once that passes";
+                ? $"{error}; {why}{(!IsConflict(why) ? "" : await ConflictsAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : ": its last leg is redone to resolve it")}"
+                : $"{error}: it is being {(await github.UpdateWayAsync(FlightOf(command.Target).RepoPath, Models.MergeMethod, cancellationToken) == UpdateWay.Merge ? "brought up to date with" : "rebased onto")} its base and reviewed afresh, and the merge is offered again once that passes";
+        }
+
+        // A merge of a PR behind its base is not sent on: the node brings it up to date (the merge-up way), pushes, and reviews it
+        // afresh, which offers the merge again.
+        if (error is not null && command.Verb is Verbs.Merge or Verbs.RerunChecks && Behind(error))
+        {
+            var code = FlightOf(command.Target).Code;
+            var updated = $"{error}, so the node brought it up to date with its base and it is reviewed afresh; the merge is offered again once that passes";
+            if (await RebaseOntoBaseAsync(code, cancellationToken) is { } why)
+            {
+                error = $"{error}; {why}{(!IsConflict(why) ? "" : await ConflictsAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : ": its last leg goes around to resolve it")}";
+            }
+            else if (command.Who == "node" && command.Verb == Verbs.Merge)
+            {
+                // The node's own merge (autopilot, an armed merge at green, a recheck) is not refused for it: the update is what it did.
+                made = updated;
+                error = null;
+                way = MergeWays.Updated;
+            }
+            else
+            {
+                error = updated;
+            }
         }
 
         // A merge lands its flight through the flight verbs' own lock, after this one's is let go. One that only joined a
@@ -218,12 +241,15 @@ public sealed partial class LegCommander(
         }
         // A merge armed or queued is no merge yet: any card of the flight offering it says where it stands, the one an answer
         // runs it from included: NodeCommands.AnswerAsync keeps that card open while the command runs.
-        if (error is null && way is not null)
+        if (error is null && way is (MergeWays.Armed or MergeWays.Queued))
         {
             ShowMerge(command.Target, made, way);
         }
         return state.Complete(command, error, way, made: made);
     }
+
+    /// <summary>Whether a reason <see cref="RebaseOntoBaseAsync"/> gave is a merge or rebase that conflicted: the only one a leg goes round for.</summary>
+    private static bool IsConflict(string why) => why.Contains(" conflicts (", StringComparison.Ordinal);
 
     /// <summary>
     /// A flight whose PR conflicts with its base (main moved after the plane was cut: tianwen #1784 and #1795, 2026-10-23,
@@ -284,7 +310,7 @@ public sealed partial class LegCommander(
                 }
                 flight = Record(code, f => f with { MergeWhenGreen = null }) ?? flight;
             }
-            var (repaired, notRebased) = await OffLockAsync(null, async Task<(FlightRow, string?)> () =>
+            var (repaired, notRebased, way) = await OffLockAsync(null, async Task<(FlightRow, string?, UpdateWay)> () =>
             {
                 // Armed on GitHub by a hand the node did not see: the plane is not rebased for a push that would be refused.
                 await EnsureNotArmedAsync(flight, cancellationToken);
@@ -296,25 +322,39 @@ public sealed partial class LegCommander(
                 await TakeRemoteAsync(flight, cancellationToken);
                 // A base that is no branch on the remote is the remote's default first, as when its PR opened.
                 var repaired = await RepairBaseAsync(flight, cancellationToken);
-                // A branch that holds its base already (merged in, as a squashing merge queue allows) has nothing to rebase.
+                // Where the queue squashes or merges the base is merged in and pushed plain; only a rebase-queue repo is rebased.
+                var way = await github.UpdateWayAsync(repaired.RepoPath, Models.MergeMethod, cancellationToken);
+                // A branch that holds its base already (merged in, as a squashing merge queue allows) has nothing to update.
                 if ((await git.RunAsync(["merge-base", "--is-ancestor", repaired.Base, "HEAD"], flight.Worktree, cancellationToken)).Ok)
                 {
                     // A base just repaired rebased the plane: that is a rewrite, pushed with the lease and not merged with the remote's old head.
                     await PushAsync(repaired, repaired: repaired.Base != flight.Base, cancellationToken);
-                    return (repaired, null);
+                    return (repaired, null, way);
                 }
-                var rebase = await git.RunAsync(["rebase", repaired.Base], flight.Worktree, cancellationToken);
-                if (!rebase.Ok)
+                if (way == UpdateWay.Merge)
                 {
-                    await git.RunAsync(["rebase", "--abort"], flight.Worktree, cancellationToken);
-                    // git's progress lines ("Rebasing (1/3)") say nothing of the conflict: only what it could not apply is kept.
-                    var stopped = string.Join(" ", rebase.Why.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                        .Where(l => !l.StartsWith("Rebasing (", StringComparison.Ordinal)));
-                    return (repaired, $"rebasing {code} onto {repaired.Base} conflicts ({stopped})");
+                    var merge = await git.RunAsync(["merge", "--no-edit", repaired.Base], flight.Worktree, cancellationToken);
+                    if (!merge.Ok)
+                    {
+                        await git.RunAsync(["merge", "--abort"], flight.Worktree, cancellationToken);
+                        return (repaired, $"merging {repaired.Base} into {code} conflicts ({merge.Why}): merge the base into its plane by hand", way);
+                    }
                 }
-                // Rebased by the node: the branch goes up with a lease on the remote head taken above.
-                await PushAsync(repaired, repaired: true, cancellationToken);
-                return (repaired, null);
+                else
+                {
+                    var rebase = await git.RunAsync(["rebase", repaired.Base], flight.Worktree, cancellationToken);
+                    if (!rebase.Ok)
+                    {
+                        await git.RunAsync(["rebase", "--abort"], flight.Worktree, cancellationToken);
+                        // git's progress lines ("Rebasing (1/3)") say nothing of the conflict: only what it could not apply is kept.
+                        var stopped = string.Join(" ", rebase.Why.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                            .Where(l => !l.StartsWith("Rebasing (", StringComparison.Ordinal)));
+                        return (repaired, $"rebasing {code} onto {repaired.Base} conflicts ({stopped}): rebase its plane by hand", way);
+                    }
+                }
+                // Rebased by the node, the branch goes up with the lease and is not merged with the remote's old head; a merge goes up plain.
+                await PushAsync(repaired, repaired: way == UpdateWay.Rebase || repaired.Base != flight.Base, cancellationToken);
+                return (repaired, null, way);
             });
             if (notRebased is not null)
             {
@@ -325,7 +365,7 @@ public sealed partial class LegCommander(
                 return null;
             }
             flight = Record(code, f => f with { Base = repaired.Base })!;
-            state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} rebased onto {flight.Base}; reviewed afresh", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+            state.CloseCardsAbout(Verbs.FlightTarget(code), way == UpdateWay.Merge ? $"{code} brought up to date with {flight.Base}; reviewed afresh" : $"{code} rebased onto {flight.Base}; reviewed afresh", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
             await StartReviewAsync(flight, cancellationToken, quiet: true);
             return null;
         }
@@ -1030,6 +1070,23 @@ public sealed partial class LegCommander(
                 {
                     throw new FlightException($"{flight.Code}/{leg.Name} has steps not ticked: {string.Join("; ", open)}");
                 }
+                // The go-around's push comes next when it is the last leg. The plane is brought up to date with its base first, so the
+                // check below runs on what is pushed; a conflict is undone and refused, the leg left flying for its worker to resolve.
+                var pushes = flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null
+                    && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name);
+                (UpdateWay Way, string? Pushed)? seenUpdate = null;
+                if (pushes)
+                {
+                    using (Calling(flight.Code, "being brought up to date"))
+                    {
+                        var seenLeg = leg;
+                        // What the remote held before this fetch: the push after the leg is recorded leases on it, not on what the fetch left.
+                        seenUpdate = await OffLockAsync(null, () => BringUpToDateLeasedAsync(flight, cancellationToken));
+                        leg = Unchanged(flight.Code, seenLeg) is { } current
+                            ? current
+                            : throw new FlightException($"{flight.Code}/{seenLeg.Name} changed while it was brought up to date: nothing was recorded, look again and finish again");
+                    }
+                }
                 if (leg.Check is { Length: > 0 } check)
                 {
                     // A check planned before plan refused wrong paths is written to find them now, and kept so: else no go-around passes it.
@@ -1064,10 +1121,8 @@ public sealed partial class LegCommander(
                         throw new FlightException($"{flight.Code}/{leg.Name}'s check `{check}` failed ({run.ExitCode}); it stays flying. Last of its output:\n{run.Tail}");
                     }
                 }
-                // The go-around's push comes next when it is the last leg: GitHub's auto-merge is turned off before the leg is done, so a
-                // refusal leaves it flying for its worker to finish again, not done with nothing pushed.
-                var pushes = flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null
-                    && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name);
+                // GitHub's auto-merge is turned off before the leg is done, so a refusal leaves it flying for its worker to finish
+                // again, not done with nothing pushed.
                 if (pushes)
                 {
                     using (Calling(flight.Code, "being pushed"))
@@ -1086,7 +1141,7 @@ public sealed partial class LegCommander(
                 {
                     using (Calling(flight.Code, "being pushed"))
                     {
-                        await OffLockAsync(null, () => PushAsync(flight, repaired: false, cancellationToken));
+                        await OffLockAsync(null, () => PushAsync(flight, repaired: false, cancellationToken, seenUpdate));
                     }
                     await StartReviewAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken, quiet: true);
                 }
@@ -1199,7 +1254,7 @@ public sealed partial class LegCommander(
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
                 var commits = await git.RunAsync(["log", "--oneline", $"{flight.Base}..HEAD"], flight.Worktree, CancellationToken.None);
                 var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
-                var brief = Briefs.For(flight, next, legs, why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket, machine: options.Machine);
+                var brief = Briefs.For(flight, next, legs, why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket, machine: options.Machine, update: await UpdateInstructionAsync(flight.Code, CancellationToken.None));
                 entering();
                 return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), CancellationToken.None);
             },
@@ -1251,7 +1306,7 @@ public sealed partial class LegCommander(
             case MergeKinds.Queued:
                 return (false, QueuedLine(flight.Code, mergeState.Place is { } place ? $"in the merge queue, {place}" : "in the merge queue"), MergeWays.Queued);
             case MergeKinds.Behind:
-                throw new FlightException($"#{pr.Number} is behind its base, so GitHub will not merge it: the node brings it up to date with its base, and it is reviewed afresh");
+                throw new FlightException(BehindText(pr.Number));
             case MergeKinds.ChangesRequested:
                 throw new FlightException($"#{pr.Number} has changes requested on GitHub: they are read first, then it merges");
             case MergeKinds.Blocked when mergeState.Reason is { } why && mergeState.FailedName is null:
@@ -1429,8 +1484,29 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"#{pr.Number} conflicts with its base, so GitHub cannot merge it");
         }
+        // Behind its base by the plane's own look, not only GitHub's (BEHIND needs a "require up to date" rule): never sent to the
+        // queue to find out. The caller brings it up to date and reviews it afresh.
+        if (Directory.Exists(flight.Worktree))
+        {
+            await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
+            // The PR's head once fetched; the plane's own head where the remote has not got it (the two are one: nothing is past it).
+            var tip = (await git.RunAsync(["cat-file", "-e", $"{pr.Head}^{{commit}}"], flight.Worktree, cancellationToken)).Ok ? pr.Head : "HEAD";
+            if (!(await git.RunAsync(["merge-base", "--is-ancestor", flight.Base, tip], flight.Worktree, cancellationToken)).Ok)
+            {
+                // A PR GitHub has queued is left as it is (the caller says it is queued): a push would drop it from the queue.
+                if ((await github.MergeStateAsync(flight.RepoPath, pr.Number, cancellationToken))?.Kind == MergeKinds.Queued)
+                {
+                    return pr;
+                }
+                throw new FlightException(BehindText(pr.Number));
+            }
+        }
         return pr;
     }
+
+    private static string BehindText(int number) => $"#{number} is behind its base";
+
+    private static bool Behind(string error) => error.Contains("is behind its base", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Shows a merge that is armed or queued (<paramref name="way"/>, a <see cref="MergeWays"/>) on every open card of the target
@@ -1621,7 +1697,7 @@ public sealed partial class LegCommander(
                 rebasedOnto = true;
             }
             // Pushed every time, not only for a new PR: a go-around's commits must reach the PR before it is reviewed again.
-            await PushAsync(repaired, repaired: repaired.Base != flight.Base, cancellationToken);
+            await PushAsync(repaired, repaired: repaired.Base != flight.Base || rebasedOnto, cancellationToken);
             var pr = await github.PullRequestAsync(repaired.RepoPath, repaired.Branch, cancellationToken);
             if (pr is null || !string.Equals(pr.State, "OPEN", StringComparison.OrdinalIgnoreCase))
             {
@@ -1746,31 +1822,68 @@ public sealed partial class LegCommander(
     private static string Short(string sha) => sha[..Math.Min(8, sha.Length)];
 
     /// <summary>
-    /// Pushes the flight's branch, never dropping commits: it goes up fast-forward only, after the remote's commits are taken in
-    /// (<see cref="TakeRemoteAsync"/>), so a push another hand made meanwhile is refused by git, not overwritten.
+    /// Fetches, takes in what the remote holds that the plane lacks (<see cref="TakeRemoteAsync"/>), then brings the plane's branch up
+    /// to date with its base in the repo's way (merge where the queue squashes or merges, rebase where it rebases); a conflict is
+    /// aborted and refused. Also gives the sha <c>origin/&lt;branch&gt;</c> held once taken in (null when it had none): the push's lease
+    /// names it, since a bare lease compares with the ref a fetch has just refreshed and always passes.
     /// </summary>
     /// <param name="repaired">
-    /// The node rewrote the branch itself (a rebase, after <see cref="TakeRemoteAsync"/> took the remote's commits in): the one push
-    /// that may replace the remote head, and only the one read before the rewrite (the tracking ref the caller fetched, not fetched
-    /// again here), as <c>--force-with-lease=refs/heads/&lt;branch&gt;:&lt;sha&gt;</c>. A bare lease would take whatever a fetch last saw.
+    /// The base was repaired, which rebased the branch: the remote's commits were taken in before that, so nothing is fetched or merged
+    /// again here, and the lease names the tracking ref the caller fetched.
     /// </param>
-    internal async Task PushAsync(FlightRow flight, bool repaired, CancellationToken cancellationToken)
+    private async Task<(UpdateWay Way, string? Pushed)> BringUpToDateLeasedAsync(FlightRow flight, CancellationToken cancellationToken, bool repaired = false)
     {
-        await EnsureNotArmedAsync(flight, cancellationToken);
-        string[] args = ["push", "-u", "origin", flight.Branch];
-        if (repaired)
+        var way = await github.UpdateWayAsync(flight.RepoPath, Models.MergeMethod, cancellationToken);
+        if (!repaired)
         {
-            var read = await git.RunAsync(["rev-parse", "--verify", "--quiet", $"refs/remotes/origin/{flight.Branch}"], flight.Worktree, cancellationToken);
-            if (read.Ok)
+            await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
+            await TakeRemoteAsync(flight, cancellationToken);
+        }
+        var before = await git.RunAsync(["rev-parse", "--verify", "--quiet", $"refs/remotes/origin/{flight.Branch}"], flight.Worktree, cancellationToken);
+        var pushed = before.Ok ? before.Output.Trim() : null;
+        if ((await git.RunAsync(["merge-base", "--is-ancestor", flight.Base, "HEAD"], flight.Worktree, cancellationToken)).Ok)
+        {
+            return (way, pushed);
+        }
+        if (way == UpdateWay.Merge)
+        {
+            var merge = await git.RunAsync(["merge", "--no-edit", flight.Base], flight.Worktree, cancellationToken);
+            if (!merge.Ok)
             {
-                args = ["push", "-u", $"--force-with-lease=refs/heads/{flight.Branch}:{read.Output.Trim()}", "origin", flight.Branch];
+                await git.RunAsync(["merge", "--abort"], flight.Worktree, cancellationToken);
+                throw new FlightException($"{flight.Branch} is not pushed: merging {flight.Base} into it conflicts ({merge.Why}); {await UpdateInstructionAsync(flight.Code, cancellationToken)}");
             }
         }
         else
         {
-            await TakeRemoteAsync(flight, cancellationToken);
+            var rebase = await git.RunAsync(["rebase", flight.Base], flight.Worktree, cancellationToken);
+            if (!rebase.Ok)
+            {
+                await git.RunAsync(["rebase", "--abort"], flight.Worktree, cancellationToken);
+                throw new FlightException($"{flight.Branch} is not pushed: rebasing it onto {flight.Base} conflicts ({rebase.Why}); {await UpdateInstructionAsync(flight.Code, cancellationToken)}");
+            }
         }
-        var push = await git.RunAsync(args, flight.Worktree, cancellationToken);
+        return (way, pushed);
+    }
+
+    /// <param name="repaired">
+    /// The base was repaired, which rebases the branch: pushed with a lease, as a rebase's is. A rebase-queue repo's branch is
+    /// rebased too, so it is pushed with the lease also; a branch brought up to date by a merge goes up plain.
+    /// </param>
+    internal async Task PushAsync(FlightRow flight, bool repaired, CancellationToken cancellationToken, (UpdateWay Way, string? Pushed)? updated = null)
+    {
+        await EnsureNotArmedAsync(flight, cancellationToken);
+        // A push after the leg is recorded done sends what the check ran on: a second update here could fail with the leg already done.
+        var (way, pushed) = updated ?? await BringUpToDateLeasedAsync(flight, cancellationToken, repaired);
+        // The node's push refuses a branch still lacking its base, however it came to be so.
+        if (!(await git.RunAsync(["merge-base", "--is-ancestor", flight.Base, "HEAD"], flight.Worktree, cancellationToken)).Ok)
+        {
+            throw new FlightException($"{flight.Branch} is not pushed: it is still behind {flight.Base}, which is not an ancestor of its head");
+        }
+        var force = repaired || way == UpdateWay.Rebase;
+        // The lease names what the remote held once its commits were taken in: a commit pushed by someone else since is refused, not overwritten.
+        var lease = pushed is null ? "--force-with-lease" : $"--force-with-lease={flight.Branch}:{pushed}";
+        var push = await git.RunAsync(force ? ["push", "-u", lease, "origin", flight.Branch] : ["push", "-u", "origin", flight.Branch], flight.Worktree, cancellationToken);
         if (!push.Ok)
         {
             throw new FlightException($"git could not push {flight.Branch}: {push.Why}");
@@ -2029,8 +2142,27 @@ public sealed partial class LegCommander(
     /// reaches the done leg and its worker resolves the conflicts. The conflict card said to go around, and the go-around
     /// was refused for a done leg whose review had passed (PIL51 after #157, 2026-10-24). Null when done; else why not.
     /// </summary>
-    public Task<string?> ConflictsAsync(string code, string why, CancellationToken cancellationToken) =>
-        SendBackAsync(code, _ => $"the PR conflicts with its base ({why}): rebase the plane onto its base, resolving every conflict so both sides' work stays, rerun the check, and push", "it conflicts with its base", cancellationToken);
+    public async Task<string?> ConflictsAsync(string code, string why, CancellationToken cancellationToken)
+    {
+        var brief = await ConflictBriefAsync(code, why, cancellationToken);
+        return await SendBackAsync(code, _ => brief, "it conflicts with its base", cancellationToken);
+    }
+
+    /// <summary>
+    /// What a worker is told when its flight's PR conflicts with its base: to merge the base in where the repo's queue squashes
+    /// or merges (and push without force), to rebase onto it where the queue rebases.
+    /// </summary>
+    public async Task<string> ConflictBriefAsync(string code, string why, CancellationToken cancellationToken) =>
+        $"the PR conflicts with its base ({why}): {await UpdateInstructionAsync(code, cancellationToken)}";
+
+    /// <summary>What a worker does to bring the plane up to date with its base, in the repo's way: merge it in, or rebase onto it.</summary>
+    public async Task<string> UpdateInstructionAsync(string code, CancellationToken cancellationToken)
+    {
+        var way = state.Flights().FirstOrDefault(f => f.Code == code) is { } flight ? await github.UpdateWayAsync(flight.RepoPath, Models.MergeMethod, cancellationToken) : UpdateWay.Rebase;
+        return way == UpdateWay.Merge
+            ? "merge the base into the plane (git merge --no-edit, never a rebase), resolving every conflict so both sides' work stays, rerun the check, and push without force"
+            : "rebase the plane onto its base, resolving every conflict so both sides' work stays, rerun the check, and push";
+    }
 
     /// <summary>
     /// Sets on GitHub what an earlier refusal left: the review comment, the status, the label. The node's look at the PRs calls it.
