@@ -762,13 +762,13 @@ public sealed class CliTests : IAsyncLifetime
         // The org (then repo) with the PR that most needs the person first: SharpAstro has the ready one.
         new[] { "SharpAstro  2 open", "SharpAstro/pilot  1", "SharpAstro/tianwen  1", "sebgod  1 open", "sebgod/mercury  1" }.Select(l => plain.IndexOf(l, StringComparison.Ordinal)).ShouldBeInOrder();
 
-        var needsMe = PullRequestsMarkdown.Plain(row, needsMe: true, now);
+        var needsMe = PullRequestsMarkdown.Plain(row, needsMe: true, now).ReplaceLineEndings("\n");
         needsMe.ShouldNotContain("tianwen");
         needsMe.ShouldContain("#9 Old");
         // The counts stay the whole org's, as the summary line's are the whole row's.
         needsMe.ShouldContain("SharpAstro  2 open · 1 ready · 1 checks running\n  SharpAstro/pilot  1\n");
 
-        var markdown = PullRequestsMarkdown.Build(row, needsMe: false, now);
+        var markdown = PullRequestsMarkdown.Build(row, needsMe: false, now).ReplaceLineEndings("\n");
         markdown.ShouldContain("## [SharpAstro](https://github.com/SharpAstro) · 2 open · 1 ready · 1 checks running\n\n### [SharpAstro/pilot](https://github.com/SharpAstro/pilot) (1)");
         markdown.ShouldContain("## [sebgod](https://github.com/sebgod) · 1 open · 1 conflicts\n\n- gh offline\n\n### [sebgod/mercury]");
         markdown.ShouldContain("| Ready | [#7 Ready one](https://github.com/SharpAstro/pilot/pull/7) | PIL7 | sebgod | [passed](https://github.com/SharpAstro/pilot/pull/7#issuecomment-1) | 3h ago |");
@@ -776,11 +776,11 @@ public sealed class CliTests : IAsyncLifetime
 
         // The row's rate-limit note stays at the foot, on its own; an org with nothing to show still prints when its read failed.
         var limited = row with { Note = "Rate-limited by GitHub until 14:05; reading again then", Orgs = ["SharpAstro", "sebgod", "quiet"] };
-        PullRequestsMarkdown.Plain(limited, needsMe: false, now).ShouldEndWith("quiet  0 open\n! Rate-limited by GitHub until 14:05; reading again then\n");
-        PullRequestsMarkdown.Build(limited, needsMe: false, now).ShouldEndWith("## [quiet](https://github.com/quiet) · 0 open\n\n- Rate-limited by GitHub until 14:05; reading again then\n");
+        PullRequestsMarkdown.Plain(limited, needsMe: false, now).ReplaceLineEndings("\n").ShouldEndWith("quiet  0 open\n! Rate-limited by GitHub until 14:05; reading again then\n");
+        PullRequestsMarkdown.Build(limited, needsMe: false, now).ReplaceLineEndings("\n").ShouldEndWith("## [quiet](https://github.com/quiet) · 0 open\n\n- Rate-limited by GitHub until 14:05; reading again then\n");
         // Nothing needs the person in an org that failed: its error is still said, and an org with nothing and no error is not.
         var failed = new PullRequestsRow { Orgs = ["SharpAstro", "sebgod"], ReadAt = now, PullRequests = [row.PullRequests[0]], Errors = row.Errors };
-        PullRequestsMarkdown.Plain(failed, needsMe: true, now).ShouldBe("No pull requests need you in SharpAstro, sebgod.\n! sebgod: gh offline\n");
+        PullRequestsMarkdown.Plain(failed, needsMe: true, now).ReplaceLineEndings("\n").ShouldBe("No pull requests need you in SharpAstro, sebgod.\n! sebgod: gh offline\n");
 
         PullRequestsMarkdown.Plain(null, needsMe: false, now).ShouldContain("pilot prs --refresh");
         PullRequestsMarkdown.Plain(new PullRequestsRow { Orgs = ["SharpAstro", "sebgod"], ReadAt = now }, needsMe: false, now).ShouldBe("No open pull requests in SharpAstro, sebgod.\n");
