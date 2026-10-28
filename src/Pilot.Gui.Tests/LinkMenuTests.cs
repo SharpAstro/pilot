@@ -328,12 +328,13 @@ public sealed class LinkMenuTests
         copied.ShouldBe([RcUrl]);
     }
 
-    // Every link that leaves the app, whatever the page: its text ends in the away mark, and a right-click on it has the menu.
+    // Every link that leaves the app, whatever the page: its text ends in the away mark, and a right-click on it has the menu. The mark
+    // alone counts too: a flight's PR link opens the Pull requests page, and the small ↗ beside it is the browser's.
     private static List<Layout.Node> AwayLinks(Layout.Node tree) =>
     [
         .. Layout.Engine.Arrange(tree, new Rect<int>(0, 0, 200, 80), CellMeasureContext.PixelAuthored)
             .Select(a => a.Node)
-            .Where(n => n.Hit is HitResult.ButtonHit && n is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.EndsWith(Followable.Away, StringComparison.Ordinal)),
+            .Where(n => n.Hit is HitResult.ButtonHit && n is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.EndsWith(Followable.Away.TrimStart(), StringComparison.Ordinal)),
     ];
 
     private static void EveryAwayLinkHasTheMenu(string page, List<Layout.Node> links, int atLeast)

@@ -140,9 +140,15 @@ internal sealed partial class FlightsView<TSurface>
         // The PR is in the header, beside the title, with where it stands: it sat in the facts line below, past a long review chip.
         if (flight.PullRequestUrl is { } url)
         {
-            head.Add(Link($"PR #{flight.PullRequest}", url, $"pr:{line.Code}").WAuto());
+            head.Add(PullRequestLink(line, url, $"pr:{line.Code}"));
         }
-        if (FlightMarks.PrState(flight) is { } prState)
+        // Where the Pull requests page has it standing (Ready, Waiting, ...): beside the PR link, not in a second PR line in the facts.
+        // It says what the flight's own word (open, queued) would, and more, so the word is for a PR the page does not list (merged).
+        if (flight.PullRequestUrl is not null && PullRequestChip(line, PullRequestChipWidth, PullRequestChipHeight) is { } chip)
+        {
+            head.Add(chip);
+        }
+        else if (FlightMarks.PrState(flight) is { } prState)
         {
             // The link's own height (20), so the two share one middle.
             head.Add(Layout.Builder.Text(prState, 12f, PrStateColor(prState)).WAuto().RowH(20f).Selectable());

@@ -50,7 +50,7 @@ internal sealed class ListTable
     private const float TitleSize = 12f;
 
     /// <summary>The padding at both ends of a row, around stripe and columns.</summary>
-    private const float EndPad = 8f;
+    internal const float EndPad = 8f;
 
     private static RGBAColor32 Ground => Palette.Current.Ground;
     private static RGBAColor32 Faint => Palette.Current.Faint;

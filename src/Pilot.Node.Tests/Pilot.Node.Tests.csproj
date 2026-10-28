@@ -40,6 +40,8 @@
        AppContext.BaseDirectory (no absolute paths). -->
   <ItemGroup>
     <None Include="..\Pilot.Contracts\Fixtures\snapshot.sample.json" Link="Fixtures\snapshot.sample.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- GitHub's search answers, one per PR state (and the live answer for a user with five), for the PullRequests tests. -->
+    <None Include="Fixtures\PullRequests\*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- What gh and GitHub's merge queue API answered for a PR in each merge state (pending and merged recorded from SharpAstro/pilot

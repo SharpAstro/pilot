@@ -33,6 +33,7 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(PrReviewAddedEvent), "prReviewAdded")]
 [JsonDerivedType(typeof(PrReviewChangedEvent), "prReviewChanged")]
 [JsonDerivedType(typeof(SummaryChangedEvent), "summaryChanged")]
+[JsonDerivedType(typeof(PullRequestsChangedEvent), "pullRequestsChanged")]
 public abstract record NodeEvent
 {
     /// <summary>
@@ -126,6 +127,9 @@ public sealed record SnapshotEvent : NodeEvent
     }
 
     private readonly SummaryRow[]? _summaries;
+
+    /// <summary>Every open PR of the clones' orgs as the node last read them; null before it has read any.</summary>
+    public PullRequestsRow? PullRequests { get; init; }
 }
 
 /// <summary>A session the node had not seen.</summary>

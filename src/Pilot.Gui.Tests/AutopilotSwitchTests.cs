@@ -43,6 +43,7 @@ public sealed class AutopilotSwitchTests
         yield return ("Background tasks", chrome.Jobs.Tree(new JobsScreen([], "test", now)));
         yield return ("Fleet", chrome.Fleet.Tree(fleet));
         yield return ("Repos", chrome.Repos.Tree(new ReposScreen([], "test", now)));
+        yield return ("Pull requests", chrome.PullRequests.Tree(new PullRequestsScreen(null, "test", now)));
         yield return ("Settings", chrome.Settings.Tree(now));
         yield return ("Chat", chrome.Chat.Tree());
     }
@@ -69,7 +70,7 @@ public sealed class AutopilotSwitchTests
         {
             chrome.Autopilot.On = on;
             var pages = Pages(chrome).ToList();
-            pages.Count.ShouldBe(8);
+            pages.Count.ShouldBe(9);
             foreach (var (page, tree) in pages)
             {
                 var arranged = Arrange(tree);

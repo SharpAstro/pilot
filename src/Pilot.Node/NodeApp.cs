@@ -94,6 +94,8 @@ public static class NodeApp
             services.GetRequiredService<NodeState>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<Planes>(),
             services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>()) { Machine = options.Machine });
         builder.Services.AddHostedService(services => services.GetRequiredService<RepoWatch>());
+        builder.Services.AddSingleton<PullRequestWatch>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<PullRequestWatch>());
         builder.Services.AddSingleton<RepoSync>();
         builder.Services.AddSingleton<RepoCommander>();
         builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));

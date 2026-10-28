@@ -49,7 +49,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// </summary>
     private sealed record View(
         SessionRow[] Sessions, FlightRow[] Flights, LegRow[] Legs, CardRow[] Cards, JobRow[] Jobs, UsageRow? Usage, string? Stream,
-        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos, SummaryRow[] Summaries, DateTimeOffset? DownSince = null, MachineRow? Machine = null);
+        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos, SummaryRow[] Summaries, DateTimeOffset? DownSince = null, MachineRow? Machine = null, PullRequestsRow? PullRequests = null);
 
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(
@@ -167,6 +167,12 @@ internal sealed class NodeFeed : IAsyncDisposable
 
     /// <summary>The summaries the node has kept, one per scope (<see cref="SummaryRow.Scope"/>).</summary>
     public IReadOnlyList<SummaryRow> Summaries() => Volatile.Read(ref _view).Summaries;
+
+    /// <summary>
+    /// The PRs the node last read, which it streams as a row, so the Pull requests page needs no read of its own; null until
+    /// the node has read them (or when its clones have no org to read).
+    /// </summary>
+    public PullRequestsRow? PullRequests() => Volatile.Read(ref _view).PullRequests;
 
     /// <summary>The cards panel: the open cards and the latest handled lines.</summary>
     public CardsScreen Cards()
@@ -414,8 +420,10 @@ internal sealed class NodeFeed : IAsyncDisposable
         var usage = _mirror.Usage;
         var machine = _mirror.Machine;
         var stream = _mirror.Stream;
+        var pullRequests = _mirror.PullRequests;
         ImmutableInterlocked.Update(ref _view, view => view with
         {
+            PullRequests = pullRequests,
             Sessions = sessions,
             Flights = flights,
             Legs = legs,
