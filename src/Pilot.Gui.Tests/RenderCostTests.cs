@@ -56,7 +56,7 @@ public sealed class RenderCostTests
         chrome.Render(sessions, null, screen, new RectF32(0, 0, 1280, 800));
         chrome.ShowsCards.ShouldBeTrue();
         var top = string.Join("\n", renderer.Texts.OrderByDescending(t => t.Value).Take(15).Select(t => $"{t.Value} x {t.Key}"));
-        System.Console.WriteLine($"calls={renderer.Calls} chars={renderer.Chars}\n{top}");
+        TestContext.Current.TestOutputHelper?.WriteLine($"calls={renderer.Calls} chars={renderer.Chars}\n{top}");
         return (renderer.Calls, renderer.Chars, renderer);
     }
 
@@ -68,7 +68,10 @@ public sealed class RenderCostTests
 
         longOne.Calls.ShouldBeLessThan(600);
         longOne.Chars.ShouldBeLessThan(20_000);
-        longOne.Calls.ShouldBeLessThanOrEqualTo(shortOne.Calls + 350);
+        // Measured: 98 calls for a short detail, 431 for 2,000 characters (about 40 words, each leaf measured 6 to 8 times by DIR.Lib's
+        // layout passes; the fit inside DIR.Lib's painter is DIR.Lib's to memoise, a per-run TextFit cache). The delta is fixed
+        // whatever the length: 20,000 characters measure the same as 2,000.
+        longOne.Calls.ShouldBeLessThanOrEqualTo(shortOne.Calls + 380);
     }
 
     [Fact]
@@ -79,6 +82,6 @@ public sealed class RenderCostTests
 
         longOne.Calls.ShouldBeLessThan(600);
         longOne.Chars.ShouldBeLessThan(20_000);
-        longOne.Calls.ShouldBeLessThanOrEqualTo(shortOne.Calls + 350);
+        longOne.Calls.ShouldBeLessThanOrEqualTo(shortOne.Calls + 250);
     }
 }

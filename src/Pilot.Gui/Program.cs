@@ -206,7 +206,6 @@ var logger = loggerFactory.CreateLogger("Pilot.Gui");
 SdlVulkanLog.Logger = loggerFactory.CreateLogger("SdlVulkan.Renderer");
 var tracker = new BackgroundTaskTracker();
 LogLine($"pilot-gui: start, version {NodeFeed.ClientVersion}, args [{string.Join(' ', args)}], node {nodeWhere}");
-var frameTimer = new FrameTimer(LogLine);
 string WhatRendered()
 {
     var what = chrome.Page.ToString();
@@ -782,11 +781,6 @@ if (feed is not null)
                     granted = new HashSet<string>(Pilot.Commands.NodeTargets.Granted(), StringComparer.OrdinalIgnoreCase);
                     fleetWatch.Know(granted.Select(e => (e, (string?)null)).Concat((chrome.Flights.Lan?.Nodes ?? []).Select(n => (n.Endpoint, (string?)n.Name))));
                 }
-                // The once-a-second look finds nothing new on an idle page: no build, no pages published, no frame.
-                if (!frameWatch.WorthAFrame(version, ask, now))
-                {
-                    continue;
-                }
                 // Every node's rows on every page, each marked with its node, as the header's node selection picks them.
                 var pages = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now, reposWanted: (PilotPage)Volatile.Read(ref pagesWanted) == PilotPage.Repos);
                 var hereSummary = feed.Summary(now);
@@ -795,6 +789,12 @@ if (feed is not null)
                 chrome.Home.Maintenance = chrome.Flights.Maintenance = hereSummary is { Connected: true, Node.Maintenance: true };
                 // And its autopilot, in every header's switch.
                 chrome.Autopilot.On = hereSummary is { Connected: true, Node.Autopilot: true };
+                // The once-a-second look finds nothing new on an idle page: what was built reads as what is drawn, so no
+                // pages are published and no frame is asked. A row's own "ago" turning over shows as different text.
+                if (!frameWatch.WorthAFrame(version, ask, FrameWatch.Fingerprint(pages, fleetScreen, now)))
+                {
+                    continue;
+                }
                 Volatile.Write(ref built, Tuple.Create(pages, fleetScreen));
                 loop.RequestRedraw();
             }
@@ -818,7 +818,19 @@ loop.OnResize = (w, h) =>
     height = (int)h;
     chrome.DpiScale = window.DisplayScale;
 };
-loop.OnRender = () => frameTimer.Time(RenderFrame, WhatRendered);
+loop.OnRender = () =>
+{
+    // The one slow-frame reporter: the whole of the frame is timed, the build pickup included.
+    var started = System.Diagnostics.Stopwatch.GetTimestamp();
+    try
+    {
+        RenderFrame();
+    }
+    finally
+    {
+        frameWatch.Frame(System.Diagnostics.Stopwatch.GetElapsedTime(started), chrome.Page, () => $"{WhatRendered()}: {screen.Lines.Count} sessions, {flights?.Lines.Count ?? 0} flights, {cards?.Open.Count ?? 0} open cards");
+    }
+};
 void RenderFrame()
 {
     // The background work clicks started: a fault it did not expect is logged here, once, instead of vanishing.
@@ -854,14 +866,12 @@ void RenderFrame()
         }
     }
 
-    var frameStarted = System.Diagnostics.Stopwatch.GetTimestamp();
     view.Ui.FrameId++;
     // With the pull requests: without them the page said "not read yet" whatever the node had read, Refresh included (SE1, 2026-10-28).
     chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines);
     // The hover text the router says is due, last, over everything.
     chrome.Tooltips.Render(router.Tooltip, new RectF32(0, 0, width, height));
     router.AfterPaint();
-    frameWatch.Frame(System.Diagnostics.Stopwatch.GetElapsedTime(frameStarted), chrome.Page, $"{screen.Lines.Count} sessions, {flights?.Lines.Count ?? 0} flights, {cards?.Open.Count ?? 0} open cards");
 
     // Say which session is selected whenever it changes, so stdout follows what the window shows.
     if (view.SelectedId != announced && view.Selected >= 0 && view.Selected < screen.Lines.Count)
