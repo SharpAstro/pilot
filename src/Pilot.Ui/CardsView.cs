@@ -273,6 +273,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// </summary>
     public Action<CardRow, PrRef>? OnPullRequest { get; set; }
 
+    /// <summary>The open PRs the node read, set by the host each frame: a card's PR the node does not list has no row to open, so its title is the browser link.</summary>
+    public PullRequestsRow? PullRequests { get; set; }
+
     /// <summary>Opens the watchtower's Remote Control link.</summary>
     public Action<string>? OnOpen { get; set; }
 
@@ -688,11 +691,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>
     /// The title of a card about an open PR (<see cref="PullRequestLinks.Of(CardRow)"/>): a link that opens the Pull requests page on that
     /// PR's row, which is a place of the app and so carries no ↗; and, smaller and beside it, a ↗ that opens GitHub. Null for any other
-    /// card, or where the host has no such page to open (<see cref="OnPullRequest"/> unset): its title is then the browser link as before.
+    /// card, a PR the node does not list (merged or closed by now), or where the host has no such page to open (<see cref="OnPullRequest"/> unset): its title is then the browser link as before.
     /// </summary>
     private Layout.Node? PullRequestTitle(CardRow card)
     {
-        if (OnPullRequest is not { } route || PullRequestLinks.Of(card) is not { } pr)
+        if (OnPullRequest is not { } route || PullRequestLinks.Of(card) is not { } pr || !PullRequestLinks.Lists(PullRequests, pr))
         {
             return null;
         }

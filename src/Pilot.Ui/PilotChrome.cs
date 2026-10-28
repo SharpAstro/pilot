@@ -350,7 +350,7 @@ internal sealed class PilotChrome<TSurface>
     /// </summary>
     public bool OpenCard(CardRow card)
     {
-        if (PullRequestLinks.Of(card) is not { } pr)
+        if (PullRequestLinks.Of(card) is not { } pr || !PullRequestLinks.Lists(Cards.PullRequests, pr))
         {
             return false;
         }
@@ -816,6 +816,7 @@ internal sealed class PilotChrome<TSurface>
         Flights.Cards = cards;
         // A flight with a PR says where it stands in the chip the Pull requests page has, and a click on it opens that row.
         Flights.PullRequests = pullRequests?.Row;
+        Cards.PullRequests = pullRequests?.Row;
         Cards.Focus = Page switch
         {
             PilotPage.Flights => Flights.FocusCode,

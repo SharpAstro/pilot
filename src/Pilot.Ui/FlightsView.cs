@@ -377,11 +377,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private const float CardChipWidth = 130f;
 
     // A flight's PR as a link: "PR #n" opens its row on the Pull requests page, a small ↗ beside it the browser. Where the host has no
-    // such page, "PR #n ↗" is the browser link it always was.
+    // such page, or the PR has no row, "PR #n ↗" is the browser link it always was.
     private Layout.Node PullRequestLink(FlightLine line, string url, string action)
     {
         var flight = line.Row;
-        if (OnPullRequest is not { } open || PullRequestLinks.Of(flight) is not { } pr)
+        // A PR the node does not list (landed or closed, or not read yet) has no row: the browser link it always was.
+        if (OnPullRequest is not { } open || PullRequestLinks.Of(flight) is not { } pr || !PullRequestLinks.Lists(PullRequests, pr))
         {
             return Link($"PR #{flight.PullRequest}", url, action);
         }
@@ -1017,11 +1018,11 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private RGBAColor32 StateColor(FlightLine line) =>
         line.Stale is not null ? Dim : line.Row.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
 
-    // The legs, and under them the flight's PR chip when it has one: the list's row has room for the line, and the chip is the same as everywhere.
+    // The legs, and under them the flight's PR chip when it has one: the list's row (54 with its padding) holds the 22 line and the 20 chip exactly, and the chip is the same as everywhere.
     private Layout.Node LegsCell(FlightLine line, bool landed)
     {
         return PullRequestChip(line, PullRequestChipWidth, PullRequestChipHeight) is { } chip
-            ? Layout.Builder.VStack(Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body).RowH(22f), chip.HFixed(26f))
+            ? Layout.Builder.VStack(Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body).RowH(22f), chip.HFixed(PullRequestChipHeight))
             : ListTable.Top(Whole(Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body), line.Legs, LegsFits));
     }
 

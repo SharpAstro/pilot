@@ -223,6 +223,7 @@ public sealed class PullRequestLinksTests
     [InlineData("merge-dropped", true)]
     [InlineData("pr-conflicts", true)]
     [InlineData("pr-review-ready", true)]
+    [InlineData("autopilot-merge-refused", true)]
     [InlineData("landed", false)]
     [InlineData("leg-failed", false)]
     [InlineData("pr-checks-failed", false)]
@@ -313,24 +314,113 @@ public sealed class PullRequestLinksTests
         chrome.PullRequests.SelectedRow.ShouldNotBeNull().Url.ShouldBe(pr.Url);
     }
 
+    private static bool Says(Layout.Node tree, RgbaImageRenderer renderer, string text) =>
+        Layout.Engine.Arrange(tree, new Rect<float>(0, 0, 1280, Height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f))
+            .Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.Contains(text, StringComparison.Ordinal));
+
     [Fact]
-    public void APRTheNodeDoesNotListLeavesThePageAsItWasAndTheJumpPending()
+    public void APRTheNodeHasNotListedYetClearsTheOldSelectionSaysSoAndIsSelectedByTheReadThatListsIt()
     {
         using var renderer = new RgbaImageRenderer(1280, (uint)Height);
         var chrome = Window(renderer);
-        // Before the node's first read the row waits; once read, a PR that is not in it (closed meanwhile) selects nothing and scrolls nothing.
+        // Before the node's first read the row waits; once read, the PR is selected.
         chrome.OpenPullRequest("SharpAstro/pilot", 252);
         Draw(chrome, null, null, new PullRequestsScreen(null, "live", Now));
         chrome.Page.ShouldBe(PilotPage.PullRequests);
         Settle(chrome, null, null, Prs());
         chrome.PullRequests.SelectedRow.ShouldNotBeNull().Number.ShouldBe(252);
+        chrome.Cards.Focus.ShouldBe("PIL252");
 
+        // A PR the read does not list yet (just opened): the old selection is let go, so the panel lights no other flight's cards, and the page says why.
         chrome.OpenPullRequest("SharpAstro/pilot", 9999);
-        var frames = 0;
-        chrome.PullRequests.Changed = () => frames++;
         Settle(chrome, null, null, Prs());
-        frames.ShouldBe(0);
-        chrome.PullRequests.SelectedRow.ShouldNotBeNull().Number.ShouldBe(252, "the selection is where it was");
+        chrome.PullRequests.SelectedRow.ShouldBeNull();
+        chrome.PullRequests.SelectedUrl.ShouldBeNull();
+        chrome.Cards.Focus.ShouldBeNull();
+        Says(chrome.PullRequests.Tree(Prs()), renderer, "SharpAstro/pilot#9999 is not among the open pull requests the node has read yet").ShouldBeTrue();
+
+        // The next read lists it: it is selected, in view, and the notice is gone.
+        var read = Row();
+        var later = read with { PullRequests = [.. read.PullRequests, Pr("SharpAstro/pilot", 9999, PullRequestKind.Ready, "Ready", "PIL9999")] };
+        var screen = Prs(later);
+        Settle(chrome, null, null, screen);
+        var selected = chrome.PullRequests.SelectedRow.ShouldNotBeNull();
+        selected.Number.ShouldBe(9999);
+        chrome.Cards.Focus.ShouldBe("PIL9999");
+        InView(ListOf(renderer, chrome.PullRequests, screen, selected)).ShouldBeTrue();
+        Says(chrome.PullRequests.Tree(screen), renderer, "has not been read").ShouldBeFalse();
+        Says(chrome.PullRequests.Tree(screen), renderer, "not among the open pull requests").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AWaitingJumpEndsWithAKeyOrAFewMinutesAndNothingHoldsTheSelectionForever()
+    {
+        using var renderer = new RgbaImageRenderer(1280, (uint)Height);
+        var chrome = Window(renderer);
+        chrome.OpenPullRequest("SharpAstro/pilot", 9999);
+        Settle(chrome, null, null, Prs());
+        chrome.PullRequests.SelectedRow.ShouldBeNull();
+
+        // A PR closed meanwhile never comes: after the wait the page is as any page, its first row selected.
+        var later = new PullRequestsScreen(Row(), "live", Now + TimeSpan.FromMinutes(4));
+        Settle(chrome, null, null, later);
+        chrome.PullRequests.SelectedRow.ShouldNotBeNull();
+
+        // And a key of the person's own is a new pick.
+        chrome.OpenPullRequest("SharpAstro/pilot", 9998);
+        Settle(chrome, null, null, Prs());
+        chrome.PullRequests.SelectedRow.ShouldBeNull();
+        chrome.PullRequests.HandleInput(new InputEvent.KeyDown(InputKey.Down, InputModifier.None)).ShouldBeTrue();
+        chrome.PullRequests.SelectedRow.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void TheTargetRowIsBelowTheFoldAfterAFrameLaidOutWithItsGroupFoldedAndStillComesIntoView()
+    {
+        using var renderer = new RgbaImageRenderer(1280, (uint)Height);
+        var chrome = Window(renderer);
+        var screen = Prs();
+        var target = LastRow(screen.Row!);
+        chrome.Show(PilotPage.PullRequests);
+        // The last frame was laid out with the target's group folded: a list as short as that, so the scroll's limit is the short list's.
+        chrome.PullRequests.Toggle(target.Repo);
+        Settle(chrome, null, null, screen);
+
+        chrome.OpenPullRequest(target.Repo, target.Number);
+        Settle(chrome, null, null, screen);
+        chrome.PullRequests.IsFolded(target.Repo).ShouldBeFalse();
+        InView(ListOf(renderer, chrome.PullRequests, screen, target)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AFlightThatLandedKeepsItsPRLinkAsTheBrowsersAndACardAboutAClosedPRKeepsItsTitleThere()
+    {
+        using var renderer = new RgbaImageRenderer(1280, (uint)Height);
+        var opened = new List<string>();
+        var chrome = Window(renderer, opened);
+        var screen = Prs();
+        // DIR9's PR is merged: the node lists no row for it, so there is no page row to open and GitHub is the link, not left behind a small arrow.
+        var merged = Flight("DIR9", "DIR.Lib", 9, 9) with { State = FlightState.Landed };
+        var flights = Flights(Flight("PIL252", "pilot", 252, 252), merged);
+        chrome.Show(PilotPage.Flights);
+        chrome.Flights.OpenDetail("DIR9");
+        Draw(chrome, flights, null, screen);
+
+        Has(chrome.Flights, "pr:DIR9:browser").ShouldBeFalse();
+        Has(chrome.Flights, "flight:DIR9:pr-chip").ShouldBeFalse();
+        Click(chrome.Flights, "pr:DIR9");
+        opened.ShouldBe(["https://github.com/SharpAstro/DIR.Lib/pull/9"]);
+        chrome.Page.ShouldBe(PilotPage.Flights);
+
+        // The same for a card whose PR is no longer listed (queue-dropped, then merged by hand).
+        chrome.Show(PilotPage.Home);
+        var dropped = Card("c8", "merge-dropped", Verbs.FlightTarget("DIR9"), "DIR9's merge was dropped", "https://github.com/SharpAstro/DIR.Lib/pull/9");
+        Draw(chrome, flights, CardsScreen.From([dropped]), screen);
+        Has(chrome.Cards, "card:c8:browser").ShouldBeFalse();
+        Click(chrome.Cards, "card:c8:title");
+        opened.Last().ShouldBe("https://github.com/SharpAstro/DIR.Lib/pull/9");
+        chrome.Page.ShouldBe(PilotPage.Home);
+        chrome.OpenCard(dropped).ShouldBeFalse("the notification's click leaves it to the card's own link");
     }
 
     [Fact]
@@ -389,6 +479,20 @@ public sealed class PullRequestLinksTests
         Has(chrome.Flights, "flight:PIL252:pr-chip").ShouldBeTrue();
         Has(chrome.Flights, "flight:TIA1799:pr-chip").ShouldBeTrue();
         Has(chrome.Flights, "flight:DIR9:pr-chip").ShouldBeFalse();
+        if (view == "List")
+        {
+            // The chip is inside its row's cell, above the row's own bottom padding (6), level with the other cells' text: it never runs out under the row.
+            var arranged = Layout.Engine.Arrange(chrome.Flights.Tree(flights), new Rect<float>(0, 0, 1280, Height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+            var rows = arranged.Where(a => a.Node.Hit is HitResult.ListItemHit).Select(a => a.Bounds).ToList();
+            var chips = arranged.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: var act } && act.EndsWith(":pr-chip", StringComparison.Ordinal)).Select(a => a.Bounds).ToList();
+            chips.Count.ShouldBe(2);
+            foreach (var chip in chips)
+            {
+                var row = rows.Single(r => chip.Y >= r.Y && chip.Y < r.Y + r.Height);
+                chip.Y.ShouldBeGreaterThanOrEqualTo(row.Y + 6f - 0.5f);
+                (chip.Y + chip.Height).ShouldBeLessThanOrEqualTo(row.Y + row.Height - 6f + 0.5f);
+            }
+        }
         Click(chrome.Flights, "flight:TIA1799:pr-chip");
         chrome.Page.ShouldBe(PilotPage.PullRequests);
         Settle(chrome, flights, null, screen);

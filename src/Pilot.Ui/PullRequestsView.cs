@@ -175,7 +175,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     public IReadOnlyList<PullRequestRow> Rows => _rows;
 
     /// <summary>The selected row's index among <see cref="Rows"/>, or -1.</summary>
-    public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
+    public int Selected => _reveal is null && ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
     /// <summary>The selected PR's URL, which the selection follows when the rows reorder or are read again.</summary>
     public string? SelectedUrl { get; private set; }
@@ -203,13 +203,25 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     {
         if (index >= 0 && index < _rows.Count)
         {
+            // A pick of the person's own ends the wait for a PR the node has not listed.
+            _reveal = null;
             ListCursor.MoveTo(index);
             SelectedUrl = _rows[index].Url;
         }
     }
 
-    // The PR a jump asked to show, until the list has it: the node's first read may not be in yet.
+    // The PR a jump asked to show, until a read lists it: the node's first read may not be in yet, and a PR just opened is not in the
+    // read before it. While it waits nothing is selected (so no flight's cards light for the row that was), and the page says so.
     private (string Repo, int Number)? _reveal;
+
+    // When the page first built with the jump waiting, and how long it waits for a read to list the PR (a read every minute) before it
+    // gives up: a PR closed meanwhile never comes.
+    private DateTimeOffset? _revealSince;
+    private static readonly TimeSpan RevealWait = TimeSpan.FromMinutes(3);
+
+    // The frame that applied a jump: its list is still the previous frame's layout, whose extent (a folded group, a pill's narrowing)
+    // the jump has just changed, so the scroll waits for the next frame, laid out for what the jump left.
+    private bool _appliedNow;
 
     // The span of the selected row in the list's content, in surface units, to bring into view once the list has been laid out.
     private (float Start, float End)? _scrollTo;
@@ -217,14 +229,21 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     /// <summary>
     /// Shows <paramref name="repo"/>'s PR <paramref name="number"/> on its row, as a card's link or a flight's chip asks: the pills
     /// and the search stand aside when they hide it, its group is unfolded, the row is selected (its flight's cards light in the panel)
-    /// and scrolled into view. It happens when the page next builds, with the rows it then has; a PR the node does not list is left alone.
+    /// and scrolled into view. It happens when the page next builds, with the rows it then has. A PR the node does not list yet waits for
+    /// the read that does (a few minutes at most): the old selection is cleared meanwhile and the page says the PR has not been read.
     /// </summary>
-    public void Reveal(string repo, int number) => _reveal = (repo, number);
+    public void Reveal(string repo, int number)
+    {
+        _reveal = (repo, number);
+        _revealSince = null;
+        SelectedUrl = null;
+    }
 
     /// <summary>Shows only <paramref name="repo"/>'s PRs (<c>owner/name</c>): All, the repo in the search box, its group unfolded.</summary>
     public void ShowRepo(string repo)
     {
         _reveal = null;
+        _revealSince = null;
         Filter = PullRequestFilter.All;
         Search.Text = repo;
         Search.CursorPos = repo.Length;
@@ -247,6 +266,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         _folded.Remove(pr.Repo);
         SelectedUrl = pr.Url;
         _scrollTo = (0f, 0f);
+        _appliedNow = true;
     }
 
     // Where the selected row is in the list's content: every group's header above it, and the rows of the groups open above it.
@@ -405,10 +425,28 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     {
         _now = screen.AsOf;
         _cards = screen.OpenCards;
-        if (_reveal is { } want && screen.Row is { } read)
+        if (_reveal is { } want)
         {
-            _reveal = null;
-            ApplyReveal(read, want);
+            if (screen.Row is { } read && PullRequestLinks.Lists(read, want.Repo, want.Number))
+            {
+                _reveal = null;
+                _revealSince = null;
+                ApplyReveal(read, want);
+            }
+            else
+            {
+                // Not listed (yet): nothing is selected while it waits, and it is let go after a while.
+                _revealSince ??= screen.AsOf;
+                if (screen.AsOf - _revealSince > RevealWait)
+                {
+                    _reveal = null;
+                    _revealSince = null;
+                }
+                else
+                {
+                    SelectedUrl = null;
+                }
+            }
         }
         var groups = Visible(screen.Row);
         _rows = [.. groups.Where(g => !IsFolded(g.Repo)).SelectMany(g => g.PullRequests)];
@@ -433,15 +471,33 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             {
                 ListCursor.MoveTo(index);
             }
-            SelectedUrl = _rows[Selected].Url;
+            if (_reveal is null)
+            {
+                SelectedUrl = _rows[Selected].Url;
+            }
             if (_scrollTo is not null)
             {
                 _scrollTo = SpanOfSelected(groups);
-                Scrolled();
+                if (!_appliedNow)
+                {
+                    Scrolled();
+                }
             }
+            _appliedNow = false;
         }
-        var page = Layout.Builder.VStack(Header(screen), Main(screen, groups, width).HStar()).Bg(P.Ground).Stretch();
+        var main = Main(screen, groups, width).HStar();
+        var page = (_reveal is { } waiting && screen.Row is not null
+                ? Layout.Builder.VStack(Header(screen), Waiting(waiting), main)
+                : Layout.Builder.VStack(Header(screen), main))
+            .Bg(P.Ground).Stretch();
         return About?.Over(page, NightOrNull) ?? page;
+    }
+
+    // What the page says while a jump waits for the read that lists its PR.
+    private Layout.Node Waiting((string Repo, int Number) want)
+    {
+        var text = $"{want.Repo}#{want.Number} is not among the open pull requests the node has read yet. It reads them every minute; Refresh asks it now.";
+        return Layout.Builder.Text(text, 12f, P.Held).WithTooltip(text).Pad(Gutter, 0f).RowH(22f);
     }
 
     public override bool HandleInput(InputEvent evt)
@@ -460,6 +516,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         {
             return false;
         }
+        _reveal = null;
         if (Selected >= 0 && Selected < _rows.Count)
         {
             SelectedUrl = _rows[Selected].Url;

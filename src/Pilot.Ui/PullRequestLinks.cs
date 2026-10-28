@@ -14,7 +14,7 @@ internal static class PullRequestLinks
     private static readonly HashSet<string> PullRequestCards = new(StringComparer.Ordinal)
     {
         "pr-ready", "review-changes", "queue-dropped", "merge-dropped", "pr-conflicts", "pr-marks-refused",
-        "pr-review-ready", "pr-review-started", "pr-review-left",
+        "pr-review-ready", "pr-review-started", "pr-review-left", "autopilot-merge-refused",
     };
 
     /// <summary>
@@ -39,6 +39,16 @@ internal static class PullRequestLinks
 
     private static PrRef? OfSubject(string subject) =>
         subject.StartsWith(Verbs.PrTargetPrefix, StringComparison.Ordinal) ? PrRef.Parse(subject) : null;
+
+    /// <summary>
+    /// Whether the node lists <paramref name="pr"/> among its open PRs: only then has the Pull requests page a row to open. A PR it does
+    /// not list (merged or closed by now, or not read yet) is the browser's, not an empty page's.
+    /// </summary>
+    public static bool Lists(PullRequestsRow? row, PrRef pr) => Lists(row, pr.Repo, pr.Number);
+
+    /// <inheritdoc cref="Lists(PullRequestsRow?, PrRef)"/>
+    public static bool Lists(PullRequestsRow? row, string repo, int number) =>
+        row is not null && row.PullRequests.Any(p => p.Number == number && string.Equals(p.Repo, repo, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>The PR's page on GitHub.</summary>
     public static string Url(PrRef pr) => $"https://github.com/{pr.Repo}/pull/{pr.Number}";
