@@ -327,9 +327,9 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         return (0f, 0f);
     }
 
-    // Whether an org with no repo listed has no PR to list: the pills and the search leave none of any org out of mind, so an org
-    // whose PRs they hid is not said to have none.
-    private bool HasNoPr(PullRequestOrgGroup org) => org.Repos.Length == 0 && Filter is null && Search.Text.Trim().Length == 0;
+    // Whether an org is said to have no open PR: nothing of it is listed and nothing hides its PRs (no pill, no search), and its read
+    // did not fail (then its error is all that is known: it is not known to have none).
+    private bool HasNoPr(PullRequestOrgGroup org) => org.Repos.Length == 0 && org.Error is null && Filter is null && Search.Text.Trim().Length == 0;
 
     // How many note rows open an org's group: why its read failed, and that it has no open PR.
     private int NoteRows(PullRequestOrgGroup org) => (org.Error is not null ? 1 : 0) + (HasNoPr(org) ? 1 : 0);

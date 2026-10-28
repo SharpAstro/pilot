@@ -654,12 +654,14 @@ public sealed class PullRequestsPageTests
         var (_, page) = Chrome(renderer);
 
         var empty = Arrange(renderer, page, Screen(Row() with { PullRequests = [] }));
-        Dump(empty).ShouldContain("No open pull requests in SharpAstro, sebgod.");
-        // Nothing to search or fold: no search box, no table header.
-        empty.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).ShouldBeFalse();
+        // Each org of the read says so in its own group; the one line is for a read with no org to say it of.
+        Dump(empty).ShouldContain("No open pull requests.");
         Dump(empty).ShouldContain("0 open");
         page.Rows.ShouldBeEmpty();
         page.Selected.ShouldBe(-1);
+        var nowhere = Arrange(renderer, page, Screen(Row() with { PullRequests = [], Orgs = [] }));
+        Dump(nowhere).ShouldContain("No open pull requests in any repo pilot works in.");
+        nowhere.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).ShouldBeFalse();
 
         var unread = Arrange(renderer, page, Screen(null) with { Row = null });
         Dump(unread).ShouldContain("The node has not read the pull requests yet.");
