@@ -13,6 +13,11 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
     private long _versionMovedAt = long.MinValue;
     private long _lastVersion = long.MinValue;
 
+    private long _frames;
+
+    /// <summary>How many frames have been drawn (reported to <see cref="Frame"/>).</summary>
+    public long Frames => Interlocked.Read(ref _frames);
+
     public TimeSpan SlowFrame { get; } = slowFrame ?? TimeSpan.FromMilliseconds(100);
 
     /// <summary>
@@ -46,6 +51,7 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
     /// <summary>Logs a frame that took longer than <see cref="SlowFrame"/>, with the page and what it drew; true when it logged.</summary>
     public bool Frame(TimeSpan took, object page, string summary)
     {
+        Interlocked.Increment(ref _frames);
         if (took <= SlowFrame)
         {
             return false;
