@@ -113,6 +113,12 @@ public sealed class PrReviews(
         {
             error = ex.Message;
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // gh, git or the disk failing in a way no FlightException names (a gh that is not on PATH, a draft that cannot be
+            // written) is a refusal that says so, not an exception out of the route: that answered 500 with an empty body.
+            error = $"{command.Verb} failed: {ex.GetType().Name}: {ex.Message}";
+        }
         finally
         {
             _one.Release();
