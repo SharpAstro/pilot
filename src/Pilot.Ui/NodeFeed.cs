@@ -50,7 +50,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// </summary>
     private sealed record View(
         SessionRow[] Sessions, FlightRow[] Flights, LegRow[] Legs, CardRow[] Cards, JobRow[] Jobs, UsageRow? Usage, string? Stream,
-        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos, SummaryRow[] Summaries, DateTimeOffset? DownSince = null, MachineRow? Machine = null);
+        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos, SummaryRow[] Summaries, DateTimeOffset? DownSince = null, MachineRow? Machine = null, PullRequestsRow? PullRequests = null);
 
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(
@@ -172,6 +172,12 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// <summary>The summaries the node has kept, one per scope (<see cref="SummaryRow.Scope"/>).</summary>
     public IReadOnlyList<SummaryRow> Summaries() => Volatile.Read(ref _view).Summaries;
 
+    /// <summary>
+    /// The PRs the node last read, which it streams as a row, so the Pull requests page needs no read of its own; null until
+    /// the node has read them (or when its clones have no org to read).
+    /// </summary>
+    public PullRequestsRow? PullRequests() => Volatile.Read(ref _view).PullRequests;
+
     /// <summary>The cards panel: the open cards and the latest handled lines.</summary>
     public CardsScreen Cards()
     {
@@ -275,7 +281,6 @@ internal sealed class NodeFeed : IAsyncDisposable
                     await polling.CancelAsync().ConfigureAwait(false);
                 }
 
-                Log?.Invoke($"pilot-gui: the node on {_socketPath} closed the stream; reconnecting");
                 SetStatus($"the node on {_socketPath} closed the stream; reconnecting", connected: false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -287,7 +292,6 @@ internal sealed class NodeFeed : IAsyncDisposable
                 // The mirror refused a delta out of order: start again from a snapshot rather than show a state the
                 // node never had.
                 _mirror = new NodeMirror();
-                Log?.Invoke($"pilot-gui: resyncing with the node: {ex.Message}");
                 SetStatus($"resyncing with the node on {_socketPath}: {ex.Message}", connected: false);
                 continue;
             }
@@ -425,8 +429,10 @@ internal sealed class NodeFeed : IAsyncDisposable
             Log?.Invoke($"pilot-gui: connected to the node on {_socketPath}{(_everConnected ? " (reconnected)" : "")}");
             _everConnected = true;
         }
+        var pullRequests = _mirror.PullRequests;
         ImmutableInterlocked.Update(ref _view, view => view with
         {
+            PullRequests = pullRequests,
             Sessions = sessions,
             Flights = flights,
             Legs = legs,

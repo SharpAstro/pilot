@@ -15,18 +15,17 @@ ConsoleOutput.AttachToParent();
 // %LOCALAPPDATA%\pilot2\logs\gui.log, rolling at 4 MB. The --capture and --say one-shots log there too, and keep only their
 // result lines on stdout.
 var guiLog = new RollingLog("gui");
-void LogLine(string line) => guiLog.Write(line);
-// The one stderr use left: a crash the log may not outlive. The line goes to the log first; stderr only carries it when
-// the log cannot take it (RollingLog never throws, so a file it cannot open shows as a file that is not there).
-AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+// The one stderr use left: a line the log cannot take (RollingLog.Write says false when the file cannot be opened or
+// written), so a catastrophic error is never lost with the log it would have gone to.
+void LogLine(string line)
 {
-    var line = $"pilot-gui: unhandled exception: {e.ExceptionObject}";
-    LogLine(line);
-    if (!File.Exists(guiLog.Path))
+    if (!guiLog.Write(line))
     {
-        LogLine(line);
+        Console.Error.WriteLine(line);
     }
-};
+}
+
+AppDomain.CurrentDomain.UnhandledException += (_, e) => LogLine($"pilot-gui: unhandled exception: {e.ExceptionObject}");
 
 if (GuiOptions.Parse(args, out var error) is not { } options)
 {
@@ -74,7 +73,7 @@ if (options.SayTo is { } sayTo)
 {
     await EnsureNodeAsync();
     using var oneShot = NewClient();
-    return await GuiSay.RunAsync(oneShot, sayTo, options.SayText ?? "", Console.Out, CancellationToken.None);
+    return await GuiSay.RunAsync(oneShot, sayTo, options.SayText ?? "", Console.Out, LogLine, CancellationToken.None);
 }
 
 SessionsScreen screen;
@@ -84,6 +83,7 @@ CardsScreen? capturedCards = null;
 JobsScreen? capturedJobs = null;
 ReposScreen? capturedRepos = null;
 MachineRow? capturedMachine = null;
+PullRequestsScreen? capturedPullRequests = null;
 if (options.Snapshot is { } snapshotFile)
 {
     var snapshotPath = Path.GetFullPath(snapshotFile);
@@ -119,6 +119,7 @@ else if (options.Capture is not null)
                 capturedCards = CardsScreen.From(live.Cards);
                 capturedMachine = live.Machine;
                 capturedJobs = new JobsScreen(JobLine.Build(live.Jobs, now), screen.Source, now);
+                capturedPullRequests = new PullRequestsScreen(live.PullRequests, screen.Source, now);
                 if (await oneShot.GetRepoStatusAsync(CancellationToken.None) is { Success: true, Response: { } read })
                 {
                     capturedRepos = new ReposScreen(RepoLine.Build(read,live.Flights, live.Sessions, live.Cards, live.Legs, now), screen.Source, now);
@@ -143,13 +144,14 @@ if (options.Capture is { } capturePath)
     capturedCards ??= snapshot is null ? null : CardsScreen.From(snapshot.Cards);
     capturedMachine ??= snapshot?.Machine;
     capturedJobs ??= snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
+    capturedPullRequests ??= snapshot is null ? null : new PullRequestsScreen(snapshot.PullRequests, screen.Source, snapshot.At);
     if (capturedRepos is null && snapshot is not null && File.Exists(SessionsCapture.ReposSamplePath))
     {
         capturedRepos = SessionsCapture.ReposScreenFor(snapshot, SessionsCapture.LoadRepos(SessionsCapture.ReposSamplePath), screen.Source);
     }
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
         jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)],
-        hover: options.Hover, flightsView: options.View, select: options.Select);
+        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;
@@ -388,7 +390,7 @@ if (feed is not null && client is not null && clients is not null)
             loop.RequestRedraw();
             return;
         }
-        var result = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.CardTarget(card.Id), Args = args, Who = GuiSay.Who }, cts.Token);
+        var result = await to.SendAsync(DashboardCommands.CardRequest(verb, card, args, GuiSay.Who), cts.Token);
         clients.NoteRefusal(chrome.Cards.NodeOf(card), result);
         // A refusal is said on the card the button is on, never only here: a Merge pressed again and again on a PR GitHub
         // would not merge showed nothing (SE1, 2026-10-24).
@@ -499,6 +501,27 @@ if (feed is not null && client is not null && clients is not null)
     };
     chrome.Repos.Changed = loop.RequestRedraw;
     chrome.Repos.CopyText = text => SetClipboardText(text);
+    // The Pull requests page's Refresh asks this window's node to read GitHub now; the row comes back on the event stream.
+    chrome.PullRequests.OnRefresh = async ct =>
+    {
+        var result = (await client.SendAsync(new CommandRequest { Verb = Verbs.RefreshPullRequests, Target = Verbs.NodeTarget, Who = GuiSay.Who }, ct)).Response;
+        if (result is not { Ok: true })
+        {
+            throw new InvalidOperationException(result?.Error ?? "the node did not answer");
+        }
+    };
+    chrome.PullRequests.Changed = loop.RequestRedraw;
+    // A row's Review is `pilot review pr` on this window's node; Merge and Go around are the flight's card's own buttons (chrome wires them).
+    chrome.PullRequests.OnReview = async (pr, ct) =>
+    {
+        var envelope = await client.SendAsync(DashboardCommands.ReviewPrRequest(pr, GuiSay.Who), ct);
+        var refused = !envelope.Success ? envelope.Error : envelope.Response is { Ok: false } answer ? answer.Error : null;
+        Console.WriteLine($"pilot-gui: review {pr.Repo}#{pr.Number}: {refused ?? "started"}");
+        if (refused is not null)
+        {
+            throw new InvalidOperationException(refused);
+        }
+    };
     chrome.Repos.OnNewFlight = line =>
     {
         chrome.Show(PilotPage.Flights);
@@ -707,9 +730,11 @@ FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.
 // A card about a leg opens its worker's transcript from the moment the card was raised.
 chrome.LinkCardTranscripts(() => screen, () => flights ?? new FlightsScreen([], screen.Source, screen.AsOf), jobs: () => jobs ?? new JobsScreen([], screen.Source, screen.AsOf));
 chrome.LinkRepos();
+chrome.LinkPullRequests();
 // The Fleet page's "N waiting on you" opens those sessions on the Sessions page.
 chrome.LinkFleet();
 chrome.Repos.OnOpen = location => OpenAway(location);
+chrome.PullRequests.OnOpen = location => OpenAway(location);
 // The pages, built off the render thread: every node's rows merged, filtered and ordered, the Fleet page's summaries, and
 // the five-second look at who is in the fleet (a file read and the LAN). Each frame built them all, under each feed's lock,
 // so a burst of events (181 archived on DE1, 2026-10-24) kept frames at full cost back to back and the window stalled. Built

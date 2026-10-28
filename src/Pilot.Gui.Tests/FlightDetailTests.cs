@@ -116,11 +116,26 @@ public sealed class FlightDetailTests
     }
 
     // The page's text leaves with the colour each is drawn in, and its clickable regions, at a width where nothing is cut.
-    private static (List<Layout.Content.Text> Leaves, List<ClickableRegion> Regions) LeavesOf(FlightRow flight, int width = 1600, Action<string>? onOpen = null)
+    private static (List<Layout.Content.Text> Leaves, List<ClickableRegion> Regions) LeavesOf(FlightRow flight, int width = 1600, Action<string>? onOpen = null, bool listed = true)
     {
         using var vessel = new RgbaImageRenderer((uint)width, 800);
         var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Flights;
         flights.OnOpen = onOpen;
+        // The node lists the flight's PR among its open ones: its link opens the Pull requests page's row, with the ↗ beside it for the browser.
+        // Unlisted (merged, or not read yet) it has no row to open, and the link is the browser's.
+        flights.PullRequests = !listed ? null : new PullRequestsRow
+        {
+            Orgs = ["x"], ReadAt = Now, Viewer = "sebgod",
+            PullRequests =
+            [
+                new PullRequestRow
+                {
+                    Repo = "x/tianwen", Number = 7, Title = flight.Title ?? flight.Code, Url = "https://github.com/x/tianwen/pull/7", Author = "sebgod",
+                    Kind = PullRequestKind.ChecksRunning, Label = "Checks running", Flight = flight.Code, UpdatedAt = Now, CreatedAt = Live.At,
+                    Head = "flight/tia1611", Base = "main",
+                },
+            ],
+        };
         var screen = new FlightsScreen([FlightLine.Build([flight], [], Now, Legs()).Single()], "test", Now);
         flights.Render(screen, new RectF32(0, 0, width, 800));
         flights.OpenDetail("TIA1611");
@@ -137,7 +152,7 @@ public sealed class FlightDetailTests
     [InlineData("draft", null, null, true)]
     [InlineData("queued", "in the merge queue, position 2", null, false)]
     [InlineData("merged", null, "landed", false)]
-    public void TheHeaderCarriesThePrAsALinkWithItsStateAndTheFactsLineNoLonger(string state, string? queue, string? landed, bool draft)
+    public void TheHeaderCarriesAPrTheNodeDoesNotListAsTheBrowsersLinkWithItsStateAndTheFactsLineNoLonger(string state, string? queue, string? landed, bool draft)
     {
         var flight = Flight() with
         {
@@ -148,18 +163,42 @@ public sealed class FlightDetailTests
         };
         var opened = new List<string>();
 
-        var (leaves, regions) = LeavesOf(flight, onOpen: opened.Add);
+        var (leaves, regions) = LeavesOf(flight, onOpen: opened.Add, listed: false);
 
+        // No row to open on the Pull requests page: "PR #7 ↗" is the one link, and it leaves the app.
         var link = leaves.Single(t => t.Value.StartsWith("PR #7", StringComparison.Ordinal));
-        link.Value.ShouldEndWith(Followable.Away);
+        link.Value.ShouldBe("PR #7" + Followable.Away);
+        regions.Any(r => r.Result is HitResult.ButtonHit { Action: "pr:TIA1611:browser" }).ShouldBeFalse();
         // Once, in the header: the facts line says the PR no longer.
         leaves.Count(t => t.Value.Contains("PR #7", StringComparison.Ordinal)).ShouldBe(1);
         var said = leaves.Single(t => t.Value == state);
         // The state sits beside the link, after the code and the title.
         leaves.IndexOf(said).ShouldBe(leaves.IndexOf(link) + 1);
         leaves.FindIndex(t => t.Value == "TIA1611").ShouldBeLessThan(leaves.IndexOf(link));
-        // A link that leaves the app: a click opens it through the host's opener, a right-click offers Copy URL.
+        // A click opens it through the host's opener, a right-click offers Copy URL.
         regions.Single(r => r.Result is HitResult.ButtonHit { Action: "pr:TIA1611" }).OnClick!.Invoke(InputModifier.None);
+        opened.ShouldBe(["https://github.com/x/tianwen/pull/7"]);
+    }
+
+    [Fact]
+    public void TheHeaderCarriesAListedPrAsALinkToItsRowWithTheBrowsersArrowAndTheChipForItsState()
+    {
+        var opened = new List<string>();
+
+        var (leaves, regions) = LeavesOf(Flight(), onOpen: opened.Add);
+
+        var link = leaves.Single(t => t.Value.StartsWith("PR #7", StringComparison.Ordinal));
+        link.Value.ShouldBe("PR #7");
+        // "PR #7" opens the PR on the Pull requests page; the ↗ beside it is the one that leaves the app.
+        var away = leaves[leaves.IndexOf(link) + 1];
+        away.Value.ShouldBe(Followable.Away.Trim());
+        // The page's chip says where it stands, in place of the flight's own word.
+        leaves[leaves.IndexOf(away) + 1].Value.ShouldBe("Checks running");
+        leaves.Any(t => t.Value is "open" or "draft" or "queued" or "merged").ShouldBeFalse();
+        leaves.Count(t => t.Value.Contains("PR #7", StringComparison.Ordinal)).ShouldBe(1);
+        leaves.FindIndex(t => t.Value == "TIA1611").ShouldBeLessThan(leaves.IndexOf(link));
+        // A link that leaves the app: a click opens it through the host's opener, a right-click offers Copy URL.
+        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "pr:TIA1611:browser" }).OnClick!.Invoke(InputModifier.None);
         opened.ShouldBe(["https://github.com/x/tianwen/pull/7"]);
     }
 

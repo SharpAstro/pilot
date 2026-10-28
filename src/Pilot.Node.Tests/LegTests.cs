@@ -118,6 +118,35 @@ internal sealed class FakeGitHub : IGitHub
                 ? (int[])[.. prs.Where(p => Labels.TryGetValue(p.Number, out var set) && set.Contains(label)).Select(p => p.Number)]
                 : []);
 
+    /// <summary>Each org's open PRs as the search reads them, by owner; an org with none listed has none.</summary>
+    public Dictionary<string, PullRequestRow[]> OrgPrs { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Owners whose search fails, as a gh that could not reach GitHub.</summary>
+    public HashSet<string> OrgPrsFail { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The owners searched, in order.</summary>
+    public List<string> OrgSearches { get; } = [];
+
+    private TaskCompletionSource? _searchHold;
+
+    /// <summary>Makes each org search wait for the returned source to be set, so a refresh can be held mid-way.</summary>
+    public TaskCompletionSource HoldSearches() => _searchHold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public async Task<PullRequestRow[]> OpenPullRequestsOfAsync(string owner, CancellationToken cancellationToken)
+    {
+        lock (OrgSearches)
+        {
+            OrgSearches.Add(owner);
+        }
+        if (_searchHold is { } hold)
+        {
+            await hold.Task.WaitAsync(cancellationToken);
+        }
+        return OrgPrsFail.Contains(owner)
+            ? throw new FlightException($"gh could not search {owner}'s PRs: offline")
+            : OrgPrs.TryGetValue(owner, out var prs) ? prs : [];
+    }
+
     /// <summary>Every issue created, as (repo path, title, body).</summary>
     public List<(string Repo, string Title, string? Body)> IssuesCreated { get; } = [];
 
@@ -215,6 +244,11 @@ internal sealed class FakeGitHub : IGitHub
     public List<int> AutoMergeDisarmed { get; } = [];
 
     public Task<bool> AutoMergeAllowedAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(AutoMergeAllowed);
+
+    /// <summary>How the repo's base is merged up to date, as UpdateWayAsync answers: a rebase-queue repo by default.</summary>
+    public UpdateWay UpdateWay { get; set; } = UpdateWay.Rebase;
+
+    public Task<UpdateWay> UpdateWayAsync(string repoPath, string mergeMethod, CancellationToken cancellationToken) => Task.FromResult(UpdateWay);
 
     /// <summary>
     /// The mergeStateStatus GitHub gives the PR when auto-merge is armed on it: BLOCKED (a required check pending) by default;

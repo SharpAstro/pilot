@@ -116,7 +116,7 @@ public static class PilotCommand
         };
         var outputFormat = new Option<string>("--output-format")
         {
-            Description = "auto (rich on a terminal that shows Sixel, else plain), rich, markdown or plain; status, cards, repos and summary take it",
+            Description = "auto (rich on a terminal that shows Sixel, else plain), rich, markdown or plain; status, cards, repos, prs and summary take it",
             Recursive = true,
             DefaultValueFactory = _ => "auto",
         };
@@ -280,6 +280,28 @@ public static class PilotCommand
 
         reposCommand.Subcommands.Add(Action(new Command("sync", "git fetch -p --all in each tracked repo, then fast-forward its default branch; a dirty, off-branch or diverged checkout is left alone and said so"),
             (p, client, ct) => Send(client, Verbs.SyncRepos, Verbs.NodeTarget, [], who, ct)));
+
+        // prs
+        var needsMe = new Option<bool>("--needs-me") { Description = "Only the PRs that wait on you: ready, changes requested or conflicts" };
+        var freshPrs = new Option<bool>("--refresh") { Description = "Ask the node to read GitHub now, not wait for its minute" };
+        var prsCommand = Action(new Command("prs", "Every open PR of the clones' orgs, grouped by repo, with GitHub's merge state, as the node last read them") { Options = { needsMe, freshPrs } },
+            async (p, client, ct) =>
+            {
+                if (p.GetValue(freshPrs))
+                {
+                    var asked = (await client.SendAsync(new CommandRequest { Verb = Verbs.RefreshPullRequests, Target = Verbs.NodeTarget, Who = who }, ct)).Response;
+                    if (asked is { Ok: false })
+                    {
+                        await error.WriteLineAsync($"pilot: {asked.Error}");
+                        return 1;
+                    }
+                }
+                var row = (await SnapshotAsync(client, ct)).PullRequests;
+                var onlyMine = p.GetValue(needsMe);
+                var now = DateTimeOffset.UtcNow;
+                await WriteAsync(p.GetValue(outputFormat), () => PullRequestsMarkdown.Plain(row, onlyMine, now), () => PullRequestsMarkdown.Build(row, onlyMine, now));
+                return 0;
+            });
 
         // issue
         var issueTitle = Arg("title", "The issue's title");
@@ -1023,7 +1045,7 @@ public static class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, attachments, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, summary, summarise, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
+            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, summary, summarise, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host

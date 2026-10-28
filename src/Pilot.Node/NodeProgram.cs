@@ -67,7 +67,7 @@ public static class NodeProgram
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            // The message is already on stderr; a log that cannot be written changes nothing about the refusal.
+            // The message is in node.log (and on stderr when the log could not take it); a log that cannot be written changes nothing about the refusal.
         }
     }
 }

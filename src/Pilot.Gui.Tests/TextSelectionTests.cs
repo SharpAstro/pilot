@@ -32,6 +32,21 @@ public sealed class TextSelectionTests
         GitHubHead = "cafe0000aaaa",
     };
 
+    // The node lists the flight's PR among its open ones: its link opens the Pull requests page's row, with the ↗ beside it for the browser.
+    private static PullRequestsScreen ListedPullRequest() => new(new PullRequestsRow
+    {
+        Orgs = ["x"], ReadAt = Now, Viewer = "sebgod",
+        PullRequests =
+        [
+            new PullRequestRow
+            {
+                Repo = "x/tianwen", Number = 7, Title = "Planets on the GPU", Url = "https://github.com/x/tianwen/pull/7", Author = "sebgod",
+                Kind = PullRequestKind.ChecksRunning, Label = "Checks running", Flight = "TIA1611", UpdatedAt = Now, CreatedAt = Live.At,
+                Head = "flight/tia1611", Base = "main",
+            },
+        ],
+    }, "test", Now);
+
     private static LegRow[] Legs() =>
     [
         new()
@@ -75,7 +90,7 @@ public sealed class TextSelectionTests
 
         public void Render()
         {
-            Chrome.Render(new SessionsScreen([], "test", Now), _screen, Size);
+            Chrome.Render(new SessionsScreen([], "test", Now), _screen, null, null, null, null, ListedPullRequest(), Size);
         }
 
         public RgbaImageRenderer Renderer => _renderer;
@@ -212,10 +227,10 @@ public sealed class TextSelectionTests
     public void AClickOnALinkOpensItAndSelectsNothing()
     {
         using var window = new Window();
-        var link = window.Clickable("pr:TIA1611");
+        var link = window.Clickable("pr:TIA1611:browser");
         var (x, y) = (link.X + 3f, link.Y + link.Height / 2f);
 
-        // A press and a release on it, as a click: the page's own opener is asked for the PR.
+        // A press and a release on it, as a click: the host's opener is asked for the PR on GitHub.
         window.Send(new InputEvent.MouseDown(x, y)).ShouldBeTrue();
         window.Send(new InputEvent.MouseUp(x, y));
 

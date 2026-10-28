@@ -52,6 +52,7 @@ public sealed class NodeState
     private readonly Dictionary<string, CardRow> _cards = new Dictionary<string, CardRow>(StringComparer.Ordinal);
     private UsageRow? _usage;
     private MachineRow? _machine;
+    private PullRequestsRow? _pullRequests;
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
     private readonly Dictionary<string, PrReviewRow> _prReviews = new Dictionary<string, PrReviewRow>(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, SummaryRow> _summaries = new Dictionary<string, SummaryRow>(StringComparer.Ordinal);
@@ -641,6 +642,15 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>Every open PR of the clones' orgs as last read; null before any.</summary>
+    public PullRequestsRow? PullRequests()
+    {
+        lock (_gate)
+        {
+            return _pullRequests;
+        }
+    }
+
     /// <summary>
     /// Puts the machine sampled when it changed meaningfully (<see cref="Pilot.Node.Flights.MachineSampler.Differs"/>): a sample every few
     /// seconds would otherwise put a delta for each, and the journal would fill with CPU jitter.
@@ -654,6 +664,24 @@ public sealed class NodeState
                 return;
             }
             Publish(new MachineChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Machine = sampled });
+        }
+    }
+
+    /// <summary>
+    /// Puts the PRs read, when they differ from those held, or when the held read is 2 minutes old: a read every minute that finds
+    /// nothing new would fill the journal with a row of every PR, yet a client dates the row by its read and marks one over 5
+    /// minutes old stale, so the read time is renewed well within that.
+    /// </summary>
+    public void PutPullRequests(PullRequestsRow read)
+    {
+        lock (_gate)
+        {
+            if (_pullRequests is { } held && held.Orgs.SequenceEqual(read.Orgs) && held.Errors.SequenceEqual(read.Errors)
+                && held.PullRequests.SequenceEqual(read.PullRequests) && read.ReadAt - held.ReadAt < TimeSpan.FromMinutes(2))
+            {
+                return;
+            }
+            Publish(new PullRequestsChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Row = read });
         }
     }
 
@@ -842,6 +870,9 @@ public sealed class NodeState
             case MachineChangedEvent machine:
                 _machine = machine.Machine;
                 break;
+            case PullRequestsChangedEvent pullRequests:
+                _pullRequests = pullRequests.Row;
+                break;
             case JobAddedEvent added:
                 _jobs[added.Job.Id] = added.Job;
                 break;
@@ -885,6 +916,7 @@ public sealed class NodeState
         }
         _usage = snapshot.Usage;
         _machine = snapshot.Machine;
+        _pullRequests = snapshot.PullRequests;
         foreach (var job in snapshot.Jobs ?? [])
         {
             _jobs[job.Id] = job;
@@ -912,6 +944,7 @@ public sealed class NodeState
         Cards = [.. _cards.Values],
         Usage = _usage,
         Machine = _machine,
+        PullRequests = _pullRequests,
         Jobs = [.. _jobs.Values],
         PrReviews = [.. _prReviews.Values],
         Summaries = [.. _summaries.Values],
