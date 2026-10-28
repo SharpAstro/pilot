@@ -3,11 +3,9 @@ using Pilot.Contracts;
 
 namespace Pilot.Ui;
 
-/// <summary>The pills of the Pull requests page: which of the PRs the list shows.</summary>
+/// <summary>The pills of the Pull requests page: which of the PRs the list narrows to. No pill lit shows every PR.</summary>
 internal enum PullRequestFilter
 {
-    All,
-
     /// <summary>The person's own (<see cref="PullRequestsRow.IsMine"/>).</summary>
     Mine,
 
@@ -46,10 +44,11 @@ internal sealed record PullRequestsScreen(PullRequestsRow? Row, string Source, D
 }
 
 /// <summary>
-/// The Pull requests page: every open PR of the repos pilot works in, grouped by repo in the order of the PR that
-/// most needs the person; a group folds on a click anywhere on its header; a row is a state chip, <c>#123 Title</c> as a link,
+/// The Pull requests page: every open PR of the repos pilot works in, grouped by org (its counts, and why its read failed if it
+/// did) and then by repo, each in the order of the PR that most needs the person; an org and a repo fold on a click anywhere on
+/// their header, and stay folded while the window is open; a row is a state chip, <c>#123 Title</c> as a link,
 /// the flight's code, the author, pilot's review and when it was updated, in columns that line up across the groups, with
-/// the column for the row's actions at the right. The pills (All, Mine, Flights, Needs me) and the repo search narrow the
+/// the column for the row's actions at the right. The pills (Mine, Flights, Needs me: a lit one clicked again goes back to every PR) and the repo search narrow the
 /// list; a click selects a row (its flight's cards light in the panel), a double-click or Enter opens its flight or the PR.
 /// Generic over the surface, as the other pages are.
 /// </summary>
@@ -62,6 +61,12 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
 
     /// <summary>A repo's header row.</summary>
     public const float GroupHeight = 34f;
+
+    /// <summary>An org's header row, a little taller than a repo's.</summary>
+    public const float OrgHeight = 38f;
+
+    /// <summary>The row of an org's group that says it has no open PR, or why it could not be read.</summary>
+    public const float OrgNoteHeight = 30f;
 
     /// <summary>The state chip and the flight chip: as tall as each other, centred in the row.</summary>
     public const float ChipHeight = 22f;
@@ -78,6 +83,13 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     // The author, the review and the age: secondary to the title, so a size down.
     private const float SecondarySize = 12f;
     private const float TitleSize = 14f;
+    private const float OrgSize = 15f;
+
+    // Where an org's notes start: under its name, past the fold mark.
+    private const float NoteIndent = 32f;
+
+    // A repo's header is set in under its org's, so the two levels read as nested.
+    private const float RepoIndent = 16f;
     private const float ChipSize = 12f;
 
     // Column widths, as they are before a reader drags a divider.
@@ -101,8 +113,8 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
     private readonly HashSet<string> _folded = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _foldedOrgs = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<PullRequestRow> _rows = [];
-    private PullRequestFilter _filter;
 
     /// <summary>The page's table: its columns' widths, which a drag on a title's divider changes and the GUI keeps.</summary>
     public ListTable Table { get; } = new("pull requests");
@@ -164,14 +176,10 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     // The cards the last frame offered a Merge or a Go around from.
     private IReadOnlyList<CardRow> _cards = [];
 
-    /// <summary>Which PRs the list shows.</summary>
-    public PullRequestFilter Filter
-    {
-        get => _filter;
-        set => _filter = value;
-    }
+    /// <summary>Which PRs the list narrows to; null (the default) shows every PR of the repos pilot works in.</summary>
+    public PullRequestFilter? Filter { get; set; }
 
-    /// <summary>The PR rows listed, in drawing order: those of the groups that are not folded.</summary>
+    /// <summary>The PR rows listed, in drawing order: those of the repos that are not folded, in the orgs that are not.</summary>
     public IReadOnlyList<PullRequestRow> Rows => _rows;
 
     /// <summary>The selected row's index among <see cref="Rows"/>, or -1.</summary>
@@ -197,6 +205,21 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             _folded.Add(repo);
         }
     }
+
+    /// <summary>Whether <paramref name="org"/>'s group is folded to its header: its repos, and what they hold, are not listed.</summary>
+    public bool IsOrgFolded(string org) => _foldedOrgs.Contains(org);
+
+    /// <summary>Folds <paramref name="org"/>'s group, or unfolds it. Its repos keep the fold they have.</summary>
+    public void ToggleOrg(string org)
+    {
+        if (!_foldedOrgs.Remove(org))
+        {
+            _foldedOrgs.Add(org);
+        }
+    }
+
+    // The org a repo (owner/name) is in: the part before the slash.
+    private static string OrgOf(string repo) => repo.IndexOf('/') is >= 0 and var slash ? repo[..slash] : repo;
 
     /// <summary>Selects the row <paramref name="index"/> of <see cref="Rows"/>.</summary>
     public void Select(int index)
@@ -239,15 +262,16 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         SelectedUrl = null;
     }
 
-    /// <summary>Shows only <paramref name="repo"/>'s PRs (<c>owner/name</c>): All, the repo in the search box, its group unfolded.</summary>
+    /// <summary>Shows only <paramref name="repo"/>'s PRs (<c>owner/name</c>): no pill, the repo in the search box, its group and its org unfolded.</summary>
     public void ShowRepo(string repo)
     {
         _reveal = null;
         _revealSince = null;
-        Filter = PullRequestFilter.All;
+        Filter = null;
         Search.Text = repo;
         Search.CursorPos = repo.Length;
         _folded.Remove(repo);
+        _foldedOrgs.Remove(OrgOf(repo));
     }
 
     private void ApplyReveal(PullRequestsRow row, (string Repo, int Number) want)
@@ -259,38 +283,56 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         var query = Search.Text.Trim();
         if (!Passes(Filter, row, pr) || (query.Length > 0 && !pr.Repo.Contains(query, StringComparison.OrdinalIgnoreCase)))
         {
-            Filter = PullRequestFilter.All;
+            Filter = null;
             Search.Text = "";
             Search.CursorPos = 0;
         }
         _folded.Remove(pr.Repo);
+        _foldedOrgs.Remove(OrgOf(pr.Repo));
         SelectedUrl = pr.Url;
         _scrollTo = (0f, 0f);
         _appliedNow = true;
     }
 
-    // Where the selected row is in the list's content: every group's header above it, and the rows of the groups open above it.
-    private (float Start, float End) SpanOfSelected(IReadOnlyList<PullRequestGroup> groups)
+    // Where the selected row is in the list's content: every header above it, the notes of the orgs above it, and the rows of the
+    // groups open above it.
+    private (float Start, float End) SpanOfSelected(IReadOnlyList<PullRequestOrgGroup> orgs)
     {
         var top = 0f;
-        foreach (var group in groups)
+        foreach (var org in orgs)
         {
-            top += GroupHeight;
-            if (IsFolded(group.Repo))
+            top += OrgHeight;
+            if (IsOrgFolded(org.Org))
             {
                 continue;
             }
-            foreach (var pr in group.PullRequests)
+            top += NoteRows(org) * OrgNoteHeight;
+            foreach (var group in org.Repos)
             {
-                if (pr.Url == SelectedUrl)
+                top += GroupHeight;
+                if (IsFolded(group.Repo))
                 {
-                    return (Scale.ToSurface(top), Scale.ToSurface(top + RowHeight));
+                    continue;
                 }
-                top += RowHeight;
+                foreach (var pr in group.PullRequests)
+                {
+                    if (pr.Url == SelectedUrl)
+                    {
+                        return (Scale.ToSurface(top), Scale.ToSurface(top + RowHeight));
+                    }
+                    top += RowHeight;
+                }
             }
         }
         return (0f, 0f);
     }
+
+    // Whether an org with no repo listed has no PR to list: the pills and the search leave none of any org out of mind, so an org
+    // whose PRs they hid is not said to have none.
+    private bool HasNoPr(PullRequestOrgGroup org) => org.Repos.Length == 0 && Filter is null && Search.Text.Trim().Length == 0;
+
+    // How many note rows open an org's group: why its read failed, and that it has no open PR.
+    private int NoteRows(PullRequestOrgGroup org) => (org.Error is not null ? 1 : 0) + (HasNoPr(org) ? 1 : 0);
 
     // Brings the row a jump selected into view, once the list has been laid out at least once (it knows its viewport then). False while it waits.
     private void Scrolled()
@@ -450,8 +492,8 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
                 }
             }
         }
-        var groups = Visible(screen.Row);
-        _rows = [.. groups.Where(g => !IsFolded(g.Repo)).SelectMany(g => g.PullRequests)];
+        var orgs = Visible(screen.Row);
+        _rows = [.. orgs.Where(o => !IsOrgFolded(o.Org)).SelectMany(o => o.Repos).Where(g => !IsFolded(g.Repo)).SelectMany(g => g.PullRequests)];
         if (_rows.Count == 0)
         {
             ListCursor.Close();
@@ -479,7 +521,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             }
             if (_scrollTo is not null)
             {
-                _scrollTo = SpanOfSelected(groups);
+                _scrollTo = SpanOfSelected(orgs);
                 if (!_appliedNow)
                 {
                     Scrolled();
@@ -487,7 +529,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             }
             _appliedNow = false;
         }
-        var main = Main(screen, groups, width).HStar();
+        var main = Main(screen, orgs, width).HStar();
         var page = (_reveal is { } waiting && screen.Row is not null
                 ? Layout.Builder.VStack(Header(screen), Waiting(waiting), main)
                 : Layout.Builder.VStack(Header(screen), main))
@@ -539,7 +581,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     }
 
     /// <summary>Whether <paramref name="pr"/> passes the pills.</summary>
-    internal static bool Passes(PullRequestFilter filter, PullRequestsRow row, PullRequestRow pr) => filter switch
+    internal static bool Passes(PullRequestFilter? filter, PullRequestsRow row, PullRequestRow pr) => filter switch
     {
         PullRequestFilter.Mine => row.IsMine(pr),
         PullRequestFilter.Flights => pr.Flight is not null,
@@ -547,8 +589,12 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         _ => true,
     };
 
-    /// <summary>The groups the pills and the search leave, in the order <see cref="PullRequestsRow.Groups"/> gives what is left.</summary>
-    internal PullRequestGroup[] Visible(PullRequestsRow? row)
+    /// <summary>
+    /// The orgs the pills and the search leave, in the order <see cref="PullRequestsRow.OrgGroups"/> gives, each with the counts of all
+    /// its PRs and the repos that are left. An org left with no repo is kept only when its read failed, or when nothing narrows the
+    /// list (then it has no open PR, and says so).
+    /// </summary>
+    internal PullRequestOrgGroup[] Visible(PullRequestsRow? row)
     {
         if (row is null)
         {
@@ -556,24 +602,33 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         }
         var query = Search.Text.Trim();
         var kept = row.PullRequests.Where(p => Passes(Filter, row, p) && (query.Length == 0 || p.Repo.Contains(query, StringComparison.OrdinalIgnoreCase)));
-        return (row with { PullRequests = [.. kept] }).Groups();
+        var counts = row.OrgGroups().ToDictionary(o => o.Org, o => o.Counts, StringComparer.OrdinalIgnoreCase);
+        var narrowed = Filter is not null || query.Length > 0;
+        return
+        [
+            .. (row with { PullRequests = [.. kept] }).OrgGroups()
+                .Where(o => o.Repos.Length > 0 || o.Error is not null || !narrowed)
+                .Select(o => o with { Counts = counts.GetValueOrDefault(o.Org, o.Counts) }),
+        ];
     }
 
     private static string FilterName(PullRequestFilter filter) => filter switch
     {
         PullRequestFilter.Mine => "Mine",
         PullRequestFilter.Flights => "Flights",
-        PullRequestFilter.NeedsMe => "Needs me",
-        _ => "All",
+        _ => "Needs me",
     };
 
     private static string FilterAction(PullRequestFilter filter) => filter switch
     {
         PullRequestFilter.Mine => "prs:filter:mine",
         PullRequestFilter.Flights => "prs:filter:flights",
-        PullRequestFilter.NeedsMe => "prs:filter:needs-me",
-        _ => "prs:filter:all",
+        _ => "prs:filter:needs-me",
     };
+
+    private static string FilterTip(PullRequestFilter filter, bool lit) => lit
+        ? $"Showing only {FilterName(filter)}; click again to show every pull request"
+        : $"Show only {FilterName(filter)}";
 
     private Layout.Node Header(PullRequestsScreen screen)
     {
@@ -596,8 +651,6 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             {
                 lines.Add(Layout.Builder.Text(note, 12f, P.Held).RowH(20f).WithTooltip(note));
             }
-            lines.AddRange(row.Errors.Select(e => Layout.Builder.Text($"{e.Org}: {e.Message.ReplaceLineEndings(" ")}", 12f, P.Held).RowH(20f)
-                .WithTooltip($"{e.Org} could not be read, so its PRs are the ones read before, or missing: {e.Message}")));
         }
         return TopBar.Build(new PageHeader("pull requests")
         {
@@ -622,7 +675,10 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         foreach (var filter in Enum.GetValues<PullRequestFilter>())
         {
             var chosen = filter;
-            items.Add(CardsView<TSurface>.HeaderPill(FilterName(filter), FilterAction(filter), () => Filter = chosen, Filter == filter ? lit : plain, NightOrNull?.Bright));
+            var isLit = Filter == filter;
+            // One of few, and one lit: the lit one clicked again is no pill, which shows every PR.
+            items.Add(CardsView<TSurface>.HeaderPill(FilterName(filter), FilterAction(filter), () => Filter = isLit ? null : chosen, isLit ? lit : plain, NightOrNull?.Bright)
+                .WithTooltip(FilterTip(filter, isLit)));
         }
         items.Add(Layout.Builder.TextInput(Search, TextSize, Palette.Input).WFixed(SearchWidth).HFixed(AboutCard.HeaderButton));
         // What the node refused of the last button pressed on a row, in its words, where the count of the list is: a place that is
@@ -639,37 +695,54 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         return Layout.Builder.HStack([.. items]).WithGap(8f).RowH(ToolbarHeight);
     }
 
-    private Layout.Node Main(PullRequestsScreen screen, IReadOnlyList<PullRequestGroup> groups, float width)
+    private Layout.Node Main(PullRequestsScreen screen, IReadOnlyList<PullRequestOrgGroup> orgs, float width)
     {
         if (screen.Row is null)
         {
             return Message("The node has not read the pull requests yet. It reads them every minute; Refresh asks it now.");
         }
-        if (screen.Row.PullRequests.Length == 0)
+        // No PR and no org to say so of: the whole page is the one line. An org with none, or whose read failed, is shown as a group instead.
+        if (screen.Row.PullRequests.Length == 0 && orgs.Count == 0)
         {
             return Message($"No open pull requests in {screen.Orgs}.");
         }
-        var shown = groups.Sum(g => g.PullRequests.Length);
+        var shown = orgs.Sum(o => o.Repos.Sum(g => g.PullRequests.Length));
         var toolbar = Toolbar(shown, screen.Row.PullRequests.Length);
-        if (groups.Count == 0)
+        if (orgs.Count == 0)
         {
             var why = Search.Text.Trim() is { Length: > 0 } query ? $"No pull requests match \"{query}\"" : "No pull requests";
-            return Layout.Builder.VStack(toolbar, Message(Filter == PullRequestFilter.All ? $"{why}." : $"{why} under {FilterName(Filter)}. All shows every one.").HStar()).Pad(Gutter, 8f).Stretch();
+            return Layout.Builder.VStack(toolbar, Message(Filter is not { } filter ? $"{why}." : $"{why} under {FilterName(filter)}. Click {FilterName(filter)} again to show every one.").HStar()).Pad(Gutter, 8f).Stretch();
         }
         var shownColumns = Columns(width);
         var columns = shownColumns.Select(c => c.Column).ToList();
         var rows = new List<Layout.Node>();
         var index = 0;
-        foreach (var group in groups)
+        foreach (var org in orgs)
         {
-            rows.Add(GroupRow(group));
-            if (IsFolded(group.Repo))
+            rows.Add(OrgRow(org));
+            if (IsOrgFolded(org.Org))
             {
                 continue;
             }
-            foreach (var pr in group.PullRequests)
+            if (org.Error is { } error)
             {
-                rows.Add(Row(pr, index++, shownColumns));
+                rows.Add(OrgNote($"Could not read {org.Org}: {error}", P.Held, $"{org.Org} could not be read, so its PRs are the ones read before, or missing: {error}"));
+            }
+            if (HasNoPr(org))
+            {
+                rows.Add(OrgNote("No open pull requests.", BodyText, $"{org.Org} has no open pull request in the repos pilot works in"));
+            }
+            foreach (var group in org.Repos)
+            {
+                rows.Add(GroupRow(group));
+                if (IsFolded(group.Repo))
+                {
+                    continue;
+                }
+                foreach (var pr in group.PullRequests)
+                {
+                    rows.Add(Row(pr, index++, shownColumns));
+                }
             }
         }
         return Layout.Builder.VStack(
@@ -772,6 +845,27 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         _ => "open",
     };
 
+    // An org's header: its fold mark, its name and its counts (cut with an ellipsis, whole on hover). A click anywhere on it folds it.
+    private Layout.Node OrgRow(PullRequestOrgGroup org)
+    {
+        var folded = IsOrgFolded(org.Org);
+        return Layout.Builder.HStack(
+                Layout.Builder.Icon(folded ? Layout.IconKind.CaretRight : Layout.IconKind.CaretDown, 12f, P.Bright).WFixed(16f).HStar(),
+                Layout.Builder.Text(org.Org, OrgSize, P.Bright).WAuto().HStar(),
+                Layout.Builder.Text(org.Counts, TextSize, BodyText).WithTooltip(org.Counts).WStar().HStar())
+            .WithGap(8f)
+            .Pad(8f, 0f)
+            .RowH(OrgHeight)
+            .Bg(P.Button)
+            .BgHover(P.ButtonHover)
+            .Follows(new HitResult.ButtonHit($"prs:org:{org.Org}"), _ => ToggleOrg(org.Org))
+            .WithTooltip(folded ? $"Show {org.Org}'s repos" : $"Fold {org.Org}'s repos away");
+    }
+
+    // A line in an org's group, under its header: that it has no open PR, or why its read failed. Cut with an ellipsis, whole on hover.
+    private Layout.Node OrgNote(string text, RGBAColor32 color, string whole) =>
+        Layout.Builder.Text(text, SecondarySize, color).WithTooltip(whole).Pad(NoteIndent, 0f).RowH(OrgNoteHeight);
+
     // A repo's header: its fold mark, its name as a link to the repo, and how many PRs it lists. A click anywhere on it folds it.
     private Layout.Node GroupRow(PullRequestGroup group)
     {
@@ -785,6 +879,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             .WithTooltip($"Open {group.Repo} on GitHub");
         var count = group.PullRequests.Length;
         return Layout.Builder.HStack(
+                Layout.Builder.Spacer().WFixed(RepoIndent),
                 Layout.Builder.Icon(folded ? Layout.IconKind.CaretRight : Layout.IconKind.CaretDown, 12f, BodyText).WFixed(16f).HStar(),
                 name.HStar(),
                 Layout.Builder.Text($"{count} {(count == 1 ? "PR" : "PRs")}", TextSize, BodyText).WAuto().HStar(),

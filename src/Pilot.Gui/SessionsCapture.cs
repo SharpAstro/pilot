@@ -159,7 +159,10 @@ internal static class SessionsCapture
         return rowsPath;
     }
 
-    /// <summary>The Pull requests page's rows: a line a repo, then a line a PR with its label, flight, author, review and age.</summary>
+    /// <summary>
+    /// The Pull requests page's rows: a line an org (its counts, and its read error or that it has no open PR), then a line a repo,
+    /// then a line a PR with its label, flight, author, review and age.
+    /// </summary>
     public static string PullRequestsDump(PullRequestsScreen? screen)
     {
         if (screen?.Row is not { } row)
@@ -167,13 +170,25 @@ internal static class SessionsCapture
             return "the node has not read the pull requests yet";
         }
         var text = new StringBuilder();
-        foreach (var group in row.Groups())
+        foreach (var org in row.OrgGroups())
         {
-            text.Append(group.Repo).Append("  ").Append(group.PullRequests.Length).Append('\n');
-            foreach (var pr in group.PullRequests)
+            text.Append(org.Org).Append("  ").Append(org.Counts).Append('\n');
+            if (org.Error is { } error)
             {
-                text.Append("  #").Append(pr.Number).Append(' ').Append(pr.Title).Append(" | ").Append(pr.Label).Append(" | ").Append(pr.Flight ?? "no flight")
-                    .Append(" | ").Append(pr.Author).Append(" | review ").Append(pr.Review ?? "none").Append(" | updated ").Append(PullRequestsRow.Age(pr.UpdatedAt, screen.AsOf)).Append('\n');
+                text.Append("  could not be read: ").Append(error).Append('\n');
+            }
+            if (org.Repos.Length == 0)
+            {
+                text.Append("  no open pull requests\n");
+            }
+            foreach (var group in org.Repos)
+            {
+                text.Append("  ").Append(group.Repo).Append("  ").Append(group.PullRequests.Length).Append('\n');
+                foreach (var pr in group.PullRequests)
+                {
+                    text.Append("    #").Append(pr.Number).Append(' ').Append(pr.Title).Append(" | ").Append(pr.Label).Append(" | ").Append(pr.Flight ?? "no flight")
+                        .Append(" | ").Append(pr.Author).Append(" | review ").Append(pr.Review ?? "none").Append(" | updated ").Append(PullRequestsRow.Age(pr.UpdatedAt, screen.AsOf)).Append('\n');
+                }
             }
         }
         return text.ToString().TrimEnd('\n');

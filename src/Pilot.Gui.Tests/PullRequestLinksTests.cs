@@ -149,7 +149,7 @@ public sealed class PullRequestLinksTests
         var page = chrome.PullRequests;
         page.SelectedRow.ShouldNotBeNull().Url.ShouldBe(target.Url);
         page.IsFolded(target.Repo).ShouldBeFalse();
-        page.Filter.ShouldBe(PullRequestFilter.All);
+        page.Filter.ShouldBeNull();
         page.Search.Text.ShouldBe("");
         InView(ListOf(renderer, page, screen, target)).ShouldBeTrue("the selected row is inside the list's viewport");
     }
@@ -563,7 +563,7 @@ public sealed class PullRequestLinksTests
         Draw(chrome, null, null, screen, repos);
         var page = chrome.PullRequests;
         page.Search.Text.ShouldBe("example-org/orbit");
-        page.Filter.ShouldBe(PullRequestFilter.All);
+        page.Filter.ShouldBeNull();
         page.Rows.Select(r => r.Repo).Distinct().ShouldBe(["example-org/orbit"]);
         page.Rows.Count.ShouldBe(2);
 
