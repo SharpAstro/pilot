@@ -180,6 +180,9 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+    
+    /// <summary>The header's Night switch, the same on every page.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
     public AboutCard? About { get; set; }
@@ -245,7 +248,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         {
             Source = PageHeader.SourceLine(screen.Flights.Source, screen.Flights.AsOf),
             Lines = Maintenance ? [Layout.Builder.Text(MaintenanceNotice.Line, 12f, Ring).RowH(20f)] : [],
-        }, new TopBarParts(Nodes, null, Autopilot, About));
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
 
     private void Section(List<Layout.Node> blocks, string title, IReadOnlyList<HomeChip> chips, string none)
     {

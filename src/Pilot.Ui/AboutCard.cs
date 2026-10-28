@@ -34,7 +34,7 @@ internal sealed class AboutCard
     /// </summary>
     public static readonly IReadOnlyList<(Layout.IconKind[] Marks, string What)> IconButtons =
     [
-        ([Layout.IconKind.Grid, Layout.IconKind.List], "the Flights page's Grid and List views (Canvas and Night are words)"),
+        ([Layout.IconKind.Grid, Layout.IconKind.List], "the Flights page's Grid and List views (Canvas is a word; Night is the header's own switch)"),
         ([Layout.IconKind.Plus], "New flight, in the Flights header"),
         ([Layout.IconKind.CaretRight, Layout.IconKind.CaretDown], "unfold and fold a row's details"),
     ];

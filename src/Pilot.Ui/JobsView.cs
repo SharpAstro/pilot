@@ -275,6 +275,9 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+    
+    /// <summary>The header's Night switch, the same on every page.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
@@ -512,7 +515,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             Hidden = screen.Hidden,
             HiddenAction = "jobs:play-all",
             Source = PageHeader.SourceLine(screen.Source, screen.AsOf, screen.Outside),
-        }, new TopBarParts(Nodes, Play, Autopilot, About));
+        }, new TopBarParts(Nodes, Play, Autopilot, About, Night));
 
     private Layout.Node Main(JobsScreen screen)
     {

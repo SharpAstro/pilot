@@ -202,6 +202,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+    
+    /// <summary>The header's Night switch, the same on every page.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>The ? card and the update light, in the top bar.</summary>
     public AboutCard? About { get; set; }
@@ -455,7 +458,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         {
             Buttons = buttons,
             Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : "the conversation with the node's watchtower"),
-        }, new TopBarParts(Nodes, null, Autopilot, About));
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
 
         var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking).Select(AsQuoted)], held.Working).Select(r => r.WStar()).ToList();
         // What was said and the watchtower has not taken yet: last among the messages, dim, and saying so.

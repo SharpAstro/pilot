@@ -142,6 +142,9 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+    
+    /// <summary>The header's Night switch, the same on every page.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
@@ -246,7 +249,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 CardsView<TSurface>.HeaderPill("All repos", "repos:all", () => ShowAll = !ShowAll, ShowAll ? Lit : null),
             ],
             Lines = lines,
-        }, new TopBarParts(Nodes, null, Autopilot, About));
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
     }
 
     /// <summary><c>sync: 2 updated, 1 skipped</c>: what the outcome list adds up to.</summary>

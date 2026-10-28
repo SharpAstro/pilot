@@ -168,6 +168,8 @@ internal sealed class PilotChrome<TSurface>
         Settings.Autopilot = Autopilot;
         Home.Autopilot = Autopilot;
         Chat.Autopilot = Autopilot;
+        // And the Night switch beside it, one state every page reads.
+        sessions.Night = Flights.Night = Repos.Night = Jobs.Night = Fleet.Night = Settings.Night = Home.Night = Chat.Night = Night;
         // A transcript or a flight's page opened from inside a page (Enter, a click on a row) is a move too.
         sessions.Transcript.Opening = RecordOpening;
         Flights.Opening = RecordOpening;
@@ -200,6 +202,9 @@ internal sealed class PilotChrome<TSurface>
 
     /// <summary>The header's Autopilot switch, the same on every page: the host sets <see cref="AutopilotSwitch.On"/> from the node in view and <see cref="AutopilotSwitch.OnToggle"/> to flip it.</summary>
     public AutopilotSwitch Autopilot { get; } = new();
+
+    /// <summary>The header's Night switch, the same on every page: the window's one night state, kept across a restart by <see cref="KeepColumnWidths"/>'s file.</summary>
+    public NightSwitch Night { get; } = new();
 
     /// <summary>Which nodes the window shows (<see cref="FleetPages.Merge"/>): all by default, kept across pages for the window's life.</summary>
     public NodeFilter Nodes { get; } = new();
@@ -608,8 +613,8 @@ internal sealed class PilotChrome<TSurface>
     }
 
     /// <summary>
-    /// Keeps the widths the user drags the list pages' columns to in <paramref name="file"/>: the pages start from what it
-    /// holds, and <paramref name="redraw"/> is asked for a frame as a drag moves a divider.
+    /// Keeps the widths the user drags the list pages' columns to, and the Night switch, in <paramref name="file"/>: the pages
+    /// start from what it holds, and <paramref name="redraw"/> is asked for a frame as a drag moves a divider.
     /// </summary>
     public void KeepColumnWidths(GuiSettingsFile file, Action redraw)
     {
@@ -619,6 +624,8 @@ internal sealed class PilotChrome<TSurface>
             file.Attach(table);
             table.Changed += redraw;
         }
+        file.Attach(Night);
+        Night.Changed += _ => redraw();
     }
 
     /// <summary>The session a waiting-session <paramref name="card"/> (subject <c>session/&lt;id&gt;</c>) is about on <paramref name="node"/>, whose ids are its own, or null.</summary>

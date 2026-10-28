@@ -325,7 +325,7 @@ public sealed class FlightDetailTests
             var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
             if (night)
             {
-                chrome.Flights.Mode = FlightsViewMode.Night;
+                chrome.Night.On = true;
             }
             chrome.Show(PilotPage.Flights);
             chrome.Flights.OpenDetail("TIA1611");

@@ -115,6 +115,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+    
+    /// <summary>The header's Night switch, the same on every page.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>The window's node selection, whose pills the top bar shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
@@ -365,7 +368,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         {
             Counts = page is null ? "" : Summary(page, checks),
             Source = Said ?? page?.Restart ?? (page is null ? (problem ?? "") : $"saved in {page.File} · the command line wins over it"),
-        }, new TopBarParts(Nodes, null, Autopilot, About));
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
 
     /// <summary>The header's counts: the setup steps left only once the checks are known, then what is saved for the next start.</summary>
     internal static string Summary(SettingsPage page, SetupChecks? checks)

@@ -412,6 +412,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+    
+    /// <summary>The header's Night switch, the same on every page.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>The window's node selection: its pills in the header, and the nodes picked are the rows shown.</summary>
     public NodeFilter? Nodes { get; set; }
@@ -468,7 +471,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         {
             Counts = screen.Summary,
             Source = Said ?? "every node heard on the LAN or granted to you, each on its own account · watching needs no grant, commanding one does",
-        }, new TopBarParts(Nodes, null, Autopilot, About));
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
 
     private Layout.Node Main(FleetScreen screen)
     {

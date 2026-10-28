@@ -261,7 +261,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
 
     // The colours come from the palette of the view shown, so night repaints the same builders.
-    private FlightsPalette P => Mode == FlightsViewMode.Night && CanvasAvailable ? FlightsPalette.Night : FlightsPalette.Standard;
+    private FlightsPalette P => Night?.Palette ?? FlightsPalette.Standard;
     private FlightsPalette? NightOrNull => ReferenceEquals(P, FlightsPalette.Night) ? P : null;
 
     private static TextInputColors NightInput(FlightsPalette n) => new()
@@ -357,6 +357,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+    
+    /// <summary>The header's Night switch, the same on every page.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
@@ -890,7 +893,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             Buttons = buttons,
             Source = PageHeader.SourceLine(screen.Source, screen.AsOf, screen.Outside),
             Lines = lines,
-        }, new TopBarParts(Nodes, Play, Autopilot, About, NightOrNull));
+        }, new TopBarParts(Nodes, Play, Autopilot, About, Night));
     }
 
     private Layout.Node Main(FlightsScreen screen)
@@ -917,7 +920,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         }
 
         return Layout.Builder.VStack(
-                Table.Header(columns, Scale),
+                Table.Header(columns, Scale, NightOrNull),
                 Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch())
             .Pad(Gutter, 8f)
             .Stretch();

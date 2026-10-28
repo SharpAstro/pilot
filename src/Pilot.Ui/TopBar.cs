@@ -38,8 +38,8 @@ internal sealed record PageHeader(string Title)
 /// <param name="Play">The In play / Everything choice, on the pages that use it; null shows no pills.</param>
 /// <param name="Autopilot">The Autopilot switch.</param>
 /// <param name="About">The ? card, and the update light before it.</param>
-/// <param name="Night">Flights' palette while that view is shown, else null.</param>
-internal sealed record TopBarParts(NodeFilter? Nodes, PlayFilter? Play, AutopilotSwitch? Autopilot, AboutCard? About, FlightsPalette? Night = null);
+/// <param name="Night">The Night switch, whose state paints the bar on every page.</param>
+internal sealed record TopBarParts(NodeFilter? Nodes, PlayFilter? Play, AutopilotSwitch? Autopilot, AboutCard? About, NightSwitch? Night = null);
 
 /// <summary>
 /// The one top bar every page shows, Home included (#231): <b>pilot v2</b> and the page's name, then the node pills and the In
@@ -70,27 +70,32 @@ internal static class TopBar
     /// <summary>The bar as one tree, <paramref name="page"/> laid out among <paramref name="parts"/>.</summary>
     public static Layout.Node Build(PageHeader page, TopBarParts parts)
     {
-        var palette = parts.Night ?? FlightsPalette.Standard;
+        var night = parts.Night?.Palette;
+        var palette = night ?? FlightsPalette.Standard;
         var items = new List<Layout.Node>
         {
             Layout.Builder.Text("pilot v2", 20f, palette.Bright, TextAlign.Near, TextAlign.Far).WAuto(),
             Layout.Builder.Text(page.Title, 20f, palette.Dim, TextAlign.Near, TextAlign.Far).WAuto(),
         };
-        items.AddRange(parts.Nodes?.Pills(parts.Night) ?? []);
-        items.AddRange(parts.Play?.Pills(parts.Night) ?? []);
+        items.AddRange(parts.Nodes?.Pills(night) ?? []);
+        items.AddRange(parts.Play?.Pills(night) ?? []);
         items.Add(Layout.Builder.Spacer().WStar());
         if (!string.IsNullOrEmpty(page.Counts))
         {
-            items.AddRange(PlayFilter.Summary(parts.Play, page.Counts, page.Hidden, page.HiddenAction, palette.Body, palette.RowHoverBg, parts.Night));
+            items.AddRange(PlayFilter.Summary(parts.Play, page.Counts, page.Hidden, page.HiddenAction, palette.Body, palette.RowHoverBg, night));
         }
         items.AddRange(page.Buttons);
         if (parts.Autopilot is { } autopilot)
         {
-            items.Add(autopilot.Button(parts.Night));
+            items.Add(autopilot.Button(night));
+        }
+        if (parts.Night is { } nightSwitch)
+        {
+            items.Add(nightSwitch.Button());
         }
         if (parts.About is { } about)
         {
-            items.Add(about.Button(parts.Night));
+            items.Add(about.Button(night));
         }
 
         var rows = new List<Layout.Node> { Layout.Builder.HStack([.. items]).WithGap(12f).RowH(RowHeight) };

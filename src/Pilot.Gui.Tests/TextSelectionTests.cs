@@ -58,7 +58,7 @@ public sealed class TextSelectionTests
             Chrome.Flights.OnOpen = Opened.Add;
             if (night)
             {
-                Chrome.Flights.Mode = FlightsViewMode.Night;
+                Chrome.Night.On = true;
             }
             _router = new InputRouter(Chrome.Flights.Ui, new BackgroundTaskTracker(), () => { }) { Widgets = () => Chrome.Widgets };
             _screen = new FlightsScreen([FlightLine.Build([Flight(report)], [], Now, Legs()).Single()], "test", Now);

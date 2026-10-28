@@ -140,7 +140,7 @@ public sealed class FlightsViewsTests
         help.Width.ShouldBe(help.Height);
         // Every segment of the view switch as tall as they are, its Grid and List marks drawn with a size: under a row sized
         // by its content the segments got no height, the words drew at the top and the marks not at all (SE1, 2026-10-25).
-        foreach (var mode in new[] { "canvas", "grid", "list", "night" })
+        foreach (var mode in new[] { "canvas", "grid", "list" })
         {
             Of($"flights:view:{mode}").Height.ShouldBe(help.Height, mode);
         }
@@ -162,27 +162,28 @@ public sealed class FlightsViewsTests
     }
 
     [Fact]
-    public void TheModeIsKeptAndTheSwitchOffersFourViews()
+    public void TheModeIsKeptAndTheSwitchOffersThreeViews()
     {
-        var (renderer, view) = Page(FlightsViewMode.Night, 1280, Six());
+        var (renderer, view) = Page(FlightsViewMode.Canvas, 1280, Six());
         using var _ = renderer;
 
-        view.Mode.ShouldBe(FlightsViewMode.Night);
+        view.Mode.ShouldBe(FlightsViewMode.Canvas);
         view.CanvasShown.ShouldBeTrue();
         view.GridShown.ShouldBeFalse();
         var regions = new List<ClickableRegion>();
         view.CollectPaintedRegions(regions);
         regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.StartsWith("flights:view:"))
-            .ShouldBe(["flights:view:canvas", "flights:view:grid", "flights:view:list", "flights:view:night"]);
+            .ShouldBe(["flights:view:canvas", "flights:view:grid", "flights:view:list"]);
     }
 
     [Fact]
     public void NightPaintsNothingButRedOnBlack()
     {
         // As the window draws it: the About button and card, two nodes' pills and a selected flight's strip.
-        var (renderer, view) = Page(FlightsViewMode.Night, 1280,
+        var (renderer, view) = Page(FlightsViewMode.Canvas, 1280,
             v =>
             {
+                v.Night = new NightSwitch { On = true };
                 var about = new AboutCard { Facts = () => [("node", "test")] };
                 about.Toggle();
                 v.About = about;

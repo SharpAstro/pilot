@@ -8,7 +8,6 @@ internal enum FlightsViewMode
     Canvas,
     Grid,
     List,
-    Night,
 }
 
 /// <summary>
