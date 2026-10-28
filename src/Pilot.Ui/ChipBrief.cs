@@ -101,6 +101,12 @@ internal static class ChipBrief
         return Cap(lines);
     }
 
+    /// <summary>
+    /// The Sessions page's row hover: the session's whole name, which its column may cut with an ellipsis (the chip has the name in
+    /// its own text, so its brief does not carry it), then the brief.
+    /// </summary>
+    public static string SessionRow(SessionLine line) => Text([line.ShownName, .. Session(line)]);
+
     /// <summary>A job: what it runs, whom it is for, and how long it has been queued or running, with its step.</summary>
     public static IReadOnlyList<string> Job(JobLine line)
     {

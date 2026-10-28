@@ -747,7 +747,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index))
             .WithContextMenu(at => OpenMenu(line, index, at))
             // The same brief as the Home chip (#258), under the session's whole name: the Session column may cut it with an ellipsis.
-            .WithTooltip(ChipBrief.Text([line.ShownName, .. ChipBrief.Session(line)]))
+            .WithTooltip(ChipBrief.SessionRow(line))
             .DoubleClickable(_ =>
             {
                 Select(index);
