@@ -334,8 +334,36 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   a review round starts ready, as the review runs on it; the merge card's merge still refuses a moved head.
 - A passed PR whose checks then fail is taken as changes, once a head: the PR goes back to draft, the merge card
   closes, and the review's ring offers **Redo leg**, told to read the failed checks and make them pass on every runner.
-- A passed PR that conflicts with its base and does not rebase cleanly is taken as changes too: the ring's **Redo leg**
-  sends the last leg's worker to rebase it, keeping both sides' work.
+- A passed PR that conflicts with its base and does not update cleanly is taken as changes too: the ring's **Redo leg**
+  sends the last leg's worker to merge the base in (a squash or merge repo) or rebase onto it (a rebase-queue repo), keeping both sides' work.
+- **How a flight's branch is brought up to date** (`RebaseOntoBaseAsync`, before every push and before the merge queue) is read once per
+  repo from GitHub and kept (`IGitHub.UpdateWayAsync`, like `AutoMergeAllowedAsync`): the default branch's ruleset `merge_queue`
+  rule's `merge_method` (`gh api repos/{o}/{r}/rules/branches/{branch}`), or with no queue the repo's allowed merge methods. Where the
+  queue squashes or merges, the base is merged in (`git merge --no-edit`, undone with `git merge --abort` on a conflict) and pushed
+  plain, never forced; where it rebases (tianwen), the plane is rebased and pushed with `--force-with-lease`. A conflict sends the last
+  leg round once, with a brief that says *merge the base in* or *rebase onto it* to match.
+- **Every push of a flight's branch goes through `PushAsync`**, which calls `BringUpToDateLeasedAsync` first (it fetches and takes in
+  what the remote holds that the plane lacks, `TakeRemoteAsync`, then merges or rebases per the repo's way, a conflict undone and refused saying how to resolve it), then refuses a head whose base is not an ancestor, then
+  pushes (plain after a merge, with a lease after a rebase). So PR open, a go-around's finish and the node's own update never push a
+  branch behind its base. A go-around's last leg is brought up to date before its check runs: a conflict leaves the leg flying for its
+  worker, whose brief says to bring the branch up to date the repo's way and rerun the check before it says done.
+- **A merge never goes to the queue behind its base.** `MergeableAsync` (the Merge verb, the autopilot's merge, arming and re-running
+  checks) fetches and tests `git merge-base --is-ancestor <base> <PR head>` itself, not only GitHub's BEHIND (which needs a "require up
+  to date" rule), and GitHub's Behind state is refused the same way. A PR behind is brought up to date by `RebaseOntoBaseAsync` (pushed,
+  reviewed afresh), `MergeAsync` is never called, and the command says it is *behind its base* and the merge is offered again once the
+  review passes; a conflict goes round as in the update above. The checks guards (pending arms, failing refuses) then apply to the new head.
+  The node's own merge (autopilot, the merge armed at green, a recheck) is not refused for it: `RunAsync` answers Ok with way `updated`
+  (`MergeWays.Updated`), the update closed the old head's cards, and the callers leave no Ring `AutopilotMergeRefused`, no `MergeDropped`
+  and no failed recheck: a Handled line at most. Only a person's Merge gets the *behind its base* error.
+- `PushAsync`'s "base is not an ancestor" guard is tested with a `post-merge` hook in the test repo that resets the merge away
+  (`APushStillBehindItsBaseAfterTheUpdateIsRefused`): the update claims success, the push is still refused.
+- **The remote's commits are taken in, never refused or dropped.** `BringUpToDateLeasedAsync` merges what `origin/<branch>` holds that the
+  plane lacks (a commit pushed from elsewhere, or history the worker rewrote) before the update, so a plain push is a fast-forward after a
+  merge and the lease names the tracking ref after that. A merge that conflicts is undone and a `push-diverged` card names both heads. A
+  go-around's finish brings the branch up to date before its check, and the push after `Done` reuses that result instead of updating again.
+- **With no queue the update way follows the node's merge method** (`RoleModels.MergeMethod`): rebase where the node rebase-merges and the
+  repo allows it, merge where it squashes or merges (GitHub rebase-merging a PR with a merge commit loses a conflict resolution). A queue's
+  own method still wins. A PR GitHub has queued is never updated by a Merge (a push would drop it from the queue).
 - A flight whose legs are all done and whose PR merged on GitHub lands on the next look even with no merge card open
   (dismissed after a rebase by hand moved its head), as one merged through its card does.
 - Only the reviewer gives the verdict; the controller may pass one that asked for changes ("ready anyway"); the
