@@ -227,7 +227,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
         var blocks = new List<Layout.Node>();
         // The summary of the nodes the window shows comes first: it is what the person came to read.
-        if (Summary is { } board && _card.Build(board, board.Shelf.Fleet(Nodes), FlightsPalette.Standard, screen.Flights.AsOf) is { } card)
+        if (Summary is { } board && _card.Build(board, board.Shelf.Fleet(Nodes), Palette.Standard, screen.Flights.AsOf) is { } card)
         {
             blocks.Add(card);
             blocks.Add(Layout.Builder.Spacer().RowH(14f));

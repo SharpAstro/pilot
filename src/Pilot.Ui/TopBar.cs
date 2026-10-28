@@ -71,7 +71,7 @@ internal static class TopBar
     public static Layout.Node Build(PageHeader page, TopBarParts parts)
     {
         var night = parts.Night?.Palette;
-        var palette = night ?? FlightsPalette.Standard;
+        var palette = night ?? Palette.Standard;
         var items = new List<Layout.Node>
         {
             Layout.Builder.Text("pilot v2", 20f, palette.Bright, TextAlign.Near, TextAlign.Far).WAuto(),

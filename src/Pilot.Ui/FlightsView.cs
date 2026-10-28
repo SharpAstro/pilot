@@ -261,10 +261,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
 
     // The colours come from the palette of the view shown, so night repaints the same builders.
-    private FlightsPalette P => Night?.Palette ?? FlightsPalette.Standard;
-    private FlightsPalette? NightOrNull => ReferenceEquals(P, FlightsPalette.Night) ? P : null;
+    private Palette P => Night?.Palette ?? Palette.Standard;
+    private Palette? NightOrNull => ReferenceEquals(P, Palette.Night) ? P : null;
 
-    private static TextInputColors NightInput(FlightsPalette n) => new()
+    private static TextInputColors NightInput(Palette n) => new()
     {
         Background = n.RowAltBg,
         BackgroundActive = n.HeaderBg,

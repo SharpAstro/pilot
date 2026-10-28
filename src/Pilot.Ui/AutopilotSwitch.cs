@@ -42,7 +42,7 @@ internal sealed class AutopilotSwitch
         : "Autopilot is off: an assistant's merge, land, settings and grant requests wait on a card for you. Click to turn it on";
 
     /// <summary>The header's button: lit while on. <paramref name="night"/> is the Flights page's own palette.</summary>
-    public Layout.Node Button(FlightsPalette? night = null)
+    public Layout.Node Button(Palette? night = null)
     {
         // As tall as the header's other buttons, its word in their middle.
         var button = Layout.Builder.Text(Label, 12f, On ? Bright : night?.Dim ?? Dim, TextAlign.Center, TextAlign.Center)

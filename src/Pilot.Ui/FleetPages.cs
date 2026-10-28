@@ -88,7 +88,7 @@ internal sealed class NodeFilter
     }
 
     /// <summary>The header's pills: All nodes, then each node, the shown ones lit; nothing while there is one node.</summary>
-    public IEnumerable<Layout.Node> Pills(FlightsPalette? night = null)
+    public IEnumerable<Layout.Node> Pills(Palette? night = null)
     {
         if (Choices.Count < 2)
         {
@@ -218,7 +218,7 @@ internal sealed class PlayFilter
     }
 
     /// <summary>The header's pills, beside the node pills: In play, Everything, the shown one lit.</summary>
-    public IEnumerable<Layout.Node> Pills(FlightsPalette? night = null)
+    public IEnumerable<Layout.Node> Pills(Palette? night = null)
     {
         var lit = night is null ? NodeFilter.Lit : (night.RowFocusBg, night.ButtonHover);
         (RGBAColor32, RGBAColor32)? plain = night is null ? null : (night.Button, night.ButtonHover);
@@ -233,7 +233,7 @@ internal sealed class PlayFilter
     /// A page's count in the header: <paramref name="counts"/>, then <paramref name="hidden"/> (<c>29 landed hidden</c>) as a
     /// click that switches to Everything, so what is out of view is named and one click away.
     /// </summary>
-    public static IEnumerable<Layout.Node> Summary(PlayFilter? play, string counts, string? hidden, string action, RGBAColor32 body, RGBAColor32 hover, FlightsPalette? night = null)
+    public static IEnumerable<Layout.Node> Summary(PlayFilter? play, string counts, string? hidden, string action, RGBAColor32 body, RGBAColor32 hover, Palette? night = null)
     {
         // Bottom-aligned as the page's title is: its 20 and these 15 design units then share a baseline, where centred
         // boxes of two sizes do not.

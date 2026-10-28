@@ -85,7 +85,7 @@ internal sealed class AboutCard
     /// <summary>The side of the header's square buttons (?, +) and the height of everything else on its row that is a button.</summary>
     public const float HeaderButton = 28f;
 
-    public Layout.Node Button(FlightsPalette? night = null)
+    public Layout.Node Button(Palette? night = null)
     {
         var help = Layout.Builder.Text("?", 14f, night?.Bright ?? Bright, TextAlign.Center, TextAlign.Center).WFixed(HeaderButton).HFixed(HeaderButton)
             .Bg(night?.Button ?? ButtonBg).BgHover(night?.ButtonHover ?? ButtonHover)
@@ -113,13 +113,13 @@ internal sealed class AboutCard
     /// Pinned to the window's corner it lay over that row and covered most of the ?, whose click then landed on the card's ×
     /// (DE1, 2026-10-26): the same toggle by luck. Under the row, the ? stays itself, and closes it as it opened it.
     /// </summary>
-    public Layout.Node Over(Layout.Node page, FlightsPalette? night = null) => IsOpen
+    public Layout.Node Over(Layout.Node page, Palette? night = null) => IsOpen
         ? Layout.Builder.Overlay(page, Layout.Builder.VStack(
             Layout.Builder.Spacer().WStar().HFixed(TopBar.ButtonsBottom),
             Layout.Builder.Anchored(Card(night), Layout.DockSide.Right, margin: 12f).WStar().HStar()))
         : page;
 
-    private Layout.Node Card(FlightsPalette? night)
+    private Layout.Node Card(Palette? night)
     {
         var bright = night?.Bright ?? Bright;
         var body = night?.Body ?? Body;
@@ -151,14 +151,14 @@ internal sealed class AboutCard
         return Layout.Builder.VStack([.. rows]).WithGap(2f).Pad(14f, 10f).Bg(night?.MenuBg ?? CardBg).WAuto().HAuto();
     }
 
-    private static Layout.Node IconLine(Layout.IconKind[] marks, string value, FlightsPalette? night) =>
+    private static Layout.Node IconLine(Layout.IconKind[] marks, string value, Palette? night) =>
         Layout.Builder.HStack(
                 Layout.Builder.HStack([.. marks.Select(m => Layout.Builder.Icon(m, 12f, night?.Bright ?? Bright).WAuto())]).WithGap(8f).WFixed(140f),
                 Layout.Builder.Text(value, 12f, night?.Body ?? Body, trim: TextTrim.Start).WAuto())
             .WithGap(10f)
             .RowH(20f);
 
-    private static Layout.Node Line(string label, string value, FlightsPalette? night) =>
+    private static Layout.Node Line(string label, string value, Palette? night) =>
         Layout.Builder.HStack(
                 Layout.Builder.Text(label, 12f, night?.Dim ?? Dim).WFixed(140f),
                 Layout.Builder.Text(value, 12f, night?.Body ?? Body, trim: TextTrim.Start).WAuto())

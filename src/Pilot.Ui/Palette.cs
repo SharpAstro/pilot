@@ -14,7 +14,7 @@ internal enum FlightsViewMode
 /// Every colour the Flights page paints with, so a view is a palette handed to the same builders: the canvas and the night
 /// view are one code path, and night is only another record.
 /// </summary>
-internal sealed record FlightsPalette(
+internal sealed record Palette(
     RGBAColor32 Ground,
     RGBAColor32 HeaderBg,
     RGBAColor32 RowAltBg,
@@ -37,7 +37,7 @@ internal sealed record FlightsPalette(
     RGBAColor32 SelectionBg,
     RGBAColor32 SelectionText)
 {
-    public static FlightsPalette Standard { get; } = new(
+    public static Palette Standard { get; } = new(
         Ground: new(0x12, 0x12, 0x18, 0xff),
         HeaderBg: new(0x1b, 0x1c, 0x24, 0xff),
         RowAltBg: new(0x16, 0x17, 0x1e, 0xff),
@@ -62,7 +62,7 @@ internal sealed record FlightsPalette(
         SelectionText: new(0xe6, 0xe7, 0xee, 0xff));
 
     /// <summary>Dim reds on black and nothing else: no green or blue in any channel, so the eye stays dark-adapted.</summary>
-    public static FlightsPalette Night { get; } = new(
+    public static Palette Night { get; } = new(
         Ground: new(0x00, 0x00, 0x00, 0xff),
         HeaderBg: new(0x14, 0x00, 0x00, 0xff),
         RowAltBg: new(0x0c, 0x00, 0x00, 0xff),

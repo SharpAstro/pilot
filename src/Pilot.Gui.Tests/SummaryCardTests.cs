@@ -339,7 +339,7 @@ public sealed class SummaryCardTests
     [Fact]
     public void EveryColourPairOnTheCardMeetsTheContrastFloorOnWhatItIsDrawnOn()
     {
-        var p = FlightsPalette.Standard;
+        var p = Palette.Standard;
         var style = SummaryCard.Style(p);
 
         // Body, headings, links and code on the card's panel; the status and the labels too.

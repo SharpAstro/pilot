@@ -38,7 +38,7 @@ internal sealed class NightSwitch
     public event Action<bool>? Changed;
 
     /// <summary>The palette the pages paint with: night while on, else null (the standard one).</summary>
-    public FlightsPalette? Palette => _on ? FlightsPalette.Night : null;
+    public Palette? Palette => _on ? Palette.Night : null;
 
     /// <summary>What the switch's tooltip says: the state, and what a click does.</summary>
     public string Tooltip => On ? "Night is on: red on black. Click to turn it off" : "Night is off. Click to paint the window red on black";

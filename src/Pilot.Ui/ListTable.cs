@@ -116,7 +116,7 @@ internal sealed class ListTable
     }
 
     /// <summary>The header row: titles over the columns, a divider in each gap, the stripe's cell ahead of them.</summary>
-    public Layout.Node Header(IReadOnlyList<ListColumn> columns, DesignScale scale, FlightsPalette? night = null)
+    public Layout.Node Header(IReadOnlyList<ListColumn> columns, DesignScale scale, Palette? night = null)
     {
         var specs = Lay(columns);
         var style = night is null ? Style : Style with { HeaderFill = night.Ground, HeaderText = night.Faint, HoverFill = night.Ground, SortIndicator = night.Dim };
