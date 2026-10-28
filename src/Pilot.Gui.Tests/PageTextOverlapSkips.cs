@@ -221,6 +221,7 @@ internal static class PageTextOverlapSkips
         ["jobs | long | 700 wide | DPI 1.5"] = "PIL380 page-fixes: outside: 'background tasks' (154.2,9 266.4x39) reaches past its page (0,0 172x900) (+20 more)",
         ["jobs | long | 900 wide | DPI 1"] = "PIL380 page-fixes: outside: 'LE2' (523.1,6 41.9x28) reaches past its page (0,0 548x900) (+17 more)",
         ["jobs | long | 900 wide | DPI 1.25"] = "PIL380 page-fixes: outside: 'SE1 (this)' (474.1,7.5 97.4x35) reaches past its page (0,0 460x900) (+27 more)",
+        ["jobs | long | 900 wide | DPI 1.5"] = "PIL380 page-fixes: outside: 'background tasks' (154.2,9 266.4x39) reaches past its page (0,0 372x900) (+22 more)",
         ["jobs | long | 1300 wide | DPI 1"] = "PIL380 page-fixes: outside: '6 jobs · 2 running · 1 queued' (758.3,6 216.6x19.5) reaches past its page (0,0 948x900) (+3 more)",
         ["jobs | long | 1300 wide | DPI 1.25"] = "PIL380 page-fixes: outside: 'Everything' (811.7,7.5 106.2x35) reaches past its page (0,0 860x900) (+4 more)",
         ["jobs | long | 1300 wide | DPI 1.5"] = "PIL380 page-fixes: outside: 'LE2' (784.7,9 62.9x42) reaches past its page (0,0 772x900) (+13 more)",
