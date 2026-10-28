@@ -6,8 +6,9 @@ namespace Pilot.Ui;
 
 /// <summary>
 /// The running GUI's run of <see cref="TextOverlap"/>: every page hands it the nodes it arranged, and it checks them once for each
-/// page, size, DPI and set of words (a steady window showing the same words is checked once, never each frame; a page whose rows
-/// arrive after its first frame is checked again), over a bounded number of text leaves. A page whose text
+/// page, size and DPI (a steady window is checked once, never each frame), over a bounded number of text leaves. A page whose rows
+/// arrive after its first frame at a size is checked again when its words change, but not oftener than <see cref="MinRecheck"/>,
+/// and its numbers do not count as words (a ticking "5s ago" is not a change). A page whose text
 /// is drawn over text raises one for-you card on its node, at most one for a page in a run, through <see cref="Send"/>; with
 /// nothing to send through (no node connected) it is only <see cref="Log"/>ged.
 /// </summary>
@@ -16,12 +17,19 @@ internal sealed class LiveTextCheck
     /// <summary>Text leaves a check reads: the pairs it compares grow with the square, and a page with more is checked on its first ones.</summary>
     public const int MaxLeaves = 400;
 
-    // Where the last check of each page was: the size is the arranged root's, so a resize or a new DPI is a new check, and so is a
-    // change of the words on it: a page's first frame at a size is often empty or loading, and its rows arrive later at the same size.
-    private readonly Dictionary<string, (int Width, int Height, float Dpi, int Content)> _checked = [];
+    /// <summary>The least time between two checks of a page at the same size and DPI: a change of its words looks again, but never each frame.</summary>
+    public static readonly TimeSpan MinRecheck = TimeSpan.FromSeconds(5);
+
+    // Where the last check of each page was: the size is the arranged root's, so a resize or a new DPI is a new check at once; a
+    // change of the words on it looks again after MinRecheck: a page's first frame at a size is often empty or loading, and its rows
+    // arrive later at the same size.
+    private readonly Dictionary<string, (int Width, int Height, float Dpi, int Content, DateTimeOffset At)> _checked = [];
     private readonly HashSet<string> _raised = [];
     // The fault (line, size and DPI) each page last logged: a page whose words change every frame says the same fault once, not at every change.
     private readonly Dictionary<string, string> _logged = [];
+
+    /// <summary>The clock the re-check interval reads; a test moves its own.</summary>
+    public TimeProvider Time { get; set; } = TimeProvider.System;
 
     /// <summary>The window's size in pixels, as the chrome last drew it: the card names it beside the page's own, which is the window less the rail and the panel. Null where the host gives none.</summary>
     public (int Width, int Height)? Window { get; set; }
@@ -49,12 +57,23 @@ internal sealed class LiveTextCheck
             return;
         }
         var root = arranged[0].Bounds;
-        var key = ((int)MathF.Round(root.Width), (int)MathF.Round(root.Height), dpi, Content(arranged));
-        if (_checked.TryGetValue(page, out var last) && last == key)
+        var (width, height) = ((int)MathF.Round(root.Width), (int)MathF.Round(root.Height));
+        var now = Time.GetUtcNow();
+        var content = 0;
+        if (_checked.TryGetValue(page, out var last) && last.Width == width && last.Height == height && last.Dpi == dpi)
         {
-            return;
+            // The same size and DPI: only a change of the words, and not within MinRecheck of the last look, looks again. The words
+            // are hashed only then, so a steady page costs nothing per frame beyond this lookup.
+            if (now - last.At < MinRecheck || (content = Content(arranged)) == last.Content)
+            {
+                return;
+            }
         }
-        _checked[page] = key;
+        else
+        {
+            content = Content(arranged);
+        }
+        _checked[page] = (width, height, dpi, content, now);
         Checks++;
 
         var faults = TextOverlap.Faults(arranged, maxLeaves: MaxLeaves);
@@ -65,8 +84,8 @@ internal sealed class LiveTextCheck
         }
         var dpiText = dpi.ToString("0.##", CultureInfo.InvariantCulture);
         var where = Window is { } window
-            ? $"window {window.Width}x{window.Height}, page {key.Item1}x{key.Item2} at DPI {dpiText}"
-            : $"page {key.Item1}x{key.Item2} at DPI {dpiText}";
+            ? $"window {window.Width}x{window.Height}, page {width}x{height} at DPI {dpiText}"
+            : $"page {width}x{height} at DPI {dpiText}";
         var detail = $"{faults[0].Line}{(faults.Count > 1 ? $" (+{faults.Count - 1} more)" : "")}; {where}";
         if (!_logged.TryGetValue(page, out var said) || said != detail)
         {
@@ -87,7 +106,8 @@ internal sealed class LiveTextCheck
     }
 
     // The words of the text leaves a check reads (the first MaxLeaves), and how many there are: what a page says changes when its
-    // rows arrive, and the check must look again at the size it already looked at.
+    // rows arrive, and the check must look again at the size it already looked at. Digits are left out of the hash: what ticks on a
+    // page ("checked 5s ago", "landed 2m ago") is numbers, and must not count as the page changing.
     private static int Content(ImmutableArray<Layout.ArrangedNode<float>> arranged)
     {
         var hash = new HashCode();
@@ -96,7 +116,14 @@ internal sealed class LiveTextCheck
         {
             if (node is Layout.Node.Leaf { Content: Layout.Content.Text { Value.Length: > 0 } text } && !string.IsNullOrWhiteSpace(text.Value))
             {
-                hash.Add(text.Value, StringComparer.Ordinal);
+                foreach (var c in text.Value)
+                {
+                    if (!char.IsAsciiDigit(c))
+                    {
+                        hash.Add(c);
+                    }
+                }
+                hash.Add('\n');
                 if (++leaves >= MaxLeaves)
                 {
                     break;

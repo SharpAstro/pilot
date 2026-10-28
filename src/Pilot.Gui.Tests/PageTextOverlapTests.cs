@@ -19,9 +19,6 @@ public sealed class PageTextOverlapTests
     private static readonly float[] Dpis = [1f, 1.25f, 1.5f];
     private const int Height = 900;
 
-    // The rail's width in design units, as PilotChrome lays it down the left of the window.
-    private const float RailWidth = 52f;
-
     internal static readonly string[] Pages =
     [
         "home", "sessions", "flights table", "flights canvas", "flight page", "jobs", "fleet", "settings", "repos", "pull requests", "chat",
@@ -121,14 +118,22 @@ public sealed class PageTextOverlapTests
         chrome.About.Restart = () => { };
         chrome.Show(PageOf(page));
 
-        // The cards panel takes its width off the page when it has cards, as the chrome decides it.
+        // The room the chrome gives the page is the chrome's own: one frame arranges the window (rail, page and the cards panel, which
+        // it shows beside the page, drops for want of room, or cues on the rail) and says where each leaf went.
         var cards = data.Cards;
-        var beside = width - RailWidth * dpi;
-        var panel = Math.Min(CardsView<RgbaImage>.Width * dpi, beside * CardsView<RgbaImage>.Share);
-        // The chrome drops a panel it cannot give its least; and without cards there is none.
-        panel = cards.HasAny && panel >= CardsView<RgbaImage>.MinWidth * dpi ? panel : 0f;
-        var pageWidth = beside - panel;
-        Rect<float> PageRect() => new(0, 0, pageWidth, Height);
+        void Frame() => chrome.Render(data.Sessions, data.Flights, cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, Height), data.Machines);
+        Frame();
+        if (page == "cards panel" && chrome.CardsDropped)
+        {
+            // A window too narrow for the panel beside the page shows it through the rail's cue, in the page's place.
+            chrome.ToggleCards();
+            Frame();
+        }
+        var shown = page == "cards panel"
+            ? chrome.CardsBounds ?? throw new InvalidOperationException($"the chrome draws no cards panel at {width} wide, DPI {dpi}")
+            : chrome.PageBounds ?? throw new InvalidOperationException($"the chrome draws no page at {width} wide, DPI {dpi}");
+        var pageWidth = shown.Width;
+        Rect<float> PageRect() => new(shown.X, shown.Y, shown.Width, shown.Height);
         // What Render hands the Flights page from its bounds: the room it has, in design units.
         chrome.Flights.PageWidth = pageWidth / dpi;
         chrome.Sessions.Table.PageWidth = chrome.Flights.Table.PageWidth = chrome.Jobs.Table.PageWidth = chrome.Repos.Table.PageWidth = chrome.Fleet.Table.PageWidth = pageWidth / dpi;
@@ -175,8 +180,7 @@ public sealed class PageTextOverlapTests
                 tree = await OpenChat(chrome, data);
                 break;
             case "cards panel":
-                // As narrow as the chrome ever draws it.
-                rect = new Rect<float>(0, 0, Math.Max(CardsView<RgbaImage>.MinWidth * dpi, Math.Min(CardsView<RgbaImage>.Width * dpi, beside * CardsView<RgbaImage>.Share)), Height);
+                // As the chrome drew it: beside the page, or in the page's place where the rail's cue opened it.
                 tree = chrome.Cards.Tree(cards);
                 break;
             case "transcript":

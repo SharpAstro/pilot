@@ -27,13 +27,21 @@ public sealed class LiveTextCheckTests
         }
     }
 
+    // A clock the test moves: the check's re-look interval reads it.
+    private sealed class Clock : TimeProvider
+    {
+        private DateTimeOffset _now = new(2026, 10, 28, 12, 0, 0, TimeSpan.Zero);
+        public void Advance(TimeSpan by) => _now += by;
+        public override DateTimeOffset GetUtcNow() => _now;
+    }
+
     private static (OverlappingPage Page, LiveTextCheck Check, List<CommandRequest> Sent, List<string> Logged, RgbaImageRenderer Renderer) Setup(string name = "overlapping")
     {
         var renderer = new RgbaImageRenderer(900, 600);
         var page = new OverlappingPage(renderer) { FontPath = SessionsCapture.FontPath };
         var sent = new List<CommandRequest>();
         var logged = new List<string>();
-        var check = new LiveTextCheck { Send = sent.Add, Log = logged.Add };
+        var check = new LiveTextCheck { Send = sent.Add, Log = logged.Add, Time = new Clock() };
         page.Arranged = nodes => check.Observe(name, nodes, page.DpiScale);
         return (page, check, sent, logged, renderer);
     }
@@ -98,6 +106,10 @@ public sealed class LiveTextCheckTests
         page.Render(new RectF32(0, 0, 900, 600));
         sent.ShouldBeEmpty();
         page.Overlap = true;
+        // Looked at again only after the interval, never in the frames just after.
+        page.Render(new RectF32(0, 0, 900, 600));
+        check.Checks.ShouldBe(1);
+        ((Clock)check.Time).Advance(LiveTextCheck.MinRecheck);
         for (var i = 0; i < 3; i++)
         {
             page.Render(new RectF32(0, 0, 900, 600));
@@ -106,6 +118,43 @@ public sealed class LiveTextCheckTests
         sent.ShouldHaveSingleItem().Args![1].ShouldBe("GUI drew text over text on overlapping");
         logged.ShouldHaveSingleItem();
         check.Checks.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ATickingTimeOnAPageIsNotAChangeOfItsWordsAndIsCheckedOnce()
+    {
+        using var renderer = new RgbaImageRenderer(900, 900);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = 1f };
+        var clock = new Clock();
+        chrome.TextCheck.Time = clock;
+        // The real time: the page reads its node only while it was drawn lately.
+        var now = DateTimeOffset.UtcNow;
+        chrome.Settings.Load = _ => Task.FromResult(new SettingsPage { File = "settings.json", Settings = [] });
+        chrome.Settings.LoadChecks = (_, _) => Task.FromResult(new SetupChecks
+        {
+            CheckedAt = now,
+            Checks = [new SetupCheck { Key = "autostart", Title = "Start with Windows", Ok = true, Line = "a Run entry starts the node" }],
+        });
+        chrome.Show(PilotPage.Settings);
+        var bounds = new RectF32(0, 0, 900, 900);
+        // The page and its checks arrive after the first frame, as they do from the node.
+        for (var i = 0; i < 200 && (chrome.Settings.Page is null || chrome.Settings.Checks is null); i++)
+        {
+            chrome.Settings.Render(now, bounds);
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+        chrome.Settings.Checks.ShouldNotBeNull();
+        chrome.Settings.Render(now, bounds);
+        var checks = chrome.TextCheck.Checks;
+
+        // The Settings page says "checked Ns ago": its now moves a second a frame, as the chrome's does.
+        for (var i = 1; i <= 30; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(1));
+            chrome.Settings.Render(now.AddSeconds(i), bounds);
+        }
+
+        chrome.TextCheck.Checks.ShouldBe(checks);
     }
 
     [Fact]

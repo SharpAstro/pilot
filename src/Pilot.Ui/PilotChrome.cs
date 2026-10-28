@@ -329,6 +329,12 @@ internal sealed class PilotChrome<TSurface>
     /// </summary>
     public bool CardsDropped { get; private set; }
 
+    /// <summary>Where the last frame put the page (in surface pixels), as the chrome's own layout arranged it; null before a frame or where the cards panel stands in its place.</summary>
+    internal RectF32? PageBounds { get; private set; }
+
+    /// <summary>Where the last frame put the cards panel (beside the page, or in its place when the rail's cue opened it); null where it is not drawn.</summary>
+    internal RectF32? CardsBounds { get; private set; }
+
     /// <summary>The cards panel stands in the page's place, as the rail's cue asked: only while <see cref="CardsDropped"/>, and any page chosen on the rail ends it.</summary>
     public bool CardsOpen { get; private set; }
 
@@ -943,6 +949,7 @@ internal sealed class PilotChrome<TSurface>
                 ShowsCards = true;
             }
         }
+        PageBounds = CardsBounds = null;
         foreach (var leaf in arranged)
         {
             if (leaf.Node is not Layout.Node.Leaf { Content: Layout.Content.Fill { Key: { } key } })
@@ -950,6 +957,14 @@ internal sealed class PilotChrome<TSurface>
                 continue;
             }
             var rect = new RectF32(leaf.Bounds.X, leaf.Bounds.Y, leaf.Bounds.Width, leaf.Bounds.Height);
+            if (key == PageKey)
+            {
+                PageBounds = rect;
+            }
+            else if (key == CardsKey)
+            {
+                CardsBounds = rect;
+            }
             switch (key)
             {
                 case RailKey:

@@ -913,10 +913,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         _ => flight.Review?.StatusState switch { "success" => Flying, "failure" => Held, _ => Dim },
     };
 
-    // A link that leaves the app: a click opens it, a right-click offers Copy URL (over the row's own menu, which stays on the rest of the row).
     // A line of the panel: one row, ending in an ellipsis where the column is narrower than it, with the whole of it on hover.
     private static Layout.Node DetailLine(string text, RGBAColor32 color) => Layout.Builder.Text(text, 12f, color).WithTooltip(text).RowH(20f);
 
+    // A link that leaves the app: a click opens it, a right-click offers Copy URL (over the row's own menu, which stays on the rest of the row).
     private Layout.Node Link(string text, string location, string action) =>
         _links.OnLink(Layout.Builder.Text(text + Followable.Away, 12f, Landed)
             .BgHover(RowHoverBg)
