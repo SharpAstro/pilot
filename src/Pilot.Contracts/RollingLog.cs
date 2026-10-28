@@ -49,7 +49,8 @@ public sealed class RollingLog
     }
 
     /// <summary>Appends <paramref name="text"/>, one stamped line for each of its lines.</summary>
-    public void Write(string text)
+    /// <returns>False when the log could not be written (a caller with a catastrophic error says it elsewhere); true when it was, or there was nothing to write.</returns>
+    public bool Write(string text)
     {
         try
         {
@@ -65,7 +66,7 @@ public sealed class RollingLog
             }
             if (sb.Length == 0)
             {
-                return;
+                return true;
             }
 
             lock (_gate)
@@ -77,9 +78,11 @@ public sealed class RollingLog
                 }
                 File.AppendAllText(Path, sb.ToString());
             }
+            return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
+            return false;
         }
     }
 }

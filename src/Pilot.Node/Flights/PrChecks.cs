@@ -10,6 +10,9 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time, FlightCommander? flights = null, LegCommander? legs = null) : BackgroundService
 {
+    /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
+
     // A PR head the node has tried to rebase: tried once, not every look.
     private readonly HashSet<string> _rebased = new(StringComparer.Ordinal);
 
@@ -52,7 +55,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             catch (Exception ex)
             {
-                await Console.Error.WriteLineAsync($"pr checks: one look failed, looking again: {ex.Message}");
+                await Error.WriteLineAsync($"pr checks: one look failed, looking again: {ex.Message}");
                 await Task.Delay(Interval, time, stopping);
             }
         }
@@ -236,7 +239,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             catch (FlightException ex)
             {
                 // One PR GitHub would not say is not a reason to skip the others'.
-                await Console.Error.WriteLineAsync($"pr checks: {flight.Code}'s PR could not be read: {ex.Message}");
+                await Error.WriteLineAsync($"pr checks: {flight.Code}'s PR could not be read: {ex.Message}");
                 continue;
             }
             if (pr is not null && pr.Number == flight.PullRequest)
@@ -512,7 +515,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             catch (FlightException ex)
             {
                 // Still armed on GitHub, so still armed here: the next look turns it off again, and the node's rebase refuses meanwhile.
-                await Console.Error.WriteLineAsync($"pr checks: {flight.Code}'s auto-merge could not be turned off: {ex.Message}");
+                await Error.WriteLineAsync($"pr checks: {flight.Code}'s auto-merge could not be turned off: {ex.Message}");
                 if (legs is not null)
                 {
                     legs.ShowMerge(Verbs.FlightTarget(flight.Code), $"GitHub shows the PR as {merge.Kind}, but its auto-merge could not be turned off ({ex.Message}): switch it off on the PR page, or it merges once the checks pass", MergeWays.Armed);

@@ -178,16 +178,14 @@ public static class NodeCommandLine
             var socketPath = NodeSocket.Resolve(parseResult.GetValue(socket));
             if (!NodeSocket.TryValidate(socketPath, out var invalid))
             {
+                // The node cannot start, and has no data folder to log in yet: stderr is the one place this goes.
                 await error.WriteLineAsync(invalid);
                 return NodeExitCodes.InvalidArguments;
             }
             // Local-only wins over --lan: it is how a launcher keeps a node it starts off the network.
             var mode = LocalOnlyMode.Of(LocalOnlyVariable, parseResult.GetValue(localOnly));
             var wantsLan = parseResult.GetValue(lan);
-            if (wantsLan && !mode.MayBindTheNetwork && parseResult.GetResult(lan) is { Implicit: false })
-            {
-                await error.WriteLineAsync($"local-only ({LocalOnlyMode.Argument} or {LocalOnlyVariable}): --lan is ignored, the node listens on its socket only");
-            }
+            var lanIgnored = wantsLan && !mode.MayBindTheNetwork && parseResult.GetResult(lan) is { Implicit: false };
             var options = new NodeOptions(socketPath, Path.GetFullPath(parseResult.GetValue(data) ?? NodeSocket.DefaultDataFolder), MachinePrefix: parseResult.GetValue(machine),
                 Watchtower: !parseResult.GetValue(noWatchtower), WatchtowerFolderGiven: parseResult.GetValue(watchtowerFolder),
                 Lan: wantsLan, LanPort: parseResult.GetValue(lanPort),
@@ -226,6 +224,11 @@ public static class NodeCommandLine
             if (parseResult.GetValue(after) is { } predecessor)
             {
                 await WaitForExitAsync(predecessor, ct);
+            }
+            if (lanIgnored)
+            {
+                // Said in the node's log, as the node writes nowhere else (pilot #416).
+                NodeApp.NodeLog(options).Write($"pilot-node: local-only ({LocalOnlyMode.Argument} or {LocalOnlyVariable}): --lan is ignored, the node listens on its socket only");
             }
             return await NodeProgram.RunAsync(options, error, ct);
         });

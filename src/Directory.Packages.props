@@ -18,6 +18,7 @@
   <!-- The GUI's logging, as tianwen's GUI logs (the same version): its own logger, and the renderer's (SdlVulkanLog). -->
   <ItemGroup>
     <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.12" />
   </ItemGroup>
   <!-- Pilot.Gui: the SharpAstro stack. A local build compiles the sibling clones instead (the UseLocal* switches in
        Pilot.Gui.csproj); these are what CI restores. -->

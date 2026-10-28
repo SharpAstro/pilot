@@ -34,6 +34,9 @@ namespace Pilot.Node.Flights;
 public sealed class Watchtower(
     NodeState state, IWorkerLauncher launcher, Func<CommandRequest, CancellationToken, Task<CommandResult>> run, NodeOptions options, TimeProvider time) : BackgroundService
 {
+    /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
+
     public const string Down = "watchtower-down";
 
     /// <summary>The model and effort the watchtower starts on; a test's watchtower passes none.</summary>
@@ -135,7 +138,7 @@ public sealed class Watchtower(
             catch (Exception ex)
             {
                 // As with the leg watch: a keeper that died on one bad look would be the silent derail itself.
-                await Console.Error.WriteLineAsync($"watchtower: one look failed, looking again: {ex.Message}");
+                await Error.WriteLineAsync($"watchtower: one look failed, looking again: {ex.Message}");
             }
         }
     }

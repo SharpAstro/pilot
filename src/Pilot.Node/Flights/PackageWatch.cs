@@ -20,6 +20,9 @@ namespace Pilot.Node.Flights;
 /// </remarks>
 public sealed class PackageWatch(NodeState state, FlightCommander flights, INuGetFeed feed, IGitHub github, TimeProvider time, LegCommander? legs = null) : BackgroundService
 {
+    /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
+
     /// <summary>The kind of ring card raised for a package that did not come.</summary>
     public const string LateKind = "package-late";
 
@@ -64,7 +67,7 @@ public sealed class PackageWatch(NodeState state, FlightCommander flights, INuGe
             catch (Exception ex)
             {
                 // Outlive anything one look throws: a dead watch holds a flight for good, silently.
-                await Console.Error.WriteLineAsync($"package watch: one look failed, looking again: {ex.Message}");
+                await Error.WriteLineAsync($"package watch: one look failed, looking again: {ex.Message}");
             }
         }
     }

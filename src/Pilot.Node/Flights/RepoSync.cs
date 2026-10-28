@@ -11,6 +11,9 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public sealed class RepoSync(IGit git, Planes planes, RepoWatch watch)
 {
+    /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
+
     private readonly SemaphoreSlim _one = new(1, 1);
 
     /// <summary>One lock per clone, by its full path, so no two syncs (a Sync repos, a leg's start) fetch or merge the same clone at once.</summary>
@@ -56,7 +59,7 @@ public sealed class RepoSync(IGit git, Planes planes, RepoWatch watch)
             }
             catch (Exception ex)
             {
-                await Console.Error.WriteLineAsync($"repo sync: the repo watch could not be refreshed after a pull: {ex.Message}");
+                await Error.WriteLineAsync($"repo sync: the repo watch could not be refreshed after a pull: {ex.Message}");
             }
         });
 

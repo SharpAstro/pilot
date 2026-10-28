@@ -18,6 +18,9 @@ namespace Pilot.Node.Flights;
 /// </remarks>
 public sealed class Compactor(NodeState state, Watchtower watchtower, Func<CommandRequest, CancellationToken, Task<CommandResult>> run, TimeProvider time) : BackgroundService
 {
+    /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
+
     /// <summary>What its Handled lines are.</summary>
     public const string Kind = "session-compacted";
 
@@ -73,7 +76,7 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
             catch (Exception ex)
             {
                 // As with the leg watch: a heartbeat that died on one bad look would leave every session to go cold.
-                await Console.Error.WriteLineAsync($"compactor: one look failed, looking again: {ex.Message}");
+                await Error.WriteLineAsync($"compactor: one look failed, looking again: {ex.Message}");
             }
         }
     }

@@ -1,31 +1,6 @@
 using System.Diagnostics;
-using Microsoft.Extensions.Logging;
-using Pilot.Contracts;
 
 namespace Pilot.Gui;
-
-/// <summary>Writes each ILogger line to a <see cref="RollingLog"/>: the GUI's and SdlVulkan.Renderer's, so gui.log has them whatever the console shows.</summary>
-internal sealed class FileLoggerProvider(RollingLog log) : ILoggerProvider
-{
-    public ILogger CreateLogger(string categoryName) => new FileLogger(categoryName, log);
-
-    public void Dispose()
-    {
-    }
-
-    private sealed class FileLogger(string category, RollingLog log) : ILogger
-    {
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-
-        public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.None;
-
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-        {
-            var text = $"{logLevel,-11} {category}: {formatter(state, exception)}";
-            log.Write(exception is null ? text : $"{text}\n{exception}");
-        }
-    }
-}
 
 /// <summary>
 /// Times each frame and says the slow ones: a frame over <see cref="Threshold"/> logs its milliseconds and what it rendered

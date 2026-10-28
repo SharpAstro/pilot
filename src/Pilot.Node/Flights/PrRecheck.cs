@@ -13,6 +13,9 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews, RepoCatalog repos, TimeProvider time, LegCommander? legs = null) : BackgroundService
 {
+    /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
+
     /// <summary>The Handled line a recheck leaves, saying what it found.</summary>
     public const string HandledKind = "pr-recheck";
 
@@ -78,7 +81,7 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
             catch (FlightException ex)
             {
                 // Not listed is not unlabelled: what a recheck knows of its label stays as it was.
-                await Console.Error.WriteLineAsync($"pr recheck: {repo.GitHub}'s PRs could not be listed: {ex.Message}");
+                await Error.WriteLineAsync($"pr recheck: {repo.GitHub}'s PRs could not be listed: {ex.Message}");
                 continue;
             }
             var labelled = listed.ToHashSet();
@@ -223,7 +226,7 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
         if (await PeerHasAsync(entry, cancellationToken) is { } peer)
         {
             // Its node looks at the same label and takes it; this one leaves it there.
-            await Console.Error.WriteLineAsync($"pr recheck: {Short(entry.Repo, entry.Number)} is {peer}'s, left to it");
+            await Error.WriteLineAsync($"pr recheck: {Short(entry.Repo, entry.Number)} is {peer}'s, left to it");
             return Outcome.Kept;
         }
 
@@ -544,7 +547,7 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
             }
             catch (Exception ex) when (ex is HttpRequestException or TimeoutException or IOException or InvalidOperationException)
             {
-                await Console.Error.WriteLineAsync($"pr recheck: {peer.Endpoint} did not say what it holds: {ex.Message}");
+                await Error.WriteLineAsync($"pr recheck: {peer.Endpoint} did not say what it holds: {ex.Message}");
             }
         }
         return null;
@@ -565,7 +568,7 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
             }
             catch (Exception ex)
             {
-                await Console.Error.WriteLineAsync($"pr recheck: one look failed, looking again: {ex.Message}");
+                await Error.WriteLineAsync($"pr recheck: one look failed, looking again: {ex.Message}");
                 await Task.Delay(Interval, time, stopping);
             }
         }
