@@ -24,8 +24,17 @@ public static class PilotMd
 
     public static async Task<Read> ReadAsync(IGit git, FlightRow flight, CancellationToken cancellationToken)
     {
-        var run = await git.RunAsync(["show", $"{flight.Base}:{FileName}"], flight.Worktree, cancellationToken);
-        if (!run.Ok || run.Output.Trim().Length == 0)
+        GitRun run;
+        try
+        {
+            run = await git.RunAsync(["show", $"{flight.Base}:{FileName}"], flight.Worktree, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // No plane to read from (git cannot start in a folder that is not there): the brief goes out without rules.
+            return Read.None;
+        }
+        if (!run.Ok || string.IsNullOrWhiteSpace(run.Output))
         {
             return Read.None;
         }
