@@ -310,7 +310,7 @@ public static class PilotCommand
 
         var code = Arg("code", "The flight's code, as TIA1611");
         var other = Arg("other", "The flight it waits for");
-        var connect = Action(new Command("connect", "The flight holds until the other has landed") { Arguments = { code, other } },
+        var connect = Action(new Command("connect", "The flight holds until the other, a flight of this node or of a reachable one, has landed") { Arguments = { code, other } },
             (p, client, ct) => Send(client, Verbs.Connect, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
 
         var fly = Action(new Command("fly", "Stop the flight's wait for a package nuget.org does not serve: it flies now") { Arguments = { code } },
@@ -351,12 +351,21 @@ public static class PilotCommand
         var planned = Action(new Command("planned", "The planner is done: a card shows the legs and starts the first") { Arguments = { code, plannedSummary } },
             (p, client, ct) => Send(client, Verbs.Planned, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(plannedSummary) ?? [], who, ct));
         var overlapWhy = Words("why", "Why it looks like part of the other");
-        var overlap = Action(new Command("overlap", "The planner found the flight to look like part of another: asks the controller to fold it in or plan it separately") { Arguments = { code, other, overlapWhy } },
-            (p, client, ct) => Send(client, Verbs.Overlap, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!, .. p.GetValue(overlapWhy) ?? []], who, ct));
-        var separate = Action(new Command("separate", "Plan the flight on its own despite the overlap: a fresh planner is started, told the answer") { Arguments = { code, other } },
+        var overlapFiles = new Option<string[]>("--file") { Description = "A file both flights change (repo-relative, as flight touches names it); give it once per file", AllowMultipleArgumentsPerToken = false };
+        var overlapPick = new Option<string?>("--pick") { Description = "What flight touches picked for this flight: fold (this node's flight only) or connect (the default); the card's title says it" };
+        overlapPick.AcceptOnlyFromAmong(Verbs.OverlapPickFold, Verbs.OverlapPickConnect);
+        var overlap = Action(new Command("overlap", "The planner found the flight to overlap another, on this node or another: asks the controller to fold it in (this node only), connect it or plan in parallel") { Arguments = { code, other, overlapWhy }, Options = { overlapFiles, overlapPick } },
+            (p, client, ct) => Send(client, Verbs.Overlap, Verbs.FlightTarget(p.GetValue(code)!),
+                [p.GetValue(other)!, .. (p.GetValue(overlapPick) is { } pick ? new[] { Verbs.OverlapPickArg + pick } : []), .. (p.GetValue(overlapFiles) ?? []).Select(f => Verbs.OverlapFileArg + f), .. p.GetValue(overlapWhy) ?? []], who, ct));
+        var touchedFiles = Words("file", "A file the flight's legs will change, repo-relative, as many as the legs have");
+        var touches = Action(new Command("touches", "The planner's overlap check: compares the files its legs will change with every other flight in the air on every node and every open PR, and says fold, connect or parallel for each") { Arguments = { code, touchedFiles } },
+            (p, client, ct) => Send(client, Verbs.Touches, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(touchedFiles) ?? [], who, ct));
+        var separate = Action(new Command("separate", "Plan the flight in parallel with the other despite the overlap: a fresh planner is started, told the answer") { Arguments = { code, other } },
             (p, client, ct) => Send(client, Verbs.Separate, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
-        var flight = new Command("flight", "Flights: create, plan, overlap, connect, fly past a package wait, open a PR, review, merge, land")
-            { Subcommands = { create, planFlight, planned, overlap, separate, connect, fly, pr, reviewStart, merge, land } };
+        var connectOverlap = Action(new Command("connect-overlap", "Answer an overlap by connecting the flight to the other (on this node or another): it holds until the other has landed, and a fresh planner is started, told the answer") { Arguments = { code, other } },
+            (p, client, ct) => Send(client, Verbs.ConnectOverlap, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
+        var flight = new Command("flight", "Flights: create, plan, check what they touch, overlap, connect, fly past a package wait, open a PR, review, merge, land")
+            { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, fly, pr, reviewStart, merge, land } };
 
         // leg
         var name = Arg("name", "The leg's name: lower-case letters, digits and dashes");
@@ -1209,7 +1218,7 @@ public static class PilotCommand
             {
                 await output.WriteLineAsync($"created issue #{issueNumber}");
             }
-            if (verb is Verbs.Overlap or Verbs.Separate or Verbs.WaitLeg or Verbs.Summarise && result.Made is { Length: > 0 } told)
+            if (verb is Verbs.Overlap or Verbs.Touches or Verbs.Separate or Verbs.ConnectOverlap or Verbs.Connect or Verbs.WaitLeg or Verbs.Summarise && result.Made is { Length: > 0 } told)
             {
                 await output.WriteLineAsync(told);
             }

@@ -569,9 +569,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>The width of the bar down a card's left edge, in its bin's colour.</summary>
     private const float AccentBar = 3f;
 
-    /// <summary>The cap on a card's detail: more for a card that offers a merge.</summary>
+    /// <summary>How many lines an overlap card's title may take: it names both flights, the shared files and the choice, which one clipped row loses.</summary>
+    internal const int OverlapTitleLines = 3;
+
+    /// <summary>The cap on a card's detail: more for a card that offers a merge, and for an overlap's, which says what each of its choices does.</summary>
     internal static int DetailLinesOf(CardRow card) =>
-        card.Choices.Any(c => c.Verb == Verbs.Merge) || card.Kind is "pr-ready" or "merge-failed" ? MergeDetailLines : DetailLines;
+        card.Choices.Any(c => c.Verb == Verbs.Merge) || card.Kind is "pr-ready" or "merge-failed" or CardKinds.Overlap ? MergeDetailLines : DetailLines;
 
     // Past these a card's title or detail may well be cut in the panel (a title is one line, a detail three), so it carries
     // its whole text as hover text, opening to the left, into the window rather than off its edge. DIR.Lib's capped wrap
@@ -661,9 +664,17 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                     .BgHover(CardHover)
                     .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => (InAppLinks.Is(titleLink) ? OnGoTo : OnOpen)?.Invoke(titleLink))
                     .RowH(22f), titleLink), card.Title, card.Title.Length > TitleFits)
-                : Whole((leg is { } titled && LegWord(card.Title, titled) ? WrappedProse.Of(Titled(card), 14f, Bright, 1, linker(14f)) : Layout.Builder.Text(Titled(card), 14f, Bright)).RowH(22f),
-                    card.Title, card.Title.Length > TitleFits)),
+                : card.Kind == CardKinds.Overlap
+                    // Wraps, up to three lines; the whole title is on hover where it could pass them (a long file list in a narrow panel).
+                    ? Whole(WrappedProse.Paragraphs(Titled(card), 14f, Bright, OverlapTitleLines), card.Title, card.Title.Length > TitleFits * OverlapTitleLines / 2)
+                    : Whole((leg is { } titled && LegWord(card.Title, titled) ? WrappedProse.Of(Titled(card), 14f, Bright, 1, linker(14f)) : Layout.Builder.Text(Titled(card), 14f, Bright)).RowH(22f),
+                        card.Title, card.Title.Length > TitleFits)),
         };
+        if (card.Kind == CardKinds.Overlap)
+        {
+            // A title of several lines is set off from the detail under it.
+            lines.Add(Layout.Builder.Spacer().RowH(4f));
+        }
         // The summary is the card's body; the raw detail is folded under it. A card from an old node has no summary and shows its detail as before.
         var summary = card.Summary is { Length: > 0 } said ? said : null;
         if (summary is not null)

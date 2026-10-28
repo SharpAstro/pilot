@@ -48,6 +48,18 @@ public sealed record FlightRow
     /// <summary>The flights it waits for: it holds until each of them has landed. Across repos.</summary>
     public string[] Connections { get; init => field = value ?? []; } = [];
 
+    /// <summary>
+    /// The flights of other nodes it waits for (<c>connect</c> to a flight a peer flies): it holds until that node says each has
+    /// landed, or its PR merged. Null-safe for the reason <see cref="Overlaps"/> is.
+    /// </summary>
+    public PeerConnection[] PeerConnections
+    {
+        get => _peerConnections ?? [];
+        init => _peerConnections = value;
+    }
+
+    private readonly PeerConnection[]? _peerConnections;
+
     public required DateTimeOffset CreatedAt { get; init; }
 
     /// <summary>Its PR's number, once <c>open-pr</c> opened it; null before.</summary>
@@ -234,7 +246,30 @@ public static class FlightWaiting
     /// </summary>
     public static string For(FlightRow flight) =>
         string.Join(", ", flight.Connections.Where(c => !flight.PackageWaits.Any(w => w.Producer == c))
+            .Concat(flight.PeerConnections.Select(Text))
             .Concat(flight.PackageWaits.Select(Text).Distinct(StringComparer.Ordinal)));
+
+    /// <summary>A wait for a flight of another node as a status line says it: <c>PIL294 on DE1</c>, with why that node could not be asked when it could not.</summary>
+    public static string Text(PeerConnection wait) => wait.Note is { Length: > 0 } note ? $"{wait.Code} on {wait.Node} ({note})" : $"{wait.Code} on {wait.Node}";
+}
+
+/// <summary>A flight of another node a flight waits for: held until that node says it landed (or its PR merged).</summary>
+public sealed record PeerConnection
+{
+    /// <summary>The code of the flight the other node flies.</summary>
+    public required string Code { get; init; }
+
+    /// <summary>The node that flies it, by its machine prefix.</summary>
+    public required string Node { get; init; }
+
+    /// <summary>When the wait began.</summary>
+    public required DateTimeOffset Since { get; init; }
+
+    /// <summary>
+    /// Why the node's answer is not known, as of the last look (<c>it did not answer: connection refused</c>, <c>it lists no flight
+    /// PIL294</c>); null while its answer is that the flight has not landed.
+    /// </summary>
+    public string? Note { get; init; }
 }
 
 /// <summary>An issue folded into a flight, and the flight it came from.</summary>
@@ -249,12 +284,25 @@ public sealed record FoldedIssue
 
 /// <summary>
 /// A flight found to overlap another (<c>overlap flight/&lt;this&gt; &lt;other&gt; &lt;why…&gt;</c>), and what became of
-/// it: pending while a card asks the controller, then <see cref="OverlapAnswer.Fold"/> or <see cref="OverlapAnswer.Separate"/>.
+/// it: pending while a card asks the controller, then <see cref="OverlapAnswer.Fold"/>, <see cref="OverlapAnswer.Connect"/> or
+/// <see cref="OverlapAnswer.Separate"/> (planned in parallel).
 /// </summary>
 public sealed record OverlapRow
 {
     /// <summary>The code of the flight it overlaps.</summary>
     public required string Other { get; init; }
+
+    /// <summary>The node that flies the other flight when it is not this one (by machine prefix); null for a flight of this node.</summary>
+    public string? Node { get; init; }
+
+    /// <summary>The files both change, as the planner's <c>touches</c> said them; null when it did not say.</summary>
+    public string[]? Files { get; init; }
+
+    /// <summary>
+    /// The choice the planner leans to, as <c>touches</c> picked it (<c>fold</c> or <c>connect</c>): what the card's title says. Null
+    /// when it did not say, which reads as connect.
+    /// </summary>
+    public string? Pick { get; init; }
 
     /// <summary>Why it looks like part of the other, as the planner said it.</summary>
     public required string Why { get; init; }
@@ -277,9 +325,13 @@ public enum OverlapAnswer
     [JsonStringEnumMemberName("fold")]
     Fold,
 
-    /// <summary>The flight is planned on its own; it connects to the other if it still depends on it.</summary>
+    /// <summary>The flight is planned on its own, in parallel with the other; it connects to the other if it still depends on it.</summary>
     [JsonStringEnumMemberName("separate")]
     Separate,
+
+    /// <summary>The flight is connected to the other (which may fly on another node): it holds until the other has landed.</summary>
+    [JsonStringEnumMemberName("connect")]
+    Connect,
 }
 
 /// <summary>
