@@ -457,4 +457,89 @@ public sealed class LegWatchTests
         _said.ShouldBeEmpty();
         Open().ShouldHaveSingleItem().Kind.ShouldBe("overlap");
     }
+
+    /// <summary>A stall ring's summary names the redo as the card words it, and Resume or Nudge only when the card offers one.</summary>
+    private static void SummaryMatchesChoices(CardRow card)
+    {
+        var summary = card.Summary.ShouldNotBeNull();
+        summary.ShouldContain("TIA1/parser");
+        summary.ShouldContain(card.Choices.Single(c => c.Verb == Verbs.GoAround).Label);
+        var say = card.Choices.FirstOrDefault(c => c.Verb == Verbs.Say)?.Label;
+        if (say is null)
+        {
+            summary.ShouldNotContain("Resume");
+            summary.ShouldNotContain("Nudge");
+        }
+        else
+        {
+            summary.ShouldContain(say);
+            foreach (var other in new[] { "Resume now", "Resume", "Nudge" }.Where(l => l != say && !say.StartsWith(l, StringComparison.Ordinal)))
+            {
+                summary.ShouldNotContain(other);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ANoResetStopRingsASummaryThatMatchesItsChoices()
+    {
+        // A usage-limit stop with no reset time, and the same stop once the resume did not take.
+        Worker(SessionState.Idle, apiError: "overloaded");
+        await _watch.LookAsync(Ct);
+        var stopped = Open().ShouldHaveSingleItem();
+        SummaryMatchesChoices(stopped);
+        stopped.Summary!.ShouldNotContain("nothing to do");
+    }
+
+    [Fact]
+    public async Task AUsageLimitStopAndItsFailedResumeRingSummariesMatchTheirChoices()
+    {
+        Worker(SessionState.Idle, apiError: "rate_limit", resetsAt: Start.AddHours(2));
+        await _watch.LookAsync(Ct);
+        var limited = Open().Single(c => c.Kind == LegWatch.Stopped);
+        SummaryMatchesChoices(limited);
+        limited.Summary!.ShouldContain("resumes it at");
+
+        _time.Advance(TimeSpan.FromHours(2) + TimeSpan.FromMinutes(3));
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+        var again = Open().Single(c => c.Kind == LegWatch.Stopped);
+        SummaryMatchesChoices(again);
+        again.Summary!.ShouldContain("still stopped");
+    }
+
+    [Fact]
+    public async Task AWaitingFailedMissingAndIdleWorkersRingsSummariesMatchTheirChoices()
+    {
+        // No worker at all: the redo alone.
+        _time.Advance(TimeSpan.FromMinutes(5));
+        await _watch.LookAsync(Ct);
+        var missing = Open().ShouldHaveSingleItem();
+        missing.Kind.ShouldBe(LegWatch.Missing);
+        missing.Choices.ShouldHaveSingleItem();
+        SummaryMatchesChoices(missing);
+
+        // A waiting worker is answered in its own session: the redo alone.
+        Worker(SessionState.Waiting, waitingFor: "permission to run rm -rf build");
+        await _watch.LookAsync(Ct);
+        var waiting = Open().Single(c => c.Kind == LegWatch.Waiting);
+        waiting.Choices.ShouldHaveSingleItem();
+        SummaryMatchesChoices(waiting);
+        waiting.Summary!.ShouldContain("waits on you");
+
+        Worker(SessionState.Failed);
+        await _watch.LookAsync(Ct);
+        SummaryMatchesChoices(Open().Single(c => c.Kind == LegWatch.Failed));
+
+        // An idle worker, nudged twice, then rung for: Nudge is offered and named.
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow());
+        foreach (var _ in Enumerable.Range(0, 3))
+        {
+            _time.Advance(TimeSpan.FromMinutes(4));
+            await _watch.LookAsync(Ct);
+        }
+        var idle = Open().Single(c => c.Kind == LegWatch.Idle);
+        idle.Choices.Select(c => c.Label).ShouldBe(["Nudge", "Redo leg parser"]);
+        SummaryMatchesChoices(idle);
+    }
 }

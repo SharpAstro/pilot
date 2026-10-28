@@ -1339,6 +1339,14 @@ public static class PilotCommand
             var bin = card.Bin switch { CardBin.Ring => "RING", CardBin.ForYou => "for you", _ => "handled" };
             var closed = card.State == CardState.Closed ? $"  [closed: {card.Outcome}{(card.ClosedBy is { } by ? $", by {by}" : "")}]" : "";
             text.AppendLine($"{card.Id}  {bin}  {card.Title}{closed}");
+            if (CardLeg.Of(card) is { } leg)
+            {
+                text.AppendLine($"      leg {leg}");
+            }
+            if (card.Summary is { Length: > 0 } summary)
+            {
+                text.AppendLine($"      {summary}");
+            }
             if (card.Detail is { Length: > 0 } detail)
             {
                 foreach (var line in detail.Split('\n'))

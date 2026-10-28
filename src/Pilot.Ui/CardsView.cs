@@ -267,6 +267,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>Opens the Fleet page on <paramref name="node"/>'s row: what a click on its held line (a node out of reach) does.</summary>
     public Action<NodeMark>? OnFleet { get; set; }
 
+    /// <summary>Called with the flight code and the leg name when a card's leg link is clicked: the window opens the flight's page at that leg.</summary>
+    public Action<string, string>? OnLeg { get; set; }
+
     /// <summary>Opens the watchtower's Remote Control link.</summary>
     public Action<string>? OnOpen { get; set; }
 
@@ -434,6 +437,15 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     public void NoteWorking(string cardId, string? action) =>
         System.Collections.Immutable.ImmutableInterlocked.Update(ref _working, working => action is null ? working.Remove(cardId) : working.SetItem(cardId, action));
 
+    // Cards whose detail fold is open, by id: swapped whole, as _working is.
+    private System.Collections.Immutable.ImmutableHashSet<string> _detailOpen = System.Collections.Immutable.ImmutableHashSet<string>.Empty;
+
+    private void ToggleDetail(string cardId) =>
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _detailOpen, open => open.Contains(cardId) ? open.Remove(cardId) : open.Add(cardId));
+
+    /// <summary>Whether card <paramref name="cardId"/>'s detail fold is open, for a test or a dump.</summary>
+    public bool DetailOpenOn(string cardId) => Volatile.Read(ref _detailOpen).Contains(cardId);
+
     /// <summary>The button of card <paramref name="cardId"/> whose press is with the node now, or null: the flight page reads it too.</summary>
     public string? WorkingOn(string cardId) => Volatile.Read(ref _working).GetValueOrDefault(cardId);
 
@@ -460,6 +472,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     internal Layout.Node Build(CardsScreen screen)
     {
+        // Drop the fold state of cards that are gone.
+        var here = screen.Open.Concat(screen.Merged).Select(c => c.Id).ToHashSet();
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _detailOpen, open => open.Any(id => !here.Contains(id)) ? open.Intersect(here) : open);
         var blocks = screen.Watchtower is { } tower ? Watchtower(tower) : NoWatchtower();
         blocks.Add(Layout.Builder.Text("For you", 18f, Bright).RowH(30f));
         blocks.Add(_waiting.Count == 0
@@ -530,6 +545,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>How many lines a node's held line may take: its counts are what it is for, so it wraps rather than hides them.</summary>
     internal const int HeldLines = 2;
 
+    /// <summary>How many lines a card's summary may take: none cut. It is the card's body, and the part that says what each choice does is its end.</summary>
+    internal const int SummaryLines = 0;
+
     /// <summary>How many lines a card's detail may take before it is cut.</summary>
     internal const int DetailLines = 3;
 
@@ -555,6 +573,38 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     private static Layout.Node Whole(Layout.Node node, string text, bool cut) => cut ? node.WithTooltip(text, Layout.DockSide.Left) : node;
 
+    private static readonly char[] SentencePunctuation = ['\'', '"', '`', '(', ')', ',', '.', ':', ';', '!', '?'];
+
+    /// <summary>
+    /// Whether <paramref name="word"/> names the leg: its <c>code/leg</c>, or its bare name right after the word "leg" ("Redo leg parser").
+    /// A bare name elsewhere is an ordinary word of the sentence ("The review of ..."), which the leg's name only happens to equal.
+    /// </summary>
+    private static bool NamesLeg(string word, string? previous, CardLeg leg)
+    {
+        var bare = word.Trim(SentencePunctuation);
+        return bare == leg.ToString() || (bare == leg.Leg && string.Equals(previous?.Trim(SentencePunctuation), "leg", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Whether the text names the leg in a way <see cref="NamesLeg"/> links.</summary>
+    private static bool LegWord(string text, CardLeg leg)
+    {
+        string? previous = null;
+        foreach (var word in text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (NamesLeg(word, previous, leg))
+            {
+                return true;
+            }
+            previous = word;
+        }
+        return false;
+    }
+
+    private Layout.Node LegLink(CardRow card, CardLeg leg, string text, float size) =>
+        Layout.Builder.Text(text, size, Link)
+            .BgHover(CardHover)
+            .Follows(new HitResult.ButtonHit($"card:{card.Id}:leg"), _ => OnLeg?.Invoke(leg.Code, leg.Leg));
+
     /// <summary>The card's title as shown: a landed flight's starts with 🛬. The node's title is left as it raised it.</summary>
     internal static string Titled(CardRow card) => card.Kind == "landed" ? "🛬 " + card.Title : card.Title;
 
@@ -568,6 +618,28 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private Layout.Node Card(CardRow card, NodeMark? node, bool closed = false, bool merged = false)
     {
         var accent = merged ? Live : closed ? Dim : card.Bin == CardBin.Ring ? Ring : ForYou;
+        var leg = CardLeg.Of(card);
+        // The first place the leg's name is in the title or the summary is the link; a later one is plain, so one card has one link to its leg.
+        var linked = false;
+        Func<float, Func<string, Layout.Node?>> linker = size =>
+        {
+            string? previous = null;
+            return word =>
+        {
+            var before = previous;
+            previous = word;
+            if (linked || leg is not { } about || !NamesLeg(word, before, about))
+            {
+                return null;
+            }
+            linked = true;
+            // Always read as code/leg: a bare leg name in the node's sentence ("Redo leg parser ...") is shown with its flight, as the TUI has no hover to say which.
+            var shown = word.TrimEnd();
+            var bare = shown.Trim('\'', '"', '`', '(', ')', ',', '.', ':', ';', '!', '?');
+            var at = shown.IndexOf(bare, StringComparison.Ordinal);
+            return LegLink(card, about, shown[..at] + about + shown[(at + bare.Length)..] + " ", size).WAuto();
+            };
+        };
         var lines = new List<Layout.Node>
         {
             Layout.Builder.Text($"{(merged ? "merged" : card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).RowH(16f),
@@ -579,17 +651,40 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                     .BgHover(CardHover)
                     .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => (InAppLinks.Is(titleLink) ? OnGoTo : OnOpen)?.Invoke(titleLink))
                     .RowH(22f), titleLink), card.Title, card.Title.Length > TitleFits)
-                : Whole(Layout.Builder.Text(Titled(card), 14f, Bright).RowH(22f), card.Title, card.Title.Length > TitleFits),
+                : Whole((leg is { } titled && LegWord(card.Title, titled) ? WrappedProse.Of(Titled(card), 14f, Bright, 1, linker(14f)) : Layout.Builder.Text(Titled(card), 14f, Bright)).RowH(22f),
+                    card.Title, card.Title.Length > TitleFits),
         };
-        if (card.Detail is { Length: > 0 } detail)
+        // The summary is the card's body; the raw detail is folded under it. A card from an old node has no summary and shows its detail as before.
+        var summary = card.Summary is { Length: > 0 } said ? said : null;
+        if (summary is not null)
         {
-            // Wraps within the panel, three lines at most (eight on a merge's); an explicit newline stays a break.
-            var cap = DetailLinesOf(card);
-            // The whole text is on hover wherever it could pass the cap: a narrow panel wraps a detail of a few hundred characters
-            // past eight lines, and a later paragraph gets one line, so the length is judged at the narrowest width (DetailFits per
-            // DetailLines), never scaled up by the cap, and a second paragraph is a cut of its own.
-            lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap), detail,
-                detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
+            lines.Add(Whole(WrappedProse.Of(summary, 12f, Body, SummaryLines, linker(12f)), summary, false));
+        }
+        // The leg's name was not in the words above: a small link row of its own, so the leg is one click away all the same.
+        if (leg is { } ofLeg && !linked)
+        {
+            lines.Add(LegLink(card, ofLeg, ofLeg.ToString(), 12f).RowH(20f));
+        }
+        if (card.Detail is { Length: > 0 } detail && detail != summary)
+        {
+            var unfolded = summary is null || Volatile.Read(ref _detailOpen).Contains(card.Id);
+            if (summary is not null)
+            {
+                lines.Add(Layout.Builder.Text($"{(unfolded ? "▾" : "▸")} Detail", 11f, Dim)
+                    .BgHover(CardHover)
+                    .Follows(new HitResult.ButtonHit($"card:{card.Id}:detail"), _ => ToggleDetail(card.Id))
+                    .RowH(20f));
+            }
+            if (unfolded)
+            {
+                // Wraps within the panel, three lines at most (eight on a merge's); an explicit newline stays a break.
+                var cap = DetailLinesOf(card);
+                // The whole text is on hover wherever it could pass the cap: a narrow panel wraps a detail of a few hundred characters
+                // past eight lines, and a later paragraph gets one line, so the length is judged at the narrowest width (DetailFits per
+                // DetailLines), never scaled up by the cap, and a second paragraph is a cut of its own.
+                lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap), detail,
+                    detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
+            }
         }
         // What the node said to the last button pressed here, when it refused: on the card, never only in a log.
         var working = Volatile.Read(ref _working).GetValueOrDefault(card.Id);
