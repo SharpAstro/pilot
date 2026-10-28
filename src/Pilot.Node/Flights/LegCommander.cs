@@ -174,7 +174,7 @@ public sealed partial class LegCommander(
             MarkMerge(command.Target, ChoiceStatus.Conflicting);
             error = await RebaseOntoBaseAsync(code, cancellationToken) is { } why
                 ? $"{error}; {why}{(await ConflictsAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : ": its last leg is redone to resolve it")}"
-                : $"{error}: it is being rebased onto its base and reviewed afresh, and the merge is offered again once that passes";
+                : $"{error}: it is being {(await github.UpdateWayAsync(FlightOf(command.Target).RepoPath, Models.MergeMethod, cancellationToken) == UpdateWay.Merge ? "brought up to date with" : "rebased onto")} its base and reviewed afresh, and the merge is offered again once that passes";
         }
 
         // A merge of a PR behind its base is not sent on: the node brings it up to date (the merge-up way), pushes, and reviews it
