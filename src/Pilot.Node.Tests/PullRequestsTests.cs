@@ -37,14 +37,17 @@ public sealed class PullRequestsTests : IDisposable
 
     [Theory]
     [InlineData("draft", PullRequestKind.Draft, "Draft", false)]
-    [InlineData("checks-running", PullRequestKind.ChecksRunning, "Checks running 4/7", false)]
+    [InlineData("checks-running", PullRequestKind.ChecksRunning, "Checks running 4/8", false)]
     [InlineData("checks-failed", PullRequestKind.ChecksFailed, "Checks failed: test (ubuntu)", false)]
     [InlineData("ready", PullRequestKind.Ready, "Ready", true)]
     [InlineData("in-merge-queue", PullRequestKind.InMergeQueue, "In merge queue #2", false)]
     [InlineData("conflicts", PullRequestKind.Conflicts, "Conflicts", true)]
     [InlineData("behind", PullRequestKind.Behind, "Behind", false)]
-    [InlineData("changes-requested", PullRequestKind.ChangesRequested, "Changes requested", true)]
-    [InlineData("approved", PullRequestKind.Approved, "Approved", false)]
+    // A failing pilot/review status is a failed check to the card's reader, which comes before a review's request for changes.
+    [InlineData("changes-requested", PullRequestKind.ChecksFailed, "Checks failed: pilot/review", false)]
+    [InlineData("approved", PullRequestKind.AwaitingCheck, "Waiting for a required check", false)]
+    [InlineData("blocked", PullRequestKind.AwaitingCheck, "Waiting for a required check", false)]
+    [InlineData("armed", PullRequestKind.Armed, "Auto-merge armed", false)]
     public void PullRequestsAreReadFromTheRecordedAnswerOfEachStateWithOneLabelAndTheNeedsMeFlag(string answer, PullRequestKind kind, string label, bool needsMe)
     {
         var pr = Read(answer);
@@ -53,7 +56,7 @@ public sealed class PullRequestsTests : IDisposable
     }
 
     [Fact]
-    public void ARecordedPullRequestCarriesItsFieldsItsCheckCountAndPilotsReviewWithoutThePilotReviewCountingAsACheck()
+    public void ARecordedPullRequestCarriesItsFieldsItsCheckCountAndPilotsReviewWhichIsACheckToo()
     {
         var pr = Read("ready");
 
@@ -61,8 +64,8 @@ public sealed class PullRequestsTests : IDisposable
         pr.Url.ShouldBe("https://github.com/SharpAstro/demo/pull/104");
         pr.CreatedAt.ShouldBe(new DateTimeOffset(2026, 10, 27, 19, 56, 26, TimeSpan.Zero));
         pr.UpdatedAt.ShouldBe(new DateTimeOffset(2026, 10, 28, 6, 0, 0, TimeSpan.Zero));
-        // build, test and a skipped publish: the pilot/review status is the review's word, not a check.
-        (pr.ChecksDone, pr.ChecksTotal, pr.FailedCheck).ShouldBe((3, 3, null));
+        // build, test, a skipped publish and the pilot/review status: a card counts that status among its checks, so the page does.
+        (pr.ChecksDone, pr.ChecksTotal, pr.FailedCheck).ShouldBe((4, 4, null));
         (pr.Review, pr.ReviewUrl).ShouldBe((PullRequestReview.Passed, "https://github.com/SharpAstro/demo/pull/104#issuecomment-9"));
     }
 
@@ -120,35 +123,88 @@ public sealed class PullRequestsTests : IDisposable
         read.ShouldAllBe(p => p.ChecksTotal == 0 && p.FailedCheck == null);
     }
 
-    [Fact]
-    public void TheMergeStateReaderTakesTheFirstThatHoldInTheOrderItDocuments()
+    // The one reader: the page's kind and label are what a flight's card reads from the same GitHub facts.
+    private static (MergeState? Card, PullRequestMergeState Page) Of(bool draft = false, string? mergeable = "MERGEABLE", string? status = "CLEAN", string? decision = null,
+        bool queued = false, int? position = null, bool armed = false, params (string Bucket, string? Name, string? Link)[] checks)
     {
-        static PullRequestMergeState Of(bool draft = false, string? mergeable = "MERGEABLE", string? status = "CLEAN", string? decision = null,
-            bool queued = false, int? position = null, int done = 2, int total = 2, string? failed = null) =>
-            PullRequestStates.Read(new PullRequestFacts(draft, mergeable, status, decision, queued, position, done, total, failed));
-
-        // A draft is a draft whatever else is true; a PR in the queue is in it.
-        Of(draft: true, mergeable: "CONFLICTING", failed: "build").Label.ShouldBe("Draft");
-        Of(queued: true, position: 1, mergeable: "CONFLICTING").Label.ShouldBe("In merge queue #1");
-        Of(queued: true).Label.ShouldBe("In merge queue");
-        // Conflicts, then changes requested, then the checks failed before running.
-        Of(mergeable: "CONFLICTING", decision: "CHANGES_REQUESTED").Label.ShouldBe("Conflicts");
-        Of(decision: "CHANGES_REQUESTED", failed: "build").Label.ShouldBe("Changes requested");
-        Of(failed: "build", done: 1, total: 3).Label.ShouldBe("Checks failed: build");
-        Of(done: 1, total: 3, status: "BEHIND").Label.ShouldBe("Checks running 1/3");
-        Of(status: "BEHIND").Label.ShouldBe("Behind");
-        // What is left is ready; approved when GitHub still holds the merge; a review wanted when the repo requires one.
-        Of(decision: "APPROVED").Label.ShouldBe("Ready");
-        Of(decision: "APPROVED", status: "BLOCKED").Label.ShouldBe("Approved");
-        Of(decision: "REVIEW_REQUIRED", status: "BLOCKED").Label.ShouldBe("Review required");
-        Of(mergeable: "UNKNOWN", status: "UNKNOWN").Label.ShouldBe("Checking merge state");
-        // Only ready, changes requested and conflicts wait on the person.
-        Of().NeedsMe.ShouldBeTrue();
-        Of(decision: "CHANGES_REQUESTED").NeedsMe.ShouldBeTrue();
-        Of(mergeable: "CONFLICTING").NeedsMe.ShouldBeTrue();
-        new[] { Of(draft: true), Of(queued: true), Of(failed: "build"), Of(done: 0, total: 2), Of(status: "BEHIND"), Of(decision: "APPROVED", status: "BLOCKED"),
-            Of(decision: "REVIEW_REQUIRED", status: "BLOCKED"), Of(mergeable: "UNKNOWN") }.ShouldAllBe(s => !s.NeedsMe);
+        var merge = GhCli.ReadMergeState(new MergeFacts("OPEN", draft, status, mergeable, decision, armed, checks), queued ? new MergeQueueState("QUEUED", "", true, position) : null);
+        return (merge, PullRequestSearch.Say(merge, draft));
     }
+
+    private static (string, string?, string?) Pass(string name = "build") => ("pass", name, null);
+
+    [Fact]
+    public void TheMergeStateReaderTakesTheFirstThatHoldInTheOrderTheCardDocuments()
+    {
+        // A draft is a draft on the page whatever else is true; a PR in the queue is in it.
+        Of(draft: true, mergeable: "CONFLICTING", checks: [("fail", "build", null)]).Page.Label.ShouldBe("Draft");
+        Of(queued: true, position: 1, mergeable: "CONFLICTING", checks: [Pass()]).Page.Label.ShouldBe("In merge queue #1");
+        Of(queued: true, checks: [Pass()]).Page.Label.ShouldBe("In merge queue");
+        // The card's order: conflicts, behind, a failed check, then changes requested, then what waits.
+        Of(mergeable: "CONFLICTING", decision: "CHANGES_REQUESTED", checks: [Pass()]).Page.Label.ShouldBe("Conflicts");
+        Of(status: "BEHIND", decision: "CHANGES_REQUESTED", checks: [Pass()]).Page.Label.ShouldBe("Behind");
+        Of(status: "BEHIND", checks: [("fail", "build", null)]).Page.Label.ShouldBe("Behind");
+        Of(decision: "CHANGES_REQUESTED", checks: [("fail", "build", null)]).Page.Label.ShouldBe("Checks failed: build");
+        Of(decision: "CHANGES_REQUESTED", checks: [Pass()]).Page.Label.ShouldBe("Changes requested");
+        Of(checks: [("fail", "build", null), ("pending", "test", null), Pass("lint")]).Page.Label.ShouldBe("Checks failed: build");
+        Of(checks: [("pending", "build", null), Pass("test"), Pass("lint")]).Page.Label.ShouldBe("Checks running 2/3");
+        // Auto-merge armed says so, whatever the merge box says of the rest; a failed check still blocks it.
+        Of(armed: true, status: "BLOCKED", checks: [Pass()]).Page.Label.ShouldBe("Auto-merge armed");
+        Of(armed: true, checks: [("pending", "build", null)]).Page.Label.ShouldBe("Auto-merge armed");
+        Of(armed: true, checks: [("fail", "build", null)]).Page.Label.ShouldBe("Checks failed: build");
+        // What is left is ready, a review wanted when the repo requires one, or a required check GitHub has yet to create.
+        Of(checks: [Pass()]).Page.Label.ShouldBe("Ready");
+        Of(decision: "APPROVED", checks: [Pass()]).Page.Label.ShouldBe("Ready");
+        Of(decision: "REVIEW_REQUIRED", status: "BLOCKED", checks: [Pass()]).Page.Label.ShouldBe("Review required");
+        Of(mergeable: "UNKNOWN", status: "UNKNOWN", checks: [Pass()]).Page.Label.ShouldBe("Checking merge state");
+        // Only ready, changes requested and conflicts wait on the person.
+        Of(checks: [Pass()]).Page.NeedsMe.ShouldBeTrue();
+        Of(decision: "CHANGES_REQUESTED", checks: [Pass()]).Page.NeedsMe.ShouldBeTrue();
+        Of(mergeable: "CONFLICTING", checks: [Pass()]).Page.NeedsMe.ShouldBeTrue();
+        new[] { Of(draft: true), Of(queued: true), Of(checks: [("fail", "build", null)]), Of(checks: [("pending", "build", null)]), Of(status: "BEHIND"), Of(armed: true, checks: [Pass()]),
+            Of(decision: "APPROVED", status: "BLOCKED", checks: [Pass()]), Of(status: "BLOCKED", checks: [Pass()]),
+            Of(decision: "REVIEW_REQUIRED", status: "BLOCKED", checks: [Pass()]), Of(mergeable: "UNKNOWN", status: "UNKNOWN", checks: [Pass()]) }.ShouldAllBe(s => !s.Page.NeedsMe);
+    }
+
+    [Fact]
+    public void APullRequestGitHubHoldsAsBlockedWithNoReviewInTheWayWaitsForItsRequiredCheckAndIsNeitherReadyNorNeedsMe()
+    {
+        // Recorded: BLOCKED, no review decision, every check green: the window before the required gate check is created.
+        var pr = Read("blocked");
+
+        (pr.Kind, pr.Label, pr.NeedsMe).ShouldBe((PullRequestKind.AwaitingCheck, "Waiting for a required check", false));
+        new PullRequestsRow { PullRequests = [pr], ReadAt = Noon }.Groups(needsMeOnly: true).ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("ready")]
+    [InlineData("blocked")]
+    [InlineData("armed")]
+    [InlineData("approved")]
+    [InlineData("checks-running")]
+    [InlineData("checks-failed")]
+    [InlineData("conflicts")]
+    [InlineData("behind")]
+    [InlineData("changes-requested")]
+    [InlineData("in-merge-queue")]
+    public void APullRequestOnThePageAndItsCardReadTheSameMergeStateFromTheSameFacts(string answer)
+    {
+        // The card's reader and the page's are one: the page's row is the card's merge state said in the page's words.
+        var pr = Read(answer);
+        var json = JsonDocument.Parse(Recorded(answer)).RootElement.GetProperty("data").GetProperty("search").GetProperty("nodes")[0];
+        var contexts = json.GetProperty("commits").GetProperty("nodes")[0].GetProperty("commit").GetProperty("statusCheckRollup").GetProperty("contexts").GetProperty("nodes");
+        var checks = contexts.EnumerateArray().Select(c => c.GetProperty("__typename").GetString() == "CheckRun"
+            ? (GhCli.CheckBucket(Str(c, "conclusion"), Str(c, "status")), Str(c, "name"), Str(c, "detailsUrl"))
+            : (GhCli.CheckBucket(Str(c, "state"), null), Str(c, "context"), Str(c, "targetUrl"))).ToList();
+        var card = GhCli.ReadMergeState(
+            new MergeFacts("OPEN", json.GetProperty("isDraft").GetBoolean(), Str(json, "mergeStateStatus"), Str(json, "mergeable"), Str(json, "reviewDecision"),
+                json.GetProperty("autoMergeRequest").ValueKind == JsonValueKind.Object, checks),
+            json.GetProperty("isInMergeQueue").GetBoolean() ? new MergeQueueState("QUEUED", "", true, json.GetProperty("mergeQueueEntry").GetProperty("position").GetInt32()) : null);
+
+        PullRequestSearch.Say(card, pr.Draft).ShouldBe(new PullRequestMergeState(pr.Kind, pr.Label, pr.NeedsMe));
+    }
+
+    private static string? Str(JsonElement element, string name) => element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
     // ---- grouping, ordering, Needs me
 
@@ -202,7 +258,7 @@ public sealed class PullRequestsTests : IDisposable
             Row("SharpAstro/b", 3, PullRequestKind.Draft),
             Row("SharpAstro/c", 4, PullRequestKind.Conflicts),
             Row("SharpAstro/c", 5, PullRequestKind.ChangesRequested),
-            Row("SharpAstro/d", 6, PullRequestKind.Approved));
+            Row("SharpAstro/d", 6, PullRequestKind.ReviewRequired));
 
         var groups = row.Groups(needsMeOnly: true);
 

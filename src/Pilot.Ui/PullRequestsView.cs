@@ -859,8 +859,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         var bg = kind switch
         {
             PullRequestKind.Ready => new RGBAColor32(0x1f, 0x6b, 0x45, 0xff),
-            PullRequestKind.Approved => new RGBAColor32(0x1c, 0x5d, 0x6b, 0xff),
-            PullRequestKind.ChecksRunning or PullRequestKind.Unknown => new RGBAColor32(0x6b, 0x52, 0x1c, 0xff),
+            PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck or PullRequestKind.Armed or PullRequestKind.Unknown => new RGBAColor32(0x6b, 0x52, 0x1c, 0xff),
             PullRequestKind.ChecksFailed => new RGBAColor32(0x7a, 0x28, 0x28, 0xff),
             PullRequestKind.Conflicts => new RGBAColor32(0x7a, 0x2a, 0x5a, 0xff),
             PullRequestKind.ChangesRequested => new RGBAColor32(0x8a, 0x48, 0x1c, 0xff),

@@ -220,6 +220,28 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
     {
         if (command.Verb == Verbs.Tell)
         {
+            if (command.Target.StartsWith(Verbs.CardTargetPrefix, StringComparison.Ordinal))
+            {
+                var id = command.Target[Verbs.CardTargetPrefix.Length..];
+                var card = state.Cards().FirstOrDefault(c => c.Id == id);
+                if (card is null)
+                {
+                    return state.Complete(command, $"There is no card {id}");
+                }
+                if (card.State != CardState.Open)
+                {
+                    return state.Complete(command, $"Card {id} is closed");
+                }
+                var words = string.Join(' ', command.Args ?? []).Trim();
+                if (words.Length == 0)
+                {
+                    return state.Complete(command, "tell takes the words to say about the card");
+                }
+                var subject = card.Subject.Split('/');
+                var flight = subject is ["flight", { } code, ..] ? state.Flights().FirstOrDefault(f => f.Code == code) : null;
+                var message = CardContext.Compose(card, Get<NodeOptions>().Machine, flight is null ? null : Briefs.FlightStatus(flight, state.Legs()), words);
+                command = command with { Args = [message] };
+            }
             var (target, why) = Get<Watchtower>().TellTarget();
             if (target is null)
             {
@@ -299,6 +321,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (command.Verb == Verbs.Update)
         {
             return await Get<NodeUpdater>().RunAsync(command, cancellationToken);
+        }
+        if (command.Verb == Verbs.RestartNode)
+        {
+            return Get<NodeSettingsCommands>().RestartNode(command);
         }
         if (command.Verb == Verbs.Say)
         {

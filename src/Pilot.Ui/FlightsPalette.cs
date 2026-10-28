@@ -35,7 +35,9 @@ internal sealed record FlightsPalette(
     RGBAColor32 MenuBg,
     RGBAColor32 GhostBg,
     RGBAColor32 LinkedBg,
-    RGBAColor32 Link)
+    RGBAColor32 Link,
+    RGBAColor32 SelectionBg,
+    RGBAColor32 SelectionText)
 {
     public static FlightsPalette Standard { get; } = new(
         Ground: new(0x12, 0x12, 0x18, 0xff),
@@ -57,7 +59,10 @@ internal sealed record FlightsPalette(
         MenuBg: new(0x1f, 0x21, 0x2b, 0xff),
         GhostBg: new(0x14, 0x15, 0x1c, 0xff),
         LinkedBg: new(0x20, 0x27, 0x36, 0xff),
-        Link: new(0x8a, 0xb4, 0xf8, 0xff));
+        Link: new(0x8a, 0xb4, 0xf8, 0xff),
+        // Selected text is drawn again on its bar, in the page's brightest ink (6.6:1 on the bar).
+        SelectionBg: new(0x2f, 0x4d, 0x8a, 0xff),
+        SelectionText: new(0xe6, 0xe7, 0xee, 0xff));
 
     /// <summary>Dim reds on black and nothing else: no green or blue in any channel, so the eye stays dark-adapted.</summary>
     public static FlightsPalette Night { get; } = new(
@@ -80,5 +85,8 @@ internal sealed record FlightsPalette(
         MenuBg: new(0x18, 0x00, 0x00, 0xff),
         GhostBg: new(0x08, 0x00, 0x00, 0xff),
         LinkedBg: new(0x1e, 0x00, 0x00, 0xff),
-        Link: new(0xc8, 0x00, 0x00, 0xff));
+        Link: new(0xc8, 0x00, 0x00, 0xff),
+        // A bar as bright as the palette goes with black on it (4.7:1): the night view has no red dark enough to read its own ink on.
+        SelectionBg: new(0xf0, 0x00, 0x00, 0xff),
+        SelectionText: new(0x00, 0x00, 0x00, 0xff));
 }

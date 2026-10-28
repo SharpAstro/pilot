@@ -339,6 +339,12 @@ public static class Verbs
     public const string Update = "update";
 
     /// <summary>
+    /// <c>restart-node node [why…]</c> (<c>pilot node restart</c>): the node starts its successor and stops, as for a setting
+    /// or an update; jobs run detached, are not waited for, and the next node follows them again. The answer says how many carry on.
+    /// </summary>
+    public const string RestartNode = "restart-node";
+
+    /// <summary>
     /// <c>set node &lt;key&gt; [value…]</c>: saves a setting in the node's settings file (no value, or <c>default</c>, takes
     /// it out); the node restarts to run with it at once; jobs carry on under the next node. This machine only.
     /// </summary>

@@ -16,6 +16,16 @@ internal static class ChatCommands
     }
 
     /// <summary>
+    /// Says <paramref name="words"/> about card <paramref name="cardId"/> to the node's watchtower (<c>tell card/id</c>): the node
+    /// adds the card's whole context. Null when the node took it, else what it said in refusing it.
+    /// </summary>
+    public static async Task<string?> TellAboutCardAsync(NodeClient client, string cardId, string words, string who, CancellationToken cancellationToken)
+    {
+        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.CardTarget(cardId), Args = [words], Who = who }, cancellationToken);
+        return envelope.Success && envelope.Response is { Ok: true } ? null : $"refused: {envelope.Response?.Error ?? envelope.Error}";
+    }
+
+    /// <summary>
     /// Stops the node's watchtower and starts a fresh one, briefed from the node's state (the node's <c>restart-watchtower</c>).
     /// Null when the node took it, else what it said in refusing it.
     /// </summary>

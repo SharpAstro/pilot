@@ -257,6 +257,56 @@ public sealed class HomeMachineTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task AProcessSaysHowItWasStartedOnHoverAndItsWorkingDirInAColumnANarrowWindowDrops()
+    {
+        var pages = await TwoNodes(new NodeFilter());
+        const string commandLine = "\"C:\\Program Files\\dotnet\\dotnet.exe\" test src/Pilot.Node.Tests --filter Machine";
+        const string folder = @"C:\Users\se\source\repos\sharpastro\pilot";
+        var row = pages.Machines![0].Row with
+        {
+            Processes = [Process(5120, "dotnet", 40, 3L << 30) with { CommandLine = commandLine, WorkingDirectory = folder }, Process(912, "chrome", 1, 1L << 30)],
+        };
+        var screen = new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, [pages.Machines![0] with { Row = row }]);
+        using var renderer = new RgbaImageRenderer(1280, 1600);
+        var home = new HomeView<RgbaImage>(renderer);
+        ImmutableArray<Layout.ArrangedNode<float>> Arrange(float width) =>
+            Layout.Engine.Arrange(home.Tree(screen), new Rect<float>(0, 0, width, 1600), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        static bool Shown(ImmutableArray<Layout.ArrangedNode<float>> arranged, string text) =>
+            arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == text && a.Bounds.Width > 0f);
+
+        // The name's hover says which dotnet it is: how it was started and where. One the node could not read says its name alone.
+        var wide = Arrange(1280);
+        wide.ShouldContain(a => a.Node.Tooltip == $"dotnet (pid 5120)\n{commandLine}\nin {folder}");
+        wide.ShouldContain(a => a.Node.Tooltip == "chrome (pid 912)");
+
+        // On a wide window the folder has its column, its end shown and the whole on hover...
+        Shown(wide, "working dir").ShouldBeTrue();
+        Shown(wide, @"…\se\source\repos\sharpastro\pilot").ShouldBeTrue();
+        wide.ShouldContain(a => a.Node.Tooltip == folder);
+        // ...and a narrow one drops it, header and rows together, so the name keeps its room.
+        var narrow = Arrange(520);
+        Shown(narrow, "working dir").ShouldBeFalse();
+        Shown(narrow, @"…\se\source\repos\sharpastro\pilot").ShouldBeFalse();
+        Shown(narrow, "dotnet").ShouldBeTrue();
+
+        Home(pages with { Machines = [pages.Machines![0] with { Row = row }] }).ToDump()
+            .ShouldContain($"  dotnet · pid 5120 · 40% · 3 GB · in {folder}", Case.Sensitive);
+    }
+
+    [Fact]
+    public void AFolderTooLongForItsColumnIsWrittenFromItsEnd()
+    {
+        static string Of(string? folder) => MachineLine.Folder(new MachineProcess { Pid = 1, Name = "p", CpuPercent = 0, MemoryBytes = 0, WorkingDirectory = folder });
+
+        Of(null).ShouldBe("");
+        Of(@"C:\work").ShouldBe(@"C:\work");
+        Of("/home/se/source/repos/sharpastro/pilot/src/Pilot.Node").ShouldBe("…/sharpastro/pilot/src/Pilot.Node");
+        // A last folder longer than the column is its own end, cut.
+        Of(@"C:\" + new string('x', 60)).ShouldBe("…" + new string('x', MachineLine.FolderChars - 1));
+        Of(@"C:\" + new string('x', 60)).Length.ShouldBe(MachineLine.FolderChars);
+    }
+
+    [Fact]
     public void TheBarsAndFiguresMeetTheContrastFloorOnTheirGround()
     {
         var page = new RGBAColor32(0x12, 0x13, 0x19, 0xff);

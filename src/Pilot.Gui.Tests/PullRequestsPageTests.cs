@@ -765,9 +765,6 @@ public sealed class PullRequestsPageTests
             // The row text and the column titles are night's bright red, not its body red, which is under 3:1 on black.
             Contrast(night.Bright, ground).ShouldBeGreaterThanOrEqualTo(3.0, $"night text on {ground}");
         }
-
-        // The words carry the state: every chip's label differs from the next kind's, so colour is never the only thing that says it.
-        PullRequestStates.Read(new PullRequestFacts(true, null, null, null, false, null, 0, 0, null)).Label.ShouldBe("Draft");
     }
 
     [Fact]

@@ -472,6 +472,17 @@ public static class Briefs
         text.AppendLine("## Your verdict");
         text.AppendLine($"- Ready: `{run} review pass \"<what you checked, in a line or two>\"`.");
         text.AppendLine($"- Not ready: `{run} review changes \"<each change asked for, concretely>\"`. A fresh worker is told it as is.");
+        // PIL383: the flight's page draws the report as Markdown, as the transcript does; PIL294's #357 report was one run of
+        // "1) … 2) …" with every name bare, and read as a wall.
+        text.AppendLine("Write the report (`changes`, and `pass` where it has findings) as Markdown: one list item per finding, each starting");
+        text.AppendLine("with a short first line that says what is wrong, then the detail on the lines under it. Put every code name, path");
+        text.AppendLine("(`path/to/File.cs:42`) and command in backticks. The page shows the first lines of each finding and the rest on");
+        text.AppendLine("\"Show all\", so the first line has to stand on its own.");
+        // A backtick inside double quotes is a command substitution in Bash and the escape character in PowerShell: the code names
+        // the report is asked to carry would vanish, or run. A quoted here-string passes the text as it is.
+        text.AppendLine("Pass the Markdown report intact, backticks and all: in Bash a quoted heredoc, `review changes \"$(cat <<'EOF'` then the");
+        text.AppendLine("report and `EOF` and `)\"` on lines of their own; in PowerShell a single-quoted here-string, `@'` and `'@` on lines of");
+        text.AppendLine("their own around the report. Never put it between plain double quotes, where a backtick runs or escapes.");
         text.AppendLine("Then end your turn with the same verdict.");
         return text.ToString();
     }
@@ -628,7 +639,9 @@ public static class Briefs
         }
         var open = cards.Where(c => c.State == CardState.Open).ToList();
         text.AppendLine();
-        text.AppendLine(open.Count == 0 ? "No card is open." : "Open cards:");
+        // Said as work, not as state: a watchtower restarted with four rings open read them here and sat idle, since the node had
+        // told them to the one before it and does not tell them again (DE1, 2026-10-28).
+        text.AppendLine(open.Count == 0 ? "No card is open." : "Open cards, yours to act on now as if the node had just said them (start with the rings):");
         foreach (var card in open)
         {
             text.AppendLine(CardLine(card));
@@ -714,7 +727,9 @@ public static class Briefs
         text.AppendLine($"  plane, test, commit, push, and `{pilot} flight review <code>`. Send the leg round (Redo leg) only for work a worker should");
         text.AppendLine("  do: new code, a design change, more than a few lines. A fresh worker costs a whole leg's tokens; a fix of yours costs a turn.");
         text.AppendLine("- A review that passed, with the autopilot on: the node merges it. Asked in the chat to merge, run the merge yourself.");
-        text.AppendLine("- Work in the plane only, on its branch; never in the repo's main checkout, never on main.");
+        text.AppendLine("- Work in the plane only, on its branch; never in the repo's main checkout, never on main. Stay where you are and reach the");
+        text.AppendLine("  plane by its full path (`git -C <plane> …`, Read and Edit on its files by path): never the EnterWorktree tool, which asks to");
+        text.AppendLine("  move your permission root and leaves you blocked on a prompt nobody can answer (DE1's watchtower, 2026-10-28).");
         text.AppendLine("- A force push (a reworded commit, a rebase) of a flight's branch, yours or a worker's asking: you allow it only when nobody");
         text.AppendLine($"  else works on that branch. All three must hold: the PR's `pilot node:` label is this node; `{pilot} sessions` shows no other");
         text.AppendLine("  live session in that flight's plane but the one pushing; and the push is `git push --force-with-lease=<branch>:<the sha last");
@@ -760,6 +775,22 @@ public static class Briefs
         text.AppendLine($"- `{pilot} leg extend <tokens> --leg <code>/<leg>`: a leg's budget, raised once by the controller's rule (a Handled line says so).");
         text.AppendLine($"- `{pilot} --help` lists the rest.");
         text.AppendLine();
+        return text.ToString();
+    }
+
+    /// <summary>A flight's state in lines, as a card's chat says it: the flight, its PR and review, then each leg.</summary>
+    public static string FlightStatus(FlightRow flight, IReadOnlyList<LegRow> legs)
+    {
+        var text = new StringBuilder();
+        var state = flight.State == FlightState.Held ? $"held, waiting for {FlightWaiting.For(flight)}" : flight.State.ToString().ToLowerInvariant();
+        text.Append($"{flight.Code}: {flight.Title ?? flight.Item.Noun} ({flight.Repo} {flight.Item.Display}, {state})");
+        text.Append(flight.PullRequestUrl is { } url ? $", PR {url}" : ", no PR yet");
+        text.Append(flight.Review is { } review ? $", review {review.State.ToString().ToLowerInvariant()}" : ", no review yet");
+        foreach (var leg in legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order))
+        {
+            var steps = leg.Checklist.Length == 0 ? "" : $", {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";
+            text.AppendLine().Append($"{leg.Order}. {leg.Name}: {FlightWaiting.LegState(leg)}{steps}");
+        }
         return text.ToString();
     }
 

@@ -375,11 +375,15 @@ internal sealed class TranscriptEntryView
     /// </summary>
     internal void Follow(string url)
     {
-        if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http")
+        if (WebLink(url) is { } web)
         {
-            OpenLink?.Invoke(uri.AbsoluteUri);
+            OpenLink?.Invoke(web);
         }
     }
+
+    /// <summary>The address of <paramref name="url"/> when it is a web page, else null: the one rule for a link in words a session wrote, here and on the flight page.</summary>
+    internal static string? WebLink(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http" ? uri.AbsoluteUri : null;
 
     // The line under a folded entry that opens it and closes it again, or null for one short enough to show whole.
     private Layout.Node? Fold(TranscriptEntry entry, int count, int lines)

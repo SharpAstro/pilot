@@ -152,19 +152,19 @@ public sealed class MergedFleetTests : IAsyncDisposable
         var filter = new NodeFilter();
         await TwoNodes(filter);
 
-        // LE1's stream drops: it is no choice in the header until it is back, but its last rows are still shown.
+        // LE1's stream drops: it stays a choice in the header, dimmed and labelled last heard, and its last rows are still shown.
         _le1.Close();
         var pages = _watch.Pages("node.sock", _here, filter, Live.At);
-        for (var i = 0; i < 500 && filter.Choices.Count != 1; i++)
+        for (var i = 0; i < 500 && filter.Down.Count != 1; i++)
         {
             await Task.Delay(10, Ct);
             pages = _watch.Pages("node.sock", _here, filter, Live.At);
         }
-        filter.Choices.ShouldHaveSingleItem().Name.ShouldBe("SE1");
+        filter.Choices.Select(c => c.Name).ShouldBe(["SE1", "LE1"]);
 
-        // This node's rows unmarked, as with no fleet; LE1's still LE1's, so a transcript or a command goes to LE1.
-        pages.Sessions.Lines.Where(l => l.Node is null).Select(l => l.Name).ShouldBe(["se1-watchtower", "se1-tia1-gpu"], ignoreOrder: true);
-        pages.Sessions.Lines.Where(l => l.Node is not null).ShouldAllBe(l => l.Node!.Name == "LE1");
+        // Both are still choices, so every row is marked; LE1's still LE1's, so a transcript or a command goes to LE1.
+        pages.Sessions.Lines.Where(l => l.Node!.Name == "SE1").Select(l => l.Name).ShouldBe(["se1-watchtower", "se1-tia1-gpu"], ignoreOrder: true);
+        pages.Sessions.Lines.Where(l => l.Node!.Name == "LE1").ShouldNotBeEmpty();
         pages.Flights.Lines.Single(l => l.Code == "ORB2").Node.ShouldNotBeNull().Name.ShouldBe("LE1");
         // Its cards are not: they leave the panel for one line naming LE1 (UnreachableNodeTests).
         pages.Cards.Open.Select(c => c.Title).ShouldBe(["TIA1 landed"]);

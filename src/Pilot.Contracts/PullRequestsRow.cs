@@ -3,8 +3,8 @@ using System.Text.Json.Serialization;
 namespace Pilot.Contracts;
 
 /// <summary>
-/// Which state of GitHub's merge box a PR is in, as <see cref="PullRequestStates.Read"/> reads it: one per PR, and the
-/// chip a client draws for it. How much each asks of the person is <see cref="PullRequestStates.Rank"/>, not the order here.
+/// Which state of GitHub's merge box a PR is in, as the node reads it (the one reader a flight's card uses too): one per PR, and
+/// the chip a client draws for it. How much each asks of the person is <see cref="PullRequestStates.Rank"/>, not the order here.
 /// </summary>
 [JsonConverter(typeof(JsonStringEnumConverter<PullRequestKind>))]
 public enum PullRequestKind
@@ -17,105 +17,48 @@ public enum PullRequestKind
     Conflicts,
     Behind,
     ChangesRequested,
-    Approved,
 
     /// <summary>Its checks pass and it merges, but the repo wants a review nobody has given yet.</summary>
     ReviewRequired,
 
     /// <summary>GitHub has not worked out yet whether it merges: a PR just pushed, or one nobody has looked at for a while.</summary>
     Unknown,
+
+    /// <summary>GitHub's auto-merge is armed on it: it merges once what it waits for is done.</summary>
+    Armed,
+
+    /// <summary>Every check shown is green, yet GitHub holds the merge: a required check has yet to report (a gate job starts only once the builds finish).</summary>
+    AwaitingCheck,
 }
 
-/// <summary>What <see cref="PullRequestStates.Read"/> makes of a PR: its state, the words for its chip, and whether it waits on the person.</summary>
+/// <summary>What the node makes of a PR's merge state: its state, the words for its chip, and whether it waits on the person.</summary>
 public readonly record struct PullRequestMergeState(PullRequestKind Kind, string Label, bool NeedsMe);
 
 /// <summary>
-/// The fields of a PR that say where it stands, as GitHub's GraphQL gives them. The checks are counted by the reader of the
-/// answer: <paramref name="ChecksTotal"/> of them, <paramref name="ChecksDone"/> finished, and the name of the first that
-/// failed (<paramref name="FailedCheck"/>), the <c>pilot/review</c> status left out, which is a review's word and no CI.
-/// </summary>
-/// <param name="Mergeable"><c>MERGEABLE</c>, <c>CONFLICTING</c> or <c>UNKNOWN</c> while GitHub works it out.</param>
-/// <param name="MergeStateStatus"><c>CLEAN</c>, <c>DIRTY</c>, <c>BEHIND</c>, <c>BLOCKED</c>, <c>UNSTABLE</c>, <c>HAS_HOOKS</c>, <c>DRAFT</c> or <c>UNKNOWN</c>.</param>
-/// <param name="ReviewDecision"><c>APPROVED</c>, <c>CHANGES_REQUESTED</c>, <c>REVIEW_REQUIRED</c> or none.</param>
-/// <param name="QueuePosition">Its place in the merge queue, 1 for the next to merge, when it is in one.</param>
-public readonly record struct PullRequestFacts(
-    bool Draft, string? Mergeable, string? MergeStateStatus, string? ReviewDecision, bool InMergeQueue, int? QueuePosition,
-    int ChecksDone, int ChecksTotal, string? FailedCheck);
-
-/// <summary>
-/// The one reader of a PR's merge state. A PR on the Pull requests page and a flight's card both say what this says, so a PR
-/// reads the same in both: <c>Draft</c>, <c>In merge queue #2</c>, <c>Conflicts</c>, <c>Changes requested</c>,
-/// <c>Checks failed: build</c>, <c>Checks running 4/7</c>, <c>Behind</c>, <c>Ready</c>, <c>Approved</c> (approved, yet
-/// GitHub still holds the merge) and <c>Review required</c>. A flight's card must take its PR's label from here, not make its own.
+/// What a PR's merge state means for the page. The reading itself is the node's one reader (<c>GhCli.ReadMergeState</c>), the
+/// one a flight's card says its merge by, so a PR on the Pull requests page and on its card say the same: <c>Draft</c>,
+/// <c>In merge queue #2</c>, <c>Conflicts</c>, <c>Changes requested</c>, <c>Checks failed: build</c>, <c>Checks running 4/7</c>,
+/// <c>Behind</c>, <c>Auto-merge armed</c>, <c>Waiting for a required check</c>, <c>Review required</c> and <c>Ready</c>. A draft is
+/// the one thing the page reads before the rest: a flight's card is never raised for one.
 /// </summary>
 public static class PullRequestStates
 {
     /// <summary>
-    /// Reads <paramref name="facts"/> in this order, the first that holds winning: a draft is a draft whatever else is true; one in
-    /// the merge queue is in it; a conflict and a request for changes are the author's to fix and the person's to know; then
-    /// the checks, failed before running; then a merge state GitHub has not worked out yet; then behind its base; and what is left is ready, or approved when a review
-    /// approved it yet GitHub does not call the merge clean, or in want of the review its repo requires.
-    /// <see cref="PullRequestMergeState.NeedsMe"/> is true for ready, changes requested and conflicts: the three the person must act on.
-    /// </summary>
-    public static PullRequestMergeState Read(PullRequestFacts facts)
-    {
-        if (facts.Draft)
-        {
-            return new(PullRequestKind.Draft, "Draft", false);
-        }
-        if (facts.InMergeQueue)
-        {
-            return new(PullRequestKind.InMergeQueue, facts.QueuePosition is { } position ? $"In merge queue #{position}" : "In merge queue", false);
-        }
-        if (facts.Mergeable == "CONFLICTING" || facts.MergeStateStatus == "DIRTY")
-        {
-            return new(PullRequestKind.Conflicts, "Conflicts", true);
-        }
-        if (facts.ReviewDecision == "CHANGES_REQUESTED")
-        {
-            return new(PullRequestKind.ChangesRequested, "Changes requested", true);
-        }
-        if (facts.FailedCheck is { } failed)
-        {
-            return new(PullRequestKind.ChecksFailed, $"Checks failed: {failed}", false);
-        }
-        if (facts.ChecksDone < facts.ChecksTotal)
-        {
-            return new(PullRequestKind.ChecksRunning, $"Checks running {facts.ChecksDone}/{facts.ChecksTotal}", false);
-        }
-        if (facts.Mergeable == "UNKNOWN" || facts.MergeStateStatus == "UNKNOWN")
-        {
-            return new(PullRequestKind.Unknown, "Checking merge state", false);
-        }
-        if (facts.MergeStateStatus == "BEHIND")
-        {
-            return new(PullRequestKind.Behind, "Behind", false);
-        }
-        return facts.ReviewDecision switch
-        {
-            "REVIEW_REQUIRED" => new(PullRequestKind.ReviewRequired, "Review required", false),
-            "APPROVED" when facts.MergeStateStatus is not ("CLEAN" or "HAS_HOOKS" or "UNSTABLE") => new(PullRequestKind.Approved, "Approved", false),
-            _ => new(PullRequestKind.Ready, "Ready", true),
-        };
-    }
-
-    /// <summary>
-    /// How much a PR of this kind asks of the person, 0 the most: ready to merge, then changes asked for, a conflict, approved
-    /// but held, failed checks, behind, a review wanted, running checks or a merge state not known yet, in the queue and last a draft. Repos are ordered by
-    /// the lowest of their PRs, and PRs in a repo by this.
+    /// How much a PR of this kind asks of the person, 0 the most: ready to merge, then changes asked for, a conflict, failed
+    /// checks, behind, a review wanted, waiting (running checks, a required check to come, an armed merge, a merge state not
+    /// known yet), in the queue and last a draft. Repos are ordered by the lowest of their PRs, and PRs in a repo by this.
     /// </summary>
     public static int Rank(PullRequestKind kind) => kind switch
     {
         PullRequestKind.Ready => 0,
         PullRequestKind.ChangesRequested => 1,
         PullRequestKind.Conflicts => 2,
-        PullRequestKind.Approved => 3,
-        PullRequestKind.ChecksFailed => 4,
-        PullRequestKind.Behind => 5,
-        PullRequestKind.ReviewRequired => 6,
-        PullRequestKind.ChecksRunning or PullRequestKind.Unknown => 7,
-        PullRequestKind.InMergeQueue => 8,
-        _ => 9,
+        PullRequestKind.ChecksFailed => 3,
+        PullRequestKind.Behind => 4,
+        PullRequestKind.ReviewRequired => 5,
+        PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck or PullRequestKind.Armed or PullRequestKind.Unknown => 6,
+        PullRequestKind.InMergeQueue => 7,
+        _ => 8,
     };
 }
 
@@ -129,7 +72,7 @@ public static class PullRequestReview
     public const string Reviewing = "reviewing";
 }
 
-/// <summary>An open PR of one of the clones' orgs, with GitHub's merge state read as <see cref="PullRequestStates.Read"/> reads it.</summary>
+/// <summary>An open PR of one of the clones' orgs, with GitHub's merge state read by the node's one reader, the flight card's.</summary>
 public sealed record PullRequestRow
 {
     /// <summary>The repo, <c>owner/name</c>, as GitHub spells it.</summary>

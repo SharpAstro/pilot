@@ -27,6 +27,9 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
     /// <summary>The node's own processes right now, as (owner, pid): a session's name, a job's id or <c>watchtower</c>; a job's tree is found from its root.</summary>
     public Func<IReadOnlyList<(string Owner, int Pid)>> Owners { get; init; } = () => [];
 
+    /// <summary>A top process's command line and folder (<see cref="ProcessDetails.Read"/>): only the few the row names are read.</summary>
+    public Func<int, (string? CommandLine, string? WorkingDirectory)> Details { get; init; } = ProcessDetails.Read;
+
     public ILogger<MachineSampler>? Logger { get; init; }
 
     /// <summary>The same sample again is put once it is this old, so a client can tell a quiet machine from a node that stopped looking.</summary>
@@ -108,6 +111,11 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
         ReadProcesses(_processes);
         var top = Top(_processes, _previous, wall, cores, TopCount);
         Note(_processes);
+        for (var i = 0; i < top.Length; i++)
+        {
+            var (commandLine, workingDirectory) = Details(top[i].Pid);
+            top[i] = top[i] with { CommandLine = commandLine, WorkingDirectory = workingDirectory };
+        }
         var gpu = _gpu.Read();
         var owners = Owners();
         if (owners.Count > 0 && top.Length > 0)
@@ -425,7 +433,7 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
 
     /// <summary>
     /// Whether <paramref name="next"/> differs from <paramref name="held"/> enough to say so: CPU or GPU moved a few
-    /// points, memory by a percent of the machine's, a busy process came, went or changed owner, or the held row is a
+    /// points, memory by a percent of the machine's, a busy process came, went, changed owner or moved folder, or the held row is a
     /// <see cref="Heartbeat"/> old. A sample every few seconds is mostly jitter, and a delta for each would fill the journal.
     /// </summary>
     public static bool Differs(MachineRow held, MachineRow next)
@@ -454,7 +462,7 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
         for (var i = 0; i < before.Length; i++)
         {
             if (before[i].Pid != after[i].Pid || before[i].Name != after[i].Name || before[i].Owner != after[i].Owner
-                || Math.Abs(before[i].CpuPercent - after[i].CpuPercent) >= PercentStep || MemoryMoved(before[i].MemoryBytes, after[i].MemoryBytes))
+                || before[i].WorkingDirectory != after[i].WorkingDirectory || Math.Abs(before[i].CpuPercent - after[i].CpuPercent) >= PercentStep || MemoryMoved(before[i].MemoryBytes, after[i].MemoryBytes))
             {
                 return true;
             }

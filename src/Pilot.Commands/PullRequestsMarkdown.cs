@@ -5,7 +5,7 @@ namespace Pilot.Commands;
 
 /// <summary>
 /// <c>pilot prs</c>: every open PR of the clones' orgs, grouped by repo in <see cref="PullRequestsRow.Groups"/>' order, each with
-/// the label <see cref="PullRequestStates.Read"/> gave it. As plain text for the terminal and as Markdown (tables) for
+/// the label the node's merge-state reader gave it. As plain text for the terminal and as Markdown (tables) for
 /// <c>--output-format markdown</c> and <c>rich</c>, the two carrying the same facts.
 /// </summary>
 internal static class PullRequestsMarkdown

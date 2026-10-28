@@ -735,8 +735,9 @@ public static class PilotCommand
 
         // the watchtower: tell it, restart it; and the cards it (or anyone) raises
         var tellText = Words("text", "What to tell it");
-        var tell = Action(new Command("tell", "Say something to the watchtower, whichever session it is now") { Arguments = { tellText } },
-            (p, client, ct) => Send(client, Verbs.Tell, Verbs.WatchtowerTarget, [Join(p, tellText)], who, ct));
+        var tellCard = new Option<string?>("--card") { Description = "A card's id (c12): tell the watchtower about that card, with its whole context ahead of your words" };
+        var tell = Action(new Command("tell", "Say something to the watchtower, whichever session it is now") { Arguments = { tellText }, Options = { tellCard } },
+            (p, client, ct) => Send(client, Verbs.Tell, p.GetValue(tellCard) is { Length: > 0 } cardId ? Verbs.CardTarget(cardId) : Verbs.WatchtowerTarget, [Join(p, tellText)], who, ct));
         var restartWhy = Words("why", "Why, for its Handled line", required: false);
         var restart = Action(new Command("restart", "Stop the watchtower and start a fresh one, briefed from the node's state") { Arguments = { restartWhy } },
             (p, client, ct) => Send(client, Verbs.RestartWatchtower, Verbs.WatchtowerTarget, p.GetValue(restartWhy) ?? [], who, ct));
@@ -824,6 +825,12 @@ public static class PilotCommand
             { Options = { updateCheck, updateAdopt, actingOn } },
             (p, client, ct) => Send(client, Verbs.Update, Verbs.NodeTarget,
                 [p.GetValue(updateCheck) ? "check" : "install", .. p.GetValue(updateAdopt) ? new[] { "--adopt" } : []], who, ct, p.GetValue(actingOn)));
+        // node restart: the node starts its successor and stops, as for a setting or an update, so a session never kills the process.
+        var nodeRestartWhy = Words("why", "Why, for its Handled line", required: false);
+        var nodeRestart = Action(new Command("restart", "Restart the node in place: its flights, sessions and jobs carry on (jobs are not waited for; the answer says how many)")
+            { Arguments = { nodeRestartWhy }, Options = { actingOn } },
+            (p, client, ct) => Send(client, Verbs.RestartNode, Verbs.NodeTarget, p.GetValue(nodeRestartWhy) ?? [], who, ct, p.GetValue(actingOn)));
+        var nodeCommand = new Command("node", "This machine's pilot node") { Subcommands = { nodeRestart } };
 
         var subject = Arg("subject", "What it is about: flight/<code>, flight/<code>/<leg>, session/<id> or node");
         var cardTitle = Arg("title", "The card in a line");
@@ -963,9 +970,9 @@ public static class PilotCommand
         var settingValue = Words("value", "Its value (every folder, for repo-roots); none, or default, takes it out", required: false);
         var set = Action(new Command("set", "Save a setting; the node restarts to run with it at once, jobs carry on") { Arguments = { settingKey, settingValue }, Options = { actingOn } },
             (p, client, ct) => Send(client, Verbs.Set, Verbs.NodeTarget, [p.GetValue(settingKey)!, .. p.GetValue(settingValue) ?? []], who, ct, p.GetValue(actingOn)));
-        var checkKey = Arg("check", "autostart, no-autostart, hooks, lan, firewall, defender or trust");
+        var checkKey = Arg("check", "autostart, no-autostart, hooks, merge-guard, claude-permissions, lan, firewall, defender or trust");
         var defenderProcesses = new Option<bool>("--processes") { Description = "With defender: exclude pilot-node, dotnet, MSBuild, VBCSCompiler and testhost as processes too, not only the folders" };
-        var setupCommand = Action(new Command("setup", "Make a setup check's fix: the logon entry, the hooks, the LAN, the firewall rule and the Defender exclusions (each asks for elevation), the trust prompt") { Arguments = { checkKey }, Options = { defenderProcesses, actingOn } },
+        var setupCommand = Action(new Command("setup", "Make a setup check's fix: the logon entry, the hooks, the merge guard, Claude Code's allow rules for pilot's commands (claude-permissions), the LAN, the firewall rule and the Defender exclusions (each asks for elevation), the trust prompt") { Arguments = { checkKey }, Options = { defenderProcesses, actingOn } },
             (p, client, ct) => Send(client, Verbs.Setup, Verbs.NodeTarget, [p.GetValue(checkKey)!, .. p.GetValue(defenderProcesses) ? new[] { "--processes" } : []], who, ct, p.GetValue(actingOn)));
         settings.Subcommands.Add(set);
         settings.Subcommands.Add(setupCommand);
@@ -973,7 +980,7 @@ public static class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, summary, summarise, update, archive, ring, flag, handled, nodes, connectNode, grants, settings },
+            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, summary, summarise, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host

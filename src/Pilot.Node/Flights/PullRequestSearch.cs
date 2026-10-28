@@ -7,7 +7,7 @@ namespace Pilot.Node.Flights;
 /// <summary>
 /// The one GraphQL search that reads every open PR of an org (<c>search(query:"org:&lt;owner&gt; is:pr is:open", type:ISSUE)</c>,
 /// paged) and what the node makes of its answer: a <see cref="PullRequestRow"/> each, its merge state read by
-/// <see cref="PullRequestStates.Read"/>. One call for the whole org, not one per repo.
+/// <see cref="GhCli.ReadMergeState"/>, the reader a flight's card uses. One call for the whole org, not one per repo.
 /// </summary>
 public static class PullRequestSearch
 {
@@ -71,13 +71,17 @@ public static class PullRequestSearch
             return null;
         }
 
-        var (done, total, failed, failedUrl, review, reviewUrl) = Checks(pr);
+        var (checks, review, reviewUrl) = Checks(pr);
         var queued = pr.TryGetProperty("isInMergeQueue", out var inQueue) && inQueue.ValueKind == JsonValueKind.True;
         int? position = pr.TryGetProperty("mergeQueueEntry", out var entry) && entry.ValueKind == JsonValueKind.Object
             && entry.TryGetProperty("position", out var at) && at.TryGetInt32(out var p) ? p : null;
         var draft = pr.TryGetProperty("isDraft", out var d) && d.ValueKind == JsonValueKind.True;
-        var state = PullRequestStates.Read(new PullRequestFacts(draft, Text(pr, "mergeable"), Text(pr, "mergeStateStatus"), Text(pr, "reviewDecision"),
-            queued, position, done, total, failed));
+        var armed = pr.TryGetProperty("autoMergeRequest", out var auto) && auto.ValueKind == JsonValueKind.Object;
+        var merge = GhCli.ReadMergeState(
+            new MergeFacts("OPEN", draft, Text(pr, "mergeStateStatus"), Text(pr, "mergeable"), Text(pr, "reviewDecision"), armed, checks),
+            queued ? new MergeQueueState("QUEUED", "", true, position) : null);
+        var state = Say(merge, draft);
+        var failed = checks.FirstOrDefault(c => c.Bucket == "fail");
         return new PullRequestRow
         {
             Repo = repo,
@@ -93,28 +97,60 @@ public static class PullRequestSearch
             Kind = state.Kind,
             Label = state.Label,
             NeedsMe = state.NeedsMe,
-            AutoMerge = pr.TryGetProperty("autoMergeRequest", out var auto) && auto.ValueKind == JsonValueKind.Object,
-            ChecksDone = done,
-            ChecksTotal = total,
-            FailedCheck = failed,
-            FailedUrl = failedUrl,
+            AutoMerge = armed,
+            ChecksDone = checks.Count(c => c.Bucket != "pending"),
+            ChecksTotal = checks.Count,
+            FailedCheck = failed.Name,
+            FailedUrl = failed.Link,
             Review = review,
             ReviewUrl = reviewUrl,
         };
     }
 
-    // The last commit's checks, counted, and its pilot/review status split off: a review's word is no CI check.
-    private static (int Done, int Total, string? Failed, string? FailedUrl, string? Review, string? ReviewUrl) Checks(JsonElement pr)
+    /// <summary>
+    /// What <paramref name="merge"/> (the card's reading of the PR) is on the page: the same state in the page's kinds, the chip's
+    /// words, and whether it waits on the person (ready, changes requested, conflicts). A draft is a draft before all else. Null is
+    /// GitHub not having worked the merge state out yet.
+    /// </summary>
+    internal static PullRequestMergeState Say(MergeState? merge, bool draft)
     {
+        if (draft)
+        {
+            return new(PullRequestKind.Draft, "Draft", false);
+        }
+        if (merge is null)
+        {
+            return new(PullRequestKind.Unknown, "Checking merge state", false);
+        }
+        return merge.Kind switch
+        {
+            MergeKinds.Queued => new(PullRequestKind.InMergeQueue, merge.Position is { } position ? $"In merge queue #{position}" : "In merge queue", false),
+            MergeKinds.Conflicts => new(PullRequestKind.Conflicts, "Conflicts", true),
+            MergeKinds.Behind => new(PullRequestKind.Behind, "Behind", false),
+            MergeKinds.ChangesRequested => new(PullRequestKind.ChangesRequested, "Changes requested", true),
+            MergeKinds.Blocked when merge.FailedName is { } failed => new(PullRequestKind.ChecksFailed, $"Checks failed: {failed}", false),
+            MergeKinds.Blocked => new(PullRequestKind.ReviewRequired, "Review required", false),
+            MergeKinds.Armed => new(PullRequestKind.Armed, "Auto-merge armed", false),
+            MergeKinds.Pending when merge.AwaitsCheck => new(PullRequestKind.AwaitingCheck, "Waiting for a required check", false),
+            MergeKinds.Pending => new(PullRequestKind.ChecksRunning, $"Checks running {merge.Done}/{merge.Total}", false),
+            MergeKinds.Ready => new(PullRequestKind.Ready, "Ready", true),
+            _ => new(PullRequestKind.Unknown, "Checking merge state", false),
+        };
+    }
+
+    // The last commit's checks, as the reader takes them (bucketed as gh does), and its pilot/review status, whose word is also
+    // the row's Review. The review status is a check like any other to the reader: a card counts it too.
+    private static (List<(string Bucket, string? Name, string? Link)> Checks, string? Review, string? ReviewUrl) Checks(JsonElement pr)
+    {
+        var checks = new List<(string Bucket, string? Name, string? Link)>();
         if (!(pr.TryGetProperty("commits", out var commits) && commits.TryGetProperty("nodes", out var commitNodes) && commitNodes.ValueKind == JsonValueKind.Array
             && commitNodes.GetArrayLength() > 0 && commitNodes[commitNodes.GetArrayLength() - 1].TryGetProperty("commit", out var commit)
             && commit.TryGetProperty("statusCheckRollup", out var rollup) && rollup.ValueKind == JsonValueKind.Object
             && rollup.TryGetProperty("contexts", out var contexts) && contexts.TryGetProperty("nodes", out var contextNodes) && contextNodes.ValueKind == JsonValueKind.Array))
         {
-            return (0, 0, null, null, null, null);
+            return (checks, null, null);
         }
-        int done = 0, total = 0;
-        string? failed = null, failedUrl = null, review = null, reviewUrl = null;
+        string? review = null, reviewUrl = null;
         foreach (var context in contextNodes.EnumerateArray())
         {
             if (Text(context, "__typename") == "StatusContext")
@@ -131,34 +167,15 @@ public static class PullRequestSearch
                         _ => null,
                     };
                     reviewUrl = Text(context, "targetUrl");
-                    continue;
                 }
-                total++;
-                if (status is "PENDING" or "EXPECTED")
-                {
-                    continue;
-                }
-                done++;
-                if (status is "FAILURE" or "ERROR" && failed is null)
-                {
-                    (failed, failedUrl) = (name, Text(context, "targetUrl"));
-                }
+                checks.Add((GhCli.CheckBucket(status, null), name, Text(context, "targetUrl")));
             }
             else if (Text(context, "__typename") == "CheckRun")
             {
-                total++;
-                if (Text(context, "status") != "COMPLETED")
-                {
-                    continue;
-                }
-                done++;
-                if (Text(context, "conclusion") is "FAILURE" or "TIMED_OUT" or "CANCELLED" or "ACTION_REQUIRED" or "STARTUP_FAILURE" && failed is null)
-                {
-                    (failed, failedUrl) = (Text(context, "name") ?? "check", Text(context, "detailsUrl"));
-                }
+                checks.Add((GhCli.CheckBucket(Text(context, "conclusion"), Text(context, "status")), Text(context, "name") ?? "check", Text(context, "detailsUrl")));
             }
         }
-        return (done, total, failed, failedUrl, review, reviewUrl);
+        return (checks, review, reviewUrl);
     }
 
     private static string? Text(JsonElement element, string name) =>

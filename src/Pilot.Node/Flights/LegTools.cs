@@ -256,6 +256,14 @@ public sealed record MergeState(string Kind, int Done = 0, int Total = 0, int? P
     public string? Place => Position is { } position ? $"position {position}" : null;
 }
 
+/// <summary>
+/// What GitHub says of a PR that bears on its merge, as <see cref="GhCli.ReadMergeState"/> reads it: <paramref name="State"/>
+/// (<c>OPEN</c>, <c>MERGED</c>, <c>CLOSED</c>), the draft flag, <c>mergeStateStatus</c>, <c>mergeable</c> and <c>reviewDecision</c>, whether
+/// auto-merge is armed, and its checks as (bucket, name, link), the bucket as <see cref="GhCli.CheckBucket"/> says.
+/// </summary>
+internal sealed record MergeFacts(string? State, bool Draft, string? MergeStateStatus, string? Mergeable, string? ReviewDecision, bool AutoMerge,
+    IReadOnlyList<(string Bucket, string? Name, string? Link)> Checks);
+
 /// <summary>The GitHub calls a merge needs, so a test decides what GitHub says.</summary>
 public interface IGitHub
 {
@@ -485,7 +493,7 @@ public sealed class GhCli : IGitHub
 
     public async Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(["pr", "view", branch, "--json", "number,state,headRefOid,url,mergeable,labels,mergeCommit,mergedAt"], repoPath, cancellationToken);
+        var (exit, output, error) = await RunAsync(["pr", "view", branch, "--json", "number,state,headRefOid,url,mergeable,labels,mergeCommit,mergedAt,isDraft"], repoPath, cancellationToken);
         if (exit != 0)
         {
             return error.Contains("no pull requests found", StringComparison.OrdinalIgnoreCase)
@@ -501,7 +509,8 @@ public sealed class GhCli : IGitHub
                 ? [.. labels.EnumerateArray().Select(l => TextOf(l, "name")).OfType<string>()]
                 : null,
             MergeCommit: root.TryGetProperty("mergeCommit", out var merge) ? TextOf(merge, "oid") ?? "" : "",
-            MergedAt: TextOf(root, "mergedAt") is { } mergedAt && DateTimeOffset.TryParse(mergedAt, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var merged) ? merged : null);
+            MergedAt: TextOf(root, "mergedAt") is { } mergedAt && DateTimeOffset.TryParse(mergedAt, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var merged) ? merged : null,
+            Draft: root.TryGetProperty("isDraft", out var draft) && draft.ValueKind == JsonValueKind.True);
     }
 
     public async Task<WorkflowRun[]> WorkflowRunsAsync(string repoPath, string commit, CancellationToken cancellationToken)
@@ -580,70 +589,101 @@ public sealed class GhCli : IGitHub
         {
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
-            switch (TextOf(root, "state"))
-            {
-                case "MERGED":
-                    return new MergeState(MergeKinds.Merged);
-                case "CLOSED":
-                    return new MergeState(MergeKinds.Closed);
-            }
-            var checks = RollupChecks(root);
-            var (done, total) = (checks.Count(c => c.Bucket != "pending"), checks.Count);
-            var failed = checks.FirstOrDefault(c => c.Bucket == "fail");
-            var dropped = queue is { Queued: false, RemovedAt: not null, RemovedReason: { Length: > 0 } reason } && !reason.Equals("merged", StringComparison.OrdinalIgnoreCase)
-                ? reason.Replace('_', ' ').ToLowerInvariant() : null;
-            MergeState Say(string kind, string? why = null, bool awaits = false) => new(kind, done, total, queue is { Queued: true } ? queue.Position : null, why, failed.Name, failed.Link, dropped, awaits);
-
-            var mergeState = TextOf(root, "mergeStateStatus");
-            if (queue is { Queued: true })
-            {
-                return Say(MergeKinds.Queued);
-            }
-            if (TextOf(root, "mergeable") == "CONFLICTING" || mergeState == "DIRTY")
-            {
-                return Say(MergeKinds.Conflicts);
-            }
-            if (mergeState == "BEHIND")
-            {
-                return Say(MergeKinds.Behind);
-            }
-            if (mergeState == "DRAFT" || root.TryGetProperty("isDraft", out var draft) && draft.ValueKind == JsonValueKind.True)
-            {
-                return Say(MergeKinds.Blocked, "it is a draft");
-            }
-            if (failed.Name is not null)
-            {
-                return Say(MergeKinds.Blocked, $"{failed.Name} failed");
-            }
-            var review = TextOf(root, "reviewDecision");
-            if (review == "CHANGES_REQUESTED")
-            {
-                return Say(MergeKinds.ChangesRequested);
-            }
-            if (root.TryGetProperty("autoMergeRequest", out var auto) && auto.ValueKind == JsonValueKind.Object)
-            {
-                // Armed with every check green and a review still required: GitHub waits for the review, not for checks.
-                return Say(MergeKinds.Armed, mergeState == "BLOCKED" && review == "REVIEW_REQUIRED" && checks.All(c => c.Bucket != "pending") ? "a review" : null);
-            }
-            if (checks.Any(c => c.Bucket == "pending"))
-            {
-                return Say(MergeKinds.Pending);
-            }
-            return mergeState switch
-            {
-                null or "" or "UNKNOWN" => null,
-                "BLOCKED" when review == "REVIEW_REQUIRED" => Say(MergeKinds.Blocked, "a review is required"),
-                // Every check shown is green, no draft, no review in the way: a required check that GitHub has not created yet (a gate
-                // job starts only after the builds finish) is the one thing left. Waiting, not blocked: an armed merge keeps waiting
-                // for it, and Merge arms one.
-                "BLOCKED" => Say(MergeKinds.Pending, "a required check has yet to report, or a branch rule blocks it: the PR page says which", awaits: true),
-                _ => Say(MergeKinds.Ready),
-            };
+            return ReadMergeState(new MergeFacts(
+                TextOf(root, "state"),
+                root.TryGetProperty("isDraft", out var draft) && draft.ValueKind == JsonValueKind.True,
+                TextOf(root, "mergeStateStatus"), TextOf(root, "mergeable"), TextOf(root, "reviewDecision"),
+                root.TryGetProperty("autoMergeRequest", out var auto) && auto.ValueKind == JsonValueKind.Object,
+                RollupChecks(root)), queue);
         }
         catch (JsonException)
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// The one reader of a PR's merge state, whichever way GitHub's answer came (<c>gh pr view</c> for a flight's card, the
+    /// GraphQL search for the Pull requests page): the order a person reads the PR page, a merged or closed PR, then the queue,
+    /// then what keeps it from merging (conflicts, behind, draft, a failed check, requested changes), then what waits (an armed
+    /// auto-merge, checks running), then ready. A failed check blocks even where GitHub would allow it (not a required one):
+    /// pilot does not merge over a red check. Null when GitHub has not worked the merge state out yet (<c>UNKNOWN</c>).
+    /// </summary>
+    internal static MergeState? ReadMergeState(MergeFacts facts, MergeQueueState? queue = null)
+    {
+        switch (facts.State)
+        {
+            case "MERGED":
+                return new MergeState(MergeKinds.Merged);
+            case "CLOSED":
+                return new MergeState(MergeKinds.Closed);
+        }
+        var checks = facts.Checks;
+        var (done, total) = (checks.Count(c => c.Bucket != "pending"), checks.Count);
+        var failed = checks.FirstOrDefault(c => c.Bucket == "fail");
+        var dropped = queue is { Queued: false, RemovedAt: not null, RemovedReason: { Length: > 0 } reason } && !reason.Equals("merged", StringComparison.OrdinalIgnoreCase)
+            ? reason.Replace('_', ' ').ToLowerInvariant() : null;
+        MergeState Say(string kind, string? why = null, bool awaits = false) => new(kind, done, total, queue is { Queued: true } ? queue.Position : null, why, failed.Name, failed.Link, dropped, awaits);
+
+        var mergeState = facts.MergeStateStatus;
+        if (queue is { Queued: true })
+        {
+            return Say(MergeKinds.Queued);
+        }
+        if (facts.Mergeable == "CONFLICTING" || mergeState == "DIRTY")
+        {
+            return Say(MergeKinds.Conflicts);
+        }
+        if (mergeState == "BEHIND")
+        {
+            return Say(MergeKinds.Behind);
+        }
+        if (mergeState == "DRAFT" || facts.Draft)
+        {
+            return Say(MergeKinds.Blocked, "it is a draft");
+        }
+        if (failed.Name is not null)
+        {
+            return Say(MergeKinds.Blocked, $"{failed.Name} failed");
+        }
+        var review = facts.ReviewDecision;
+        if (review == "CHANGES_REQUESTED")
+        {
+            return Say(MergeKinds.ChangesRequested);
+        }
+        if (facts.AutoMerge)
+        {
+            // Armed with every check green and a review still required: GitHub waits for the review, not for checks.
+            return Say(MergeKinds.Armed, mergeState == "BLOCKED" && review == "REVIEW_REQUIRED" && checks.All(c => c.Bucket != "pending") ? "a review" : null);
+        }
+        if (checks.Any(c => c.Bucket == "pending"))
+        {
+            return Say(MergeKinds.Pending);
+        }
+        return mergeState switch
+        {
+            null or "" or "UNKNOWN" => null,
+            "BLOCKED" when review == "REVIEW_REQUIRED" => Say(MergeKinds.Blocked, "a review is required"),
+            // Every check shown is green, no draft, no review in the way: a required check that GitHub has not created yet (a gate
+            // job starts only after the builds finish) is the one thing left. Waiting, not blocked: an armed merge keeps waiting
+            // for it, and Merge arms one.
+            "BLOCKED" => Say(MergeKinds.Pending, "a required check has yet to report, or a branch rule blocks it: the PR page says which", awaits: true),
+            _ => Say(MergeKinds.Ready),
+        };
+    }
+
+    /// <summary>
+    /// How a check stands, as <c>gh</c> buckets it: <c>fail</c>, <c>pending</c> or <c>pass</c>, from a check run's conclusion and
+    /// status or a commit status's state (the conclusion).
+    /// </summary>
+    internal static string CheckBucket(string? conclusion, string? status)
+    {
+        conclusion = conclusion?.ToUpperInvariant();
+        status = status?.ToUpperInvariant();
+        // STALE is gh's pending: the result is out of date, not a verdict.
+        return conclusion is "FAILURE" or "ERROR" or "CANCELLED" or "TIMED_OUT" or "ACTION_REQUIRED" or "STARTUP_FAILURE" ? "fail"
+            : string.IsNullOrEmpty(conclusion) || conclusion is "PENDING" or "EXPECTED" or "STALE" || status is { Length: > 0 } and not "COMPLETED" ? "pending"
+            : "pass";
     }
 
     // A check run carries name, status, conclusion and detailsUrl; a commit status context, state and targetUrl. The rollup keeps
@@ -659,12 +699,7 @@ public sealed class GhCli : IGitHub
         }
         foreach (var check in rollup.EnumerateArray())
         {
-            var conclusion = (TextOf(check, "conclusion") is { Length: > 0 } c ? c : TextOf(check, "state"))?.ToUpperInvariant();
-            var status = TextOf(check, "status")?.ToUpperInvariant();
-            // STALE is gh's pending: the result is out of date, not a verdict.
-            var bucket = conclusion is "FAILURE" or "ERROR" or "CANCELLED" or "TIMED_OUT" or "ACTION_REQUIRED" or "STARTUP_FAILURE" ? "fail"
-                : string.IsNullOrEmpty(conclusion) || conclusion is "PENDING" or "EXPECTED" or "STALE" || status is { Length: > 0 } and not "COMPLETED" ? "pending"
-                : "pass";
+            var bucket = CheckBucket(TextOf(check, "conclusion") is { Length: > 0 } c ? c : TextOf(check, "state"), TextOf(check, "status"));
             var name = TextOf(check, "name") ?? TextOf(check, "context");
             var entry = (bucket, name, TextOf(check, "detailsUrl") ?? TextOf(check, "targetUrl"), Started: StampOf(check, "startedAt") ?? StampOf(check, "completedAt"));
             // A check with no name cannot be told from another: kept as it is.

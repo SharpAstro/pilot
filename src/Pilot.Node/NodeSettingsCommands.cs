@@ -98,6 +98,20 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         return state.Complete(command, null, setting: Row(key, updated), way: restart ?? $"{key} saved as {value}; the node restarts to run with it{carrying}");
     }
 
+    /// <summary>
+    /// <c>restart-node node [why…]</c>: the node starts its successor and stops, as a saved setting makes it; jobs run
+    /// detached and are not waited for, so the answer (and a Handled card naming the caller) says how many carry on under the next node.
+    /// </summary>
+    public CommandResult RestartNode(CommandRequest command)
+    {
+        var why = string.Join(' ', command.Args ?? []).Trim();
+        var carrying = NodeRestarter.JobsCarryOn(state) is { } jobsLeft ? $"; {jobsLeft} under the next node" : "";
+        var line = $"the node restarts for {command.Who}{(why.Length > 0 ? $": {why}" : "")}{carrying}";
+        var refused = restarter.Restart(why.Length > 0 ? $"{command.Who}: {why}" : command.Who,
+            () => state.RaiseCard(CardBin.Handled, "restart", Verbs.NodeTarget, line));
+        return state.Complete(command, refused, way: refused is null ? line : null);
+    }
+
     /// <summary><c>setup node &lt;check&gt;</c>: the fix the checklist offers for it.</summary>
     public async Task<CommandResult> SetupAsync(CommandRequest command, CancellationToken cancellationToken)
     {

@@ -278,7 +278,8 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
 
         _github.Posted.ShouldHaveSingleItem().Number.ShouldBe(7);
         Row("acme/widget", 7).PostedId.ShouldNotBeNull();
-        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.ReadyKind);
+        // No Post card at all, not even one closed by the post: one raised first was pressed while the node posted (DIR.Lib#168).
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.ReadyKind);
         _state.Cards().ShouldContain(c => c.Kind == PrReviews.PostedKind && c.Bin == CardBin.Handled);
         _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
 
@@ -335,7 +336,7 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
         (card.Id, card.Bin, card.Kind).ShouldBe((row.Card, CardBin.ForYou, PrReviews.ReadyKind));
         card.Detail.ShouldNotBeNull().ShouldStartWith("Not posted by the node: GitHub refused the review of acme/widget#7: HTTP 422\n");
         card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.PostReview);
-        _state.Cards().Count(c => c.Kind == PrReviews.ReadyKind).ShouldBe(2);
+        _state.Cards().Count(c => c.Kind == PrReviews.ReadyKind).ShouldBe(1);
         _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.PostedKind);
         // Its worktree stays while the card is open, for the Post that is still to come.
         Directory.Exists(row.Worktree).ShouldBeTrue();

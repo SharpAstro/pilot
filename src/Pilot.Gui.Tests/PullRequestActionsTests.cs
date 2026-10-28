@@ -59,8 +59,13 @@ public sealed class PullRequestActionsTests
         running[0].Status.ShouldBe(ChoiceStatus.Pending);
         running[0].Tooltip.ShouldContain("arms the merge");
 
+        // Waiting for a required check is the card's pending too: Merge arms it.
+        var awaiting = PullRequestActions.Offered(Pr("SharpAstro/pilot", 252, PullRequestKind.AwaitingCheck, "Waiting for a required check", "PIL252", PullRequestReview.Passed), [MergeCard("PIL252", status: ChoiceStatus.Pending)]);
+        awaiting.Select(a => a.Kind).ShouldBe([PullRequestActionKind.Merge, PullRequestActionKind.Open]);
+        awaiting[0].Status.ShouldBe(ChoiceStatus.Pending);
+
         // Not on any other state of a flight's PR, card or no card.
-        foreach (var kind in AllKinds.Where(k => k is not (PullRequestKind.Ready or PullRequestKind.ChecksRunning)))
+        foreach (var kind in AllKinds.Where(k => k is not (PullRequestKind.Ready or PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck)))
         {
             Kinds(Pr("SharpAstro/pilot", 252, kind, kind.ToString(), "PIL252", PullRequestReview.Passed), cards).ShouldNotContain(PullRequestActionKind.Merge, kind.ToString());
         }

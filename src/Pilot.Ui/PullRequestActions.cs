@@ -39,13 +39,13 @@ internal static class PullRequestActions
         var name = $"{pr.Repo}#{pr.Number}";
         if (pr.Flight is { } code)
         {
-            if (pr.Kind is PullRequestKind.Ready or PullRequestKind.ChecksRunning && Choice(cards, code, Verbs.Merge) is { } merge)
+            if (pr.Kind is PullRequestKind.Ready or PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck && Choice(cards, code, Verbs.Merge) is { } merge)
             {
                 var choice = merge.Card.Choices[merge.Number - 1];
-                var pending = pr.Kind == PullRequestKind.ChecksRunning;
+                var pending = pr.Kind is PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck;
                 offered.Add(new(PullRequestActionKind.Merge, "Merge",
                     pending
-                        ? $"Merge {name} as {code}'s card does: its checks are still running, so the node arms the merge and lands it when they pass"
+                        ? $"Merge {name} as {code}'s card does: {(pr.Kind == PullRequestKind.AwaitingCheck ? "a required check has yet to report" : "its checks are still running")}, so the node arms the merge and lands it when they pass"
                         : $"Merge {name} as {code}'s card does: the node merges it, or enqueues it on a repo with a merge queue",
                     merge.Card, merge.Number, pending ? ChoiceStatus.Pending : choice.Status));
             }

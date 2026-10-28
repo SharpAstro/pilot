@@ -82,6 +82,12 @@ public sealed record FlightRow
     public string? GitHubHead { get; init; }
 
     /// <summary>
+    /// Whether the PR is a draft as GitHub had it at the node's last look at it, which it keeps for a flight with a review (the
+    /// pages' PR state: draft, open, queued, merged); null before a look, where the pages say open.
+    /// </summary>
+    public bool? GitHubDraft { get; init; }
+
+    /// <summary>
     /// The <c>pilot:</c> label GitHub has on the PR as of the node's last look (several, joined by a comma, if someone added
     /// more); null when it has none, or before a look. Compare with <see cref="ReviewRow.Label"/>, which the node set.
     /// </summary>

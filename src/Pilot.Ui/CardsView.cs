@@ -247,6 +247,14 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>Opens the Chat page: what the panel's foot, the watchtower's shortcut, does.</summary>
     public Action? OnChat { get; set; }
 
+    /// <summary>
+    /// Opens the Chat page about a card: the card's <b>Chat about this</b>. Null leaves the button off, as a host with no chat has it.
+    /// </summary>
+    public Action<CardRow>? OnChatAbout { get; set; }
+
+    /// <summary>The words of every card's chat button, the same on the panel and the flight page.</summary>
+    internal const string ChatAboutLabel = "Chat about this";
+
     /// <summary>Whether the Chat page is the one shown: the shortcut to it is then left off the panel, and a panel with no card is not drawn.</summary>
     public bool OnChatPage { get; set; }
 
@@ -647,6 +655,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         if (OnOpenSession is { } show && card.Kind == CardKinds.SessionWaiting && session is { Row.Kind: SessionKind.Interactive })
         {
             buttons.Add(Button("Open", $"card:{card.Id}:open", () => show(card, session)));
+        }
+        if (watched is null && !merged && OnChatAbout is { } about)
+        {
+            buttons.Add(Button(ChatAboutLabel, $"card:{card.Id}:chat", () => about(card)));
         }
         if (watched is null && !merged)
         {
