@@ -176,6 +176,10 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         return new Plane(repoPath, branch, worktree, baseRef);
     }
 
+    /// <summary>Whether the plane at <paramref name="worktree"/> exists and has <paramref name="sha"/> in its history (its head, or a commit flown on since).</summary>
+    public async Task<bool> HasCommitAsync(string worktree, string sha, CancellationToken cancellationToken) =>
+        Directory.Exists(worktree) && (await git.RunAsync(["merge-base", "--is-ancestor", sha, "HEAD"], worktree, cancellationToken)).Ok;
+
     /// <summary>Whether git has <paramref name="worktree"/> as a worktree of the repo, not merely a folder there.</summary>
     public async Task<bool> IsRegisteredAsync(string repoPath, string worktree, CancellationToken cancellationToken)
     {

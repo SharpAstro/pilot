@@ -18,6 +18,12 @@ public sealed record FlightMove
     /// <summary>The repo's GitHub <c>owner/name</c>, by which the receiver finds its own checkout; null when the sender's has no GitHub remote (which the receiver refuses).</summary>
     public string? GitHub { get; init; }
 
+    /// <summary>
+    /// The head of the branch the sender pushed, read back from origin equal to its plane's. A receiver that already holds the flight
+    /// from the same sender answers Ok again when its plane has this commit in its history (a retry of a hand-over it took); null when not given.
+    /// </summary>
+    public string? Head { get; init; }
+
     /// <summary>The flight, as the sender has it: its PR, its review, its connections. Its paths are the sender's; the receiver puts its own.</summary>
     public required FlightRow Flight { get; init; }
 

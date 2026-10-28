@@ -136,13 +136,41 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
             _creating.Release();
         }
 
-        // A flight handed over goes on by the node's normal advance (its next leg, or its PR), off this lock: starting a leg takes the leg verbs' own.
+        // A flight handed over goes on by the node's normal advance (its next leg, or its PR), off this lock and off the reply: the sender
+        // is told it was taken as soon as it is, not after a validator or a worker has started (a slow reply is a sender that cannot tell).
         if (result.Ok && command.Verb == Verbs.ReceiveFlight && result.Made is { } received && Advance is { } advance)
         {
-            await advance(received, cancellationToken);
+            AdvanceOffReply(received, advance, cancellationToken);
         }
         return result;
     }
+
+    // The advances running after their receive-flight was answered; a test awaits them (WhenAdvancedAsync).
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Task, bool> _advancing = [];
+
+    private void AdvanceOffReply(string code, Func<string, CancellationToken, Task> advance, CancellationToken cancellationToken)
+    {
+        var task = Task.Run(async () =>
+        {
+            try
+            {
+                await advance(code, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                // The sweep takes the step again every minute; the flight is taken, so this is a card, not a failed receive.
+                state.RaiseCard(CardBin.Ring, LegCommander.NextStepKind, Verbs.FlightTarget(code), $"{code} could not go on by itself after it came here", ex.Message);
+            }
+        }, CancellationToken.None);
+        _advancing[task] = true;
+        _ = task.ContinueWith(t => _advancing.TryRemove(t, out _), TaskScheduler.Default);
+    }
+
+    /// <summary>Completes when the advances that follow the receive-flights answered so far have finished.</summary>
+    public Task WhenAdvancedAsync() => Task.WhenAll(_advancing.Keys);
 
     /// <summary>
     /// Runs <paramref name="call"/> (git, GitHub, a launcher: each takes as long as it takes) with the lock let go, and takes it
@@ -252,8 +280,9 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
 
     /// <summary>
     /// Takes over a flight another node hands this one (<see cref="Verbs.ReceiveFlight"/>, #376): refused unless it comes under a LAN
-    /// grant, this node is out of maintenance and willing to take fleet flights, it does not have the code already, no leg of the
-    /// flight is flying, and it has a checkout of the repo's GitHub remote. Then the plane is made from the branch the sender pushed
+    /// grant, this node is out of maintenance and willing to take fleet flights, it does not have the code already (but a flight that
+    /// moved away from here and comes back replaces its moved-away row, and the same hand-over again, a retry of one this node took, is
+    /// answered taken without doing it twice), no leg of the flight is flying, and it has a checkout of the repo's GitHub remote. Then the plane is made from the branch the sender pushed
     /// (in this machine's checkout, at this machine's path), and the flight, its legs and its open cards are put as they were, the
     /// flight saying where it came from. Returns the code, and where it came from as the result's way.
     /// </summary>
@@ -283,7 +312,16 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         }
         if (state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) is { } here)
         {
-            throw new FlightException($"{code} is already here ({here.State.ToString().ToLowerInvariant()} on {Machine}): a code is one flight on a node for good");
+            // The same hand-over again (the sender did not hear the answer and asks once more): it was taken, so it is answered taken.
+            if (await TookFromAsync(here, move, cancellationToken))
+            {
+                return (code, $"{code} {here.MovedFrom!.Text}");
+            }
+            // A flight that left this node earlier and comes back: its row here is the line it left, so it is replaced; any other row is a flight of this node's.
+            if (here is not { State: FlightState.Landed, MovedTo: not null })
+            {
+                throw new FlightException($"{code} is already here ({here.State.ToString().ToLowerInvariant()} on {Machine}): a code is one flight on a node for good, unless the flight moved away from here and comes back");
+            }
         }
         if (sent.State != FlightState.Flying)
         {
@@ -329,6 +367,16 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         state.RaiseCard(CardBin.Handled, ReceivedKind, Verbs.FlightTarget(code), way, $"{move.From} handed {code} over to {Machine}, which made its plane at {plane.Worktree} from {plane.Branch} on origin");
         return (code, way);
     }
+
+    /// <summary>
+    /// Whether <paramref name="here"/> is this very hand-over already taken: the flight flies here, it came from the same sender on the same
+    /// branch, and its plane has the head the sender pushed in its history (the plane may have flown on since).
+    /// </summary>
+    private async Task<bool> TookFromAsync(FlightRow here, FlightMove move, CancellationToken cancellationToken) =>
+        here is { State: FlightState.Flying, MovedTo: null, MovedFrom: { } from }
+        && string.Equals(from.From, move.From, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(here.Branch, move.Flight.Branch, StringComparison.Ordinal)
+        && (move.Head is not { Length: > 0 } head || await planes.HasCommitAsync(here.Worktree, head, cancellationToken));
 
     /// <summary>A flight a peer node flies, as a refusal names it.</summary>
     public sealed record PeerFlight(string Node, string Code);

@@ -24,11 +24,24 @@ public sealed partial class LegCommander
     // A flight's session starts while it is being moved are refused (Launching names the flight by the code after its key's colon).
     private void RefuseIfMoving(string key, string what)
     {
-        if (_moving.ContainsKey(key[(key.IndexOf(':') + 1)..]))
+        var code = key[(key.IndexOf(':') + 1)..];
+        if (_moving.ContainsKey(code))
         {
             throw new FlightException($"{what} does not start: the flight is being moved to another node");
         }
+        // Nor while it is not known whether the other node took it: the flight is flown on one node only, so on none until that is known.
+        if (state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) is { MoveUnknown: { } unknown })
+        {
+            throw new FlightException($"{what} does not start: it is not known yet whether {unknown.To} took the flight");
+        }
     }
+
+    /// <summary>
+    /// How long after a hand-over was sent a node that says it does not hold the flight is believed: a receive-flight whose reply was slow
+    /// or lost may still be under way on the other node (the node does not cancel it when the sender goes), and a flight not held there
+    /// <em>yet</em> is not one it will not hold. Past it, the flight stays here with the failure, as any failed move.
+    /// </summary>
+    public TimeSpan MoveSettle { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
     /// Why the flight is not to move yet, as a refusal says it; null when nothing of it is flying or starting: its legs are done or
@@ -36,6 +49,10 @@ public sealed partial class LegCommander
     /// </summary>
     private string? NotYetToMove(FlightRow flight)
     {
+        if (flight.MoveUnknown is { } unknown)
+        {
+            return $"{flight.Code} may already be {unknown.To}'s: it is not known yet whether {unknown.To} took it, so it is not moved again until that is known";
+        }
         if (flight.State != FlightState.Flying)
         {
             return $"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}{(flight.MovedTo is { } to ? $" ({to.Text})" : "")}: only a flying flight is moved";
@@ -101,6 +118,12 @@ public sealed partial class LegCommander
     /// </summary>
     public async Task<(string? Moved, string? Failure)> MoveAsync(string code, CancellationToken cancellationToken)
     {
+        // A move whose outcome is not known is asked about first: the other node may well have the flight, which is then moved, not moved again.
+        if (state.Flights().Any(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase) && f.MoveUnknown is not null)
+            && await SettleMoveAsync(code, cancellationToken) is { Moved: { } already })
+        {
+            return (already, null);
+        }
         var call = await EnterAsync(code, "being moved to another node", cancellationToken);
         var moving = false;
         (FlightRow Flight, string Text)? moved = null;
@@ -113,10 +136,10 @@ public sealed partial class LegCommander
             }
             // From here, under the lock, no session of the flight starts until it is moved or the move has failed.
             moving = _moving.TryAdd(flight.Code, true);
-            var (to, failure) = await OffLockAsync(null, () => HandOverAsync(flight, cancellationToken));
+            var (to, failure, unknown) = await OffLockAsync(null, () => HandOverAsync(flight, cancellationToken));
             if (to is null)
             {
-                RecordMoveFailure(flight, failure!);
+                RecordMoveFailure(flight, failure!, unknown);
                 return (null, failure);
             }
             var text = RecordMoved(flight, to);
@@ -144,7 +167,7 @@ public sealed partial class LegCommander
     /// (<see cref="FleetChoice"/>), the plane made safe, and the flight sent to each willing node in turn until one takes it. The node
     /// that took it, or null and why not.
     /// </summary>
-    private async Task<(string? To, string? Failure)> HandOverAsync(FlightRow flight, CancellationToken cancellationToken)
+    private async Task<(string? To, string? Failure, FlightMoveUnknown? Unknown)> HandOverAsync(FlightRow flight, CancellationToken cancellationToken)
     {
         var gitHub = RepoCatalog.GitHubOf(Path.Combine(flight.RepoPath, ".git"));
         var peers = flights.Fleet?.Peers() ?? [];
@@ -155,38 +178,131 @@ public sealed partial class LegCommander
         {
             return (null, Failed(flight, null, peers.Count == 0
                 ? "this node knows no other node of the fleet. Grant it one, or fly the flight on here."
-                : $"no node of the fleet takes it ({string.Join("; ", verdicts.Select(v => $"{v.Name}: {v.Reason}"))}). Put one out of maintenance and willing (accept-fleet-flights on), or move it again later."));
+                : $"no node of the fleet takes it ({string.Join("; ", verdicts.Select(v => $"{v.Name}: {v.Reason}"))}). Put one out of maintenance and willing (accept-fleet-flights on), or move it again later."), null);
         }
 
         // The node it is named for in a failure: the one chosen, when it is the only one willing.
         var named = willing.Count == 1 ? willing[0].Name : null;
         if (await MakeSafeAsync(flight, cancellationToken) is { } unsafePlane)
         {
-            return (null, Failed(flight, named ?? willing[0].Name, unsafePlane));
+            return (null, Failed(flight, named ?? willing[0].Name, unsafePlane), null);
         }
 
         var move = FlightMoves.Gather(state, flight.Code, options.Machine);
-        // What is the sender's alone does not go: the failure of an earlier try, and its card.
-        move = move with { Flight = move.Flight with { MoveFailure = null }, Cards = [.. move.Cards.Where(c => c.Kind != MoveFailedKind)] };
+        // What is the sender's alone does not go: the failure of an earlier try, and its card. The head is what origin was read back to hold.
+        var head = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken);
+        move = move with { Head = head.Ok ? head.Output.Trim() : null, Flight = move.Flight with { MoveFailure = null, MoveUnknown = null }, Cards = [.. move.Cards.Where(c => c.Kind != MoveFailedKind)] };
         var refused = new List<string>();
         foreach (var verdict in willing)
         {
             var peer = facts.Single(f => ReferenceEquals(f.Facts, verdict.Facts)).Peer;
+            var sentAt = time.GetUtcNow();
+            string lost;
             try
             {
                 var result = await peer.SendAsync(move, $"{options.Machine}/node", cancellationToken);
-                if (result.Ok)
+                if (result is { Ok: true, Waiting: null })
                 {
-                    return (verdict.Name, null);
+                    return (verdict.Name, null, null);
                 }
-                refused.Add($"{verdict.Name} refused it ({result.Error ?? "without a reason"})");
+                if (!result.Ok)
+                {
+                    refused.Add($"{verdict.Name} refused it ({result.Error ?? "without a reason"})");
+                    continue;
+                }
+                // Past its reply deadline the other node answers "still running": it has not said it took the flight, and may yet.
+                lost = $"it was still taking it when its reply deadline passed ({result.Waiting})";
             }
-            catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or System.Net.WebSockets.WebSocketException)
+            catch (Exception ex) when (IsNeverDelivered(ex))
             {
                 refused.Add($"{verdict.Name} could not be reached ({ex.Message})");
+                continue;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or OperationCanceledException or System.Net.WebSockets.WebSocketException)
+            {
+                lost = $"its answer did not come ({ex.Message})";
+            }
+
+            // The flight may be taken and the answer lost: the other node is asked, and the flight is sent to no other node meanwhile.
+            var unknown = new FlightMoveUnknown { To = verdict.Name, Endpoint = peer.Endpoint, Since = sentAt };
+            if (await AskPeerAsync(peer, flight.Code) == PeerHolds.Yes)
+            {
+                return (verdict.Name, null, null);
+            }
+            return (null, $"{flight.Code} may have moved to {verdict.Name}: {lost}. {flight.Code} stays here and is flown by nobody until {verdict.Name} says whether it holds it (asked again every sweep, and settled {MoveSettle.TotalMinutes:0} min after it was sent), or move it again.", unknown);
+        }
+        return (null, Failed(flight, named, $"{string.Join("; ", refused)}. Put that right there, or move it again."), null);
+    }
+
+    // A connection that was never made: the request did not reach the node, so it cannot have taken the flight.
+    private static bool IsNeverDelivered(Exception ex) =>
+        ex is HttpRequestException { InnerException: System.Net.Sockets.SocketException { SocketErrorCode: System.Net.Sockets.SocketError.ConnectionRefused or System.Net.Sockets.SocketError.HostNotFound or System.Net.Sockets.SocketError.HostUnreachable or System.Net.Sockets.SocketError.NetworkUnreachable } };
+
+    private enum PeerHolds { Yes, No, Unreachable }
+
+    /// <summary>Asks <paramref name="peer"/> what it holds: it holds the flight when its snapshot has it, handed over by this node and not itself moved away from there.</summary>
+    private async Task<PeerHolds> AskPeerAsync(IFleetPeer peer, string code)
+    {
+        using var budget = new CancellationTokenSource(HeldTokenFleet.ReadBudget * 2);
+        try
+        {
+            var load = await peer.LoadAsync(budget.Token);
+            return load.Flights.Any(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)
+                && f.MovedTo is null && f.MovedFrom is { } from && string.Equals(from.From, options.Machine, StringComparison.OrdinalIgnoreCase))
+                ? PeerHolds.Yes
+                : PeerHolds.No;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or OperationCanceledException or System.Net.WebSockets.WebSocketException)
+        {
+            return PeerHolds.Unreachable;
+        }
+    }
+
+    /// <summary>
+    /// Settles a move whose outcome was not known (<see cref="FlightRow.MoveUnknown"/>) by asking the other node: when it holds the flight,
+    /// the flight is moved (recorded, let go of here); when it says it does not and the settling time has passed since the hand-over was
+    /// sent, the move failed as any failed move; otherwise the flight waits, flown by nobody. Moved is what moved; Unknown, whether it is still not known.
+    /// </summary>
+    public async Task<(string? Moved, bool Unknown)> SettleMoveAsync(string code, CancellationToken cancellationToken)
+    {
+        var call = await EnterAsync(code, "being asked where it moved", cancellationToken);
+        (FlightRow Flight, string Text)? moved = null;
+        try
+        {
+            if (state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) is not { MoveUnknown: { } unknown } flight)
+            {
+                return (null, false);
+            }
+            var peer = flights.Fleet?.Peers().FirstOrDefault(p => string.Equals(p.Endpoint, unknown.Endpoint, StringComparison.OrdinalIgnoreCase));
+            var holds = peer is null ? PeerHolds.Unreachable : await OffLockAsync(null, () => AskPeerAsync(peer, flight.Code));
+            // Whatever changed the row meanwhile (a settling by another call) is that call's.
+            if (state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) is not { MoveUnknown: not null } now)
+            {
+                return (null, false);
+            }
+            flight = now;
+            if (holds == PeerHolds.Yes)
+            {
+                var text = RecordMoved(flight, unknown.To);
+                moved = (flight, text);
+                return (text, false);
+            }
+            if (holds == PeerHolds.No && time.GetUtcNow() - unknown.Since >= MoveSettle)
+            {
+                RecordMoveFailure(flight, $"{flight.Code} did not move to {unknown.To}: {unknown.To} does not hold it {MoveSettle.TotalMinutes:0} minutes after it was sent, so the flight stays here. Move it again.", null);
+                return (null, false);
+            }
+            return (null, true);
+        }
+        finally
+        {
+            call.Dispose();
+            _one.Release();
+            if (moved is { } let)
+            {
+                await LetGoOfPlaneAsync(let.Flight, let.Text);
             }
         }
-        return (null, Failed(flight, named, $"{string.Join("; ", refused)}. Put that right there, or move it again."));
     }
 
     private static string Failed(FlightRow flight, string? to, string why) =>
@@ -280,9 +396,9 @@ public sealed partial class LegCommander
     }
 
     // The flight stays here: its reason on the row and a card that moves it again, which the next failure rewrites rather than doubles.
-    private void RecordMoveFailure(FlightRow flight, string failure)
+    private void RecordMoveFailure(FlightRow flight, string failure, FlightMoveUnknown? unknown)
     {
-        Record(flight.Code, f => f with { MoveFailure = failure });
+        Record(flight.Code, f => f with { MoveFailure = failure, MoveUnknown = unknown });
         var split = failure.IndexOf(": ", StringComparison.Ordinal);
         var (title, detail) = split > 0 ? (failure[..split], failure[(split + 2)..]) : (failure, null);
         var subject = Verbs.FlightTarget(flight.Code);
@@ -306,7 +422,7 @@ public sealed partial class LegCommander
         var at = time.GetUtcNow();
         var after = state.Legs(flight.Code).Where(l => l.State == LegState.Done).OrderByDescending(l => l.Order).FirstOrDefault()?.Name;
         var movedTo = new FlightMovedTo { To = to, AfterLeg = after, At = at };
-        Record(flight.Code, f => f with { State = FlightState.Landed, LandedAt = at, MovedTo = movedTo, MoveFailure = null });
+        Record(flight.Code, f => f with { State = FlightState.Landed, LandedAt = at, MovedTo = movedTo, MoveFailure = null, MoveUnknown = null });
         _rung.TryRemove(flight.Code, out _);
         var text = $"{flight.Code} {movedTo.Text}";
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), text);

@@ -191,6 +191,26 @@ public sealed record FlightRow
     /// again (the card's Retry move, <c>pilot flight move</c>).
     /// </summary>
     public string? MoveFailure { get; init; }
+
+    /// <summary>
+    /// Set while it is not known whether the other node took the flight: the hand-over was sent and its answer was slow, lost or only
+    /// "still running". The flight stays here but is flown by nobody (no leg, PR or review starts) until the node has asked that node and
+    /// it says it holds the flight (then it moved) or, past the settling time, says it does not (then <see cref="MoveFailure"/>). Null otherwise.
+    /// </summary>
+    public FlightMoveUnknown? MoveUnknown { get; init; }
+}
+
+/// <summary>A move whose outcome is not known yet (<see cref="FlightRow.MoveUnknown"/>).</summary>
+public sealed record FlightMoveUnknown
+{
+    /// <summary>The node the flight was sent to, by its machine prefix.</summary>
+    public required string To { get; init; }
+
+    /// <summary>The node's endpoint, which names it where its prefix is not known and tells which peer to ask.</summary>
+    public required string Endpoint { get; init; }
+
+    /// <summary>When the hand-over was sent; the node does not call the flight not taken before the settling time has passed since.</summary>
+    public required DateTimeOffset Since { get; init; }
 }
 
 /// <summary>Where a flight this node handed over went (<see cref="FlightRow.MovedTo"/>).</summary>

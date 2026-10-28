@@ -439,6 +439,12 @@ public sealed partial class LegCommander(
     /// </summary>
     private async Task AdvanceAsync(FlightRow flight, CancellationToken cancellationToken)
     {
+        // A flight whose move may have been taken by another node is flown on no node until that is known: it is asked about, never advanced.
+        if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is { MoveUnknown: not null })
+        {
+            await SettleMoveAsync(flight.Code, cancellationToken);
+            return;
+        }
         if (!Models.Advances || state.Flights().FirstOrDefault(f => f.Code == flight.Code) is not { State: FlightState.Flying } current
             || await InMaintenanceAsync(current, cancellationToken))
         {

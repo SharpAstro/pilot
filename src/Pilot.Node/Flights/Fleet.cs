@@ -126,6 +126,12 @@ public sealed class HeldTokenFleet(string tokenFile) : IFleet
     /// <summary>How long a peer has to answer a read before it counts as unreachable.</summary>
     public static readonly TimeSpan ReadBudget = TimeSpan.FromSeconds(8);
 
+    /// <summary>
+    /// How long a peer has to answer a receive-flight: the node's own reply deadline (<c>NodeCommands.ReplyDeadline</c>, 90 s) and a margin, so a
+    /// receiver that is slow answers "still running" rather than being given up on at <see cref="ReadBudget"/> while it goes on taking the flight.
+    /// </summary>
+    public static readonly TimeSpan HandOverBudget = TimeSpan.FromSeconds(100);
+
     public IReadOnlyList<IFleetPeer> Peers()
     {
         var held = new LanHeldTokenFile(tokenFile);
@@ -161,14 +167,16 @@ public sealed class HeldTokenFleet(string tokenFile) : IFleet
 
         public async Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken)
         {
-            var envelope = await WithClientAsync((client, ct) => client.SendAsync(command, ct), cancellationToken).ConfigureAwait(false);
+            var limit = command.Verb == Verbs.ReceiveFlight ? HandOverBudget : ReadBudget;
+            var envelope = await WithClientAsync((client, ct) => client.SendAsync(command, ct), cancellationToken, limit).ConfigureAwait(false);
             return envelope.Response ?? throw new HttpRequestException($"{Endpoint} refused {command.Verb}: {envelope.Error}");
         }
 
-        private async Task<T> WithClientAsync<T>(Func<NodeClient, CancellationToken, Task<T>> read, CancellationToken cancellationToken)
+        private async Task<T> WithClientAsync<T>(Func<NodeClient, CancellationToken, Task<T>> read, CancellationToken cancellationToken, TimeSpan? limit = null)
         {
+            var allowed = limit ?? ReadBudget;
             using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            budget.CancelAfter(ReadBudget);
+            budget.CancelAfter(allowed);
             using var client = NodeClient.Remote(Endpoint, token);
             try
             {
@@ -176,7 +184,7 @@ public sealed class HeldTokenFleet(string tokenFile) : IFleet
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                throw new TimeoutException($"{Endpoint} did not answer within {ReadBudget.TotalSeconds:0} s");
+                throw new TimeoutException($"{Endpoint} did not answer within {allowed.TotalSeconds:0} s");
             }
         }
     }

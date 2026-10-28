@@ -70,7 +70,7 @@ public sealed class FlightMoveTests : IDisposable
         Fleet(true);
 
         var senderOptions = new NodeOptions(Path.Combine(_root, "sender.sock"), Path.Combine(_root, "sender-data"), MachinePrefix: "SE1", RepoRootsGiven: [Path.Combine(_root, "sender")]);
-        _peer = new MovePeer(_flights) { Checkout = Receiving };
+        _peer = new MovePeer(_flights) { Checkout = Receiving, State = _state };
         _senderFlights = new FlightCommander(_sender, new Planes(git), TimeProvider.System) { Models = _senderModels, Machine = "SE1", Fleet = new MoveFleet(_peer) };
         _senderLegs = new LegCommander(_sender, _senderWorkers, new FakeChecks(), new FakeGitHub(), _senderGit, new Planes(git), _senderFlights, senderOptions, TimeProvider.System) { Models = _senderModels };
     }
@@ -147,7 +147,13 @@ public sealed class FlightMoveTests : IDisposable
 
     private static CommandRequest Under(FlightMove move, string grant = "SE1") => move.Command("SE1/node") with { Grant = grant };
 
-    private Task<CommandResult> Receive(FlightMove move, string grant = "SE1") => _flights.RunAsync(Under(move, grant), Ct);
+    // The flight's advance runs after the receive-flight is answered; a test looks at what it did once it has finished.
+    private async Task<CommandResult> Receive(FlightMove move, string grant = "SE1")
+    {
+        var result = await _flights.RunAsync(Under(move, grant), Ct);
+        await _flights.WhenAdvancedAsync();
+        return result;
+    }
 
     private void NothingTaken()
     {
@@ -283,7 +289,7 @@ public sealed class FlightMoveTests : IDisposable
         var result = await Receive(Sent());
 
         result.Ok.ShouldBeFalse();
-        result.Error.ShouldBe("TIA900 is already here (landed on DE1): a code is one flight on a node for good");
+        result.Error.ShouldBe("TIA900 is already here (landed on DE1): a code is one flight on a node for good, unless the flight moved away from here and comes back");
         _state.Flights().ShouldHaveSingleItem().ShouldBe(here);
         _state.Legs().ShouldBeEmpty();
         Directory.Exists(Plane).ShouldBeFalse();
@@ -666,6 +672,207 @@ public sealed class FlightMoveTests : IDisposable
         _sender.Flights().Single(f => f.Code == "TIA901").State.ShouldBe(FlightState.Held);
     }
 
+    private async Task SweepSenderAsync() => await _senderLegs.AdvanceAllAsync(Ct);
+
+    /// <summary>The flight is flown by nobody on SE1 (no leg, review or PR starts) while its move is unknown, and DE1 flies it if it holds it.</summary>
+    private async Task SenderStartsNothingAsync()
+    {
+        await SweepSenderAsync();
+        _senderWorkers.Started.ShouldBeEmpty();
+        (await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.StartLeg, Target = Verbs.LegTarget(Code, "render"), Who = "tests" }, Ct)).Error
+            .ShouldNotBeNull().ShouldContain("it is not known yet whether DE1 took the flight");
+        _senderWorkers.Started.ShouldBeEmpty();
+        OnSender.State.ShouldBe(FlightState.Flying);
+    }
+
+    [Fact]
+    public async Task AReplyLostAfterTheReceiverTookTheFlightIsSettledByAskingItAndOnlyTheReceiverFliesIt()
+    {
+        Fly(LegState.Done);
+        SenderMaintenance(true);
+        _peer.Reply = Lost.AfterTaking;
+
+        await SweepSenderAsync();
+
+        // The answer never came, but DE1 says it holds the flight, so it moved: SE1 lets it go and flies nothing.
+        MovedAway();
+        _senderWorkers.Started.ShouldBeEmpty();
+        Directory.Exists(SenderPlane).ShouldBeFalse();
+        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("de1-tia900-render-validator");
+        await SweepSenderAsync();
+        _senderWorkers.Started.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AReplyLostWhileTheReceiverCannotBeAskedKeepsTheFlightOnNoNodeOfTheSenderUntilItIsKnown()
+    {
+        Fly(LegState.Done);
+        SenderMaintenance(true);
+        _peer.Reply = Lost.AfterTaking;
+        // DE1 took the flight, the reply was lost, and DE1 cannot be asked either.
+        _peer.AfterReceive = () => _peer.Reachable = false;
+
+        await SweepSenderAsync();
+
+        var unknown = OnSender.MoveUnknown.ShouldNotBeNull();
+        (unknown.To, unknown.Endpoint).ShouldBe(("DE1", "de1.local:47731"));
+        OnSender.MoveFailure.ShouldNotBeNull().ShouldStartWith("TIA900 may have moved to DE1: its answer did not come");
+        var card = _sender.Cards(openOnly: true).Single(c => c.Kind == LegCommander.MoveFailedKind);
+        card.Choices.ShouldHaveSingleItem().Label.ShouldBe("Retry move");
+        Directory.Exists(SenderPlane).ShouldBeTrue();
+        // One node flies it: DE1, which holds it; SE1 starts nothing, by sweep or by hand, and is not moved again until it is known.
+        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("de1-tia900-render-validator");
+        await SenderStartsNothingAsync();
+        (await Retry(card)).Error.ShouldNotBeNull().ShouldContain("not known yet whether DE1 took it");
+        _peer.Sent.Count.ShouldBe(1);
+
+        // DE1 answers again: it holds the flight, so it moved, and SE1 lets go.
+        _peer.Reachable = true;
+        await SweepSenderAsync();
+        MovedAway();
+        OnSender.MoveUnknown.ShouldBeNull();
+        Directory.Exists(SenderPlane).ShouldBeFalse();
+        _senderWorkers.Started.ShouldBeEmpty();
+        _peer.Sent.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AStillRunningReplyIsNotAMoveUntilTheReceiverHoldsTheFlight()
+    {
+        Fly(LegState.Done);
+        SenderMaintenance(true);
+        // Past the reply deadline DE1 answers Ok, "still running": the flight is not yet DE1's, and may never be.
+        _peer.Reply = Lost.StillRunningUntaken;
+
+        await SweepSenderAsync();
+
+        OnSender.MoveUnknown.ShouldNotBeNull().To.ShouldBe("DE1");
+        OnSender.MoveFailure.ShouldNotBeNull().ShouldContain("it was still taking it when its reply deadline passed");
+        OnSender.MovedTo.ShouldBeNull();
+        _state.Flights().ShouldBeEmpty();
+        await SenderStartsNothingAsync();
+
+        // The receive finishes late, on DE1: the next look finds it there, and the flight is DE1's alone.
+        _peer.Reply = Lost.None;
+        (await _flights.RunAsync(_peer.Sent[0] with { Grant = "SE1" }, Ct)).Ok.ShouldBeTrue();
+        await _flights.WhenAdvancedAsync();
+        await SweepSenderAsync();
+        MovedAway();
+        _senderWorkers.Started.ShouldBeEmpty();
+        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("de1-tia900-render-validator");
+    }
+
+    [Fact]
+    public async Task AFlightTheReceiverDoesNotHoldAfterTheSettlingTimeStaysHereAsAFailedMoveAndRetriesWithoutFlyingTwice()
+    {
+        Fly(LegState.Done);
+        SenderMaintenance(true);
+        _peer.Reply = Lost.BeforeTaking;
+
+        await SweepSenderAsync();
+
+        OnSender.MoveUnknown.ShouldNotBeNull();
+        await SenderStartsNothingAsync();
+        _state.Flights().ShouldBeEmpty();
+
+        // Past the settling time, with DE1 answering that it does not hold the flight, the move is a failed one: the flight stays, held in maintenance.
+        _senderLegs.MoveSettle = TimeSpan.Zero;
+        await SweepSenderAsync();
+        OnSender.MoveUnknown.ShouldBeNull();
+        var card = StayedWith("TIA900 did not move to DE1: DE1 does not hold it 0 minutes after it was sent, so the flight stays here. Move it again.");
+        _senderWorkers.Started.ShouldBeEmpty();
+
+        // The receive had in fact arrived late: the retry is answered taken by the same hand-over's idempotence, and the flight is DE1's only.
+        _peer.Reply = Lost.None;
+        (await _flights.RunAsync(_peer.Sent[0] with { Grant = "SE1" }, Ct)).Ok.ShouldBeTrue();
+        await _flights.WhenAdvancedAsync();
+        var retried = await Retry(card);
+        retried.Ok.ShouldBeTrue(retried.Error);
+        MovedAway();
+        _state.Flights().ShouldHaveSingleItem();
+        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("de1-tia900-render-validator");
+        _senderWorkers.Started.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TheSameHandOverAgainIsAnsweredTakenAndDoesNothingTwice()
+    {
+        var move = Sent() with { Head = _pushedHead };
+        (await Receive(move)).Ok.ShouldBeTrue();
+        var flight = _state.Flights().Single();
+        var cards = _state.Cards().Length;
+        var started = _workers.Started.Count;
+
+        var again = await Receive(move);
+
+        again.Ok.ShouldBeTrue(again.Error);
+        (again.Made, again.Way).ShouldBe((Code, "TIA900 moved from SE1 after leg parser"));
+        _state.Flights().ShouldHaveSingleItem().ShouldBe(flight);
+        _state.Cards().Length.ShouldBe(cards);
+        _workers.Started.Count.ShouldBe(started);
+
+        // Not another node's hand-over, nor one of a head this plane lacks.
+        (await Receive(move with { From = "XX1" })).Error.ShouldNotBeNull().ShouldStartWith("TIA900 is already here (flying on DE1)");
+        (await Receive(move with { Head = new string('a', 40) })).Error.ShouldNotBeNull().ShouldStartWith("TIA900 is already here (flying on DE1)");
+    }
+
+    [Fact]
+    public async Task AFlightThatMovedAwayComesBackAndReplacesItsMovedAwayRow()
+    {
+        var move = Sent() with { Head = _pushedHead };
+        (await Receive(move)).Ok.ShouldBeTrue();
+        // DE1 hands it on to SE1: its plane is gone, its branch is kept, its row says where it went.
+        Git(Receiving, "worktree", "remove", "--force", Plane);
+        _state.PutFlight(_state.Flights().Single() with { State = FlightState.Landed, MovedTo = new FlightMovedTo { To = "SE1", AfterLeg = "parser", At = DateTimeOffset.UtcNow } });
+        // SE1 flew on and pushed.
+        Git(Sending, "switch", "-q", Branch);
+        File.WriteAllText(Path.Combine(Sending, "more.txt"), "flown on SE1\n");
+        Git(Sending, "add", ".");
+        Git(Sending, "commit", "-q", "-m", "more");
+        Git(Sending, "push", "-q", "origin", Branch);
+        var head = Git(Sending, "rev-parse", "HEAD");
+
+        var back = await Receive(move with { Head = head });
+
+        back.Ok.ShouldBeTrue(back.Error);
+        var flight = _state.Flights().ShouldHaveSingleItem();
+        (flight.State, flight.MovedTo).ShouldBe((FlightState.Flying, null));
+        flight.MovedFrom.ShouldNotBeNull().From.ShouldBe("SE1");
+        Git(Plane, "rev-parse", "HEAD").ShouldBe(head);
+        File.ReadAllText(Path.Combine(Plane, "more.txt")).Trim().ShouldBe("flown on SE1");
+        _state.Legs(Code).Select(l => l.Name).ShouldBe(["parser", "render"]);
+    }
+
+    [Fact]
+    public async Task TheReceiveIsAnsweredBeforeTheFlightsAdvanceIsDone()
+    {
+        var gate = new TaskCompletionSource();
+        _flights.Advance = async (_, _) => await gate.Task;
+
+        var result = await _flights.RunAsync(Under(Sent()), Ct);
+
+        // Taken and answered while the advance (a validator starting) has not yet run.
+        result.Ok.ShouldBeTrue(result.Error);
+        result.Waiting.ShouldBeNull();
+        _workers.Started.ShouldBeEmpty();
+        _state.Flights().ShouldHaveSingleItem();
+
+        gate.SetResult();
+        await _flights.WhenAdvancedAsync();
+    }
+
+    [Fact]
+    public async Task AnAdvanceThatThrowsAfterTheReceiveIsACardNotAFailedReceive()
+    {
+        _flights.Advance = (_, _) => throw new InvalidOperationException("the launcher is down");
+
+        var result = await Receive(Sent());
+
+        result.Ok.ShouldBeTrue(result.Error);
+        _state.Flights().ShouldHaveSingleItem();
+        _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.NextStepKind).Detail.ShouldBe("the launcher is down");
+    }
+
     /// <summary>Git for the sending node, which a test makes refuse a push, as a remote that rejects it.</summary>
     private sealed class RefusingGit(IGit inner) : IGit
     {
@@ -706,7 +913,17 @@ public sealed class FlightMoveTests : IDisposable
         public Task<RepoInfo[]?> ReposAsync(CancellationToken cancellationToken) =>
             Task.FromResult<RepoInfo[]?>([new RepoInfo { Name = "tianwen", Path = Checkout!, GitHub = GitHub }]);
 
-        public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) => Task.FromResult(new FleetLoad(null, [], null));
+        /// <summary>The flights DE1 says it has: its node's state, as the stream's snapshot carries them.</summary>
+        public NodeState? State { get; init; }
+
+        /// <summary>How the answer to the receive-flight goes wrong, when it does: the flight is taken or not, and the sender hears nothing, or only "still running".</summary>
+        public Lost Reply { get; set; }
+
+        /// <summary>Whether the peer can be asked what it holds.</summary>
+        public bool Reachable { get; set; } = true;
+
+        public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) =>
+            Reachable ? Task.FromResult(new FleetLoad(null, State?.Flights() ?? [], null)) : throw new TimeoutException("de1.local:47731 did not answer within 8 s");
 
         public async Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken)
         {
@@ -715,11 +932,33 @@ public sealed class FlightMoveTests : IDisposable
             {
                 await before();
             }
+            if (Reply == Lost.BeforeTaking)
+            {
+                throw new TimeoutException("de1.local:47731 did not answer within 100 s");
+            }
+            if (Reply == Lost.StillRunningUntaken)
+            {
+                return new CommandResult
+                {
+                    Verb = command.Verb, Target = command.Target, Who = command.Who, Ok = true, Seq = 0,
+                    Waiting = "still running after 90 s; its outcome follows on the stream, check pilot status",
+                };
+            }
             var result = await receiver.RunAsync(command with { Grant = "SE1" }, cancellationToken);
+            // Over the wire the receiver goes on after it has answered; what it did then is what a test looks at.
+            await receiver.WhenAdvancedAsync();
             AfterReceive?.Invoke();
-            return result;
+            return Reply switch
+            {
+                Lost.AfterTaking => throw new TimeoutException("de1.local:47731 did not answer within 100 s"),
+                Lost.StillRunning => result with { Waiting = "still running after 90 s; its outcome follows on the stream, check pilot status" },
+                _ => result,
+            };
         }
     }
+
+    // The reply of a receive-flight that goes wrong: never taken and no answer; taken and no answer; taken and answered "still running"; and answered "still running" without being taken.
+    private enum Lost { None, BeforeTaking, AfterTaking, StillRunning, StillRunningUntaken }
 
     /// <summary>A peer whose receive-flight is this node's: what the sender's node reaches over the LAN, under its grant.</summary>
     private sealed class HandingPeer(FlightCommander receiver) : IFleetPeer
