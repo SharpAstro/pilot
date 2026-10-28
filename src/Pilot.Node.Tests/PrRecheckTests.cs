@@ -322,7 +322,7 @@ public sealed class PrRecheckTests : IDisposable
         var rebased = PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven");
         rebased.ShouldNotBe(head);
         PrOrigins.Git(Origin, "merge-base", "--is-ancestor", main, rebased).ShouldBeEmpty();
-        Handled().ShouldBe(["recheck of widget#7: brought up to date with main, review restarted"]);
+        Handled().ShouldBe(["recheck of widget#7: rebased onto main, review restarted"]);
         _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
         Review().ShouldNotBeNull().State.ShouldBe(PrReviewState.Reviewing);
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrRecheck.ConflictKind);

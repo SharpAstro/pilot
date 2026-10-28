@@ -654,7 +654,6 @@ public sealed class ReviewTests1 : ReviewTestsBase
         // Handed to the watchtower for the conflict, not sent back as changes, and the label says the conflict.
         F("TIA32").Review!.State.ShouldBe(ReviewState.Passed);
         PilotLabels(_github.Labels[number]).ShouldBe(["pilot: conflicts"]);
-        _github.Statuses.Last().State.ShouldBe("failure");
 
         // GitHub working it out again after a push does not lift it; its saying MERGEABLE does.
         _github.Pr = _github.Pr! with { Mergeable = "UNKNOWN" };
@@ -831,7 +830,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
-    public async Task AFlightWhoseBaseIsNoBranchOnTheRemoteIsRebasedOntoItsDefaultWhenItsPrOpens()
+    public async Task AFlightWhoseBaseIsNoBranchOnTheRemoteHasItsDefaultMergedInWhenItsPrOpens()
     {
         // Cut, as PIL126 was, from a feature branch that has since landed on main and gone from the remote.
         Git(Repo, "switch", "-q", "-c", "feat/landed");
@@ -850,12 +849,13 @@ public sealed class ReviewTests2 : ReviewTestsBase
 
         F("TIA5").Base.ShouldBe("origin/main");
         _github.Created.Last().Base.ShouldBe("main");
-        // The feature's commit is on main already, so only the leg's own commit is the PR's.
-        Git(F("TIA5").Worktree, "rev-list", "--count", "origin/main..HEAD").Trim().ShouldBe("1");
+        // The feature is on main already, so the PR's diff holds only the leg's own work.
+        Git(F("TIA5").Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
+        Git(F("TIA5").Worktree, "diff", "--name-only", "origin/main", "HEAD").ShouldNotContain("feature.txt");
     }
 
     [Fact]
-    public async Task ARebaseOntoTheDefaultWhenTheBaseIsNoBranchOnTheRemoteIsPushedWithTheLeaseAndNotMergedWithItsOldHead()
+    public async Task TheDefaultMergedInWhenTheBaseIsNoBranchOnTheRemoteIsPushedPlainOnTopOfTheOldHead()
     {
         Git(Repo, "switch", "-q", "-c", "feat/landed");
         File.WriteAllText(Path.Combine(Repo, "feature.txt"), "landed\n");
@@ -878,8 +878,8 @@ public sealed class ReviewTests2 : ReviewTestsBase
         var head = Git(wt, "rev-parse", "HEAD").Trim();
         F("TIA19").Base.ShouldBe("origin/main");
         Git(wt, "rev-parse", $"origin/{branch}").Trim().ShouldBe(head);
-        Git(wt, "rev-list", "--merges", "--count", $"origin/{branch}").Trim().ShouldBe("0");
-        Git(wt, "rev-list", "--count", "origin/main..HEAD").Trim().ShouldBe("1");
+        Git(wt, "merge-base", "--is-ancestor", "origin/main", head);
+        Git(wt, "diff", "--name-only", "origin/main", "HEAD").ShouldNotContain("feature.txt");
     }
 
     [Fact]

@@ -169,7 +169,7 @@ public sealed class MergedUnderLegTests : IDisposable
         // The base as it now stands is merged in, never rebased: the new leg's commit and the old head are both still in the history.
         Git(Plane, "merge-base", "--is-ancestor", "main", "HEAD");
         Git(Plane, "merge-base", "--is-ancestor", _mergedHead, "HEAD");
-        Git(Plane, "log", "--format=%s", "--no-merges", "main..HEAD").ShouldBe("the render\nthe parser");
+        Git(Plane, "log", "--format=%s", "--no-merges", "main..HEAD").ShouldBe("the render");
         Git(Origin, "rev-parse", "flight/tia1").ShouldBe(Git(Plane, "rev-parse", "HEAD"));
         node.State.Cards(openOnly: true).Any(c => c.Kind == FlightCommander.MergedUnderLegKind).ShouldBeFalse();
         node.State.Cards().Any(c => c.Kind == LegCommander.MergeTakenBackKind).ShouldBeFalse();
