@@ -209,9 +209,10 @@ public sealed class PackageHoldPageTests
             var tips = Layout.Engine.Arrange(view.Build(screen), new Rect<int>(0, 0, 1280, 900), CellMeasureContext.PixelAuthored)
                 .Select(a => a.Node.Tooltip).Where(t => t is { Length: > 0 }).ToList();
 
-            tips.ShouldContain(held.Title, detail ? "page" : "list");
+            // The page's title wraps whole, where the list's column cuts it.
             if (!detail)
             {
+                tips.ShouldContain(held.Title, "list");
                 tips.ShouldContain(wait);
                 tips.ShouldContain(held.Legs);
                 tips.ShouldContain($"holding for {LongId} 3.23.7");

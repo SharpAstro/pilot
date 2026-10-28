@@ -443,6 +443,15 @@ if (feed is not null && client is not null && clients is not null)
         () => CardCommandAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)], $"card:{card.Id}:{number}"), $"answer {card.Id}");
     chrome.Cards.OnDismiss = card => tracker.Run(() => CardCommandAsync(Verbs.Dismiss, card, [], $"card:{card.Id}:dismiss"), $"dismiss {card.Id}");
 
+    // A page that draws text over text raises one for-you card on this window's node (the check's own once-per-page rule): through
+    // the tracker, as a click's command goes, never on the render thread that found it.
+    chrome.TextCheck.Who = GuiSay.Who;
+    chrome.TextCheck.Send = request => tracker.Run(async () =>
+    {
+        var result = await client.SendAsync(request, cts.Token);
+        Console.WriteLine($"pilot-gui: raised '{request.Args?[1]}': {(!result.Success ? result.Error : result.Response is { Ok: false } answer ? answer.Error : "done")}");
+    }, "raise a text-overlap card");
+
     // The watchtower, from its panel: its Remote Control link one click away, and a shortcut to the Chat page.
     chrome.Cards.CanTell = true;
     chrome.Cards.OnOpen = url => OpenAway(url);
@@ -759,6 +768,8 @@ _ = Task.Run(async () =>
     }
 });
 void Say(string line) => console.Writer.TryWrite(line);
+// Every fault the live text check finds is a console line, a card or not (with no node connected it is all there is).
+chrome.TextCheck.Log = line => Say($"pilot-gui: {line}");
 CardsScreen? cards = snapshot is null ? null : CardsScreen.From(snapshot.Cards);
 JobsScreen? jobs = snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
 FleetScreen? fleet = null;

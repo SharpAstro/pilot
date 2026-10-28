@@ -267,7 +267,7 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
 /// one-line why under its button where the verb needs words, or a message put in the chat's box (Plan a leg). Generic over
 /// the surface, as the sessions view is.
 /// </summary>
-internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     public const string ListId = "flights";
 
@@ -282,6 +282,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private const float WhatDropBelow = 60f;
     private const float WhereWidth = 140f;
     private const float StateWidth = 160f;
+    // What a page too narrow for the table leaves these columns: their words end in an ellipsis; the row's tooltip has the whole (the Node column's cell has its own).
+    private const float CodeMin = 56f;
+    private const float StateMin = 64f;
+    private const float NodeMin = 40f;
     private const float BranchWidth = 150f;
     private const float LegsWidth = 210f;
     private const float SessionsWidth = 170f;
@@ -310,9 +314,14 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private RGBAColor32 Failed => P.Failed;
     private RGBAColor32 MenuBg => P.MenuBg;
 
-    private const float DetailHeight = 168f;
-    // The panel while a why is asked under its buttons: a row (WhyRowHeight) taller.
-    private const float DetailHeightAsking = DetailHeight + WhyRowHeight;
+    // The panel without its buttons: what it was (168) less their row, and a row more while a why is asked under them.
+    private const float DetailColumnsHeight = 124f;
+    // The panel's least height: some of its columns, its padding and a line of buttons. Below it the panel is not shown.
+    private const float DetailColumnsMinHeight = 40f;
+    private const float DetailHeight = DetailColumnsMinHeight + 16f + 28f;
+    private readonly ListScrollController _detailColumnsScroll = new() { Mode = ScrollBarMode.Interactive };
+    // What the table keeps before the panel has any: the header row and a few flights.
+    private const float BodyMinHeight = 140f;
     private const float DetailColumn = 380f;
     // Branch and Sessions are the columns a narrow window drops, each as it can no longer have its whole width (Optional);
     // the engine decides, from the room it has.
@@ -400,7 +409,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         // A PR the node does not list (landed or closed, or not read yet) has no row: the browser link it always was.
         if (OnPullRequest is not { } open || PullRequestLinks.Of(flight) is not { } pr || !PullRequestLinks.Lists(PullRequests, pr))
         {
-            return Link($"PR #{flight.PullRequest}", url, action);
+            return Link($"PR #{flight.PullRequest}", url, action).WAuto();
         }
         // Both carry the Copy URL menu: the URL is the PR's on GitHub, whichever of the two is right-clicked.
         return Layout.Builder.HStack(
@@ -416,7 +425,8 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                     .WithTooltip($"Open {pr} on GitHub")
                     .WAuto(), url))
             .WAuto()
-            .RowH(20f);
+            // HFixed, not RowH: RowH makes the width a star, which a flow's cell measures as nothing.
+            .HFixed(20f);
     }
 
     /// <summary>Opens an artifact: a file on the machine, or a URL.</summary>
@@ -601,10 +611,19 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>The selected flight's index, or -1.</summary>
     public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
+    /// <summary>
+    /// The width, in design units, the page has to draw in: <see cref="Render"/> sets it from its bounds, and a test that arranges the
+    /// tree itself sets it from the room it gives it. Null (not known) draws the cards at their own width, as pilot-tui does. The
+    /// canvas is wider than a narrow page and cannot scroll across, so a page narrower than it shows the grid, and a card is never
+    /// wider than the page.
+    /// </summary>
+    internal float? PageWidth { get; set; }
+
     public void Render(FlightsScreen screen, RectF32 bounds)
     {
         Palette.Use(Night);
         BeginFrame();
+        PageWidth = Table.PageWidth = Scale.ToDesignX(bounds.Width);
         var arranged = RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
         {
             DrawCanvas(fill, rect);
@@ -794,10 +813,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             // Flights whose move failed, in red above the table: what happened, and Retry move. The open flight's page has its own.
             parts.AddRange(MoveFailureBand.All<TSurface>(screen.Lines, P, RetryOf).Select(band => Layout.Builder.VStack(band).Pad(Gutter, 4f).WStar().HAuto()));
         }
-        parts.Add(body.HStar());
+        parts.Add(body.HStar(1f, BodyMinHeight));
         if (selected is not null && !Wizard.IsOpen && open is null)
         {
-            parts.Add(Details(selected));
+            // Its height is its content's, and no less than it needs: a window with less to give it (a header that wrapped onto many
+            // lines) shows the table alone, which is what the page is for, rather than a panel past the window's foot.
+            parts.Add(Details(selected).CollapseBelow(DetailHeight));
         }
         if (CanCommand && Said is { Length: > 0 } said)
         {
@@ -828,8 +849,8 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             var color = leg.Hold is not null || (leg.Wait is not null && leg.State == LegState.Flying) ? Held : leg.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
             var legState = $"{FlightWaiting.LegState(leg)}{steps}{(leg.GoArounds > 0 ? $" · go-around {leg.GoArounds}" : "")}";
             legs.Add(Layout.Builder.HStack(
-                    Layout.Builder.Text($"{leg.Order}. {leg.Name}", 13f, Body).WFixed(150f),
-                    Whole(Layout.Builder.Text(legState, 12f, color).WStar(), legState, DetailLegFits))
+                    Whole(Layout.Builder.Text($"{leg.Order}. {leg.Name}", 13f, Body).WStar(1f, 0f, 150f), $"{leg.Order}. {leg.Name}", 0),
+                    Whole(Layout.Builder.Text(legState, 12f, color).WStar(), legState, 0))
                 .RowH(20f));
         }
         if (line.LegRows.Count == 0)
@@ -838,22 +859,22 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         }
         if (flight.Review is { } review)
         {
-            legs.Add(Layout.Builder.Text($"review {review.State.ToString().ToLowerInvariant()}{(review.Report is { Length: > 0 } r ? $": {r.Split('\n')[0]}" : "")}", 12f,
-                review.State == ReviewState.Passed ? Flying : review.State == ReviewState.Changes ? Held : Dim).RowH(20f));
+            legs.Add(DetailLine($"review {review.State.ToString().ToLowerInvariant()}{(review.Report is { Length: > 0 } r ? $": {r.Split('\n')[0]}" : "")}",
+                review.State == ReviewState.Passed ? Flying : review.State == ReviewState.Changes ? Held : Dim));
         }
 
         var marks = FlightMarks.From(flight);
         if (marks.Line is { } markLine)
         {
-            legs.Add(Layout.Builder.Text(markLine, 12f, MarksColor(flight)).RowH(20f));
+            legs.Add(DetailLine(markLine, MarksColor(flight)));
         }
         if (marks.Warning is { } warning)
         {
-            legs.Add(Layout.Builder.Text($"⚠ GitHub: {warning}", 12f, Held).RowH(20f));
+            legs.Add(DetailLine($"⚠ GitHub: {warning}", Held));
         }
         if (marks.Pending is { } pending)
         {
-            legs.Add(Layout.Builder.Text(pending, 12f, Held).RowH(20f));
+            legs.Add(DetailLine(pending, Held));
         }
 
         // Its jobs: the long runs its workers handed to the node, running first.
@@ -863,7 +884,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             var isPaused = job.State == JobState.Running && job.PausedAt is not null;
             var color = isPaused ? Held : job.State switch { JobState.Running => Flying, JobState.Queued => Held, JobState.Succeeded => Landed, _ => Failed };
             var waiting = job.State == JobState.Queued && job.Step is { } step ? $" ({step})" : "";
-            legs.Add(Layout.Builder.Text($"job {job.Id} {(isPaused ? "paused" : job.State.ToString().ToLowerInvariant())}{waiting}: {job.Command}", 12f, color).RowH(20f));
+            legs.Add(DetailLine($"job {job.Id} {(isPaused ? "paused" : job.State.ToString().ToLowerInvariant())}{waiting}: {job.Command}", color));
         }
 
         var artifacts = new List<Layout.Node> { Label("artifacts").RowH(20f) };
@@ -903,18 +924,21 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
         // A why asked for sits under the buttons, the panel a row taller while it is there.
         var why = WhyRow(line).ToList();
+        // The columns are at least what the panel was (less its buttons' row), and more where they have more lines than that; they scroll
+        // in what the window leaves them, the buttons flow onto lines of their own where the page is narrower than they are, and the
+        // panel takes the height of both.
+        var columns = Layout.Builder.HStack(
+                Layout.Builder.VStack([.. legs]).WStar(1f, 0f, DetailColumn),
+                Layout.Builder.VStack([.. artifacts]).WStar(1f, 0f, DetailColumn))
+            .WithGap(24f)
+            .WStar().HAuto().HClamp(DetailColumnsHeight);
         return Layout.Builder.VStack([
-                Layout.Builder.HStack(
-                        Layout.Builder.VStack([.. legs]).WFixed(DetailColumn),
-                        Layout.Builder.VStack([.. artifacts]).WFixed(DetailColumn),
-                        Layout.Builder.Spacer().WStar())
-                    .WithGap(24f)
-                    .HStar(),
-                Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f).RowH(28f),
+                Layout.Builder.VStack(columns).WithScroll(_detailColumnsScroll).WStar().HStarUpToContent(1f, DetailColumnsMinHeight),
+                Layout.Builder.WrapH([.. buttons.Select(b => Layout.Builder.HStack(b).WAuto().HFixed(28f))]).WithGap(8f).WithLineGap(6f).WStar().HAuto(),
                 .. why])
             .Pad(Gutter, 8f)
             .Bg(PanelBg)
-            .RowH(why.Count > 0 ? DetailHeightAsking : DetailHeight);
+            .WStar().HStarUpToContent();
     }
 
     // The marks' colour: amber for changes, a disagreement or a write still to do, green for a pass, dim otherwise.
@@ -923,6 +947,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         { Warning: not null } or { Pending: not null } => Held,
         _ => flight.Review?.StatusState switch { "success" => Flying, "failure" => Held, _ => Dim },
     };
+
+    // A line of the panel: one row, ending in an ellipsis where the column is narrower than it, with the whole of it on hover.
+    private static Layout.Node DetailLine(string text, RGBAColor32 color) => Layout.Builder.Text(text, 12f, color).WithTooltip(text).RowH(20f);
 
     // A link that leaves the app: a click opens it, a right-click offers Copy URL (over the row's own menu, which stays on the rest of the row).
     private Layout.Node Link(string text, string location, string action) =>
@@ -987,17 +1014,17 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             return Layout.Builder.Text(screen.Hidden is null ? "No flights yet: New flight, above, makes one" : "No flight in play: Everything, above, shows the landed", 16f, Dim, TextAlign.Center).Stretch();
         }
-        if (CanvasShown)
+        if (CanvasShown && !CanvasTooWide(screen))
         {
             return CanvasBody(screen);
         }
-        if (GridShown)
+        if (GridShown || CanvasShown)
         {
             return GridBody(screen);
         }
 
         var marked = screen.Lines.Any(l => l.Node is not null);
-        var columns = Columns(marked, screen.Lines.Any(l => l.Stale is not null));
+        var columns = Table.Fit(Columns(marked, screen.Lines.Any(l => l.Stale is not null)));
         var rows = new Layout.Node[screen.Lines.Count];
         for (var i = 0; i < rows.Length; i++)
         {
@@ -1020,17 +1047,17 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Fixed("Flight", stale ? StaleCodeWidth : CodeWidth),
+            ListColumn.Fixed("Flight", stale ? StaleCodeWidth : CodeWidth, CodeMin),
             new ListColumn("What", Layout.Sizing.Star(1f, 0f), WhatDropBelow),
             ListColumn.Optional("Repo", WhereWidth),
-            ListColumn.Fixed("State", StateWidth),
+            ListColumn.Fixed("State", StateWidth, StateMin),
             ListColumn.Fixed("Legs", LegsWidth),
             ListColumn.Optional("Branch", BranchWidth),
             ListColumn.Optional("Sessions", SessionsWidth),
         };
         if (marked)
         {
-            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth));
+            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth, NodeMin));
         }
         return columns;
     }
@@ -1097,7 +1124,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         };
         if (marked)
         {
-            cells.Insert(0, ListTable.Top(Layout.Builder.Text(line.Node?.Name ?? "", 13f, landed ? Dim : Body)));
+            cells.Insert(0, ListTable.Top(Layout.Builder.Text(line.Node?.Name ?? "", 13f, landed ? Dim : Body).Whole(line.Node?.Name)));
         }
         var row = Table.Row(columns, Layout.Builder.Spacer().Bg(StripeColor(line)), cells)
             .RowH(RowHeight)

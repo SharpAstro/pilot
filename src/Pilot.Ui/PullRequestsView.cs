@@ -53,7 +53,7 @@ internal sealed record PullRequestsScreen(PullRequestsRow? Row, string Source, D
 /// list; a click selects a row (its flight's cards light in the panel), a double-click or Enter opens its flight or the PR.
 /// Generic over the surface, as the other pages are.
 /// </summary>
-internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     public const string ListId = "pull-requests";
 
@@ -84,6 +84,9 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     // The columns the page shows when it is narrow, in the order it gives them up: the author first, then the age, the review and the flight last.
     private const float StateWidth = 144f;
     private const float TitleMin = 180f;
+
+    // What a title keeps on the narrowest page: enough for its number and the start of its words.
+    private const float TitleFloor = 80f;
     private const float FlightWidth = 92f;
     private const float AuthorWidth = 120f;
     private const float ReviewWidth = 84f;
@@ -686,7 +689,12 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     private IReadOnlyList<(ListColumn Column, Func<PullRequestRow, Layout.Node> Cell)> Columns(float width)
     {
         var room = width - 2 * Gutter - 2 * ListTable.EndPad - ListTable.StripeWidth - ListTable.ColumnGap;
-        var used = StateWidth + TitleMin + ActionsWidth + 2 * ListTable.ColumnGap;
+        // A page too narrow for the state, a title and the buttons loses the buttons (a row's double-click and Enter still open it, and
+        // its card has the same Merge) and the title gives up what it needs of its own least, rather than the row running past the page.
+        var needed = StateWidth + TitleMin + ActionsWidth + 2 * ListTable.ColumnGap;
+        var withActions = needed <= room;
+        var titleMin = withActions ? TitleMin : Math.Clamp(room - StateWidth - ListTable.ColumnGap, TitleFloor, TitleMin);
+        var used = StateWidth + titleMin + (withActions ? ActionsWidth + 2 * ListTable.ColumnGap : ListTable.ColumnGap);
         var optional = new List<(string Header, float Width, Func<PullRequestRow, Layout.Node> Cell)>
         {
             ("Flight", FlightWidth, FlightCell),
@@ -707,7 +715,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         var columns = new List<(ListColumn, Func<PullRequestRow, Layout.Node>)>
         {
             (ListColumn.Fixed("State", StateWidth), StateCell),
-            (ListColumn.Star("Pull request", TitleMin), TitleCell),
+            (ListColumn.Star("Pull request", titleMin), TitleCell),
         };
         // In the order they are read: the flight, the author, the review, the age.
         foreach (var header in new[] { "Flight", "Author", "Review", "Updated" })
@@ -719,7 +727,10 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             }
         }
         // The row's actions go here, untitled: the buttons its state offers, in slots that hold their width when it offers fewer.
-        columns.Add((ListColumn.Fixed("", ActionsWidth), ActionsCell));
+        if (withActions)
+        {
+            columns.Add((ListColumn.Fixed("", ActionsWidth), ActionsCell));
+        }
         return columns;
     }
 
@@ -772,10 +783,11 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     private Layout.Node GroupRow(PullRequestGroup group)
     {
         var folded = IsFolded(group.Repo);
+        // The name takes what the fold mark and the count leave, and ends in an ellipsis where it is longer: a repo name has no break to wrap at.
         var name = Layout.Builder.HStack(
-                Layout.Builder.Text(group.Repo, TitleSize, P.Link).WAuto().HStar(),
+                Layout.Builder.Text(group.Repo, TitleSize, P.Link).WStar().HStar(),
                 Layout.Builder.Text(Followable.Away, TitleSize, P.Link).WAuto().HStar())
-            .WAuto()
+            .WStar()
             .BgHover(P.RowHoverBg)
             .Follows(new HitResult.ButtonHit($"prs:repo:{group.Repo}"), _ => OnOpen?.Invoke($"https://github.com/{group.Repo}"))
             .WithTooltip($"Open {group.Repo} on GitHub");
@@ -783,8 +795,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         return Layout.Builder.HStack(
                 Layout.Builder.Icon(folded ? Layout.IconKind.CaretRight : Layout.IconKind.CaretDown, 12f, BodyText).WFixed(16f).HStar(),
                 name.HStar(),
-                Layout.Builder.Text($"{count} {(count == 1 ? "PR" : "PRs")}", TextSize, BodyText).WAuto().HStar(),
-                Layout.Builder.Spacer().WStar())
+                Layout.Builder.Text($"{count} {(count == 1 ? "PR" : "PRs")}", TextSize, BodyText).WAuto().HStar())
             .WithGap(8f)
             .Pad(8f, 0f)
             .RowH(GroupHeight)

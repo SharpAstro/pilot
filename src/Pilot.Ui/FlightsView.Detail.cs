@@ -135,7 +135,7 @@ internal sealed partial class FlightsView<TSurface>
         {
             Pill("← Back", "flight:back", GoBack),
             Layout.Builder.Text(line.Code, 16f, Bright).WAuto().Selectable(),
-            Whole(Layout.Builder.Text(line.Title, 14f, Body).WStar().Selectable(), line.Title, TitleFits),
+            WrappedProse.Of(line.Title, 14f, Body, selectable: true).WAuto(),
         };
         // The PR is in the header, beside the title, with where it stands: it sat in the facts line below, past a long review chip.
         if (flight.PullRequestUrl is { } url)
@@ -150,11 +150,11 @@ internal sealed partial class FlightsView<TSurface>
         }
         else if (FlightMarks.PrState(flight) is { } prState)
         {
-            // The link's own height (20), so the two share one middle.
-            head.Add(Layout.Builder.Text(prState, 12f, PrStateColor(prState)).WAuto().RowH(20f).Selectable());
+            // Its cell is as tall as the link's, so the two share one middle.
+            head.Add(Layout.Builder.Text(prState, 12f, PrStateColor(prState)).WAuto().Selectable());
         }
         // The stale mark is a line of its own below: here it overlapped the title and cut the buttons at a narrow width.
-        head.Add(Layout.Builder.Text(line.StateDetail is null ? line.State : $"{line.State} ({line.StateDetail})", 13f, color, TextAlign.Far).WAuto().Selectable());
+        head.Add(WrappedProse.Of(line.StateDetail is null ? line.State : $"{line.State} ({line.StateDetail})", 13f, color, selectable: true).WAuto());
         // The buttons wrap onto lines of their own under the title, as Home's chips do: in the head row they took the title's room and
         // the last (a stale flight's dead "Remove render") ran past the page's edge at a narrow width.
         // Retry move is in the red band under the head, not said twice.
@@ -164,7 +164,7 @@ internal sealed partial class FlightsView<TSurface>
 
         var facts = new List<Layout.Node>
         {
-            Layout.Builder.Text($"{line.Where} · {line.Branch} · {line.Legs}", 12f, Dim).WAuto().Selectable(),
+            WrappedProse.Of($"{line.Where} · {line.Branch} · {line.Legs}", 12f, Dim, selectable: true).WAuto(),
         };
         if (flight.Review is { } review)
         {
@@ -174,7 +174,7 @@ internal sealed partial class FlightsView<TSurface>
         var marks = FlightMarks.From(flight);
         if (marks.Line is { } markLine)
         {
-            facts.Add(Layout.Builder.Text(markLine, 12f, MarksColor(flight)).WAuto().Selectable());
+            facts.Add(WrappedProse.Of(markLine, 12f, MarksColor(flight), selectable: true).WAuto());
         }
         if (marks.ReviewUrl is { } reviewUrl)
         {
@@ -182,13 +182,12 @@ internal sealed partial class FlightsView<TSurface>
         }
         if (marks.Warning is { } warning)
         {
-            facts.Add(Layout.Builder.Text($"⚠ GitHub: {warning}", 12f, Held).WAuto().Selectable());
+            facts.Add(WrappedProse.Of($"⚠ GitHub: {warning}", 12f, Held, selectable: true).WAuto());
         }
         if (marks.Pending is { } pending)
         {
-            facts.Add(Layout.Builder.Text(pending, 12f, Held).WAuto().Selectable());
+            facts.Add(WrappedProse.Of(pending, 12f, Held, selectable: true).WAuto());
         }
-        facts.Add(Layout.Builder.Spacer().WStar());
 
         _legBlocks.Clear();
         var legs = detail.Legs.Count == 0
@@ -202,7 +201,7 @@ internal sealed partial class FlightsView<TSurface>
 
         List<Layout.Node> page =
         [
-            Layout.Builder.HStack([.. head]).WithGap(10f).RowH(32f),
+            FlowRow.Of(32f, 10f, head),
         ];
         if (MoveFailureBand.Build<TSurface>(line, P, RetryOf(line)) is { } band)
         {
@@ -229,11 +228,16 @@ internal sealed partial class FlightsView<TSurface>
         }
         page.AddRange(ReviewAsks(detail));
         // The node's copies of the images the legs recorded, above the legs: the links in each leg stay as they were.
-        var scrolled = Gallery.Section($"flight:{line.Code}", detail.Attachments) is { } attachments ? [attachments, .. legs] : legs;
+        // The facts and who is working lead what scrolls, as the summary does: they wrap onto as many lines as the page needs, and
+        // above the scroll they pushed the page's foot past the window's.
+        List<Layout.Node> scrolled = [FlowRow.Of(22f, 14f, facts), FlowRow.Of(26f, 10f, WhoWorks(line))];
+        if (Gallery.Section($"flight:{line.Code}", detail.Attachments) is { } attachments)
+        {
+            scrolled.Add(attachments);
+        }
+        scrolled.AddRange(legs);
         return Layout.Builder.VStack(
                 [.. page,
-                Layout.Builder.HStack([.. facts]).WithGap(14f).RowH(22f),
-                Layout.Builder.HStack([.. WhoWorks(line)]).WithGap(10f).RowH(26f),
                 Layout.Builder.VStack([.. scrolled]).WithGap(10f).WithScroll(_detailScroll).Stretch()])
             .Pad(Gutter, 8f)
             .Stretch();
@@ -246,10 +250,17 @@ internal sealed partial class FlightsView<TSurface>
     /// <paramref name="action"/>'s button, or for a stale flight (its node unreachable) the same words as a dead one: a verb goes
     /// to the node, which cannot be asked, and a live button there read as a command that would be lost (pilot #325).
     /// </summary>
-    private Layout.Node ActionButton(FlightLine line, FlightAction action, string id) =>
-        line.Stale is null
-            ? Pill(action.Label, id, () => Choose(action, line.Code))
-            : CardsView<TSurface>.Dead(action.Label).WithTooltip(StaleWhy(line));
+    private Layout.Node ActionButton(FlightLine line, FlightAction action, string id)
+    {
+        // A label long past a narrow page (a leg's name in "Redo leg ...") ends in an ellipsis, with the whole of it on hover.
+        var label = CardsView<TSurface>.Ellipsize(action.Label, ActionFits);
+        var whole = label == action.Label ? null : action.Label;
+        return line.Stale is null
+            ? whole is null ? Pill(label, id, () => Choose(action, line.Code)) : Pill(label, id, () => Choose(action, line.Code)).WithTooltip(whole)
+            : CardsView<TSurface>.Dead(label).WithTooltip(whole is null ? StaleWhy(line) : $"{whole}: {StaleWhy(line)}");
+    }
+
+    private const int ActionFits = 24;
 
     /// <summary>Why a stale flight's commands are off, for a dead button's or a disabled entry's hover text.</summary>
     internal static string StaleWhy(FlightLine line) => $"{line.Stale} is unreachable: its commands wait until it answers";
@@ -316,7 +327,7 @@ internal sealed partial class FlightsView<TSurface>
                     _ => (session.Leg is { } leg ? $"flying {leg}" : "working", "Worker"),
                 };
                 var color = session.State == SessionState.Waiting ? Held : Flying;
-                yield return Layout.Builder.Text($"{doing} · {session.Name} · {session.State.ToString().ToLowerInvariant()}", 12f, color).WAuto().Selectable();
+                yield return WrappedProse.Of($"{doing} · {session.Name} · {session.State.ToString().ToLowerInvariant()}", 12f, color, selectable: true).WAuto();
                 if (OnSession is { } open)
                 {
                     // Named for whose it is: beside two sessions, two "Its transcript" said nothing of which was which.
@@ -330,7 +341,7 @@ internal sealed partial class FlightsView<TSurface>
         }
         else if (line.Row.State == FlightState.Flying && line.LegRows.Count == 0)
         {
-            yield return Layout.Builder.Text("not planned yet: no planner is running", 12f, Held).WAuto();
+            yield return WrappedProse.Of("not planned yet: no planner is running", 12f, Held).WAuto();
             if (CanCommand && OnAction is { } act)
             {
                 yield return line.Stale is null
@@ -341,9 +352,8 @@ internal sealed partial class FlightsView<TSurface>
         }
         else if (line.Row.State == FlightState.Flying)
         {
-            yield return Layout.Builder.Text("nothing is running on it now", 12f, Dim).WAuto();
+            yield return WrappedProse.Of("nothing is running on it now", 12f, Dim).WAuto();
         }
-        yield return Layout.Builder.Spacer().WStar();
     }
 
     private const string ValidatorSuffix = "-validator";
@@ -353,7 +363,7 @@ internal sealed partial class FlightsView<TSurface>
         var color = leg.Row.Hold is not null || (leg.Row.Wait is not null && leg.Row.State == LegState.Flying) ? Held : leg.Row.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
         var head = new List<Layout.Node>
         {
-            Layout.Builder.Text($"{leg.Order}. {leg.Name}", 15f, Bright).WAuto().Selectable(),
+            WrappedProse.Of($"{leg.Order}. {leg.Name}", 15f, Bright, selectable: true).WAuto(),
             Layout.Builder.Text(leg.State, 13f, color).WAuto().Selectable(),
         };
         if (leg.StepsText is { } steps)
@@ -364,9 +374,8 @@ internal sealed partial class FlightsView<TSurface>
         {
             head.Add(Layout.Builder.Text(goArounds, 12f, Held).WAuto().Selectable());
         }
-        head.Add(Layout.Builder.Spacer().WStar());
 
-        var rows = new List<Layout.Node> { Layout.Builder.HStack([.. head]).WithGap(12f).RowH(24f) };
+        var rows = new List<Layout.Node> { FlowRow.Of(24f, 12f, head) };
         rows.Add(Field("Goal", leg.Goal));
         rows.Add(Field("Done when", leg.DoneWhen));
         if (leg.Check is { } check)
@@ -392,8 +401,9 @@ internal sealed partial class FlightsView<TSurface>
             {
                 links.Add(Link("folder", folder, $"artifact-folder:{code}:{leg.Name}:{artifact.Title}").WAuto());
             }
-            links.Add(Layout.Builder.Text($"{artifact.When} · {artifact.Location}", 11f, Faint, trim: TextTrim.Start).WStar().Selectable());
-            rows.Add(Layout.Builder.HStack([.. links]).WithGap(10f).RowH(20f));
+            rows.Add(FlowRow.Of(20f, 10f, links));
+            var where = $"{artifact.When} · {artifact.Location}";
+            rows.Add(Layout.Builder.Text(where, 11f, Faint, trim: TextTrim.Start).WithTooltip(where).RowH(20f).Selectable());
         }
         var block = Layout.Builder.VStack([.. rows])
             .WithGap(4f)

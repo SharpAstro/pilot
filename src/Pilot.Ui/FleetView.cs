@@ -333,7 +333,7 @@ internal sealed class FleetWatch : IAsyncDisposable
 /// <see cref="OnOpen"/> (a window of its own on a node) by default.
 /// Generic over the surface, as the other pages are.
 /// </summary>
-internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     public const string ListId = "fleet";
 
@@ -359,6 +359,10 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private const float WorkWidth = 170f;
     private const float RingsWidth = 80f;
     private const float ButtonsWidth = 180f;
+    // What a page too narrow for the table leaves the columns that cannot be dropped: their words end in an ellipsis.
+    private const float MachineMin = 70f;
+    private const float RingsMin = 44f;
+    private const float ButtonsMin = 70f;
 
     private static RGBAColor32 Ground => Palette.Current.Ground;
     private static RGBAColor32 HeaderBg => Palette.Current.HeaderBg;
@@ -426,6 +430,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     {
         Palette.Use(Night);
         BeginFrame();
+        Table.PageWidth = Scale.ToDesignX(bounds.Width);
         RenderLayout(Tree(screen), bounds);
     }
 
@@ -483,7 +488,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             rows[i] = Row(screen.Lines[i], i);
         }
         return Layout.Builder.VStack(
-                Table.Header(Columns, Scale),
+                Table.Header(FitColumns, Scale),
                 Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch())
             .Pad(Gutter, 8f)
             .Stretch();
@@ -495,13 +500,16 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// </summary>
     private static readonly IReadOnlyList<ListColumn> Columns =
     [
-        ListColumn.Fixed("Node", MachineWidth),
+        ListColumn.Fixed("Node", MachineWidth, MachineMin),
         ListColumn.Fixed("Account and usage", AccountWidth),
         ListColumn.Fixed("Sessions", SessionsWidth),
         ListColumn.Optional("Flights and jobs", WorkWidth),
-        ListColumn.Fixed("Rings", RingsWidth),
-        ListColumn.Fixed("", ButtonsWidth),
+        ListColumn.Fixed("Rings", RingsWidth, RingsMin),
+        ListColumn.Fixed("", ButtonsWidth, ButtonsMin),
     ];
+
+    // The columns as the page can hold them (ListTable.Fit).
+    private IReadOnlyList<ListColumn> FitColumns => Table.Fit(Columns);
 
     private static float LastKnownUsageHeight(FleetLine line) => !line.Connected && line.Usage.Length > 0 ? 16f : 0f;
 
@@ -534,13 +542,15 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             // The row's menu item: it names what it does, so a node in maintenance offers to end it.
             buttons.Add(Pill(line.Maintenance ? "Take out of maintenance" : "Put into maintenance", $"fleet:{line.Where}:maintenance", () => maintenance(line, !line.Maintenance)));
         }
+        var where = line.Here ? $"{line.Where} · this window" : line.CanCommand ? line.Where : $"{line.Where} · watch only";
+        var rings = line.Rings == 0 ? "—" : $"{line.Rings} ringing";
         var cells = new List<Layout.Node>
         {
             Layout.Builder.VStack(
-                Layout.Builder.Text(line.Machine, 15f, line.Connected ? Bright : Dim).RowH(22f),
-                Layout.Builder.Text(line.Here ? $"{line.Where} · this window" : line.CanCommand ? line.Where : $"{line.Where} · watch only", 11f, Dim).RowH(18f)),
+                Layout.Builder.Text(line.Machine, 15f, line.Connected ? Bright : Dim).Whole(line.Machine).RowH(22f),
+                Layout.Builder.Text(where, 11f, Dim).Whole(where).RowH(18f)),
             Layout.Builder.VStack(
-                Layout.Builder.Text(line.Account, 13f, line.LastKnown ? Dim : Body).RowH(22f),
+                Layout.Builder.Text(line.Account, 13f, line.LastKnown ? Dim : Body).Whole(line.Account).RowH(22f),
                 line.Maintenance || line.AutopilotWord is not null || line.WatchtowerMark is not null
                     ? Layout.Builder.HStack([
                             .. (line.Maintenance ? [Layout.Builder.HStack(
@@ -562,10 +572,10 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.Flights, 13f, line.LastKnown ? Dim : Body).RowH(22f),
                 Layout.Builder.Text(line.JobHolder ?? line.Jobs switch { "—" => "", "none" => "no jobs", var jobs => $"jobs: {jobs}" }, 11f, line.JobHolder is null || line.LastKnown ? Dim : Ringing).RowH(18f)),
-            ListTable.Top(Layout.Builder.Text(line.Rings == 0 ? "—" : $"{line.Rings} ringing", 13f, line.Rings == 0 || line.LastKnown ? Dim : Ringing)),
+            ListTable.Top(Layout.Builder.Text(rings, 13f, line.Rings == 0 || line.LastKnown ? Dim : Ringing).Whole(rings)),
             Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f),
         };
-        var row = Table.Row(Columns, Layout.Builder.Spacer().Bg(line.Connected ? Live : Away), cells)
+        var row = Table.Row(FitColumns, Layout.Builder.Spacer().Bg(line.Connected ? Live : Away), cells)
             .RowH(RowHeightOf(line))
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
@@ -595,7 +605,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             .WAuto()
             .Bg(Button)
             .BgHover(ButtonHover)
-            .Follows(new HitResult.ButtonHit(action), _ => onClick());
+            .Follows(new HitResult.ButtonHit(action), _ => onClick())
+            // A narrow buttons column cuts a word like 'Take out of maintenance'; the whole is on hover.
+            .WithTooltip(label);
 }
 
 /// <summary>What the Home and Flights pages say when this window's node is in maintenance.</summary>

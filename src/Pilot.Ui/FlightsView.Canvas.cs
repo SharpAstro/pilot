@@ -76,6 +76,18 @@ internal sealed partial class FlightsView<TSurface>
             .Stretch();
     }
 
+    // Whether the canvas does not fit the page it is drawn in (its columns, their gaps and the page's gutters).
+    private bool CanvasTooWide(FlightsScreen screen)
+    {
+        return PageWidth is { } room && !FlightCanvas.Build(screen.Lines).FitsIn(room, Gutter);
+    }
+
+    // A card's width: its own, or the page's less its gutters where the page is narrower.
+    private float CardWidthOnPage()
+    {
+        return PageWidth is { } room ? FlightCanvas.CardWidthIn(room, Gutter) : FlightCanvas.CardWidth;
+    }
+
     private Layout.Node CanvasBody(FlightsScreen screen)
     {
         _canvas = FlightCanvas.Build(screen.Lines);
@@ -154,7 +166,7 @@ internal sealed partial class FlightsView<TSurface>
                 ListCursor.MoveTo(index);
                 OpenDetail(line.Code);
             })
-            .WFixed(FlightCanvas.CardWidth)
+            .WFixed(grid ? CardWidthOnPage() : FlightCanvas.CardWidth)
             .HFixed(height);
     }
 

@@ -1,0 +1,287 @@
+using DIR.Lib;
+using Layout = DIR.Lib.Layout;
+using Pilot.Contracts;
+using Shouldly;
+using SharpAstro.Png;
+using Xunit;
+
+namespace Pilot.Gui.Tests;
+
+/// <summary>
+/// Every page's arranged tree, with sample data, at the widths and DPIs the issue names: no text is drawn over other text,
+/// and none reaches past the scroll or the page that holds it (<see cref="TextOverlap"/>, the one check the live GUI reads too).
+/// Every case runs: a fault is the page's own layout and is fixed, never skipped. (DIR.Lib's stack measure, #169, is in the
+/// pinned package from 11.39.)
+/// </summary>
+public sealed class PageTextOverlapTests
+{
+    private static readonly int[] Widths = [700, 900, 1300, 1900];
+    private static readonly float[] Dpis = [1f, 1.25f, 1.5f];
+    private const int Height = 900;
+
+    internal static readonly string[] Pages =
+    [
+        "home", "sessions", "flights table", "flights canvas", "flight page", "jobs", "fleet", "settings", "repos", "pull requests", "chat",
+        "cards panel", "transcript", "wizard repos", "wizard issues",
+    ];
+
+    internal static readonly string[] States = ["sample", "long", "many", "empty"];
+
+    public static IEnumerable<TheoryDataRow<string, string, int, float>> Cases()
+    {
+        foreach (var page in Pages)
+        {
+            foreach (var state in States)
+            {
+                foreach (var width in Widths)
+                {
+                    foreach (var dpi in Dpis)
+                    {
+                        yield return new TheoryDataRow<string, string, int, float>(page, state, width, dpi)
+                        {
+                            TestDisplayName = Key(page, state, width, dpi),
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    internal static string Key(string page, string state, int width, float dpi) => $"{page} | {state} | {width} wide | DPI {dpi.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+
+    [Theory]
+    [MemberData(nameof(Cases))]
+    public async Task NoTextIsDrawnOverOtherTextOrPastItsClip(string page, string state, int width, float dpi)
+    {
+        var faults = await FaultsOf(page, state, width, dpi);
+        var dump = Environment.GetEnvironmentVariable("PILOT_TEXT_OVERLAP_DUMP");
+        if (dump is { Length: > 0 })
+        {
+            // One line a fault, for classifying a run: the case, then the fault's own line.
+            lock (DumpLock)
+            {
+                File.AppendAllLines(dump, faults.Select(f => $"{Key(page, state, width, dpi)}\t{f.Line}"));
+            }
+        }
+        faults.Select(f => f.Line).ShouldBeEmpty($"{Key(page, state, width, dpi)} [{faults.Count} faults]");
+    }
+
+    private static readonly Lock DumpLock = new();
+
+    /// <summary>The check over <paramref name="page"/> in <paramref name="state"/>, arranged as the chrome arranges it: the page in the room the rail and the panel leave.</summary>
+    internal static async Task<IReadOnlyList<TextFault>> FaultsOf(string page, string state, int width, float dpi)
+    {
+        using var prepared = await Prepare(page, state, width, dpi);
+        var ctx = new PixelMeasureContext<RgbaImage>(prepared.Renderer, SessionsCapture.FontPath, dpi);
+        return TextOverlap.Faults(Layout.Engine.Arrange(prepared.Tree, prepared.Rect, ctx));
+    }
+
+    internal static async Task<System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<float>>> ArrangedOf(string page, string state, int width, float dpi)
+    {
+        using var prepared = await Prepare(page, state, width, dpi);
+        var ctx = new PixelMeasureContext<RgbaImage>(prepared.Renderer, SessionsCapture.FontPath, dpi);
+        return Layout.Engine.Arrange(prepared.Tree, prepared.Rect, ctx);
+    }
+
+    /// <summary>A page set up in a state: its chrome, the page's tree and the room the chrome leaves it.</summary>
+    private sealed record Prepared(RgbaImageRenderer Renderer, PilotChrome<RgbaImage> Chrome, PageData Data, Layout.Node Tree, Rect<float> Rect) : IDisposable
+    {
+        public void Dispose() => Renderer.Dispose();
+    }
+
+    private static PilotPage PageOf(string page) => page switch
+    {
+        "home" => PilotPage.Home,
+        "sessions" or "transcript" => PilotPage.Sessions,
+        "flights table" or "flights canvas" or "flight page" or "wizard repos" or "wizard issues" => PilotPage.Flights,
+        "jobs" => PilotPage.Jobs,
+        "fleet" => PilotPage.Fleet,
+        "settings" => PilotPage.Settings,
+        "repos" => PilotPage.Repos,
+        "pull requests" => PilotPage.PullRequests,
+        "chat" => PilotPage.Chat,
+        _ => PilotPage.Home,
+    };
+
+    private static async Task<Prepared> Prepare(string page, string state, int width, float dpi)
+    {
+        var renderer = new RgbaImageRenderer((uint)width, Height);
+        var data = PageData.For(state);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = dpi };
+        chrome.Play.ShowEverything();
+        chrome.Flights.CanCommand = true;
+        chrome.Jobs.CanCommand = true;
+        chrome.Cards.CanTell = true;
+        chrome.Nodes.Choices = data.Nodes;
+        chrome.Autopilot.OnToggle = _ => { };
+        chrome.About.Newer = () => "2.0.9-beta.1";
+        chrome.About.Restart = () => { };
+        chrome.Show(PageOf(page));
+
+        // The room the chrome gives the page is the chrome's own: one frame arranges the window (rail, page and the cards panel, which
+        // it shows beside the page, drops for want of room, or cues on the rail) and says where each leaf went.
+        var cards = data.Cards;
+        void Frame() => chrome.Render(data.Sessions, data.Flights, cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, Height), data.Machines);
+        Frame();
+        if (page == "cards panel" && chrome.CardsDropped)
+        {
+            // A window too narrow for the panel beside the page shows it through the rail's cue, in the page's place.
+            chrome.ToggleCards();
+            Frame();
+        }
+        // Where the chrome draws no panel (none waiting, so nothing for the rail to cue either) there is nothing to check.
+        var panelDrawn = chrome.CardsBounds is not null;
+        var shown = page == "cards panel"
+            ? chrome.CardsBounds ?? chrome.PageBounds ?? throw new InvalidOperationException($"the chrome draws no page at {width} wide, DPI {dpi}")
+            : chrome.PageBounds ?? throw new InvalidOperationException($"the chrome draws no page at {width} wide, DPI {dpi}");
+        var pageWidth = shown.Width;
+        Rect<float> PageRect() => new(shown.X, shown.Y, shown.Width, shown.Height);
+        // What Render hands the Flights page from its bounds: the room it has, in design units.
+        chrome.Flights.PageWidth = pageWidth / dpi;
+        chrome.Sessions.Table.PageWidth = chrome.Flights.Table.PageWidth = chrome.Jobs.Table.PageWidth = chrome.Repos.Table.PageWidth = chrome.Fleet.Table.PageWidth = pageWidth / dpi;
+
+        Layout.Node tree;
+        Rect<float> rect = PageRect();
+        switch (page)
+        {
+            case "home":
+                tree = chrome.Home.Tree(new HomeScreen(data.Flights, data.Sessions, data.Jobs, cards, data.Machines));
+                break;
+            case "sessions":
+                tree = chrome.Sessions.Tree(data.Sessions);
+                break;
+            case "flights table":
+                chrome.Flights.Mode = FlightsViewMode.List;
+                tree = chrome.Flights.Tree(data.Flights);
+                break;
+            case "flights canvas":
+                chrome.Flights.Mode = FlightsViewMode.Canvas;
+                tree = chrome.Flights.Tree(data.Flights);
+                break;
+            case "flight page":
+                chrome.Flights.OpenDetail(data.Flights.Lines.Count > 0 ? data.Flights.Lines[0].Code : "NONE1");
+                tree = chrome.Flights.Tree(data.Flights);
+                break;
+            case "jobs":
+                tree = chrome.Jobs.Tree(data.Jobs);
+                break;
+            case "fleet":
+                tree = chrome.Fleet.Tree(data.Fleet);
+                break;
+            case "settings":
+                tree = chrome.Settings.Tree(PageData.Now);
+                break;
+            case "repos":
+                chrome.Repos.ExpandAll(data.Repos);
+                tree = chrome.Repos.Tree(data.Repos);
+                break;
+            case "pull requests":
+                tree = chrome.PullRequests.Tree(data.PullRequests, pageWidth / dpi);
+                break;
+            case "chat":
+                tree = await OpenChat(chrome, data);
+                break;
+            case "cards panel":
+                // As the chrome drew it: beside the page, or in the page's place where the rail's cue opened it.
+                tree = panelDrawn ? chrome.Cards.Tree(cards) : Layout.Builder.Spacer();
+                break;
+            case "transcript":
+                tree = await OpenTranscript(chrome, data);
+                break;
+            case "wizard repos":
+                tree = await OpenWizard(chrome, data, toIssues: false);
+                break;
+            case "wizard issues":
+                tree = await OpenWizard(chrome, data, toIssues: true);
+                break;
+            default:
+                throw new ArgumentException($"no page '{page}'", nameof(page));
+        }
+
+        return new Prepared(renderer, chrome, data, tree, rect);
+    }
+
+    /// <summary>
+    /// With PILOT_TEST_CAPTURE set to a folder, every page in the "long" state as a PNG at a narrow window and a wide one, as the
+    /// chrome paints it: what a person sees of the text the check above holds apart.
+    /// </summary>
+    [Fact]
+    public async Task CapturesOfEveryPageAtNarrowAndWideWindows()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        Directory.CreateDirectory(capture);
+        foreach (var (width, dpi) in new[] { (700, 1.5f), (1900, 1f) })
+        {
+            foreach (var page in Pages.Where(p => p != "cards panel"))
+            {
+                using var prepared = await Prepare(page, Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_STATE") is { Length: > 0 } state ? state : "long", width, dpi);
+                var chrome = prepared.Chrome;
+                var data = prepared.Data;
+                chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, Height), data.Machines);
+                File.WriteAllBytes(Path.Combine(capture, $"{page.Replace(' ', '-')}-{width}.png"), PngWriter.Encode(prepared.Renderer.Surface.Pixels, width, Height));
+            }
+        }
+    }
+
+    private static async Task<Layout.Node> OpenChat(PilotChrome<RgbaImage> chrome, PageData data)
+    {
+        var chat = chrome.Chat;
+        var feed = data.Chat;
+        chat.Load = (after, _) => Task.FromResult(after < 0 ? new ChatPage { Entries = feed, Total = feed.Length } : new ChatPage { Entries = [], Total = feed.Length });
+        chat.OnSend = _ => Task.FromResult<string?>(null);
+        chat.Open();
+        for (var i = 0; i < 100 && chat.Entries.Count < feed.Length; i++)
+        {
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+        chat.Close();
+        chat.Entries.Count.ShouldBe(feed.Length);
+        return chat.Tree();
+    }
+
+    private static async Task<Layout.Node> OpenTranscript(PilotChrome<RgbaImage> chrome, PageData data)
+    {
+        var entries = data.Transcript;
+        var view = chrome.Sessions;
+        view.Transcript.Load = (_, _, after, _) => Task.FromResult(after < 0
+            ? new TranscriptPage { Total = entries.Length, Entries = entries }
+            : new TranscriptPage { Total = entries.Length, Entries = [] });
+        var line = data.Sessions.Lines.Count > 0 ? data.Sessions.Lines[0] : SessionLine.From(PageData.Row("aaaa0000", "worker", SessionState.Working), PageData.Now);
+        view.Transcript.Open(line);
+        for (var i = 0; i < 100 && view.Transcript.Entries.Count < entries.Length; i++)
+        {
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+        view.Transcript.Entries.Count.ShouldBe(entries.Length);
+        return view.Tree(data.Sessions);
+    }
+
+    private static async Task<Layout.Node> OpenWizard(PilotChrome<RgbaImage> chrome, PageData data, bool toIssues)
+    {
+        var wizard = chrome.Flights.Wizard;
+        wizard.LoadRepos = _ => Task.FromResult(data.WizardRepos);
+        wizard.LoadIssues = (_, _) => Task.FromResult(data.WizardIssues);
+        wizard.Open();
+        for (var i = 0; i < 100 && wizard.RepoResults.Count < data.WizardRepos.Length; i++)
+        {
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+        if (toIssues && data.WizardRepos.Length > 0)
+        {
+            wizard.Toggle(data.WizardRepos[0]);
+            wizard.ToIssues();
+            for (var i = 0; i < 100 && wizard.IssueResults.Count < data.WizardIssues.Length; i++)
+            {
+                await Task.Delay(20, TestContext.Current.CancellationToken);
+            }
+        }
+        else if (data.WizardRepos.Length > 1)
+        {
+            wizard.Toggle(data.WizardRepos[1]);
+        }
+        return chrome.Flights.Tree(data.Flights);
+    }
+}

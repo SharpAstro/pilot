@@ -48,6 +48,11 @@ internal sealed class NewFlightWizard
 
     private const float RowHeight = 30f;
 
+    // A row's columns share the page by these weights, the name taking most; a column the page leaves less than MinSide is dropped
+    // (the name keeps its place and ends in an ellipsis), where a fixed width ran it past the page's edge (PIL380).
+    private const float NameWeight = 3f;
+    private const float MinSide = 80f;
+
     private readonly ListScrollController _repoScroll = new() { Mode = ScrollBarMode.Interactive };
     private readonly ListScrollController _issueScroll = new() { Mode = ScrollBarMode.Interactive };
     private readonly List<RepoInfo> _chosen = [];
@@ -398,8 +403,9 @@ internal sealed class NewFlightWizard
                             .Follows(new HitResult.ButtonHit("wizard:close"), _ => Close())
                             .WithTooltip("Close the wizard (Escape on the repos)"))
                     .RowH(28f),
-                Layout.Builder.Text(hint, 12f, Dim).RowH(20f))
-            .RowH(52f);
+                // Wrapped, never cut: it says what the step asks of the person.
+                WrappedProse.Of(hint, 12f, Dim))
+            .WStar().HAuto();
 
     private Layout.Node Repos()
     {
@@ -427,9 +433,9 @@ internal sealed class NewFlightWizard
             var order = _chosen.FindIndex(r => string.Equals(r.Path, repo.Path, StringComparison.OrdinalIgnoreCase));
             var row = Layout.Builder.HStack(
                     Layout.Builder.Text(order >= 0 ? $"{order + 1}" : "", 14f, Accent, TextAlign.Center).WFixed(28f),
-                    Layout.Builder.Text(repo.Name, 14f, Bright).WFixed(260f),
-                    Layout.Builder.Text(repo.GitHub ?? "not on GitHub", 12f, Dim).WStar(),
-                    Layout.Builder.Text(repo.Flights == 0 ? "" : $"{repo.Flights} {(repo.Flights == 1 ? "flight" : "flights")}", 12f, Dim, TextAlign.Far).WFixed(90f))
+                    Layout.Builder.Text(repo.Name, 14f, Bright).WStar(NameWeight, 0f, 260f).Whole(repo.Name),
+                    Layout.Builder.Text(repo.GitHub ?? "not on GitHub", 12f, Dim).WStar().Whole(repo.GitHub).CollapseBelow(MinSide),
+                    Layout.Builder.Text(repo.Flights == 0 ? "" : $"{repo.Flights} {(repo.Flights == 1 ? "flight" : "flights")}", 12f, Dim, TextAlign.Far).WStar(1f, 0f, 90f).CollapseBelow(MinSide))
                 .WithGap(10f)
                 .PadX(6f)
                 .RowH(RowHeight)
@@ -484,8 +490,8 @@ internal sealed class NewFlightWizard
             var at = i;
             var row = Layout.Builder.HStack(
                     Layout.Builder.Text($"#{issue.Number}", 14f, Accent).WFixed(70f),
-                    Layout.Builder.Text(issue.Title, 14f, Bright).WStar(),
-                    Layout.Builder.Text(string.Join(", ", issue.Labels), 12f, Dim, TextAlign.Far).WFixed(200f))
+                    Layout.Builder.Text(issue.Title, 14f, Bright).WStar().Whole(issue.Title),
+                    Layout.Builder.Text(string.Join(", ", issue.Labels), 12f, Dim, TextAlign.Far).WStar(1f, 0f, 200f).Whole(string.Join(", ", issue.Labels)).CollapseBelow(MinSide))
                 .WithGap(10f)
                 .PadX(6f)
                 .RowH(RowHeight)
@@ -509,11 +515,14 @@ internal sealed class NewFlightWizard
         for (var i = 0; i < picks.Count; i++)
         {
             var (repo, issue) = picks[i];
+            var waits = i == 0 ? "" : $"waits for {picks[i - 1].Repo.Name}";
             rows.Add(Layout.Builder.HStack(
                     Layout.Builder.Text($"{i + 1}.", 14f, Accent).WFixed(28f),
-                    Layout.Builder.Text($"{repo.Name} #{issue.Number}", 14f, Bright).WFixed(260f),
-                    Layout.Builder.Text(issue.Title, 14f, Body).WStar(),
-                    Layout.Builder.Text(i == 0 ? "" : $"waits for {picks[i - 1].Repo.Name}", 12f, Dim, TextAlign.Far).WFixed(220f))
+                    Layout.Builder.Text($"{repo.Name} #{issue.Number}", 14f, Bright).WStar(NameWeight, 0f, 260f).Whole($"{repo.Name} #{issue.Number}"),
+                    // The issue is what the person confirms: it stays at every width (cut, with the whole on hover) and the
+                    // 'waits for' column is the one dropped first.
+                    Layout.Builder.Text(issue.Title, 14f, Body).WStar(2f).Whole(issue.Title),
+                    Layout.Builder.Text(waits, 12f, Dim, TextAlign.Far).WStar(1f, 0f, 220f).Whole(waits).CollapseBelow(MinSide))
                 .WithGap(10f)
                 .PadX(6f)
                 .RowH(RowHeight));
@@ -551,10 +560,9 @@ internal sealed class NewFlightWizard
         }
         if (Current == Step.Creating)
         {
-            buttons.Add(Layout.Builder.Text(Status ?? "", 13f, Dim).WAuto());
+            buttons.Add(WrappedProse.Of(Status ?? "", 13f, Dim).WAuto());
         }
-        buttons.Add(Layout.Builder.Spacer().WStar());
-        return Layout.Builder.HStack([.. buttons]).WithGap(8f).RowH(30f);
+        return FlowRow.Of(30f, 8f, buttons);
     }
 
     private static Layout.Node Pill(string label, string action, Action onClick, bool go = false) =>

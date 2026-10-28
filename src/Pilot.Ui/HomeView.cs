@@ -164,7 +164,7 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
 /// flying and waiting on you, then every flight, session and job on the node as a chip. A chip opens the thing's own page through <see cref="OnFlight"/>, <see cref="OnSession"/> and
 /// <see cref="OnJob"/>. Generic over the surface, as the other pages are.
 /// </summary>
-internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     private const float Gutter = 20f;
 
@@ -424,24 +424,30 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             Layout.Builder.Spacer().HStar()).WFixed(OwnerWidth);
     }
 
+    // How much of a label a chip shows before it ends in an ellipsis, so one chip is never wider than a narrow page; the brief on
+    // hover has the whole of it.
+    private const int ChipFits = 30;
+
     private Layout.Node Chip(HomeChip chip)
     {
+        var label = CardsView<TSurface>.Ellipsize(chip.Label, ChipFits);
         var tint = chip.Tone switch { "held" or "queued" => Amber, "stale" => Stale, "failed" => FailedChip, _ => Green };
         var pill = chip.Kind switch
         {
             // A failed move's chip is red, its words on it Bright (8:1); its reason is the band under the chips, and in its brief.
             HomeChipKind.Flight when chip.Tone == "failed" =>
-                CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint),
+                CardsView<TSurface>.Pill(label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint),
             // The chip of a stale flight still opens its page (the last known row); its words, not its tint, say why it is dim,
             // and its brief says it again in full (ChipBrief.Flight).
             HomeChipKind.Flight when chip.Tone == "stale" =>
-                CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint, StaleText),
-            HomeChipKind.Flight => CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint),
-            HomeChipKind.Session => CardsView<TSurface>.Pill(chip.Label, $"home:session:{chip.Session!.Key}", () => OnSession?.Invoke(chip.Session), tint),
-            _ => CardsView<TSurface>.Pill(chip.Label, $"home:job:{chip.Job!.Key}", () => OnJob?.Invoke(chip.Job), tint),
+                CardsView<TSurface>.Pill(label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint, StaleText),
+            HomeChipKind.Flight => CardsView<TSurface>.Pill(label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint),
+            HomeChipKind.Session => CardsView<TSurface>.Pill(label, $"home:session:{chip.Session!.Key}", () => OnSession?.Invoke(chip.Session), tint),
+            _ => CardsView<TSurface>.Pill(label, $"home:job:{chip.Job!.Key}", () => OnJob?.Invoke(chip.Job), tint),
         };
         // The brief opens below the chip, centred, and the tooltip layer keeps it inside the window (flipping above near the bottom).
-        return chip.Brief.Length > 0 ? pill.WithTooltip(chip.Brief) : pill;
+        var shown = label == chip.Label ? chip.Brief : chip.Brief.Length > 0 ? $"{chip.Label}\n{chip.Brief}" : chip.Label;
+        return shown.Length > 0 ? pill.WithTooltip(shown) : pill;
     }
 
     public override bool HandleInput(InputEvent evt) => false;

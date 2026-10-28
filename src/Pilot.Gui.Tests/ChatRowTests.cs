@@ -64,21 +64,13 @@ public sealed class ChatRowTests
         var ctx = new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, dpi);
         var arranged = Layout.Engine.Arrange(chat.Tree(), new Rect<float>(0, 0, width, height), ctx);
 
-        // Every text leaf in the page's body (under the header), as drawn: no two of them share a pixel.
+        // Every text leaf in the page's body (under the header), as drawn: no two of them share a pixel, and none reaches past its clip.
         var texts = arranged
             .Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value.Length: > 0 } } && a.Bounds.Y > 70f * dpi)
             .Select(a => (Text: ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value, a.Bounds))
             .ToList();
         texts.Count.ShouldBeGreaterThan(50);
-        for (var i = 0; i < texts.Count; i++)
-        {
-            for (var j = i + 1; j < texts.Count; j++)
-            {
-                var (a, b) = (texts[i].Bounds, texts[j].Bounds);
-                var overlap = a.X < b.X + b.Width - 0.5f && b.X < a.X + a.Width - 0.5f && a.Y < b.Y + b.Height - 0.5f && b.Y < a.Y + a.Height - 0.5f;
-                overlap.ShouldBeFalse($"'{texts[i].Text}' {a} is drawn over '{texts[j].Text}' {b} at {width} wide, DPI {dpi}");
-            }
-        }
+        TextOverlap.Faults(arranged).Where(f => f.Bounds.Y > 70f * dpi).Select(f => f.Line).ShouldBeEmpty($"at {width} wide, DPI {dpi}");
 
         // The person's long message is there whole, its last word included, and nothing in the feed ends in an ellipsis.
         texts.ShouldContain(t => t.Text.Trim() == "(c1727)?)");

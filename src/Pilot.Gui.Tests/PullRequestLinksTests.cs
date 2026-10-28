@@ -100,10 +100,10 @@ public sealed class PullRequestLinksTests
 
     private static bool Has(PixelWidgetBase<RgbaImage> widget, string action) => Regions(widget).Any(r => r.Result is HitResult.ButtonHit b && b.Action == action);
 
-    // The page's list laid out as the window gives it (the cards panel takes the right), with its viewport and its row <pr>'s place.
-    private static (Rect<float> Viewport, Rect<float>? Row) ListOf(RgbaImageRenderer renderer, PullRequestsView<RgbaImage> page, PullRequestsScreen screen, PullRequestRow pr)
+    // The page's list laid out as the window gives it (the cards panel takes the right when there are cards), with its viewport and its row <pr>'s place.
+    private static (Rect<float> Viewport, Rect<float>? Row) ListOf(RgbaImageRenderer renderer, PullRequestsView<RgbaImage> page, PullRequestsScreen screen, PullRequestRow pr, bool withCards = true)
     {
-        var width = 1280f - 52f - CardsView<RgbaImage>.Width;
+        var width = 1280f - 52f - (withCards ? CardsView<RgbaImage>.Width : 0f);
         var arranged = Layout.Engine.Arrange(page.Tree(screen, width), new Rect<float>(0, 0, width, Height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
         var viewport = arranged.Single(a => a.Node.Scroll is not null).Bounds;
         var index = page.Rows.ToList().FindIndex(r => r.Url == pr.Url);
@@ -163,11 +163,11 @@ public sealed class PullRequestLinksTests
         var target = LastRow(screen.Row!);
         chrome.Show(PilotPage.PullRequests);
         Settle(chrome, null, null, screen);
-        InView(ListOf(renderer, chrome.PullRequests, screen, target)).ShouldBeFalse("a short window holds twelve rows at most");
+        InView(ListOf(renderer, chrome.PullRequests, screen, target, withCards: false)).ShouldBeFalse("a short window holds twelve rows at most");
 
         chrome.OpenPullRequest(target.Repo, target.Number);
         Settle(chrome, null, null, screen);
-        InView(ListOf(renderer, chrome.PullRequests, screen, target)).ShouldBeTrue();
+        InView(ListOf(renderer, chrome.PullRequests, screen, target, withCards: false)).ShouldBeTrue();
     }
 
     [Fact]
@@ -347,7 +347,7 @@ public sealed class PullRequestLinksTests
         var selected = chrome.PullRequests.SelectedRow.ShouldNotBeNull();
         selected.Number.ShouldBe(9999);
         chrome.Cards.Focus.ShouldBe("PIL9999");
-        InView(ListOf(renderer, chrome.PullRequests, screen, selected)).ShouldBeTrue();
+        InView(ListOf(renderer, chrome.PullRequests, screen, selected, withCards: false)).ShouldBeTrue();
         Says(chrome.PullRequests.Tree(screen), renderer, "has not been read").ShouldBeFalse();
         Says(chrome.PullRequests.Tree(screen), renderer, "not among the open pull requests").ShouldBeFalse();
     }
@@ -389,7 +389,7 @@ public sealed class PullRequestLinksTests
         chrome.OpenPullRequest(target.Repo, target.Number);
         Settle(chrome, null, null, screen);
         chrome.PullRequests.IsFolded(target.Repo).ShouldBeFalse();
-        InView(ListOf(renderer, chrome.PullRequests, screen, target)).ShouldBeTrue();
+        InView(ListOf(renderer, chrome.PullRequests, screen, target, withCards: false)).ShouldBeTrue();
     }
 
     [Fact]

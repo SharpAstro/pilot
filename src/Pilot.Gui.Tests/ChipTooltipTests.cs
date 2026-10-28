@@ -94,7 +94,8 @@ public sealed class ChipTooltipTests
         var sessionRows = Regions(Page(renderer, PilotPage.Sessions)).Where(r => r is { Result: HitResult.ListItemHit }).Select(r => r.Tooltip).ToList();
         foreach (var line in sessions.Lines)
         {
-            sessionRows.ShouldContain(ChipBrief.Text(ChipBrief.Session(line)));
+            // The page leads the chip's brief with the whole name, which its column may cut.
+            sessionRows.ShouldContain(ChipBrief.SessionRow(line));
         }
 
         var jobRows = Regions(Page(renderer, PilotPage.Jobs)).Where(r => r is { Result: HitResult.ListItemHit }).Select(r => r.Tooltip).ToList();

@@ -9,13 +9,34 @@ namespace Pilot.Ui;
 /// <param name="Header">The column's title, which also names it in the saved widths: the Node column comes and goes, so an index would drift.</param>
 /// <param name="Width">Its declared width: fixed for a value column a reader may drag, a star for the one that takes the slack.</param>
 /// <param name="DropBelow">With a value, the column collapses once the engine could give it less than this, on the header and on every row alike.</param>
-internal readonly record struct ListColumn(string Header, Layout.Sizing Width, float? DropBelow = null)
+internal sealed record ListColumn(string Header, Layout.Sizing Width, float? DropBelow = null)
 {
-    /// <summary>A column of a fixed width, which a drag on the divider beside it resizes.</summary>
-    public static ListColumn Fixed(string header, float width) => new(header, Layout.Sizing.Fixed(width));
+    /// <summary>
+    /// What the column is once the page cannot give every column its width (<see cref="ListTable.Fit"/>): null keeps it as it is.
+    /// A fixed column is then dropped, or narrowed where it says how far (<see cref="Fixed(string, float, float)"/>), and the star
+    /// column keeps less, so a narrow page narrows the table instead of running it past the page's edge (PIL380).
+    /// </summary>
+    public ListColumn? Squeezed { get; init; }
+
+    /// <summary>A column of a fixed width, which a drag on the divider beside it resizes; dropped where the page is too narrow for all of them.</summary>
+    public static ListColumn Fixed(string header, float width) => new(header, Layout.Sizing.Fixed(width)) { Squeezed = Optional(header, width) };
+
+    /// <summary>
+    /// A fixed column a too-narrow page narrows, to <paramref name="shrinkTo"/> at the least (its words ending in an ellipsis), where
+    /// <see cref="Fixed(string, float)"/> would drop it: the one a row cannot do without (a state).
+    /// </summary>
+    public static ListColumn Fixed(string header, float width, float shrinkTo) =>
+        new(header, Layout.Sizing.Fixed(width)) { Squeezed = new ListColumn(header, Layout.Sizing.Star(1f, shrinkTo, width)) };
 
     /// <summary>The column that takes what the others leave, never less than <paramref name="min"/> (0: it may shrink to nothing).</summary>
     public static ListColumn Star(string header, float min = 0f) => new(header, Layout.Sizing.Star(1f, min));
+
+    /// <summary>
+    /// A star column that, on a page too narrow for the table, keeps only <paramref name="squeezedMin"/> and takes
+    /// <paramref name="squeezedWeight"/> shares of the room to the others' one, so it still has most of what there is.
+    /// </summary>
+    public static ListColumn Star(string header, float min, float squeezedMin, float squeezedWeight = 1f) =>
+        new(header, Layout.Sizing.Star(1f, min)) { Squeezed = new ListColumn(header, Layout.Sizing.Star(squeezedWeight, squeezedMin)) };
 
     /// <summary>
     /// A column the page drops on a narrow window: its whole <paramref name="width"/> while there is room, gone once the
@@ -80,6 +101,31 @@ internal sealed class ListTable
 
     /// <summary>The page this table belongs to, the key its widths are saved under.</summary>
     public string Page { get; }
+
+    /// <summary>
+    /// The width, in design units, the page has to draw in: its view sets it from its bounds when it renders, and a test that arranges
+    /// the tree itself from the room it gives it. Null (not known) lays the table out as it was declared.
+    /// </summary>
+    public float? PageWidth { get; set; }
+
+    // What a page spends beside the columns: its gutters either side, a row's padding either side, the stripe and the gap after it.
+    private const float PageGutter = 16f;
+
+    /// <summary>
+    /// <paramref name="columns"/> as the page can hold them: as declared while the room is there for each column that cannot be
+    /// dropped at its width (a fixed column's, a star column's least), else each column as it says it is when squeezed. A narrower
+    /// page then has a narrower table, never one wider than itself.
+    /// </summary>
+    public IReadOnlyList<ListColumn> Fit(IReadOnlyList<ListColumn> columns)
+    {
+        if (PageWidth is not { } room)
+        {
+            return columns;
+        }
+        var shown = columns.Where(c => c.DropBelow is null).ToList();
+        var needs = 2 * PageGutter + 2 * EndPad + StripeWidth + ColumnGap + shown.Sum(c => c.Width.IsFixed ? c.Width.Value : c.Width.Min) + Math.Max(0, shown.Count - 1) * ColumnGap;
+        return needs <= room ? columns : [.. columns.Select(c => c.Squeezed ?? c)];
+    }
 
     /// <summary>The widths a reader has dragged, which header and rows both read.</summary>
     public Layout.TableColumnWidths Widths { get; } = new();
