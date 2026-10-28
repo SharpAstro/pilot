@@ -143,6 +143,28 @@ public sealed record FlightRow
     }
 
     private readonly PackageWait[]? _packageWaits;
+
+    /// <summary>
+    /// Where the flight came from when another node handed it over (<c>receive-flight</c>, #376): which node, after which leg,
+    /// when. Null for a flight made on this node.
+    /// </summary>
+    public FlightMoved? MovedFrom { get; init; }
+}
+
+/// <summary>Where a flight that moved between nodes came from (<see cref="FlightRow.MovedFrom"/>).</summary>
+public sealed record FlightMoved
+{
+    /// <summary>The node that handed it over, by its machine prefix (<c>SE1</c>).</summary>
+    public required string From { get; init; }
+
+    /// <summary>The last leg done on that node's plane, in the flight's order; null when none was done yet.</summary>
+    public string? AfterLeg { get; init; }
+
+    /// <summary>When this node took the flight over.</summary>
+    public required DateTimeOffset At { get; init; }
+
+    /// <summary>How a client says it, in one place: <c>moved from SE1 after leg parser</c>.</summary>
+    public string Text => AfterLeg is { Length: > 0 } ? $"moved from {From} after leg {AfterLeg}" : $"moved from {From}";
 }
 
 /// <summary>

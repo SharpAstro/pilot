@@ -26,6 +26,8 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(SessionRow))]
 [JsonSerializable(typeof(Artifact))]
 [JsonSerializable(typeof(FlightRow))]
+[JsonSerializable(typeof(FlightMoved))]
+[JsonSerializable(typeof(FlightMove))]
 [JsonSerializable(typeof(OverlapRow))]
 [JsonSerializable(typeof(FoldedIssue))]
 [JsonSerializable(typeof(PackageWait))]

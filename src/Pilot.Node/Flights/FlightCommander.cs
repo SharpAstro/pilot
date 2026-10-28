@@ -47,18 +47,30 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
     /// <summary>The other nodes of the fleet, which a create-flight in maintenance is routed to; null where there are none (a test's commander).</summary>
     public IFleet? Fleet { get; set; }
 
+    /// <summary>This machine's checkouts, by which a flight handed over is given its own repo; null where there is none (a receive-flight is then refused for want of a checkout).</summary>
+    public RepoCatalog? Repos { get; set; }
+
+    /// <summary>
+    /// Takes a flight's next step, as the sweep does (<see cref="LegCommander.AdvanceFlightAsync"/>): what a flight handed over goes on
+    /// with once it is here, through the normal advance and no path of its own. Null where there is none (a test's commander).
+    /// </summary>
+    public Func<string, CancellationToken, Task>? Advance { get; set; }
+
     /// <summary>The quiet card a flight folded into another leaves in place of a landed one.</summary>
     public const string FoldedKind = "folded";
 
     /// <summary>The Handled card that says a flight went to another node, as this one is in maintenance.</summary>
     public const string RoutedKind = "routed";
 
+    /// <summary>The Handled card that says a flight came from another node.</summary>
+    public const string ReceivedKind = "received";
+
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
-    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.Connect or Verbs.Land or Verbs.FlyAnyway;
+    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.ReceiveFlight or Verbs.Connect or Verbs.Land or Verbs.FlyAnyway;
 
     /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
     public Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken) =>
-        command.Verb == Verbs.CreateFlight
+        command.Verb is Verbs.CreateFlight or Verbs.ReceiveFlight
             ? CreateOneAtATimeAsync(command, cancellationToken)
             : LockWait.RunAsync(_one, state, time, command, token => RunUnderLockAsync(command, token), cancellationToken);
 
@@ -97,8 +109,10 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         }
     }
 
+    // A flight made and a flight received both claim a code, so they take turns on the one lock.
     private async Task<CommandResult> CreateOneAtATimeAsync(CommandRequest command, CancellationToken cancellationToken)
     {
+        CommandResult result;
         await _creating.WaitAsync(cancellationToken);
         try
         {
@@ -107,18 +121,27 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             string? way = null;
             try
             {
-                (made, way) = await CreateAsync(command, cancellationToken);
+                (made, way) = command.Verb == Verbs.ReceiveFlight
+                    ? await ReceiveAsync(command, cancellationToken)
+                    : await CreateAsync(command, cancellationToken);
             }
             catch (FlightException ex)
             {
                 error = ex.Message;
             }
-            return state.Complete(command, error, way: way, made: made);
+            result = state.Complete(command, error, way: way, made: made);
         }
         finally
         {
             _creating.Release();
         }
+
+        // A flight handed over goes on by the node's normal advance (its next leg, or its PR), off this lock: starting a leg takes the leg verbs' own.
+        if (result.Ok && command.Verb == Verbs.ReceiveFlight && result.Made is { } received && Advance is { } advance)
+        {
+            await advance(received, cancellationToken);
+        }
+        return result;
     }
 
     /// <summary>
@@ -218,6 +241,84 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         });
         await LabelAsync(repoPath, item, code, otherNode, cancellationToken);
         return (code, null);
+    }
+
+    /// <summary>
+    /// Takes over a flight another node hands this one (<see cref="Verbs.ReceiveFlight"/>, #376): refused unless it comes under a LAN
+    /// grant, this node is out of maintenance and willing to take fleet flights, it does not have the code already, no leg of the
+    /// flight is flying, and it has a checkout of the repo's GitHub remote. Then the plane is made from the branch the sender pushed
+    /// (in this machine's checkout, at this machine's path), and the flight, its legs and its open cards are put as they were, the
+    /// flight saying where it came from. Returns the code, and where it came from as the result's way.
+    /// </summary>
+    private async Task<(string Code, string? Way)> ReceiveAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        if (command.Grant is null)
+        {
+            throw new FlightException($"{Verbs.ReceiveFlight} is taken from another node of the fleet, under its grant, not from a client of {Machine}");
+        }
+        if (Models.Maintenance)
+        {
+            throw new FlightException($"{Machine} is in maintenance: it takes no new flights");
+        }
+        if (!Models.AcceptsFleetFlights)
+        {
+            throw new FlightException($"{Machine} does not take a flight another node hands it (accept-fleet-flights is off)");
+        }
+        if (FlightMove.Read((command.Args ?? []).FirstOrDefault()) is not { } move || move.Flight.Code.Length == 0)
+        {
+            throw new FlightException($"{Verbs.ReceiveFlight} takes the flight's whole record as JSON, as in {Verbs.ReceiveFlight} flight/<code> <record>");
+        }
+        var sent = move.Flight;
+        var code = sent.Code;
+        if (!string.Equals(command.Target, Verbs.FlightTarget(code), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException($"{command.Target} is not the flight in the record, {code}");
+        }
+        if (state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) is { } here)
+        {
+            throw new FlightException($"{code} is already here ({here.State.ToString().ToLowerInvariant()} on {Machine}): a code is one flight on a node for good");
+        }
+        if (sent.State != FlightState.Flying)
+        {
+            throw new FlightException($"{code} is {sent.State.ToString().ToLowerInvariant()}: only a flying flight is handed over");
+        }
+        if (move.Legs.FirstOrDefault(l => l.State == LegState.Flying) is { } flying)
+        {
+            throw new FlightException($"{code}'s leg {flying.Name} is still flying on {move.From}: it is handed over once the leg has finished");
+        }
+        if (move.GitHub is not { Length: > 0 } gitHub)
+        {
+            throw new FlightException($"{code}'s repo has no GitHub remote on {move.From}, so {Machine} cannot tell which of its checkouts is it");
+        }
+        var checkout = Repos?.Repos().FirstOrDefault(r => string.Equals(r.GitHub, gitHub, StringComparison.OrdinalIgnoreCase))?.Path;
+        var repoPath = checkout is null ? null : await planes.MainCheckoutAsync(checkout, cancellationToken);
+        if (repoPath is null)
+        {
+            throw new FlightException($"{Machine} has no checkout of {gitHub}");
+        }
+
+        var plane = await planes.MakeFromBranchAsync(repoPath, code, sent.Branch, sent.Base, cancellationToken);
+        var moved = new FlightMoved { From = move.From, AfterLeg = move.AfterLeg, At = time.GetUtcNow() };
+        state.PutFlight(sent with
+        {
+            Repo = Path.GetFileName(repoPath),
+            RepoPath = repoPath,
+            Branch = plane.Branch,
+            Worktree = plane.Worktree,
+            Base = plane.Base,
+            MovedFrom = moved,
+        });
+        foreach (var leg in move.Legs.Where(l => string.Equals(l.Flight, code, StringComparison.Ordinal)))
+        {
+            state.PutLeg(leg);
+        }
+        foreach (var card in move.Cards.Where(c => c is { State: CardState.Open, Bin: not CardBin.Handled } && FlightMove.IsAbout(c, code)))
+        {
+            state.RaiseCard(card.Bin, card.Kind, card.Subject, card.Title, card.Detail, card.Choices, card.Link, card.AskedBy, card.Why);
+        }
+        var way = $"{code} {moved.Text}";
+        state.RaiseCard(CardBin.Handled, ReceivedKind, Verbs.FlightTarget(code), way, $"{move.From} handed {code} over to {Machine}, which made its plane at {plane.Worktree} from {plane.Branch} on origin");
+        return (code, way);
     }
 
     /// <summary>The node code another node's label on <paramref name="item"/> names, or null when it has none (this node's own is no other's).</summary>

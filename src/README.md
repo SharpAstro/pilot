@@ -1017,6 +1017,30 @@ maintenance`), which `pilot flight create`, the MCP tool and the new-flight wiza
 command is refused, naming each node and why it did not qualify (`in maintenance`, `not willing`, `unreachable`,
 `no grant`, `no checkout of <owner/name>`); with no other node known, it is refused with the maintenance reason alone.
 
+**Handing a flight to another node (#376).** Routing moves a flight that does not exist yet; `receive-flight flight/<code>
+<record>` moves one that does, so a node can take over a flight another node hands it. The record (`FlightMove`, JSON, the one
+argument) is the flight's whole row (its PR, its review), every leg with its report, checklist, artifacts and go-arounds, the
+cards about the flight still open, the sending node's prefix, the last leg done there, and the repo's GitHub `owner/name`.
+The plane is not in it: the sender pushes the flight's branch first (`FlightMoves.Gather` builds the record,
+`IFleetPeer.SendAsync(move, who)` hands it over, under the grant it holds for the peer). The receiver:
+- refuses unless the command comes under a LAN grant, it is not in maintenance (`<machine> is in maintenance: it takes no new
+  flights`) and has `accept-fleet-flights` on, it does not have the code already, whatever its state (`TIA900 is already here
+  (landed on DE1)`: a code is one flight on a node for good), no leg of the flight is flying (it is handed over once the leg
+  has finished), the flight is flying, and it has a checkout of the repo's GitHub remote under its repo roots (`<machine> has no
+  checkout of <owner/name>`); a branch the sender did not push is refused too (`<branch> is not on origin of <checkout>`). A
+  refusal changes nothing: no flight, leg, card or plane is left;
+- makes the plane in its own checkout from the pushed branch (`git fetch` of the branch, then `git worktree add` of
+  `<checkout>/.claude/worktrees/<code>` on `origin/<branch>`), so the worktree stands at the pushed head, and the flight's
+  `RepoPath`, `Worktree` and `Branch` are this machine's own;
+- puts the flight, its legs as they were, and the open cards about the flight (raised again here, numbered by this node), and
+  records where it came from in `FlightRow.MovedFrom` (`From`, `AfterLeg`, `At`, journaled with the row; `FlightMoved.Text` says it
+  for every client: `moved from SE1 after leg parser`), plus a Handled `received` card saying the same;
+- then takes the flight's next step by the node's ordinary advance (`LegCommander.AdvanceFlightAsync`, the sweep's own step for
+  one flight): the next planned leg starts (a leg after a done one with its validator first, as anywhere), or the PR and its
+  review once every leg is done. The result's `Made` is the code and its `Way` the same words as the card.
+
+An artifact a leg recorded keeps the sender's path or URL: the images it names are not copied to the receiver.
+
 Any other setting's change restarts the node to run with it, once no
 job runs or waits (a job is its child): the node starts its
 successor with its own arguments and `--after <its pid>`, and stops, as a self-update does, so flights, sessions and

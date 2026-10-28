@@ -145,6 +145,34 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         return new Plane(repoPath, branch, worktree, baseRef);
     }
 
+    /// <summary>
+    /// Makes the plane of a flight another node pushed (#376): its <paramref name="branch"/> fetched from origin, and a worktree
+    /// of the code's folder checked out at the pushed head. A local branch of that name left from an earlier stay is moved up to
+    /// the pushed head when that only fast-forwards it; one with commits origin lacks is refused, never overwritten. Throws with git's words.
+    /// </summary>
+    public async Task<Plane> MakeFromBranchAsync(string repoPath, string code, string branch, string baseRef, CancellationToken cancellationToken)
+    {
+        var fetch = await git.RunAsync(["fetch", "--quiet", "origin", $"+refs/heads/{branch}:refs/remotes/origin/{branch}"], repoPath, cancellationToken);
+        if (!fetch.Ok)
+        {
+            throw new FlightException($"{branch} is not on origin of {repoPath}, so {code}'s plane cannot be made from it: {fetch.Why}");
+        }
+        var pushed = $"origin/{branch}";
+        var worktree = Path.Combine(repoPath, ".claude", "worktrees", code.ToLowerInvariant());
+        var local = await git.RunAsync(["rev-parse", "--verify", "--quiet", $"refs/heads/{branch}"], repoPath, cancellationToken);
+        if (local.Ok && !(await git.RunAsync(["merge-base", "--is-ancestor", $"refs/heads/{branch}", pushed], repoPath, cancellationToken)).Ok)
+        {
+            throw new FlightException($"{repoPath} has a branch {branch} with commits that {pushed} lacks: it is not overwritten, so {code}'s plane is not made from it");
+        }
+        var add = await git.RunAsync(["worktree", "add", "--no-track", local.Ok ? "-B" : "-b", branch, worktree, pushed], repoPath, cancellationToken);
+        if (!add.Ok)
+        {
+            throw new FlightException($"git could not make {code}'s plane from {pushed}: {add.Why}");
+        }
+        PlaneSettings.DisableRepoMcpServers(worktree);
+        return new Plane(repoPath, branch, worktree, baseRef);
+    }
+
     /// <summary>Whether git has <paramref name="worktree"/> as a worktree of the repo, not merely a folder there.</summary>
     public async Task<bool> IsRegisteredAsync(string repoPath, string worktree, CancellationToken cancellationToken)
     {

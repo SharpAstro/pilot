@@ -322,6 +322,10 @@ public sealed partial class LegCommander(
     // The step each flight's advance last carded: said once, not every sweep, until the flight moves on.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _rung = new(StringComparer.Ordinal);
 
+    /// <summary>One flight's next step, where it has one, as <see cref="AdvanceAllAsync"/> takes it for every flying flight: what a flight just handed over by another node goes on with.</summary>
+    public Task AdvanceFlightAsync(string code, CancellationToken cancellationToken) =>
+        state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.Ordinal)) is { } flight ? AdvanceAsync(flight, cancellationToken) : Task.CompletedTask;
+
     /// <summary>Every flying flight's next step, where it has one: what the node's sweep runs every minute.</summary>
     public async Task AdvanceAllAsync(CancellationToken cancellationToken)
     {

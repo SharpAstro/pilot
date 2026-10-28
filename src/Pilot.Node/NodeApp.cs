@@ -74,6 +74,7 @@ public static class NodeApp
             flights.Models = services.GetRequiredService<RoleModels>();
             flights.Machine = options.Machine;
             flights.Attachments = services.GetRequiredService<Attachments>();
+            flights.Repos = services.GetRequiredService<RepoCatalog>();
             var models = services.GetRequiredService<RoleModels>();
             var trackers = new List<ITracker> { new ShortcutTracker(new HttpClient { Timeout = TimeSpan.FromSeconds(30) }, () => ShortcutTracker.TokenFrom(models.ShortcutToken)) };
             if (services.GetService<IGitHub>() is { } gitHub)
@@ -108,6 +109,8 @@ public static class NodeApp
             legs.Attachments = services.GetRequiredService<Attachments>();
             legs.Releases = services.GetRequiredService<PackageReleases>();
             legs.SiblingSync = services.GetRequiredService<RepoSync>();
+            // A flight another node hands over goes on by the normal advance, as the sweep takes every flying flight's.
+            services.GetRequiredService<FlightCommander>().Advance = legs.AdvanceFlightAsync;
             return legs;
         });
         builder.Services.AddSingleton(services =>
