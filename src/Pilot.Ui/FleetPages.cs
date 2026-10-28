@@ -237,7 +237,8 @@ internal sealed class PlayFilter
     {
         // Bottom-aligned as the page's title is: its 20 and these 15 design units then share a baseline, where centred
         // boxes of two sizes do not.
-        yield return Layout.Builder.Text(hidden is null ? counts : counts + " · ", 15f, body, TextAlign.Far, TextAlign.Far).WAuto();
+        // Its words wrap, as the bar flows: a counts line longer than a narrow page's row runs on a second line, not past the page (PIL380).
+        yield return WrappedProse.Of(hidden is null ? counts : counts + " ·", 15f, body).WAuto();
         if (hidden is not null)
         {
             yield return Layout.Builder.Text(hidden, 15f, night?.Bright ?? ClauseColor, TextAlign.Far, TextAlign.Far)

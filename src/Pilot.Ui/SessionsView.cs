@@ -89,9 +89,12 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private const float ActWidth = 84f;
     private const float NodeWidth = 64f;
 
-    // The room the Session column keeps for a role and a name ("worker · ORB204 / parser"): the optional columns drop
-    // before it gives any of it up.
-    private const float SessionMin = 200f;
+    // The room the Session column keeps for a role and a name ("worker · ORB204 / parser") is most of the row, by its weight:
+    // the optional columns drop before it gives much of it up. Its floor is only what a window too narrow for anything else
+    // leaves; the name then ends in an ellipsis and the row's tooltip has the whole of it.
+    private const float SessionMin = 80f;
+    private const float SessionWeight = 6f;
+    private const float StateMin = 64f;
 
     private static readonly RGBAColor32 Ground = TranscriptPane.Ground;
     private static readonly RGBAColor32 HeaderBg = new(0x1b, 0x1c, 0x24, 0xff);
@@ -689,11 +692,11 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Star("Session", SessionMin),
+            ListColumn.Star("Session", SessionMin, SessionWeight),
             ListColumn.Optional("Model", ModelWidth),
-            ListColumn.Fixed("Context", ContextWidth),
+            ListColumn.Optional("Context", ContextWidth),
             ListColumn.Optional("Last response", LastWidth),
-            ListColumn.Fixed(StateTitle, StateWidth),
+            ListColumn.Shrinking(StateTitle, StateWidth, StateMin),
             ListColumn.Optional("Spend", SpendWidth),
             ListColumn.Optional("", ActWidth),
         };

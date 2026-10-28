@@ -2,6 +2,7 @@ using DIR.Lib;
 using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Shouldly;
+using SharpAstro.Png;
 using Xunit;
 
 namespace Pilot.Gui.Tests;
@@ -77,7 +78,40 @@ public sealed class PageTextOverlapTests
     /// <summary>The check over <paramref name="page"/> in <paramref name="state"/>, arranged as the chrome arranges it: the page in the room the rail and the panel leave.</summary>
     internal static async Task<IReadOnlyList<TextFault>> FaultsOf(string page, string state, int width, float dpi)
     {
-        using var renderer = new RgbaImageRenderer((uint)width, Height);
+        using var prepared = await Prepare(page, state, width, dpi);
+        var ctx = new PixelMeasureContext<RgbaImage>(prepared.Renderer, SessionsCapture.FontPath, dpi);
+        return TextOverlap.Faults(Layout.Engine.Arrange(prepared.Tree, prepared.Rect, ctx));
+    }
+
+    internal static async Task<System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<float>>> ArrangedOf(string page, string state, int width, float dpi)
+    {
+        using var prepared = await Prepare(page, state, width, dpi);
+        var ctx = new PixelMeasureContext<RgbaImage>(prepared.Renderer, SessionsCapture.FontPath, dpi);
+        return Layout.Engine.Arrange(prepared.Tree, prepared.Rect, ctx);
+    }
+
+    /// <summary>A page set up in a state: its chrome, the page's tree and the room the chrome leaves it.</summary>
+    private sealed record Prepared(RgbaImageRenderer Renderer, PilotChrome<RgbaImage> Chrome, PageData Data, Layout.Node Tree, Rect<float> Rect) : IDisposable
+    {
+        public void Dispose() => Renderer.Dispose();
+    }
+
+    private static PilotPage PageOf(string page) => page switch
+    {
+        "home" => PilotPage.Home,
+        "sessions" or "transcript" => PilotPage.Sessions,
+        "flights table" or "flights canvas" or "flight page" or "wizard repos" or "wizard issues" => PilotPage.Flights,
+        "jobs" => PilotPage.Jobs,
+        "fleet" => PilotPage.Fleet,
+        "settings" => PilotPage.Settings,
+        "repos" => PilotPage.Repos,
+        "chat" => PilotPage.Chat,
+        _ => PilotPage.Home,
+    };
+
+    private static async Task<Prepared> Prepare(string page, string state, int width, float dpi)
+    {
+        var renderer = new RgbaImageRenderer((uint)width, Height);
         var data = PageData.For(state);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = dpi };
         chrome.Play.ShowEverything();
@@ -88,7 +122,7 @@ public sealed class PageTextOverlapTests
         chrome.Autopilot.OnToggle = _ => { };
         chrome.About.Newer = () => "2.0.9-beta.1";
         chrome.About.Restart = () => { };
-        var ctx = new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, dpi);
+        chrome.Show(PageOf(page));
 
         // The cards panel takes its width off the page when it has cards, as the chrome decides it.
         var cards = data.Cards;
@@ -151,8 +185,32 @@ public sealed class PageTextOverlapTests
                 throw new ArgumentException($"no page '{page}'", nameof(page));
         }
 
-        var arranged = Layout.Engine.Arrange(tree, rect, ctx);
-        return TextOverlap.Faults(arranged);
+        return new Prepared(renderer, chrome, data, tree, rect);
+    }
+
+    /// <summary>
+    /// With PILOT_TEST_CAPTURE set to a folder, every page in the "long" state as a PNG at a narrow window and a wide one, as the
+    /// chrome paints it: what a person sees of the text the check above holds apart.
+    /// </summary>
+    [Fact]
+    public async Task CapturesOfEveryPageAtNarrowAndWideWindows()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        Directory.CreateDirectory(capture);
+        foreach (var (width, dpi) in new[] { (700, 1.5f), (1900, 1f) })
+        {
+            foreach (var page in Pages.Where(p => p != "cards panel"))
+            {
+                using var prepared = await Prepare(page, "long", width, dpi);
+                var chrome = prepared.Chrome;
+                var data = prepared.Data;
+                chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, width, Height), data.Machines);
+                File.WriteAllBytes(Path.Combine(capture, $"{page.Replace(' ', '-')}-{width}.png"), PngWriter.Encode(prepared.Renderer.Surface.Pixels, width, Height));
+            }
+        }
     }
 
     private static async Task<Layout.Node> OpenChat(PilotChrome<RgbaImage> chrome, PageData data)

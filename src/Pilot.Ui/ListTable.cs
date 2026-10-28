@@ -14,8 +14,15 @@ internal readonly record struct ListColumn(string Header, Layout.Sizing Width, f
     /// <summary>A column of a fixed width, which a drag on the divider beside it resizes.</summary>
     public static ListColumn Fixed(string header, float width) => new(header, Layout.Sizing.Fixed(width));
 
-    /// <summary>The column that takes what the others leave, never less than <paramref name="min"/> (0: it may shrink to nothing).</summary>
-    public static ListColumn Star(string header, float min = 0f) => new(header, Layout.Sizing.Star(1f, min));
+    /// <summary>The column that takes what the others leave, never less than <paramref name="min"/> (0: it may shrink to nothing), by <paramref name="weight"/> against the other stars.</summary>
+    public static ListColumn Star(string header, float min = 0f, float weight = 1f) => new(header, Layout.Sizing.Star(weight, min));
+
+    /// <summary>
+    /// A column a narrow window narrows instead of drops: its whole <paramref name="width"/> while there is room, never less than
+    /// <paramref name="min"/>, its text ending in an ellipsis once cut. For the one a row cannot do without (a state), where an
+    /// <see cref="Optional"/> one would leave the row with no word of it.
+    /// </summary>
+    public static ListColumn Shrinking(string header, float width, float min) => new(header, Layout.Sizing.Star(1f, min, width));
 
     /// <summary>
     /// A column the page drops on a narrow window: its whole <paramref name="width"/> while there is room, gone once the

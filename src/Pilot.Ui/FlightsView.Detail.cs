@@ -226,10 +226,17 @@ internal sealed partial class FlightsView<TSurface>
     /// <paramref name="action"/>'s button, or for a stale flight (its node unreachable) the same words as a dead one: a verb goes
     /// to the node, which cannot be asked, and a live button there read as a command that would be lost (pilot #325).
     /// </summary>
-    private Layout.Node ActionButton(FlightLine line, FlightAction action, string id) =>
-        line.Stale is null
-            ? Pill(action.Label, id, () => Choose(action, line.Code))
-            : CardsView<TSurface>.Dead(action.Label).WithTooltip(StaleWhy(line));
+    private Layout.Node ActionButton(FlightLine line, FlightAction action, string id)
+    {
+        // A label long past a narrow page (a leg's name in "Redo leg ...") ends in an ellipsis, with the whole of it on hover.
+        var label = CardsView<TSurface>.Ellipsize(action.Label, ActionFits);
+        var whole = label == action.Label ? null : action.Label;
+        return line.Stale is null
+            ? whole is null ? Pill(label, id, () => Choose(action, line.Code)) : Pill(label, id, () => Choose(action, line.Code)).WithTooltip(whole)
+            : CardsView<TSurface>.Dead(label).WithTooltip(whole is null ? StaleWhy(line) : $"{whole}: {StaleWhy(line)}");
+    }
+
+    private const int ActionFits = 24;
 
     /// <summary>Why a stale flight's commands are off, for a dead button's or a disabled entry's hover text.</summary>
     internal static string StaleWhy(FlightLine line) => $"{line.Stale} is unreachable: its commands wait until it answers";

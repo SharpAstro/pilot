@@ -67,8 +67,8 @@ internal static class TopBar
     /// <summary>The bar with its source line and no extra lines: what the transcript's overlay starts under.</summary>
     public const float Height = RowHeight + SourceHeight + 2 * PadY;
 
-    // One item of the bar, in a cell as tall as the bar's row.
-    private static Layout.Node Cell(Layout.Node item) => Layout.Builder.HStack(item).WAuto().HFixed(RowHeight);
+    // One item of the bar, in a cell at least as tall as the bar's row: a counts line that wraps makes its own cell taller.
+    private static Layout.Node Cell(Layout.Node item) => Layout.Builder.HStack(item).WAuto().HAuto().HClamp(RowHeight);
 
     /// <summary>The bar as one tree, <paramref name="page"/> laid out among <paramref name="parts"/>.</summary>
     public static Layout.Node Build(PageHeader page, TopBarParts parts)

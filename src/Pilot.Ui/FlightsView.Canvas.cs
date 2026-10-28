@@ -60,7 +60,7 @@ internal sealed partial class FlightsView<TSurface>
             .HFixed(AboutCard.HeaderButton);
     }
 
-    private const float ViewSwitchSegment = 60f;
+    private const float ViewSwitchSegment = 46f;
     private const float ViewSwitchWidth = 4 * ViewSwitchSegment + 3 * 2f;
 
     // The cards as a wrapping grid, in the list's order: the engine wraps them by the width it is given.

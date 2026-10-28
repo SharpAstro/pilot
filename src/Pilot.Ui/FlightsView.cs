@@ -254,6 +254,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private const float WhatDropBelow = 60f;
     private const float WhereWidth = 140f;
     private const float StateWidth = 160f;
+    // What a window too narrow for the rest leaves these two columns: their words end in an ellipsis, the row's tooltip has the whole.
+    private const float CodeMin = 56f;
+    private const float StateMin = 64f;
     private const float BranchWidth = 150f;
     private const float LegsWidth = 210f;
     private const float SessionsWidth = 170f;
@@ -294,9 +297,8 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private RGBAColor32 Failed => P.Failed;
     private RGBAColor32 MenuBg => P.MenuBg;
 
-    private const float DetailHeight = 168f;
-    // The panel while a why is asked under its buttons: a row (WhyRowHeight) taller.
-    private const float DetailHeightAsking = DetailHeight + WhyRowHeight;
+    // The panel without its buttons: what it was (168) less their row, and a row more while a why is asked under them.
+    private const float DetailColumnsHeight = 124f;
     private const float DetailColumn = 380f;
     // Branch and Sessions are the columns a narrow window drops, each as it can no longer have its whole width (Optional);
     // the engine decides, from the room it has.
@@ -741,8 +743,8 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             var color = leg.Hold is not null || (leg.Wait is not null && leg.State == LegState.Flying) ? Held : leg.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
             var legState = $"{FlightWaiting.LegState(leg)}{steps}{(leg.GoArounds > 0 ? $" · go-around {leg.GoArounds}" : "")}";
             legs.Add(Layout.Builder.HStack(
-                    Layout.Builder.Text($"{leg.Order}. {leg.Name}", 13f, Body).WFixed(150f),
-                    Whole(Layout.Builder.Text(legState, 12f, color).WStar(), legState, DetailLegFits))
+                    Whole(Layout.Builder.Text($"{leg.Order}. {leg.Name}", 13f, Body).WStar(1f, 0f, 150f), $"{leg.Order}. {leg.Name}", 0),
+                    Whole(Layout.Builder.Text(legState, 12f, color).WStar(), legState, 0))
                 .RowH(20f));
         }
         if (line.LegRows.Count == 0)
@@ -751,22 +753,22 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         }
         if (flight.Review is { } review)
         {
-            legs.Add(Layout.Builder.Text($"review {review.State.ToString().ToLowerInvariant()}{(review.Report is { Length: > 0 } r ? $": {r.Split('\n')[0]}" : "")}", 12f,
-                review.State == ReviewState.Passed ? Flying : review.State == ReviewState.Changes ? Held : Dim).RowH(20f));
+            legs.Add(DetailLine($"review {review.State.ToString().ToLowerInvariant()}{(review.Report is { Length: > 0 } r ? $": {r.Split('\n')[0]}" : "")}",
+                review.State == ReviewState.Passed ? Flying : review.State == ReviewState.Changes ? Held : Dim));
         }
 
         var marks = FlightMarks.From(flight);
         if (marks.Line is { } markLine)
         {
-            legs.Add(Layout.Builder.Text(markLine, 12f, MarksColor(flight)).RowH(20f));
+            legs.Add(DetailLine(markLine, MarksColor(flight)));
         }
         if (marks.Warning is { } warning)
         {
-            legs.Add(Layout.Builder.Text($"⚠ GitHub: {warning}", 12f, Held).RowH(20f));
+            legs.Add(DetailLine($"⚠ GitHub: {warning}", Held));
         }
         if (marks.Pending is { } pending)
         {
-            legs.Add(Layout.Builder.Text(pending, 12f, Held).RowH(20f));
+            legs.Add(DetailLine(pending, Held));
         }
 
         // Its jobs: the long runs its workers handed to the node, running first.
@@ -776,7 +778,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             var isPaused = job.State == JobState.Running && job.PausedAt is not null;
             var color = isPaused ? Held : job.State switch { JobState.Running => Flying, JobState.Queued => Held, JobState.Succeeded => Landed, _ => Failed };
             var waiting = job.State == JobState.Queued && job.Step is { } step ? $" ({step})" : "";
-            legs.Add(Layout.Builder.Text($"job {job.Id} {(isPaused ? "paused" : job.State.ToString().ToLowerInvariant())}{waiting}: {job.Command}", 12f, color).RowH(20f));
+            legs.Add(DetailLine($"job {job.Id} {(isPaused ? "paused" : job.State.ToString().ToLowerInvariant())}{waiting}: {job.Command}", color));
         }
 
         var artifacts = new List<Layout.Node> { Label("artifacts").RowH(20f) };
@@ -801,7 +803,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         var buttons = new List<Layout.Node> { Pill("Open flight", $"flight:{line.Code}:open", () => OpenDetail(line.Code)) };
         if (CanCommand && WatchOnly(line) is { } watchedNode)
         {
-            buttons.Add(Layout.Builder.Text(SessionsView<TSurface>.SteerHint(watchedNode), 12f, Dim).WAuto());
+            buttons.Add(WrappedProse.Of(SessionsView<TSurface>.SteerHint(watchedNode), 12f, Dim).WAuto());
             // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Pill("Connect", $"flight:{line.Code}:connect", () => OnConnect?.Invoke(watchedNode)));
         }
@@ -815,18 +817,20 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
         // A why asked for sits under the buttons, the panel a row taller while it is there.
         var why = WhyRow(line).ToList();
+        // The columns keep their height (what the panel was, less its buttons' row) unless they have more lines than it holds; the
+        // buttons flow onto lines of their own where the page is narrower than they are, and the panel takes the height of both.
+        var columnsHeight = Math.Max(DetailColumnsHeight, Math.Max(legs.Count, artifacts.Count) * 20f);
         return Layout.Builder.VStack([
                 Layout.Builder.HStack(
-                        Layout.Builder.VStack([.. legs]).WFixed(DetailColumn),
-                        Layout.Builder.VStack([.. artifacts]).WFixed(DetailColumn),
-                        Layout.Builder.Spacer().WStar())
+                        Layout.Builder.VStack([.. legs]).WStar(1f, 0f, DetailColumn),
+                        Layout.Builder.VStack([.. artifacts]).WStar(1f, 0f, DetailColumn))
                     .WithGap(24f)
-                    .HStar(),
-                Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f).RowH(28f),
+                    .W(Layout.Sizing.Star()).HFixed(columnsHeight),
+                Layout.Builder.WrapH([.. buttons.Select(b => Layout.Builder.HStack(b).WAuto().HFixed(28f))]).WithGap(8f).WithLineGap(6f).WStar().HAuto(),
                 .. why])
             .Pad(Gutter, 8f)
             .Bg(PanelBg)
-            .RowH(why.Count > 0 ? DetailHeightAsking : DetailHeight);
+            .WStar().HAuto();
     }
 
     // The marks' colour: amber for changes, a disagreement or a write still to do, green for a pass, dim otherwise.
@@ -837,6 +841,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     };
 
     // A link that leaves the app: a click opens it, a right-click offers Copy URL (over the row's own menu, which stays on the rest of the row).
+    // A line of the panel: one row, ending in an ellipsis where the column is narrower than it, with the whole of it on hover.
+    private static Layout.Node DetailLine(string text, RGBAColor32 color) => Layout.Builder.Text(text, 12f, color).WithTooltip(text).RowH(20f);
+
     private Layout.Node Link(string text, string location, string action) =>
         _links.OnLink(Layout.Builder.Text(text + Followable.Away, 12f, Landed)
             .BgHover(RowHoverBg)
@@ -932,11 +939,11 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Fixed("Flight", stale ? StaleCodeWidth : CodeWidth),
+            ListColumn.Shrinking("Flight", stale ? StaleCodeWidth : CodeWidth, CodeMin),
             new ListColumn("What", Layout.Sizing.Star(1f, 0f), WhatDropBelow),
             ListColumn.Optional("Repo", WhereWidth),
-            ListColumn.Fixed("State", StateWidth),
-            ListColumn.Fixed("Legs", LegsWidth),
+            ListColumn.Shrinking("State", StateWidth, StateMin),
+            ListColumn.Optional("Legs", LegsWidth),
             ListColumn.Optional("Branch", BranchWidth),
             ListColumn.Optional("Sessions", SessionsWidth),
         };
