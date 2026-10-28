@@ -39,9 +39,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private const float AskTextMinHeight = 40f;
     private const float AskMinHeight = 2 * AskPadY + AskTextMinHeight + ChoiceGap + 2 * ChoiceHeight + ChoiceLineGap;
 
-    private static readonly RGBAColor32 PageBg = TranscriptPane.Ground;
-    private static readonly RGBAColor32 FootBg = new(0x16, 0x17, 0x1e, 0xff);
-    private static readonly RGBAColor32 Marked = new(0x2a, 0x24, 0x18, 0xff);
+    private static RGBAColor32 PageBg => TranscriptPane.Ground;
+    private static RGBAColor32 FootBg => Palette.Current.RowAltBg;
+    private static RGBAColor32 Marked => Palette.Current.Marked;
 
     // What the follow has read, as one immutable record swapped whole: the follow appends on the pool, the render thread
     // reads the record it finds, and neither ever waits on the other.
@@ -405,6 +405,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     public void Render(RectF32 bounds)
     {
+        Palette.Use(Night);
         BeginFrame();
         RenderLayout(Tree(), bounds);
     }
@@ -412,6 +413,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
     internal Layout.Node Tree()
     {
+        Palette.Use(Night);
         var held = Volatile.Read(ref _held);
         _composer.Input.OnCommit = _ => SendAsync();
         _composer.Input.Placeholder = Node is { } to ? $"Message {to.Name}'s watchtower" : "Message the watchtower";

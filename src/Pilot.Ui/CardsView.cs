@@ -218,17 +218,17 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     private const float Gutter = 14f;
 
-    private static readonly RGBAColor32 PanelBg = new(0x16, 0x17, 0x1e, 0xff);
-    private static readonly RGBAColor32 CardBg = new(0x1f, 0x21, 0x2b, 0xff);
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
-    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
-    private static readonly RGBAColor32 Ring = new(0xf0, 0xb4, 0x3c, 0xff);
-    private static readonly RGBAColor32 ForYou = new(0x6f, 0x9b, 0xd8, 0xff);
-    private static readonly RGBAColor32 Link = new(0x8a, 0xb4, 0xf8, 0xff);
-    private static readonly RGBAColor32 CardHover = new(0x2a, 0x2d, 0x3a, 0xff);
-    private static readonly RGBAColor32 Button = new(0x2c, 0x35, 0x4a, 0xff);
-    private static readonly RGBAColor32 ButtonHover = new(0x3a, 0x46, 0x62, 0xff);
+    private static RGBAColor32 PanelBg => Palette.Current.RowAltBg;
+    private static RGBAColor32 CardBg => Palette.Current.MenuBg;
+    private static RGBAColor32 Bright => Palette.Current.Bright;
+    private static RGBAColor32 Body => Palette.Current.Body;
+    private static RGBAColor32 Dim => Palette.Current.Dim;
+    private static RGBAColor32 Ring => Palette.Current.Held;
+    private static RGBAColor32 ForYou => Palette.Current.Landed;
+    private static RGBAColor32 Link => Palette.Current.Link;
+    private static RGBAColor32 CardHover => Palette.Current.CardHover;
+    private static RGBAColor32 Button => Palette.Current.Action;
+    private static RGBAColor32 ButtonHover => Palette.Current.ActionHover;
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
 
@@ -285,7 +285,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>The flight the page in front is about (open, or selected): its cards are lit in the panel. Null lights none.</summary>
     public string? Focus { get; set; }
 
-    private static readonly RGBAColor32 FocusBg = new(0x26, 0x33, 0x4a, 0xff);
+    private static RGBAColor32 FocusBg => Palette.Current.RowFocusBg;
 
     // A card about the focused flight: about the flight itself, or one of its legs.
     private bool Focused(CardRow card) =>
@@ -297,7 +297,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>Whether the Handled list is open under In play; a click on its line flips it.</summary>
     public bool HandledOpen { get; set; }
 
-    private static readonly RGBAColor32 Live = new(0x4c, 0xc3, 0x8a, 0xff);
+    private static RGBAColor32 Live => Palette.Current.Flying;
 
     // The right-click menu of the links that leave the app: Copy URL.
     private readonly LinkMenu _links = new();
@@ -525,7 +525,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// The held line's words: dim, but a step up from <see cref="Dim"/>, whose 3.9:1 on <see cref="CardHover"/> is short of 4.5:1 where the
     /// line, a click, is lit under the pointer. 6.6:1 on the panel and 5.1:1 on the hover.
     /// </summary>
-    private static readonly RGBAColor32 HeldText = new(0x9a, 0x9d, 0xac, 0xff);
+    private static RGBAColor32 HeldText => Palette.Current.HeldText;
 
     /// <summary>How many lines a node's held line may take: its counts are what it is for, so it wraps rather than hides them.</summary>
     internal const int HeldLines = 2;
@@ -785,16 +785,16 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     internal const string ArmedLabel = "Merging when checks pass";
 
     /// <summary>The armed merge's fill, a violet no other status uses (green passes, amber runs, red fails, blue is a plain button). Its words, <see cref="Bright"/>, are 8:1 on it.</summary>
-    internal static readonly RGBAColor32 ArmedBg = new(0x4a, 0x35, 0x7a, 0xff);
+    internal static RGBAColor32 ArmedBg => Palette.Current.ArmedBg;
 
-    internal static readonly RGBAColor32 ArmedText = Bright;
+    internal static RGBAColor32 ArmedText => Bright;
 
     /// <summary>The button's colours for a choice's status: green when its checks pass, amber while they run, red when one failed, violet once armed.</summary>
     internal static (RGBAColor32 Bg, RGBAColor32 Hover)? StatusTint(string? status) => status switch
     {
-        ChoiceStatus.Passing or ChoiceStatus.Merged => (new RGBAColor32(0x1f, 0x6b, 0x45, 0xff), new RGBAColor32(0x23, 0x74, 0x4c, 0xff)),
-        ChoiceStatus.Pending => (new RGBAColor32(0x6b, 0x52, 0x1c, 0xff), new RGBAColor32(0x78, 0x5c, 0x20, 0xff)),
-        ChoiceStatus.Failing or ChoiceStatus.Conflicting or ChoiceStatus.Behind or ChoiceStatus.Blocked or ChoiceStatus.ChangesRequested => (new RGBAColor32(0x7a, 0x28, 0x28, 0xff), new RGBAColor32(0x96, 0x32, 0x32, 0xff)),
+        ChoiceStatus.Passing or ChoiceStatus.Merged => (Palette.Current.PassTint, Palette.Current.PassTintHover),
+        ChoiceStatus.Pending => (Palette.Current.PendTint, Palette.Current.PendTintHover),
+        ChoiceStatus.Failing or ChoiceStatus.Conflicting or ChoiceStatus.Behind or ChoiceStatus.Blocked or ChoiceStatus.ChangesRequested => (Palette.Current.FailTint, Palette.Current.FailTintHover),
         ChoiceStatus.Armed or ChoiceStatus.Queued => (ArmedBg, ArmedBg),
         _ => null,
     };

@@ -9,12 +9,12 @@ namespace Pilot.Ui;
 /// </summary>
 internal sealed class AboutCard
 {
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
-    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
-    private static readonly RGBAColor32 CardBg = new(0x1f, 0x21, 0x2b, 0xff);
-    private static readonly RGBAColor32 ButtonBg = new(0x2c, 0x35, 0x4a, 0xff);
-    private static readonly RGBAColor32 ButtonHover = new(0x3a, 0x46, 0x62, 0xff);
+    private static RGBAColor32 Bright => Palette.Current.Bright;
+    private static RGBAColor32 Body => Palette.Current.Body;
+    private static RGBAColor32 Dim => Palette.Current.Dim;
+    private static RGBAColor32 CardBg => Palette.Current.MenuBg;
+    private static RGBAColor32 ButtonBg => Palette.Current.Action;
+    private static RGBAColor32 ButtonHover => Palette.Current.ActionHover;
 
     /// <summary>The keys, as the card lists them.</summary>
     public static readonly IReadOnlyList<(string Keys, string What)> Keys =
@@ -74,9 +74,9 @@ internal sealed class AboutCard
     /// <summary>What the light's pulse counts in, milliseconds; a test sets it to see each phase.</summary>
     internal Func<long> Clock { get; set; } = () => Environment.TickCount64;
 
-    private static readonly RGBAColor32 LightOn = new(0xf0, 0xb4, 0x3c, 0xff);
-    private static readonly RGBAColor32 LightOff = new(0x5c, 0x48, 0x22, 0xff);
-    private static readonly RGBAColor32 LightText = new(0x1a, 0x14, 0x08, 0xff);
+    private static RGBAColor32 LightOn => Palette.Current.Held;
+    private static RGBAColor32 LightOff => Palette.Current.LightOff;
+    private static RGBAColor32 LightText => Palette.Current.LightText;
 
     /// <summary>
     /// The header's button, and while a newer pilot is installed the update light before it. The "?" stays a word for want

@@ -33,18 +33,18 @@ internal sealed class NewFlightWizard
     /// <summary>Goes on from a step without leaving the keyboard: Next on the repos, Create on the review.</summary>
     public static readonly KeyChord NextShortcut = new(InputKey.Enter, InputModifier.Ctrl);
 
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
-    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
-    private static readonly RGBAColor32 Accent = new(0x6f, 0x9b, 0xd8, 0xff);
-    private static readonly RGBAColor32 Warn = new(0xe0, 0x5a, 0x5a, 0xff);
-    private static readonly RGBAColor32 RowHoverBg = new(0x22, 0x24, 0x2e, 0xff);
-    private static readonly RGBAColor32 ChosenBg = new(0x26, 0x33, 0x4a, 0xff);
-    private static readonly RGBAColor32 HighlightBg = new(0x33, 0x40, 0x5c, 0xff);
-    private static readonly RGBAColor32 Button = new(0x2c, 0x35, 0x4a, 0xff);
-    private static readonly RGBAColor32 ButtonHover = new(0x3a, 0x46, 0x62, 0xff);
-    private static readonly RGBAColor32 Go = new(0x1f, 0x6b, 0x45, 0xff);
-    private static readonly RGBAColor32 GoHover = new(0x27, 0x85, 0x56, 0xff);
+    private static RGBAColor32 Bright => Palette.Current.Bright;
+    private static RGBAColor32 Body => Palette.Current.Body;
+    private static RGBAColor32 Dim => Palette.Current.Dim;
+    private static RGBAColor32 Accent => Palette.Current.Landed;
+    private static RGBAColor32 Warn => Palette.Current.Failed;
+    private static RGBAColor32 RowHoverBg => Palette.Current.RowHoverBg;
+    private static RGBAColor32 ChosenBg => Palette.Current.RowFocusBg;
+    private static RGBAColor32 HighlightBg => Palette.Current.HighlightBg;
+    private static RGBAColor32 Button => Palette.Current.Action;
+    private static RGBAColor32 ButtonHover => Palette.Current.ActionHover;
+    private static RGBAColor32 Go => Palette.Current.Go;
+    private static RGBAColor32 GoHover => Palette.Current.GoHover;
 
     private const float RowHeight = 30f;
 

@@ -41,9 +41,9 @@ internal sealed class PilotChrome<TSurface>
     private const string PageKey = "page";
     private const string CardsKey = "cards";
 
-    private static readonly RGBAColor32 RailBg = new(0x16, 0x17, 0x1e, 0xff);
-    private static readonly RGBAColor32 RailHover = new(0x22, 0x24, 0x2e, 0xff);
-    private static readonly RGBAColor32 RailActive = new(0x26, 0x33, 0x4a, 0xff);
+    private static RGBAColor32 RailBg => Palette.Current.RowAltBg;
+    private static RGBAColor32 RailHover => Palette.Current.RowHoverBg;
+    private static RGBAColor32 RailActive => Palette.Current.RowFocusBg;
 
     /// <summary>
     /// What each page is on the rail, top to bottom: its glyph, its name, the chord that reaches it, and why it is locked, if
@@ -674,12 +674,23 @@ internal sealed class PilotChrome<TSurface>
             // The rail's glyphs are emoji, which the UI face lacks: the platform's colour emoji face draws them
             // (Segoe UI Emoji, Noto Color Emoji), or none, and the rail falls back to the UI face.
             var emoji = FontResolver.ResolveEmojiFont();
-            Rail.EmojiFontPath = emoji.Length > 0 ? emoji : null;
-            // A landed card's title starts with 🛬, which the UI face lacks as well.
-            Cards.EmojiFontPath = emoji.Length > 0 ? emoji : null;
-            // A node in maintenance is marked 🔧 on the Fleet, Home and Flights pages.
-            Fleet.EmojiFontPath = Home.EmojiFontPath = Flights.EmojiFontPath = Cards.EmojiFontPath;
+            _emojiFont = emoji.Length > 0 ? emoji : null;
+            ApplyEmojiFont();
         }
+    }
+
+    private string? _emojiFont;
+
+    /// <summary>
+    /// The colour emoji face for the rail's glyphs, a landed card's 🛬 and a node's 🔧, none while Night is on: a colour glyph
+    /// cannot be painted red, so night draws them in the UI face, in the page's own ink.
+    /// </summary>
+    private void ApplyEmojiFont()
+    {
+        var emoji = Night.On ? null : _emojiFont;
+        Rail.EmojiFontPath = emoji;
+        Cards.EmojiFontPath = emoji;
+        Fleet.EmojiFontPath = Home.EmojiFontPath = Flights.EmojiFontPath = emoji;
     }
 
     /// <summary>The pointer, so the rail resolves its own hover.</summary>
@@ -704,6 +715,8 @@ internal sealed class PilotChrome<TSurface>
     /// <param name="machines">Each shown node's machine, for the Home page's blocks; null shows none, as a snapshot file from an older node has none.</param>
     public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, ReposScreen? repos, RectF32 bounds, IReadOnlyList<MachineLine>? machines = null)
     {
+        Palette.Use(Night);
+        ApplyEmojiFont();
         _items.Clear();
         var tasks = JobsGlyph(jobs, screen.AsOf);
         foreach (var (page, icon, label, shortcut, locked) in Pages)
@@ -732,6 +745,12 @@ internal sealed class PilotChrome<TSurface>
             InactiveBackground = RailBg,
             HoverBackground = RailHover,
             ActiveBackground = RailActive,
+            Separator = Palette.Current.RailSeparator,
+            ActiveAccent = Palette.Current.RailAccent,
+            ActiveText = Palette.Current.RailActiveText,
+            InactiveText = Palette.Current.RailInactiveText,
+            CloseMark = Palette.Current.RailClose,
+            DisabledText = Palette.Current.RailDisabled,
         };
         // The tab bar takes its icon in pixels; its own scale maps the design size.
         Rail.IconSize = Rail.Scale.ToSurface(RailIconSize);

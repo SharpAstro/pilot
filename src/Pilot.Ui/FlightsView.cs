@@ -533,6 +533,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     public void Render(FlightsScreen screen, RectF32 bounds)
     {
+        Palette.Use(Night);
         BeginFrame();
         RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
         {
@@ -548,6 +549,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// </summary>
     internal Layout.Node Tree(FlightsScreen screen)
     {
+        Palette.Use(Night);
         // In play, the landed are left out of the table; an open flight's page still finds its flight among them.
         var whole = screen;
         // A flight a jump opened is shown too, until its page is shut and the selection has moved off it.

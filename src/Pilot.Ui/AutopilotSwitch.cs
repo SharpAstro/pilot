@@ -17,18 +17,18 @@ internal sealed class AutopilotSwitch
     /// <summary>The word on the switch, lit or not.</summary>
     public const string Label = "Autopilot";
 
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
+    private static RGBAColor32 Bright => Palette.Current.Bright;
+    private static RGBAColor32 Dim => Palette.Current.Dim;
 
     /// <summary>The fill while autopilot is on: the accent the rail's chosen page and the New flight wizard share.</summary>
-    internal static readonly RGBAColor32 LitBg = new(0x3d, 0x6f, 0xb8, 0xff);
+    internal static RGBAColor32 LitBg => Palette.Current.LitBg;
 
-    internal static readonly RGBAColor32 LitHover = new(0x4c, 0x82, 0xd0, 0xff);
+    internal static RGBAColor32 LitHover => Palette.Current.LitHover;
 
     /// <summary>The fill while it is off: a plain header button's.</summary>
-    internal static readonly RGBAColor32 PlainBg = new(0x2c, 0x35, 0x4a, 0xff);
+    internal static RGBAColor32 PlainBg => Palette.Current.Action;
 
-    internal static readonly RGBAColor32 PlainHover = new(0x3a, 0x46, 0x62, 0xff);
+    internal static RGBAColor32 PlainHover => Palette.Current.ActionHover;
 
     /// <summary>Whether the node in view says its autopilot is on. Set by the host from the node's <see cref="Pilot.Contracts.NodeInfo.Autopilot"/>.</summary>
     public bool On { get; set; }

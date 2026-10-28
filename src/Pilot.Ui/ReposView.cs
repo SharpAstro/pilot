@@ -26,21 +26,21 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private const float WorkWidth = 170f;
     private const float LinkWidth = 130f;
 
-    private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
-    private static readonly RGBAColor32 HeaderBg = new(0x1b, 0x1c, 0x24, 0xff);
-    private static readonly RGBAColor32 RowAltBg = new(0x16, 0x17, 0x1e, 0xff);
-    private static readonly RGBAColor32 RowHoverBg = new(0x22, 0x24, 0x2e, 0xff);
-    private static readonly RGBAColor32 RowFocusBg = new(0x26, 0x33, 0x4a, 0xff);
-    private static readonly RGBAColor32 WorktreeBg = new(0x18, 0x19, 0x21, 0xff);
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
-    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
-    private static readonly RGBAColor32 Faint = new(0x5c, 0x5f, 0x6c, 0xff);
-    private static readonly RGBAColor32 Working = new(0x4c, 0xc3, 0x8a, 0xff);
-    private static readonly RGBAColor32 Waiting = new(0xf0, 0xb4, 0x3c, 0xff);
-    private static readonly RGBAColor32 Failing = new(0xe0, 0x5a, 0x5a, 0xff);
-    private static readonly RGBAColor32 Link = new(0x6f, 0x9b, 0xd8, 0xff);
-    private static readonly (RGBAColor32 Bg, RGBAColor32 Hover) Lit = (new RGBAColor32(0x2f, 0x5a, 0x8c, 0xff), new RGBAColor32(0x3a, 0x6c, 0xa6, 0xff));
+    private static RGBAColor32 Ground => Palette.Current.Ground;
+    private static RGBAColor32 HeaderBg => Palette.Current.HeaderBg;
+    private static RGBAColor32 RowAltBg => Palette.Current.RowAltBg;
+    private static RGBAColor32 RowHoverBg => Palette.Current.RowHoverBg;
+    private static RGBAColor32 RowFocusBg => Palette.Current.RowFocusBg;
+    private static RGBAColor32 WorktreeBg => Palette.Current.PanelBg;
+    private static RGBAColor32 Bright => Palette.Current.Bright;
+    private static RGBAColor32 Body => Palette.Current.Body;
+    private static RGBAColor32 Dim => Palette.Current.Dim;
+    private static RGBAColor32 Faint => Palette.Current.Faint;
+    private static RGBAColor32 Working => Palette.Current.Flying;
+    private static RGBAColor32 Waiting => Palette.Current.Held;
+    private static RGBAColor32 Failing => Palette.Current.Failed;
+    private static RGBAColor32 Link => Palette.Current.Landed;
+    private static (RGBAColor32 Bg, RGBAColor32 Hover) Lit => (Palette.Current.PillLit, Palette.Current.PillLitHover);
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
 
@@ -169,6 +169,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     public void Render(ReposScreen screen, RectF32 bounds)
     {
+        Palette.Use(Night);
         BeginFrame();
         RenderLayout(Tree(screen), bounds);
     }
@@ -176,6 +177,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
     internal Layout.Node Tree(ReposScreen screen)
     {
+        Palette.Use(Night);
         var shown = ShowAll ? screen.Lines : [.. screen.Lines.Where(l => l.Status.Tracked)];
         _lines = shown;
         _marked = shown.Any(l => l.Node is not null);

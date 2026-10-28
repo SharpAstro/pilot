@@ -15,8 +15,8 @@ internal sealed class NightSwitch
     /// <summary>The word on the switch, lit or not.</summary>
     public const string Label = "Night";
 
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
+    private static RGBAColor32 Bright => Palette.Current.Bright;
+    private static RGBAColor32 Dim => Palette.Current.Dim;
 
     private bool _on;
 
