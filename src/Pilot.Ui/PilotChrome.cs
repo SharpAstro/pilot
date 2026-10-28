@@ -21,6 +21,12 @@ internal enum PilotPage
 
     /// <summary>Last in the enum for the same reason; the rail lists it between Repos and Background tasks.</summary>
     PullRequests,
+
+    /// <summary>
+    /// Never a page shown: the rail's cue for the cards a window too narrow for the panel beside its page dropped (<c>PilotChrome.CardsOpen</c>).
+    /// Last in the enum for the same reason as the others.
+    /// </summary>
+    Cards,
 }
 
 /// <summary>
@@ -318,6 +324,18 @@ internal sealed class PilotChrome<TSurface>
     public bool ShowsCards { get; private set; }
 
     /// <summary>
+    /// Whether the last frame had cards open but no room for the panel beside the page, and so cued them on the rail
+    /// (<see cref="PilotPage.Cards"/>) instead of dropping them without a trace.
+    /// </summary>
+    public bool CardsDropped { get; private set; }
+
+    /// <summary>The cards panel stands in the page's place, as the rail's cue asked: only while <see cref="CardsDropped"/>, and any page chosen on the rail ends it.</summary>
+    public bool CardsOpen { get; private set; }
+
+    /// <summary>What a click on the rail's cards cue does: puts the panel in the page's place, or the page back.</summary>
+    internal void ToggleCards() => CardsOpen = !CardsOpen;
+
+    /// <summary>
     /// The page shown, by the chord or a click on the rail; a locked page is never shown. A move to another page is recorded for
     /// <see cref="Back"/>. Where the host keeps the page itself (the show of a Link call), it is told as well.
     /// </summary>
@@ -338,6 +356,8 @@ internal sealed class PilotChrome<TSurface>
         {
             return;
         }
+        // Any move on the rail leaves the cards a narrow window showed in the page's place.
+        CardsOpen = false;
         show?.Invoke(page);
         if (page != Page)
         {
@@ -830,6 +850,7 @@ internal sealed class PilotChrome<TSurface>
     {
         Palette.Use(Night);
         ApplyEmojiFont();
+        TextCheck.Window = ((int)MathF.Round(bounds.Width), (int)MathF.Round(bounds.Height));
         _items.Clear();
         var tasks = JobsGlyph(jobs, screen.AsOf);
         foreach (var (page, icon, label, shortcut, locked) in Pages)
@@ -893,10 +914,35 @@ internal sealed class PilotChrome<TSurface>
                 Layout.Builder.Fill(key: CardsKey).W(Layout.Sizing.Star(CardsView<TSurface>.Share, 0f, CardsView<TSurface>.Width)).H(Layout.Sizing.Star())
                     .CollapseBelow(CardsView<TSurface>.MinWidth))
             : Layout.Builder.HStack(Layout.Builder.Fill(key: RailKey).ColW(RailWidth), Layout.Builder.Fill(key: PageKey).Stretch());
-        var arranged = Layout.Engine.Arrange(tree.Stretch(), new Rect<float>(bounds.X, bounds.Y, bounds.Width, bounds.Height),
-            new PixelMeasureContext<TSurface>(_renderer, FontPath, DpiScale));
-        // A panel the window had too little for was dropped from the arrangement: it is not drawn, and the page says so.
+        var measure = new PixelMeasureContext<TSurface>(_renderer, FontPath, DpiScale);
+        var window = new Rect<float>(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+        var arranged = Layout.Engine.Arrange(tree.Stretch(), window, measure);
+        // A panel the window had too little for was dropped from the arrangement: it is not drawn, and a card waiting in it would go
+        // unseen, so the rail says so and a click on its cue puts the panel in the page's place.
+        var wanted = ShowsCards;
         ShowsCards &= arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Fill { Key: CardsKey } });
+        CardsDropped = wanted && !ShowsCards && cards is { Open.Count: > 0 };
+        if (!CardsDropped)
+        {
+            CardsOpen = false;
+        }
+        else
+        {
+            var waiting = cards!.Open.Count;
+            _items.Add(new TabItem<PilotPage>("Cards", PilotPage.Cards)
+            {
+                Icon = Night.On ? "!" : "\U0001F514",
+                Tooltip = $"{waiting} card{(waiting == 1 ? "" : "s")} waiting: the window has no room for them beside the page. Click to {(CardsOpen ? "close" : "open")} them",
+                OnSelect = _ => ToggleCards(),
+            });
+            if (CardsOpen)
+            {
+                // The panel takes the page's place, at the window's width less the rail.
+                arranged = Layout.Engine.Arrange(Layout.Builder.HStack(Layout.Builder.Fill(key: RailKey).ColW(RailWidth),
+                    Layout.Builder.Fill(key: CardsKey).Stretch()).Stretch(), window, measure);
+                ShowsCards = true;
+            }
+        }
         foreach (var leaf in arranged)
         {
             if (leaf.Node is not Layout.Node.Leaf { Content: Layout.Content.Fill { Key: { } key } })
@@ -910,7 +956,7 @@ internal sealed class PilotChrome<TSurface>
                     // Back and Forward over the tabs, the tabs in what is left of the rail.
                     var navHeight = Nav.Scale.ToSurface(NavControls<TSurface>.Height);
                     Nav.Render(new RectF32(rect.X, rect.Y, rect.Width, navHeight));
-                    Rail.Render(new RectF32(rect.X, rect.Y + navHeight, rect.Width, rect.Height - navHeight), _items, Page);
+                    Rail.Render(new RectF32(rect.X, rect.Y + navHeight, rect.Width, rect.Height - navHeight), _items, CardsOpen ? PilotPage.Cards : Page);
                     break;
                 case CardsKey:
                     Cards.Render(cards!, rect);

@@ -89,6 +89,69 @@ public sealed class LiveTextCheckTests
     }
 
     [Fact]
+    public void AnOverlapThatArrivesAfterACleanFirstFrameAtTheSameSizeAndDpiRaisesExactlyOneCard()
+    {
+        var (page, check, sent, logged, renderer) = Setup();
+        using var r = renderer;
+        // The page's first frame is empty (a loading page); its rows arrive later at the same size and DPI.
+        page.Overlap = false;
+        page.Render(new RectF32(0, 0, 900, 600));
+        sent.ShouldBeEmpty();
+        page.Overlap = true;
+        for (var i = 0; i < 3; i++)
+        {
+            page.Render(new RectF32(0, 0, 900, 600));
+        }
+
+        sent.ShouldHaveSingleItem().Args![1].ShouldBe("GUI drew text over text on overlapping");
+        logged.ShouldHaveSingleItem();
+        check.Checks.ShouldBe(2);
+    }
+
+    [Fact]
+    public void TheCardNamesTheWindowAndThePageAreaWhereTheHostGivesTheWindow()
+    {
+        var (page, check, sent, _, renderer) = Setup();
+        using var r = renderer;
+        check.Window = (1300, 900);
+        page.Render(new RectF32(0, 0, 900, 600));
+
+        sent.ShouldHaveSingleItem().Args![2].ShouldContain("window 1300x900, page 900x600 at DPI 1");
+    }
+
+    [Fact]
+    public void AWindowTooNarrowForTheCardsPanelCuesThemOnTheRailAndOpensThemInThePagesPlace()
+    {
+        using var renderer = new RgbaImageRenderer(700, 900);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = 1.5f };
+        var data = PageData.For("sample");
+        data.Cards.Open.Count.ShouldBeGreaterThan(0);
+        chrome.Show(PilotPage.Jobs);
+        void Draw() => chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, 700, 900), data.Machines);
+
+        Draw();
+        chrome.ShowsCards.ShouldBeFalse();
+        chrome.CardsDropped.ShouldBeTrue();
+        chrome.CardsOpen.ShouldBeFalse();
+
+        chrome.ToggleCards();
+        Draw();
+        chrome.CardsOpen.ShouldBeTrue();
+        chrome.ShowsCards.ShouldBeTrue();
+
+        // Another page on the rail ends it.
+        chrome.Show(PilotPage.Repos);
+        Draw();
+        chrome.CardsOpen.ShouldBeFalse();
+        chrome.CardsDropped.ShouldBeTrue();
+
+        // A wide window has the panel beside the page and no cue.
+        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, 1700, 900), data.Machines);
+        chrome.ShowsCards.ShouldBeTrue();
+        chrome.CardsDropped.ShouldBeFalse();
+    }
+
+    [Fact]
     public void ACleanPageRaisesNothing()
     {
         var (page, check, sent, logged, renderer) = Setup();
