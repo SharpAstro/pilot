@@ -48,20 +48,25 @@ public sealed class ChatRowTests
         return chat;
     }
 
+    // At DPI 1.25 and 1.5 as well, as the flight page's padded panels are held (DIR.Lib#163): a measure off by a few
+    // pixels shows at one scale and not another.
     [Theory]
-    [InlineData(700, 900)]
-    [InlineData(900, 700)]
-    [InlineData(1640, 1260)]
-    public async Task NoRowsTextIsDrawnOverAnotherRowAndALongMessageWraps(int width, int height)
+    [InlineData(700, 900, 1f)]
+    [InlineData(900, 700, 1f)]
+    [InlineData(1640, 1260, 1f)]
+    [InlineData(1640, 1260, 1.25f)]
+    [InlineData(1640, 1260, 1.5f)]
+    [InlineData(1100, 900, 1.5f)]
+    public async Task NoRowsTextIsDrawnOverAnotherRowAndALongMessageWraps(int width, int height, float dpi)
     {
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         var chat = await Chat(renderer);
-        var ctx = new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f, 1f);
+        var ctx = new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, dpi);
         var arranged = Layout.Engine.Arrange(chat.Tree(), new Rect<float>(0, 0, width, height), ctx);
 
-        // Every text leaf in the page's body, as drawn: no two of them share a pixel.
+        // Every text leaf in the page's body (under the header), as drawn: no two of them share a pixel.
         var texts = arranged
-            .Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value.Length: > 0 } } && a.Bounds.Y > 70f)
+            .Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value.Length: > 0 } } && a.Bounds.Y > 70f * dpi)
             .Select(a => (Text: ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value, a.Bounds))
             .ToList();
         texts.Count.ShouldBeGreaterThan(50);
@@ -71,7 +76,7 @@ public sealed class ChatRowTests
             {
                 var (a, b) = (texts[i].Bounds, texts[j].Bounds);
                 var overlap = a.X < b.X + b.Width - 0.5f && b.X < a.X + a.Width - 0.5f && a.Y < b.Y + b.Height - 0.5f && b.Y < a.Y + a.Height - 0.5f;
-                overlap.ShouldBeFalse($"'{texts[i].Text}' {a} is drawn over '{texts[j].Text}' {b} at {width} wide");
+                overlap.ShouldBeFalse($"'{texts[i].Text}' {a} is drawn over '{texts[j].Text}' {b} at {width} wide, DPI {dpi}");
             }
         }
 
@@ -82,7 +87,7 @@ public sealed class ChatRowTests
         if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 } capture)
         {
             chat.Render(new RectF32(0, 0, width, height));
-            File.WriteAllBytes(Path.Combine(Path.GetDirectoryName(capture) ?? ".", $"chat-rows-{width}.png"), SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, height));
+            File.WriteAllBytes(Path.Combine(Path.GetDirectoryName(capture) ?? ".", $"chat-rows-{width}-{dpi}.png"), SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, height));
         }
     }
 }
