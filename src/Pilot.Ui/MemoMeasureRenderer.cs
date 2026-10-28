@@ -58,12 +58,10 @@ public sealed class MemoMeasureRenderer<TSurface> : Renderer<TSurface>
         return size;
     }
 
-    public override void Resize(uint width, uint height)
-    {
-        _inner.Resize(width, height);
-        _measured.Clear();
-        _count = 0;
-    }
+    // A measure is a function of (font, size, text) alone, so a resize or DPI change (which arrives as a different size key)
+    // never makes the inner renderer answer differently for the same key: the memo needs no clearing on resize. The window's
+    // loop resizes the bare VkRenderer anyway, so this override never runs there; it only forwards.
+    public override void Resize(uint width, uint height) => _inner.Resize(width, height);
 
     public override void DrawRectangle(in RectInt rect, RGBAColor32 strokeColor, int strokeWidth) => _inner.DrawRectangle(in rect, strokeColor, strokeWidth);
 

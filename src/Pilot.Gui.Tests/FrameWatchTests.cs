@@ -117,12 +117,31 @@ public class FrameWatchTests
         var watch = new FrameWatch(new Capture());
         var since = T0;
         var fleet = new FleetScreen([], T0);
-        var at = (TimeSpan span) => FrameWatch.Fingerprint(PagesWith(since, T0 + span), fleet, T0 + span);
+        var at = (TimeSpan span) => FrameWatch.Fingerprint(PagesWith(since, T0 + span), fleet, T0 + span, PilotPage.Sessions);
 
         watch.WorthAFrame(1, 0, at(TimeSpan.FromSeconds(61))).ShouldBeTrue();
         // The rest of that minute (and its seconds of ago) is the same banner: no frame.
         watch.WorthAFrame(1, 0, at(TimeSpan.FromSeconds(61))).ShouldBeFalse();
         // The banner reads "since 2 m" now: a frame.
         watch.WorthAFrame(1, 0, at(TimeSpan.FromSeconds(121))).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void A_last_response_turning_over_asks_a_frame_on_Sessions_but_not_on_Home()
+    {
+        var fleet = new FleetScreen([], T0);
+        FleetPages Pages(DateTimeOffset now)
+        {
+            var row = new SessionRow
+            {
+                Id = "a1b2c3d4", SessionId = "a1b2c3d4-0000-4000-8000-000000000000", Name = "push-it", Kind = SessionKind.Interactive, Cwd = "/r/pilot",
+                Role = SessionRole.AdHoc, State = SessionState.Working, StartedAt = T0 - TimeSpan.FromHours(1), LastResponseAt = T0 - TimeSpan.FromSeconds(5), ContextTokens = 0, ContextWindow = 200_000, SpendWeighted = 0,
+            };
+            return new FleetPages(new SessionsScreen(SessionLine.Build([row], now), "test", now), new FlightsScreen([], "test", now), new JobsScreen([], "test", now), [], CardsScreen.From([]));
+        }
+        long At(PilotPage page, int seconds) => FrameWatch.Fingerprint(Pages(T0 + TimeSpan.FromSeconds(seconds)), fleet, T0 + TimeSpan.FromSeconds(seconds), page);
+
+        At(PilotPage.Home, 0).ShouldBe(At(PilotPage.Home, 1));
+        At(PilotPage.Sessions, 0).ShouldNotBe(At(PilotPage.Sessions, 1));
     }
 }

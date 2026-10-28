@@ -824,7 +824,7 @@ if (feed is not null)
                 chrome.Autopilot.On = hereSummary is { Connected: true, Node.Autopilot: true };
                 // The once-a-second look finds nothing new on an idle page: what was built reads as what is drawn, so no
                 // pages are published and no frame is asked. A row's own "ago" turning over shows as different text.
-                if (!frameWatch.WorthAFrame(version, ask, FrameWatch.Fingerprint(pages, fleetScreen, now, (PilotPage)Volatile.Read(ref pagesWanted) == PilotPage.Settings)))
+                if (!frameWatch.WorthAFrame(version, ask, FrameWatch.Fingerprint(pages, fleetScreen, now, (PilotPage)Volatile.Read(ref pagesWanted))))
                 {
                     continue;
                 }
