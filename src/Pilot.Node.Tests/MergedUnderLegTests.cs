@@ -178,7 +178,6 @@ public sealed class MergedUnderLegTests : IDisposable
     public async Task ADoneLegGoesToANewPrFromTheMergedBaseInAMergeWayRepo()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
-        node.GitHub.UpdateWay = UpdateWay.Merge;
         var ready = Merged(node);
         (await Send(node, Verbs.PlanLeg, Subject, Plan)).Error.ShouldBeNull();
         ShouldHaveRung(node, ready);

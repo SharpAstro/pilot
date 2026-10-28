@@ -330,19 +330,15 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
 
         if (pr.Mergeable == "CONFLICTING" || merge is { Kind: MergeKinds.Conflicts or MergeKinds.Behind })
         {
-            if (await legs.RebaseOntoBaseAsync(code, cancellationToken) is not { } why)
+            if (await legs.BringUpToDateAsync(code, cancellationToken) is not { } why)
             {
                 var onto = (Now(code)?.Base ?? flight.Base).Replace("origin/", "", StringComparison.Ordinal);
                 var restarted = Now(code)?.Review?.ReviewedHead is { Length: > 0 } read ? $"review restarted at {Short8(read)}" : "its review has not started yet";
-                return await FinishAsync(entry, pr, $"{(await github.UpdateWayAsync(flight.RepoPath, legs.Models.MergeMethod, cancellationToken) == UpdateWay.Merge ? "brought up to date with" : "rebased onto")} {onto}, {restarted}", LabelOf(code), cancellationToken);
+                return await FinishAsync(entry, pr, $"brought up to date with {onto}, {restarted}", LabelOf(code), cancellationToken);
             }
-            // A rebase that conflicts rings as PrChecks rings it, and the Handled line says so too.
+            // A merge that conflicts goes to the watchtower as PrChecks hands it, and the Handled line says so too.
             var notSent = await legs.ConflictsAsync(code, why, cancellationToken);
-            if (notSent is not null)
-            {
-                state.RaiseCard(CardBin.Ring, "pr-conflicts", subject, $"{code}'s PR #{entry.Number} conflicts with its base", $"{why} ({notSent})", link: pr.Url);
-            }
-            return await FinishAsync(entry, pr, $"{why}{(notSent is null ? ": sent back as changes, its last leg redone to resolve it" : $" ({notSent}), rung")}", LabelOf(code), cancellationToken);
+            return await FinishAsync(entry, pr, $"{why}{(notSent is null ? ": the watchtower is told to resolve it in the plane" : $" ({notSent})")}", LabelOf(code), cancellationToken);
         }
 
         if (checks == ChoiceStatus.Failing && flight.Review is { State: ReviewState.Passed })

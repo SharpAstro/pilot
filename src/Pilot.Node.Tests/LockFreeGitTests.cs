@@ -159,7 +159,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         var git = new GatedGit(new GitCli(), gate, args => args is ["fetch", ..]);
         var legs = Another(git);
 
-        var rebase = legs.RebaseOntoBaseAsync(flight.Code, Ct);
+        var rebase = legs.BringUpToDateAsync(flight.Code, Ct);
         await Within(gate.Reached, "the fetch was out");
 
         var (plan, planTook) = await Timed(() => legs.RunAsync(new CommandRequest { Verb = Verbs.PlanLeg, Target = Verbs.FlightTarget(other), Args = ["name=sun", "goal=Draw the sun", "done-when=It shows", "item=Draw it"], Who = "controller" }, Ct));

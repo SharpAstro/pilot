@@ -192,20 +192,20 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             // Taken out for a conflict with its base (main moved while it waited): Merge would only be refused again. The
-            // plane is rebased and reviewed afresh, which offers the merge again, as a PR found conflicting is (PIL207's
+            // base is merged into the plane and it is reviewed afresh, which offers the merge again, as a PR found conflicting is (PIL207's
             // #238, SE1 2026-10-25: a For-you card offered Merge on a merge_conflict).
             if (queue.RemovedReason?.Contains("conflict", StringComparison.OrdinalIgnoreCase) == true && legs is not null)
             {
                 if (_rebased.Add($"{flight.Code} {queue.Head}"))
                 {
-                    if (await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } notRebased)
+                    if (await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } notUpdated)
                     {
-                        // Resolved by a worker the node sends, not rung: a conflict is pilot's to fix (#344 rang for one, 2026-10-27).
-                        await GoAroundOnConflictAsync(flight.Code, number, notRebased, flight.PullRequestUrl, cancellationToken);
+                        // Resolved by the watchtower in the plane, not by a worker the node sends: a conflict is a merge (#344 rang for one, 2026-10-27).
+                        await HandConflictOverAsync(flight.Code, notUpdated, cancellationToken);
                     }
                     else
                     {
-                        state.RaiseCard(CardBin.Handled, QueueDropped, subject, $"{flight.Code}'s PR #{number} left the merge queue on a conflict: {(await github.UpdateWayAsync(flight.RepoPath, legs.Models.MergeMethod, cancellationToken) == UpdateWay.Merge ? "brought up to date with" : "rebased onto")} its base and reviewed afresh");
+                        state.RaiseCard(CardBin.Handled, QueueDropped, subject, $"{flight.Code}'s PR #{number} left the merge queue on a conflict: brought up to date with its base and reviewed afresh");
                     }
                 }
                 continue;
@@ -251,9 +251,9 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     }
 
     /// <summary>
-    /// A flight's PR that conflicts with its base, whatever its review said and with no merge card open (those are rebased
-    /// from the card): rebased by the node, once a head, while no leg flies and no reviewer reads; a rebase that conflicts
-    /// sends the last leg around to resolve it. Only a passed PR's card did this, so a PR that conflicted under a review
+    /// A flight's PR that conflicts with its base, whatever its review said and with no merge card open (those are updated
+    /// from the card): the base merged in by the node, once a head, while no leg flies and no reviewer reads; a merge that conflicts
+    /// goes to the watchtower to resolve in the plane. Only a passed PR's card did this, so a PR that conflicted under a review
     /// asking for changes, or still flying, sat DIRTY until someone said so (#339, #340, 2026-10-27).
     /// </summary>
     private async Task ResolveConflictsAsync(string code, PullRequest pr, CancellationToken cancellationToken)
@@ -267,37 +267,22 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         {
             return;
         }
-        if (await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } why)
+        if (await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } why)
         {
-            await GoAroundOnConflictAsync(code, number, why, pr.Url, cancellationToken);
+            await HandConflictOverAsync(code, why, cancellationToken);
         }
     }
 
     /// <summary>
-    /// The node's rebase of a flight conflicted: its last leg goes around to resolve it, told what its review still asks for
-    /// too. A passed review is turned to Changes first, as a go-around of a done leg needs. Rung only when that is refused.
+    /// The node's merge of the base into a flight conflicted: the watchtower is told to resolve it in the plane (a card), merge the
+    /// base in, rerun the check and push plain. The last leg goes round only if the watchtower says the conflict is real work, so a
+    /// merge is never a fresh worker's whole leg of tokens.
     /// </summary>
-    private async Task GoAroundOnConflictAsync(string code, int number, string why, string? url, CancellationToken cancellationToken)
+    private async Task HandConflictOverAsync(string code, string why, CancellationToken cancellationToken)
     {
-        if (legs is null || state.Flights().FirstOrDefault(f => f.Code == code) is not { } flight || state.Legs(code) is not { Length: > 0 } flown)
+        if (legs is not null)
         {
-            return;
-        }
-        var asked = flight.Review is { State: ReviewState.Changes, Report: { Length: > 0 } report } ? $" Its review also asks for changes, make them too: {report}" : "";
-        var refused = flight.Review is { State: ReviewState.Passed } ? await legs.ConflictsAsync(code, why, cancellationToken) : null;
-        if (refused is null)
-        {
-            var result = await legs.RunAsync(new CommandRequest
-            {
-                Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, flown[^1].Name), Who = "node",
-                Args = [$"{await legs.ConflictBriefAsync(code, why, cancellationToken)}.{asked}"],
-            }, cancellationToken);
-            refused = result.Ok ? null : result.Error ?? "the go-around did not start";
-        }
-        if (refused is not null)
-        {
-            state.RaiseCard(CardBin.Ring, "pr-conflicts", Verbs.FlightTarget(code), $"{code}'s PR #{number} conflicts with its base", $"{why} ({refused})", link: url,
-                summary: $"The PR #{number} of {code} conflicts with its base and could not be rebased by the node, nor sent back. Redo the last leg from the flight page or with pilot leg go-around, or resolve it by hand.");
+            await legs.ConflictsAsync(code, why, cancellationToken);
         }
     }
 
@@ -628,27 +613,26 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 }
                 continue;
             }
-            // Reviewed and passed, but no longer merging into its base: main moved. Rebased by itself, once a head, and
-            // reviewed afresh; a rebase that conflicts rings with what to do. The card says so meanwhile, offering the go-around
+            // Reviewed and passed, but no longer merging into its base: main moved. The base is merged in by itself, once a head, and
+            // it is reviewed afresh; a merge that conflicts goes to the watchtower. The card says so meanwhile, offering the go-around
             // that does it by hand, not a Merge GitHub would refuse.
             var conflicts = pr is { Mergeable: "CONFLICTING" } && pr.Number == number || merge is { Kind: MergeKinds.Conflicts };
             if (conflicts || merge is { Kind: MergeKinds.Behind })
             {
                 if (legs is not null && _rebased.Add($"{flight.Code} {head}")
-                    && await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } why)
+                    && await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } why)
                 {
-                    await GoAroundOnConflictAsync(flight.Code, number, why, pr?.Url, cancellationToken);
+                    await HandConflictOverAsync(flight.Code, why, cancellationToken);
                 }
                 // The rebase closes the card when it starts a fresh review; one still open says what is wrong and offers the go-around.
                 if (legs is not null && state.Cards(openOnly: true).Any(c => c.Id == card.Id))
                 {
                     var what = conflicts ? "conflicts with its base" : "is behind its base";
-                    var merges = await github.UpdateWayAsync(flight.RepoPath, legs.Models.MergeMethod, cancellationToken) == UpdateWay.Merge;
                     legs.ShowMergeFailed(flight.Code, head, "", $"{flight.Code}'s PR #{number} {what}",
-                        conflicts ? $"GitHub cannot merge it until the conflict is resolved. The node {(merges ? "merges the base in" : "rebases it")} by itself, once a head; one that conflicts is a redo of the leg (a go-around): the last leg resolves it."
-                            : $"GitHub will not merge it until it is {(merges ? "up to date with" : "rebased onto")} its base. The node {(merges ? "merges the base in" : "rebases it")} by itself, once a head; redoing the leg (a go-around) does it by hand.",
+                        conflicts ? $"GitHub cannot merge it until the conflict is resolved. The node merges the base in by itself, once a head; one that conflicts goes to the watchtower to resolve in the plane."
+                            : $"GitHub will not merge it until it is up to date with its base. The node merges the base in by itself, once a head; redoing the leg (a go-around) does it by hand.",
                         pr?.Url ?? card.Link, rerun: false,
-                        goAroundWhy: $"the PR {what}: {await legs.UpdateInstructionAsync(flight.Code, cancellationToken)}",
+                        goAroundWhy: $"the PR {what}: {LegCommander.UpdateInstruction}",
                         mergeAgain: false, kind: LegCommander.PrReady);
                 }
                 continue;
