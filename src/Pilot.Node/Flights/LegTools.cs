@@ -794,8 +794,8 @@ public sealed class GhCli : IGitHub
         var (exit, repoJson, _) = await RunAsync(["api", "repos/{owner}/{repo}"], repoPath, cancellationToken);
         if (exit != 0)
         {
-            // No answer: not kept, so the next push asks again.
-            return UpdateWay.Rebase;
+            // No answer: not kept, so the next push asks again. A way read before still stands: a merge-way repo is not rebased on a blip.
+            return known.At != default ? known.Way : UpdateWay.Rebase;
         }
         var rules = "[]";
         if (ParseDefaultBranch(repoJson) is { } branch)
@@ -803,7 +803,7 @@ public sealed class GhCli : IGitHub
             var (rulesExit, rulesOutput, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/rules/branches/{branch}"], repoPath, cancellationToken);
             if (rulesExit != 0)
             {
-                return UpdateWay.Rebase;
+                return known.At != default ? known.Way : UpdateWay.Rebase;
             }
             rules = rulesOutput;
         }

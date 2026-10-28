@@ -1331,6 +1331,39 @@ public sealed class ReviewTests3 : ReviewTestsBase
         Git(flight.Worktree, "ls-remote", "origin", "flight/tia16").ShouldStartWith(pushed);
     }
 
+    [Theory]
+    [InlineData(UpdateWay.Rebase, "18", "was pushed by someone else")]
+    [InlineData(UpdateWay.Merge, "19", "has commits its head lacks")]
+    public async Task ACommitPushedToTheBranchFromElsewhereDuringAGoAroundIsNotLost(UpdateWay way, string number, string said)
+    {
+        _github.UpdateWay = way;
+        var flight = await NewFlight(number, "parser");
+        var code = $"TIA{number}";
+        var branch = $"flight/tia{number}";
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(code), "controller");
+        (await Run(Verbs.Review, $"flight/{code}", Reviewer(code), "changes", "naming")).Ok.ShouldBeTrue();
+        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges).Choices[0];
+        (await Run(card.Verb, card.Target, "controller", card.Args)).Error.ShouldBeNull();
+        var worker = _state.Legs(code).Single().Worker!;
+
+        // GitHub's "Update branch", a committed suggestion or the controller's resolution: a push the node did not make.
+        var other = Path.Combine(_root, $"other{number}");
+        Git(_root, "clone", "-q", Git(Repo, "remote", "get-url", "origin"), other);
+        Git(other, "checkout", "-q", branch);
+        File.WriteAllText(Path.Combine(other, "elsewhere.txt"), "elsewhere\n");
+        Git(other, "add", ".");
+        Git(other, "commit", "-q", "-m", "pushed from elsewhere");
+        Git(other, "push", "-q", "origin", branch);
+        var theirs = Git(other, "rev-parse", "HEAD");
+        MainMoves();
+
+        var result = await Run(Verbs.FinishLeg, Verbs.LegTarget(code, "parser"), worker, "done", "fixed");
+
+        result.Error.ShouldNotBeNull().ShouldContain(said.Contains("someone else") ? "git could not push" : said);
+        Git(flight.Worktree, "ls-remote", "origin", branch).ShouldStartWith(theirs);
+    }
+
     private void MainMoves()
     {
         File.WriteAllText(Path.Combine(Repo, "later.txt"), "later\n");
