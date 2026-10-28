@@ -360,6 +360,9 @@ public static class Verbs
     /// <summary><c>sync-repos node</c>: <c>git fetch -p --all</c> and a fast-forward-only pull of each tracked repo's default branch; the result's <see cref="CommandResult.Made"/> is one <see cref="RepoSyncOutcome"/> line per repo.</summary>
     public const string SyncRepos = "sync-repos";
 
+    /// <summary><c>refresh-prs node</c>: reads every open PR of the clones' orgs again now, rather than at the next minute; the result's <see cref="CommandResult.Made"/> is how many it found.</summary>
+    public const string RefreshPullRequests = "refresh-prs";
+
     /// <summary><c>create-issue repo/&lt;path&gt; &lt;title&gt; [body]</c>: a new issue through gh; the result's <see cref="CommandResult.Made"/> is its number.</summary>
     public const string CreateIssue = "create-issue";
 
@@ -375,12 +378,37 @@ public static class Verbs
     public const string Planned = "planned";
 
     /// <summary>
-    /// <c>overlap flight/&lt;code&gt; &lt;other&gt; &lt;why…&gt;</c>: the planner found the flight to look like part of another.
-    /// A pair not asked before is recorded pending and rings one card (<c>Fold</c> or <c>Plan separately</c>); the flight's
+    /// <c>touches flight/&lt;code&gt; &lt;file…&gt;</c>: the planner's overlap check across nodes. Compares the files the flight's legs will
+    /// change with every other not-landed flight of the repo on this node and on each reachable peer (its pushed branch's changed files
+    /// against its base) and with every open PR, and answers a line per flight or PR: the shared files and fold, connect or parallel
+    /// (<c>unknown</c> for one whose branch is not pushed or whose node could not be reached). Reads only; changes nothing.
+    /// </summary>
+    public const string Touches = "touches";
+
+    /// <summary>
+    /// <c>overlap flight/&lt;code&gt; &lt;other&gt; [file=&lt;path&gt;…] &lt;why…&gt;</c>: the planner found the flight to look like part of another
+    /// (which may fly on another node), and names the files both change (<c>file=</c>, as <c>touches</c> said them).
+    /// A pair not asked before is recorded pending and rings one card naming both flights, the shared files and the choice
+    /// (<c>Fold into</c>, <c>Connect to</c> or <c>Plan in parallel</c>; no fold into a flight of another node); the flight's
     /// <c>plan-leg</c> and <c>planned</c> are refused while it waits, and the planner is told to end its turn, as it is
     /// started again with the answer. A pair answered already returns the answer with no new card.
     /// </summary>
     public const string Overlap = "overlap";
+
+    /// <summary>The prefix of an argument of <see cref="Overlap"/> that names a file both flights change: <c>file=src/Parser.cs</c>.</summary>
+    public const string OverlapFileArg = "file=";
+
+    /// <summary>
+    /// The prefix of an argument of <see cref="Overlap"/> that carries the pick <c>touches</c> made, <c>pick=fold</c> or <c>pick=connect</c>
+    /// (none is connect): the card's title says the choice the planner leans to. A flight of another node is never titled fold.
+    /// </summary>
+    public const string OverlapPickArg = "pick=";
+
+    /// <summary>The pick <c>pick=</c> carries for a flight that is part of the same goal as the other.</summary>
+    public const string OverlapPickFold = "fold";
+
+    /// <summary>The pick <c>pick=</c> carries for a flight that depends on the other, and the default.</summary>
+    public const string OverlapPickConnect = "connect";
 
     /// <summary>
     /// <c>fold flight/&lt;code&gt; &lt;other&gt;</c>: the answer that the flight is part of the other. Records it, closes the
@@ -395,6 +423,13 @@ public static class Verbs
     /// card, stops the waiting planner and starts a fresh one told the answer.
     /// </summary>
     public const string Separate = "separate";
+
+    /// <summary>
+    /// <c>connect-overlap flight/&lt;code&gt; &lt;other&gt;</c>: the answer that the flight waits for the other (which may fly on another
+    /// node). Records it, closes the card, connects the flight (<c>connect</c>: held until the other has landed), stops the waiting
+    /// planner and starts a fresh one told the answer.
+    /// </summary>
+    public const string ConnectOverlap = "connect-overlap";
 
     /// <summary>
     /// <c>stop session/&lt;id&gt;</c>: stops a running background session (<c>claude stop</c>); its row ends. An interactive
@@ -474,6 +509,12 @@ public static class MergeWays
 
     /// <summary>The PR joined its base's merge queue: the flight lands once the queue merges it.</summary>
     public const string Queued = "queued";
+
+    /// <summary>
+    /// The node's own merge found the PR behind its base: it brought it up to date, pushed it and began a fresh review, which offers the
+    /// merge again. Handled, not refused: the PR was not merged and nothing is left to answer.
+    /// </summary>
+    public const string Updated = "updated";
 }
 
 /// <summary>The ways a <c>say</c> reaches a session (<see cref="CommandResult.Way"/>).</summary>

@@ -256,6 +256,24 @@ public sealed record MergeState(string Kind, int Done = 0, int Total = 0, int? P
     public string? Place => Position is { } position ? $"position {position}" : null;
 }
 
+/// <summary>How a flight's branch is brought up to date with its base.</summary>
+public enum UpdateWay
+{
+    /// <summary>The branch is rebased onto its base and pushed with a lease (a rebase-queue repo).</summary>
+    Rebase,
+
+    /// <summary>The base is merged into the branch and pushed plain (a squash or merge repo).</summary>
+    Merge,
+}
+
+/// <summary>
+/// What GitHub says of a PR that bears on its merge, as <see cref="GhCli.ReadMergeState"/> reads it: <paramref name="State"/>
+/// (<c>OPEN</c>, <c>MERGED</c>, <c>CLOSED</c>), the draft flag, <c>mergeStateStatus</c>, <c>mergeable</c> and <c>reviewDecision</c>, whether
+/// auto-merge is armed, and its checks as (bucket, name, link), the bucket as <see cref="GhCli.CheckBucket"/> says.
+/// </summary>
+internal sealed record MergeFacts(string? State, bool Draft, string? MergeStateStatus, string? Mergeable, string? ReviewDecision, bool AutoMerge,
+    IReadOnlyList<(string Bucket, string? Name, string? Link)> Checks);
+
 /// <summary>The GitHub calls a merge needs, so a test decides what GitHub says.</summary>
 public interface IGitHub
 {
@@ -312,6 +330,13 @@ public interface IGitHub
     Task<bool> AutoMergeAllowedAsync(string repoPath, CancellationToken cancellationToken);
 
     /// <summary>
+    /// How a flight's branch is brought up to date with its base in the repo at <paramref name="repoPath"/>: by the default
+    /// branch's merge queue method (its ruleset's <c>merge_queue</c> rule), else by the repo's allowed merge methods. Kept for a
+    /// while per repo. <see cref="UpdateWay.Rebase"/> when GitHub would not say, as the node always did.
+    /// </summary>
+    Task<UpdateWay> UpdateWayAsync(string repoPath, string mergeMethod, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Arms GitHub's auto-merge on PR <paramref name="number"/>: it merges by <paramref name="method"/> once its required checks
     /// pass, refused unless its head is still <paramref name="head"/>. Never merges: a PR GitHub would merge now (CLEAN, HAS_HOOKS,
     /// UNSTABLE: its running checks are not required) is refused, and the caller waits for it itself.
@@ -351,9 +376,20 @@ public interface IGitHub
     /// <exception cref="FlightException">gh could not list them.</exception>
     Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken);
 
+    /// <summary>The paths PR <paramref name="number"/> changes, all of them (not the first page): what a planner's overlap check compares its own files with.</summary>
+    /// <exception cref="FlightException">gh could not list them.</exception>
+    Task<string[]> PullRequestFilesAsync(string repoPath, int number, CancellationToken cancellationToken);
+
     /// <summary>The numbers of the repo's open PRs that carry <paramref name="label"/>: a light ask (no checks), for a look made often.</summary>
     /// <exception cref="FlightException">gh could not list them.</exception>
     Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Every open PR of the org (or user) <paramref name="owner"/>, from one paged GraphQL search for the whole of it, each with its
+    /// merge state read (<see cref="PullRequestSearch"/>); the flights are not known to it.
+    /// </summary>
+    /// <exception cref="FlightException">gh could not search.</exception>
+    Task<PullRequestRow[]> OpenPullRequestsOfAsync(string owner, CancellationToken cancellationToken);
 
     /// <summary>Opens an issue in the repo at <paramref name="repoPath"/>; returns it as listed.</summary>
     /// <exception cref="FlightException">gh could not create it.</exception>
@@ -574,70 +610,101 @@ public sealed class GhCli : IGitHub
         {
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
-            switch (TextOf(root, "state"))
-            {
-                case "MERGED":
-                    return new MergeState(MergeKinds.Merged);
-                case "CLOSED":
-                    return new MergeState(MergeKinds.Closed);
-            }
-            var checks = RollupChecks(root);
-            var (done, total) = (checks.Count(c => c.Bucket != "pending"), checks.Count);
-            var failed = checks.FirstOrDefault(c => c.Bucket == "fail");
-            var dropped = queue is { Queued: false, RemovedAt: not null, RemovedReason: { Length: > 0 } reason } && !reason.Equals("merged", StringComparison.OrdinalIgnoreCase)
-                ? reason.Replace('_', ' ').ToLowerInvariant() : null;
-            MergeState Say(string kind, string? why = null, bool awaits = false) => new(kind, done, total, queue is { Queued: true } ? queue.Position : null, why, failed.Name, failed.Link, dropped, awaits);
-
-            var mergeState = TextOf(root, "mergeStateStatus");
-            if (queue is { Queued: true })
-            {
-                return Say(MergeKinds.Queued);
-            }
-            if (TextOf(root, "mergeable") == "CONFLICTING" || mergeState == "DIRTY")
-            {
-                return Say(MergeKinds.Conflicts);
-            }
-            if (mergeState == "BEHIND")
-            {
-                return Say(MergeKinds.Behind);
-            }
-            if (mergeState == "DRAFT" || root.TryGetProperty("isDraft", out var draft) && draft.ValueKind == JsonValueKind.True)
-            {
-                return Say(MergeKinds.Blocked, "it is a draft");
-            }
-            if (failed.Name is not null)
-            {
-                return Say(MergeKinds.Blocked, $"{failed.Name} failed");
-            }
-            var review = TextOf(root, "reviewDecision");
-            if (review == "CHANGES_REQUESTED")
-            {
-                return Say(MergeKinds.ChangesRequested);
-            }
-            if (root.TryGetProperty("autoMergeRequest", out var auto) && auto.ValueKind == JsonValueKind.Object)
-            {
-                // Armed with every check green and a review still required: GitHub waits for the review, not for checks.
-                return Say(MergeKinds.Armed, mergeState == "BLOCKED" && review == "REVIEW_REQUIRED" && checks.All(c => c.Bucket != "pending") ? "a review" : null);
-            }
-            if (checks.Any(c => c.Bucket == "pending"))
-            {
-                return Say(MergeKinds.Pending);
-            }
-            return mergeState switch
-            {
-                null or "" or "UNKNOWN" => null,
-                "BLOCKED" when review == "REVIEW_REQUIRED" => Say(MergeKinds.Blocked, "a review is required"),
-                // Every check shown is green, no draft, no review in the way: a required check that GitHub has not created yet (a gate
-                // job starts only after the builds finish) is the one thing left. Waiting, not blocked: an armed merge keeps waiting
-                // for it, and Merge arms one.
-                "BLOCKED" => Say(MergeKinds.Pending, "a required check has yet to report, or a branch rule blocks it: the PR page says which", awaits: true),
-                _ => Say(MergeKinds.Ready),
-            };
+            return ReadMergeState(new MergeFacts(
+                TextOf(root, "state"),
+                root.TryGetProperty("isDraft", out var draft) && draft.ValueKind == JsonValueKind.True,
+                TextOf(root, "mergeStateStatus"), TextOf(root, "mergeable"), TextOf(root, "reviewDecision"),
+                root.TryGetProperty("autoMergeRequest", out var auto) && auto.ValueKind == JsonValueKind.Object,
+                RollupChecks(root)), queue);
         }
         catch (JsonException)
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// The one reader of a PR's merge state, whichever way GitHub's answer came (<c>gh pr view</c> for a flight's card, the
+    /// GraphQL search for the Pull requests page): the order a person reads the PR page, a merged or closed PR, then the queue,
+    /// then what keeps it from merging (conflicts, behind, draft, a failed check, requested changes), then what waits (an armed
+    /// auto-merge, checks running), then ready. A failed check blocks even where GitHub would allow it (not a required one):
+    /// pilot does not merge over a red check. Null when GitHub has not worked the merge state out yet (<c>UNKNOWN</c>).
+    /// </summary>
+    internal static MergeState? ReadMergeState(MergeFacts facts, MergeQueueState? queue = null)
+    {
+        switch (facts.State)
+        {
+            case "MERGED":
+                return new MergeState(MergeKinds.Merged);
+            case "CLOSED":
+                return new MergeState(MergeKinds.Closed);
+        }
+        var checks = facts.Checks;
+        var (done, total) = (checks.Count(c => c.Bucket != "pending"), checks.Count);
+        var failed = checks.FirstOrDefault(c => c.Bucket == "fail");
+        var dropped = queue is { Queued: false, RemovedAt: not null, RemovedReason: { Length: > 0 } reason } && !reason.Equals("merged", StringComparison.OrdinalIgnoreCase)
+            ? reason.Replace('_', ' ').ToLowerInvariant() : null;
+        MergeState Say(string kind, string? why = null, bool awaits = false) => new(kind, done, total, queue is { Queued: true } ? queue.Position : null, why, failed.Name, failed.Link, dropped, awaits);
+
+        var mergeState = facts.MergeStateStatus;
+        if (queue is { Queued: true })
+        {
+            return Say(MergeKinds.Queued);
+        }
+        if (facts.Mergeable == "CONFLICTING" || mergeState == "DIRTY")
+        {
+            return Say(MergeKinds.Conflicts);
+        }
+        if (mergeState == "BEHIND")
+        {
+            return Say(MergeKinds.Behind);
+        }
+        if (mergeState == "DRAFT" || facts.Draft)
+        {
+            return Say(MergeKinds.Blocked, "it is a draft");
+        }
+        if (failed.Name is not null)
+        {
+            return Say(MergeKinds.Blocked, $"{failed.Name} failed");
+        }
+        var review = facts.ReviewDecision;
+        if (review == "CHANGES_REQUESTED")
+        {
+            return Say(MergeKinds.ChangesRequested);
+        }
+        if (facts.AutoMerge)
+        {
+            // Armed with every check green and a review still required: GitHub waits for the review, not for checks.
+            return Say(MergeKinds.Armed, mergeState == "BLOCKED" && review == "REVIEW_REQUIRED" && checks.All(c => c.Bucket != "pending") ? "a review" : null);
+        }
+        if (checks.Any(c => c.Bucket == "pending"))
+        {
+            return Say(MergeKinds.Pending);
+        }
+        return mergeState switch
+        {
+            null or "" or "UNKNOWN" => null,
+            "BLOCKED" when review == "REVIEW_REQUIRED" => Say(MergeKinds.Blocked, "a review is required"),
+            // Every check shown is green, no draft, no review in the way: a required check that GitHub has not created yet (a gate
+            // job starts only after the builds finish) is the one thing left. Waiting, not blocked: an armed merge keeps waiting
+            // for it, and Merge arms one.
+            "BLOCKED" => Say(MergeKinds.Pending, "a required check has yet to report, or a branch rule blocks it: the PR page says which", awaits: true),
+            _ => Say(MergeKinds.Ready),
+        };
+    }
+
+    /// <summary>
+    /// How a check stands, as <c>gh</c> buckets it: <c>fail</c>, <c>pending</c> or <c>pass</c>, from a check run's conclusion and
+    /// status or a commit status's state (the conclusion).
+    /// </summary>
+    internal static string CheckBucket(string? conclusion, string? status)
+    {
+        conclusion = conclusion?.ToUpperInvariant();
+        status = status?.ToUpperInvariant();
+        // STALE is gh's pending: the result is out of date, not a verdict.
+        return conclusion is "FAILURE" or "ERROR" or "CANCELLED" or "TIMED_OUT" or "ACTION_REQUIRED" or "STARTUP_FAILURE" ? "fail"
+            : string.IsNullOrEmpty(conclusion) || conclusion is "PENDING" or "EXPECTED" or "STALE" || status is { Length: > 0 } and not "COMPLETED" ? "pending"
+            : "pass";
     }
 
     // A check run carries name, status, conclusion and detailsUrl; a commit status context, state and targetUrl. The rollup keeps
@@ -653,12 +720,7 @@ public sealed class GhCli : IGitHub
         }
         foreach (var check in rollup.EnumerateArray())
         {
-            var conclusion = (TextOf(check, "conclusion") is { Length: > 0 } c ? c : TextOf(check, "state"))?.ToUpperInvariant();
-            var status = TextOf(check, "status")?.ToUpperInvariant();
-            // STALE is gh's pending: the result is out of date, not a verdict.
-            var bucket = conclusion is "FAILURE" or "ERROR" or "CANCELLED" or "TIMED_OUT" or "ACTION_REQUIRED" or "STARTUP_FAILURE" ? "fail"
-                : string.IsNullOrEmpty(conclusion) || conclusion is "PENDING" or "EXPECTED" or "STALE" || status is { Length: > 0 } and not "COMPLETED" ? "pending"
-                : "pass";
+            var bucket = CheckBucket(TextOf(check, "conclusion") is { Length: > 0 } c ? c : TextOf(check, "state"), TextOf(check, "status"));
             var name = TextOf(check, "name") ?? TextOf(check, "context");
             var entry = (bucket, name, TextOf(check, "detailsUrl") ?? TextOf(check, "targetUrl"), Started: StampOf(check, "startedAt") ?? StampOf(check, "completedAt"));
             // A check with no name cannot be told from another: kept as it is.
@@ -762,6 +824,94 @@ public sealed class GhCli : IGitHub
 
     /// <summary><c>gh api repos/{owner}/{repo} --jq .allow_auto_merge</c>'s output: true only for <c>true</c>; <c>false</c>, <c>null</c> (a token that cannot see the setting) and nothing are off.</summary>
     internal static bool ParseAllowAutoMerge(string output) => output.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
+
+    private static readonly TimeSpan UpdateWayFor = TimeSpan.FromHours(1);
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (UpdateWay Way, DateTimeOffset At)> _updateWay = new(StringComparer.OrdinalIgnoreCase);
+
+    public async Task<UpdateWay> UpdateWayAsync(string repoPath, string mergeMethod, CancellationToken cancellationToken)
+    {
+        var key = $"{repoPath}|{mergeMethod}";
+        if (_updateWay.TryGetValue(key, out var known) && DateTimeOffset.UtcNow - known.At < UpdateWayFor)
+        {
+            return known.Way;
+        }
+        var (exit, repoJson, _) = await RunAsync(["api", "repos/{owner}/{repo}"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            // No answer: not kept, so the next push asks again. A way read before still stands: a merge-way repo is not rebased on a blip.
+            return known.At != default ? known.Way : UpdateWay.Rebase;
+        }
+        var rules = "[]";
+        if (ParseDefaultBranch(repoJson) is { } branch)
+        {
+            var (rulesExit, rulesOutput, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/rules/branches/{branch}"], repoPath, cancellationToken);
+            if (rulesExit != 0)
+            {
+                return known.At != default ? known.Way : UpdateWay.Rebase;
+            }
+            rules = rulesOutput;
+        }
+        var way = ParseUpdateWay(rules, repoJson, mergeMethod);
+        _updateWay[key] = (way, DateTimeOffset.UtcNow);
+        return way;
+    }
+
+    /// <summary><c>gh api repos/{owner}/{repo}</c>'s <c>default_branch</c>; null when it is no JSON or has none.</summary>
+    internal static string? ParseDefaultBranch(string repoJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(repoJson);
+            return TextOf(doc.RootElement, "default_branch");
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// How a branch is brought up to date from <c>gh api repos/{o}/{r}/rules/branches/{branch}</c> and the repo's own JSON: a
+    /// <c>merge_queue</c> rule's <c>merge_method</c> (REBASE rebases, SQUASH and MERGE merge the base in); with no queue, the
+    /// repo's allowed methods (only rebase allowed rebases), where the method the node merges with (<paramref name="mergeMethod"/>)
+    /// decides when the repo allows it: GitHub rebase-merges a PR with a merge commit in it and loses a conflict resolution, so a
+    /// repo that squashes only takes the base merged in where the node squashes. Rebase when either is unreadable.
+    /// </summary>
+    internal static UpdateWay ParseUpdateWay(string rulesJson, string repoJson, string? mergeMethod = null)
+    {
+        try
+        {
+            using var rules = JsonDocument.Parse(rulesJson);
+            if (rules.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var rule in rules.RootElement.EnumerateArray())
+                {
+                    if (TextOf(rule, "type") == "merge_queue")
+                    {
+                        var method = rule.TryGetProperty("parameters", out var p) ? TextOf(p, "merge_method") : null;
+                        return string.Equals(method, "REBASE", StringComparison.OrdinalIgnoreCase) || method is null ? UpdateWay.Rebase : UpdateWay.Merge;
+                    }
+                }
+            }
+            using var repo = JsonDocument.Parse(repoJson);
+            bool Allows(string name) => repo.RootElement.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+            if (string.Equals(mergeMethod, "rebase", StringComparison.OrdinalIgnoreCase) && Allows("allow_rebase_merge"))
+            {
+                return UpdateWay.Rebase;
+            }
+            if (string.Equals(mergeMethod, "squash", StringComparison.OrdinalIgnoreCase) && Allows("allow_squash_merge")
+                || string.Equals(mergeMethod, "merge", StringComparison.OrdinalIgnoreCase) && Allows("allow_merge_commit"))
+            {
+                return UpdateWay.Merge;
+            }
+            return Allows("allow_squash_merge") || Allows("allow_merge_commit") ? UpdateWay.Merge : UpdateWay.Rebase;
+        }
+        catch (JsonException)
+        {
+            return UpdateWay.Rebase;
+        }
+    }
 
     // Not `gh pr merge --auto`: gh merges at once, arming nothing, when GitHub calls the PR immediately mergeable (CLEAN, HAS_HOOKS
     // or UNSTABLE: running checks that are not required leave it so). enablePullRequestAutoMerge refuses such a PR instead, and
@@ -1004,6 +1154,37 @@ public sealed class GhCli : IGitHub
             .OrderByDescending(i => i.UpdatedAt)];
     }
 
+    /// <summary>A search that runs to more pages than this is cut short: 40 pages are 1200 open PRs.</summary>
+    private const int MostPages = 40;
+
+    public async Task<PullRequestRow[]> OpenPullRequestsOfAsync(string owner, CancellationToken cancellationToken)
+    {
+        var prs = new List<PullRequestRow>();
+        string? after = null;
+        for (var page = 0; page < MostPages; page++)
+        {
+            List<string> args = ["api", "graphql", "-f", $"query={PullRequestSearch.Query}", "-f", $"q={PullRequestSearch.QueryFor(owner)}"];
+            if (after is not null)
+            {
+                args.AddRange(["-f", $"after={after}"]);
+            }
+            // gh api needs no repo, so it runs where the node does.
+            var (exit, output, error) = await RunAsync(args, AppContext.BaseDirectory, cancellationToken);
+            if (exit != 0)
+            {
+                throw new FlightException($"gh could not search {owner}'s PRs: {(error.Trim().Length > 0 ? error : output).Trim()}");
+            }
+            var read = PullRequestSearch.Parse(output);
+            prs.AddRange(read.PullRequests);
+            if (read.Next is not { } next)
+            {
+                break;
+            }
+            after = next;
+        }
+        return [.. prs];
+    }
+
     public async Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken)
     {
         var (exit, output, error) = await RunAsync(["pr", "list", "--state", "open", "--limit", "100", "--json", "number,title,isDraft,headRefName,url,statusCheckRollup,labels"], repoPath, cancellationToken);
@@ -1026,6 +1207,17 @@ public sealed class GhCli : IGitHub
                     : [],
             })
             .OrderByDescending(p => p.Number)];
+    }
+
+    public async Task<string[]> PullRequestFilesAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        // The API, paginated: `gh pr view --json files` stops at the first 100 files, and a list cut short would read as no overlap.
+        var (exit, output, error) = await RunAsync(["api", "--paginate", $"repos/{{owner}}/{{repo}}/pulls/{number}/files?per_page=100", "--jq", ".[].filename"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not list the files of PR #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        return [.. output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
     }
 
     public async Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken)

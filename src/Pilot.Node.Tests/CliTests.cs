@@ -648,4 +648,49 @@ public sealed class CliTests : IAsyncLifetime
         PilotCommand.Repos(rows, all: false).ShouldContain("PR #7 A|B is *ready*  flight/X1  X1  ready  checks passing  labels pilot node: SE1, bug");
         PilotCommand.Repos(rows, all: false).ShouldNotContain("draft  labels");
     }
+
+    [Fact]
+    public void PullRequestsPrintGroupedByRepoWithTheirLabelsAsPlainTextAndAsMarkdownTables()
+    {
+        var now = new DateTimeOffset(2026, 10, 28, 12, 0, 0, TimeSpan.Zero);
+        PullRequestRow Pr(string repo, int number, string title, PullRequestKind kind, string label, bool needsMe, int hoursAgo) => new()
+        {
+            Repo = repo, Number = number, Title = title, Url = $"https://github.com/{repo}/pull/{number}", Kind = kind, Label = label, NeedsMe = needsMe,
+            Author = "sebgod", UpdatedAt = now.AddHours(-hoursAgo),
+        };
+        var row = new PullRequestsRow
+        {
+            Orgs = ["SharpAstro", "sebgod"], ReadAt = now.AddMinutes(-2),
+            PullRequests =
+            [
+                Pr("SharpAstro/tianwen", 3, "A|B is *wip*", PullRequestKind.ChecksRunning, "Checks running 4/7", false, 30),
+                Pr("SharpAstro/pilot", 7, "Ready one", PullRequestKind.Ready, "Ready", true, 3) with { Flight = "PIL7", Review = PullRequestReview.Passed, ReviewUrl = "https://github.com/SharpAstro/pilot/pull/7#issuecomment-1" },
+                Pr("sebgod/mercury", 9, "Old", PullRequestKind.Conflicts, "Conflicts", true, 24 * 400),
+            ],
+            Errors = [new PullRequestsError { Org = "sebgod", Message = "gh offline" }],
+        };
+
+        var plain = PullRequestsMarkdown.Plain(row, needsMe: false, now).ReplaceLineEndings("\n");
+        plain.ShouldContain("3 open · 1 ready · 1 checks running · 1 conflicts · read 2m ago");
+        plain.ShouldContain("SharpAstro/pilot  1\n    #7 Ready one  Ready  PIL7  sebgod  review passed  updated 3h ago");
+        plain.ShouldContain("    #3 A|B is *wip*  Checks running 4/7  sebgod  updated 1d ago");
+        plain.ShouldContain("updated 400d ago");
+        plain.ShouldContain("! sebgod: gh offline");
+        // The repo with the PR that most needs the person first: ready, then the conflict, then the running checks.
+        new[] { "SharpAstro/pilot  1", "sebgod/mercury  1", "SharpAstro/tianwen  1" }.Select(l => plain.IndexOf(l, StringComparison.Ordinal)).ShouldBeInOrder();
+
+        var needsMe = PullRequestsMarkdown.Plain(row, needsMe: true, now);
+        needsMe.ShouldNotContain("tianwen");
+        needsMe.ShouldContain("#9 Old");
+
+        var markdown = PullRequestsMarkdown.Build(row, needsMe: false, now);
+        markdown.ShouldContain("## [SharpAstro/pilot](https://github.com/SharpAstro/pilot) (1)");
+        markdown.ShouldContain("| Ready | [#7 Ready one](https://github.com/SharpAstro/pilot/pull/7) | PIL7 | sebgod | [passed](https://github.com/SharpAstro/pilot/pull/7#issuecomment-1) | 3h ago |");
+        markdown.ShouldContain(@"[#3 A\|B is \*wip\*]");
+        markdown.ShouldContain("- sebgod: gh offline");
+
+        PullRequestsMarkdown.Plain(null, needsMe: false, now).ShouldContain("pilot prs --refresh");
+        PullRequestsMarkdown.Plain(new PullRequestsRow { Orgs = ["SharpAstro", "sebgod"], ReadAt = now }, needsMe: false, now).ShouldBe("No open pull requests in SharpAstro, sebgod.\n");
+        PullRequestsMarkdown.Plain(new PullRequestsRow { Orgs = ["SharpAstro"], ReadAt = now, PullRequests = [row.PullRequests[0]] }, needsMe: true, now).ShouldBe("No pull requests need you in SharpAstro.\n");
+    }
 }

@@ -12,11 +12,12 @@ internal sealed class NavControls<TSurface>(Renderer<TSurface> renderer) : Pixel
     /// <summary>Design units, as the rail's.</summary>
     public const float Height = 34f;
 
-    private static readonly Layout.NavigationStripColors Colors = new(
-        Fill: new RGBAColor32(0x16, 0x17, 0x1e, 0xff),
-        HoverFill: new RGBAColor32(0x22, 0x24, 0x2e, 0xff),
-        Ink: new RGBAColor32(0xe6, 0xe7, 0xee, 0xff),
-        DisabledInk: new RGBAColor32(0x4a, 0x4d, 0x5a, 0xff));
+    // From the palette, so Night recolours it as the rest of the chrome (PIL406).
+    private static Layout.NavigationStripColors Colors => new(
+        Fill: Palette.Current.RowAltBg,
+        HoverFill: Palette.Current.RowHoverBg,
+        Ink: Palette.Current.Bright,
+        DisabledInk: Palette.Current.NavControlsFaint);
 
     public Func<bool>? CanGoBack { get; set; }
 

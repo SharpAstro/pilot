@@ -185,6 +185,7 @@
   "cards": [],
   "usage": null,
   "machine": null,
+  "pullRequests": null,
   "jobs": [
     {
       "id": "j14",

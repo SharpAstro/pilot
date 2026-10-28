@@ -9,12 +9,12 @@ namespace Pilot.Ui;
 /// </summary>
 internal sealed class AboutCard
 {
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
-    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
-    private static readonly RGBAColor32 CardBg = new(0x1f, 0x21, 0x2b, 0xff);
-    private static readonly RGBAColor32 ButtonBg = new(0x2c, 0x35, 0x4a, 0xff);
-    private static readonly RGBAColor32 ButtonHover = new(0x3a, 0x46, 0x62, 0xff);
+    private static RGBAColor32 Bright => Palette.Current.Bright;
+    private static RGBAColor32 Body => Palette.Current.Body;
+    private static RGBAColor32 Dim => Palette.Current.Dim;
+    private static RGBAColor32 CardBg => Palette.Current.MenuBg;
+    private static RGBAColor32 ButtonBg => Palette.Current.Action;
+    private static RGBAColor32 ButtonHover => Palette.Current.ActionHover;
 
     /// <summary>The keys, as the card lists them.</summary>
     public static readonly IReadOnlyList<(string Keys, string What)> Keys =
@@ -34,7 +34,7 @@ internal sealed class AboutCard
     /// </summary>
     public static readonly IReadOnlyList<(Layout.IconKind[] Marks, string What)> IconButtons =
     [
-        ([Layout.IconKind.Grid, Layout.IconKind.List], "the Flights page's Grid and List views (Canvas and Night are words)"),
+        ([Layout.IconKind.Grid, Layout.IconKind.List], "the Flights page's Grid and List views (Canvas is a word; Night is the header's own switch)"),
         ([Layout.IconKind.Plus], "New flight, in the Flights header"),
         ([Layout.IconKind.CaretRight, Layout.IconKind.CaretDown], "unfold and fold a row's details"),
     ];
@@ -74,9 +74,9 @@ internal sealed class AboutCard
     /// <summary>What the light's pulse counts in, milliseconds; a test sets it to see each phase.</summary>
     internal Func<long> Clock { get; set; } = () => Environment.TickCount64;
 
-    private static readonly RGBAColor32 LightOn = new(0xf0, 0xb4, 0x3c, 0xff);
-    private static readonly RGBAColor32 LightOff = new(0x5c, 0x48, 0x22, 0xff);
-    private static readonly RGBAColor32 LightText = new(0x1a, 0x14, 0x08, 0xff);
+    private static RGBAColor32 LightOn => Palette.Current.Held;
+    private static RGBAColor32 LightOff => Palette.Current.LightOff;
+    private static RGBAColor32 LightText => Palette.Current.LightText;
 
     /// <summary>
     /// The header's button, and while a newer pilot is installed the update light before it. The "?" stays a word for want
@@ -85,7 +85,7 @@ internal sealed class AboutCard
     /// <summary>The side of the header's square buttons (?, +) and the height of everything else on its row that is a button.</summary>
     public const float HeaderButton = 28f;
 
-    public Layout.Node Button(FlightsPalette? night = null)
+    public Layout.Node Button(Palette? night = null)
     {
         var help = Layout.Builder.Text("?", 14f, night?.Bright ?? Bright, TextAlign.Center, TextAlign.Center).WFixed(HeaderButton).HFixed(HeaderButton)
             .Bg(night?.Button ?? ButtonBg).BgHover(night?.ButtonHover ?? ButtonHover)
@@ -113,13 +113,13 @@ internal sealed class AboutCard
     /// Pinned to the window's corner it lay over that row and covered most of the ?, whose click then landed on the card's ×
     /// (DE1, 2026-10-26): the same toggle by luck. Under the row, the ? stays itself, and closes it as it opened it.
     /// </summary>
-    public Layout.Node Over(Layout.Node page, FlightsPalette? night = null) => IsOpen
+    public Layout.Node Over(Layout.Node page, Palette? night = null) => IsOpen
         ? Layout.Builder.Overlay(page, Layout.Builder.VStack(
             Layout.Builder.Spacer().WStar().HFixed(TopBar.ButtonsBottom),
             Layout.Builder.Anchored(Card(night), Layout.DockSide.Right, margin: 12f).WStar().HStar()))
         : page;
 
-    private Layout.Node Card(FlightsPalette? night)
+    private Layout.Node Card(Palette? night)
     {
         var bright = night?.Bright ?? Bright;
         var body = night?.Body ?? Body;
@@ -151,14 +151,14 @@ internal sealed class AboutCard
         return Layout.Builder.VStack([.. rows]).WithGap(2f).Pad(14f, 10f).Bg(night?.MenuBg ?? CardBg).WAuto().HAuto();
     }
 
-    private static Layout.Node IconLine(Layout.IconKind[] marks, string value, FlightsPalette? night) =>
+    private static Layout.Node IconLine(Layout.IconKind[] marks, string value, Palette? night) =>
         Layout.Builder.HStack(
                 Layout.Builder.HStack([.. marks.Select(m => Layout.Builder.Icon(m, 12f, night?.Bright ?? Bright).WAuto())]).WithGap(8f).WFixed(140f),
                 Layout.Builder.Text(value, 12f, night?.Body ?? Body, trim: TextTrim.Start).WAuto())
             .WithGap(10f)
             .RowH(20f);
 
-    private static Layout.Node Line(string label, string value, FlightsPalette? night) =>
+    private static Layout.Node Line(string label, string value, Palette? night) =>
         Layout.Builder.HStack(
                 Layout.Builder.Text(label, 12f, night?.Dim ?? Dim).WFixed(140f),
                 Layout.Builder.Text(value, 12f, night?.Body ?? Body, trim: TextTrim.Start).WAuto())

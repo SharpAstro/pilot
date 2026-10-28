@@ -142,7 +142,7 @@ public sealed class UnreachableNodeTests : IAsyncDisposable
         filter.Pills().Count().ShouldBe(3);
 
         // Drawn dim: the down pill's text is the dim colour, the live ones' is not.
-        foreach (var night in new FlightsPalette?[] { null, FlightsPalette.Night })
+        foreach (var night in new Palette?[] { null, Palette.Night })
         {
             var pills = filter.Pills(night).Select(p => ((Layout.Content.Text)((Layout.Node.Leaf)p).Content)).ToArray();
             var dim = pills[2].Color;

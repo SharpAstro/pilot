@@ -1,0 +1,80 @@
+{
+ "data": {
+  "search": {
+   "issueCount": 1,
+   "pageInfo": {
+    "hasNextPage": false,
+    "endCursor": null
+   },
+   "nodes": [
+    {
+     "number": 105,
+     "title": "Waiting in the queue",
+     "url": "https://github.com/SharpAstro/demo/pull/105",
+     "repository": {
+      "nameWithOwner": "SharpAstro/demo"
+     },
+     "author": {
+      "login": "sebgod"
+     },
+     "isDraft": false,
+     "createdAt": "2026-10-27T19:56:26Z",
+     "updatedAt": "2026-10-28T06:00:00Z",
+     "headRefName": "feature-105",
+     "baseRefName": "main",
+     "mergeable": "MERGEABLE",
+     "mergeStateStatus": "CLEAN",
+     "reviewDecision": null,
+     "isInMergeQueue": true,
+     "mergeQueueEntry": {
+      "position": 2
+     },
+     "autoMergeRequest": null,
+     "commits": {
+      "nodes": [
+       {
+        "commit": {
+         "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+         "statusCheckRollup": {
+          "state": "SUCCESS",
+          "contexts": {
+           "nodes": [
+            {
+             "__typename": "CheckRun",
+             "name": "build",
+             "status": "COMPLETED",
+             "conclusion": "SUCCESS",
+             "detailsUrl": "https://github.com/SharpAstro/demo/actions/runs/1/job/528"
+            },
+            {
+             "__typename": "CheckRun",
+             "name": "test",
+             "status": "COMPLETED",
+             "conclusion": "SUCCESS",
+             "detailsUrl": "https://github.com/SharpAstro/demo/actions/runs/1/job/448"
+            },
+            {
+             "__typename": "CheckRun",
+             "name": "publish-nuget",
+             "status": "COMPLETED",
+             "conclusion": "SKIPPED",
+             "detailsUrl": "https://github.com/SharpAstro/demo/actions/runs/1/job/1351"
+            },
+            {
+             "__typename": "StatusContext",
+             "context": "pilot/review",
+             "state": "SUCCESS",
+             "targetUrl": "https://github.com/SharpAstro/demo/pull/105#issuecomment-9"
+            }
+           ]
+          }
+         }
+        }
+       }
+      ]
+     }
+    }
+   ]
+  }
+ }
+}
