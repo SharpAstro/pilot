@@ -273,6 +273,15 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>Opens the Fleet page on <paramref name="node"/>'s row: what a click on its held line (a node out of reach) does.</summary>
     public Action<NodeMark>? OnFleet { get; set; }
 
+    /// <summary>
+    /// Opens the Pull requests page on the PR a card is about (a title link of a card of <see cref="PullRequestLinks"/>'s kinds): the
+    /// window's one route to a PR's row. Null where the host has no such page, as pilot-tui's cards have none.
+    /// </summary>
+    public Action<CardRow, PrRef>? OnPullRequest { get; set; }
+
+    /// <summary>The open PRs the node read, set by the host each frame: a card's PR the node does not list has no row to open, so its title is the browser link.</summary>
+    public PullRequestsRow? PullRequests { get; set; }
+
     /// <summary>Called with the flight code and the leg name when a card's leg link is clicked: the window opens the flight's page at that leg.</summary>
     public Action<string, string>? OnLeg { get; set; }
 
@@ -674,7 +683,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
             // session's link is its button, Answer in the browser, so its title is no second one.
-            card.Link is { } titleLink && card.Kind != CardKinds.SessionWaiting
+            PullRequestTitle(card)
+                ?? (card.Link is { } titleLink && card.Kind != CardKinds.SessionWaiting
                 ? Whole(_links.OnLink(Layout.Builder.Text(Titled(card) + (InAppLinks.Is(titleLink) ? "" : Followable.Away), 14f, Link)
                     .BgHover(CardHover)
                     .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => (InAppLinks.Is(titleLink) ? OnGoTo : OnOpen)?.Invoke(titleLink))
@@ -683,7 +693,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                     // Wraps, up to three lines; the whole title is on hover where it could pass them (a long file list in a narrow panel).
                     ? Whole(WrappedProse.Paragraphs(Titled(card), 14f, Bright, OverlapTitleLines), card.Title, card.Title.Length > TitleFits * OverlapTitleLines / 2)
                     : Whole((leg is { } titled && LegWord(card.Title, titled) ? WrappedProse.Of(Titled(card), 14f, Bright, 1, linker(14f)) : Layout.Builder.Text(Titled(card), 14f, Bright)).RowH(22f),
-                        card.Title, card.Title.Length > TitleFits),
+                        card.Title, card.Title.Length > TitleFits)),
         };
         if (card.Kind == CardKinds.Overlap)
         {
@@ -807,6 +817,35 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             .Bg(!closed && Focused(card) ? FocusBg : CardBg)
             .WStar()
             .HAuto();
+    }
+
+    /// <summary>
+    /// The title of a card about an open PR (<see cref="PullRequestLinks.Of(CardRow)"/>): a link that opens the Pull requests page on that
+    /// PR's row, which is a place of the app and so carries no ↗; and, smaller and beside it, a ↗ that opens GitHub. Null for any other
+    /// card, a PR the node does not list (merged or closed by now), or where the host has no such page to open (<see cref="OnPullRequest"/> unset): its title is then the browser link as before.
+    /// </summary>
+    private Layout.Node? PullRequestTitle(CardRow card)
+    {
+        if (OnPullRequest is not { } route || PullRequestLinks.Of(card) is not { } pr || !PullRequestLinks.Lists(PullRequests, pr))
+        {
+            return null;
+        }
+        var title = Whole(Layout.Builder.Text(Titled(card), 14f, Link)
+                .BgHover(CardHover)
+                .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => route(card, pr))
+                .WStar().HStar(), card.Title, card.Title.Length > TitleFits);
+        if (card.Title.Length <= TitleFits)
+        {
+            title = title.WithTooltip($"Show {pr} on the Pull requests page");
+        }
+        // The browser's own, small: a mark, not a word, so it reads as the way out and the title as the way in.
+        var away = _links.OnLink(Layout.Builder.Text("↗", 11f, Link, TextAlign.Center, TextAlign.Center)
+            .Pad(6f, 0f)
+            .WAuto().HStar()
+            .BgHover(CardHover)
+            .Follows(new HitResult.ButtonHit($"card:{card.Id}:browser"), _ => OnOpen?.Invoke(PullRequestLinks.Url(pr)))
+            .WithTooltip($"Open {pr} on GitHub", Layout.DockSide.Left), PullRequestLinks.Url(pr));
+        return Layout.Builder.HStack(title, away).RowH(22f);
     }
 
     // A closed card's button as it was, the same size, answering nothing.

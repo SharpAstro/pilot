@@ -23,6 +23,7 @@ internal sealed class PageData
     public required JobsScreen Jobs { get; init; }
     public required FleetScreen Fleet { get; init; }
     public required ReposScreen Repos { get; init; }
+    public required PullRequestsScreen PullRequests { get; init; }
     public required CardsScreen Cards { get; init; }
     public required IReadOnlyList<MachineLine>? Machines { get; init; }
     public required TranscriptEntry[] Chat { get; init; }
@@ -67,6 +68,7 @@ internal sealed class PageData
         Jobs = new JobsScreen([], "test", Now),
         Fleet = new FleetScreen([], Now),
         Repos = new ReposScreen([], "test", Now),
+        PullRequests = PullRequestsFor("empty"),
         Cards = CardsScreen.Empty,
         Machines = null,
         Chat = [],
@@ -91,6 +93,7 @@ internal sealed class PageData
             Jobs = new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), "sample", snapshot.At),
             Fleet = built.Fleet,
             Repos = SessionsCapture.ReposScreenFor(snapshot, repos, "sample"),
+            PullRequests = PullRequestsFor("sample"),
             Cards = built.Cards,
             Machines = null,
             Chat = built.Chat,
@@ -258,6 +261,7 @@ internal sealed class PageData
             Jobs = jobsScreen,
             Fleet = fleetScreen,
             Repos = reposScreen,
+            PullRequests = PullRequestsFor(state),
             Cards = cardsScreen,
             Machines = null,
             Chat = chatEntries,
@@ -265,6 +269,46 @@ internal sealed class PageData
             WizardRepos = wizardRepos,
             WizardIssues = wizardIssues,
         };
+    }
+
+    // The Pull requests page's read: a handful of every kind (sample), titles, repos and chips far past a column (long), rows enough to
+    // scroll across many repos (many), and a read with no open PR (empty).
+    private static PullRequestsScreen PullRequestsFor(string state)
+    {
+        var lengthen = state == "long";
+        var kinds = Enum.GetValues<PullRequestKind>();
+        var (repos, perRepo) = state switch { "empty" => (0, 0), "sample" => (3, 3), "long" => (3, 3), _ => (15, 4) };
+        var rows = new List<PullRequestRow>();
+        for (var r = 0; r < repos; r++)
+        {
+            var repo = lengthen ? $"example-org/{LongWord}-{r}" : $"SharpAstro/repo-{r}";
+            for (var n = 0; n < perRepo; n++)
+            {
+                var kind = kinds[(r * perRepo + n) % kinds.Length];
+                var flight = (r + n) % 2 == 0 ? $"PIL{380 + r}" : null;
+                var label = kind == PullRequestKind.ChecksRunning ? "Checks running 4/7" : kind == PullRequestKind.ChecksFailed ? "Checks failed: build" : kind.ToString();
+                rows.Add(new PullRequestRow
+                {
+                    Repo = repo,
+                    Number = 100 + r * 10 + n,
+                    Title = lengthen ? LongTitle : $"A change in {repo} ({n})",
+                    Url = $"https://github.com/{repo}/pull/{100 + r * 10 + n}",
+                    Author = lengthen ? LongWord : "ada",
+                    Draft = kind == PullRequestKind.Draft,
+                    CreatedAt = Now.AddDays(-2),
+                    UpdatedAt = Now.AddMinutes(-(5 + r * 7 + n)),
+                    Head = lengthen ? "flight/" + LongWord : "feature/x",
+                    Base = "main",
+                    Kind = kind,
+                    Label = lengthen ? $"{label}: {LongWord}" : label,
+                    NeedsMe = kind is PullRequestKind.Ready or PullRequestKind.Conflicts or PullRequestKind.ChangesRequested,
+                    Flight = flight,
+                    Review = flight is null ? null : n % 3 == 0 ? PullRequestReview.Passed : n % 3 == 1 ? PullRequestReview.Changes : PullRequestReview.Reviewing,
+                });
+            }
+        }
+        var row = new PullRequestsRow { Orgs = ["SharpAstro", "example-org"], ReadAt = Now.AddSeconds(-40), Viewer = "ada", PullRequests = [.. rows] };
+        return new PullRequestsScreen(row, "live from the node on node.sock", Now);
     }
 
     // A feed of n entries: replies, a person's messages, tool calls with their results, as the chat and a transcript show them.

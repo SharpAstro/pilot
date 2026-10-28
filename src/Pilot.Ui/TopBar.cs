@@ -13,6 +13,9 @@ internal sealed record PageHeader(string Title)
     /// <summary>The page's counts line (<c>12 flights · 8 flying</c>); null or empty says none.</summary>
     public string? Counts { get; init; }
 
+    /// <summary>Whether the counts may be longer than the bar has room for: they then wrap within the bar and carry the whole line on hover, rather than push the buttons out of the window.</summary>
+    public bool CountsFit { get; init; }
+
     /// <summary>What In play leaves out (<c>29 landed hidden</c>), after the counts, as a click that shows everything; null says nothing is hidden.</summary>
     public string? Hidden { get; init; }
 
@@ -24,6 +27,9 @@ internal sealed record PageHeader(string Title)
 
     /// <summary>The source line under the bar: <c>live from the node on … · as of …</c>, or what the page says in its place.</summary>
     public string? Source { get; init; }
+
+    /// <summary>The source line's colour where it says something the person should see (a feed gone stale); null is the palette's dim.</summary>
+    public RGBAColor32? SourceColor { get; init; }
 
     /// <summary>More lines under the source line: a node in maintenance, the LAN's state, the sync's outcome.</summary>
     public IReadOnlyList<Layout.Node> Lines { get; init; } = [];
@@ -55,6 +61,9 @@ internal static class TopBar
     /// <summary>The source line's row.</summary>
     public const float SourceHeight = 20f;
 
+    /// <summary>The line a long counts line stands on (<see cref="PageHeader.CountsFit"/>).</summary>
+    public const float CountsHeight = 20f;
+
     /// <summary>The padding above and below the bar's rows.</summary>
     public const float PadY = 6f;
 
@@ -82,7 +91,7 @@ internal static class TopBar
         };
         items.AddRange(parts.Nodes?.Pills(night) ?? []);
         items.AddRange(parts.Play?.Pills(night) ?? []);
-        if (!string.IsNullOrEmpty(page.Counts))
+        if (!page.CountsFit && !string.IsNullOrEmpty(page.Counts))
         {
             items.AddRange(PlayFilter.Summary(parts.Play, page.Counts, page.Hidden, page.HiddenAction, palette.Body, palette.RowHoverBg, night));
         }
@@ -109,9 +118,15 @@ internal static class TopBar
         var flow = FlowRow.Of(RowHeight, 12f, shared.Count > 0 ? SharedReserve : 0f, items);
         var corner = Layout.Builder.HStack([.. shared.Select(item => FlowRow.Cell(item, RowHeight))]).WithGap(12f).WAuto().HFixed(RowHeight);
         var rows = new List<Layout.Node> { shared.Count > 0 ? Layout.Builder.Overlay(flow, Layout.Builder.Anchored(corner, Layout.DockSide.Right).WStar().HStar()).WStar().HAuto() : flow };
+        if (page.CountsFit && !string.IsNullOrEmpty(page.Counts))
+        {
+            // Counts that may be long stand on a line of their own under the bar: cut with an ellipsis and carried whole on hover where
+            // the page is narrow, so they never push a button out of the window or past the page's edge. Bottom-aligned as Summary is.
+            rows.Add(Layout.Builder.Text(page.Counts, 15f, palette.Body, TextAlign.Far, TextAlign.Far).WithTooltip(page.Counts).RowH(CountsHeight));
+        }
         if (page.Source is { } source)
         {
-            rows.Add(Layout.Builder.Text(source, 12f, palette.Dim).RowH(SourceHeight));
+            rows.Add(Layout.Builder.Text(source, 12f, page.SourceColor ?? palette.Dim).RowH(SourceHeight));
         }
         rows.AddRange(page.Lines);
         return Layout.Builder.VStack([.. rows]).Pad(PadX, PadY).Bg(palette.HeaderBg).WStar().HAuto();

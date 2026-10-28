@@ -345,6 +345,11 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return await Get<FlightCommander>().RunAsync(command, cancellationToken);
         }
+        if (command.Verb == Verbs.RefreshPullRequests)
+        {
+            var row = await Get<PullRequestWatch>().RefreshAsync(cancellationToken);
+            return state.Complete(command, null, made: (row?.PullRequests.Length ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
         if (RepoCommander.Handles(command.Verb))
         {
             return await Get<RepoCommander>().RunAsync(command, cancellationToken);

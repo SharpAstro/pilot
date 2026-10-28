@@ -24,7 +24,7 @@ public sealed class PageTextOverlapTests
 
     internal static readonly string[] Pages =
     [
-        "home", "sessions", "flights table", "flights canvas", "flight page", "jobs", "fleet", "settings", "repos", "chat",
+        "home", "sessions", "flights table", "flights canvas", "flight page", "jobs", "fleet", "settings", "repos", "pull requests", "chat",
         "cards panel", "transcript", "wizard repos", "wizard issues",
     ];
 
@@ -101,6 +101,7 @@ public sealed class PageTextOverlapTests
         "fleet" => PilotPage.Fleet,
         "settings" => PilotPage.Settings,
         "repos" => PilotPage.Repos,
+        "pull requests" => PilotPage.PullRequests,
         "chat" => PilotPage.Chat,
         _ => PilotPage.Home,
     };
@@ -167,6 +168,9 @@ public sealed class PageTextOverlapTests
                 chrome.Repos.ExpandAll(data.Repos);
                 tree = chrome.Repos.Tree(data.Repos);
                 break;
+            case "pull requests":
+                tree = chrome.PullRequests.Tree(data.PullRequests, pageWidth / dpi);
+                break;
             case "chat":
                 tree = await OpenChat(chrome, data);
                 break;
@@ -210,7 +214,7 @@ public sealed class PageTextOverlapTests
                 using var prepared = await Prepare(page, Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_STATE") is { Length: > 0 } state ? state : "long", width, dpi);
                 var chrome = prepared.Chrome;
                 var data = prepared.Data;
-                chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, width, Height), data.Machines);
+                chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, Height), data.Machines);
                 File.WriteAllBytes(Path.Combine(capture, $"{page.Replace(' ', '-')}-{width}.png"), PngWriter.Encode(prepared.Renderer.Surface.Pixels, width, Height));
             }
         }

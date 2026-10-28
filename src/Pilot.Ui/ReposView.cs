@@ -13,7 +13,8 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 {
     public const string ListId = "repos";
 
-    private const float RowHeight = 54f;
+    // Three lines of 18 (two PRs and their count) and the table's 6 above and below.
+    private const float RowHeight = 66f;
     private const float WorktreeRowHeight = 46f;
     private const float Gutter = 16f;
     private const float IndentWidth = 16f;
@@ -65,6 +66,9 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     /// <summary>Opens a session's transcript on the Sessions page; the host switches the page.</summary>
     public Action<SessionLine>? OnSession { get; set; }
+
+    /// <summary>Opens the Pull requests page listing only a repo's PRs (<c>owner/name</c>): the repo's open-PRs line. Null where the host has no such page.</summary>
+    public Action<string>? OnPullRequests { get; set; }
 
     /// <summary>Opens a URL (a PR) or a folder.</summary>
     public Action<string>? OnOpen { get; set; }
@@ -332,7 +336,16 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                     Layout.Builder.Text(line.Name, 15f, tracked ? Bright : Dim).WStar())
                 .WithGap(6f);
         var pulls = line.Pulls.Take(2).Select(PullText).ToList();
-        if (line.Pulls.Count > 2)
+        if (line.Pulls.Count > 0 && line.Status.GitHub is { } github && OnPullRequests is { } show)
+        {
+            // The count is a link to the Pull requests page, filtered to this repo: it says the "+N more" this line used to, and where to see them.
+            var count = line.Pulls.Count;
+            pulls.Add(Layout.Builder.Text($"{count} open {(count == 1 ? "PR" : "PRs")}", 11f, Link).BgHover(RowHoverBg)
+                .Follows(new HitResult.ButtonHit($"repo:{line.Key}:prs"), _ => show(github))
+                .WithTooltip($"List {github}'s open PRs on the Pull requests page")
+                .RowH(18f));
+        }
+        else if (line.Pulls.Count > 2)
         {
             pulls.Add(Layout.Builder.Text($"+{line.Pulls.Count - 2} more", 11f, Dim).RowH(18f));
         }
