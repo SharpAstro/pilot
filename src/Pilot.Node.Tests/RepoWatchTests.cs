@@ -76,6 +76,30 @@ public sealed class RepoWatchTests : IDisposable
     }
 
     [Fact]
+    public async Task AFlightOfThisNodeWhoseIssueOrPrLacksTheLabelGetsItAndAnotherNodesLabelIsLeft()
+    {
+        var repo = Clone();
+        var github = new FakeGitHub();
+        github.Issues[1] = "flying, made before the label";
+        github.Issues[2] = "flying, another node's label on it";
+        github.Issues[3] = "landed";
+        github.IssueLabels[2] = ["pilot node: SE1"];
+        github.OpenPrs[repo] =
+        [
+            new PullRequestStatus { Number = 11, Title = "TIA1", Head = "flight/tia1", Labels = ["pilot: changes"] },
+            new PullRequestStatus { Number = 12, Title = "someone's", Head = "feat/other" },
+        ];
+
+        await Look(repo, github, Flight(repo, 1, FlightState.Flying), Flight(repo, 2, FlightState.Flying), Flight(repo, 3, FlightState.Landed));
+
+        github.IssueLabels[1].ShouldBe(["pilot node: DE1"]);
+        github.IssueLabels[11].ShouldBe(["pilot node: DE1"]);
+        github.IssueLabels[2].ShouldBe(["pilot node: SE1"]);
+        github.IssueLabels.ShouldNotContainKey(3);
+        github.IssueLabels.ShouldNotContainKey(12);
+    }
+
+    [Fact]
     public async Task ASweepGitHubRefusesIsTheRepoStatusErrorNotAStop()
     {
         var repo = Clone();
