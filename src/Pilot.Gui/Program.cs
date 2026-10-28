@@ -647,6 +647,7 @@ if (feed is not null && client is not null && clients is not null)
 }
 
 var announced = (string?)null;
+var frameWatch = new FrameWatch(logger);
 // The pages as the builder last made them, and as the render thread last drew them; what the render thread wants built.
 Tuple<FleetPages, FleetScreen>? built = null;
 Tuple<FleetPages, FleetScreen>? drawnBuilt = null;
@@ -714,6 +715,11 @@ if (feed is not null)
                     granted = new HashSet<string>(Pilot.Commands.NodeTargets.Granted(), StringComparer.OrdinalIgnoreCase);
                     fleetWatch.Know(granted.Select(e => (e, (string?)null)).Concat((chrome.Flights.Lan?.Nodes ?? []).Select(n => (n.Endpoint, (string?)n.Name))));
                 }
+                // The once-a-second look finds nothing new on an idle page: no build, no pages published, no frame.
+                if (!frameWatch.WorthAFrame(version, ask, now))
+                {
+                    continue;
+                }
                 // Every node's rows on every page, each marked with its node, as the header's node selection picks them.
                 var pages = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now, reposWanted: (PilotPage)Volatile.Read(ref pagesWanted) == PilotPage.Repos);
                 var hereSummary = feed.Summary(now);
@@ -732,6 +738,7 @@ if (feed is not null)
             catch (Exception ex)
             {
                 // A build that failed is said and tried again; the window keeps the last pages it had.
+                frameWatch.Forget();
                 Say($"pilot-gui: the pages could not be built: {ex.Message}");
                 await Task.Delay(TimeSpan.FromSeconds(1), CancellationToken.None);
             }
@@ -778,11 +785,13 @@ loop.OnRender = () =>
         }
     }
 
+    var frameStarted = System.Diagnostics.Stopwatch.GetTimestamp();
     view.Ui.FrameId++;
     chrome.Render(screen, flights, cards, jobs, fleet, repos, new RectF32(0, 0, width, height), machines);
     // The hover text the router says is due, last, over everything.
     chrome.Tooltips.Render(router.Tooltip, new RectF32(0, 0, width, height));
     router.AfterPaint();
+    frameWatch.Frame(System.Diagnostics.Stopwatch.GetElapsedTime(frameStarted), chrome.Page, $"{screen.Lines.Count} sessions, {flights?.Lines.Count ?? 0} flights, {cards?.Open.Count ?? 0} open cards");
 
     // Say which session is selected whenever it changes, so stdout follows what the window shows.
     if (view.SelectedId != announced && view.Selected >= 0 && view.Selected < screen.Lines.Count)
