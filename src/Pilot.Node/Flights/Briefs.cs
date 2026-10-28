@@ -639,7 +639,9 @@ public static class Briefs
         }
         var open = cards.Where(c => c.State == CardState.Open).ToList();
         text.AppendLine();
-        text.AppendLine(open.Count == 0 ? "No card is open." : "Open cards:");
+        // Said as work, not as state: a watchtower restarted with four rings open read them here and sat idle, since the node had
+        // told them to the one before it and does not tell them again (DE1, 2026-10-28).
+        text.AppendLine(open.Count == 0 ? "No card is open." : "Open cards, yours to act on now as if the node had just said them (start with the rings):");
         foreach (var card in open)
         {
             text.AppendLine(CardLine(card));
