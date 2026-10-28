@@ -176,6 +176,7 @@ public static class NodeApp
             return new LegWatch(services.GetRequiredService<NodeState>(), commands.RunAsync, services.GetRequiredService<TimeProvider>())
             {
                 Pilot = Briefs.Run(legs.Cli, legs.Socket),
+                Models = services.GetRequiredService<RoleModels>(),
                 Error = logWriter,
             };
         });

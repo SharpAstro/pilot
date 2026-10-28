@@ -132,6 +132,75 @@ public sealed partial class RoleModels
         };
     }
 
+    public const string DefaultWorkerModelMax = "opus";
+    public const string DefaultWorkerEffortMax = "max";
+
+    /// <summary>The strongest model the worker ladder steps up to (<see cref="NodeSettings.WorkerModelMaxKey"/>).</summary>
+    public string WorkerModelMax => Raw(NodeSettings.WorkerModelMaxKey) is { } v && Named(v) is { } model ? model : DefaultWorkerModelMax;
+
+    /// <summary>The highest effort the worker ladder steps up to (<see cref="NodeSettings.WorkerEffortMaxKey"/>).</summary>
+    public string WorkerEffortMax => Raw(NodeSettings.WorkerEffortMaxKey) is { } v && Named(v) is { } effort ? effort : DefaultWorkerEffortMax;
+
+    /// <summary>Whether a leg's fresh worker steps up the ladder by attempt (<see cref="NodeSettings.WorkerLadderKey"/>); on unless set off.</summary>
+    public bool WorkerLadder
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.WorkerLadder ?? true;
+            }
+        }
+    }
+
+    /// <summary>The rank of a model by its alias or a full id containing the name (haiku 0, sonnet 1, opus 2); -1 for any other.</summary>
+    public static int ModelRank(string? model) =>
+        model is null ? -1
+        : model.Contains("opus", StringComparison.OrdinalIgnoreCase) ? 2
+        : model.Contains("sonnet", StringComparison.OrdinalIgnoreCase) ? 1
+        : model.Contains("haiku", StringComparison.OrdinalIgnoreCase) ? 0
+        : -1;
+
+    /// <summary>
+    /// The model and effort a leg's fresh worker of <paramref name="attempt"/> (go-arounds + 1) starts on: attempts 1 and 2 on the
+    /// leg's own (<paramref name="plannedModel"/>, <paramref name="plannedEffort"/>) or the worker role's, attempt 3 on opus at the
+    /// same effort, attempt 4 and on opus at xhigh. Never past <see cref="WorkerModelMax"/> and <see cref="WorkerEffortMax"/>, and
+    /// never below what the leg's plan names. A resumed or nudged session does not come here: it keeps the model it started with.
+    /// </summary>
+    public (string? Model, string? Effort) WorkerFor(string? plannedModel, string? plannedEffort, int attempt)
+    {
+        var model = plannedModel ?? Model(Worker);
+        var effort = plannedEffort ?? Effort(Worker);
+        if (!WorkerLadder || attempt < 3)
+        {
+            return (model, effort);
+        }
+        var max = WorkerModelMax;
+        var step = ModelRank(max) < 0 || ModelRank(max) >= 2 ? "opus" : max;
+        if (model is null || (ModelRank(model) >= 0 && ModelRank(step) > ModelRank(model)))
+        {
+            model = step;
+        }
+        if (attempt >= 4)
+        {
+            var efforts = Efforts.ToArray();
+            var maxAt = Array.IndexOf(efforts, WorkerEffortMax);
+            var target = Math.Min(Array.IndexOf(efforts, "xhigh"), maxAt < 0 ? efforts.Length - 1 : maxAt);
+            if (Array.IndexOf(efforts, effort) < target)
+            {
+                effort = efforts[target];
+            }
+        }
+        return (model, effort);
+    }
+
+    /// <summary>The redo choice for <paramref name="leg"/> (its next fresh worker is attempt go-arounds + 2), numbered as the redo it orders (go-arounds + 1) and naming that attempt's model once it is a second redo or later.</summary>
+    public string RedoLabel(LegRow leg)
+    {
+        var (model, effort) = WorkerFor(leg.Model, leg.Effort, leg.GoArounds + 2);
+        return Verbs.RedoLeg(leg.Name, leg.GoArounds + 1, model, effort);
+    }
+
     private static string Step(string? effort, int by, string whenUnset) =>
         Array.IndexOf(Efforts.ToArray(), effort) is var at and >= 0 ? Efforts[Math.Clamp(at + by, 0, Efforts.Count - 1)] : whenUnset;
 

@@ -501,6 +501,29 @@ public static class Verbs
     /// <summary>The words every button that sends leg <paramref name="leg"/> around again carries; the verb stays <see cref="GoAround"/>.</summary>
     public static string RedoLeg(string leg) => $"Redo leg {leg}";
 
+    /// <summary>The redo choice naming what the next worker runs on, once it is a second redo or later (<paramref name="redo"/> is go-arounds + 1): <c>Redo leg x (redo 3, on Opus)</c>.</summary>
+    public static string RedoLeg(string leg, int redo, string? model, string? effort = null) =>
+        redo >= 2 && model is not null ? $"Redo leg {leg} (redo {redo}, {OnModel(model, effort)})" : RedoLeg(leg);
+
+    /// <summary>The redo (go-arounds) and the model (and effort) it runs on: <c>redo 3, on Opus</c>, or <c>on Sonnet</c> before the second redo.</summary>
+    public static string AttemptText(int redo, string? model, string? effort = null)
+    {
+        var on = model is null ? null : OnModel(model, effort);
+        return redo >= 2 ? (on is null ? $"redo {redo}" : $"redo {redo}, {on}") : on ?? "";
+    }
+
+    /// <summary>The redo (go-arounds) and the model and effort of <paramref name="leg"/>'s current worker, as recorded on the row; null when none is.</summary>
+    public static string? AttemptOf(LegRow leg) =>
+        leg.AttemptModel is null || leg.GoArounds < 1 ? null : AttemptText(leg.GoArounds, leg.AttemptModel, leg.AttemptEffort);
+
+    private static string OnModel(string model, string? effort) => $"on {ModelName(model)}{(effort is null ? "" : $" at {effort}")}";
+
+    private static string ModelName(string model) =>
+        model.Contains("opus", StringComparison.OrdinalIgnoreCase) ? "Opus"
+        : model.Contains("sonnet", StringComparison.OrdinalIgnoreCase) ? "Sonnet"
+        : model.Contains("haiku", StringComparison.OrdinalIgnoreCase) ? "Haiku"
+        : model;
+
     /// <summary>What a PR target starts with: <c>pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>.</summary>
     public const string PrTargetPrefix = "pr/";
 

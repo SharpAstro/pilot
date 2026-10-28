@@ -374,6 +374,10 @@ internal sealed partial class FlightsView<TSurface>
         {
             head.Add(Layout.Builder.Text(goArounds, 12f, Held).WAuto().Selectable());
         }
+        if (leg.Attempt is { } attempt)
+        {
+            head.Add(Layout.Builder.Text(attempt, 12f, Dim).WAuto().Selectable());
+        }
 
         var rows = new List<Layout.Node> { FlowRow.Of(24f, 12f, head) };
         rows.Add(Field("Goal", leg.Goal));

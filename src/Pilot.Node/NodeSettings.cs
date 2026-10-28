@@ -36,6 +36,12 @@ public sealed record NodeSettings
     public const string ShortcutTokenKey = "shortcut-token";
     public const string RepoTrackersKey = "repo-trackers";
     public const string NoAutoMergeReposKey = "no-auto-merge-repos";
+    /// <summary>The strongest model a leg's worker steps up to (<see cref="RoleModels.WorkerFor"/>); opus unless set.</summary>
+    public const string WorkerModelMaxKey = "worker-model-max";
+    /// <summary>The highest effort a leg's worker steps up to; max unless set.</summary>
+    public const string WorkerEffortMaxKey = "worker-effort-max";
+    /// <summary>Whether a leg's fresh worker steps up a model ladder by attempt; on unless set off.</summary>
+    public const string WorkerLadderKey = "worker-ladder";
 
     /// <summary>How a flight's PR is merged when the merge names no method: rebase keeps every commit's subject, which a
     /// repo's docs may cite (tianwen's rule); squash makes one commit of them; merge adds a merge commit.</summary>
@@ -44,10 +50,10 @@ public sealed record NodeSettings
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
         [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey,
-         .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey)];
+         .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey), WorkerModelMaxKey, WorkerEffortMaxKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
-    public static bool IsRoleKey(string key) => RoleModels.Roles.Any(r => key == RoleModels.ModelKey(r) || key == RoleModels.EffortKey(r));
+    public static bool IsRoleKey(string key) => RoleModels.Roles.Any(r => key == RoleModels.ModelKey(r) || key == RoleModels.EffortKey(r)) || key is WorkerModelMaxKey or WorkerEffortMaxKey;
 
     public bool? Lan { get; init; }
 
@@ -59,6 +65,9 @@ public sealed record NodeSettings
 
     /// <summary>Whether an assistant's your-only requests run directly (<see cref="AutopilotKey"/>) rather than raising a confirm card; off unless the person saved it on, and only the person may.</summary>
     public bool? Autopilot { get; init; }
+
+    /// <summary>Whether a leg's fresh worker steps up the model ladder by attempt (<see cref="WorkerLadderKey"/>); on unless set off.</summary>
+    public bool? WorkerLadder { get; init; }
 
     /// <summary>The Shortcut API token (<see cref="ShortcutTokenKey"/>) that reads a story's title; the <c>SHORTCUT_API_TOKEN</c> variable wins over it. Never shown by the settings output beyond set or not.</summary>
     public string? ShortcutToken { get; init; }
@@ -143,6 +152,7 @@ public sealed record NodeSettings
                     MaintenanceKey => JsonValue.Create(Maintenance),
                     AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
                     AutopilotKey => JsonValue.Create(Autopilot),
+                    WorkerLadderKey => JsonValue.Create(WorkerLadder),
                     LanPortKey => JsonValue.Create(LanPort),
                     MaxJobsKey => JsonValue.Create(MaxJobs),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
@@ -168,6 +178,7 @@ public sealed record NodeSettings
         MaintenanceKey => Maintenance is { } maintenance ? [maintenance ? "on" : "off"] : null,
         AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
         AutopilotKey => Autopilot is { } autopilot ? [autopilot ? "on" : "off"] : null,
+        WorkerLadderKey => WorkerLadder is { } ladder ? [ladder ? "on" : "off"] : null,
         LanPortKey => LanPort is { } port ? [port.ToString(CultureInfo.InvariantCulture)] : null,
         ShortcutTokenKey => ShortcutToken is { } token ? [token] : null,
         MachineKey => Machine is { } machine ? [machine] : null,
@@ -233,6 +244,14 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } autopilot
                     ? (settings with { Autopilot = autopilot }, null)
                     : (null, "autopilot takes on or off");
+            case WorkerLadderKey:
+                if (clear)
+                {
+                    return (settings with { WorkerLadder = null }, null);
+                }
+                return OnOff(One()) is { } ladder
+                    ? (settings with { WorkerLadder = ladder }, null)
+                    : (null, "worker-ladder takes on or off");
             case ShortcutTokenKey:
                 return clear
                     ? (settings with { ShortcutToken = null }, null)
@@ -379,7 +398,7 @@ public sealed record NodeSettings
                     return (settings with { Roles = roles.Count == 0 ? null : roles }, null);
                 }
                 var value = One()?.ToLowerInvariant();
-                var effort = role.EndsWith("-effort", StringComparison.Ordinal);
+                var effort = role.Contains("-effort", StringComparison.Ordinal);
                 if (value is null || (value != RoleModels.NoneValue && (effort ? !RoleModels.Efforts.Contains(value) : !RoleModels.IsModel(value))))
                 {
                     return (null, effort
