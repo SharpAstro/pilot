@@ -55,7 +55,7 @@ public sealed class NodeLogTests
     }
 
     [Fact]
-    public async Task WhatTheWatchersWouldHaveSaidOnStderrIsInTheLog()
+    public async Task TheWatchersWriteTheirErrorsThroughTheNodesLog()
     {
         var stderr = new StringWriter();
         var previous = System.Console.Error;
@@ -65,9 +65,13 @@ public sealed class NodeLogTests
             await using var node = await NodeHarness.StartAsync(Ct);
             var writer = node.App.Services.GetRequiredService<Pilot.Contracts.LogWriter>();
 
-            await writer.WriteLineAsync("watchtower: one look failed, looking again: boom");
-
-            File.ReadAllText(Path.Combine(node.Options.DataFolder, "logs", "node.log")).ShouldContain("watchtower: one look failed, looking again: boom");
+            var services = node.App.Services;
+            services.GetRequiredService<Pilot.Node.Flights.Watchtower>().Error.ShouldBeSameAs(writer);
+            services.GetRequiredService<Pilot.Node.Flights.PrChecks>().Error.ShouldBeSameAs(writer);
+            services.GetRequiredService<Pilot.Node.Flights.PullRequestWatch>().Error.ShouldBeSameAs(writer);
+            services.GetRequiredService<Pilot.Node.Flights.RemovalQueue>().Error.ShouldBeSameAs(writer);
+            services.GetRequiredService<Pilot.Node.Flights.PrReviews>().Error.ShouldBeSameAs(writer);
+            services.GetRequiredService<Pilot.Node.Flights.RepoSync>().Error.ShouldBeSameAs(writer);
         }
         finally
         {

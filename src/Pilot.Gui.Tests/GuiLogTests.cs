@@ -78,9 +78,9 @@ public sealed class GuiLogTests : IDisposable
         start.Environment[RollingLog.FolderEnvironmentVariable] = _folder;
 
         using var process = System.Diagnostics.Process.Start(start)!;
-        var stderr = process.StandardError.ReadToEndAsync();
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        await process.WaitForExitAsync();
+        var stderr = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
+        var stdout = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        await process.WaitForExitAsync(TestContext.Current.CancellationToken);
         await stdout;
 
         process.ExitCode.ShouldNotBe(0);
