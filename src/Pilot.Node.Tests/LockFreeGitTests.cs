@@ -151,7 +151,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
     }
 
     [Fact]
-    public async Task ARebaseHeldInAFetchLeavesAnotherFlightsCommandsAnsweringAtOnce()
+    public async Task AnUpdateHeldInAFetchLeavesAnotherFlightsCommandsAnsweringAtOnce()
     {
         var (flight, _) = await Passed("1");
         var other = await OtherFlight();
@@ -164,9 +164,9 @@ public sealed class LockFreeGitTests : ReviewTestsBase
 
         var (plan, planTook) = await Timed(() => legs.RunAsync(new CommandRequest { Verb = Verbs.PlanLeg, Target = Verbs.FlightTarget(other), Args = ["name=sun", "goal=Draw the sun", "done-when=It shows", "item=Draw it"], Who = "controller" }, Ct));
         (plan.Ok, planTook < Quick).ShouldBe((true, true), plan.Error);
-        // A merge of the flight being rebased is refused on that flight, not queued behind the node.
+        // A merge of the flight being updated is refused on that flight, not queued behind the node.
         var merge = await legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [_github.Pr!.Head], Who = "controller" }, Ct);
-        merge.Error.ShouldNotBeNull().ShouldContain("is being rebased onto its base already");
+        merge.Error.ShouldNotBeNull().ShouldContain("is being brought up to date with its base already");
         rebase.IsCompleted.ShouldBeFalse();
 
         gate.Open();

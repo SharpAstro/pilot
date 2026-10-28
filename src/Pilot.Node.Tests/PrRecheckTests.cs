@@ -322,7 +322,7 @@ public sealed class PrRecheckTests : IDisposable
         var rebased = PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven");
         rebased.ShouldNotBe(head);
         PrOrigins.Git(Origin, "merge-base", "--is-ancestor", main, rebased).ShouldBeEmpty();
-        Handled().ShouldBe(["recheck of widget#7: rebased onto main, review restarted"]);
+        Handled().ShouldBe(["recheck of widget#7: brought up to date with main, review restarted"]);
         _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
         Review().ShouldNotBeNull().State.ShouldBe(PrReviewState.Reviewing);
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrRecheck.ConflictKind);
@@ -465,7 +465,7 @@ public sealed class PrRecheckTests : IDisposable
     }
 
     [Fact]
-    public async Task AFlightsPrBehindItsBaseIsRebasedAndItsReviewRestarted()
+    public async Task AFlightsPrBehindItsBaseHasItMergedInAndItsReviewRestarted()
     {
         var flight = await PassedFlightAsync();
         MainMoves();
@@ -479,13 +479,13 @@ public sealed class PrRecheckTests : IDisposable
         review.State.ShouldBe(ReviewState.Reviewing);
         var read = review.ReviewedHead.ShouldNotBeNull();
         read.ShouldNotBe(flight.Review!.ReviewedHead);
-        Handled().ShouldBe([$"recheck of widget#7: rebased onto main, review restarted at {Short(read)}"]);
+        Handled().ShouldBe([$"recheck of widget#7: brought up to date with main, review restarted at {Short(read)}"]);
         _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
         _github.Merged.ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task AFlightsPrWhoseRebaseConflictsIsSentBackAsChangesAndTheHandledLineSaysSo()
+    public async Task AFlightsPrWhoseBaseMergeConflictsIsHandedToTheWatchtowerAndTheHandledLineSaysSo()
     {
         await PassedFlightAsync(readme: "theirs\n");
         MainMoves("README.md", "ours\n");
@@ -493,13 +493,14 @@ public sealed class PrRecheckTests : IDisposable
 
         await LookAsync();
 
-        _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+        // No go-around: the review stays passed and the watchtower is told by a ring card.
+        _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
         var said = Handled().ShouldHaveSingleItem();
-        said.ShouldStartWith("recheck of widget#7: rebasing ");
+        said.ShouldStartWith("recheck of widget#7: merging ");
         said.ShouldContain("conflicts");
-        said.ShouldContain("sent back as changes");
-        _github.Labels[7].ShouldBe([PilotMarks.Changes]);
-        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.ReviewChanges);
+        said.ShouldContain("the watchtower is told");
+        _state.Legs(_state.Flights().Single().Code).ShouldAllBe(l => l.GoArounds == 0);
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.PrConflictsKind && c.Bin == CardBin.Ring);
     }
 
     [Fact]

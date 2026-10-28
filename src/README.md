@@ -295,9 +295,9 @@ restarted node and a client resuming the stream both replay it.
 
 A flight's push never drops commits. Before it, the node fetches the branch: what the remote holds that the plane lacks is
 merged in (a fast-forward when it can be), and when that merge conflicts it is undone, a Ring `push-diverged` card names the
-remote head and the plane's head and says to merge by hand, and nothing is pushed. The push itself is fast-forward only. The one
-exception is a rebase the node made (a repaired base): it goes up with `--force-with-lease=refs/heads/<branch>:<sha>`, pinned
-to the remote head read before the rebase, never a bare `--force-with-lease`.
+remote head and the plane's head and says to merge by hand, and nothing is pushed. The push itself is plain (`git push -u origin <branch>`) and fast-forward only: **the node never rebases a pushed
+branch and never pushes with `--force` or `--force-with-lease`.** A branch someone else has pushed is only ever added to. SE1's
+PIL294 work was lost to a force push on 2026-10-27, and a lease only compares with a ref a fetch has refreshed.
 
 `flight pr` pushes the plane (every time, so a go-around's commits reach the PR) and starts a fresh reviewer,
 `<machine>-<flight>-review`, in the plane: briefed with every leg's goal and Done-when, the commits and the files, told
@@ -331,7 +331,7 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   flying (the take-back, or PrChecks seeing the merge), a Ring `merged-under-leg` card says the merge went without the
   leg and its work goes to a new PR. The flight stays flying and is not landed: its PR and review are let go, its merge
   cards close, and the merged head is kept (`MergedHead`). When its legs are done, `open-pr` (the node's next step)
-  rebases the plane `--onto` the base from that head (the merged commits drop out, squashed or not), pushes, opens the new
+  merges the base as it now stands into the plane (`git merge --no-edit`, so the new PR holds only the plane's work past it, squashed or not), pushes plain, opens the new
   PR (`PullRequest` replaced) and reviews it as any PR. Landing after a merge refuses, with a ring, while a leg is not
   done, the plane has changes not committed, or it holds commits past the merged head; the plane is never removed then.
 - `pilot review changes <changes>` rings with **Redo leg** (redo the leg, a go-around: the last leg, told the changes; a done leg may go around
@@ -342,36 +342,36 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   a review round starts ready, as the review runs on it; the merge card's merge still refuses a moved head.
 - A passed PR whose checks then fail is taken as changes, once a head: the PR goes back to draft, the merge card
   closes, and the review's ring offers **Redo leg**, told to read the failed checks and make them pass on every runner.
-- A passed PR that conflicts with its base and does not update cleanly is taken as changes too: the ring's **Redo leg**
-  sends the last leg's worker to merge the base in (a squash or merge repo) or rebase onto it (a rebase-queue repo), keeping both sides' work.
-- **How a flight's branch is brought up to date** (`RebaseOntoBaseAsync`, before every push and before the merge queue) is read once per
-  repo from GitHub and kept (`IGitHub.UpdateWayAsync`, like `AutoMergeAllowedAsync`): the default branch's ruleset `merge_queue`
-  rule's `merge_method` (`gh api repos/{o}/{r}/rules/branches/{branch}`), or with no queue the repo's allowed merge methods. Where the
-  queue squashes or merges, the base is merged in (`git merge --no-edit`, undone with `git merge --abort` on a conflict) and pushed
-  plain, never forced; where it rebases (tianwen), the plane is rebased and pushed with `--force-with-lease`. A conflict sends the last
-  leg round once, with a brief that says *merge the base in* or *rebase onto it* to match.
-- **Every push of a flight's branch goes through `PushAsync`**, which calls `BringUpToDateLeasedAsync` first (it fetches and takes in
-  what the remote holds that the plane lacks, `TakeRemoteAsync`, then merges or rebases per the repo's way, a conflict undone and refused saying how to resolve it), then refuses a head whose base is not an ancestor, then
-  pushes (plain after a merge, with a lease after a rebase). So PR open, a go-around's finish and the node's own update never push a
+- A PR that conflicts with its base goes to the **watchtower**, not to a fresh worker. The node's update is
+  `git fetch` + `git merge --no-edit origin/<base>` in the plane, aborted with `git merge --abort` when it conflicts. A Ring `pr-conflicts`
+  card (once a head) names the conflict and the plane and carries the brief the watchtower follows (`LegCommander.UpdateInstruction`, the
+  watchtower's "Getting reviewed work in"): merge the base in there, resolve every file so both sides' work stays, rerun the leg's check
+  and push plain, then `pilot flight review <code>`. The card's **Redo leg** choice is the watchtower's only when it finds the conflict is
+  real work (two designs, a goal to drop); no leg goes round for a conflict by itself, and the review stays as it was.
+- **How a flight's branch is brought up to date** (`BringUpToDateAsync`, before every push and before the merge queue) is always a merge,
+  in every repo, whatever its merge queue or the node's merge method: `git fetch`, `git merge --no-edit origin/<base>`, a plain push. There is
+  no rebase way and no `UpdateWay`; a repaired base (a base that is no branch on the remote) is the remote's default merged in, not rebased onto.
+  GitHub rebase-merging a PR that holds a merge commit is its own business, and the merge queue's method decides only how the PR lands.
+- **Every push of a flight's branch goes through `PushAsync`**, which calls `FetchAndMergeBaseAsync` first (it fetches and takes in
+  what the remote holds that the plane lacks, `TakeRemoteAsync`, then merges the base in, a conflict aborted and refused saying how to resolve it), then refuses a head whose base is not an ancestor, or whose pushed history (`origin/<branch>`) is not an ancestor, then
+  pushes plain. So PR open, a go-around's finish and the node's own update never push a
   branch behind its base. A go-around's last leg is brought up to date before its check runs: a conflict leaves the leg flying for its
-  worker, whose brief says to bring the branch up to date the repo's way and rerun the check before it says done.
+  worker, whose brief says to merge the base in, rerun the check and push plain before it says done.
 - **A merge never goes to the queue behind its base.** `MergeableAsync` (the Merge verb, the autopilot's merge, arming and re-running
   checks) fetches and tests `git merge-base --is-ancestor <base> <PR head>` itself, not only GitHub's BEHIND (which needs a "require up
-  to date" rule), and GitHub's Behind state is refused the same way. A PR behind is brought up to date by `RebaseOntoBaseAsync` (pushed,
+  to date" rule), and GitHub's Behind state is refused the same way. A PR behind is brought up to date by `BringUpToDateAsync` (pushed,
   reviewed afresh), `MergeAsync` is never called, and the command says it is *behind its base* and the merge is offered again once the
-  review passes; a conflict goes round as in the update above. The checks guards (pending arms, failing refuses) then apply to the new head.
+  review passes; a conflict goes to the watchtower as in the update above. The checks guards (pending arms, failing refuses) then apply to the new head.
   The node's own merge (autopilot, the merge armed at green, a recheck) is not refused for it: `RunAsync` answers Ok with way `updated`
   (`MergeWays.Updated`), the update closed the old head's cards, and the callers leave no Ring `AutopilotMergeRefused`, no `MergeDropped`
   and no failed recheck: a Handled line at most. Only a person's Merge gets the *behind its base* error.
 - `PushAsync`'s "base is not an ancestor" guard is tested with a `post-merge` hook in the test repo that resets the merge away
   (`APushStillBehindItsBaseAfterTheUpdateIsRefused`): the update claims success, the push is still refused.
-- **The remote's commits are taken in, never refused or dropped.** `BringUpToDateLeasedAsync` merges what `origin/<branch>` holds that the
-  plane lacks (a commit pushed from elsewhere, or history the worker rewrote) before the update, so a plain push is a fast-forward after a
-  merge and the lease names the tracking ref after that. A merge that conflicts is undone and a `push-diverged` card names both heads. A
+- **The remote's commits are taken in, never refused or dropped.** `TakeRemoteAsync` merges what `origin/<branch>` holds that the
+  plane lacks (a commit pushed from elsewhere, or history a worker rewrote) before the update, so a plain push is a fast-forward after a
+  merge. A merge that conflicts is aborted and a `push-diverged` card names both heads. A
   go-around's finish brings the branch up to date before its check, and the push after `Done` reuses that result instead of updating again.
-- **With no queue the update way follows the node's merge method** (`RoleModels.MergeMethod`): rebase where the node rebase-merges and the
-  repo allows it, merge where it squashes or merges (GitHub rebase-merging a PR with a merge commit loses a conflict resolution). A queue's
-  own method still wins. A PR GitHub has queued is never updated by a Merge (a push would drop it from the queue).
+- A PR GitHub has queued is never updated by a Merge (a push would drop it from the queue).
 - A flight whose legs are all done and whose PR merged on GitHub lands on the next look even with no merge card open
   (dismissed after a rebase by hand moved its head), as one merged through its card does.
 - Only the reviewer gives the verdict; the controller may pass one that asked for changes ("ready anyway"); the
@@ -474,8 +474,8 @@ grant for does (a peer that does not answer holds nothing). A PR a peer holds is
 - A recheck reads the PR afresh from GitHub, does one thing, replaces `pilot: recheck` with the one `pilot:` label for where
   the PR then stands, and leaves a Handled line saying what it did. A PR already merged or closed, or in the merge queue,
   is handled the same for all three kinds below.
-- **A flight's PR** (the node's own flight on it): a conflict or a PR behind its base is rebased as the queue-conflict path
-  does, and its review restarts (a rebase that conflicts goes back to the last leg as changes); red checks on a passed
+- **A flight's PR** (the node's own flight on it): a conflict or a PR behind its base has the base merged in as the queue-conflict path
+  does, and its review restarts (a merge that conflicts goes to the watchtower); red checks on a passed
   review go back as changes; a head the review never read is reviewed afresh; a passed, green, clean one goes to the merge
   queue by the usual merge rule. The explicit ask bypasses the once-a-head sets of the timed `PrChecks` look.
 - **A PR pilot reviewed with `pilot review pr`** (no flight): a head other than the review's starts a fresh review

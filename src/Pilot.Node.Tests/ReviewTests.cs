@@ -651,8 +651,8 @@ public sealed class ReviewTests1 : ReviewTestsBase
 
         await checks.LookAsync(Ct);
 
-        // Sent back as changes for the conflict, and the label says the conflict, not the changes.
-        F("TIA32").Review!.State.ShouldBe(ReviewState.Changes);
+        // Handed to the watchtower for the conflict, not sent back as changes, and the label says the conflict.
+        F("TIA32").Review!.State.ShouldBe(ReviewState.Passed);
         PilotLabels(_github.Labels[number]).ShouldBe(["pilot: conflicts"]);
         _github.Statuses.Last().State.ShouldBe("failure");
 
@@ -662,7 +662,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         PilotLabels(_github.Labels[number]).ShouldBe(["pilot: conflicts"]);
         _github.Pr = _github.Pr! with { Mergeable = "MERGEABLE" };
         await checks.LookAsync(Ct);
-        PilotLabels(_github.Labels[number]).ShouldBe(["pilot: changes"]);
+        PilotLabels(_github.Labels[number]).ShouldNotContain("pilot: conflicts");
     }
 
     [Fact]
@@ -1315,7 +1315,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
         (await Run(Verbs.Review, "flight/TIA16", Reviewer("TIA16"), "changes", "naming")).Ok.ShouldBeTrue();
         var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges).Choices[0];
         (await Run(card.Verb, card.Target, "controller", card.Args)).Error.ShouldBeNull();
-        _workers.Started.Last().Brief.ShouldContain("merge the base into the plane");
+        _workers.Started.Last().Brief.ShouldContain("merge origin/<base> into the plane");
         var worker = _state.Legs("TIA16").Single().Worker!;
 
         // Main moves on a file the flight also changed: its finish is refused, the plane undone and the leg still flying.
@@ -1556,7 +1556,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
-    public async Task APassedPrWhoseRebaseConflictsIsSentBackAsChangesAndItsDoneLegGoesAroundByItself()
+    public async Task APassedPrWhoseBaseMergeConflictsIsHandedToTheWatchtowerAndNoLegGoesAround()
     {
         var flight = await NewFlight("8", "parser");
         File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
@@ -1570,14 +1570,16 @@ public sealed class ReviewTests3 : ReviewTestsBase
 
         await new PrChecks(_state, _github, TimeProvider.System, legs: _legs).LookAsync(Ct);
 
-        F("TIA8").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
-        // No one is asked: the node sends the done leg round to resolve it.
-        _state.Legs("TIA8").ShouldHaveSingleItem().State.ShouldBe(LegState.Flying);
-        Open().ShouldNotContain(c => c.Kind == "pr-conflicts");
+        F("TIA8").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        // The watchtower is told by a card and resolves the merge in the plane: no worker is sent round.
+        var leg = _state.Legs("TIA8").ShouldHaveSingleItem();
+        leg.State.ShouldBe(LegState.Done);
+        leg.GoArounds.ShouldBe(0);
+        Open().ShouldContain(c => c.Kind == LegCommander.PrConflictsKind && c.Bin == CardBin.Ring);
     }
 
     [Fact]
-    public async Task APrThatConflictsUnderAReviewAskingForChangesGoesAroundByItselfOnceAHead()
+    public async Task APrThatConflictsUnderAReviewAskingForChangesIsHandedToTheWatchtowerOnceAHeadWithNoGoAround()
     {
         var flight = await NewFlight("9", "parser");
         File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
@@ -1593,11 +1595,11 @@ public sealed class ReviewTests3 : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         var leg = _state.Legs("TIA9").ShouldHaveSingleItem();
-        leg.State.ShouldBe(LegState.Flying);
-        leg.GoArounds.ShouldBe(1);
-        // Once a head: the same conflicting head looked at again sends no second worker.
+        leg.State.ShouldBe(LegState.Done);
+        leg.GoArounds.ShouldBe(0);
+        // Once a head: the same conflicting head looked at again raises no second card.
         await checks.LookAsync(Ct);
-        _state.Legs("TIA9").ShouldHaveSingleItem().GoArounds.ShouldBe(1);
+        Open().Count(c => c.Kind == LegCommander.PrConflictsKind).ShouldBe(1);
     }
 
     [Fact]
