@@ -311,7 +311,7 @@ public sealed partial class LegCommander(
                     if (!merge.Ok)
                     {
                         await git.RunAsync(["merge", "--abort"], flight.Worktree, cancellationToken);
-                        return (repaired, $"merging {repaired.Base} into {code} conflicts ({merge.Why}): merge the base into its plane by hand, or go around its last leg to", way);
+                        return (repaired, $"merging {repaired.Base} into {code} conflicts ({merge.Why}): merge the base into its plane by hand", way);
                     }
                 }
                 else
@@ -323,7 +323,7 @@ public sealed partial class LegCommander(
                         // git's progress lines ("Rebasing (1/3)") say nothing of the conflict: only what it could not apply is kept.
                         var stopped = string.Join(" ", rebase.Why.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                             .Where(l => !l.StartsWith("Rebasing (", StringComparison.Ordinal)));
-                        return (repaired, $"rebasing {code} onto {repaired.Base} conflicts ({stopped}): rebase its plane by hand, or go around its last leg to", way);
+                        return (repaired, $"rebasing {code} onto {repaired.Base} conflicts ({stopped}): rebase its plane by hand", way);
                     }
                 }
                 await PushAsync(repaired, repaired: repaired.Base != flight.Base, cancellationToken);
@@ -1023,7 +1023,14 @@ public sealed partial class LegCommander(
                     && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name);
                 if (pushes)
                 {
-                    await BringUpToDateAsync(flight, cancellationToken);
+                    using (Calling(flight.Code, "being brought up to date"))
+                    {
+                        var seenLeg = leg;
+                        await OffLockAsync(null, () => BringUpToDateAsync(flight, cancellationToken));
+                        leg = Unchanged(flight.Code, seenLeg) is { } current
+                            ? current
+                            : throw new FlightException($"{flight.Code}/{seenLeg.Name} changed while it was brought up to date: nothing was recorded, look again and finish again");
+                    }
                 }
                 if (leg.Check is { Length: > 0 } check)
                 {
