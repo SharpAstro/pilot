@@ -130,7 +130,7 @@ public sealed class FlightDetailTests
             [
                 new PullRequestRow
                 {
-                    Repo = "x/tianwen", Number = 7, Title = flight.Title, Url = "https://github.com/x/tianwen/pull/7", Author = "sebgod",
+                    Repo = "x/tianwen", Number = 7, Title = flight.Title ?? flight.Code, Url = "https://github.com/x/tianwen/pull/7", Author = "sebgod",
                     Kind = PullRequestKind.ChecksRunning, Label = "Checks running", Flight = flight.Code, UpdatedAt = Now, CreatedAt = Live.At,
                     Head = "flight/tia1611", Base = "main",
                 },
