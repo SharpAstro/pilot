@@ -7,6 +7,9 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public sealed class FlightAdvance(LegCommander legs, TimeProvider time) : BackgroundService
 {
+    /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
+
     public TimeSpan Interval { get; init; } = TimeSpan.FromMinutes(1);
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
@@ -25,7 +28,7 @@ public sealed class FlightAdvance(LegCommander legs, TimeProvider time) : Backgr
             catch (Exception ex)
             {
                 // A sweep that failed once is tried again a minute later: a flight that never advances is the stall itself.
-                await Console.Error.WriteLineAsync($"flight advance: one sweep failed, sweeping again: {ex.Message}");
+                await Error.WriteLineAsync($"flight advance: one sweep failed, sweeping again: {ex.Message}");
             }
         }
     }

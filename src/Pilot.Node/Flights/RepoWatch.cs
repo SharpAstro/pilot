@@ -12,6 +12,9 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes, IGitHub github, TimeProvider time) : BackgroundService
 {
+    /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
+
     private readonly object _gate = new();
     private readonly TaskCompletionSource _asked = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task<RepoStatus[]>? _running;
@@ -61,7 +64,7 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
                 }
                 catch (Exception ex) when (!stopping.IsCancellationRequested)
                 {
-                    await Console.Error.WriteLineAsync($"repo watch: one read failed, reading again: {ex.Message}");
+                    await Error.WriteLineAsync($"repo watch: one read failed, reading again: {ex.Message}");
                 }
                 await Task.Delay(Interval, time, stopping);
             }

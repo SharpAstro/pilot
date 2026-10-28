@@ -7,6 +7,9 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public sealed class PeerConnectionWatch(FlightCommander flights, TimeProvider time) : BackgroundService
 {
+    /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
+
     /// <summary>How often the peers are asked while a flight waits on one.</summary>
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(60);
 
@@ -26,7 +29,7 @@ public sealed class PeerConnectionWatch(FlightCommander flights, TimeProvider ti
             catch (Exception ex)
             {
                 // Outlive anything one look throws: a dead watch holds a flight for good, silently.
-                await Console.Error.WriteLineAsync($"peer connection watch: one look failed, looking again: {ex.Message}");
+                await Error.WriteLineAsync($"peer connection watch: one look failed, looking again: {ex.Message}");
             }
         }
     }

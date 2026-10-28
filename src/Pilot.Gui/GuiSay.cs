@@ -72,8 +72,8 @@ internal static class GuiSay
         _ => $"refused: {(string.IsNullOrEmpty(error) ? "the node gave no reason" : error)}",
     };
 
-    /// <summary><c>--say</c>: finds the session, says the text, prints the result; 0 when it was delivered.</summary>
-    public static async Task<int> RunAsync(NodeClient client, string to, string text, TextWriter output, CancellationToken cancellationToken)
+    /// <summary><c>--say</c>: finds the session, says the text, prints the result to <paramref name="output"/>; its errors go to <paramref name="log"/> (gui.log), and it is 0 when it was delivered.</summary>
+    public static async Task<int> RunAsync(NodeClient client, string to, string text, TextWriter output, Action<string> log, CancellationToken cancellationToken)
     {
         SessionRow[] rows;
         try
@@ -82,13 +82,13 @@ internal static class GuiSay
         }
         catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException or IOException)
         {
-            await output.WriteLineAsync($"pilot-gui: no node answers on {client.SocketPath} ({ex.Message}); start pilot-node").ConfigureAwait(false);
+            log($"pilot-gui: no node answers on {client.SocketPath} ({ex.Message}); start pilot-node");
             return 1;
         }
 
         if (Find(rows, to, out var why) is not { } row)
         {
-            await output.WriteLineAsync($"pilot-gui: {why}").ConfigureAwait(false);
+            log($"pilot-gui: {why}");
             return 1;
         }
 
