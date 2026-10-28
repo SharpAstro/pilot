@@ -68,6 +68,7 @@ public sealed class StandingTests
             (Verbs.AnswerGrant, Verbs.NodeTarget, ["x", "allow"]),
             (Verbs.RevokeGrant, Verbs.NodeTarget, ["x"]),
             (Verbs.Update, Verbs.NodeTarget, ["install"]),
+            (Verbs.RestartNode, Verbs.NodeTarget, ["settings changed"]),
             (Verbs.RestartWatchtower, Verbs.WatchtowerTarget, []),
             (Verbs.PostReview, "flight/TIA1", []),
             (Verbs.SyncRepos, Verbs.NodeTarget, []),
@@ -130,11 +131,11 @@ public sealed class StandingTests
         node.Agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, worker, status: "busy"));
         var row = await Listed(node, worker);
 
-        // The choices LegWatch gives a stalled worker's ring card: Resume says to the worker, Go around starts a fresh one.
+        // The choices LegWatch gives a stalled worker's ring card: Resume says to the worker, Redo leg starts a fresh one.
         var choices = new[]
         {
             new CardChoice { Label = "Resume", Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = ["Carry on with your leg from where you left off."] },
-            new CardChoice { Label = "Go around", Verb = Verbs.GoAround, Target = "flight/TIA1/parser", Args = ["the last worker stalled (idle)"] },
+            new CardChoice { Label = "Redo leg parser", Verb = Verbs.GoAround, Target = "flight/TIA1/parser", Args = ["the last worker stalled (idle)"] },
         };
         var resume = node.State.RaiseCard(CardBin.Ring, "leg-stalled", "flight/TIA1/parser", "TIA1/parser's worker stopped", null, choices);
 
@@ -144,7 +145,7 @@ public sealed class StandingTests
 
         var around = node.State.RaiseCard(CardBin.Ring, "leg-stalled", "flight/TIA1/parser", "TIA1/parser's worker stalled", null, choices);
 
-        var error = await Error(node, Command(Verbs.Answer, Verbs.CardTarget(around.Id), lookout, true, "Go around"));
+        var error = await Error(node, Command(Verbs.Answer, Verbs.CardTarget(around.Id), lookout, true, "Redo leg parser"));
         error.ShouldNotBeNull().ShouldContain("a go-around is for a leg flying or failed");
         error.ShouldNotContain("controller's");
 
@@ -206,14 +207,15 @@ public sealed class StandingTests
         (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "on"))).ShouldBeNull();
         (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000") with { Why = why })).ShouldNotBeNull().ShouldContain(PastTheFence);
 
-        // The node's own message to it (a card it says) starts a turn that is not the person's: the lookout again.
+        // The node's own message to it (a card it says) starts a turn that is not the person's: the lookout again, which on
+        // autopilot merges all the same (the person on Remote Control talks to it past the node, #344).
         (await Error(node, Command(Verbs.Say, Verbs.SessionTarget(row.Id), "node", false, "a card opened"))).ShouldBeNull();
-        (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
-
-        // So is a turn an assistant's agent-run CLI began, after the person's.
-        (await Error(node, Command(Verbs.Tell, Verbs.WatchtowerTarget, "gui", false, "merge again"))).ShouldBeNull();
         (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain(PastTheFence);
-        (await Error(node, Command(Verbs.Say, Verbs.SessionTarget(row.Id), "some-assistant", true, "ring me"))).ShouldBeNull();
+        // The node's settings stay the person's.
+        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, lookout, true, "maintenance", "on"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
+
+        // With the autopilot off, the lookout's merge is refused again.
+        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "off"))).ShouldBeNull();
         (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
     }
 
@@ -273,9 +275,18 @@ public sealed class StandingTests
         }
 
         // A job it does not own is not its to cancel.
-        (await Error(node, Command(Verbs.CancelJob, "job/j2", worker, true))).ShouldBe("job/j2 is not TIA1's job: a flight's session cancels its own flight's only");
+        (await Error(node, Command(Verbs.CancelJob, "job/j2", worker, true))).ShouldBe("job/j2 is not TIA1's job: a flight's session cancels, pauses and resumes its own flight's only");
         (await Error(node, Command(Verbs.CancelJob, "job/j3", worker, true))).ShouldNotBeNull().ShouldContain("not TIA1's job");
         ((await Error(node, Command(Verbs.CancelJob, "job/j1", worker, true))) ?? "").ShouldNotContain("not TIA1's job");
+
+        // Pausing and resuming a job are fenced like cancelling it.
+        foreach (var verb in new[] { Verbs.PauseJob, Verbs.ResumeJob })
+        {
+            (await Error(node, Command(verb, "job/j2", worker, true))).ShouldBe("job/j2 is not TIA1's job: a flight's session cancels, pauses and resumes its own flight's only");
+            (await Error(node, Command(verb, "job/j3", worker, true))).ShouldNotBeNull().ShouldContain("not TIA1's job");
+            ((await Error(node, Command(verb, "job/j1", worker, true))) ?? "").ShouldNotContain("not TIA1's job");
+            ((await Error(node, Command(verb, "job/j2", "gui"))) ?? "").ShouldNotContain("not TIA1's job");
+        }
 
         // Nothing that reaches outside the flight, whatever it targets.
         foreach (var (verb, target) in new[] { (Verbs.CreateIssue, "repo/tianwen"), (Verbs.CreateFlight, Verbs.NodeTarget), (Verbs.SyncRepos, Verbs.NodeTarget) })

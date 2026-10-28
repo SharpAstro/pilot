@@ -26,7 +26,7 @@ internal sealed partial class FlightsView<TSurface>
     public FlightsViewMode Mode { get; set; } = FlightsViewMode.Canvas;
 
     /// <summary>Whether the page is showing the canvas now, in either palette.</summary>
-    public bool CanvasShown => CanvasAvailable && Mode is FlightsViewMode.Canvas or FlightsViewMode.Night;
+    public bool CanvasShown => CanvasAvailable && Mode == FlightsViewMode.Canvas;
 
     /// <summary>Whether the page is showing the cards in a wrapping grid, without arrows.</summary>
     public bool GridShown => CanvasAvailable && Mode == FlightsViewMode.Grid;
@@ -34,7 +34,7 @@ internal sealed partial class FlightsView<TSurface>
     /// <summary>The geometry the last tree was built from.</summary>
     internal FlightCanvas Canvas => _canvas;
 
-    // Grid and List say it better as the marks DIR.Lib draws, each with the word as its tooltip; Canvas and Night stay words
+    // Grid and List say it better as the marks DIR.Lib draws, each with the word as its tooltip; Canvas stays a word
     // until DIR.Lib has a mark for them (SharpAstro/DIR.Lib#151). Every segment keeps the flights:view:* id a pill had, and the hand cursor.
     private Layout.Node ViewSwitch()
     {
@@ -43,7 +43,6 @@ internal sealed partial class FlightsView<TSurface>
             new(FlightsViewMode.Canvas, "Canvas") { Hit = new HitResult.ButtonHit("flights:view:canvas") },
             new(FlightsViewMode.Grid, Icon: Layout.IconKind.Grid) { Hit = new HitResult.ButtonHit("flights:view:grid"), Tooltip = "Grid" },
             new(FlightsViewMode.List, Icon: Layout.IconKind.List) { Hit = new HitResult.ButtonHit("flights:view:list"), Tooltip = "List" },
-            new(FlightsViewMode.Night, "Night") { Hit = new HitResult.ButtonHit("flights:view:night") },
         ];
         var style = new Layout.ButtonGroupStyle(RowFocusBg, Button, Bright, Dim, ButtonHover)
         {
@@ -61,7 +60,7 @@ internal sealed partial class FlightsView<TSurface>
     }
 
     private const float ViewSwitchSegment = 60f;
-    private const float ViewSwitchWidth = 4 * ViewSwitchSegment + 3 * 2f;
+    private const float ViewSwitchWidth = 3 * ViewSwitchSegment + 2 * 2f;
 
     // The cards as a wrapping grid, in the list's order: the engine wraps them by the width it is given.
     private Layout.Node GridBody(FlightsScreen screen)
@@ -115,9 +114,15 @@ internal sealed partial class FlightsView<TSurface>
     {
         var landed = line.Row.State == FlightState.Landed || line.Stale is not null;
         var color = StateColor(line);
+        // A flight with a PR says where it stands at the right of its code, in the chip the Pull requests page has.
+        var code = Layout.Builder.Text(line.Code, 15f, landed ? Dim : Bright).RowH(22f);
+        if (PullRequestChip(line, CardChipWidth, PullRequestChipHeight) is { } chip)
+        {
+            code = Layout.Builder.HStack(code.WStar(), chip).WithGap(6f).RowH(22f);
+        }
         var rows = new List<Layout.Node>
         {
-            Layout.Builder.Text(line.Code, 15f, landed ? Dim : Bright).RowH(22f),
+            code,
             Whole(Layout.Builder.Text(line.Title, 13f, landed ? Dim : Body).RowH(20f), line.Title, CardTitleFits),
             // Body, not Dim, on a failed move's red card: Dim is 4.1:1 on it.
             Layout.Builder.Text(line.Where, 12f, line.MoveMark is not null ? Body : Dim).RowH(18f),
@@ -142,6 +147,8 @@ internal sealed partial class FlightsView<TSurface>
             .BgFocus(line.MoveMark is not null ? P.FailedFocusBg : RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index))
             .WithContextMenu(at => OpenMenu(line, index, at))
+            // The same brief as the Home chip (#258); a cut line keeps its own whole-text tooltip, the innermost.
+            .WithTooltip(ChipBrief.Text(ChipBrief.Flight(line)))
             .DoubleClickable(_ =>
             {
                 ListCursor.MoveTo(index);

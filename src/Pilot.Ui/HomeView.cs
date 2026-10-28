@@ -19,6 +19,9 @@ internal sealed record HomeChip(HomeChipKind Kind, string Label, string Tone)
     public SessionLine? Session { get; init; }
 
     public JobLine? Job { get; init; }
+
+    /// <summary>The chip's short brief for its hover (#258): at most <see cref="ChipBrief.MaxLines"/> lines, one per line of text.</summary>
+    public string Brief { get; init; } = "";
 }
 
 /// <summary>
@@ -89,21 +92,21 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
         [.. Flights.Lines.Where(l => l.Row.State != FlightState.Landed)
             .Select(l => l.StaleMark is { } stale
                 // Its node is in the mark, so the node's name is not said twice; the chip is the last known row, dimmed.
-                ? new HomeChip(HomeChipKind.Flight, $"{l.Code} · {stale}", "stale") { Flight = l }
+                ? new HomeChip(HomeChipKind.Flight, $"{l.Code} · {stale}", "stale") { Flight = l, Brief = ChipBrief.Text(ChipBrief.Flight(l)) }
                 // A failed move's chip says so in its words, and is red; its reason and Retry move are in the band under the chips.
                 : l.MoveMark is { } failed
-                    ? new HomeChip(HomeChipKind.Flight, Mark(l.Node, $"{l.Code} · {failed}"), "failed") { Flight = l }
-                    : new HomeChip(HomeChipKind.Flight, Mark(l.Node, $"{l.Code} · {l.State}"), l.State) { Flight = l })];
+                    ? new HomeChip(HomeChipKind.Flight, Mark(l.Node, $"{l.Code} · {failed}"), "failed") { Flight = l, Brief = ChipBrief.Text(ChipBrief.Flight(l)) }
+                    : new HomeChip(HomeChipKind.Flight, Mark(l.Node, $"{l.Code} · {l.State}"), l.State) { Flight = l, Brief = ChipBrief.Text(ChipBrief.Flight(l)) })];
 
     /// <summary>The live sessions.</summary>
     public IReadOnlyList<HomeChip> SessionChips =>
         [.. Sessions.Lines.Where(l => l.IsLive)
-            .Select(l => new HomeChip(HomeChipKind.Session, Mark(l.Node, l.ShownName), "live") { Session = l })];
+            .Select(l => new HomeChip(HomeChipKind.Session, Mark(l.Node, l.ShownName), "live") { Session = l, Brief = ChipBrief.Text(ChipBrief.Session(l)) })];
 
     /// <summary>The running and queued jobs.</summary>
     public IReadOnlyList<HomeChip> JobChips =>
         [.. Jobs.Lines.Where(l => l.Live)
-            .Select(l => new HomeChip(HomeChipKind.Job, Mark(l.Node, $"{l.Id} · {l.State}"), l.State) { Job = l })];
+            .Select(l => new HomeChip(HomeChipKind.Job, Mark(l.Node, $"{l.Id} · {l.State}"), l.State) { Job = l, Brief = ChipBrief.Text(ChipBrief.Job(l)) })];
 
     /// <summary>The machine blocks to draw: a node that sends no row has none.</summary>
     public IReadOnlyList<MachineLine> MachineBlocks => Machines ?? [];
@@ -126,16 +129,17 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
             && (owner == WatchtowerOwner ? l.Row.Role == SessionRole.Watchtower : l.Row.Name == owner));
         if (session is not null)
         {
-            return new HomeChip(HomeChipKind.Session, session.ShownName, "live") { Session = session };
+            return new HomeChip(HomeChipKind.Session, session.ShownName, "live") { Session = session, Brief = ChipBrief.Text(ChipBrief.Session(session)) };
         }
         var job = Jobs.Lines.FirstOrDefault(l => l.Live && line.Is(l.Node) && l.Id == owner);
-        return job is null ? null : new HomeChip(HomeChipKind.Job, $"{job.Id} · {job.State}", job.State) { Job = job };
+        return job is null ? null : new HomeChip(HomeChipKind.Job, $"{job.Id} · {job.State}", job.State) { Job = job, Brief = ChipBrief.Text(ChipBrief.Job(job)) };
     }
 
     private string ProcessDump(MachineLine line, MachineProcess p)
     {
         var owner = OwnerChip(line, p)?.Label ?? p.Owner;
-        return $"  {p.Name} · pid {p.Pid} · {MachineLine.Cpu(p)} · {MachineLine.Memory(p)}{(owner is null ? "" : $" · {owner}")}";
+        return $"  {p.Name} · pid {p.Pid} · {MachineLine.Cpu(p)} · {MachineLine.Memory(p)}{(owner is null ? "" : $" · {owner}")}"
+            + (p.WorkingDirectory is { } folder ? $" · in {folder}" : "");
     }
 
     /// <summary>The page as a dump writes it, for a capture and a test: a line for each shown node's machine, and one under it for each process.</summary>
@@ -156,26 +160,26 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
 }
 
 /// <summary>
-/// The Home page: the two verdicts at the top, flying and waiting on you, then every flight, session and job on the
-/// node as a chip. A chip opens the thing's own page through <see cref="OnFlight"/>, <see cref="OnSession"/> and
+/// The Home page: the Summary card first (what needs you and where it is, for the nodes in view), then the two verdicts,
+/// flying and waiting on you, then every flight, session and job on the node as a chip. A chip opens the thing's own page through <see cref="OnFlight"/>, <see cref="OnSession"/> and
 /// <see cref="OnJob"/>. Generic over the surface, as the other pages are.
 /// </summary>
 internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
 {
     private const float Gutter = 20f;
 
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
-    private static readonly RGBAColor32 Live = new(0x4c, 0xc3, 0x8a, 0xff);
-    private static readonly RGBAColor32 Ring = new(0xf0, 0xb4, 0x3c, 0xff);
-    private static readonly RGBAColor32 PageBg = new(0x12, 0x13, 0x19, 0xff);
+    private static RGBAColor32 Bright => Palette.Current.Bright;
+    private static RGBAColor32 Dim => Palette.Current.Dim;
+    private static RGBAColor32 Live => Palette.Current.Flying;
+    private static RGBAColor32 Ring => Palette.Current.Held;
+    private static RGBAColor32 PageBg => Palette.Current.Well;
 
-    private static readonly (RGBAColor32 Bg, RGBAColor32 Hover) Green = (new RGBAColor32(0x1f, 0x6b, 0x45, 0xff), new RGBAColor32(0x27, 0x85, 0x56, 0xff));
-    private static readonly (RGBAColor32 Bg, RGBAColor32 Hover) Amber = (new RGBAColor32(0x6b, 0x52, 0x1c, 0xff), new RGBAColor32(0x85, 0x66, 0x23, 0xff));
+    private static (RGBAColor32 Bg, RGBAColor32 Hover) Green => (Palette.Current.Go, Palette.Current.GoHover);
+    private static (RGBAColor32 Bg, RGBAColor32 Hover) Amber => (Palette.Current.AmberChip, Palette.Current.AmberChipHover);
 
     // A stale flight's chip: grey, not the green or amber of a state, its text lighter than Dim so it stays at AA on the grey.
-    private static readonly (RGBAColor32 Bg, RGBAColor32 Hover) Stale = (new RGBAColor32(0x26, 0x28, 0x32, 0xff), new RGBAColor32(0x31, 0x34, 0x40, 0xff));
-    private static readonly RGBAColor32 StaleText = new(0xb4, 0xb7, 0xc4, 0xff);
+    private static (RGBAColor32 Bg, RGBAColor32 Hover) Stale => (Palette.Current.StaleChip, Palette.Current.StaleChipHover);
+    private static RGBAColor32 StaleText => Palette.Current.StaleText;
 
     // A failed move's chip: the red of a failed check on a card's button, the one red fill the pilot's buttons use.
     private static readonly (RGBAColor32 Bg, RGBAColor32 Hover) FailedChip = CardsView<TSurface>.StatusTint(ChoiceStatus.Failing)!.Value;
@@ -187,12 +191,20 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+    
+    /// <summary>The header's Night switch, the same on every page.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
     public AboutCard? About { get; set; }
 
     /// <summary>The window's node selection: its pills in the top bar, and the nodes picked are the things shown.</summary>
     public NodeFilter? Nodes { get; set; }
+
+    /// <summary>The window's summaries: the card at the top reads its row from it and its button presses through it. Null draws no card.</summary>
+    public SummaryBoard? Summary { get; set; }
+
+    private readonly SummaryCard _card = new();
 
     /// <summary>Opens a flight's page on Flights.</summary>
     public Action<FlightLine>? OnFlight { get; set; }
@@ -214,6 +226,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     public void Render(HomeScreen screen, RectF32 bounds)
     {
+        Palette.Use(Night);
         BeginFrame();
         RenderLayout(Tree(screen), bounds);
     }
@@ -221,6 +234,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
     internal Layout.Node Tree(HomeScreen screen)
     {
+        Palette.Use(Night);
         // The node selection holds here as on every page; the pills above bring the others back.
         if (Nodes is { All: false } nodes)
         {
@@ -233,11 +247,15 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                 Machines = [.. screen.MachineBlocks.Where(l => nodes.Shows(l.Node))],
             };
         }
-        var blocks = new List<Layout.Node>
+        var blocks = new List<Layout.Node>();
+        // The summary of the nodes the window shows comes first: it is what the person came to read.
+        if (Summary is { } board && _card.Build(board, board.Shelf.Fleet(Nodes), Palette.Current, screen.Flights.AsOf) is { } card)
         {
-            Layout.Builder.Text(screen.Flying, 16f, screen.Flying == "Nothing is flying" ? Dim : Live).RowH(28f),
-            Layout.Builder.Text(screen.Waiting, 16f, screen.Waiting == "Nothing waits on you" ? Dim : Ring).RowH(28f),
-        };
+            blocks.Add(card);
+            blocks.Add(Layout.Builder.Spacer().RowH(14f));
+        }
+        blocks.Add(Layout.Builder.Text(screen.Flying, 16f, screen.Flying == "Nothing is flying" ? Dim : Live).RowH(28f));
+        blocks.Add(Layout.Builder.Text(screen.Waiting, 16f, screen.Waiting == "Nothing waits on you" ? Dim : Ring).RowH(28f));
         Section(blocks, "Flights", screen.FlightChips, "no flight is flying or held");
         MoveFailures(blocks, screen);
         Section(blocks, "Sessions", screen.SessionChips, "no live session");
@@ -252,8 +270,8 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         TopBar.Build(new PageHeader("home")
         {
             Source = PageHeader.SourceLine(screen.Flights.Source, screen.Flights.AsOf),
-            Lines = Maintenance ? [Layout.Builder.Text(MaintenanceNotice.Line, 12f, Ring).RowH(20f)] : [],
-        }, new TopBarParts(Nodes, null, Autopilot, About));
+            Lines = Maintenance ? [Layout.Builder.Text(MaintenanceNotice.LineFor(Palette.Current), 12f, Ring).RowH(20f)] : [],
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
 
     private void Section(List<Layout.Node> blocks, string title, IReadOnlyList<HomeChip> chips, string none)
     {
@@ -277,7 +295,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     // The flights whose move failed, each as the red band the Flights page shows (one component): its reason wrapped, and Retry move.
     private void MoveFailures(List<Layout.Node> blocks, HomeScreen screen)
     {
-        var bands = MoveFailureBand.All<TSurface>(screen.Flights.Lines, FlightsPalette.Standard,
+        var bands = MoveFailureBand.All<TSurface>(screen.Flights.Lines, Palette.Current,
             line => OnAction is { } act && CanSteer?.Invoke(line.Node) != false ? act : null, "home:").ToList();
         if (bands.Count == 0)
         {
@@ -311,10 +329,12 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private const float CpuWidth = 56f;
     private const float MemoryWidth = 72f;
     private const float OwnerWidth = 240f;
+    private const float FolderWidth = 240f;
     private const float ColumnGap = 12f;
 
-    // The process table stops here on a wide page, so a row's name and its figures are not a screen apart.
-    private const float TableMaxWidth = 960f;
+    // The process table stops here on a wide page, so a row's name and its figures are not a screen apart; wide enough that the
+    // working dir column (FolderWidth) still has its whole width beside the name.
+    private const float TableMaxWidth = 1200f;
 
     // A process's name and owner always carry their whole text on hover: a narrow window cuts even a short name with the column's ellipsis.
 
@@ -337,6 +357,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             blocks.Add(Layout.Builder.WrapH([.. line.Row.Gauges().Select(Gauge)]).WithGap(GaugeSpacing).WithLineGap(0f).WStar());
             blocks.Add(Layout.Builder.HStack(
                 Layout.Builder.Text("process", 11f, Dim).WStar().HStar(),
+                Folder(Layout.Builder.Text("working dir", 11f, Dim)),
                 Layout.Builder.Text("pid", 11f, Dim, TextAlign.Far).WFixed(PidWidth).HStar(),
                 Layout.Builder.Text("cpu", 11f, Dim, TextAlign.Far).WFixed(CpuWidth).HStar(),
                 Layout.Builder.Text("memory", 11f, Dim, TextAlign.Far).WFixed(MemoryWidth).HStar(),
@@ -367,8 +388,10 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private Layout.Node ProcessRow(HomeScreen screen, MachineLine line, MachineProcess process)
     {
         var name = Layout.Builder.Text(process.Name, 13f, Bright).WStar().HStar();
+        var folder = Layout.Builder.Text(MachineLine.Folder(process), 12f, Dim);
         return Layout.Builder.HStack(
-            name.WithTooltip($"{process.Name} (pid {process.Pid})"),
+            name.WithTooltip(MachineLine.Hover(process)),
+            Folder(process.WorkingDirectory is { } directory ? folder.WithTooltip(directory) : folder),
             Layout.Builder.Text(process.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture), 12f, Dim, TextAlign.Far).WFixed(PidWidth).HStar(),
             Layout.Builder.Text(MachineLine.Cpu(process), 13f, Bright, TextAlign.Far).WFixed(CpuWidth).HStar(),
             Layout.Builder.Text(MachineLine.Memory(process), 13f, Bright, TextAlign.Far).WFixed(MemoryWidth).HStar(),
@@ -376,6 +399,10 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             .WithGap(ColumnGap)
             .RowH(ProcessRowHeight).WStar(1f, 0f, TableMaxWidth);
     }
+
+    // The folder column, the one a narrow window drops: its whole width while there is room, gone once it could have less, header
+    // and rows alike, so the name keeps the room it needs.
+    private static Layout.Node Folder(Layout.Node cell) => cell.HStar().WStar(1f, 0f, FolderWidth).CollapseBelow(FolderWidth);
 
     // The owner as its chip, which opens that session's or job's page as the chip above it does; the node's word when the page has
     // no such session or job any more (it ended since the sample), which opens nothing; empty for a process that is nobody's.
@@ -400,23 +427,21 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private Layout.Node Chip(HomeChip chip)
     {
         var tint = chip.Tone switch { "held" or "queued" => Amber, "stale" => Stale, "failed" => FailedChip, _ => Green };
-        return chip.Kind switch
+        var pill = chip.Kind switch
         {
-            // A failed move's chip is red, its words on it Bright (8:1); its reason is the band under the chips, and its tooltip.
+            // A failed move's chip is red, its words on it Bright (8:1); its reason is the band under the chips, and in its brief.
             HomeChipKind.Flight when chip.Tone == "failed" =>
-                CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint)
-                    .WithTooltip(chip.Flight.MoveFailure ?? chip.Label),
-            HomeChipKind.Flight when chip.Flight!.Provenance is { } provenance =>
-                CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight.Code}", () => OnFlight?.Invoke(chip.Flight), tint)
-                    .WithTooltip(provenance),
-            // The chip of a stale flight still opens its page (the last known row); its words, not its tint, say why it is dim.
+                CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint),
+            // The chip of a stale flight still opens its page (the last known row); its words, not its tint, say why it is dim,
+            // and its brief says it again in full (ChipBrief.Flight).
             HomeChipKind.Flight when chip.Tone == "stale" =>
-                CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint, StaleText)
-                    .WithTooltip($"{chip.Flight.Code} was {chip.Flight.State} when {chip.Flight.Stale} last answered"),
+                CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint, StaleText),
             HomeChipKind.Flight => CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint),
             HomeChipKind.Session => CardsView<TSurface>.Pill(chip.Label, $"home:session:{chip.Session!.Key}", () => OnSession?.Invoke(chip.Session), tint),
             _ => CardsView<TSurface>.Pill(chip.Label, $"home:job:{chip.Job!.Key}", () => OnJob?.Invoke(chip.Job), tint),
         };
+        // The brief opens below the chip, centred, and the tooltip layer keeps it inside the window (flipping above near the bottom).
+        return chip.Brief.Length > 0 ? pill.WithTooltip(chip.Brief) : pill;
     }
 
     public override bool HandleInput(InputEvent evt) => false;

@@ -38,6 +38,9 @@ public sealed class NodeMirror
     /// <summary>The node's machine as last sampled; null before any, and from an older node.</summary>
     public MachineRow? Machine { get; private set; }
 
+    /// <summary>Every open PR of the clones' orgs as the node last read them; null before any.</summary>
+    public PullRequestsRow? PullRequests { get; private set; }
+
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
 
     /// <summary>The jobs, by id.</summary>
@@ -47,6 +50,11 @@ public sealed class NodeMirror
 
     /// <summary>The PR reviews, by target (<c>pr/owner/repo#n</c>).</summary>
     public IReadOnlyDictionary<string, PrReviewRow> PrReviews => _prReviews;
+
+    private readonly Dictionary<string, SummaryRow> _summaries = new Dictionary<string, SummaryRow>(StringComparer.Ordinal);
+
+    /// <summary>The summaries, by scope (<see cref="SummaryRow.FleetScope"/> or a flight's code).</summary>
+    public IReadOnlyDictionary<string, SummaryRow> Summaries => _summaries;
 
     /// <summary>
     /// Applies one event. A snapshot replaces everything; a delta must be numbered one past the last, or the mirror
@@ -80,6 +88,7 @@ public sealed class NodeMirror
             }
             Usage = snapshot.Usage;
             Machine = snapshot.Machine;
+            PullRequests = snapshot.PullRequests;
             _jobs.Clear();
             foreach (var job in snapshot.Jobs ?? [])
             {
@@ -89,6 +98,11 @@ public sealed class NodeMirror
             foreach (var review in snapshot.PrReviews ?? [])
             {
                 _prReviews[Verbs.PrTarget(review.Repo, review.Number)] = review;
+            }
+            _summaries.Clear();
+            foreach (var summary in snapshot.Summaries ?? [])
+            {
+                _summaries[summary.Scope] = summary;
             }
             Stream = snapshot.Stream;
             Seq = snapshot.Seq;
@@ -151,11 +165,17 @@ public sealed class NodeMirror
             case PrReviewChangedEvent changed:
                 _prReviews[Verbs.PrTarget(changed.Review.Repo, changed.Review.Number)] = changed.Review;
                 break;
+            case SummaryChangedEvent summary:
+                _summaries[summary.Summary.Scope] = summary.Summary;
+                break;
             case UsageChangedEvent usage:
                 Usage = usage.Usage;
                 break;
             case MachineChangedEvent machine:
                 Machine = machine.Machine;
+                break;
+            case PullRequestsChangedEvent pullRequests:
+                PullRequests = pullRequests.Row;
                 break;
             case CommandResultEvent:
                 // A result changes no state; the deltas the command made carry that.

@@ -11,7 +11,7 @@ using Pilot.Contracts;
 // this machine's node or one on the LAN.
 var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN: host:port, or its name (SE1) or host; else PILOT_NODE, else this machine's" };
 var socketOption = new Option<string?>("--node-socket") { Description = "This machine's node's socket; else PILOT_NODE_SOCKET, else this user's default" };
-var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 sessions, 3 flights, 4 jobs, 5 fleet, 6 settings, 7 repos, 8 chat, Alt+Left or Backspace back and Alt+Right forward, Ctrl+T the chat with the watchtower, q quits")
+var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 sessions, 3 flights, 4 jobs, 5 fleet, 6 settings, 7 repos, 8 chat, 9 pull requests, Alt+Left or Backspace back and Alt+Right forward, Ctrl+T the chat with the watchtower, q quits")
 {
     Options = { nodeOption, socketOption },
 };
@@ -59,6 +59,7 @@ var flights = chrome.Flights;
 flights.CanvasAvailable = false; // cells cannot draw an arrow: the terminal keeps the list
 var jobs = chrome.Jobs;
 var repos = chrome.Repos;
+var pullRequests = chrome.PullRequests;
 var home = chrome.Home;
 var fleet = chrome.Fleet;
 var settings = chrome.Settings;
@@ -106,6 +107,16 @@ repos.SyncRepos = async ct =>
     return outcomes;
 };
 repos.Changed = Redraw;
+// The Pull requests page's Refresh asks the node to read GitHub now; the row comes back on the event stream.
+pullRequests.OnRefresh = async ct =>
+{
+    var result = (await client.SendAsync(new CommandRequest { Verb = Verbs.RefreshPullRequests, Target = Verbs.NodeTarget, Who = Who }, ct)).Response;
+    if (result is not { Ok: true })
+    {
+        throw new InvalidOperationException(result?.Error ?? "the node did not answer");
+    }
+};
+pullRequests.Changed = Redraw;
 flights.OnAction = action => _ = Task.Run(async () =>
 {
     flights.Say(clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, Who, stop.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node));
@@ -168,7 +179,7 @@ async Task CardAsync(string verb, CardRow card, string[] cardArgs)
         Redraw();
         return;
     }
-    var envelope = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.CardTarget(card.Id), Args = cardArgs, Who = Who }, stop.Token);
+    var envelope = await to.SendAsync(DashboardCommands.CardRequest(verb, card, cardArgs, Who), stop.Token);
     clients.NoteRefusal(cards.NodeOf(card), envelope);
     flights.Say(envelope.Success ? $"{verb} {card.Id}: done" : $"{verb} {card.Id}: {envelope.Response?.Error ?? envelope.Error}");
     Redraw();
@@ -187,6 +198,34 @@ chat.OnSend = async text =>
     Redraw();
     return refused;
 };
+chat.OnSendAboutCard = async (card, node, words) =>
+{
+    var refused = clients.For(node) is { } to
+        ? await ChatCommands.TellAboutCardAsync(to, card.Id, words, Who, stop.Token)
+        : FleetClients.WatchOnly(node);
+    Redraw();
+    return refused;
+};
+chat.LoadOn = async (node, after, ct) => (await clients.For(node, command: false)!.GetChatAsync(after, ct)) is { Success: true, Response: { } page }
+    ? page
+    : throw new InvalidOperationException($"{node.Name} did not send its watchtower's chat");
+chat.OnSendOn = async (node, text) =>
+{
+    var refused = clients.For(node) is { } to
+        ? await ChatCommands.TellAsync(to, text, Who, stop.Token)
+        : FleetClients.WatchOnly(node);
+    Redraw();
+    return refused;
+};
+// A card's Chat about this opens the chat of the node the card was raised on.
+cards.OnChatAbout = card =>
+{
+    var node = cards.NodeOf(card);
+    chrome.Show(PilotPage.Chat);
+    chat.SwitchTo(node);
+    chat.Attach(card, node);
+};
+flights.OnChatAboutCard = card => cards.OnChatAbout?.Invoke(card);
 chat.OnRestart = async () =>
 {
     var refused = await ChatCommands.RestartWatchtowerAsync(client, Who, stop.Token);
@@ -207,17 +246,35 @@ jobs.LoadLog = async (node, id, ct) => (await (clients.For(node, command: false)
     : throw new InvalidOperationException($"the node did not send {id}'s log");
 jobs.Changed = Redraw;
 // Cancel is the selected job's, whose log is followed: its node's.
-jobs.OnCancel = job => _ = Task.Run(async () =>
+Action<JobRow> CancelJob(bool force) => job => _ = Task.Run(async () =>
 {
+    var what = force ? "force cancel" : "cancel";
     if (clients.For(jobs.FollowingNode) is not { } to)
     {
-        flights.Say($"cancel {job.Id}: {FleetClients.WatchOnly(jobs.FollowingNode)}");
+        flights.Say($"{what} {job.Id}: {FleetClients.WatchOnly(jobs.FollowingNode)}");
         Redraw();
         return;
     }
-    var envelope = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = [], Who = Who }, stop.Token);
+    var envelope = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = force ? [Verbs.ForceArg] : [], Who = Who }, stop.Token);
     clients.NoteRefusal(jobs.FollowingNode, envelope);
-    flights.Say(envelope.Success && envelope.Response is { Ok: true } ? $"cancelled {job.Id}" : $"cancel {job.Id}: {envelope.Response?.Error ?? envelope.Error}");
+    flights.Say(envelope.Success && envelope.Response is { Ok: true } ? $"{(force ? "force cancelled" : "cancelled")} {job.Id}" : $"{what} {job.Id}: {envelope.Response?.Error ?? envelope.Error}");
+    Redraw();
+});
+jobs.OnCancel = CancelJob(force: false);
+jobs.OnForceCancel = CancelJob(force: true);
+jobs.OnPause = job => SendJobVerb(job, Verbs.PauseJob, "paused");
+jobs.OnResume = job => SendJobVerb(job, Verbs.ResumeJob, "resumed");
+void SendJobVerb(JobRow job, string verb, string done) => _ = Task.Run(async () =>
+{
+    if (clients.For(jobs.FollowingNode) is not { } to)
+    {
+        flights.Say($"{verb} {job.Id}: {FleetClients.WatchOnly(jobs.FollowingNode)}");
+        Redraw();
+        return;
+    }
+    var envelope = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.JobTarget(job.Id), Args = [], Who = Who }, stop.Token);
+    clients.NoteRefusal(jobs.FollowingNode, envelope);
+    flights.Say(envelope.Success && envelope.Response is { Ok: true } ? $"{done} {job.Id}" : $"{verb} {job.Id}: {envelope.Response?.Error ?? envelope.Error}");
     Redraw();
 });
 jobs.OnOpen = location => DashboardCommands.Open(location);
@@ -299,9 +356,11 @@ FleetPages? merged = null;
 chrome.LinkCardTranscripts(() => merged?.Sessions ?? feed.Screen(DateTimeOffset.UtcNow), () => merged?.Flights ?? feed.Flights(DateTimeOffset.UtcNow), shown => page = shown,
     () => merged?.Jobs ?? feed.JobsPage(DateTimeOffset.UtcNow));
 chrome.LinkRepos(shown => page = shown);
+chrome.LinkPullRequests(shown => page = shown);
 // The Fleet page's "N waiting on you" opens those sessions on the Sessions page.
 chrome.LinkFleet(shown => page = shown);
 repos.OnOpen = location => DashboardCommands.Open(location);
+pullRequests.OnOpen = location => DashboardCommands.Open(location);
 // The session menu's New flight in its repo: the Flights page, with the wizard open on it.
 sessions.OnNewFlight = repo =>
 {
@@ -352,6 +411,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.Sessions => sessions.Tree(pages.Sessions),
             PilotPage.Flights => flights.Tree(pages.Flights),
             PilotPage.Repos => repos.Tree(pages.Repos ?? new ReposScreen([], pages.Sessions.Source, now)),
+            PilotPage.PullRequests => pullRequests.Tree(pages.PullRequests ?? new PullRequestsScreen(null, pages.Sessions.Source, now), width),
             PilotPage.Jobs => jobs.Tree(pages.Jobs),
             PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, now)),
             PilotPage.Settings => settings.Tree(now),
@@ -450,6 +510,9 @@ void Handle(ConsoleInputEvent raw)
             break;
         case InputEvent.KeyDown(InputKey.D7, _):
             chrome.Show(PilotPage.Repos);
+            break;
+        case InputEvent.KeyDown(InputKey.D9, _):
+            chrome.Show(PilotPage.PullRequests);
             break;
         case InputEvent.KeyDown(InputKey.D8, _):
             chrome.Show(PilotPage.Chat);

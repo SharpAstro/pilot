@@ -11,10 +11,10 @@ namespace Pilot.Ui;
 /// </summary>
 internal sealed class TooltipLayer<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
 {
-    private static readonly Layout.TooltipStyle Style = new(
-        Background: new RGBAColor32(0x24, 0x26, 0x31, 0xf4),
-        Text: new RGBAColor32(0xe6, 0xe7, 0xee, 0xff),
-        Border: new RGBAColor32(0x3a, 0x3d, 0x4c, 0xff),
+    private static Layout.TooltipStyle Style => new(
+        Background: Palette.Current.TipBg,
+        Text: Palette.Current.Bright,
+        Border: Palette.Current.TipBorder,
         FontSize: 12f);
 
     /// <summary>How wide a tooltip's text may grow, in design units, before it breaks onto another line.</summary>

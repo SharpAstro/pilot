@@ -69,7 +69,7 @@ public class TrackerBriefTests
 
         plan.ShouldContain("Read the issue\n(`gh issue view 101645 --comments`), the repo's CLAUDE.md".ReplaceLineEndings());
         plan.ShouldContain("- #7, from flight BUL7: read it (`gh issue view 7 --comments`) and plan its points");
-        plan.ShouldContain("read its issue (`gh issue view <number> -R <repo>`), its legs' goals, and the");
+        plan.ShouldContain("read its issue (`gh issue view <number> -R <repo>`) and its legs' goals");
         plan.ShouldNotContain("stories-get-by-id");
     }
 

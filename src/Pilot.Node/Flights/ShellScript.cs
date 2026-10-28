@@ -32,7 +32,7 @@ public sealed partial class ShellScript : IDisposable
     {
         if (!OperatingSystem.IsWindows())
         {
-            return new ShellScript(Quiet(new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", command }, WorkingDirectory = cwd }), null);
+            return new ShellScript(BuildEnvironment.Apply(new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", command }, WorkingDirectory = cwd }), null);
         }
         var script = Path.Combine(Path.GetTempPath(), $"pilot-{Guid.NewGuid():N}.ps1");
         File.WriteAllText(script, Body(Unwrap(command)), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
@@ -41,20 +41,7 @@ public sealed partial class ShellScript : IDisposable
         {
             start.ArgumentList.Add(arg);
         }
-        return new ShellScript(Quiet(start), script);
-    }
-
-    /// <summary>
-    /// The build servers a dotnet build leaves running are switched off for the line: MSBuild's reused worker nodes and the
-    /// compiler server outlive the build, inherit its output, and kept a job's pipe open after its tests had finished, so the
-    /// job read as running and the node's one slot stayed taken (DE1's j302 and SE1's j122, 2026-10-26).
-    /// </summary>
-    private static ProcessStartInfo Quiet(ProcessStartInfo start)
-    {
-        start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
-        start.Environment["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0";
-        start.Environment["UseSharedCompilation"] = "false";
-        return start;
+        return new ShellScript(BuildEnvironment.Apply(start), script);
     }
 
     /// <summary>
@@ -75,7 +62,7 @@ public sealed partial class ShellScript : IDisposable
     /// it: <c>pwsh -c "a" &amp;&amp; echo "b"</c> or two chained <c>pwsh -c</c> lines are left as written, as is anything else.
     /// A switch may take a bare-word value before the command (<c>-ExecutionPolicy Bypass</c>).
     /// <para>
-    /// Unwrap runs in <see cref="For"/>, so it also rewrites the jobs <c>JobRunner</c> starts (JobRunner.cs, <c>ShellScript.For(job.Command, …)</c>).
+    /// Unwrap runs in <see cref="For"/> and in <see cref="DetachedShell.For"/>, so it also rewrites the jobs <c>JobRunner</c> starts (DetachedShell.cs, <c>ShellScript.Body(ShellScript.Unwrap(command))</c>).
     /// That is intended: they had the same quoting bug, a double-quoted <c>$LASTEXITCODE</c> expanded by the outer pwsh.
     /// </para>
     /// </summary>
@@ -145,15 +132,18 @@ public sealed partial class ShellScript : IDisposable
     [GeneratedRegex(@"^\s*(?<shell>pwsh|powershell|bash|sh|cmd)(?:\.exe)?(?:\s+[-/](?!c(?:ommand)?\b)\w+(?:\s+[^-/\s'""]\S*)?)*\s+[-/](?:c|command)\b", RegexOptions.IgnoreCase)]
     private static partial Regex WrappedCommand();
 
-    public void Dispose()
+    public void Dispose() => Delete(Script);
+
+    /// <summary>Deletes a script file; a path of null, or one already gone, is nothing.</summary>
+    public static void Delete(string? script)
     {
-        if (Script is null)
+        if (script is null)
         {
             return;
         }
         try
         {
-            File.Delete(Script);
+            File.Delete(script);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

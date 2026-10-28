@@ -401,7 +401,9 @@ public sealed class TerminalTests
         // A subagent's row opens its transcript; the chips go between it and the session's own.
         Click($"session:{parent.Row.Id}:agent:a1");
         await Loaded("a1");
-        Described().ShouldContain("asked a1");
+        // The prompt wraps, a leaf a word.
+        Described().ShouldContain("\"asked ");
+        Described().ShouldContain("\"a1");
         Described().ShouldContain("main");
         Click("transcript:agent:main");
         await Loaded(null);

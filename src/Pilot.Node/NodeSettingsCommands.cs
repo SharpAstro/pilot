@@ -25,7 +25,6 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         return Task.FromResult(new SettingsPage
         {
             Settings = [.. NodeSettings.Keys.Select(key => Row(key, saved))],
-            Restart = restarter.Waiting,
             File = options.SettingsFile,
         });
     }
@@ -94,8 +93,23 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             jobs.Pump();
             return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now");
         }
+        var carrying = NodeRestarter.JobsCarryOn(state) is { } jobsLeft ? $" ({jobsLeft} under the next node)" : "";
         var restart = restarter.Request($"{key} = {value}");
-        return state.Complete(command, null, setting: Row(key, updated), way: restart ?? $"{key} saved as {value}; the node restarts to run with it");
+        return state.Complete(command, null, setting: Row(key, updated), way: restart ?? $"{key} saved as {value}; the node restarts to run with it{carrying}");
+    }
+
+    /// <summary>
+    /// <c>restart-node node [why…]</c>: the node starts its successor and stops, as a saved setting makes it; jobs run
+    /// detached and are not waited for, so the answer (and a Handled card naming the caller) says how many carry on under the next node.
+    /// </summary>
+    public CommandResult RestartNode(CommandRequest command)
+    {
+        var why = string.Join(' ', command.Args ?? []).Trim();
+        var carrying = NodeRestarter.JobsCarryOn(state) is { } jobsLeft ? $"; {jobsLeft} under the next node" : "";
+        var line = $"the node restarts for {command.Who}{(why.Length > 0 ? $": {why}" : "")}{carrying}";
+        var refused = restarter.Restart(why.Length > 0 ? $"{command.Who}: {why}" : command.Who,
+            () => state.RaiseCard(CardBin.Handled, "restart", Verbs.NodeTarget, line));
+        return state.Complete(command, refused, way: refused is null ? line : null);
     }
 
     /// <summary><c>setup node &lt;check&gt;</c>: the fix the checklist offers for it.</summary>
@@ -210,7 +224,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.UpdatePolicyKey => UpdatePolicy.Auto.Name(),
         NodeSettings.UpdateChannelKey => UpdateChannel.Stable.Name(),
         NodeSettings.MaxJobsKey => "1",
-        NodeSettings.JobMemoryKey => "2",
+        NodeSettings.JobMemoryKey => "0",
         NodeSettings.MergeMethodKey => "rebase",
         NodeSettings.StartLimitKey => "90",
         NodeSettings.PriorityStartLimitKey => "98",
@@ -233,10 +247,10 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.LanPortKey => ("LAN port", "The TCP port other machines reach this node on", []),
         NodeSettings.MachineKey => ("Machine prefix", "Two letters and a number, at the front of this machine's session names (DE1-watchtower)", []),
         NodeSettings.RepoRootsKey => ("Repo roots", "Folders of git clones the new-flight wizard offers, beside the flights' own repos", []),
-        NodeSettings.UpdatePolicyKey => ("Updates", "auto installs a newer pilot once no job runs; ask raises a card; off does not look", [.. UpdatePolicies.Names]),
+        NodeSettings.UpdatePolicyKey => ("Updates", "auto installs a newer pilot at once (jobs carry on under the new node); ask raises a card; off does not look", [.. UpdatePolicies.Names]),
         NodeSettings.UpdateChannelKey => ("Update channel", "stable follows the tagged releases; beta follows main's every push (a Debug build, needs the .NET runtime)", [.. UpdateChannels.Names]),
         NodeSettings.MaxJobsKey => ("Jobs at once", "How many background tasks run at once; the rest wait their turn", ["1", "2", "3", "4"]),
-        NodeSettings.JobMemoryKey => ("Job memory", "The free memory, in GB, a job waits for before it starts; 0 to not wait", ["0", "2", "4", "8"]),
+        NodeSettings.JobMemoryKey => ("Job memory", "The least free memory, in GB, a second job waits for: a floor under the measured need of its kind of command, never a cap; 0 for the measured need alone", ["0", "2", "4", "8"]),
         NodeSettings.PriorityReposKey => ("Priority repos", "Repos whose flights keep going past the start limit, up to the priority limit", []),
         NodeSettings.RepoTrackersKey => ("Repo trackers", "The tracker a bare number means when a flight is made in the repo; a repo not listed means GitHub issues", []),
         NodeSettings.NoAutoMergeReposKey => ("No auto-merge repos", "Repos whose PRs the node never merges by itself, autopilot or not; only your own merge lands them", []),

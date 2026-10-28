@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Pilot.Contracts;
+using Pilot.Node.Flights;
 
 namespace Pilot.Node;
 
@@ -48,8 +49,10 @@ public sealed class NodeState
     private readonly Dictionary<string, CardRow> _cards = new Dictionary<string, CardRow>(StringComparer.Ordinal);
     private UsageRow? _usage;
     private MachineRow? _machine;
+    private PullRequestsRow? _pullRequests;
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
     private readonly Dictionary<string, PrReviewRow> _prReviews = new Dictionary<string, PrReviewRow>(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, SummaryRow> _summaries = new Dictionary<string, SummaryRow>(StringComparer.Ordinal);
 
     // The latest deltas, oldest first, serialised once: what a resuming client is sent.
     private readonly Queue<(long Seq, byte[] Json)> _held = new Queue<(long Seq, byte[] Json)>();
@@ -330,7 +333,7 @@ public sealed class NodeState
     /// </summary>
     /// <param name="link">The page the card is about (a flight's PR), opened from the card.</param>
     /// <param name="askedBy">The assistant's session an ask card is about (<see cref="CardKinds.AssistantAsk"/>), and <paramref name="why"/> the message it acted on.</param>
-    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null)
+    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null, string? summary = null)
     {
         lock (_gate)
         {
@@ -348,6 +351,7 @@ public sealed class NodeState
                 Subject = subject,
                 Title = title,
                 Detail = detail,
+                Summary = CardSummaries.Resolve(summary, detail, kind, subject, title, choices ?? []),
                 Choices = [.. choices ?? []],
                 Link = link,
                 AskedBy = askedBy,
@@ -400,7 +404,7 @@ public sealed class NodeState
     /// one <see cref="CardChangedEvent"/>, none when nothing changed. A <paramref name="kind"/> given is the card's new kind.
     /// False when the card is not open or nothing changed.
     /// </summary>
-    public bool UpdateCard(string id, string title, string? detail, IReadOnlyList<CardChoice> choices, string? link, string? kind = null)
+    public bool UpdateCard(string id, string title, string? detail, IReadOnlyList<CardChoice> choices, string? link, string? kind = null, string? summary = null)
     {
         lock (_gate)
         {
@@ -409,7 +413,9 @@ public sealed class NodeState
                 return false;
             }
             var next = card with { Title = title, Detail = detail, Choices = [.. choices], Link = link, Kind = kind ?? card.Kind };
-            if (next.Title == card.Title && next.Detail == card.Detail && next.Link == card.Link && next.Kind == card.Kind
+            // A card that says something new says it in new words: the summary follows the title and kind, as the raiser wrote it or the table has it.
+            next = next with { Summary = summary is null && next.Title == card.Title && next.Kind == card.Kind ? card.Summary : CardSummaries.Resolve(summary, detail, next.Kind, next.Subject, next.Title, next.Choices) };
+            if (next.Title == card.Title && next.Detail == card.Detail && next.Link == card.Link && next.Kind == card.Kind && next.Summary == card.Summary
                 && next.Choices.SequenceEqual(card.Choices, EqualityComparer<CardChoice>.Create((a, b) => a! with { Args = [] } == b! with { Args = [] } && a.Args.SequenceEqual(b.Args))))
             {
                 return false;
@@ -504,10 +510,10 @@ public sealed class NodeState
         }
     }
 
-    // Record equality compares the connections, overlaps, folded-in and package-wait arrays by reference.
+    // Record equality compares the connections, peer connections, overlaps, folded-in and package-wait arrays by reference.
     private static bool Same(FlightRow a, FlightRow b) =>
-        a with { Connections = [], Overlaps = [], FoldedIn = [], PackageWaits = [] } == b with { Connections = [], Overlaps = [], FoldedIn = [], PackageWaits = [] }
-        && a.Connections.SequenceEqual(b.Connections, StringComparer.Ordinal) && a.Overlaps.SequenceEqual(b.Overlaps) && a.FoldedIn.SequenceEqual(b.FoldedIn)
+        a with { Connections = [], PeerConnections = [], Overlaps = [], FoldedIn = [], PackageWaits = [] } == b with { Connections = [], PeerConnections = [], Overlaps = [], FoldedIn = [], PackageWaits = [] }
+        && a.Connections.SequenceEqual(b.Connections, StringComparer.Ordinal) && a.PeerConnections.SequenceEqual(b.PeerConnections) && a.Overlaps.SequenceEqual(b.Overlaps) && a.FoldedIn.SequenceEqual(b.FoldedIn)
         && a.PackageWaits.SequenceEqual(b.PackageWaits);
 
     /// <summary>The jobs, newest first.</summary>
@@ -575,6 +581,27 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>The summaries made, one per scope: the fleet's first, then each flight's by code.</summary>
+    public SummaryRow[] Summaries()
+    {
+        lock (_gate)
+        {
+            return [.. _summaries.Values.OrderBy(s => s.Scope != SummaryRow.FleetScope).ThenBy(s => s.Scope, StringComparer.Ordinal)];
+        }
+    }
+
+    /// <summary>
+    /// Keeps a summary, replacing the older of its scope: one delta, journaled and sent to every client. Always a delta, even for
+    /// the same words, as the row says when it was made and what that cost.
+    /// </summary>
+    public void PutSummary(SummaryRow summary)
+    {
+        lock (_gate)
+        {
+            Publish(new SummaryChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Summary = summary });
+        }
+    }
+
     /// <summary>The account's usage as last read; null before any.</summary>
     public UsageRow? Usage()
     {
@@ -612,6 +639,15 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>Every open PR of the clones' orgs as last read; null before any.</summary>
+    public PullRequestsRow? PullRequests()
+    {
+        lock (_gate)
+        {
+            return _pullRequests;
+        }
+    }
+
     /// <summary>
     /// Puts the machine sampled when it changed meaningfully (<see cref="Pilot.Node.Flights.MachineSampler.Differs"/>): a sample every few
     /// seconds would otherwise put a delta for each, and the journal would fill with CPU jitter.
@@ -625,6 +661,24 @@ public sealed class NodeState
                 return;
             }
             Publish(new MachineChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Machine = sampled });
+        }
+    }
+
+    /// <summary>
+    /// Puts the PRs read, when they differ from those held, or when the held read is 2 minutes old: a read every minute that finds
+    /// nothing new would fill the journal with a row of every PR, yet a client dates the row by its read and marks one over 5
+    /// minutes old stale, so the read time is renewed well within that.
+    /// </summary>
+    public void PutPullRequests(PullRequestsRow read)
+    {
+        lock (_gate)
+        {
+            if (_pullRequests is { } held && held.Orgs.SequenceEqual(read.Orgs) && held.Errors.SequenceEqual(read.Errors)
+                && held.PullRequests.SequenceEqual(read.PullRequests) && read.ReadAt - held.ReadAt < TimeSpan.FromMinutes(2))
+            {
+                return;
+            }
+            Publish(new PullRequestsChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Row = read });
         }
     }
 
@@ -802,16 +856,19 @@ public sealed class NodeState
                 _legs.Remove((removed.Flight, removed.Name));
                 break;
             case CardAddedEvent added:
-                _cards[added.Card.Id] = added.Card;
+                _cards[added.Card.Id] = WithSummary(added.Card);
                 break;
             case CardChangedEvent changed:
-                _cards[changed.Card.Id] = changed.Card;
+                _cards[changed.Card.Id] = WithSummary(changed.Card);
                 break;
             case UsageChangedEvent usage:
                 _usage = usage.Usage;
                 break;
             case MachineChangedEvent machine:
                 _machine = machine.Machine;
+                break;
+            case PullRequestsChangedEvent pullRequests:
+                _pullRequests = pullRequests.Row;
                 break;
             case JobAddedEvent added:
                 _jobs[added.Job.Id] = added.Job;
@@ -825,8 +882,14 @@ public sealed class NodeState
             case PrReviewChangedEvent changed:
                 _prReviews[Verbs.PrTarget(changed.Review.Repo, changed.Review.Number)] = changed.Review;
                 break;
+            case SummaryChangedEvent summary:
+                _summaries[summary.Summary.Scope] = summary.Summary;
+                break;
         }
     }
+
+    private static CardRow WithSummary(CardRow card) =>
+        CardSummaries.Usable(card.Summary) ? card : card with { Summary = CardSummaries.For(card.Kind, card.Subject, card.Title, card.Choices) };
 
     private void Restore(SnapshotEvent snapshot)
     {
@@ -845,10 +908,12 @@ public sealed class NodeState
         }
         foreach (var card in snapshot.Cards ?? [])
         {
-            _cards[card.Id] = card;
+            // A card an older node wrote has no summary: it gets one from the same table.
+            _cards[card.Id] = WithSummary(card);
         }
         _usage = snapshot.Usage;
         _machine = snapshot.Machine;
+        _pullRequests = snapshot.PullRequests;
         foreach (var job in snapshot.Jobs ?? [])
         {
             _jobs[job.Id] = job;
@@ -856,6 +921,10 @@ public sealed class NodeState
         foreach (var review in snapshot.PrReviews ?? [])
         {
             _prReviews[Verbs.PrTarget(review.Repo, review.Number)] = review;
+        }
+        foreach (var summary in snapshot.Summaries ?? [])
+        {
+            _summaries[summary.Scope] = summary;
         }
         _seq = snapshot.Seq;
     }
@@ -872,8 +941,10 @@ public sealed class NodeState
         Cards = [.. _cards.Values],
         Usage = _usage,
         Machine = _machine,
+        PullRequests = _pullRequests,
         Jobs = [.. _jobs.Values],
         PrReviews = [.. _prReviews.Values],
+        Summaries = [.. _summaries.Values],
     };
 
     private static byte[] Serialize(NodeEvent nodeEvent) => JsonSerializer.SerializeToUtf8Bytes(nodeEvent, PilotJsonContext.Default.NodeEvent);

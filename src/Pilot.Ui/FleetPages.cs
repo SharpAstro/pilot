@@ -29,7 +29,7 @@ internal sealed record NodeMark(string Key, string Where, string Name, bool Here
 /// </summary>
 internal sealed class NodeFilter
 {
-    internal static readonly (RGBAColor32 Bg, RGBAColor32 Hover) Lit = (new RGBAColor32(0x2f, 0x5a, 0x8c, 0xff), new RGBAColor32(0x3a, 0x6c, 0xa6, 0xff));
+    internal static (RGBAColor32 Bg, RGBAColor32 Hover) Lit => (Palette.Current.PillLit, Palette.Current.PillLitHover);
 
     // Swapped whole, never changed in place: the render thread picks, and the pages are merged off it (pilot-gui builds
     // them on a background task), so a reader always sees one whole set.
@@ -88,7 +88,7 @@ internal sealed class NodeFilter
     }
 
     /// <summary>The header's pills: All nodes, then each node, the shown ones lit; nothing while there is one node.</summary>
-    public IEnumerable<Layout.Node> Pills(FlightsPalette? night = null)
+    public IEnumerable<Layout.Node> Pills(Palette? night = null)
     {
         if (Choices.Count < 2)
         {
@@ -101,9 +101,19 @@ internal sealed class NodeFilter
         foreach (var choice in Choices)
         {
             var key = choice.Key;
-            yield return CardsView<RgbaImage>.HeaderPill(Label(choice), $"nodes:{key}", modifiers => Pick(key, modifiers), !all && _picked.Contains(key) ? lit : plain, night?.Bright);
+            var down = Down.ContainsKey(key);
+            yield return CardsView<RgbaImage>.HeaderPill(Label(choice, down ? Down[key] : null, down), $"nodes:{key}", modifiers => Pick(key, modifiers), !all && _picked.Contains(key) ? lit : plain, down ? night?.Dim ?? DimText : night?.Bright);
         }
     }
+
+    private static RGBAColor32 DimText => Palette.Current.Dim;
+
+    /// <summary>The choices whose node was heard but cannot be reached now, by key, with when it went quiet (none when that is not known); set by each merge.</summary>
+    public IReadOnlyDictionary<string, DateTimeOffset?> Down { get; set; } = new Dictionary<string, DateTimeOffset?>();
+
+    /// <summary>A pill for a node that cannot be reached: its name and when it was last heard, so it reads as last known.</summary>
+    internal static string Label(NodeMark node, DateTimeOffset? downSince, bool down) =>
+        !down ? Label(node) : $"{Label(node)} · {(downSince is { } since ? $"last heard {since.ToLocalTime():HH:mm}" : "last heard earlier")}";
 
     /// <summary>
     /// A node's pill: its name, and "(this)" for the node this window runs against, which the page's lines call "this node"
@@ -113,7 +123,9 @@ internal sealed class NodeFilter
 
     /// <summary>The pills in a line, for a dump or a test: <c>[All nodes] SE1 LE1</c>, the lit ones bracketed.</summary>
     public string Line() =>
-        Choices.Count < 2 ? "" : string.Join(" ", new[] { All ? "[All nodes]" : "All nodes" }.Concat(Choices.Select(c => !All && _picked.Contains(c.Key) ? $"[{c.Name}]" : c.Name)));
+        Choices.Count < 2 ? "" : string.Join(" ", new[] { All ? "[All nodes]" : "All nodes" }.Concat(Choices.Select(c => !All && _picked.Contains(c.Key) ? $"[{PillName(c)}]" : PillName(c))));
+
+    private string PillName(NodeMark c) => Down.TryGetValue(c.Key, out var since) ? Label(c, since, true).Replace(" (this)", "") : c.Name;
 }
 
 /// <summary>
@@ -125,7 +137,7 @@ internal sealed class NodeFilter
 /// </summary>
 internal sealed class PlayFilter
 {
-    private static readonly RGBAColor32 ClauseColor = new(0x8a, 0xb4, 0xf8, 0xff);
+    private static RGBAColor32 ClauseColor => Palette.Current.Link;
 
     /// <summary>How long a finished job stays in play, counted back from the screen's moment.</summary>
     public static readonly TimeSpan JobsFinished = TimeSpan.FromMinutes(10);
@@ -206,7 +218,7 @@ internal sealed class PlayFilter
     }
 
     /// <summary>The header's pills, beside the node pills: In play, Everything, the shown one lit.</summary>
-    public IEnumerable<Layout.Node> Pills(FlightsPalette? night = null)
+    public IEnumerable<Layout.Node> Pills(Palette? night = null)
     {
         var lit = night is null ? NodeFilter.Lit : (night.RowFocusBg, night.ButtonHover);
         (RGBAColor32, RGBAColor32)? plain = night is null ? null : (night.Button, night.ButtonHover);
@@ -221,7 +233,7 @@ internal sealed class PlayFilter
     /// A page's count in the header: <paramref name="counts"/>, then <paramref name="hidden"/> (<c>29 landed hidden</c>) as a
     /// click that switches to Everything, so what is out of view is named and one click away.
     /// </summary>
-    public static IEnumerable<Layout.Node> Summary(PlayFilter? play, string counts, string? hidden, string action, RGBAColor32 body, RGBAColor32 hover, FlightsPalette? night = null)
+    public static IEnumerable<Layout.Node> Summary(PlayFilter? play, string counts, string? hidden, string action, RGBAColor32 body, RGBAColor32 hover, Palette? night = null)
     {
         // Bottom-aligned as the page's title is: its 20 and these 15 design units then share a baseline, where centred
         // boxes of two sizes do not.
@@ -240,7 +252,7 @@ internal sealed class PlayFilter
 /// Every page's screen for the nodes a window shows: each node's rows merged, marked with their node when there is more
 /// than one, and filtered by the window's <see cref="NodeFilter"/>.
 /// </summary>
-internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights, JobsScreen Jobs, IReadOnlyList<JobRow> JobRows, CardsScreen Cards, ReposScreen? Repos = null, IReadOnlyList<MachineLine>? Machines = null)
+internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights, JobsScreen Jobs, IReadOnlyList<JobRow> JobRows, CardsScreen Cards, ReposScreen? Repos = null, SummaryShelf? Summaries = null, IReadOnlyList<MachineLine>? Machines = null, PullRequestsScreen? PullRequests = null)
 {
     /// <summary>Whether a feed's <see cref="NodeFeed.Reach"/> says its node cannot be reached: down since a first failed try or a drop. The one test the panel's held lines and the flights' stale marks share.</summary>
     private static bool Unreachable((bool Connected, DateTimeOffset? DownSince) reach) => !reach.Connected && reach.DownSince is not null;
@@ -252,7 +264,11 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
     /// </summary>
     public static FleetPages Merge(IReadOnlyList<(NodeMark Mark, NodeFeed Feed)> feeds, NodeFilter filter, DateTimeOffset now, bool reposWanted = false)
     {
-        filter.Choices = [.. feeds.Where(f => f.Mark.Here || f.Feed.Connected).Select(f => f.Mark)];
+        // A node that was heard and cannot be reached keeps its pill (dimmed, labelled last heard), as its row keeps its last
+        // known state; one never heard stays out. Its rows keep their stale marks, and its commands stay refused.
+        var offered = feeds.Select(f => (f.Mark, f.Feed, Reach: f.Feed.Reach)).Where(f => f.Mark.Here || f.Reach.Connected || (Unreachable(f.Reach) && f.Feed.Node is not null)).ToList();
+        filter.Choices = [.. offered.Select(f => f.Mark)];
+        filter.Down = offered.Where(f => !f.Mark.Here && Unreachable(f.Reach)).ToDictionary(f => f.Mark.Key, f => f.Reach.DownSince);
         var several = filter.Choices.Count > 1;
         var shown = feeds.Where(f => !several || filter.Shows(f.Mark)).ToList();
         // Another node's rows keep their mark while its stream is down: its last rows are still shown, and unmarked they
@@ -289,7 +305,12 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
             [.. shown.SelectMany(f => f.Feed.Jobs())],
             cards,
             new ReposScreen(repos, several ? source : hereSessions.Source, now),
-            machines);
+            // Every node's summaries, shown or not: the card picks the node it asks about, from the window's node selection.
+            new SummaryShelf(filter.Choices, feeds.SelectMany(f => f.Feed.Summaries().Select(s => (Key: (f.Mark.Key, s.Scope), Row: s)))
+                .ToDictionary(x => x.Key, x => x.Row)),
+            machines,
+            // Every shown node reads the same GitHub: a PR two of them read is one row, and the page is as old as the oldest read.
+            new PullRequestsScreen(PullRequestsRow.Merge(shown.Select(f => f.Feed.PullRequests())), several ? source : hereSessions.Source, now));
     }
 }
 

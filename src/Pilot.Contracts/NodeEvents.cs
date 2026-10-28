@@ -32,6 +32,8 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(JobChangedEvent), "jobChanged")]
 [JsonDerivedType(typeof(PrReviewAddedEvent), "prReviewAdded")]
 [JsonDerivedType(typeof(PrReviewChangedEvent), "prReviewChanged")]
+[JsonDerivedType(typeof(SummaryChangedEvent), "summaryChanged")]
+[JsonDerivedType(typeof(PullRequestsChangedEvent), "pullRequestsChanged")]
 public abstract record NodeEvent
 {
     /// <summary>
@@ -116,6 +118,18 @@ public sealed record SnapshotEvent : NodeEvent
     }
 
     private readonly PrReviewRow[]? _prReviews;
+
+    /// <summary>The summary of each scope the node has made one of (<see cref="SummaryRow"/>). Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public SummaryRow[] Summaries
+    {
+        get => _summaries ?? [];
+        init => _summaries = value;
+    }
+
+    private readonly SummaryRow[]? _summaries;
+
+    /// <summary>Every open PR of the clones' orgs as the node last read them; null before it has read any.</summary>
+    public PullRequestsRow? PullRequests { get; init; }
 }
 
 /// <summary>A session the node had not seen.</summary>

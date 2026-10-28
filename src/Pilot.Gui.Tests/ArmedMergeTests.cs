@@ -40,7 +40,7 @@ public sealed class ArmedMergeTests
         Id = "c2", Bin = CardBin.Ring, Kind = "merge-failed", Subject = "flight/PIL244", Title = $"PIL244's PR #251: check {LongCheck} failed", Detail = FailedDetail,
         Choices =
         [
-            new CardChoice { Label = "Go around armed-in-gui", Verb = Verbs.GoAround, Target = "flight/PIL244/armed-in-gui", Args = ["the PR's checks failed"] },
+            new CardChoice { Label = "Redo leg armed-in-gui", Verb = Verbs.GoAround, Target = "flight/PIL244/armed-in-gui", Args = ["the PR's checks failed"] },
             new CardChoice { Label = "Re-run checks", Verb = Verbs.RerunChecks, Target = "flight/PIL244", Args = ["77018f1", "rebase"] },
             Merge(null, "Merge again"),
         ],
@@ -125,7 +125,8 @@ public sealed class ArmedMergeTests
         using var _ = renderer;
         var actions = arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action).ToList();
 
-        actions.ShouldBe(["card:c2:title", "card:c2:1", "card:c2:2", "card:c2:3", "card:c2:dismiss"], ignoreOrder: true);
+        // The go-around names a leg, so the card also links it (card:c2:leg).
+        actions.ShouldBe(["card:c2:title", "card:c2:leg", "card:c2:1", "card:c2:2", "card:c2:3", "card:c2:dismiss"], ignoreOrder: true);
         Words(arranged).ShouldContain("Merge again");
         // A merge that is not armed any more is a button again: pressing it arms it afresh.
         CardsView<RgbaImage>.StatusLabel(Disarmed().Choices[2]).ShouldBe("Merge again");
@@ -166,7 +167,8 @@ public sealed class ArmedMergeTests
         var card = arranged.Where(a => a.Node.Background is not null && a.Bounds.Width > width / 2 && a.Bounds.Width < width - 1).OrderBy(a => a.Depth).First();
         var buttons = arranged.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: var action } && action.StartsWith("card:c2:", StringComparison.Ordinal) && action != "card:c2:title").ToList();
 
-        buttons.Count.ShouldBe(4);
+        // The four choice buttons and the card's leg link.
+        buttons.Count.ShouldBe(5);
         buttons.ShouldAllBe(b => b.Bounds.Bottom <= card.Bounds.Bottom + 0.5f, $"card bottom {card.Bounds.Bottom}: {string.Join(", ", buttons.Select(b => b.Bounds.Bottom))}");
     }
 
@@ -188,7 +190,7 @@ public sealed class ArmedMergeTests
         // Under the old 320-character threshold, yet at a narrow panel's width the first paragraph wraps past the cap and the
         // second gets one line: both are cut by the line cap with no ellipsis, so the whole text is on hover (ui-changes.md section 3).
         var detail = "GitHub blocks the merge: a required check has yet to report on 77018f1c, or a branch rule keeps it from merging, and the PR page says which one it is.\n"
-            + "Go around to fix what it found, re-run the checks if it was a flake, or merge again once that is dealt with.";
+            + "Redo the leg to fix what it found, re-run the checks if it was a flake, or merge again once that is dealt with.";
         detail.Length.ShouldBeInRange(230, 300);
         var arranged = Arrange(Disarmed() with { Detail = detail }, width, out var renderer);
         using var _ = renderer;

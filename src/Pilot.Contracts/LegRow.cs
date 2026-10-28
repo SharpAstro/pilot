@@ -58,6 +58,12 @@ public sealed record LegRow
     /// </summary>
     public int ReviewGoArounds { get; init; }
 
+    /// <summary>
+    /// How many <see cref="ReviewGoArounds"/> the watchtower may send before the card is the person's: here, so the node
+    /// (LegCommander) and the flight page read one number and cannot drift.
+    /// </summary>
+    public const int MaxReviewGoArounds = 3;
+
     /// <summary>What the last <c>finish-leg</c> or check said: the worker's report, or why the check failed.</summary>
     public string? Report { get; init; }
 

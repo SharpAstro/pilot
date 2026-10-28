@@ -103,7 +103,7 @@ public static class PilotCommand
         };
         var outputFormat = new Option<string>("--output-format")
         {
-            Description = "auto (rich on a terminal that shows Sixel, else plain), rich, markdown or plain; status, cards and repos take it",
+            Description = "auto (rich on a terminal that shows Sixel, else plain), rich, markdown or plain; status, cards, repos, prs and summary take it",
             Recursive = true,
             DefaultValueFactory = _ => "auto",
         };
@@ -268,6 +268,28 @@ public static class PilotCommand
         reposCommand.Subcommands.Add(Action(new Command("sync", "git fetch -p --all in each tracked repo, then fast-forward its default branch; a dirty, off-branch or diverged checkout is left alone and said so"),
             (p, client, ct) => Send(client, Verbs.SyncRepos, Verbs.NodeTarget, [], who, ct)));
 
+        // prs
+        var needsMe = new Option<bool>("--needs-me") { Description = "Only the PRs that wait on you: ready, changes requested or conflicts" };
+        var freshPrs = new Option<bool>("--refresh") { Description = "Ask the node to read GitHub now, not wait for its minute" };
+        var prsCommand = Action(new Command("prs", "Every open PR of the clones' orgs, grouped by repo, with GitHub's merge state, as the node last read them") { Options = { needsMe, freshPrs } },
+            async (p, client, ct) =>
+            {
+                if (p.GetValue(freshPrs))
+                {
+                    var asked = (await client.SendAsync(new CommandRequest { Verb = Verbs.RefreshPullRequests, Target = Verbs.NodeTarget, Who = who }, ct)).Response;
+                    if (asked is { Ok: false })
+                    {
+                        await error.WriteLineAsync($"pilot: {asked.Error}");
+                        return 1;
+                    }
+                }
+                var row = (await SnapshotAsync(client, ct)).PullRequests;
+                var onlyMine = p.GetValue(needsMe);
+                var now = DateTimeOffset.UtcNow;
+                await WriteAsync(p.GetValue(outputFormat), () => PullRequestsMarkdown.Plain(row, onlyMine, now), () => PullRequestsMarkdown.Build(row, onlyMine, now));
+                return 0;
+            });
+
         // issue
         var issueTitle = Arg("title", "The issue's title");
         var issueBody = new Option<string?>("--body") { Description = "The issue's text" };
@@ -288,7 +310,7 @@ public static class PilotCommand
 
         var code = Arg("code", "The flight's code, as TIA1611");
         var other = Arg("other", "The flight it waits for");
-        var connect = Action(new Command("connect", "The flight holds until the other has landed") { Arguments = { code, other } },
+        var connect = Action(new Command("connect", "The flight holds until the other, a flight of this node or of a reachable one, has landed") { Arguments = { code, other } },
             (p, client, ct) => Send(client, Verbs.Connect, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
 
         var fly = Action(new Command("fly", "Stop the flight's wait for a package nuget.org does not serve: it flies now") { Arguments = { code } },
@@ -332,12 +354,21 @@ public static class PilotCommand
         var planned = Action(new Command("planned", "The planner is done: a card shows the legs and starts the first") { Arguments = { code, plannedSummary } },
             (p, client, ct) => Send(client, Verbs.Planned, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(plannedSummary) ?? [], who, ct));
         var overlapWhy = Words("why", "Why it looks like part of the other");
-        var overlap = Action(new Command("overlap", "The planner found the flight to look like part of another: asks the controller to fold it in or plan it separately") { Arguments = { code, other, overlapWhy } },
-            (p, client, ct) => Send(client, Verbs.Overlap, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!, .. p.GetValue(overlapWhy) ?? []], who, ct));
-        var separate = Action(new Command("separate", "Plan the flight on its own despite the overlap: a fresh planner is started, told the answer") { Arguments = { code, other } },
+        var overlapFiles = new Option<string[]>("--file") { Description = "A file both flights change (repo-relative, as flight touches names it); give it once per file", AllowMultipleArgumentsPerToken = false };
+        var overlapPick = new Option<string?>("--pick") { Description = "What flight touches picked for this flight: fold (this node's flight only) or connect (the default); the card's title says it" };
+        overlapPick.AcceptOnlyFromAmong(Verbs.OverlapPickFold, Verbs.OverlapPickConnect);
+        var overlap = Action(new Command("overlap", "The planner found the flight to overlap another, on this node or another: asks the controller to fold it in (this node only), connect it or plan in parallel") { Arguments = { code, other, overlapWhy }, Options = { overlapFiles, overlapPick } },
+            (p, client, ct) => Send(client, Verbs.Overlap, Verbs.FlightTarget(p.GetValue(code)!),
+                [p.GetValue(other)!, .. (p.GetValue(overlapPick) is { } pick ? new[] { Verbs.OverlapPickArg + pick } : []), .. (p.GetValue(overlapFiles) ?? []).Select(f => Verbs.OverlapFileArg + f), .. p.GetValue(overlapWhy) ?? []], who, ct));
+        var touchedFiles = Words("file", "A file the flight's legs will change, repo-relative, as many as the legs have");
+        var touches = Action(new Command("touches", "The planner's overlap check: compares the files its legs will change with every other flight in the air on every node and every open PR, and says fold, connect or parallel for each") { Arguments = { code, touchedFiles } },
+            (p, client, ct) => Send(client, Verbs.Touches, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(touchedFiles) ?? [], who, ct));
+        var separate = Action(new Command("separate", "Plan the flight in parallel with the other despite the overlap: a fresh planner is started, told the answer") { Arguments = { code, other } },
             (p, client, ct) => Send(client, Verbs.Separate, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
-        var flight = new Command("flight", "Flights: create, plan, overlap, connect, fly past a package wait, open a PR, review, merge, land")
-            { Subcommands = { create, planFlight, planned, overlap, separate, connect, fly, move, pr, reviewStart, merge, land } };
+        var connectOverlap = Action(new Command("connect-overlap", "Answer an overlap by connecting the flight to the other (on this node or another): it holds until the other has landed, and a fresh planner is started, told the answer") { Arguments = { code, other } },
+            (p, client, ct) => Send(client, Verbs.ConnectOverlap, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
+        var flight = new Command("flight", "Flights: create, plan, check what they touch, overlap, connect, fly past a package wait, open a PR, review, merge, land")
+            { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, fly, move, pr, reviewStart, merge, land } };
 
         // leg
         var name = Arg("name", "The leg's name: lower-case letters, digits and dashes");
@@ -603,6 +634,18 @@ public static class PilotCommand
             // writer, where a plain read of the file here was refused while the job ran, and it works from the LAN too.
             if (await client.GetJobLogAsync(job.Id, ct) is { Success: true, Response: { } log })
             {
+                if (log.Pid is { } pid)
+                {
+                    await output.WriteLineAsync($"  pid {pid}");
+                }
+                foreach (var process in log.Tree ?? [])
+                {
+                    await output.WriteLineAsync($"  {new string(' ', process.Depth * 2)}{process.Name} {process.Pid}");
+                }
+                if (log.Stuck is { } stuck)
+                {
+                    await output.WriteLineAsync($"  stuck: {stuck}; pilot job {job.Id} cancel --force ends it");
+                }
                 foreach (var line in log.Lines.TakeLast(15))
                 {
                     await output.WriteLineAsync($"  | {line}");
@@ -610,9 +653,16 @@ public static class PilotCommand
             }
             return 0;
         });
-        var cancelJob = Action(new Command("cancel", "Stop a running job; its owner is told") { Arguments = { jobId } },
-            (p, client, ct) => Send(client, Verbs.CancelJob, Verbs.JobTarget(p.GetValue(jobId)!), [], who, ct));
+        var cancelForce = new Option<bool>("--force") { Description = "Kill the job's wrapper and every process under it at once, including ones that outlived the wrapper and hold its output" };
+        var cancelJob = Action(new Command("cancel", "Stop a running job; its owner is told") { Arguments = { jobId }, Options = { cancelForce } },
+            (p, client, ct) => Send(client, Verbs.CancelJob, Verbs.JobTarget(p.GetValue(jobId)!), p.GetValue(cancelForce) ? [Verbs.ForceArg] : [], who, ct));
         jobShow.Subcommands.Add(cancelJob);
+        var pauseJob = Action(new Command("pause", "Freeze a running job's processes; it keeps its slot and its timeout stops") { Arguments = { jobId } },
+            (p, client, ct) => Send(client, Verbs.PauseJob, Verbs.JobTarget(p.GetValue(jobId)!), [], who, ct));
+        jobShow.Subcommands.Add(pauseJob);
+        var resumeJob = Action(new Command("resume", "Let a paused job run on") { Arguments = { jobId } },
+            (p, client, ct) => Send(client, Verbs.ResumeJob, Verbs.JobTarget(p.GetValue(jobId)!), [], who, ct));
+        jobShow.Subcommands.Add(resumeJob);
 
         // say, note
         var session = Arg("session", "The session's row id");
@@ -697,14 +747,78 @@ public static class PilotCommand
 
         // the watchtower: tell it, restart it; and the cards it (or anyone) raises
         var tellText = Words("text", "What to tell it");
-        var tell = Action(new Command("tell", "Say something to the watchtower, whichever session it is now") { Arguments = { tellText } },
-            (p, client, ct) => Send(client, Verbs.Tell, Verbs.WatchtowerTarget, [Join(p, tellText)], who, ct));
+        var tellCard = new Option<string?>("--card") { Description = "A card's id (c12): tell the watchtower about that card, with its whole context ahead of your words" };
+        var tell = Action(new Command("tell", "Say something to the watchtower, whichever session it is now") { Arguments = { tellText }, Options = { tellCard } },
+            (p, client, ct) => Send(client, Verbs.Tell, p.GetValue(tellCard) is { Length: > 0 } cardId ? Verbs.CardTarget(cardId) : Verbs.WatchtowerTarget, [Join(p, tellText)], who, ct));
         var restartWhy = Words("why", "Why, for its Handled line", required: false);
         var restart = Action(new Command("restart", "Stop the watchtower and start a fresh one, briefed from the node's state") { Arguments = { restartWhy } },
             (p, client, ct) => Send(client, Verbs.RestartWatchtower, Verbs.WatchtowerTarget, p.GetValue(restartWhy) ?? [], who, ct));
         var watchtower = new Command("watchtower", "The node's watchtower session") { Subcommands = { restart } };
         var digest = Action(new Command("digest", "The digest now: what landed, what was handled, what is parked"),
             (_, client, ct) => Send(client, Verbs.Digest, Verbs.NodeTarget, [], who, ct));
+        // summarise: one Haiku call over what the node holds, kept on the node for every client.
+        var summariseFlight = new Argument<string?>("flight") { Description = "The flight's code; leave it out for every flight in play", Arity = ArgumentArity.ZeroOrOne };
+        var summarise = Action(new Command("summarise", "Summarise the flights in play (or one flight) with one Haiku call: what needs you, where it is") { Arguments = { summariseFlight } },
+            (p, client, ct) => Send(client, Verbs.Summarise, p.GetValue(summariseFlight) is { Length: > 0 } code ? Verbs.FlightTarget(code) : Verbs.NodeTarget, [], who, ct));
+        // summary: the kept summary, or one made when there is none or --fresh asks; the fleet's records are the node's to gather.
+        var summaryOf = new Argument<string?>("flight") { Description = "The flight's code; leave it out for every flight in play on this node", Arity = ArgumentArity.ZeroOrOne };
+        var summaryFresh = new Option<bool>("--fresh") { Description = "Make a new one now (one Haiku call) instead of showing the kept one" };
+        var summaryFleet = new Option<bool>("--fleet") { Description = "Every node this machine holds a grant for, not only this node: their records are fetched from each node" };
+        var summary = Action(new Command("summary", "The kept summary (needs you, where it is) with its age, tokens and cost; made now when there is none or with --fresh. Use it to answer 'where are we'")
+            { Arguments = { summaryOf }, Options = { summaryFresh, summaryFleet } },
+            async (p, client, ct) =>
+            {
+                var snapshot = await SnapshotAsync(client, ct);
+                string scope;
+                string target;
+                string[] args = [];
+                if (p.GetValue(summaryOf) is { Length: > 0 } named)
+                {
+                    if (p.GetValue(summaryFleet))
+                    {
+                        throw new UsageException("--fleet is about every node's flights; leave the flight out, or leave --fleet out");
+                    }
+                    if (snapshot.Flights.FirstOrDefault(f => string.Equals(f.Code, named, StringComparison.OrdinalIgnoreCase)) is not { } flight)
+                    {
+                        await output.WriteLineAsync($"refused: summary {named}: there is no flight {named}");
+                        return 1;
+                    }
+                    (scope, target) = (flight.Code, Verbs.FlightTarget(flight.Code));
+                }
+                else if (p.GetValue(summaryFleet))
+                {
+                    (scope, target, args) = (SummaryRow.AllNodesScope, Verbs.NodeTarget, [SummaryRow.FleetArgument]);
+                }
+                else
+                {
+                    (scope, target) = (SummaryRow.FleetScope, Verbs.NodeTarget);
+                }
+
+                var kept = snapshot.Summaries.FirstOrDefault(s => s.Scope == scope);
+                string? made = null;
+                if (kept is null || p.GetValue(summaryFresh))
+                {
+                    var sender = await SenderAsync(client, who, bySession, byAgent, cwd, sessionId, ct);
+                    var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Summarise, Target = target, Args = args, Who = sender, Agent = byAgent }, ct);
+                    if (envelope is not { Success: true, Response: { Ok: true } result })
+                    {
+                        await output.WriteLineAsync($"refused: summarise {target}: {envelope.Response?.Error ?? envelope.Error}");
+                        return 1;
+                    }
+                    made = result.Made;
+                    kept = (await SnapshotAsync(client, ct)).Summaries.FirstOrDefault(s => s.Scope == scope);
+                }
+
+                if (kept is null)
+                {
+                    // The node kept none to read back (it was restarted between the two reads): the answer it gave is still the answer.
+                    await output.WriteLineAsync(made is { Length: > 0 } ? made : $"pilot: the node holds no summary of {SummaryMarkdown.About(scope)}");
+                    return made is { Length: > 0 } ? 0 : 1;
+                }
+                var now = DateTimeOffset.UtcNow;
+                await WriteAsync(p.GetValue(outputFormat), () => SummaryMarkdown.Plain(kept, now), () => SummaryMarkdown.Build(kept, now));
+                return 0;
+            });
         // archive: ended sessions put away, out of the lists (or back, with --undo).
         var archiveSession = new Argument<string?>("session") { Description = "The session's row id; leave it out with --ended", Arity = ArgumentArity.ZeroOrOne };
         var archiveEnded = new Option<bool>("--ended") { Description = "Every ended session" };
@@ -723,6 +837,12 @@ public static class PilotCommand
             { Options = { updateCheck, updateAdopt, actingOn } },
             (p, client, ct) => Send(client, Verbs.Update, Verbs.NodeTarget,
                 [p.GetValue(updateCheck) ? "check" : "install", .. p.GetValue(updateAdopt) ? new[] { "--adopt" } : []], who, ct, p.GetValue(actingOn)));
+        // node restart: the node starts its successor and stops, as for a setting or an update, so a session never kills the process.
+        var nodeRestartWhy = Words("why", "Why, for its Handled line", required: false);
+        var nodeRestart = Action(new Command("restart", "Restart the node in place: its flights, sessions and jobs carry on (jobs are not waited for; the answer says how many)")
+            { Arguments = { nodeRestartWhy }, Options = { actingOn } },
+            (p, client, ct) => Send(client, Verbs.RestartNode, Verbs.NodeTarget, p.GetValue(nodeRestartWhy) ?? [], who, ct, p.GetValue(actingOn)));
+        var nodeCommand = new Command("node", "This machine's pilot node") { Subcommands = { nodeRestart } };
 
         var subject = Arg("subject", "What it is about: flight/<code>, flight/<code>/<leg>, session/<id> or node");
         var cardTitle = Arg("title", "The card in a line");
@@ -860,11 +980,11 @@ public static class PilotCommand
         });
         var settingKey = Arg("setting", "lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory or lan-port");
         var settingValue = Words("value", "Its value (every folder, for repo-roots); none, or default, takes it out", required: false);
-        var set = Action(new Command("set", "Save a setting; the node restarts to run with it once no job runs") { Arguments = { settingKey, settingValue }, Options = { actingOn } },
+        var set = Action(new Command("set", "Save a setting; the node restarts to run with it at once, jobs carry on") { Arguments = { settingKey, settingValue }, Options = { actingOn } },
             (p, client, ct) => Send(client, Verbs.Set, Verbs.NodeTarget, [p.GetValue(settingKey)!, .. p.GetValue(settingValue) ?? []], who, ct, p.GetValue(actingOn)));
-        var checkKey = Arg("check", "autostart, no-autostart, hooks, lan, firewall, defender or trust");
+        var checkKey = Arg("check", "autostart, no-autostart, hooks, merge-guard, claude-permissions, lan, firewall, defender or trust");
         var defenderProcesses = new Option<bool>("--processes") { Description = "With defender: exclude pilot-node, dotnet, MSBuild, VBCSCompiler and testhost as processes too, not only the folders" };
-        var setupCommand = Action(new Command("setup", "Make a setup check's fix: the logon entry, the hooks, the LAN, the firewall rule and the Defender exclusions (each asks for elevation), the trust prompt") { Arguments = { checkKey }, Options = { defenderProcesses, actingOn } },
+        var setupCommand = Action(new Command("setup", "Make a setup check's fix: the logon entry, the hooks, the merge guard, Claude Code's allow rules for pilot's commands (claude-permissions), the LAN, the firewall rule and the Defender exclusions (each asks for elevation), the trust prompt") { Arguments = { checkKey }, Options = { defenderProcesses, actingOn } },
             (p, client, ct) => Send(client, Verbs.Setup, Verbs.NodeTarget, [p.GetValue(checkKey)!, .. p.GetValue(defenderProcesses) ? new[] { "--processes" } : []], who, ct, p.GetValue(actingOn)));
         settings.Subcommands.Add(set);
         settings.Subcommands.Add(setupCommand);
@@ -872,7 +992,7 @@ public static class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, attachments, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, update, archive, ring, flag, handled, nodes, connectNode, grants, settings },
+            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, summary, summarise, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
@@ -929,6 +1049,10 @@ public static class PilotCommand
     internal static string JobLine(JobRow job)
     {
         var state = job.State.ToString().ToLowerInvariant();
+        if (job.State == JobState.Running && job.PausedAt is { } pausedAt)
+        {
+            state = $"paused since {pausedAt.ToLocalTime():HH:mm}";
+        }
         var end = job.Error is { } error ? $": {error}" : "";
         var took = (job.EndedAt ?? DateTimeOffset.UtcNow) - job.StartedAt;
         var told = job.EndedAt is not null && job.Owner is not null && !job.Told ? ", owner not told" : "";
@@ -1097,7 +1221,7 @@ public static class PilotCommand
             {
                 await output.WriteLineAsync($"created issue #{issueNumber}");
             }
-            if (verb is Verbs.Overlap or Verbs.Separate or Verbs.WaitLeg && result.Made is { Length: > 0 } told)
+            if (verb is Verbs.Overlap or Verbs.Touches or Verbs.Separate or Verbs.ConnectOverlap or Verbs.Connect or Verbs.WaitLeg or Verbs.Summarise && result.Made is { Length: > 0 } told)
             {
                 await output.WriteLineAsync(told);
             }
@@ -1249,6 +1373,14 @@ public static class PilotCommand
             var bin = card.Bin switch { CardBin.Ring => "RING", CardBin.ForYou => "for you", _ => "handled" };
             var closed = card.State == CardState.Closed ? $"  [closed: {card.Outcome}{(card.ClosedBy is { } by ? $", by {by}" : "")}]" : "";
             text.AppendLine($"{card.Id}  {bin}  {card.Title}{closed}");
+            if (CardLeg.Of(card) is { } leg)
+            {
+                text.AppendLine($"      leg {leg}");
+            }
+            if (card.Summary is { Length: > 0 } summary)
+            {
+                text.AppendLine($"      {summary}");
+            }
             if (card.Detail is { Length: > 0 } detail)
             {
                 foreach (var line in detail.Split('\n'))

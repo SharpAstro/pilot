@@ -40,12 +40,21 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
 
     /// <summary>
     /// The verbs that are the person's alone: merge and land, the node's settings and setup, a grant's answer and
-    /// revocation, an update, and a watchtower restart. (<c>connect</c> is a flight's dependency, so not here; a card's
+    /// revocation, an update, a restart of the node, and a watchtower restart. (<c>connect</c> is a flight's dependency, so not here; a card's
     /// dismissal is: see <see cref="YourOnly"/>.)
     /// </summary>
     public static readonly IReadOnlySet<string> YourOnlyVerbs = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.Merge, Verbs.RerunChecks, Verbs.MoveFlight, Verbs.Land, Verbs.Set, Verbs.Setup, Verbs.AnswerGrant, Verbs.RevokeGrant, Verbs.Update, Verbs.RestartWatchtower,
+        Verbs.Merge, Verbs.RerunChecks, Verbs.MoveFlight, Verbs.Land, Verbs.Set, Verbs.Setup, Verbs.AnswerGrant, Verbs.RevokeGrant, Verbs.Update, Verbs.RestartNode, Verbs.RestartWatchtower,
+    };
+
+    /// <summary>
+    /// What the lookout does as the person's assistant when the autopilot is on (see NodeCommands.RunAsync): a flight's merge,
+    /// its landing, a rerun of its checks, and a card's answer or dismissal. The node's settings, setup, grants and updates stay the person's.
+    /// </summary>
+    public static readonly IReadOnlySet<string> LookoutOnAutopilot = new HashSet<string>(StringComparer.Ordinal)
+    {
+        Verbs.Merge, Verbs.Land, Verbs.RerunChecks, Verbs.Answer, Verbs.Dismiss,
     };
 
     /// <summary>
@@ -55,7 +64,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// </summary>
     private static readonly IReadOnlySet<string> LookoutNever = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.Review, Verbs.PostReview, Verbs.FixPr, Verbs.SyncRepos, Verbs.CreateIssue, Verbs.Fold, Verbs.Separate,
+        Verbs.Review, Verbs.PostReview, Verbs.FixPr, Verbs.SyncRepos, Verbs.CreateIssue, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap,
     };
 
     /// <summary>
@@ -64,7 +73,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// </summary>
     private static readonly IReadOnlySet<string> FlightSessionNever = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.PostReview, Verbs.FixPr, Verbs.Fold, Verbs.Separate, Verbs.CreateIssue, Verbs.CreateFlight, Verbs.SyncRepos,
+        Verbs.PostReview, Verbs.FixPr, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.CreateIssue, Verbs.CreateFlight, Verbs.SyncRepos,
     };
 
     /// <summary>
@@ -163,8 +172,8 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
                     : $"{command.Target} is not the PR this review is of ({Pr}): a review acts on its own PR only";
             case StandingKind.FlightSession when command.Verb is Verbs.Stop or Verbs.Compact && !OwnsSession(command, state):
                 return $"{command.Target} is not {OwnerName()} session: a flight's session stops and compacts its own flight's only";
-            case StandingKind.FlightSession when command.Verb == Verbs.CancelJob && !OwnsJob(command, state):
-                return $"{command.Target} is not {OwnerName()} job: a flight's session cancels its own flight's only";
+            case StandingKind.FlightSession when command.Verb is Verbs.CancelJob or Verbs.PauseJob or Verbs.ResumeJob && !OwnsJob(command, state):
+                return $"{command.Target} is not {OwnerName()} job: a flight's session cancels, pauses and resumes its own flight's only";
             case StandingKind.Assistant when IsAsk(command, state):
                 return "answering an assistant's ask is the person's: Allow and Deny are theirs to press, on the card";
             default:

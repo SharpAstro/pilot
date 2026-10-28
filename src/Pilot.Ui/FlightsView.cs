@@ -234,7 +234,7 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
         }
         if ((flying ?? failed) is { } stuck)
         {
-            actions.Add(new FlightAction($"Redo leg {stuck.Name}", Verbs.GoAround, Verbs.LegTarget(code, stuck.Name), []) { WhyPrompt = $"why redo leg {stuck.Name}?" });
+            actions.Add(new FlightAction(Verbs.RedoLeg(stuck.Name), Verbs.GoAround, Verbs.LegTarget(code, stuck.Name), []) { WhyPrompt = $"why redo leg {stuck.Name}?" });
         }
         var allDone = legs.Count > 0 && legs.All(l => l.State == LegState.Done);
         if (allDone && (flight.PullRequest is null || flight.Review is null))
@@ -289,20 +289,8 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
 
     // The colours come from the palette of the view shown, so night repaints the same builders.
-    private FlightsPalette P => Mode == FlightsViewMode.Night && CanvasAvailable ? FlightsPalette.Night : FlightsPalette.Standard;
-    private FlightsPalette? NightOrNull => ReferenceEquals(P, FlightsPalette.Night) ? P : null;
-
-    private static TextInputColors NightInput(FlightsPalette n) => new()
-    {
-        Background = n.RowAltBg,
-        BackgroundActive = n.HeaderBg,
-        Border = n.Faint,
-        BorderActive = n.Dim,
-        Text = n.Bright,
-        Placeholder = n.Dim,
-        Cursor = n.Held,
-        Selection = n.RowFocusBg,
-    };
+    private Palette P => Night?.Palette ?? Palette.Standard;
+    private Palette? NightOrNull => ReferenceEquals(P, Palette.Night) ? P : null;
 
     private RGBAColor32 Ground => P.Ground;
     private RGBAColor32 HeaderBg => P.HeaderBg;
@@ -377,6 +365,60 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>The node of <paramref name="line"/> when it is watched and not commanded, else null.</summary>
     private NodeMark? WatchOnly(FlightLine line) => line.Node is { Here: false } node && CanSteer?.Invoke(node) == false ? node : null;
 
+    /// <summary>The open PRs the node read, from which a flight with a PR takes its state chip; set by the host each frame. Null before the first read.</summary>
+    public PullRequestsRow? PullRequests { get; set; }
+
+    /// <summary>Opens the Pull requests page on a PR's row (<c>owner/name</c>, number): a flight's PR link and its chip. Null where the host has no such page.</summary>
+    public Action<string, int>? OnPullRequest { get; set; }
+
+    // The PR chip of a flight, the one the Pull requests page draws, the width given; a click opens that row there. Null for a flight with no PR
+    // the node lists (none opened, not read yet, or closed), or where the host cannot open the page.
+    private Layout.Node? PullRequestChip(FlightLine line, float width, float height)
+    {
+        if (OnPullRequest is not { } open || PullRequestLinks.RowOf(PullRequests, line.Row) is not { } pr)
+        {
+            return null;
+        }
+        var chip = PullRequestsView<TSurface>.Chip(P, pr)
+            .Follows(new HitResult.ButtonHit($"flight:{line.Code}:pr-chip"), _ => open(pr.Repo, pr.Number))
+            .WithTooltip($"{pr.Label}: show #{pr.Number} on the Pull requests page")
+            .HFixed(height);
+        // In the middle of the row it sits in, whatever that row's height.
+        return Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), chip, Layout.Builder.Spacer().HStar()).WFixed(width);
+    }
+
+    // The chip's size on a flight's page and in the list (a line's worth), and on a canvas card, where the code leaves it less.
+    private const float PullRequestChipWidth = 170f;
+    private const float PullRequestChipHeight = 20f;
+    private const float CardChipWidth = 130f;
+
+    // A flight's PR as a link: "PR #n" opens its row on the Pull requests page, a small ↗ beside it the browser. Where the host has no
+    // such page, or the PR has no row, "PR #n ↗" is the browser link it always was.
+    private Layout.Node PullRequestLink(FlightLine line, string url, string action)
+    {
+        var flight = line.Row;
+        // A PR the node does not list (landed or closed, or not read yet) has no row: the browser link it always was.
+        if (OnPullRequest is not { } open || PullRequestLinks.Of(flight) is not { } pr || !PullRequestLinks.Lists(PullRequests, pr))
+        {
+            return Link($"PR #{flight.PullRequest}", url, action);
+        }
+        // Both carry the Copy URL menu: the URL is the PR's on GitHub, whichever of the two is right-clicked.
+        return Layout.Builder.HStack(
+                _links.OnLink(Layout.Builder.Text($"PR #{flight.PullRequest}", 12f, Landed)
+                    .BgHover(RowHoverBg)
+                    .Follows(new HitResult.ButtonHit(action), _ => open(pr.Repo, pr.Number))
+                    .WithTooltip($"Show {pr} on the Pull requests page")
+                    .WAuto(), url),
+                _links.OnLink(Layout.Builder.Text("↗", 11f, Landed, TextAlign.Center, TextAlign.Center)
+                    .Pad(6f, 0f)
+                    .BgHover(RowHoverBg)
+                    .Follows(new HitResult.ButtonHit($"{action}:browser"), _ => OnOpen?.Invoke(url))
+                    .WithTooltip($"Open {pr} on GitHub")
+                    .WAuto(), url))
+            .WAuto()
+            .RowH(20f);
+    }
+
     /// <summary>Opens an artifact: a file on the machine, or a URL.</summary>
     public Action<string>? OnOpen { get; set; }
 
@@ -385,6 +427,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+    
+    /// <summary>The header's Night switch, the same on every page.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
@@ -412,6 +457,80 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     /// <summary>The links' menu: its open items and its notice.</summary>
     internal LinkMenu Links => _links;
+
+    // The text selected on the open flight's page (its host has a clipboard to copy it to), made on first use: it measures through the renderer.
+    private TextSelection<TSurface>? _selection;
+
+    /// <summary>The selection over the open flight page's text; a view has one, as it has one link menu.</summary>
+    internal TextSelection<TSurface> Selection => _selection ??= new TextSelection<TSurface>(Renderer);
+
+    /// <summary>The Fill leaf laid over the open page: painted after its text and before the menus over it, it is where the selection is drawn.</summary>
+    private const string SelectionKey = "text-selection";
+
+    /// <summary>Lets go of the selected text: the page it was made on was left.</summary>
+    internal void ClearSelection() => _selection?.Clear();
+
+    private void DrawSelection(Layout.Content.Fill fill)
+    {
+        if (fill.Key != SelectionKey)
+        {
+            return;
+        }
+        Selection.Frame(SelectableTextRegions, _detailScroll.Viewport);
+        var palette = P;
+        Selection.Paint(
+            (text, region, x, y, width, height, color) => DrawText(text, region.FontPath, x, y, width, height, region.FontSize, color, TextAlign.Near, region.VerticalAlign),
+            palette.SelectionBg, palette.SelectionText);
+    }
+
+    /// <summary>
+    /// The open page's selection, ahead of the router: a left drag over its text selects it, Ctrl+C and a right-click on the
+    /// selection copy it through <see cref="CopyText"/>. Never takes a press that is a button's, a link's, a field's or a
+    /// scrollbar's, and lets go while a menu or the viewer is up (those presses are theirs). True for what it took.
+    /// </summary>
+    public bool HandleSelection(InputEvent evt)
+    {
+        if (!IsDetailOpen || CopyText is null || Wizard.IsOpen || _links.MenuItems.Count > 0 || _menu.IsOpen
+            || Gallery.Viewing is not null || About is { IsOpen: true })
+        {
+            return false;
+        }
+        switch (evt)
+        {
+            case InputEvent.KeyDown { Key: InputKey.C, Modifiers: InputModifier.Ctrl } when Selection.Text is { } text:
+                _links.Copy(text, Selection.Pointer.X, Selection.Pointer.Y);
+                return true;
+            case InputEvent.MouseDown { Button: MouseButton.Right } right:
+                // A link keeps its own menu (Copy URL, and Copy beside it); the selection's is for the text itself.
+                if (!Selection.Contains(right.X, right.Y) || Under(right.X, right.Y, r => r is { OnContextMenu: not null }))
+                {
+                    return false;
+                }
+                _links.OpenSelection(new PointerPress(right.X, right.Y, right.Button, right.Modifiers, right.ClickCount));
+                return true;
+            default:
+                // Property patterns throughout: a region that is not plain chrome, or has anything to do with a press, is not ours.
+                return Selection.HandleInput(evt, (x, y) => !Under(x, y, r => r is not { Result: HitResult.ChromeHit }
+                    || r is { OnPress: not null } or { OnActivate: not null } or { OnDoubleClick: not null } or { Opens: not null }
+                    or { Dismisses: not null } or { FocusOnOpen: true }));
+        }
+    }
+
+    // Whether the topmost region painted under the point is one the test holds for.
+    private bool Under(float x, float y, Func<ClickableRegion, bool> test)
+    {
+        var regions = new List<ClickableRegion>();
+        CollectPaintedRegions(regions);
+        for (var i = regions.Count - 1; i >= 0; i--)
+        {
+            var r = regions[i];
+            if (x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
+            {
+                return test(r);
+            }
+        }
+        return false;
+    }
 
     // A row's right-click menu, hung where the press was.
     private readonly DropdownMenuState<string> _menu = new();
@@ -484,12 +603,20 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     public void Render(FlightsScreen screen, RectF32 bounds)
     {
+        Palette.Use(Night);
         BeginFrame();
-        RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
+        var arranged = RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
         {
             DrawCanvas(fill, rect);
             Gallery.DrawFill(fill, rect);
+            DrawSelection(fill);
         });
+        _arranged = arranged;
+        // A leg a card's link asked for: the layout just made knows where its block sits, so scroll there and paint again at the new offset.
+        if (RevealLeg(arranged))
+        {
+            Render(screen, bounds);
+        }
     }
 
     /// <summary>
@@ -498,6 +625,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// </summary>
     internal Layout.Node Tree(FlightsScreen screen)
     {
+        Palette.Use(Night);
         // In play, the landed are left out of the table; an open flight's page still finds its flight among them.
         var whole = screen;
         // A flight a jump opened is shown too, until its page is shut and the selection has moved off it.
@@ -594,7 +722,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         var action = asking.Action;
         yield return Layout.Builder.HStack(
                 Layout.Builder.Text(action.WhyPrompt ?? "why?", 12f, Dim).WAuto(),
-                Layout.Builder.TextInput(WhyInput, 14f, NightOrNull is { } n ? NightInput(n) : null, focusOnOpen: true).WStar(),
+                Layout.Builder.TextInput(WhyInput, 14f, Palette.Input, focusOnOpen: true).WStar(),
                 Layout.Builder.Text("Enter sends · Esc cancels", 11f, Faint).WAuto())
             .WithGap(10f)
             .RowH(WhyRowHeight);
@@ -677,6 +805,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             parts.Add(Prose(said, 11f, Dim).Pad(Gutter, 4f).Bg(HeaderBg).WStar().HAuto());
         }
         var page = Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch();
+        if (open is not null && CopyText is not null)
+        {
+            // After the page's text and before the menus over it: where the selection is drawn (DrawSelection).
+            page = Layout.Builder.Overlay(page, Layout.Builder.Fill(key: SelectionKey).Stretch());
+            _links.SelectedText ??= () => Selection.Text;
+        }
         page = About?.Over(page, NightOrNull) ?? page;
         page = Gallery.Over(page);
         page = _menu.IsOpen ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg)) : page;
@@ -726,16 +860,17 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         foreach (var job in Jobs.Where(j => j.Flight == flight.Code).OrderBy(j => j.State switch { JobState.Running => 0, JobState.Queued => 1, _ => 2 })
             .ThenByDescending(j => j.StartedAt).Take(2))
         {
-            var color = job.State switch { JobState.Running => Flying, JobState.Queued => Held, JobState.Succeeded => Landed, _ => Failed };
+            var isPaused = job.State == JobState.Running && job.PausedAt is not null;
+            var color = isPaused ? Held : job.State switch { JobState.Running => Flying, JobState.Queued => Held, JobState.Succeeded => Landed, _ => Failed };
             var waiting = job.State == JobState.Queued && job.Step is { } step ? $" ({step})" : "";
-            legs.Add(Layout.Builder.Text($"job {job.Id} {job.State.ToString().ToLowerInvariant()}{waiting}: {job.Command}", 12f, color).RowH(20f));
+            legs.Add(Layout.Builder.Text($"job {job.Id} {(isPaused ? "paused" : job.State.ToString().ToLowerInvariant())}{waiting}: {job.Command}", 12f, color).RowH(20f));
         }
 
         var artifacts = new List<Layout.Node> { Label("artifacts").RowH(20f) };
         var all = line.LegRows.SelectMany(l => l.Artifacts.Select(a => (Leg: l.Name, Artifact: a))).OrderByDescending(x => x.Artifact.At).Take(5).ToList();
         if (flight.PullRequestUrl is { } url)
         {
-            artifacts.Add(Link($"PR #{flight.PullRequest}", url, $"pr:{line.Code}"));
+            artifacts.Add(PullRequestLink(line, url, $"pr:{line.Code}"));
         }
         if (marks.ReviewUrl is { } reviewUrl)
         {
@@ -829,7 +964,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         var lines = new List<Layout.Node>();
         if (Maintenance)
         {
-            lines.Add(Layout.Builder.Text(MaintenanceNotice.Line, 12f, Held).RowH(20f));
+            lines.Add(Layout.Builder.Text(MaintenanceNotice.LineFor(P), 12f, Held).RowH(20f));
         }
         if (Lan is { Quiet: false } lan)
         {
@@ -843,7 +978,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             Buttons = buttons,
             Source = PageHeader.SourceLine(screen.Source, screen.AsOf, screen.Outside),
             Lines = lines,
-        }, new TopBarParts(Nodes, Play, Autopilot, About, NightOrNull));
+        }, new TopBarParts(Nodes, Play, Autopilot, About, Night));
     }
 
     private Layout.Node Main(FlightsScreen screen)
@@ -870,7 +1005,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         }
 
         return Layout.Builder.VStack(
-                Table.Header(columns, Scale),
+                Table.Header(columns, Scale, NightOrNull),
                 Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch())
             .Pad(Gutter, 8f)
             .Stretch();
@@ -926,6 +1061,14 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// </summary>
     private Action<FlightAction>? RetryOf(FlightLine line) => CanCommand && WatchOnly(line) is null ? action => Choose(action, line.Code) : null;
 
+    // The legs, and under them the flight's PR chip when it has one: the list's row (54 with its padding) holds the 22 line and the 20 chip exactly, and the chip is the same as everywhere.
+    private Layout.Node LegsCell(FlightLine line, bool landed)
+    {
+        return PullRequestChip(line, PullRequestChipWidth, PullRequestChipHeight) is { } chip
+            ? Layout.Builder.VStack(Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body).RowH(22f), chip.HFixed(PullRequestChipHeight))
+            : ListTable.Top(Whole(Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body), line.Legs, LegsFits));
+    }
+
     private Layout.Node Row(FlightLine line, int index, bool marked, IReadOnlyList<ListColumn> columns)
     {
         // A stale row is drawn as a landed one is, dim: its state is the last the node told, not what it is now.
@@ -948,7 +1091,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.State, 14f, color).RowH(22f),
                 Whole(Layout.Builder.Text(line.RowDetail ?? "", 11f, failed ? P.FailedText : line.Row.State == FlightState.Held && line.Stale is null ? Body : Dim).RowH(18f), line.RowDetail ?? "", StateDetailFits)),
-            ListTable.Top(Whole(Layout.Builder.Text(line.Legs, 13f, landed ? Dim : Body), line.Legs, LegsFits)),
+            LegsCell(line, landed),
             ListTable.Top(Layout.Builder.Text(line.Branch, 12f, dim)),
             ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body)),
         };
@@ -962,6 +1105,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             .BgFocus(failed ? P.FailedFocusBg : RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index))
             .WithContextMenu(at => OpenMenu(line, index, at))
+            // The same brief as the Home chip (#258). A cell cut by its column keeps its own whole-text tooltip, which is the
+            // innermost and so wins over the cell; the rest of the row says the brief.
+            .WithTooltip(ChipBrief.Text(ChipBrief.Flight(line)))
             .DoubleClickable(_ =>
             {
                 ListCursor.MoveTo(index);

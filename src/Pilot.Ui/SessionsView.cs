@@ -93,25 +93,25 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     // before it gives any of it up.
     private const float SessionMin = 200f;
 
-    private static readonly RGBAColor32 Ground = TranscriptPane.Ground;
-    private static readonly RGBAColor32 HeaderBg = new(0x1b, 0x1c, 0x24, 0xff);
-    private static readonly RGBAColor32 RowAltBg = new(0x16, 0x17, 0x1e, 0xff);
-    private static readonly RGBAColor32 RowHoverBg = new(0x22, 0x24, 0x2e, 0xff);
-    private static readonly RGBAColor32 RowFocusBg = new(0x26, 0x33, 0x4a, 0xff);
-    private static readonly RGBAColor32 MenuBg = new(0x1f, 0x21, 0x2b, 0xff);
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
-    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
-    private static readonly RGBAColor32 Faint = new(0x5c, 0x5f, 0x6c, 0xff);
-    internal static readonly RGBAColor32 Track = new(0x2a, 0x2c, 0x38, 0xff);
-    private static readonly RGBAColor32 Working = new(0x4c, 0xc3, 0x8a, 0xff);
-    private static readonly RGBAColor32 Waiting = new(0xf0, 0xb4, 0x3c, 0xff);
-    private static readonly RGBAColor32 Idle = new(0x6f, 0x9b, 0xd8, 0xff);
-    private static readonly RGBAColor32 Ended = new(0x5c, 0x5f, 0x6c, 0xff);
-    private static readonly RGBAColor32 Failed = new(0xe0, 0x5a, 0x5a, 0xff);
-    private static readonly RGBAColor32 Low = new(0x5a, 0x8f, 0xd8, 0xff);
-    private static readonly RGBAColor32 AnswerBg = new(0x2c, 0x35, 0x4a, 0xff);
-    private static readonly RGBAColor32 AnswerHoverBg = new(0x3a, 0x46, 0x62, 0xff);
+    private static RGBAColor32 Ground => TranscriptPane.Ground;
+    private static RGBAColor32 HeaderBg => Palette.Current.HeaderBg;
+    private static RGBAColor32 RowAltBg => Palette.Current.RowAltBg;
+    private static RGBAColor32 RowHoverBg => Palette.Current.RowHoverBg;
+    private static RGBAColor32 RowFocusBg => Palette.Current.RowFocusBg;
+    private static RGBAColor32 MenuBg => Palette.Current.MenuBg;
+    private static RGBAColor32 Bright => Palette.Current.Bright;
+    private static RGBAColor32 Body => Palette.Current.Body;
+    private static RGBAColor32 Dim => Palette.Current.Dim;
+    private static RGBAColor32 Faint => Palette.Current.Faint;
+    internal static RGBAColor32 Track => Palette.Current.Track;
+    private static RGBAColor32 Working => Palette.Current.Flying;
+    private static RGBAColor32 Waiting => Palette.Current.Held;
+    private static RGBAColor32 Idle => Palette.Current.Landed;
+    private static RGBAColor32 Ended => Palette.Current.Faint;
+    private static RGBAColor32 Failed => Palette.Current.Failed;
+    private static RGBAColor32 Low => Palette.Current.Low;
+    private static RGBAColor32 AnswerBg => Palette.Current.Action;
+    private static RGBAColor32 AnswerHoverBg => Palette.Current.ActionHover;
 
     // Model, Last response, Spend and the archive button are the columns a narrow window drops, each as it can no longer
     // have its whole width (Optional), so the Session column keeps its SessionMin for the role and the name. The engine
@@ -176,6 +176,9 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+    
+    /// <summary>The header's Night switch, the same on every page.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
@@ -315,6 +318,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
     public void Render(SessionsScreen screen, RectF32 bounds)
     {
+        Palette.Use(Night);
         BeginFrame();
         RenderLayout(Tree(screen), bounds, drawFill: Gallery.DrawFill);
     }
@@ -325,6 +329,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     /// </summary>
     internal Layout.Node Tree(SessionsScreen screen)
     {
+        Palette.Use(Night);
         // Archived rows are left out unless asked for: the selection and the count follow what is shown.
         _archivedCount = screen.Lines.Count(l => l.Row.Archived);
         _endedLines = [.. screen.Lines.Where(l => !l.Row.Archived && l.Row.State is Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed)];
@@ -582,7 +587,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         : Layout.Builder.VStack(
                 Layout.Builder.HStack(
                         Layout.Builder.Text(SayTarget is { } target ? $"Say to {target}" : "No session selected", 14f, Body).WAuto(),
-                        Layout.Builder.TextInput(SayInput, 15f, focusOnOpen: true)
+                        Layout.Builder.TextInput(SayInput, 15f, Palette.Input, focusOnOpen: true)
                             .WithShortcut(SayShortcut)
                             .WStar())
                     .WithGap(12f)
@@ -602,7 +607,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             Source = PageHeader.SourceLine(screen.Source, screen.AsOf,
                 string.Join(" · ", new[] { screen.Account, screen.Usage is { } usage ? $"usage {usage}" : null, screen.Outside }.Where(p => p is not null))
                     is { Length: > 0 } more ? more : null),
-        }, new TopBarParts(Nodes, Play, Autopilot, About));
+        }, new TopBarParts(Nodes, Play, Autopilot, About, Night));
 
     // The table, or the open session's transcript in its place.
     private Layout.Node Page(SessionsScreen screen)
@@ -734,6 +739,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index))
             .WithContextMenu(at => OpenMenu(line, index, at))
+            // The same brief as the Home chip (#258).
+            .WithTooltip(ChipBrief.Text(ChipBrief.Session(line)))
             .DoubleClickable(_ =>
             {
                 Select(index);

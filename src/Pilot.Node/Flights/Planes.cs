@@ -127,6 +127,9 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         }
     }
 
+    /// <summary>The branch <paramref name="code"/>'s plane gets (flight/bul101645-sc-101645: only the branch carries the tracker's link).</summary>
+    public static string BranchOf(string code, WorkItem? item = null) => $"flight/{code.ToLowerInvariant()}{item?.BranchSuffix}";
+
     /// <summary>Makes the plane for <paramref name="code"/> in <paramref name="repoPath"/>, or throws with git's words.</summary>
     public async Task<Plane> MakeAsync(string repoPath, string code, CancellationToken cancellationToken, WorkItem? item = null)
     {
@@ -134,7 +137,7 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
 
         // The folder is the code alone; only the branch carries the tracker's link (flight/bul101645-sc-101645).
         var name = code.ToLowerInvariant();
-        var branch = $"flight/{name}{item?.BranchSuffix}";
+        var branch = BranchOf(code, item);
         var worktree = Path.Combine(repoPath, ".claude", "worktrees", name);
         var add = await git.RunAsync(["worktree", "add", "--no-track", "-b", branch, worktree, baseRef], repoPath, cancellationToken);
         if (!add.Ok)

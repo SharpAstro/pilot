@@ -12,7 +12,7 @@ namespace Pilot.Node.Flights;
 /// <param name="workers">Stops the flight's sessions before its plane goes; null in a test that starts none.</param>
 /// <param name="github">Gives a flight made without a title its issue's, and the commit a landed PR merged as; null in a test that names its titles.</param>
 /// <param name="packages">Reads what a landing flight releases, for the flights connected to it to wait for; null in a test that has none wait for a package.</param>
-public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider time, IWorkerLauncher? workers = null, IGitHub? github = null, PackageReleases? packages = null)
+public sealed partial class FlightCommander(NodeState state, Planes planes, TimeProvider time, IWorkerLauncher? workers = null, IGitHub? github = null, PackageReleases? packages = null)
 {
     // The one lock of the flight verbs, which says what holds it (a command waiting past LockWait.Patience is told).
     private readonly NamedLock _one = new(time);
@@ -87,7 +87,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
                 switch (command.Verb)
                 {
                     case Verbs.Connect:
-                        Connect(command);
+                        made = await ConnectAsync(command, cancellationToken);
                         break;
                     case Verbs.Land:
                         await LandAsync(command, cancellationToken);
@@ -198,15 +198,22 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         var repoPath = await planes.MainCheckoutAsync(path, cancellationToken)
             ?? throw new FlightException($"{path} is no git checkout");
         var repo = Path.GetFileName(repoPath);
+        var flights = state.Flights();
+        var prefix = FlightCodes.PrefixFor(repo, flights);
+        var code = FlightCodes.Next(prefix, item.Id, flights)
+            ?? throw new FlightException($"{prefix}{item.Id} and its suffixes {FlightCodes.Suffixes} are all taken");
+
+        // A flight is flown by one node: a peer that flies this item, or the branch this flight would get, answers for it, and
+        // --anyway does not override a flight that is live there (it only overrides a label, which can be stale).
+        if (await FlownByPeerAsync(repoPath, item, Planes.BranchOf(code, item), cancellationToken) is { } peerFlight)
+        {
+            throw new FlightException($"{peerFlight.Code} flies {item.Display} on {peerFlight.Node}: fly it there");
+        }
         var otherNode = await OtherNodeOfAsync(repoPath, item, cancellationToken);
         if (otherNode is not null && !anyway)
         {
             throw new FlightException($"{item.Noun} carries the label {PilotMarks.NodeLabel(otherNode)}: it is flying on {otherNode}, not on {Machine}. Fly it there, or give --anyway to create the flight here over {otherNode}'s label");
         }
-        var flights = state.Flights();
-        var prefix = FlightCodes.PrefixFor(repo, flights);
-        var code = FlightCodes.Next(prefix, item.Id, flights)
-            ?? throw new FlightException($"{prefix}{item.Id} and its suffixes {FlightCodes.Suffixes} are all taken");
 
         var title = string.Join(' ', args.Skip(1)).Trim();
         if (title.Length == 0 && Trackers?.Of(item.Tracker) is { } tracker)
@@ -322,6 +329,60 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         state.RaiseCard(CardBin.Handled, ReceivedKind, Verbs.FlightTarget(code), way, $"{move.From} handed {code} over to {Machine}, which made its plane at {plane.Worktree} from {plane.Branch} on origin");
         return (code, way);
     }
+
+    /// <summary>A flight a peer node flies, as a refusal names it.</summary>
+    public sealed record PeerFlight(string Node, string Code);
+
+    /// <summary>How long the peers have, all at once, to say what they fly before they count as not flying it (an unreachable peer never blocks).</summary>
+    public static readonly TimeSpan PeerBudget = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// The not-landed flight a granted, reachable peer flies on this repo for <paramref name="item"/> (when given) or on
+    /// <paramref name="branch"/>, else null. The repo is matched by its GitHub remote, as the paths are each machine's own.
+    /// A peer that cannot be reached, refuses the grant or is too slow is taken as flying nothing.
+    /// </summary>
+    public async Task<PeerFlight?> FlownByPeerAsync(string repoPath, WorkItem? item, string branch, CancellationToken cancellationToken)
+    {
+        var peers = Fleet?.Peers() ?? [];
+        var gitHub = RepoCatalog.GitHubOf(Path.Combine(repoPath, ".git"));
+        if (peers.Count == 0 || gitHub is null)
+        {
+            return null;
+        }
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(PeerBudget);
+        var found = await Task.WhenAll(peers.Where(p => p.HasGrant).Select(p => PeerFlightAsync(p, gitHub, item, branch, budget.Token)));
+        return found.FirstOrDefault(f => f is not null);
+    }
+
+    private static async Task<PeerFlight?> PeerFlightAsync(IFleetPeer peer, string gitHub, WorkItem? item, string branch, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (await peer.ReposAsync(cancellationToken) is not { } repos
+                || repos.FirstOrDefault(r => string.Equals(r.GitHub, gitHub, StringComparison.OrdinalIgnoreCase))?.Path is not { } checkout)
+            {
+                return null;
+            }
+            var load = await peer.LoadAsync(cancellationToken);
+            var flies = load.Flights.FirstOrDefault(f => f.State != FlightState.Landed
+                && SamePath(f.RepoPath, checkout)
+                && (string.Equals(f.Branch, branch, StringComparison.OrdinalIgnoreCase) || (item is { } i && f.Tracker == i.Tracker && f.Issue == i.Id)));
+            if (flies is null)
+            {
+                return null;
+            }
+            var info = await peer.NodeAsync(cancellationToken);
+            return new PeerFlight(info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Endpoint, flies.Code);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or OperationCanceledException or System.Net.WebSockets.WebSocketException)
+        {
+            return null;
+        }
+    }
+
+    internal static bool SamePath(string a, string b) =>
+        string.Equals(a.Replace('\\', '/').TrimEnd('/'), b.Replace('\\', '/').TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The node code another node's label on <paramref name="item"/> names, or null when it has none (this node's own is no other's).</summary>
     private async Task<string?> OtherNodeOfAsync(string repoPath, WorkItem item, CancellationToken cancellationToken)
@@ -440,10 +501,24 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         }
     }
 
-    private void Connect(CommandRequest command)
+    /// <summary>
+    /// <c>connect flight/&lt;code&gt; &lt;other&gt;</c>: the flight holds until the other has landed. The other is a flight of this node, or
+    /// else one a reachable peer flies (see <see cref="ConnectPeerAsync"/>). Returns what the caller is told, or null.
+    /// </summary>
+    private async Task<string?> ConnectAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var flight = Find(command.Target);
-        var other = (command.Args ?? []) is [{ } code, ..] ? state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) : null;
+        var given = (command.Args ?? []) is [{ } code, ..] ? code : null;
+        var other = given is null ? null : state.Flights().FirstOrDefault(f => string.Equals(f.Code, given, StringComparison.OrdinalIgnoreCase));
+        if (other is null && given is not null)
+        {
+            return await ConnectPeerAsync(flight, given, null, cancellationToken);
+        }
+        return Connect(flight, other);
+    }
+
+    private string? Connect(FlightRow flight, FlightRow? other)
+    {
         if (other is null)
         {
             throw new FlightException($"connect needs the code of a flight {flight.Code} waits for, as in connect flight/{flight.Code} TIA1611");
@@ -454,9 +529,33 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         }
         if (flight.Connections.Contains(other.Code, StringComparer.Ordinal))
         {
-            return;
+            return null;
         }
         state.PutFlight(Settle(flight with { Connections = [.. flight.Connections, other.Code] }));
+        return null;
+    }
+
+    /// <summary>
+    /// Connects the flight to a flight of this node, as <c>connect</c> does, for the controller's answer to an overlap: one at a time with
+    /// the flight verbs. Throws <see cref="FlightException"/> with why it could not, and then changes nothing. Returns what the connect
+    /// said of a flight of another node (that it waits, or that it has landed already and there is nothing to wait for), or null.
+    /// </summary>
+    public async Task<string?> ConnectToAsync(string code, string other, string? node, CancellationToken cancellationToken)
+    {
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            var flight = Find(Verbs.FlightTarget(code));
+            if (node is null)
+            {
+                return Connect(flight, state.Flights().FirstOrDefault(f => string.Equals(f.Code, other, StringComparison.OrdinalIgnoreCase)));
+            }
+            return await ConnectPeerAsync(flight, other, node, cancellationToken);
+        }
+        finally
+        {
+            _one.Release();
+        }
     }
 
     /// <summary>
@@ -522,6 +621,32 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         }
     }
 
+    /// <summary>The card saying a PR merged while a new leg was planned or flying.</summary>
+    public const string MergedUnderLegKind = "merged-under-leg";
+
+    /// <summary>
+    /// <paramref name="flight"/>'s PR merged on GitHub without the work of a leg planned, flying or not yet finished (#342): the
+    /// flight stays flying and is not landed as merged. Its PR is let go (its merge cards close), the head it merged at is kept,
+    /// and a Ring card says the new work goes to a new PR from the merged base, which the node opens when the legs are done.
+    /// Returns the flight as it now stands.
+    /// </summary>
+    public FlightRow MarkMergedUnderLeg(FlightRow flight, string mergedHead, string why)
+    {
+        var number = flight.PullRequest;
+        var marked = flight with
+        {
+            MergedHead = mergedHead, MergedPullRequest = number, PullRequest = null, PullRequestUrl = null, Review = null,
+            MergeWhenGreen = null, MergeQueue = null, GitHubHead = null,
+        };
+        state.PutFlight(marked);
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"#{number} merged on GitHub without the new leg", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, "not-landed");
+        state.RaiseCard(CardBin.Ring, MergedUnderLegKind, Verbs.FlightTarget(flight.Code),
+            $"{flight.Code}'s PR #{number} merged without the new leg",
+            $"{why}. GitHub merged #{number} at {mergedHead[..Math.Min(8, mergedHead.Length)]} before the merge could be taken back, so it holds none of the new leg's work: that goes to a new PR from the merged base, which opens when the legs are done (rebased onto the base, pushed, reviewed as any PR). {flight.Code} stays flying and is not landed.",
+            link: flight.PullRequestUrl);
+        return marked;
+    }
+
     private Task LandAsync(CommandRequest command, CancellationToken cancellationToken) => LandFlightAsync(Find(command.Target), cancellationToken);
 
     private async Task LandFlightAsync(FlightRow flight, CancellationToken cancellationToken, string? mergedHead = null, string? foldedInto = null)
@@ -547,6 +672,15 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
 
     private async Task LandingAsync(FlightRow flight, CancellationToken cancellationToken, string? mergedHead, string? foldedInto)
     {
+        // A merge does not land work still to come: a leg planned or flying means the PR went without it. Read from the state
+        // alone, before any of the flight's sessions is stopped, so a flying leg's worker is left at its work.
+        if (mergedHead is not null
+            && state.Legs(flight.Code).Where(l => l.State != LegState.Done).Select(l => $"{l.Name} ({l.State.ToString().ToLowerInvariant()})").ToList() is { Count: > 0 } open)
+        {
+            var said = $"its legs {string.Join(", ", open)} are not done";
+            MarkMergedUnderLeg(flight, mergedHead, said);
+            throw new FlightException($"{flight.Code}'s PR merged, but {said}: their work goes to a new PR, and the flight is not landed");
+        }
         // What it releases is read before its plane goes, and before anything is changed: a land that cannot say what its
         // consumers wait for is refused, never half done. A folded flight released nothing.
         var consumers = state.Flights().Where(f => f.State != FlightState.Landed && f.Connections.Contains(flight.Code, StringComparer.Ordinal)).ToList();
@@ -579,6 +713,10 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             var mainRef = flight.Base.Length > 0 ? flight.Base : "origin/main";
             if (mergedHead is not null)
             {
+                if (await planes.UncommittedAsync(flight.Worktree, cancellationToken) is { } dirty)
+                {
+                    throw new FlightException($"{flight.Code} merged at {mergedHead[..Math.Min(8, mergedHead.Length)]}, but its plane holds {dirty}: commit and land {(dirty.StartsWith("1 ", StringComparison.Ordinal) ? "it" : "them")} in a PR of their own, then land the flight");
+                }
                 if (await planes.PastAsync(flight.Worktree, mergedHead, cancellationToken) is { Count: > 0 } past)
                 {
                     throw new FlightException($"{flight.Code} merged at {mergedHead[..Math.Min(8, mergedHead.Length)]}, but its plane holds {past.Count} commit{(past.Count == 1 ? "" : "s")} past it: {string.Join("; ", past)}. Land {(past.Count == 1 ? "it" : "them")} in a PR of {(past.Count == 1 ? "its" : "their")} own, then land the flight");
@@ -823,7 +961,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         }
     }
 
-    /// <summary>A flight held while any flight it connects from has not landed or any package it waits for is not up, flying otherwise; a landed one stays landed.</summary>
+    /// <summary>A flight held while any flight it connects from (on this node or another) has not landed or any package it waits for is not up, flying otherwise; a landed one stays landed.</summary>
     private FlightRow Settle(FlightRow flight)
     {
         if (flight.State == FlightState.Landed)
@@ -832,7 +970,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         }
         var flights = state.Flights().ToDictionary(f => f.Code, StringComparer.Ordinal);
         // A flight that went to another node is Landed here but has not landed: what waits for it keeps waiting.
-        var held = flight.PackageWaits.Length > 0 || flight.Connections.Any(c => !flights.TryGetValue(c, out var other) || other.State != FlightState.Landed || other.MovedTo is not null);
+        var held = flight.PackageWaits.Length > 0 || flight.PeerConnections.Length > 0 || flight.Connections.Any(c => !flights.TryGetValue(c, out var other) || other.State != FlightState.Landed || other.MovedTo is not null);
         return flight with { State = held ? FlightState.Held : FlightState.Flying };
     }
 

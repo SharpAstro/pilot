@@ -118,7 +118,7 @@ public sealed class FlightMoveTests
 
         var arranged = Arrange(view.Tree(screen), renderer, 1600, 900);
 
-        var rows = arranged.Where(a => a.Node.Background == FlightsPalette.Standard.FailedBg && a.Bounds.Height == 54f).ToList();
+        var rows = arranged.Where(a => a.Node.Background == Palette.Standard.FailedBg && a.Bounds.Height == 54f).ToList();
         rows.Count.ShouldBe(1);
         var words = Runs(arranged, rows[0].Bounds);
         // Said, not only coloured: the row's State column says it under "flying", and the code is the row's.
@@ -134,7 +134,7 @@ public sealed class FlightMoveTests
     public void FlightMoveEveryWordOnTheRedRowIsAtFourPointFiveToOneOnTheRedItIsDrawnOn(bool selected)
     {
         var screen = selected ? Screen(Rows) : NewestFirst();
-        var p = FlightsPalette.Standard;
+        var p = Palette.Standard;
         var ground = selected ? p.FailedFocusBg : p.FailedBg;
         using var renderer = new RgbaImageRenderer(1600, 900);
         var view = View(renderer);
@@ -155,7 +155,7 @@ public sealed class FlightMoveTests
     [Fact]
     public void FlightMoveTheRedColoursHoldContrastOnEveryGroundTheyAreDrawnOn()
     {
-        var p = FlightsPalette.Standard;
+        var p = Palette.Standard;
         foreach (var ground in new[] { p.FailedBg, p.FailedFocusBg, p.RowHoverBg })
         {
             foreach (var text in new[] { p.Bright, p.Body, p.FailedText })
@@ -170,7 +170,7 @@ public sealed class FlightMoveTests
         // The stripe is the red of a failed leg and is a mark, not text: 3:1 against the red it sits on.
         Contrast(p.Failed, p.FailedBg).ShouldBeGreaterThanOrEqualTo(3.0);
         // Night keeps to reds on black and still holds the floor for what is red.
-        var n = FlightsPalette.Night;
+        var n = Palette.Night;
         foreach (var ground in new[] { n.FailedBg, n.FailedFocusBg })
         {
             Contrast(n.FailedText, ground).ShouldBeGreaterThanOrEqualTo(4.5);
@@ -185,7 +185,7 @@ public sealed class FlightMoveTests
     [InlineData(1600)]
     public void FlightMoveTheReasonIsShownWrappedAndWholeBesideRetryMove(int width)
     {
-        var p = FlightsPalette.Standard;
+        var p = Palette.Standard;
         using var renderer = new RgbaImageRenderer((uint)width, 900);
         var view = View(renderer);
 
@@ -216,7 +216,7 @@ public sealed class FlightMoveTests
         {
             using var renderer = new RgbaImageRenderer((uint)width, 900);
             var arranged = Arrange(View(renderer).Tree(Screen(Rows)), renderer, width, 900);
-            var band = Band(arranged, FlightsPalette.Standard.FailedBg);
+            var band = Band(arranged, Palette.Standard.FailedBg);
             return Runs(arranged, band.Bounds).Where(r => r.Text != FlightAction.RetryMove && !IsHeading(r))
                 .Select(r => (int)MathF.Round(r.Bounds.Y)).Distinct().Count();
         }
@@ -353,7 +353,7 @@ public sealed class FlightMoveTests
         using var renderer = new RgbaImageRenderer(760, 900);
         var view = new HomeView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = _ => { } };
         var arranged = Arrange(view.Tree(home), renderer, 700, 900);
-        var p = FlightsPalette.Standard;
+        var p = Palette.Standard;
 
         var band = Band(arranged, p.FailedBg);
         var inBand = Runs(arranged, band.Bounds);
@@ -380,7 +380,7 @@ public sealed class FlightMoveTests
         line.MoveFailure.ShouldBeNull();
         line.StaleMark.ShouldBe("stale (DE1 unreachable)");
         FlightAction.For(line).Select(a => a.Verb).ShouldNotContain(Verbs.MoveFlight);
-        MoveFailureBand.Build<RgbaImage>(line, FlightsPalette.Standard, _ => { }).ShouldBeNull();
+        MoveFailureBand.Build<RgbaImage>(line, Palette.Standard, _ => { }).ShouldBeNull();
         var home = new HomeScreen(new FlightsScreen([line], "sample", At), NoSessions, NoJobs, CardsScreen.Empty);
         home.Waiting.ShouldBe("Nothing waits on you");
         home.FlightChips.Single().Tone.ShouldBe("stale");

@@ -43,6 +43,7 @@ public sealed class AutopilotSwitchTests
         yield return ("Background tasks", chrome.Jobs.Tree(new JobsScreen([], "test", now)));
         yield return ("Fleet", chrome.Fleet.Tree(fleet));
         yield return ("Repos", chrome.Repos.Tree(new ReposScreen([], "test", now)));
+        yield return ("Pull requests", chrome.PullRequests.Tree(new PullRequestsScreen(null, "test", now)));
         yield return ("Settings", chrome.Settings.Tree(now));
         yield return ("Chat", chrome.Chat.Tree());
     }
@@ -69,7 +70,7 @@ public sealed class AutopilotSwitchTests
         {
             chrome.Autopilot.On = on;
             var pages = Pages(chrome).ToList();
-            pages.Count.ShouldBe(8);
+            pages.Count.ShouldBe(9);
             foreach (var (page, tree) in pages)
             {
                 var arranged = Arrange(tree);
@@ -160,8 +161,9 @@ public sealed class AutopilotSwitchTests
         on.AutopilotWord.ShouldBe("autopilot on");
         off.Autopilot.ShouldBeFalse();
         off.AutopilotWord.ShouldBe("autopilot off");
-        gone.Autopilot.ShouldBeFalse();
-        gone.AutopilotWord.ShouldBeNull();
+        gone.Autopilot.ShouldBeTrue();
+        gone.LastKnown.ShouldBeTrue();
+        gone.AutopilotWord.ShouldBe("autopilot on");
         on.ToDumpLine().ShouldEndWith(" | can command | autopilot on");
 
         using var renderer = new RgbaImageRenderer(1, 1);
@@ -169,7 +171,8 @@ public sealed class AutopilotSwitchTests
         var screen = new FleetScreen([FleetLine.From("node.sock", here: true, canCommand: true, null, Summary("laptop")), on, gone], Live.At);
         var rows = CellLayout.Describe(Arrange(fleet.Tree(screen))).Split('\n');
 
-        rows.Count(l => l.Contains("autopilot on", StringComparison.Ordinal)).ShouldBe(1);
+        // The live row and the quiet one (its last word, dimmed) both say on.
+        rows.Count(l => l.Contains("autopilot on", StringComparison.Ordinal)).ShouldBe(2);
         rows.Count(l => l.Contains("autopilot off", StringComparison.Ordinal)).ShouldBe(1);
     }
 }

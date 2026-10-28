@@ -367,4 +367,179 @@ public sealed class LegWatchTests
 
         (_said.Count, Open().Length).ShouldBe((0, 0));
     }
+
+    private void Unplanned(string code = "PIL9") => _state.PutFlight(new FlightRow
+    {
+        Code = code, Repo = "pilot", RepoPath = "/r", Issue = 9, Branch = "flight/pil9", Worktree = "/r/pil9", Base = "origin/main",
+        State = FlightState.Flying, CreatedAt = Start,
+    });
+
+    private void Planner(SessionState state, DateTimeOffset lastResponse) =>
+        _state.PutSession(new SessionRow
+        {
+            Id = "e5f6a7b8",
+            SessionId = "e5f6a7b8-0000-4000-8000-000000000000",
+            Name = "du1-pil9-plan",
+            Kind = SessionKind.Background,
+            Cwd = "/r/pil9",
+            Role = SessionRole.Planner,
+            Flight = "PIL9",
+            ContextTokens = 0,
+            ContextWindow = 200_000,
+            State = state,
+            SpendWeighted = 0,
+            LastResponseAt = lastResponse,
+            StartedAt = Start,
+        });
+
+    [Fact]
+    public async Task AFlightWithNoLegsAndNoPlannerGetsOneAfterTheGraceAndRingsWhenThatFails()
+    {
+        // PIL221 sat flying with no legs and no planner for days, and nothing said so (SE1, 2026-10-28).
+        Worker(SessionState.Working);
+        Unplanned();
+        await _watch.LookAsync(Ct);
+        _said.ShouldBeEmpty();
+
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await _watch.LookAsync(Ct);
+        var plan = _said.ShouldHaveSingleItem();
+        (plan.Verb, plan.Target, plan.Who).ShouldBe((Verbs.PlanFlight, "flight/PIL9", "node"));
+        Handled().ShouldHaveSingleItem().Kind.ShouldBe(LegWatch.PlanStalled);
+
+        // The fresh planner never shows: a look within the grace does nothing, the next rings with Plan again.
+        await _watch.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+        var ring = Open().ShouldHaveSingleItem();
+        (ring.Bin, ring.Kind, ring.Subject).ShouldBe((CardBin.Ring, LegWatch.PlanStalled, "flight/PIL9"));
+        ring.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Plan PIL9 again", Verbs.PlanFlight)]);
+
+        // Legs planned: the ring closes.
+        _state.PutLeg(_state.Legs().Single() with { Flight = "PIL9", Name = "first" });
+        await _watch.LookAsync(Ct);
+        Open().Where(c => c.Kind == LegWatch.PlanStalled).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AnIdlePlannerWithNoLegsIsToldToHandThemInThenRungNeverReplaced()
+    {
+        Worker(SessionState.Working);
+        Unplanned();
+        Planner(SessionState.Idle, Start);
+        _time.Advance(TimeSpan.FromMinutes(4));
+
+        await _watch.LookAsync(Ct);
+        var say = _said.ShouldHaveSingleItem();
+        (say.Verb, say.Target).ShouldBe((Verbs.Say, "session/e5f6a7b8"));
+        say.Args[0].ShouldContain("planned command");
+
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+        var ring = Open().ShouldHaveSingleItem();
+        (ring.Bin, ring.Kind).ShouldBe((CardBin.Ring, LegWatch.PlanStalled));
+        ring.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.Say);
+    }
+
+    [Fact]
+    public async Task AFlightWithAnotherCardOpenAboutItIsLeftToThatCard()
+    {
+        Worker(SessionState.Working);
+        Unplanned();
+        _state.RaiseCard(CardBin.ForYou, "overlap", "flight/PIL9", "PIL9 looks like part of PIL8", null);
+        _time.Advance(TimeSpan.FromMinutes(30));
+
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldBeEmpty();
+        Open().ShouldHaveSingleItem().Kind.ShouldBe("overlap");
+    }
+
+    /// <summary>A stall ring's summary names the redo as the card words it, and Resume or Nudge only when the card offers one.</summary>
+    private static void SummaryMatchesChoices(CardRow card)
+    {
+        var summary = card.Summary.ShouldNotBeNull();
+        summary.ShouldContain("TIA1/parser");
+        summary.ShouldContain(card.Choices.Single(c => c.Verb == Verbs.GoAround).Label);
+        var say = card.Choices.FirstOrDefault(c => c.Verb == Verbs.Say)?.Label;
+        if (say is null)
+        {
+            summary.ShouldNotContain("Resume");
+            summary.ShouldNotContain("Nudge");
+        }
+        else
+        {
+            summary.ShouldContain(say);
+            foreach (var other in new[] { "Resume now", "Resume", "Nudge" }.Where(l => l != say && !say.StartsWith(l, StringComparison.Ordinal)))
+            {
+                summary.ShouldNotContain(other);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ANoResetStopRingsASummaryThatMatchesItsChoices()
+    {
+        // A usage-limit stop with no reset time, and the same stop once the resume did not take.
+        Worker(SessionState.Idle, apiError: "overloaded");
+        await _watch.LookAsync(Ct);
+        var stopped = Open().ShouldHaveSingleItem();
+        SummaryMatchesChoices(stopped);
+        stopped.Summary!.ShouldNotContain("nothing to do");
+    }
+
+    [Fact]
+    public async Task AUsageLimitStopAndItsFailedResumeRingSummariesMatchTheirChoices()
+    {
+        Worker(SessionState.Idle, apiError: "rate_limit", resetsAt: Start.AddHours(2));
+        await _watch.LookAsync(Ct);
+        var limited = Open().Single(c => c.Kind == LegWatch.Stopped);
+        SummaryMatchesChoices(limited);
+        limited.Summary!.ShouldContain("resumes it at");
+
+        _time.Advance(TimeSpan.FromHours(2) + TimeSpan.FromMinutes(3));
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+        var again = Open().Single(c => c.Kind == LegWatch.Stopped);
+        SummaryMatchesChoices(again);
+        again.Summary!.ShouldContain("still stopped");
+    }
+
+    [Fact]
+    public async Task AWaitingFailedMissingAndIdleWorkersRingsSummariesMatchTheirChoices()
+    {
+        // No worker at all: the redo alone.
+        _time.Advance(TimeSpan.FromMinutes(5));
+        await _watch.LookAsync(Ct);
+        var missing = Open().ShouldHaveSingleItem();
+        missing.Kind.ShouldBe(LegWatch.Missing);
+        missing.Choices.ShouldHaveSingleItem();
+        SummaryMatchesChoices(missing);
+
+        // A waiting worker is answered in its own session: the redo alone.
+        Worker(SessionState.Waiting, waitingFor: "permission to run rm -rf build");
+        await _watch.LookAsync(Ct);
+        var waiting = Open().Single(c => c.Kind == LegWatch.Waiting);
+        waiting.Choices.ShouldHaveSingleItem();
+        SummaryMatchesChoices(waiting);
+        waiting.Summary!.ShouldContain("waits on you");
+
+        Worker(SessionState.Failed);
+        await _watch.LookAsync(Ct);
+        SummaryMatchesChoices(Open().Single(c => c.Kind == LegWatch.Failed));
+
+        // An idle worker, nudged twice, then rung for: Nudge is offered and named.
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow());
+        foreach (var _ in Enumerable.Range(0, 3))
+        {
+            _time.Advance(TimeSpan.FromMinutes(4));
+            await _watch.LookAsync(Ct);
+        }
+        var idle = Open().Single(c => c.Kind == LegWatch.Idle);
+        idle.Choices.Select(c => c.Label).ShouldBe(["Nudge", "Redo leg parser"]);
+        SummaryMatchesChoices(idle);
+    }
 }

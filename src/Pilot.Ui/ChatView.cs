@@ -39,9 +39,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private const float AskTextMinHeight = 40f;
     private const float AskMinHeight = 2 * AskPadY + AskTextMinHeight + ChoiceGap + 2 * ChoiceHeight + ChoiceLineGap;
 
-    private static readonly RGBAColor32 PageBg = TranscriptPane.Ground;
-    private static readonly RGBAColor32 FootBg = new(0x16, 0x17, 0x1e, 0xff);
-    private static readonly RGBAColor32 Marked = new(0x2a, 0x24, 0x18, 0xff);
+    private static RGBAColor32 PageBg => TranscriptPane.Ground;
+    private static RGBAColor32 FootBg => Palette.Current.RowAltBg;
+    private static RGBAColor32 Marked => Palette.Current.Marked;
 
     // What the follow has read, as one immutable record swapped whole: the follow appends on the pool, the render thread
     // reads the record it finds, and neither ever waits on the other.
@@ -86,6 +86,87 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     public Func<string, Task<string?>>? OnSend { get; set; }
 
     /// <summary>
+    /// Says words about a card to the watchtower (the node's <c>tell card/id</c>), given the card, its node (null: this window's)
+    /// and the words: null when the node took it, else what it said in refusing it. Null sends a message about a card as a plain one.
+    /// </summary>
+    public Func<CardRow, NodeMark?, string, Task<string?>>? OnSendAboutCard { get; set; }
+
+    /// <summary>
+    /// Reads another node's chat feed, given that node: its client's chat route. Null leaves another node's chat unread
+    /// (<see cref="SwitchTo"/> then shows a problem rather than this node's feed).
+    /// </summary>
+    public Func<NodeMark, int, CancellationToken, Task<ChatPage>>? LoadOn { get; set; }
+
+    /// <summary>Says a message to another node's watchtower, given that node: null when it took it, else what it said in refusing it.</summary>
+    public Func<NodeMark, string, Task<string?>>? OnSendOn { get; set; }
+
+    // The node the conversation is with; null is this window's own. Swapped whole.
+    private NodeMark? _node;
+
+    /// <summary>The node whose watchtower the page talks to; null when it is this window's own node's.</summary>
+    public NodeMark? Node => Volatile.Read(ref _node);
+
+    /// <summary>
+    /// Points the page at <paramref name="node"/>'s watchtower (null, or this window's own: this node's): what is held, the
+    /// notices and a quoted card are dropped, and an open page reads that node's feed from its start.
+    /// </summary>
+    public void SwitchTo(NodeMark? node)
+    {
+        node = node is { Here: false } ? node : null;
+        if (Volatile.Read(ref _node)?.Where == node?.Where)
+        {
+            return;
+        }
+        var open = _following is not null;
+        Close();
+        Volatile.Write(ref _node, node);
+        Volatile.Write(ref _held, Held.Empty);
+        Volatile.Write(ref _notices, []);
+        Volatile.Write(ref _about, null);
+        _confirmRestart = false;
+        if (open)
+        {
+            Open();
+        }
+        Changed?.Invoke();
+    }
+
+    // What the page reads and sends through now: this node's, or the chosen node's.
+    private Func<int, CancellationToken, Task<ChatPage>>? CurrentLoad() => Node is { } node
+        ? (after, ct) => LoadOn is { } on ? on(node, after, ct) : throw new InvalidOperationException($"{node.Name}'s chat cannot be read from here")
+        : Load;
+
+    private Func<string, Task<string?>>? CurrentSend() => Node is { } node
+        ? (OnSendOn is { } on ? text => on(node, text) : null)
+        : OnSend;
+
+    // The card the next message is about, quoted above the box until it goes or is dropped; swapped whole.
+    private sealed record Quoted(CardRow Card, NodeMark? Node);
+
+    private Quoted? _about;
+
+    /// <summary>The card the next message is about, as the quote above the box holds it; null when none.</summary>
+    public CardRow? QuotedCard => Volatile.Read(ref _about)?.Card;
+
+    /// <summary>
+    /// Quotes <paramref name="card"/> (raised on <paramref name="node"/>) above the box, what is sent next being about it, and
+    /// gives the box the keyboard. What is typed is kept.
+    /// </summary>
+    public void Attach(CardRow card, NodeMark? node)
+    {
+        Volatile.Write(ref _about, new Quoted(card, node));
+        Ui.Focus.Focus(Input);
+        Changed?.Invoke();
+    }
+
+    /// <summary>Drops the card the next message was about; it is then sent as a plain one.</summary>
+    public void Detach()
+    {
+        Volatile.Write(ref _about, null);
+        Changed?.Invoke();
+    }
+
+    /// <summary>
     /// Stops the watchtower and starts a fresh one: null when the node took it, else what it said in refusing it. A stop-gap
     /// for a watchtower gone quiet when it should not have; the node keeps one running by itself. Null leaves the page
     /// without the button.
@@ -121,6 +202,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+    
+    /// <summary>The header's Night switch, the same on every page.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>The ? card and the update light, in the top bar.</summary>
     public AboutCard? About { get; set; }
@@ -164,7 +248,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>Starts following the feed (after what it already holds) until <see cref="Close"/>; does nothing while it already is.</summary>
     public void Open()
     {
-        if (_following is not null || Load is not { } load)
+        if (_following is not null || CurrentLoad() is not { } load)
         {
             return;
         }
@@ -237,19 +321,26 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// </summary>
     public Task SendAsync()
     {
-        if (_composer.IsEmpty || OnSend is null)
+        if (_composer.IsEmpty || CurrentSend() is null)
         {
             return Task.CompletedTask;
         }
         var message = _composer.Message;
         _composer.Clear();
+        // A message about a card goes through the card's tell, and the card is dropped with it, as the box is emptied.
+        if (!string.IsNullOrWhiteSpace(message) && OnSendAboutCard is { } aboutCard && Interlocked.Exchange(ref _about, null) is { } quoted)
+        {
+            return SendAsync(message, words => aboutCard(quoted.Card, quoted.Node, words));
+        }
         return SendAsync(message);
     }
 
     /// <summary>Says <paramref name="message"/> to the watchtower: a choice button's label, or what was typed.</summary>
-    public async Task SendAsync(string message)
+    public Task SendAsync(string message) => CurrentSend() is { } send ? SendAsync(message, send) : Task.CompletedTask;
+
+    private async Task SendAsync(string message, Func<string, Task<string?>> send)
     {
-        if (OnSend is not { } send || string.IsNullOrWhiteSpace(message))
+        if (string.IsNullOrWhiteSpace(message))
         {
             return;
         }
@@ -314,6 +405,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     public void Render(RectF32 bounds)
     {
+        Palette.Use(Night);
         BeginFrame();
         RenderLayout(Tree(), bounds);
     }
@@ -321,9 +413,11 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
     internal Layout.Node Tree()
     {
+        Palette.Use(Night);
         var held = Volatile.Read(ref _held);
         _composer.Input.OnCommit = _ => SendAsync();
-        _composer.Input.Placeholder = "Message the watchtower";
+        _composer.Input.Placeholder = Node is { } to ? $"Message {to.Name}'s watchtower" : "Message the watchtower";
+        var canSend = CurrentSend() is not null;
         var buttons = new List<Layout.Node>();
         if (!_scroll.IsFollowingEnd)
         {
@@ -333,7 +427,11 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                 Changed?.Invoke();
             }));
         }
-        if (OnRestart is not null && Load is not null)
+        if (Node is not null)
+        {
+            buttons.Add(CardsView<TSurface>.HeaderPill("This node's watchtower", "chat:back", () => SwitchTo(null)));
+        }
+        else if (OnRestart is not null && Load is not null)
         {
             if (_confirmRestart)
             {
@@ -358,13 +456,13 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                 }));
             }
         }
-        var top = TopBar.Build(new PageHeader("chat")
+        var top = TopBar.Build(new PageHeader(Node is { } on ? $"watchtower · {on.Name}" : "chat")
         {
             Buttons = buttons,
-            Source = held.Problem ?? (Load is null ? "not live" : "the conversation with the node's watchtower"),
-        }, new TopBarParts(Nodes, null, Autopilot, About));
+            Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : "the conversation with the node's watchtower"),
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
 
-        var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking)], held.Working).Select(r => r.WStar()).ToList();
+        var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking).Select(AsQuoted)], held.Working).Select(r => r.WStar()).ToList();
         // What was said and the watchtower has not taken yet: last among the messages, dim, and saying so.
         rows.AddRange(held.Queued.Select(q => Waiting(q).WStar()));
         foreach (var notice in Notices)
@@ -375,7 +473,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         // the reply it ends, cutting its last lines, and scrolled away with the feed. Here it always shows, and the feed ends
         // above it.
         Layout.Node? asked = null;
-        if (OnSend is not null && held.Question is { Length: > 0 } question)
+        if (canSend && held.Question is { Length: > 0 } question)
         {
             // The reply the question ends already says it in the feed: the card then holds only the choices.
             var said = held.Entries.LastOrDefault(e => e.Kind == TranscriptKind.Assistant)?.Text;
@@ -396,10 +494,10 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             rows.Add(Layout.Builder.Text(sending ? "● sending…" : "● working…", 13f, Running).Pad(0f, 4f).WStar());
         }
         var list = rows.Count == 0
-            ? Layout.Builder.Text(held.Problem ?? (Load is null ? "The chat is read from a live node." : "Nothing said yet. Tell the watchtower what you want: “let's launch a flight for issue 12”."), 13f, Dim).Stretch()
+            ? Layout.Builder.Text(held.Problem ?? (CurrentLoad() is null ? "The chat is read from a live node." : "Nothing said yet. Tell the watchtower what you want: “let's launch a flight for issue 12”."), 13f, Dim).Stretch()
             : Layout.Builder.VStack([.. rows]).WithGap(ToolGap).WithScroll(_scroll).Stretch();
 
-        var page = OnSend is null
+        var page = !canSend
             ? Layout.Builder.VStack(list.HStar())
             : asked is null
                 ? Layout.Builder.VStack(list.HStar(), Foot())
@@ -409,6 +507,20 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         var body = page.WithGap(8f).Pad(Gutter, 8f).Stretch();
         var whole = Layout.Builder.VStack(top, body.HStar()).Bg(PageBg).Stretch();
         return About?.Over(whole) ?? whole;
+    }
+
+    /// <summary>
+    /// A person's message about a card (<see cref="CardContext"/>'s block and then their words) as the chat shows it: the card's
+    /// short quote, then the words. Any other entry as it is.
+    /// </summary>
+    internal static TranscriptEntry AsQuoted(TranscriptEntry entry)
+    {
+        if (entry.Kind != TranscriptKind.User || entry.From is not null || !CardContext.TryParse(entry.Text, out var chat))
+        {
+            return entry;
+        }
+        var quote = chat.Quote.Length > 0 && chat.Quote != chat.Title ? $"\n> {chat.Quote}" : "";
+        return entry with { Text = $"> card {chat.CardId}: {chat.Title}{quote}\n{chat.Words}" };
     }
 
     // A message that did not go.
@@ -486,6 +598,20 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         return $"{choice} (my answer to: {(asked.Length > 300 ? asked[..299] + "…" : asked)})";
     }
 
+    // The card the next message is about, quoted above the box: its id and title in one or two lines, and a way to drop it.
+    private Layout.Node Quote(CardRow card, NodeMark? node) =>
+        Layout.Builder.HStack(
+                Layout.Builder.Spacer().Bg(Prompt).WFixed(3f).HStar(),
+                WrappedProse.Of($"about card {card.Id}{(node is null ? "" : $" · {node.Name}")}: {card.Title}", 12f, Body, QuoteLines).WStar(),
+                CardsView<TSurface>.Pill("Drop", "chat:drop-card", Detach))
+            .WithGap(8f)
+            .Pad(0f, 3f)
+            .WStar()
+            .HAuto();
+
+    /// <summary>How many lines the quoted card takes above the box.</summary>
+    internal const int QuoteLines = 2;
+
     // The box: the lines typed above the one being edited, read-only, and the field under them.
     private Layout.Node Foot()
     {
@@ -497,7 +623,11 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             rows.Add(Layout.Builder.Text($"… {skipped} earlier {(skipped == 1 ? "line" : "lines")}", 11f, Dim).RowH(16f));
         }
         rows.AddRange(before.Skip(skipped).Select(line => Layout.Builder.Text(line.Length == 0 ? " " : line, 13f, Body).RowH(18f)));
-        rows.Add(Layout.Builder.TextInput(_composer.Input, 14f, focusOnOpen: true).RowH(30f));
+        if (OnSendAboutCard is not null && Volatile.Read(ref _about) is { } quoted)
+        {
+            rows.Add(Quote(quoted.Card, quoted.Node));
+        }
+        rows.Add(Layout.Builder.TextInput(_composer.Input, 14f, Palette.Input, focusOnOpen: true).RowH(30f));
         rows.Add(Layout.Builder.Text(before.Count > 0 ? $"{before.Count + 1} lines · Enter sends · Backspace on an empty line goes back" : "Enter sends · Shift+Enter a new line", 10f, Dim).RowH(16f));
         return Layout.Builder.VStack([.. rows]).Pad(12f, 6f).Bg(FootBg).WStar().HAuto();
     }

@@ -68,6 +68,7 @@ CardsScreen? capturedCards = null;
 JobsScreen? capturedJobs = null;
 ReposScreen? capturedRepos = null;
 MachineRow? capturedMachine = null;
+PullRequestsScreen? capturedPullRequests = null;
 if (options.Snapshot is { } snapshotFile)
 {
     var snapshotPath = Path.GetFullPath(snapshotFile);
@@ -103,6 +104,7 @@ else if (options.Capture is not null)
                 capturedCards = CardsScreen.From(live.Cards);
                 capturedMachine = live.Machine;
                 capturedJobs = new JobsScreen(JobLine.Build(live.Jobs, now), screen.Source, now);
+                capturedPullRequests = new PullRequestsScreen(live.PullRequests, screen.Source, now);
                 if (await oneShot.GetRepoStatusAsync(CancellationToken.None) is { Success: true, Response: { } read })
                 {
                     capturedRepos = new ReposScreen(RepoLine.Build(read,live.Flights, live.Sessions, live.Cards, live.Legs, now), screen.Source, now);
@@ -127,12 +129,14 @@ if (options.Capture is { } capturePath)
     capturedCards ??= snapshot is null ? null : CardsScreen.From(snapshot.Cards);
     capturedMachine ??= snapshot?.Machine;
     capturedJobs ??= snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
+    capturedPullRequests ??= snapshot is null ? null : new PullRequestsScreen(snapshot.PullRequests, screen.Source, snapshot.At);
     if (capturedRepos is null && snapshot is not null && File.Exists(SessionsCapture.ReposSamplePath))
     {
         capturedRepos = SessionsCapture.ReposScreenFor(snapshot, SessionsCapture.LoadRepos(SessionsCapture.ReposSamplePath), screen.Source);
     }
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
-        jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)]);
+        jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)],
+        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;
@@ -353,7 +357,7 @@ if (feed is not null && client is not null && clients is not null)
             loop.RequestRedraw();
             return;
         }
-        var result = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.CardTarget(card.Id), Args = args, Who = GuiSay.Who }, cts.Token);
+        var result = await to.SendAsync(DashboardCommands.CardRequest(verb, card, args, GuiSay.Who), cts.Token);
         clients.NoteRefusal(chrome.Cards.NodeOf(card), result);
         // A refusal is said on the card the button is on, never only here: a Merge pressed again and again on a PR GitHub
         // would not merge showed nothing (SE1, 2026-10-24).
@@ -383,6 +387,32 @@ if (feed is not null && client is not null && clients is not null)
     {
         var refused = await ChatCommands.TellAsync(client, text, GuiSay.Who, cts.Token);
         Console.WriteLine($"pilot-gui: tell watchtower: {refused ?? "told"}");
+        return refused;
+    };
+    // The chat with another node's watchtower (a card raised there was chatted about): its feed is read through its own
+    // client, which needs no grant, and what is typed is told through the grant's, a refusal said in the chat.
+    chrome.Chat.LoadOn = async (node, after, ct) => (await clients.For(node, command: false)!.GetChatAsync(after, ct)) is { Success: true, Response: { } chat }
+        ? chat
+        : throw new InvalidOperationException($"{node.Name} did not send its watchtower's chat");
+    chrome.Chat.OnSendOn = async (node, text) =>
+    {
+        if (clients.For(node) is not { } to)
+        {
+            return FleetClients.WatchOnly(node);
+        }
+        var refused = await ChatCommands.TellAsync(to, text, GuiSay.Who, cts.Token);
+        Console.WriteLine($"pilot-gui: tell {node.Name}'s watchtower: {refused ?? "told"}");
+        return refused;
+    };
+    // A card's Chat about this: the words go to the node the card was raised on, as its tell card/<id>.
+    chrome.Chat.OnSendAboutCard = async (card, node, words) =>
+    {
+        if (clients.For(node) is not { } to)
+        {
+            return FleetClients.WatchOnly(node);
+        }
+        var refused = await ChatCommands.TellAboutCardAsync(to, card.Id, words, GuiSay.Who, cts.Token);
+        Console.WriteLine($"pilot-gui: tell card {card.Id}: {refused ?? "told"}");
         return refused;
     };
     chrome.Chat.OnRestart = async () =>
@@ -438,6 +468,27 @@ if (feed is not null && client is not null && clients is not null)
     };
     chrome.Repos.Changed = loop.RequestRedraw;
     chrome.Repos.CopyText = text => SetClipboardText(text);
+    // The Pull requests page's Refresh asks this window's node to read GitHub now; the row comes back on the event stream.
+    chrome.PullRequests.OnRefresh = async ct =>
+    {
+        var result = (await client.SendAsync(new CommandRequest { Verb = Verbs.RefreshPullRequests, Target = Verbs.NodeTarget, Who = GuiSay.Who }, ct)).Response;
+        if (result is not { Ok: true })
+        {
+            throw new InvalidOperationException(result?.Error ?? "the node did not answer");
+        }
+    };
+    chrome.PullRequests.Changed = loop.RequestRedraw;
+    // A row's Review is `pilot review pr` on this window's node; Merge and Go around are the flight's card's own buttons (chrome wires them).
+    chrome.PullRequests.OnReview = async (pr, ct) =>
+    {
+        var envelope = await client.SendAsync(DashboardCommands.ReviewPrRequest(pr, GuiSay.Who), ct);
+        var refused = !envelope.Success ? envelope.Error : envelope.Response is { Ok: false } answer ? answer.Error : null;
+        Console.WriteLine($"pilot-gui: review {pr.Repo}#{pr.Number}: {refused ?? "started"}");
+        if (refused is not null)
+        {
+            throw new InvalidOperationException(refused);
+        }
+    };
     chrome.Repos.OnNewFlight = line =>
     {
         chrome.Show(PilotPage.Flights);
@@ -451,6 +502,35 @@ if (feed is not null && client is not null && clients is not null)
         loop.RequestRedraw();
     }, "a Flights action");
     chrome.Flights.OnOpen = location => OpenAway(location, () => chrome.Flights.Say($"could not open {location}"));
+    // The Summary cards on Home and on a flight's page: Summarise is a verb on the node the summary is of, and the card shows
+    // it running until the node answers. The row it then shows is the node's own, from the stream, never this answer's.
+    chrome.Summaries.Track = (run, what) => tracker.Run(run, what);
+    chrome.Summaries.Changed = loop.RequestRedraw;
+    chrome.Summaries.CanSteer = CanSteer;
+    chrome.Summaries.Send = async ask =>
+    {
+        if (clients.For(ask.Node) is not { } to)
+        {
+            return FleetClients.WatchOnly(ask.Node);
+        }
+        try
+        {
+            var envelope = await to.SendAsync(ask.Request(GuiSay.Who), cts.Token);
+            clients.NoteRefusal(ask.Node, envelope);
+            var refused = !envelope.Success ? envelope.Error : envelope.Response is { Ok: false } answer ? answer.Error : null;
+            Console.WriteLine($"pilot-gui: summarise {ask.Scope} on {ask.Node.Name}: {refused ?? "done"}");
+            return refused;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or System.Text.Json.JsonException)
+        {
+            return $"the node could not be reached ({ex.Message})";
+        }
+        catch (TaskCanceledException) when (!cts.IsCancellationRequested)
+        {
+            // The client gives up on a call after 100 s, a summary may take longer: the node keeps it all the same.
+            return "the node did not answer in time, and a summary it made late still shows here";
+        }
+    };
     // The Background tasks page: a job's log followed while it is selected, Cancel a verb on the node.
     chrome.Jobs.CanCommand = true;
     chrome.Jobs.LoadLog = async (node, id, ct) => (await (clients.For(node, command: false) ?? throw new InvalidOperationException($"no connection to {node?.Name ?? "this node"}")).GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
@@ -458,18 +538,35 @@ if (feed is not null && client is not null && clients is not null)
         : throw new InvalidOperationException($"the node did not send {id}'s log");
     chrome.Jobs.Changed = loop.RequestRedraw;
     // Cancel is the selected job's, whose log is followed: its node's.
-    chrome.Jobs.OnCancel = job => tracker.Run(async () =>
+    Action<JobRow> CancelJob(bool force) => job => tracker.Run(async () =>
+    {
+        var what = force ? "force cancel" : "cancel";
+        if (clients.For(chrome.Jobs.FollowingNode) is not { } to)
+        {
+            Console.WriteLine($"pilot-gui: {what} {job.Id}: {FleetClients.WatchOnly(chrome.Jobs.FollowingNode)}");
+            return;
+        }
+        var result = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = force ? [Verbs.ForceArg] : [], Who = GuiSay.Who }, cts.Token);
+        clients.NoteRefusal(chrome.Jobs.FollowingNode, result);
+        Console.WriteLine($"pilot-gui: {what} {job.Id}: {(result.Success && result.Response is { Ok: true } ? "done" : result.Response?.Error ?? result.Error)}");
+        loop.RequestRedraw();
+    }, $"{(force ? "force cancel" : "cancel")} {job.Id}");
+    chrome.Jobs.OnCancel = CancelJob(force: false);
+    chrome.Jobs.OnForceCancel = CancelJob(force: true);
+    chrome.Jobs.OnPause = job => SendJobVerb(job, Verbs.PauseJob, "pause");
+    chrome.Jobs.OnResume = job => SendJobVerb(job, Verbs.ResumeJob, "resume");
+    void SendJobVerb(JobRow job, string verb, string word) => tracker.Run(async () =>
     {
         if (clients.For(chrome.Jobs.FollowingNode) is not { } to)
         {
-            Console.WriteLine($"pilot-gui: cancel {job.Id}: {FleetClients.WatchOnly(chrome.Jobs.FollowingNode)}");
+            Console.WriteLine($"pilot-gui: {word} {job.Id}: {FleetClients.WatchOnly(chrome.Jobs.FollowingNode)}");
             return;
         }
-        var result = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = [], Who = GuiSay.Who }, cts.Token);
+        var result = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.JobTarget(job.Id), Args = [], Who = GuiSay.Who }, cts.Token);
         clients.NoteRefusal(chrome.Jobs.FollowingNode, result);
-        Console.WriteLine($"pilot-gui: cancel {job.Id}: {(result.Success && result.Response is { Ok: true } ? "done" : result.Response?.Error ?? result.Error)}");
+        Console.WriteLine($"pilot-gui: {word} {job.Id}: {(result.Success && result.Response is { Ok: true } ? "done" : result.Response?.Error ?? result.Error)}");
         loop.RequestRedraw();
-    }, $"cancel {job.Id}");
+    }, $"{word} {job.Id}");
     chrome.Jobs.OnOpen = location => OpenAway(location);
     chrome.Jobs.CopyText = text => SetClipboardText(text);
     // Rows on a node this user cannot steer are watch-only: their actions say "Connect to <node> to steer", and a Connect
@@ -600,9 +697,11 @@ FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.
 // A card about a leg opens its worker's transcript from the moment the card was raised.
 chrome.LinkCardTranscripts(() => screen, () => flights ?? new FlightsScreen([], screen.Source, screen.AsOf), jobs: () => jobs ?? new JobsScreen([], screen.Source, screen.AsOf));
 chrome.LinkRepos();
+chrome.LinkPullRequests();
 // The Fleet page's "N waiting on you" opens those sessions on the Sessions page.
 chrome.LinkFleet();
 chrome.Repos.OnOpen = location => OpenAway(location);
+chrome.PullRequests.OnOpen = location => OpenAway(location);
 // The pages, built off the render thread: every node's rows merged, filtered and ordered, the Fleet page's summaries, and
 // the five-second look at who is in the fleet (a file read and the LAN). Each frame built them all, under each feed's lock,
 // so a burst of events (181 archived on DE1, 2026-10-24) kept frames at full cost back to back and the window stalled. Built
@@ -699,6 +798,7 @@ loop.OnRender = () =>
             chrome.Flights.Jobs = pages.JobRows;
             jobs = pages.Jobs;
             repos = pages.Repos;
+            chrome.Summaries.Shelf = pages.Summaries ?? SummaryShelf.Empty;
             machines = pages.Machines;
             fleet = made.Item2;
         }

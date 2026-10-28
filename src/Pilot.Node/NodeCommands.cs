@@ -17,6 +17,9 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
 
     private const int MaxRemembered = 2000;
 
+    /// <summary>How long the command route waits for a command before it answers queued (Waiting); under the CLI's own deadline, so its client hears the node, not its own timeout.</summary>
+    public TimeSpan ReplyDeadline { get; set; } = TimeSpan.FromSeconds(90);
+
     private readonly Lock _seenGate = new Lock();
     private readonly Dictionary<string, Seen> _seen = [];
 
@@ -143,6 +146,13 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         // The watchtower is the lookout on its own, and an assistant while it acts on a message the person sent it in its chat.
         var watchtower = Get<Watchtower>();
         var standing = Standing.Of(command, state, watchtower.Name, watchtower.ActingForPerson);
+        // On autopilot the watchtower sees a flight's work in as the person's assistant would, whoever woke it: the person on
+        // Remote Control talks to it past the node, so its turn never read as theirs and it was refused the merge they asked for
+        // (#344, DE1, 2026-10-28). Its own merge and landing are then run and recorded; an ask's Allow stays the person's.
+        if (standing.Kind == StandingKind.Lookout && Standing.LookoutOnAutopilot.Contains(command.Verb) && Get<RoleModels>().Autopilot)
+        {
+            standing = new Standing(StandingKind.Assistant);
+        }
         if (standing.Refusal(command, state) is { } refused)
         {
             return state.Complete(command, refused);
@@ -213,6 +223,28 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
     {
         if (command.Verb == Verbs.Tell)
         {
+            if (command.Target.StartsWith(Verbs.CardTargetPrefix, StringComparison.Ordinal))
+            {
+                var id = command.Target[Verbs.CardTargetPrefix.Length..];
+                var card = state.Cards().FirstOrDefault(c => c.Id == id);
+                if (card is null)
+                {
+                    return state.Complete(command, $"There is no card {id}");
+                }
+                if (card.State != CardState.Open)
+                {
+                    return state.Complete(command, $"Card {id} is closed");
+                }
+                var words = string.Join(' ', command.Args ?? []).Trim();
+                if (words.Length == 0)
+                {
+                    return state.Complete(command, "tell takes the words to say about the card");
+                }
+                var subject = card.Subject.Split('/');
+                var flight = subject is ["flight", { } code, ..] ? state.Flights().FirstOrDefault(f => f.Code == code) : null;
+                var message = CardContext.Compose(card, Get<NodeOptions>().Machine, flight is null ? null : Briefs.FlightStatus(flight, state.Legs()), words);
+                command = command with { Args = [message] };
+            }
             var (target, why) = Get<Watchtower>().TellTarget();
             if (target is null)
             {
@@ -252,10 +284,26 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return Get<JobRunner>().Cancel(command);
         }
+        if (command.Verb == Verbs.PauseJob)
+        {
+            return Get<JobRunner>().Pause(command);
+        }
+        if (command.Verb == Verbs.ResumeJob)
+        {
+            return Get<JobRunner>().Resume(command);
+        }
         if (command.Verb == Verbs.Digest)
         {
             Get<Digest>().Raise(Get<TimeProvider>().GetUtcNow());
             return state.Complete(command, null);
+        }
+        if (command.Verb == Verbs.Summarise)
+        {
+            return await Get<Summaries>().RunAsync(command, cancellationToken);
+        }
+        if (command.Verb == Verbs.Records)
+        {
+            return Get<Summaries>().Records(command);
         }
         if (command.Verb == Verbs.Stop)
         {
@@ -277,6 +325,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return await Get<NodeUpdater>().RunAsync(command, cancellationToken);
         }
+        if (command.Verb == Verbs.RestartNode)
+        {
+            return Get<NodeSettingsCommands>().RestartNode(command);
+        }
         if (command.Verb == Verbs.Say)
         {
             return await Get<SessionMessenger>().SayAsync(command, cancellationToken);
@@ -292,6 +344,11 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (FlightCommander.Handles(command.Verb))
         {
             return await Get<FlightCommander>().RunAsync(command, cancellationToken);
+        }
+        if (command.Verb == Verbs.RefreshPullRequests)
+        {
+            var row = await Get<PullRequestWatch>().RefreshAsync(cancellationToken);
+            return state.Complete(command, null, made: (row?.PullRequests.Length ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
         if (RepoCommander.Handles(command.Verb))
         {

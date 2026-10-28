@@ -264,8 +264,23 @@ public static class Verbs
     /// </summary>
     public const string Run = "run";
 
-    /// <summary><c>cancel-job job/&lt;id&gt;</c>: stops a running job; its owner is told, as of any job's end.</summary>
+    /// <summary>
+    /// <c>cancel-job job/&lt;id&gt;</c>: stops a running job; its owner is told, as of any job's end. With <see cref="ForceArg"/> it
+    /// kills the job's wrapper and every process the node has seen under it at once, with no grace.
+    /// </summary>
     public const string CancelJob = "cancel-job";
+
+    /// <summary>The arg of <see cref="CancelJob"/> that kills the whole process tree, descendants that outlived the wrapper too.</summary>
+    public const string ForceArg = "force";
+
+    /// <summary>
+    /// <c>pause-job job/&lt;id&gt;</c>: freezes a running job's whole process tree. The job stays <see cref="JobState.Running"/>
+    /// (it keeps its slot), its row says <see cref="JobRow.PausedAt"/>, and its timeout stops counting.
+    /// </summary>
+    public const string PauseJob = "pause-job";
+
+    /// <summary><c>resume-job job/&lt;id&gt;</c>: thaws a paused job's process tree; the time it was paused is added to <see cref="JobRow.PausedFor"/>.</summary>
+    public const string ResumeJob = "resume-job";
 
     /// <summary>What a job target starts with: <c>job/&lt;id&gt;</c>.</summary>
     public const string JobTargetPrefix = "job/";
@@ -320,14 +335,34 @@ public static class Verbs
     public const string Digest = "digest";
 
     /// <summary>
+    /// <c>summarise node</c> or <c>summarise flight/&lt;code&gt;</c>: one Haiku call over what the node holds of the flights in play
+    /// (or of that one flight), kept as the scope's <see cref="SummaryRow"/> with its time, tokens and cost, on the feed for every
+    /// client. Never run by itself: a client asks. The result's <see cref="CommandResult.Made"/> is the summary's markdown.
+    /// </summary>
+    public const string Summarise = "summarise";
+
+    /// <summary>
+    /// <c>records node</c> or <c>records flight/&lt;code&gt;</c>: what the node holds of its flights in play (or of that one flight) as
+    /// the plain records a summary is made from, in the result's <see cref="CommandResult.Made"/>; nothing when it holds none. A read,
+    /// with no call and nothing kept: it is what a node answers when another gathers the fleet's records for <see cref="Summarise"/>.
+    /// </summary>
+    public const string Records = "records";
+
+    /// <summary>
     /// <c>update node [check|install] [--adopt]</c>: whether a newer release of pilot is out (<c>check</c>), or installs it
     /// now and restarts the node; <c>--adopt</c> installs it over a build of one's own.
     /// </summary>
     public const string Update = "update";
 
     /// <summary>
+    /// <c>restart-node node [why…]</c> (<c>pilot node restart</c>): the node starts its successor and stops, as for a setting
+    /// or an update; jobs run detached, are not waited for, and the next node follows them again. The answer says how many carry on.
+    /// </summary>
+    public const string RestartNode = "restart-node";
+
+    /// <summary>
     /// <c>set node &lt;key&gt; [value…]</c>: saves a setting in the node's settings file (no value, or <c>default</c>, takes
-    /// it out); the node restarts to run with it once no job would be cut short. This machine only.
+    /// it out); the node restarts to run with it at once; jobs carry on under the next node. This machine only.
     /// </summary>
     public const string Set = "set";
 
@@ -340,6 +375,9 @@ public static class Verbs
 
     /// <summary><c>sync-repos node</c>: <c>git fetch -p --all</c> and a fast-forward-only pull of each tracked repo's default branch; the result's <see cref="CommandResult.Made"/> is one <see cref="RepoSyncOutcome"/> line per repo.</summary>
     public const string SyncRepos = "sync-repos";
+
+    /// <summary><c>refresh-prs node</c>: reads every open PR of the clones' orgs again now, rather than at the next minute; the result's <see cref="CommandResult.Made"/> is how many it found.</summary>
+    public const string RefreshPullRequests = "refresh-prs";
 
     /// <summary><c>create-issue repo/&lt;path&gt; &lt;title&gt; [body]</c>: a new issue through gh; the result's <see cref="CommandResult.Made"/> is its number.</summary>
     public const string CreateIssue = "create-issue";
@@ -356,12 +394,37 @@ public static class Verbs
     public const string Planned = "planned";
 
     /// <summary>
-    /// <c>overlap flight/&lt;code&gt; &lt;other&gt; &lt;why…&gt;</c>: the planner found the flight to look like part of another.
-    /// A pair not asked before is recorded pending and rings one card (<c>Fold</c> or <c>Plan separately</c>); the flight's
+    /// <c>touches flight/&lt;code&gt; &lt;file…&gt;</c>: the planner's overlap check across nodes. Compares the files the flight's legs will
+    /// change with every other not-landed flight of the repo on this node and on each reachable peer (its pushed branch's changed files
+    /// against its base) and with every open PR, and answers a line per flight or PR: the shared files and fold, connect or parallel
+    /// (<c>unknown</c> for one whose branch is not pushed or whose node could not be reached). Reads only; changes nothing.
+    /// </summary>
+    public const string Touches = "touches";
+
+    /// <summary>
+    /// <c>overlap flight/&lt;code&gt; &lt;other&gt; [file=&lt;path&gt;…] &lt;why…&gt;</c>: the planner found the flight to look like part of another
+    /// (which may fly on another node), and names the files both change (<c>file=</c>, as <c>touches</c> said them).
+    /// A pair not asked before is recorded pending and rings one card naming both flights, the shared files and the choice
+    /// (<c>Fold into</c>, <c>Connect to</c> or <c>Plan in parallel</c>; no fold into a flight of another node); the flight's
     /// <c>plan-leg</c> and <c>planned</c> are refused while it waits, and the planner is told to end its turn, as it is
     /// started again with the answer. A pair answered already returns the answer with no new card.
     /// </summary>
     public const string Overlap = "overlap";
+
+    /// <summary>The prefix of an argument of <see cref="Overlap"/> that names a file both flights change: <c>file=src/Parser.cs</c>.</summary>
+    public const string OverlapFileArg = "file=";
+
+    /// <summary>
+    /// The prefix of an argument of <see cref="Overlap"/> that carries the pick <c>touches</c> made, <c>pick=fold</c> or <c>pick=connect</c>
+    /// (none is connect): the card's title says the choice the planner leans to. A flight of another node is never titled fold.
+    /// </summary>
+    public const string OverlapPickArg = "pick=";
+
+    /// <summary>The pick <c>pick=</c> carries for a flight that is part of the same goal as the other.</summary>
+    public const string OverlapPickFold = "fold";
+
+    /// <summary>The pick <c>pick=</c> carries for a flight that depends on the other, and the default.</summary>
+    public const string OverlapPickConnect = "connect";
 
     /// <summary>
     /// <c>fold flight/&lt;code&gt; &lt;other&gt;</c>: the answer that the flight is part of the other. Records it, closes the
@@ -376,6 +439,13 @@ public static class Verbs
     /// card, stops the waiting planner and starts a fresh one told the answer.
     /// </summary>
     public const string Separate = "separate";
+
+    /// <summary>
+    /// <c>connect-overlap flight/&lt;code&gt; &lt;other&gt;</c>: the answer that the flight waits for the other (which may fly on another
+    /// node). Records it, closes the card, connects the flight (<c>connect</c>: held until the other has landed), stops the waiting
+    /// planner and starts a fresh one told the answer.
+    /// </summary>
+    public const string ConnectOverlap = "connect-overlap";
 
     /// <summary>
     /// <c>stop session/&lt;id&gt;</c>: stops a running background session (<c>claude stop</c>); its row ends. An interactive
@@ -428,6 +498,9 @@ public static class Verbs
     /// <summary>The target naming leg <paramref name="leg"/> of flight <paramref name="code"/>.</summary>
     public static string LegTarget(string code, string leg) => $"{FlightTargetPrefix}{code}/{leg}";
 
+    /// <summary>The words every button that sends leg <paramref name="leg"/> around again carries; the verb stays <see cref="GoAround"/>.</summary>
+    public static string RedoLeg(string leg) => $"Redo leg {leg}";
+
     /// <summary>What a PR target starts with: <c>pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>.</summary>
     public const string PrTargetPrefix = "pr/";
 
@@ -452,6 +525,12 @@ public static class MergeWays
 
     /// <summary>The PR joined its base's merge queue: the flight lands once the queue merges it.</summary>
     public const string Queued = "queued";
+
+    /// <summary>
+    /// The node's own merge found the PR behind its base: it brought it up to date, pushed it and began a fresh review, which offers the
+    /// merge again. Handled, not refused: the PR was not merged and nothing is left to answer.
+    /// </summary>
+    public const string Updated = "updated";
 }
 
 /// <summary>The ways a <c>say</c> reaches a session (<see cref="CommandResult.Way"/>).</summary>

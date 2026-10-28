@@ -249,6 +249,76 @@ public sealed class CliTests : IAsyncLifetime
         (await Pilot(_root, "jobs")).Output.ShouldContain("j1 holds the queue (se1-tia1-parser), held for 5m");
     }
 
+    [Fact]
+    public async Task PilotJobCancelForceSendsCancelJobWithForceAndTheJobEndsForced()
+    {
+        var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        runner.MinFreeMemory = 0;
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        // Not a bare sleep, which the node refuses: the echo makes it a job.
+        await Ok(_root, "run", "--", "sleep 30; echo slept");
+        var id = _node.State.Jobs().Single().Id;
+        for (var i = 0; _node.State.Jobs().Single().State != JobState.Running; i++)
+        {
+            i.ShouldBeLessThan(500, "the job did not start");
+            await Task.Delay(20, Ct);
+        }
+
+        var (exit, output, error) = await Pilot(_root, "job", id, "cancel", "--force");
+
+        exit.ShouldBe(0, $"{output}{error}");
+        JobRow ended;
+        for (var i = 0; (ended = _node.State.Jobs().Single()).EndedAt is null; i++)
+        {
+            i.ShouldBeLessThan(300, "the job did not end");
+            await Task.Delay(100, Ct);
+        }
+        ended.State.ShouldBe(JobState.Cancelled);
+        ended.Error.ShouldNotBeNull().ShouldStartWith("cancelled (forced) by ");
+    }
+
+    [Fact]
+    public async Task PilotJobCancelWithoutForceIsAPlainCancel()
+    {
+        var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        runner.MinFreeMemory = 0;
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await Ok(_root, "run", "--", "sleep 30; echo slept");
+        var id = _node.State.Jobs().Single().Id;
+        for (var i = 0; _node.State.Jobs().Single().State != JobState.Running; i++)
+        {
+            i.ShouldBeLessThan(500, "the job did not start");
+            await Task.Delay(20, Ct);
+        }
+
+        await Ok(_root, "job", id, "cancel");
+        JobRow ended;
+        for (var i = 0; (ended = _node.State.Jobs().Single()).EndedAt is null; i++)
+        {
+            i.ShouldBeLessThan(300, "the job did not end");
+            await Task.Delay(100, Ct);
+        }
+
+        ended.Error.ShouldStartWith("cancelled by ");
+    }
+
+    [Fact]
+    public async Task APausedJobReadsPausedWithItsTimeInJobsAndJob()
+    {
+        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        _node.State.PutJob(new JobRow
+        {
+            Id = "j1", Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = JobState.Running,
+            LogPath = Path.Combine(_root, "j1.log"), Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            PausedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+        });
+
+        var jobs = await Pilot(_root, "jobs");
+        jobs.Output.ShouldContain("j1  paused since ");
+        jobs.Output.ShouldNotContain("running");
+        (await Pilot(_root, "job", "j1")).Output.ShouldContain("j1  paused since ");
+    }
+
     /// <summary>A flight whose first leg is done and whose second, render, has started: its validator is flying.</summary>
     private async Task<string> FlightWithAValidatorFlying(string number)
     {
@@ -296,6 +366,21 @@ public sealed class CliTests : IAsyncLifetime
         // Named, not by the folder, and refused when nothing is waiting.
         var again = await Pilot(plane, "leg", "validate", "go", "--leg", "TIA9/render");
         again.Exit.ShouldBe(1);
+    }
+
+    /// <summary>The node under test is not a pilot-node, so it refuses: the refusal shows <c>node restart</c> reached the node as <see cref="Verbs.RestartNode"/>, why words and all.</summary>
+    [Fact]
+    public async Task NodeRestartIsSentToTheNodeWhichRefusesWhenItIsNotAPilotNode()
+    {
+        var (exit, output, _) = await Pilot(_root, "node", "restart", "the", "settings", "changed");
+
+        exit.ShouldBe(1);
+        output.ShouldContain("is not pilot-node, so it cannot start a successor of itself");
+        _node.State.Cards().ShouldNotContain(c => c.Kind == "restart");
+        (await Pilot(_root, "node")).Exit.ShouldBe(2);
+        var help = await Pilot(_root, "node", "restart", "--help");
+        help.Output.ShouldContain("carry on");
+        help.Output.ShouldContain("--why");
     }
 
     [Fact]
@@ -562,5 +647,50 @@ public sealed class CliTests : IAsyncLifetime
         ReposMarkdown.Build([], all: false).ShouldBe(PilotCommand.Repos([], all: false));
         PilotCommand.Repos(rows, all: false).ShouldContain("PR #7 A|B is *ready*  flight/X1  X1  ready  checks passing  labels pilot node: SE1, bug");
         PilotCommand.Repos(rows, all: false).ShouldNotContain("draft  labels");
+    }
+
+    [Fact]
+    public void PullRequestsPrintGroupedByRepoWithTheirLabelsAsPlainTextAndAsMarkdownTables()
+    {
+        var now = new DateTimeOffset(2026, 10, 28, 12, 0, 0, TimeSpan.Zero);
+        PullRequestRow Pr(string repo, int number, string title, PullRequestKind kind, string label, bool needsMe, int hoursAgo) => new()
+        {
+            Repo = repo, Number = number, Title = title, Url = $"https://github.com/{repo}/pull/{number}", Kind = kind, Label = label, NeedsMe = needsMe,
+            Author = "sebgod", UpdatedAt = now.AddHours(-hoursAgo),
+        };
+        var row = new PullRequestsRow
+        {
+            Orgs = ["SharpAstro", "sebgod"], ReadAt = now.AddMinutes(-2),
+            PullRequests =
+            [
+                Pr("SharpAstro/tianwen", 3, "A|B is *wip*", PullRequestKind.ChecksRunning, "Checks running 4/7", false, 30),
+                Pr("SharpAstro/pilot", 7, "Ready one", PullRequestKind.Ready, "Ready", true, 3) with { Flight = "PIL7", Review = PullRequestReview.Passed, ReviewUrl = "https://github.com/SharpAstro/pilot/pull/7#issuecomment-1" },
+                Pr("sebgod/mercury", 9, "Old", PullRequestKind.Conflicts, "Conflicts", true, 24 * 400),
+            ],
+            Errors = [new PullRequestsError { Org = "sebgod", Message = "gh offline" }],
+        };
+
+        var plain = PullRequestsMarkdown.Plain(row, needsMe: false, now).ReplaceLineEndings("\n");
+        plain.ShouldContain("3 open · 1 ready · 1 checks running · 1 conflicts · read 2m ago");
+        plain.ShouldContain("SharpAstro/pilot  1\n    #7 Ready one  Ready  PIL7  sebgod  review passed  updated 3h ago");
+        plain.ShouldContain("    #3 A|B is *wip*  Checks running 4/7  sebgod  updated 1d ago");
+        plain.ShouldContain("updated 400d ago");
+        plain.ShouldContain("! sebgod: gh offline");
+        // The repo with the PR that most needs the person first: ready, then the conflict, then the running checks.
+        new[] { "SharpAstro/pilot  1", "sebgod/mercury  1", "SharpAstro/tianwen  1" }.Select(l => plain.IndexOf(l, StringComparison.Ordinal)).ShouldBeInOrder();
+
+        var needsMe = PullRequestsMarkdown.Plain(row, needsMe: true, now);
+        needsMe.ShouldNotContain("tianwen");
+        needsMe.ShouldContain("#9 Old");
+
+        var markdown = PullRequestsMarkdown.Build(row, needsMe: false, now);
+        markdown.ShouldContain("## [SharpAstro/pilot](https://github.com/SharpAstro/pilot) (1)");
+        markdown.ShouldContain("| Ready | [#7 Ready one](https://github.com/SharpAstro/pilot/pull/7) | PIL7 | sebgod | [passed](https://github.com/SharpAstro/pilot/pull/7#issuecomment-1) | 3h ago |");
+        markdown.ShouldContain(@"[#3 A\|B is \*wip\*]");
+        markdown.ShouldContain("- sebgod: gh offline");
+
+        PullRequestsMarkdown.Plain(null, needsMe: false, now).ShouldContain("pilot prs --refresh");
+        PullRequestsMarkdown.Plain(new PullRequestsRow { Orgs = ["SharpAstro", "sebgod"], ReadAt = now }, needsMe: false, now).ShouldBe("No open pull requests in SharpAstro, sebgod.\n");
+        PullRequestsMarkdown.Plain(new PullRequestsRow { Orgs = ["SharpAstro"], ReadAt = now, PullRequests = [row.PullRequests[0]] }, needsMe: true, now).ShouldBe("No pull requests need you in SharpAstro.\n");
     }
 }

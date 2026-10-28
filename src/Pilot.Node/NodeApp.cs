@@ -68,6 +68,8 @@ public static class NodeApp
         builder.Services.AddSingleton<PackageReleases>();
         builder.Services.AddSingleton<PackageWatch>();
         builder.Services.AddHostedService(services => services.GetRequiredService<PackageWatch>());
+        // A flight connected to a flight another node flies is held until that node says it landed.
+        builder.Services.AddHostedService(services => new PeerConnectionWatch(services.GetRequiredService<FlightCommander>(), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton(services =>
         {
             var flights = ActivatorUtilities.CreateInstance<FlightCommander>(services);
@@ -93,6 +95,8 @@ public static class NodeApp
             services.GetRequiredService<NodeState>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<Planes>(),
             services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>()) { Machine = options.Machine });
         builder.Services.AddHostedService(services => services.GetRequiredService<RepoWatch>());
+        builder.Services.AddSingleton<PullRequestWatch>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<PullRequestWatch>());
         builder.Services.AddSingleton<RepoSync>();
         builder.Services.AddSingleton<RepoCommander>();
         builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));
@@ -238,6 +242,15 @@ public static class NodeApp
             return checks;
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PrChecks>());
+        builder.Services.AddSingleton<ISummaryModel>(_ => new ClaudeSummaryModel(Path.Combine(options.DataFolder, "summary")));
+        builder.Services.AddSingleton(services => new Summaries(services.GetRequiredService<NodeState>(), services.GetRequiredService<ISummaryModel>(), services.GetRequiredService<TimeProvider>())
+        {
+            Machine = options.Machine,
+            // What a card the call proposes as resolved is checked against.
+            GitHub = services.GetRequiredService<IGitHub>(),
+            // The nodes this user's grants reach, the same a create-flight in maintenance may route to.
+            Fleet = services.GetRequiredService<FlightCommander>().Fleet,
+        });
         builder.Services.AddSingleton<Digest>();
         builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());
         // Releases of pilot itself: by --update-policy, for an installed release only (NodeUpdater).
@@ -248,7 +261,6 @@ public static class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<NodeUpdater>());
         // The Settings page: a saved setting restarts the node to run with it, and the setup checklist's fixes.
         builder.Services.AddSingleton<NodeRestarter>();
-        builder.Services.AddHostedService(services => services.GetRequiredService<NodeRestarter>());
         builder.Services.AddSingleton(services => new NodeSetup(options, Environment.ProcessPath ?? "pilot-node",
             services.GetRequiredService<SessionTrackerOptions>().Profile.Root)
         {
@@ -453,10 +465,11 @@ public static class NodeApp
             Results.Json(ResponseEnvelope<ChatPage>.Ok(chat.Page(after ?? -1)), PilotJsonContext.Default.ResponseEnvelopeChatPage));
 
         // A job's output, its end, for the Background tasks page; the whole is in its log, on this machine.
-        app.MapGet(NodeWire.JobLogPattern, (string id, NodeState state) =>
+        // With its pid, the process tree under it and, when its wrapper has exited while a process it started holds it, that fact.
+        app.MapGet(NodeWire.JobLogPattern, (string id, NodeState state, JobRunner jobs) =>
             state.Jobs().FirstOrDefault(j => j.Id == id) is not { } job
                 ? Results.Json(ResponseEnvelope<JobLog>.Fail($"There is no job {id}", 404), PilotJsonContext.Default.ResponseEnvelopeJobLog, statusCode: 404)
-                : Results.Json(ResponseEnvelope<JobLog>.Ok(JobLogs.Tail(job.LogPath) ?? new JobLog { Lines = [], Length = 0 }), PilotJsonContext.Default.ResponseEnvelopeJobLog));
+                : Results.Json(ResponseEnvelope<JobLog>.Ok(jobs.Describe(job, JobLogs.Tail(job.LogPath) ?? new JobLog { Lines = [], Length = 0 })), PilotJsonContext.Default.ResponseEnvelopeJobLog));
 
         // The new-flight wizard's reads: the repos a flight can be made in, and a repo's open issues (through gh).
         // This machine only: the LAN policy lets no route through it does not name.
@@ -486,7 +499,7 @@ public static class NodeApp
         });
 
         // Read by hand rather than bound, so a body that is not a command gets the envelope like any other refusal.
-        app.MapPost(NodeWire.CommandsRoute, async (HttpContext context, NodeState state, NodeCommands commands, IHostApplicationLifetime lifetime) =>
+        app.MapPost(NodeWire.CommandsRoute, async (HttpContext context, NodeState state, NodeCommands commands, IHostApplicationLifetime lifetime, ILogger<NodeCommands> logger) =>
         {
             CommandRequest? command;
             try
@@ -518,10 +531,30 @@ public static class NodeApp
             // A say takes seconds and runs off the state's lock. It is not cut short when its client goes: a session
             // stopped and never resumed would be worse than a result nobody reads, which the stream carries anyway.
             // A flight verb runs git, off the lock too, and is not cut short either: a half-made worktree helps nobody.
-            var result = await commands.RunAsync(command, lifetime.ApplicationStopping);
-            return result.Ok
-                ? Results.Json(ResponseEnvelope<CommandResult>.Ok(result), PilotJsonContext.Default.ResponseEnvelopeCommandResult)
-                : Results.Json(ResponseEnvelope<CommandResult>.Fail(result.Error ?? "refused", 400, result), PilotJsonContext.Default.ResponseEnvelopeCommandResult, statusCode: 400);
+            // The reply is always an envelope: a handler that throws is a 500 naming the verb and the error (ASP.NET would answer
+            // 500 with no body, which a client could only call a crash), and one that outlasts the reply deadline is answered
+            // queued (Waiting) while it goes on, its outcome following on the stream.
+            var run = commands.RunAsync(command, lifetime.ApplicationStopping);
+            try
+            {
+                var finished = await Task.WhenAny(run, Task.Delay(commands.ReplyDeadline, lifetime.ApplicationStopping));
+                if (finished != run)
+                {
+                    _ = run.ContinueWith(t => logger.LogError(t.Exception, "{Verb} {Target} failed after its reply deadline", command.Verb, command.Target), TaskContinuationOptions.OnlyOnFaulted);
+                    var waiting = state.Complete(command, null, waiting: $"still running after {commands.ReplyDeadline.TotalSeconds:0} s; its outcome follows on the stream, check pilot status");
+                    return Results.Json(ResponseEnvelope<CommandResult>.Ok(waiting), PilotJsonContext.Default.ResponseEnvelopeCommandResult, statusCode: 202);
+                }
+                var result = await run;
+                return result.Ok
+                    ? Results.Json(ResponseEnvelope<CommandResult>.Ok(result), PilotJsonContext.Default.ResponseEnvelopeCommandResult)
+                    : Results.Json(ResponseEnvelope<CommandResult>.Fail(result.Error ?? "refused", 400, result), PilotJsonContext.Default.ResponseEnvelopeCommandResult, statusCode: 400);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "{Verb} {Target} threw", command.Verb, command.Target);
+                var failed = state.Complete(command, $"{command.Verb} failed on the node: {ex.GetType().Name}: {ex.Message}");
+                return Results.Json(ResponseEnvelope<CommandResult>.Fail(failed.Error!, 500, failed), PilotJsonContext.Default.ResponseEnvelopeCommandResult, statusCode: 500);
+            }
         });
     }
 

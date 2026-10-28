@@ -505,16 +505,16 @@ public sealed class RailTests
         var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = SessionsCapture.FontPath };
         chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 1280, 800));
 
-        PilotChrome<RgbaImage>.Pages.Select(p => p.Label).ShouldBe(["Home", "Chat", "Sessions", "Flights", "Repos", "Background tasks", "Fleet", "Settings"]);
-        PilotChrome<RgbaImage>.Pages.Where(p => p.Locked is null).Select(p => p.Page).ShouldBe([PilotPage.Home, PilotPage.Chat, PilotPage.Sessions, PilotPage.Flights, PilotPage.Repos, PilotPage.Jobs, PilotPage.Fleet, PilotPage.Settings]);
+        PilotChrome<RgbaImage>.Pages.Select(p => p.Label).ShouldBe(["Home", "Chat", "Sessions", "Flights", "Repos", "Pull requests", "Background tasks", "Fleet", "Settings"]);
+        PilotChrome<RgbaImage>.Pages.Where(p => p.Locked is null).Select(p => p.Page).ShouldBe([PilotPage.Home, PilotPage.Chat, PilotPage.Sessions, PilotPage.Flights, PilotPage.Repos, PilotPage.PullRequests, PilotPage.Jobs, PilotPage.Fleet, PilotPage.Settings]);
         chrome.Page.ShouldBe(PilotPage.Home);
 
         var regions = new List<ClickableRegion>();
         chrome.Rail.CollectPaintedRegions(regions);
         // One cell per page down the rail's 52 px, every one live.
         var cells = regions.Where(r => r.Result is HitResult.ListItemHit).ToList();
-        cells.Count.ShouldBe(8);
-        cells.Count(r => r.Result is HitResult.ListItemHit { ListId: TabBarRegions.Tabs }).ShouldBe(8);
+        cells.Count.ShouldBe(9);
+        cells.Count(r => r.Result is HitResult.ListItemHit { ListId: TabBarRegions.Tabs }).ShouldBe(9);
         cells.ShouldAllBe(r => r.X + r.Width <= 53f);
     }
 }
@@ -616,7 +616,7 @@ public sealed class CardsPanelTests
             Card("c1", CardBin.ForYou, "TIA2 landed", 1),
             Card("c2", CardBin.Ring, "TIA1's PR #63 is ready to merge", 5, "Merge"),
             Card("c3", CardBin.Handled, "Resumed du1-tia1-gpu after the window reset", 2),
-            Card("c4", CardBin.Ring, "TIA1/parser failed", 3, "Go around"),
+            Card("c4", CardBin.Ring, "TIA1/parser failed", 3, "Redo leg parser"),
         ]);
 
         screen.Open.Select(c => c.Id).ShouldBe(["c4", "c2", "c1"]);

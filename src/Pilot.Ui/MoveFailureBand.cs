@@ -27,7 +27,7 @@ internal static class MoveFailureBand
     /// <paramref name="line"/>'s band, or null when its move did not fail. <paramref name="retry"/> is the page's way of running
     /// the action (null draws no button: a snapshot has no node to ask, or the flight is on a node this window only watches).
     /// </summary>
-    public static Layout.Node? Build<TSurface>(FlightLine line, FlightsPalette p, Action<FlightAction>? retry, string idPrefix = "")
+    public static Layout.Node? Build<TSurface>(FlightLine line, Palette p, Action<FlightAction>? retry, string idPrefix = "")
     {
         if (line.MoveFailure is not { } reason)
         {
@@ -66,7 +66,7 @@ internal static class MoveFailureBand
     /// The bands of the flights in <paramref name="lines"/> whose move failed, at most <see cref="MaxBands"/>, then a line saying how
     /// many more there are and where to read them; nothing when none failed.
     /// </summary>
-    public static IEnumerable<Layout.Node> All<TSurface>(IEnumerable<FlightLine> lines, FlightsPalette p, Func<FlightLine, Action<FlightAction>?> retryOf, string idPrefix = "")
+    public static IEnumerable<Layout.Node> All<TSurface>(IEnumerable<FlightLine> lines, Palette p, Func<FlightLine, Action<FlightAction>?> retryOf, string idPrefix = "")
     {
         var failed = lines.Where(l => l.MoveMark is not null).ToList();
         foreach (var line in failed.Take(MaxBands))
