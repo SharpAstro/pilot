@@ -44,5 +44,17 @@ internal sealed record FlightMarks(string? Status, string? Label, string? Warnin
         return new FlightMarks(status, label, warning, review?.ReviewUrl, pending);
     }
 
-    private static string Short(string sha) => sha.Length > 7 ? sha[..7] : sha;
+    /// <summary>
+    /// Where the flight's PR stands, as its page's header says it: merged once the flight has landed, queued while the node has
+    /// it in the merge queue, draft while GitHub had it as one at the last look, else open. Null without a PR.
+    /// </summary>
+    public static string? PrState(FlightRow flight) =>
+        flight.PullRequest is null && flight.PullRequestUrl is null ? null
+        : flight.State == FlightState.Landed || flight.LandedAt is not null ? "merged"
+        : flight.MergeQueue?.StartsWith("in the merge queue", StringComparison.Ordinal) == true ? "queued"
+        : flight.GitHubDraft == true ? "draft"
+        : "open";
+
+    /// <summary>A commit as the pages name it: its first seven characters.</summary>
+    public static string Short(string sha) => sha.Length > 7 ? sha[..7] : sha;
 }

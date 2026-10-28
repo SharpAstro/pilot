@@ -267,6 +267,11 @@ internal sealed class PilotChrome<TSurface>
             return;
         }
         show?.Invoke(page);
+        if (page != Page)
+        {
+            // Text selected on the flight's page stays on it: leaving the page lets it go.
+            Flights.ClearSelection();
+        }
         Page = page;
         // The chat follows its feed while its page is the one shown, and only then.
         if (page == PilotPage.Chat)
@@ -341,7 +346,8 @@ internal sealed class PilotChrome<TSurface>
             case InputEvent.MouseUp { Button: MouseButton.Back or MouseButton.Forward }:
                 return true;
             default:
-                return false;
+                // The open flight page's text selection (a drag over its text, Ctrl+C, a right-click on it), ahead of the router.
+                return Page == PilotPage.Flights && Flights.HandleSelection(evt);
         }
     }
 

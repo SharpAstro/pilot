@@ -90,10 +90,13 @@ Install one by unzipping it into a folder on `PATH` (`%LOCALAPPDATA%\pilot2\bin`
 `pilot-node autostart install -- <node options>` starts the node at logon with those options (none, once the settings
 file holds them), and now if none answers
 on its socket: a value in the user's `Run` key on Windows (through `conhost --headless`, so no console window), a
-systemd user unit on Linux (`Restart=always`, so a self-update's restart is the unit's own; exit code 3, another node on
-the socket, is not retried). The options are checked by the node's own parser before anything is written.
+systemd user unit on Linux (`Restart=always`; jobs run in scopes of their own, and an update or a settings restart starts no
+successor: the node exits and the unit restarts it itself; exit code 3, another node on the socket, is not retried; a unit
+that differs from the one the node writes fails the setup check, whose fix `Rewrite` writes it again and reloads systemd). The options are checked by the node's own parser before anything is written.
 `autostart show` says what is there, `autostart remove` takes it out. Without it the node runs while something
 started it: by hand, or the GUI, whose node listens on its socket only, never on the LAN.
+
+`tests/linux/systemd-jobs.sh` proves the Linux half on a real systemd (WSL Ubuntu will do): `wsl -d Ubuntu -- bash tests/linux/systemd-jobs.sh` from the plane root installs a node as the user unit, starts a job, restarts the node by a setting and by an update from a folder feed, and checks the job lives on with the same start time, is listed running by the new node, ends with its own exit code, and the unit is active. It takes linux-x64 builds from `$PILOT_LINUX_PUBLISH` (see its header for the three `dotnet publish -p:PublishAot=false` lines; AOT does not cross-compile from Windows), works in a scratch folder under `/tmp`, and puts back a `pilot-node` unit it found (the unit name is fixed, and systemd reads only `~/.config/systemd/user`). It enables user lingering when no user bus answers.
 
 An installed node keeps itself on the latest release by `--update-policy`:
 
@@ -635,7 +638,7 @@ once; a short spike never does. `--job-memory <GB>` (0 by default) is a floor: a
 the order they came, each saying what it needs (median and peak) and the memory free now. A job's log is kept in the node's data folder
 (`jobs/<id>.log`), and its end is served for the GUI (`GET /api/v1/jobs/<id>/log`, a grant's on the LAN).
 
-A job runs **detached** from the node (its own session via `setsid`, or on Windows its own hidden console outside the
+A job runs **detached** from the node (its own session via `setsid`, and under a Linux systemd unit also its own transient user scope, `systemd-run --user --scope`, outside the node unit's cgroup so the unit's default `KillMode=control-group` does not kill it when the node exits; or on Windows its own hidden console outside the
 node's job object, in a named job object of its own, inheriting only the log and NUL, so no pipe the node holds): its
 shell writes stdout and stderr straight to the log and its exit code to `jobs/<id>.log.exit` when it ends. The Running row carries `Pid`, `ProcessStartedAt` and `ExitPath`; the node
 follows the log file for the tail and step, takes the end from the process exit plus the exit file (no file: failed, no
@@ -1094,7 +1097,7 @@ command is refused, naming each node and why it did not qualify (`in maintenance
 Any other setting's change restarts the node to run with it at once, whatever jobs run or wait (a job runs detached
 from the node and the next node follows it again, and the answer says how many carry on: ` (2 jobs carry on under the
 next node)`, as an update's says `; 2 jobs carry on`): the node starts its successor with its own arguments and
-`--after <its pid>`, and stops, as a self-update does, so flights, sessions and the watchtower carry on and clients
+`--after <its pid>`, and stops, as a self-update does (under its systemd unit it only stops, and the unit restarts it), so flights, sessions and the watchtower carry on and clients
 resume their stream. A setting the command line gives is saved but says it does
 not count until the command line stops giving it.
 

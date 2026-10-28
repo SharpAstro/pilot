@@ -327,6 +327,25 @@ public sealed class UpdateTests : IDisposable
     }
 
     [Fact]
+    public async Task UnderSystemdAnInstallStartsNoSuccessorAndStillSaysTheNodeRestartsAndTheJobsCarryOn()
+    {
+        var node = NodeUpdater.Layout.Required[0];
+        Install("2.0.1", Binaries("old"), rid: "test-rid");
+        var feed = Feed("2.0.2", Binaries("new"), rid: "test-rid", layout: NodeUpdater.Layout);
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        PutJob(state, "j1", JobState.Running);
+        var updater = Updater(state, feed, UpdatePolicy.Off, out var successors, out var lifetime, systemd: true);
+
+        var installed = await updater.RunAsync(Command(UpdateArgs.Install), Ct);
+
+        installed.Ok.ShouldBeTrue(installed.Error);
+        installed.Way.ShouldBe("2.0.1 -> 2.0.2; the node restarts; 1 job carries on");
+        Read(node).ShouldBe("new " + node);
+        successors.ShouldBeEmpty();
+        lifetime.Stopped.ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task AnAutoPolicyInstallsWithAJobRunning()
     {
         var node = NodeUpdater.Layout.Required[0];
@@ -394,7 +413,7 @@ public sealed class UpdateTests : IDisposable
         ReleaseInstall.ReadMarker(_install).ShouldNotBeNull().Version.ShouldBe("2.0.2");
     }
 
-    private NodeUpdater Updater(NodeState state, IReleaseFeed feed, UpdatePolicy policy, out List<string> successors, out FakeLifetime lifetime, string version = "2.0.1")
+    private NodeUpdater Updater(NodeState state, IReleaseFeed feed, UpdatePolicy policy, out List<string> successors, out FakeLifetime lifetime, string version = "2.0.1", bool systemd = false)
     {
         var started = new List<string>();
         successors = started;
@@ -404,6 +423,7 @@ public sealed class UpdateTests : IDisposable
         {
             InstallFolder = _install,
             Version = version,
+            RestartedBySystemd = _ => systemd,
             StartSuccessor = path =>
             {
                 started.Add(path);
