@@ -921,7 +921,7 @@ loop.CheckNeedsRedraw = () =>
     return renderer.FontAtlasDirty || router.TooltipNeedsFrame;
 };
 #if PILOT_DEBUG_INSPECTOR
-// The live UI inspector (Debug builds against sibling source only): an agent finds this window, reads its regions
+// The live UI inspector (every Debug build: sibling source or the .Debug twin packages): an agent finds this window, reads its regions
 // and screenshots the real swapchain, which the CPU --capture never shows.
 using var inspector = DebugInspector.Attach(loop, new DebugInspectorOptions
 {

@@ -27,7 +27,8 @@
     <ProjectReference Include="$(SharpAstroRoot)Console.Lib\src\Console.Lib\Console.Lib.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(UseLocalConsoleLib)' != 'true'">
-    <PackageReference Include="Console.Lib" />
+    <PackageReference Include="Console.Lib" Condition="'$(Configuration)' != 'Debug'" />
+    <PackageReference Include="Console.Lib.Debug" Condition="'$(Configuration)' == 'Debug'" />
   </ItemGroup>
 
 </Project>
