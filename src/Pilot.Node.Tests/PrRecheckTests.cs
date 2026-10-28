@@ -465,7 +465,7 @@ public sealed class PrRecheckTests : IDisposable
     }
 
     [Fact]
-    public async Task AFlightsPrBehindItsBaseHasItMergedInAndItsReviewRestarted()
+    public async Task AFlightsPrBehindItsBaseHasItMergedInAndItsPassedReviewCarriedToTheNewHead()
     {
         var flight = await PassedFlightAsync();
         MainMoves();
@@ -476,11 +476,13 @@ public sealed class PrRecheckTests : IDisposable
         var now = _state.Flights().Single();
         PrOrigins.Git(now.Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
         var review = now.Review.ShouldNotBeNull();
-        review.State.ShouldBe(ReviewState.Reviewing);
+        // Only a clean merge of the base moved the head: the pass goes with it.
+        review.State.ShouldBe(ReviewState.Passed);
         var read = review.ReviewedHead.ShouldNotBeNull();
         read.ShouldNotBe(flight.Review!.ReviewedHead);
-        Handled().ShouldBe([$"recheck of widget#7: brought up to date with main, review restarted at {Short(read)}"]);
-        _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
+        read.ShouldBe(PrOrigins.Git(now.Worktree, "rev-parse", "HEAD").Trim());
+        Handled().ShouldBe([$"recheck of widget#7: brought up to date with main, its review carried over to {Short(read)}"]);
+        _github.Labels[7].ShouldBe([PilotMarks.Passed]);
         _github.Merged.ShouldBeEmpty();
     }
 

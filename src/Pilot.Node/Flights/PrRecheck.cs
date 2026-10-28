@@ -333,7 +333,8 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
             if (await legs.BringUpToDateAsync(code, cancellationToken) is not { } why)
             {
                 var onto = (Now(code)?.Base ?? flight.Base).Replace("origin/", "", StringComparison.Ordinal);
-                var restarted = Now(code)?.Review?.ReviewedHead is { Length: > 0 } read ? $"review restarted at {Short8(read)}" : "its review has not started yet";
+                var restarted = Now(code)?.Review is { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } kept } ? $"its review carried over to {Short8(kept)}"
+                    : Now(code)?.Review?.ReviewedHead is { Length: > 0 } read ? $"review restarted at {Short8(read)}" : "its review has not started yet";
                 return await FinishAsync(entry, pr, $"brought up to date with {onto}, {restarted}", LabelOf(code), cancellationToken);
             }
             // A merge that conflicts goes to the watchtower as PrChecks hands it, and the Handled line says so too.

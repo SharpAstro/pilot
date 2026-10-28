@@ -365,6 +365,19 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   The node's own merge (autopilot, the merge armed at green, a recheck) is not refused for it: `RunAsync` answers Ok with way `updated`
   (`MergeWays.Updated`), the update closed the old head's cards, and the callers leave no Ring `AutopilotMergeRefused`, no `MergeDropped`
   and no failed recheck: a Handled line at most. Only a person's Merge gets the *behind its base* error.
+- **The node's merge queue (#395).** The node owns a queue per repo, as first-class rows like jobs (`MergeRow` in `Pilot.Contracts`,
+  kept in `NodeState`, journaled as `mergeAdded`/`mergeChanged`/`mergeRemoved` and carried in `NodeMirror.Merges`; `pilot merges` prints
+  a row per entry: flight, PR, repo, place, head, state, why). A Merge (by hand, armed at green, or autopilot) adds one entry per
+  flight, or gives the one it has the new head and keeps its place; it is no merge on the spot. The node takes a repo's entries in
+  order (`MergeAsync`, `WaitTurnAsync`), one at a time per repo (another repo's queue is its own): `waiting` behind others,
+  `updating` (fetch, the base merged in, a plain push: never a rebase, never a force push), `checks` (waiting for green checks, or for a
+  passed review at its head: `AwaitsReview`, which `LookAtMergesAsync` takes at each look), `merging` (`gh pr merge`, or joining
+  GitHub's own queue where the base has one), `merged` (the flight lands) or `dropped` with its why. **A merge needs a passed review at its
+  head and green checks.** A head moved by a clean base merge alone, with the plane at the head the review read and nothing taken from the
+  remote, keeps its passed review (`BringUpToDateKeepingAsync`: the review's `ReviewedHead` and its status go to the new head, and the PR-ready card
+  is raised for it); any other change is reviewed afresh. A conflict or a failed check takes the entry out with its why and sends it on as
+  before (the watchtower for a conflict); taking a merge back (#342) removes the entry. Only a flight with a merge command under way holds a repo's turn, so an
+  entry left by a node that went away holds nothing.
 - `PushAsync`'s "base is not an ancestor" guard is tested with a `post-merge` hook in the test repo that resets the merge away
   (`APushStillBehindItsBaseAfterTheUpdateIsRefused`): the update claims success, the push is still refused.
 - **The remote's commits are taken in, never refused or dropped.** `TakeRemoteAsync` merges what `origin/<branch>` holds that the

@@ -81,20 +81,21 @@ public sealed partial class LegCommander(
     // A merge holds its repo's turn in the queue until the command is done, whatever came of it.
     private async Task<CommandResult> RunQueuedAsync(CommandRequest command, CancellationToken cancellationToken)
     {
+        var held = _held.Value = new HeldTurn();
         try
         {
             return await RunQueuedCoreAsync(command, cancellationToken);
         }
         finally
         {
-            if (command.Verb == Verbs.Merge && MergeCode(command) is { } code)
+            if (held.Code is { } code)
             {
                 Leave(code);
             }
         }
     }
 
-    private async Task<CommandResult> RunQueuedCoreAsync(CommandRequest command, CancellationToken cancellationToken, bool again = false)
+    private async Task<CommandResult> RunQueuedCoreAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var launches = _launched.Value = [];
         // Asked of the peers before the lock is taken: a slow one holds up this command, not the others.
@@ -248,19 +249,16 @@ public sealed partial class LegCommander(
                 }
                 error = $"{error}; {why}{(!IsConflict(why) ? "" : await ConflictsAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : ": the watchtower is told to resolve it in the plane")}";
             }
-            else if (kept is not null && command.Verb == Verbs.Merge && !again)
-            {
-                // Its review carried over the clean merge of the base: the merge goes on at the new head, through the queue again.
-                return await RunQueuedCoreAsync(command with { Args = [kept, .. (command.Args ?? []).Skip(1)] }, cancellationToken, again: true);
-            }
             else
             {
+                // A clean merge alone kept the passed review (kept is the new head); anything else is reviewed afresh.
+                var reviewed = kept is not null ? "its review carried over" : "it is reviewed afresh";
                 var updated = conflicting
-                    ? $"{error}: it is being brought up to date with its base and reviewed afresh, and the merge is offered again once that passes"
-                    : $"{error}, so the node brought it up to date with its base and it is reviewed afresh; the merge is offered again once that passes";
+                    ? $"{error}: it is being brought up to date with its base ({reviewed}), and the merge is offered again once that stands"
+                    : $"{error}, so the node brought it up to date with its base and {reviewed}; the merge is offered again once that stands";
                 if (command.Verb == Verbs.Merge)
                 {
-                    SetEntry(code, MergeEntryState.Checks, "brought up to date with its base: waits for a fresh review at its head", awaitsReview: true);
+                    SetEntry(code, MergeEntryState.Checks, kept is not null ? "brought up to date with its base, its review carried over: merges once GitHub shows the new head" : "brought up to date with its base: waits for a fresh review at its head", awaitsReview: true, head: kept);
                 }
                 if (!conflicting && command.Who == "node" && command.Verb == Verbs.Merge)
                 {
@@ -1360,7 +1358,21 @@ public sealed partial class LegCommander(
         var (asked, askedHead, askedMethod) = Mergeable(command);
         var by = command.Who != "node" ? MergeBy.Hand : asked.MergeWhenGreen is null ? MergeBy.Autopilot
             : asked.MergeWhenGreen[^1] == ArmedByAutopilot ? MergeBy.Autopilot : MergeBy.Armed;
+        // A flight's entry is its one merge command's: a second ask while one is under way is refused and leaves the entry as it is.
+        bool underWay;
+        lock (_turns)
+        {
+            underWay = _active.Contains(asked.Code);
+        }
+        if (underWay)
+        {
+            throw new FlightException($"{asked.Code} is being merged already: wait for its answer, then ask again");
+        }
         Enqueue(asked, askedHead, askedMethod, by);
+        if (_held.Value is { } holder)
+        {
+            holder.Code = asked.Code;
+        }
         await OffLockAsync(null, () => WaitTurnAsync(asked.Code, asked.Repo, cancellationToken));
         try
         {
@@ -1435,6 +1447,7 @@ public sealed partial class LegCommander(
         {
             Record(flight.Code, f => f with { MergeWhenGreen = null });
         }
+        SetEntry(flight.Code, MergeEntryState.Merging, $"merging #{pr.Number} ({method})");
         // The merge itself is the longest ask: nothing of the flight is held over it, and what follows reads the flight afresh.
         return await OffLockAsync(null, () => github.MergeAsync(flight.RepoPath, pr.Number, pr.Head, method, cancellationToken))
             ? (false, QueuedLine(flight.Code), MergeWays.Queued)

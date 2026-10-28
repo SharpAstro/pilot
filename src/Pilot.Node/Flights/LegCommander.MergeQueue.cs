@@ -19,18 +19,14 @@ public sealed partial class LegCommander
 
     private static TaskCompletionSource NewTurn() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    /// <summary>The flight whose merge <paramref name="command"/> asks for, or null when its target is no flight.</summary>
-    private string? MergeCode(CommandRequest command)
+    // The turn a running command took (the flight it enqueued), set by MergeAsync and given back when the command ends; a command
+    // refused before it enqueued holds none, so it never gives back another command's.
+    private sealed class HeldTurn
     {
-        try
-        {
-            return FlightOf(command.Target).Code;
-        }
-        catch (FlightException)
-        {
-            return null;
-        }
+        public string? Code { get; set; }
     }
+
+    private readonly AsyncLocal<HeldTurn?> _held = new();
 
     private void Signal()
     {
@@ -142,6 +138,11 @@ public sealed partial class LegCommander
                     DropMerge(entry.Flight, "its review asks for changes");
                     break;
                 case { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } reviewed } when flight.PullRequest is not null:
+                    // GitHub still shows the head before the update: the entry waits for it to show the head the review carried to.
+                    if (await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken) is not { } shown || !shown.Head.StartsWith(reviewed, StringComparison.OrdinalIgnoreCase))
+                    {
+                        break;
+                    }
                     await RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [reviewed, entry.Method], Who = "node" }, cancellationToken);
                     break;
             }

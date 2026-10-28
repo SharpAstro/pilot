@@ -561,12 +561,13 @@ public sealed class ReviewTests1 : ReviewTestsBase
         Open().Where(c => c.Kind == PrChecks.AutopilotMergeRefused).ShouldHaveSingleItem().Subject.ShouldBe($"flight/{flight.Code}");
         Open().ShouldContain(c => c.Id == ready.Id);
 
-        // Main moved: the flight is rebased and reviewed afresh, and the refused merge's card, with its stale head, goes with its PR-ready card.
+        // Main moved: the base is merged into the flight (a clean merge alone keeps its pass), and the refused merge's card, with its
+        // stale head, goes with the old PR-ready card, which is raised again for the new head.
         _github.Pr = _github.Pr! with { Mergeable = "CONFLICTING" };
         await checks.LookAsync(Ct);
 
-        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
-        Open().ShouldNotContain(c => c.Kind == LegCommander.PrReady || c.Kind == PrChecks.AutopilotMergeRefused);
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        Open().ShouldNotContain(c => c.Id == ready.Id || c.Kind == PrChecks.AutopilotMergeRefused);
     }
 
     [Fact]
@@ -584,18 +585,19 @@ public sealed class ReviewTests1 : ReviewTestsBase
         _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: false, RemovedAt: DateTimeOffset.UtcNow.AddSeconds(-5), RemovedReason: "merge_conflict");
         await checks.LookAsync(Ct);
 
-        Open().ShouldNotContain(c => c.Choices.Any(ch => ch.Verb == Verbs.Merge));
-        // The Handled card is the rebase's success: a failed rebase rings with a card of the same words in a different bin and kind.
+        // The Handled card is the update's success: a failed update rings with a card of the same words in a different bin and kind.
         var handled = _state.Cards().Where(c => c.Kind == PrChecks.QueueDropped && c.Subject == "flight/TIA21").ShouldHaveSingleItem();
         handled.Bin.ShouldBe(CardBin.Handled);
         _state.Cards().ShouldNotContain(c => c.Kind == "pr-conflicts");
-        // Rebased onto its base and reviewed afresh: the old pass is of a head that is gone, and a review leg was started.
+        // The base is merged in: only a clean merge moved the head, so the pass goes with it, no review leg starts, and the Merge on
+        // the PR-ready card offers the new head.
         Git(F("TIA21").Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
-        F("TIA21").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
-        _workers.Started.Count.ShouldBe(startedBefore + 1);
-        // Once a removal, as for any other: the rebase count, not only the card count, holds still.
+        F("TIA21").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        Open().Single(c => c.Kind == LegCommander.PrReady).Choices.Single(ch => ch.Verb == Verbs.Merge).Args[0].ShouldBe(Git(F("TIA21").Worktree, "rev-parse", "HEAD").Trim());
+        _workers.Started.Count.ShouldBe(startedBefore);
+        // Once a removal, as for any other: the update count, not only the card count, holds still.
         await checks.LookAsync(Ct);
-        _workers.Started.Count.ShouldBe(startedBefore + 1);
+        _workers.Started.Count.ShouldBe(startedBefore);
         _state.Cards().Count(c => c.Kind == PrChecks.QueueDropped && c.Subject == "flight/TIA21").ShouldBe(1);
     }
 
@@ -925,7 +927,8 @@ public sealed class ReviewTests2 : ReviewTestsBase
         F("TIA16").MergeWhenGreen.ShouldBeNull();
         _github.AutoMergeDisarmed.ShouldBe([pr.Number]);
         _state.Cards().Where(c => c.Kind == PrChecks.MergeDropped || c.Kind == LegCommander.MergeFailed).ShouldBeEmpty();
-        F("TIA16").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        // A clean merge of the base alone: its pass goes with the head.
+        F("TIA16").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
         _github.Merged.ShouldBeEmpty();
     }
 
@@ -1387,7 +1390,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
-    public async Task AMergeOnAPrBehindMainUpdatesItAndStartsAReviewWithoutCallingMerge()
+    public async Task AMergeOnAPrBehindMainUpdatesItKeepsItsPassedReviewAndDoesNotCallMerge()
     {
         _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
         var (flight, _) = await Passed("14");
@@ -1404,7 +1407,11 @@ public sealed class ReviewTests3 : ReviewTestsBase
         newHead.ShouldNotBe(head);
         Git(flight.Worktree, "merge-base", "--is-ancestor", "origin/main", newHead);
         Git(flight.Worktree, "ls-remote", "origin", $"flight/{flight.Code.ToLowerInvariant()}").ShouldStartWith(newHead);
-        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        // A clean merge of the base alone: the pass goes to the new head, and the merge waits in the queue for GitHub to show it.
+        var review = F(flight.Code).Review.ShouldNotBeNull();
+        review.State.ShouldBe(ReviewState.Passed);
+        review.ReviewedHead.ShouldBe(newHead.Trim());
+        _state.Merges().ShouldHaveSingleItem().State.ShouldBe(MergeEntryState.Checks);
     }
 
     [Fact]
@@ -1426,10 +1433,9 @@ public sealed class ReviewTests3 : ReviewTestsBase
         MainMoves();
         (await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8])).Error.ShouldNotBeNull().ShouldContain("is behind its base");
 
-        // The update is pushed and reviewed afresh; the review passes on the new head, and the merge is offered again.
+        // The update is pushed and its pass goes to the new head; GitHub shows it, and the merge is offered again.
         var newHead = Git(flight.Worktree, "rev-parse", "HEAD");
         _github.Pr = _github.Pr! with { Head = newHead };
-        (await Run(Verbs.Review, $"flight/{flight.Code}", Reviewer(flight.Code), "pass", "fine")).Ok.ShouldBeTrue();
         (await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", newHead[..8])).Error.ShouldBeNull();
 
         // Its checks still run on the new head: armed to merge when they pass, not sent to the queue.
@@ -1529,7 +1535,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
 
         _github.Merged.ShouldBeEmpty();
         Git(flight.Worktree, "rev-parse", "HEAD").ShouldNotBe(head);
-        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrChecks.AutopilotMergeRefused || c.Kind == PrChecks.MergeDropped);
     }
 
@@ -1550,7 +1556,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
 
         _github.Merged.ShouldBeEmpty();
         Git(flight.Worktree, "rev-parse", "HEAD").ShouldNotBe(head);
-        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
         F(flight.Code).MergeWhenGreen.ShouldBeNull();
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrChecks.AutopilotMergeRefused || c.Kind == PrChecks.MergeDropped);
     }
