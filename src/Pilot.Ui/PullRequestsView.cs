@@ -37,7 +37,7 @@ internal sealed record PullRequestsScreen(PullRequestsRow? Row, string Source, D
     public string Counts => Row?.Summary() ?? "";
 
     /// <summary>The orgs read, as the empty line names them: <c>SharpAstro, sebgod</c>.</summary>
-    public string Orgs => Row is { Orgs.Length: > 0 } row ? string.Join(", ", row.Orgs) : "any org the clones come from";
+    public string Orgs => Row is { Orgs.Length: > 0 } row ? string.Join(", ", row.Orgs) : "any repo pilot works in";
 
     /// <summary>The source line: where the rows come from and when GitHub was last read, and that it is old once it is.</summary>
     public string SourceText => Row is { } row
@@ -46,7 +46,7 @@ internal sealed record PullRequestsScreen(PullRequestsRow? Row, string Source, D
 }
 
 /// <summary>
-/// The Pull requests page: every open PR of every org the node's clones come from, grouped by repo in the order of the PR that
+/// The Pull requests page: every open PR of the repos pilot works in, grouped by repo in the order of the PR that
 /// most needs the person; a group folds on a click anywhere on its header; a row is a state chip, <c>#123 Title</c> as a link,
 /// the flight's code, the author, pilot's review and when it was updated, in columns that line up across the groups, with
 /// the column for the row's actions at the right. The pills (All, Mine, Flights, Needs me) and the repo search narrow the
@@ -592,6 +592,10 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         }
         if (screen.Row is { } row)
         {
+            if (row.Note is { } note)
+            {
+                lines.Add(Layout.Builder.Text(note, 12f, P.Held).RowH(20f).WithTooltip(note));
+            }
             lines.AddRange(row.Errors.Select(e => Layout.Builder.Text($"{e.Org}: {e.Message.ReplaceLineEndings(" ")}", 12f, P.Held).RowH(20f)
                 .WithTooltip($"{e.Org} could not be read, so its PRs are the ones read before, or missing: {e.Message}")));
         }

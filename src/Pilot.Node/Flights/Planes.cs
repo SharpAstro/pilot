@@ -506,4 +506,10 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
 }
 
 /// <summary>A flight command that could not be done, with why: the command's error.</summary>
-public sealed class FlightException(string message) : Exception(message);
+public class FlightException(string message) : Exception(message);
+
+/// <summary>GitHub's rate limit stopped a call: <see cref="ResetAt"/> is when its points come back, null when gh could not say.</summary>
+public sealed class RateLimitedException(string message, DateTimeOffset? resetAt) : FlightException(message)
+{
+    public DateTimeOffset? ResetAt { get; } = resetAt;
+}

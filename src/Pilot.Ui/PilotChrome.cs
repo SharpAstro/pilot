@@ -257,7 +257,7 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>The Repos page: every tracked repo with its worktrees and PRs.</summary>
     public ReposView<TSurface> Repos { get; }
 
-    /// <summary>The Pull requests page: every open PR of the clones' orgs, grouped by repo.</summary>
+    /// <summary>The Pull requests page: every open PR of the repos pilot works in, grouped by repo.</summary>
     public PullRequestsView<TSurface> PullRequests { get; }
 
     /// <summary>The Background tasks page: the node's jobs.</summary>

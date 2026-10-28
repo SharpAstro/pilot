@@ -4,7 +4,7 @@ using Pilot.Contracts;
 namespace Pilot.Commands;
 
 /// <summary>
-/// <c>pilot prs</c>: every open PR of the clones' orgs, grouped by repo in <see cref="PullRequestsRow.Groups"/>' order, each with
+/// <c>pilot prs</c>: every open PR of the repos pilot works in, grouped by repo in <see cref="PullRequestsRow.Groups"/>' order, each with
 /// the label the node's merge-state reader gave it. As plain text for the terminal and as Markdown (tables) for
 /// <c>--output-format markdown</c> and <c>rich</c>, the two carrying the same facts.
 /// </summary>
@@ -17,7 +17,7 @@ internal static class PullRequestsMarkdown
         {
             return "The node has not read the pull requests yet; pilot prs --refresh asks it to.\n";
         }
-        var orgs = row.Orgs.Length > 0 ? string.Join(", ", row.Orgs) : "any org the clones come from";
+        var orgs = row.Orgs.Length > 0 ? string.Join(", ", row.Orgs) : "any repo pilot works in";
         return needsMe ? $"No pull requests need you in {orgs}.\n" : $"No open pull requests in {orgs}.\n";
     }
 
@@ -29,8 +29,14 @@ internal static class PullRequestsMarkdown
 
     private static string Review(PullRequestRow pr) => pr.Review is { } review ? $"review {review}" : "";
 
+    // The row's note (the read is rate-limited), then a line for each org that could not be read.
     private static string Errors(PullRequestsRow row, Func<string, string> text) =>
-        string.Concat(row.Errors.Select(e => $"! {text($"{e.Org}: {e.Message.ReplaceLineEndings(" ")}")}\n"));
+        (row.Note is { } note ? $"! {text(note)}\n" : "")
+        + string.Concat(row.Errors.Select(e => $"! {text($"{e.Org}: {e.Message.ReplaceLineEndings(" ")}")}\n"));
+
+    private static string Bullets(PullRequestsRow row) =>
+        (row.Note is { } note ? $"- {Markdown.Text(note)}\n" : "")
+        + string.Concat(row.Errors.Select(e => $"- {Markdown.Text($"{e.Org}: {e.Message.ReplaceLineEndings(" ")}")}\n"));
 
     /// <summary>The plain list: a line a repo (its name and count), its PRs indented under it with the label, flight, author, review and age.</summary>
     internal static string Plain(PullRequestsRow? row, bool needsMe, DateTimeOffset now)
@@ -61,7 +67,7 @@ internal static class PullRequestsMarkdown
         var groups = row?.Groups(needsMe) ?? [];
         if (row is null || groups.Length == 0)
         {
-            return Empty(row, needsMe) + (row is null ? "" : string.Concat(row.Errors.Select(e => $"- {Markdown.Text($"{e.Org}: {e.Message.ReplaceLineEndings(" ")}")}\n")));
+            return Empty(row, needsMe) + (row is null ? "" : Bullets(row));
         }
         var text = new StringBuilder();
         text.AppendLine("# pilot prs").AppendLine();
@@ -80,10 +86,7 @@ internal static class PullRequestsMarkdown
             }
             text.AppendLine();
         }
-        foreach (var e in row.Errors)
-        {
-            text.AppendLine($"- {Markdown.Text($"{e.Org}: {e.Message.ReplaceLineEndings(" ")}")}");
-        }
+        text.Append(Bullets(row));
         return text.ToString();
     }
 }

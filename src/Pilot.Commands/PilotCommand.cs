@@ -284,7 +284,7 @@ public static class PilotCommand
         // prs
         var needsMe = new Option<bool>("--needs-me") { Description = "Only the PRs that wait on you: ready, changes requested or conflicts" };
         var freshPrs = new Option<bool>("--refresh") { Description = "Ask the node to read GitHub now, not wait for its minute" };
-        var prsCommand = Action(new Command("prs", "Every open PR of the clones' orgs, grouped by repo, with GitHub's merge state, as the node last read them") { Options = { needsMe, freshPrs } },
+        var prsCommand = Action(new Command("prs", "Every open PR of the repos pilot works in, grouped by repo, with GitHub's merge state, as the node last read them") { Options = { needsMe, freshPrs } },
             async (p, client, ct) =>
             {
                 if (p.GetValue(freshPrs))

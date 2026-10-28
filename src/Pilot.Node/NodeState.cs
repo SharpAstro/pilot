@@ -642,7 +642,7 @@ public sealed class NodeState
         }
     }
 
-    /// <summary>Every open PR of the clones' orgs as last read; null before any.</summary>
+    /// <summary>Every open PR of the repos pilot works in as last read; null before any.</summary>
     public PullRequestsRow? PullRequests()
     {
         lock (_gate)
@@ -676,7 +676,7 @@ public sealed class NodeState
     {
         lock (_gate)
         {
-            if (_pullRequests is { } held && held.Orgs.SequenceEqual(read.Orgs) && held.Errors.SequenceEqual(read.Errors)
+            if (_pullRequests is { } held && held.Orgs.SequenceEqual(read.Orgs) && held.Errors.SequenceEqual(read.Errors) && held.Note == read.Note
                 && held.PullRequests.SequenceEqual(read.PullRequests) && read.ReadAt - held.ReadAt < TimeSpan.FromMinutes(2))
             {
                 return;

@@ -118,33 +118,53 @@ internal sealed class FakeGitHub : IGitHub
                 ? (int[])[.. prs.Where(p => Labels.TryGetValue(p.Number, out var set) && set.Contains(label)).Select(p => p.Number)]
                 : []);
 
-    /// <summary>Each org's open PRs as the search reads them, by owner; an org with none listed has none.</summary>
-    public Dictionary<string, PullRequestRow[]> OrgPrs { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Every open PR GitHub holds, as the search reads them: a search answers those of the repos it names.</summary>
+    public List<PullRequestRow> PullRequestsOnGitHub { get; } = [];
 
-    /// <summary>Owners whose search fails, as a gh that could not reach GitHub.</summary>
-    public HashSet<string> OrgPrsFail { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Repos whose search fails, as a gh that could not reach GitHub: the whole batch that names one fails.</summary>
+    public HashSet<string> SearchFail { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The owners searched, in order.</summary>
-    public List<string> OrgSearches { get; } = [];
+    /// <summary>The repos of each search, in order.</summary>
+    public List<string[]> Searches { get; } = [];
+
+    /// <summary>The GraphQL points each search costs, as <c>rateLimit { cost }</c> says.</summary>
+    public int SearchCost { get; set; } = 3;
+
+    /// <summary>The points GitHub says are left after a search; null when it says nothing.</summary>
+    public int? SearchRemaining { get; set; } = 4900;
+
+    /// <summary>When on, each search is stopped by GitHub's rate limit, which comes back at the time given (null: gh cannot say).</summary>
+    public (bool On, DateTimeOffset? ResetAt) RateLimited { get; set; }
 
     private TaskCompletionSource? _searchHold;
 
-    /// <summary>Makes each org search wait for the returned source to be set, so a refresh can be held mid-way.</summary>
+    /// <summary>Makes each search wait for the returned source to be set, so a refresh can be held mid-way.</summary>
     public TaskCompletionSource HoldSearches() => _searchHold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public async Task<PullRequestRow[]> OpenPullRequestsOfAsync(string owner, CancellationToken cancellationToken)
+    public async Task<PullRequestSearch.Read> OpenPullRequestsInAsync(string[] repos, CancellationToken cancellationToken)
     {
-        lock (OrgSearches)
+        lock (Searches)
         {
-            OrgSearches.Add(owner);
+            Searches.Add(repos);
         }
         if (_searchHold is { } hold)
         {
             await hold.Task.WaitAsync(cancellationToken);
         }
-        return OrgPrsFail.Contains(owner)
-            ? throw new FlightException($"gh could not search {owner}'s PRs: offline")
-            : OrgPrs.TryGetValue(owner, out var prs) ? prs : [];
+        if (RateLimited.On)
+        {
+            throw new RateLimitedException("gh could not search the PRs: API rate limit exceeded", RateLimited.ResetAt);
+        }
+        if (repos.Any(SearchFail.Contains))
+        {
+            throw new FlightException($"gh could not search the PRs of {repos.Length} repos: offline");
+        }
+        PullRequestRow[] found;
+        lock (PullRequestsOnGitHub)
+        {
+            found = [.. PullRequestsOnGitHub.Where(p => repos.Contains(p.Repo, StringComparer.OrdinalIgnoreCase))];
+        }
+        return new PullRequestSearch.Read(found, SearchCost, SearchRemaining, null);
     }
 
     /// <summary>Every issue created, as (repo path, title, body).</summary>

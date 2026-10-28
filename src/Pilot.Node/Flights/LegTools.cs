@@ -385,11 +385,13 @@ public interface IGitHub
     Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Every open PR of the org (or user) <paramref name="owner"/>, from one paged GraphQL search for the whole of it, each with its
-    /// merge state read (<see cref="PullRequestSearch"/>); the flights are not known to it.
+    /// The open PRs of <paramref name="repos"/> (<c>owner/name</c>), from one paged GraphQL search for all of them, each with its
+    /// merge state read (<see cref="PullRequestSearch"/>), and what the read cost; the flights are not known to it. The repos must
+    /// make a query within GitHub's limit (<see cref="PullRequestSearch.Batches"/>).
     /// </summary>
+    /// <exception cref="RateLimitedException">GitHub's rate limit stopped it.</exception>
     /// <exception cref="FlightException">gh could not search.</exception>
-    Task<PullRequestRow[]> OpenPullRequestsOfAsync(string owner, CancellationToken cancellationToken);
+    Task<PullRequestSearch.Read> OpenPullRequestsInAsync(string[] repos, CancellationToken cancellationToken);
 
     /// <summary>Opens an issue in the repo at <paramref name="repoPath"/>; returns it as listed.</summary>
     /// <exception cref="FlightException">gh could not create it.</exception>
@@ -1157,13 +1159,16 @@ public sealed class GhCli : IGitHub
     /// <summary>A search that runs to more pages than this is cut short: 40 pages are 1200 open PRs.</summary>
     private const int MostPages = 40;
 
-    public async Task<PullRequestRow[]> OpenPullRequestsOfAsync(string owner, CancellationToken cancellationToken)
+    public async Task<PullRequestSearch.Read> OpenPullRequestsInAsync(string[] repos, CancellationToken cancellationToken)
     {
         var prs = new List<PullRequestRow>();
+        var cost = 0;
+        int? remaining = null;
+        DateTimeOffset? resetAt = null;
         string? after = null;
         for (var page = 0; page < MostPages; page++)
         {
-            List<string> args = ["api", "graphql", "-f", $"query={PullRequestSearch.Query}", "-f", $"q={PullRequestSearch.QueryFor(owner)}"];
+            List<string> args = ["api", "graphql", "-f", $"query={PullRequestSearch.Query}", "-f", $"q={PullRequestSearch.QueryFor(repos)}"];
             if (after is not null)
             {
                 args.AddRange(["-f", $"after={after}"]);
@@ -1172,17 +1177,46 @@ public sealed class GhCli : IGitHub
             var (exit, output, error) = await RunAsync(args, AppContext.BaseDirectory, cancellationToken);
             if (exit != 0)
             {
-                throw new FlightException($"gh could not search {owner}'s PRs: {(error.Trim().Length > 0 ? error : output).Trim()}");
+                var said = (error.Trim().Length > 0 ? error : output).Trim();
+                var message = $"gh could not search the PRs of {repos.Length} repos: {said}";
+                throw said.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
+                    ? new RateLimitedException(message, await GraphQlResetAsync(cancellationToken))
+                    : new FlightException(message);
             }
-            var read = PullRequestSearch.Parse(output);
+            PullRequestSearch.Page read;
+            try
+            {
+                read = PullRequestSearch.Parse(output);
+            }
+            catch (RateLimitedException ex)
+            {
+                throw new RateLimitedException(ex.Message, await GraphQlResetAsync(cancellationToken));
+            }
             prs.AddRange(read.PullRequests);
+            cost += read.Cost;
+            remaining = read.Remaining ?? remaining;
+            resetAt = read.ResetAt ?? resetAt;
             if (read.Next is not { } next)
             {
                 break;
             }
             after = next;
         }
-        return [.. prs];
+        return new PullRequestSearch.Read([.. prs], cost, remaining, resetAt);
+    }
+
+    // When GraphQL's points come back: the rate-limit endpoint, which costs no point; null when it cannot say.
+    private async Task<DateTimeOffset?> GraphQlResetAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var (exit, output, _) = await RunAsync(["api", "rate_limit", "--jq", ".resources.graphql.reset"], AppContext.BaseDirectory, cancellationToken);
+            return exit == 0 && long.TryParse(output.Trim(), out var epoch) ? DateTimeOffset.FromUnixTimeSeconds(epoch) : null;
+        }
+        catch (Exception ex) when (ex is FlightException or IOException or System.ComponentModel.Win32Exception)
+        {
+            return null;
+        }
     }
 
     public async Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken)

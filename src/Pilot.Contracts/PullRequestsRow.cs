@@ -72,7 +72,7 @@ public static class PullRequestReview
     public const string Reviewing = "reviewing";
 }
 
-/// <summary>An open PR of one of the clones' orgs, with GitHub's merge state read by the node's one reader, the flight card's.</summary>
+/// <summary>An open PR of one of the repos pilot works in, with GitHub's merge state read by the node's one reader, the flight card's.</summary>
 public sealed record PullRequestRow
 {
     /// <summary>The repo, <c>owner/name</c>, as GitHub spells it.</summary>
@@ -142,20 +142,32 @@ public sealed record PullRequestsError
 public sealed record PullRequestGroup(string Repo, PullRequestRow[] PullRequests);
 
 /// <summary>
-/// Every open PR of every org the node's clones come from, as the node last read them with one GitHub search per org: a
-/// node row on the stream, so every client shows the same thing. A node on the LAN has its own, and
-/// <see cref="Merge"/> makes one of several.
+/// Every open PR of the repos pilot works in (the clones with a GitHub origin, and any repo a flight or PR review of the node has
+/// been in), as the node last read them with a few batched GitHub searches: a node row on the stream, so every client shows the
+/// same thing. A node on the LAN has its own, and <see cref="Merge"/> makes one of several.
 /// </summary>
 public sealed record PullRequestsRow
 {
-    /// <summary>The orgs it searched: the distinct owners of the clones' origins.</summary>
+    /// <summary>The orgs those repos are in: their distinct owners.</summary>
     public string[] Orgs { get; init => field = value ?? []; } = [];
 
     /// <summary>The PRs, in no particular order: see <see cref="Groups"/>.</summary>
     public PullRequestRow[] PullRequests { get; init => field = value ?? []; } = [];
 
-    /// <summary>The orgs it could not read, a note each; their PRs are missing above.</summary>
+    /// <summary>The orgs it could not read, a note each (the orgs of a batch that failed); what was read of them before stands above.</summary>
     public PullRequestsError[] Errors { get; init => field = value ?? []; } = [];
+
+    /// <summary>What this read cost in GitHub GraphQL points, over all its batches and pages; 0 when it asked nothing.</summary>
+    public int Cost { get; init; }
+
+    /// <summary>The GraphQL points GitHub says are left of the hour's after this read; null when it did not say.</summary>
+    public int? RateRemaining { get; init; }
+
+    /// <summary>
+    /// A word about the whole read: <c>Rate-limited by GitHub until 14:05; reading again then</c> when GitHub's limit stopped it,
+    /// the PRs shown being those last read. Null when there is nothing to say.
+    /// </summary>
+    public string? Note { get; init; }
 
     /// <summary>When the node read it: how stale it is.</summary>
     public required DateTimeOffset ReadAt { get; init; }
@@ -246,6 +258,9 @@ public sealed record PullRequestsRow
             Orgs = [.. read.SelectMany(r => r.Orgs).Distinct(StringComparer.OrdinalIgnoreCase)],
             PullRequests = [.. prs.Values],
             Errors = [.. read.SelectMany(r => r.Errors).Distinct()],
+            Cost = read.Sum(r => r.Cost),
+            RateRemaining = read.Select(r => r.RateRemaining).OfType<int>().Cast<int?>().Min(),
+            Note = string.Join(" ", read.Select(r => r.Note).OfType<string>().Distinct()) is { Length: > 0 } notes ? notes : null,
             ReadAt = read[^1].ReadAt,
             Viewer = read.Select(r => r.Viewer).FirstOrDefault(v => v is not null),
         };

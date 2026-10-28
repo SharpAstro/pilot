@@ -38,7 +38,7 @@ public sealed class NodeMirror
     /// <summary>The node's machine as last sampled; null before any, and from an older node.</summary>
     public MachineRow? Machine { get; private set; }
 
-    /// <summary>Every open PR of the clones' orgs as the node last read them; null before any.</summary>
+    /// <summary>Every open PR of the repos pilot works in as the node last read them; null before any.</summary>
     public PullRequestsRow? PullRequests { get; private set; }
 
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
