@@ -89,6 +89,87 @@ public sealed class CliTests : IAsyncLifetime
         exit.ShouldBe(0, $"pilot {string.Join(' ', args)}: {output}{error}");
     }
 
+    private async Task<(int Exit, string Output)> Logs(string folder, params string[] args)
+    {
+        var before = RollingLog.FolderOverride;
+        RollingLog.FolderOverride = folder;
+        try
+        {
+            var (exit, output, _) = await Pilot(_root, ["logs", .. args]);
+            return (exit, output);
+        }
+        finally
+        {
+            RollingLog.FolderOverride = before;
+        }
+    }
+
+    private static string LogFolder(string root, string name = "logs") => Path.Combine(root, name);
+
+    private static void Seed(string folder, string file, int from, int count)
+    {
+        Directory.CreateDirectory(folder);
+        File.WriteAllLines(Path.Combine(folder, file), Enumerable.Range(from, count).Select(i => $"2026-10-28 10:00:00.000 line {i}"));
+    }
+
+    [Fact]
+    public async Task PilotLogsPrintsBothLogsUnderTheirPathsAndOneWhenNamed()
+    {
+        var folder = LogFolder(_root);
+        Seed(folder, "gui.log", 1, 3);
+        Seed(folder, "node.log", 1, 2);
+
+        var (exit, both) = await Logs(folder);
+        exit.ShouldBe(0);
+        both.ShouldContain($"== gui: {Path.Combine(folder, "gui.log")} ==");
+        both.ShouldContain($"== node: {Path.Combine(folder, "node.log")} ==");
+        both.ShouldContain("line 3");
+
+        var (_, gui) = await Logs(folder, "gui");
+        gui.ShouldContain("== gui:");
+        gui.ShouldNotContain("== node:");
+        var (_, node) = await Logs(folder, "node");
+        node.ShouldContain("== node:");
+        node.ShouldNotContain("== gui:");
+    }
+
+    [Fact]
+    public async Task PilotLogsTailTakesTheLastLinesAndReachesIntoTheRolledFile()
+    {
+        var folder = LogFolder(_root);
+        Seed(folder, "gui.log", 6, 5);
+        Seed(folder, "gui.1.log", 1, 5);
+
+        var (_, last) = await Logs(folder, "gui", "--tail", "2");
+        last.ShouldContain("line 11");
+        last.ShouldContain("line 10");
+        last.ShouldNotContain("line 9");
+
+        var (_, reaching) = await Logs(folder, "gui", "--tail", "7");
+        var lines = reaching.Split('\n', StringSplitOptions.RemoveEmptyEntries).Skip(1).Select(l => l.TrimEnd('\r')).ToArray();
+        lines.Length.ShouldBe(7);
+        lines[0].ShouldEndWith("line 5");
+        lines[^1].ShouldEndWith("line 11");
+
+        // Within the current file the rolled one is not read.
+        (await Logs(folder, "gui", "--tail", "5")).Output.ShouldNotContain("line 5");
+    }
+
+    [Fact]
+    public async Task PilotLogsSaysAMissingLogAndExitsZero()
+    {
+        var folder = LogFolder(_root, "no-logs");
+        var (exit, output) = await Logs(folder, "gui");
+        exit.ShouldBe(0);
+        output.ShouldContain($"no gui log yet at {Path.Combine(folder, "gui.log")}");
+
+        Seed(folder, "node.log", 1, 1);
+        var (both, text) = await Logs(folder);
+        both.ShouldBe(0);
+        text.ShouldContain("no gui log yet at");
+        text.ShouldContain("== node:");
+    }
+
     [Fact]
     public async Task TheSessionsListShowsTheNodesCodeBeforeANameWithoutAMachinePrefix()
     {

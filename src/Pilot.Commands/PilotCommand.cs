@@ -83,6 +83,19 @@ public static class PilotCommand
         return await parsed.InvokeAsync(new InvocationConfiguration { Output = output, Error = error }, cancellationToken);
     }
 
+    /// <summary>A text file's lines, read alongside a writer that still has it open (the log is being appended to).</summary>
+    private static async Task<List<string>> ReadLinesAsync(string path, CancellationToken ct)
+    {
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        var lines = new List<string>();
+        while (await reader.ReadLineAsync(ct) is { } line)
+        {
+            lines.Add(line);
+        }
+        return lines;
+    }
+
     /// <summary>The command tree; actions write to <paramref name="output"/> and <paramref name="error"/>, and resolve folders against <paramref name="cwd"/>.</summary>
     internal static RootCommand Build(string cwd, TextWriter output, TextWriter error, string who = "cli", bool bySession = true, bool console = false, bool? agent = null, string? sessionId = null, RichOutput? rich = null, string? requestId = null, TimeSpan? commandTimeout = null)
     {
@@ -964,10 +977,53 @@ public static class PilotCommand
         settings.Subcommands.Add(set);
         settings.Subcommands.Add(setupCommand);
 
+        // logs: the GUI's and the node's rolling logs, read from this machine's folder; no node needed, as neither writes to stderr
+        var logWhich = new Argument<string?>("which") { Description = "gui or node; both when left out", Arity = ArgumentArity.ZeroOrOne };
+        logWhich.AcceptOnlyFromAmong("gui", "node");
+        var logTail = new Option<int>("--tail") { Description = "How many of the last lines to print", DefaultValueFactory = _ => 50 };
+        var logs = new Command("logs", "The last lines of logs/gui.log and logs/node.log in this machine's pilot2 folder, each under its path") { Arguments = { logWhich }, Options = { logTail } };
+        logs.SetAction(async (p, ct) =>
+        {
+            var tail = p.GetValue(logTail);
+            if (tail < 1)
+            {
+                await error.WriteLineAsync("pilot: --tail takes a number of lines, 1 or more");
+                return 2;
+            }
+            var names = p.GetValue(logWhich) is { } one ? new[] { one } : ["gui", "node"];
+            var first = true;
+            foreach (var name in names)
+            {
+                var log = new RollingLog(name);
+                if (!first)
+                {
+                    await output.WriteLineAsync();
+                }
+                first = false;
+                if (!File.Exists(log.Path))
+                {
+                    await output.WriteLineAsync($"no {name} log yet at {log.Path}");
+                    continue;
+                }
+                await output.WriteLineAsync($"== {name}: {log.Path} ==");
+                var lines = await ReadLinesAsync(log.Path, ct);
+                if (lines.Count < tail && File.Exists(log.RolledPath))
+                {
+                    var rolled = await ReadLinesAsync(log.RolledPath, ct);
+                    lines.InsertRange(0, rolled.Skip(Math.Max(0, rolled.Count - (tail - lines.Count))));
+                }
+                foreach (var line in lines.Skip(Math.Max(0, lines.Count - tail)))
+                {
+                    await output.WriteLineAsync(line);
+                }
+            }
+            return 0;
+        });
+
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, attachments, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, summary, summarise, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings },
+            Subcommands = { status, attachments, sessions, reposCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, summary, summarise, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
