@@ -137,7 +137,7 @@ public sealed class CliTests : IAsyncLifetime
     public async Task PilotLogsTailTakesTheLastLinesAndReachesIntoTheRolledFile()
     {
         var folder = LogFolder(_root);
-        Seed(folder, "gui.log", 6, 5);
+        Seed(folder, "gui.log", 6, 6);
         Seed(folder, "gui.1.log", 1, 5);
 
         var (_, last) = await Logs(folder, "gui", "--tail", "2");
@@ -152,7 +152,7 @@ public sealed class CliTests : IAsyncLifetime
         lines[^1].ShouldEndWith("line 11");
 
         // Within the current file the rolled one is not read.
-        (await Logs(folder, "gui", "--tail", "5")).Output.ShouldNotContain("line 5");
+        (await Logs(folder, "gui", "--tail", "6")).Output.ShouldNotContain("line 5");
     }
 
     [Fact]
