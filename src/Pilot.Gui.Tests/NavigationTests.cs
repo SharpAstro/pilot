@@ -412,7 +412,7 @@ public sealed class NavigationTests
     [Fact]
     public void TheHistoryIsBounded()
     {
-        var history = new NavHistory<int>(3);
+        var history = new NavigationHistory<int>(3);
         for (var i = 0; i < 5; i++)
         {
             history.Push(i);
