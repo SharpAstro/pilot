@@ -8,9 +8,9 @@
    },
    "nodes": [
     {
-     "number": 109,
-     "title": "Approved but held",
-     "url": "https://github.com/SharpAstro/demo/pull/109",
+     "number": 116,
+     "title": "Approved and clean",
+     "url": "https://github.com/SharpAstro/demo/pull/116",
      "repository": {
       "nameWithOwner": "SharpAstro/demo"
      },
@@ -20,10 +20,10 @@
      "isDraft": false,
      "createdAt": "2026-10-27T19:56:26Z",
      "updatedAt": "2026-10-28T06:00:00Z",
-     "headRefName": "feature-109",
+     "headRefName": "feature-116",
      "baseRefName": "main",
      "mergeable": "MERGEABLE",
-     "mergeStateStatus": "BLOCKED",
+     "mergeStateStatus": "CLEAN",
      "reviewDecision": "APPROVED",
      "isInMergeQueue": false,
      "mergeQueueEntry": null,

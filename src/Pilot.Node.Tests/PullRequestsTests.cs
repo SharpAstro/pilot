@@ -43,9 +43,12 @@ public sealed class PullRequestsTests : IDisposable
     [InlineData("in-merge-queue", PullRequestKind.InMergeQueue, "In merge queue #2", false)]
     [InlineData("conflicts", PullRequestKind.Conflicts, "Conflicts", true)]
     [InlineData("behind", PullRequestKind.Behind, "Behind", false)]
+    [InlineData("changes-requested", PullRequestKind.ChangesRequested, "Changes requested", true)]
     // A failing pilot/review status is a failed check to the card's reader, which comes before a review's request for changes.
-    [InlineData("changes-requested", PullRequestKind.ChecksFailed, "Checks failed: pilot/review", false)]
-    [InlineData("approved", PullRequestKind.AwaitingCheck, "Waiting for a required check", false)]
+    [InlineData("review-failed", PullRequestKind.ChecksFailed, "Checks failed: pilot/review", false)]
+    [InlineData("approved", PullRequestKind.Ready, "Ready", true)]
+    // Approved, but a required check or rule still holds it: waiting, not ready.
+    [InlineData("approved-held", PullRequestKind.AwaitingCheck, "Waiting for a required check", false)]
     [InlineData("blocked", PullRequestKind.AwaitingCheck, "Waiting for a required check", false)]
     [InlineData("armed", PullRequestKind.Armed, "Auto-merge armed", false)]
     public void PullRequestsAreReadFromTheRecordedAnswerOfEachStateWithOneLabelAndTheNeedsMeFlag(string answer, PullRequestKind kind, string label, bool needsMe)
@@ -71,7 +74,8 @@ public sealed class PullRequestsTests : IDisposable
 
     [Theory]
     [InlineData("draft", PullRequestReview.Reviewing)]
-    [InlineData("changes-requested", PullRequestReview.Changes)]
+    [InlineData("review-failed", PullRequestReview.Changes)]
+    [InlineData("changes-requested", null)]
     [InlineData("conflicts", null)]
     public void PilotsReviewIsReadFromItsStatusOnTheLastCommit(string answer, string? review) => Read(answer).Review.ShouldBe(review);
 
@@ -192,11 +196,13 @@ public sealed class PullRequestsTests : IDisposable
     [InlineData("blocked")]
     [InlineData("armed")]
     [InlineData("approved")]
+    [InlineData("approved-held")]
     [InlineData("checks-running")]
     [InlineData("checks-failed")]
     [InlineData("conflicts")]
     [InlineData("behind")]
     [InlineData("changes-requested")]
+    [InlineData("review-failed")]
     [InlineData("in-merge-queue")]
     public void APullRequestOnThePageAndItsCardReadTheSameMergeStateFromTheSameFacts(string answer)
     {
