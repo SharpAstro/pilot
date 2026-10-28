@@ -383,6 +383,9 @@ public static class Briefs
         text.AppendLine($"`{run} leg plan {flight.Code} <name> --goal \"…\" --done-when \"…\" --check \"<command>\" --item \"<step>\" --item \"<step>\"`");
         text.AppendLine("Name: lower-case letters, digits and dashes. Items are the worker's checklist, in order. Add --model or --effort");
         text.AppendLine("only when a leg needs more (or less) than the default.");
+        text.AppendLine("Every item is the worker's to do, so none pushes, opens or edits a PR, merges, releases or publishes: the node pushes the");
+        text.AppendLine("branch and opens the PR once the last leg is done, and a release follows its merge. A worker cannot tick such a step and fails");
+        text.AppendLine("the leg over it with the work done (TIA1853, twice on 2026-10-28). End a leg on its last commit and its check passing.");
         text.AppendLine("The check runs as written in pwsh on Windows (sh elsewhere): quote anything holding a |, as a test filter");
         text.AppendLine("(`--filter 'FullyQualifiedName~A|FullyQualifiedName~B'`). A bare | is refused, since it would pipe.");
         // SDL144: a Debug check on a worktree needed what the Release package never carries, and failed for nothing of the leg's.
